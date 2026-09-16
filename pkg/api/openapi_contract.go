@@ -1,6 +1,45 @@
 package api
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// OpenAPI contract policies control how a production deployment reacts to
+// breaking changes in its customer-facing OpenAPI surface. Observe is the
+// compatibility-safe default; warn records telemetry without rejecting a
+// deployment; block rejects breaking promotions.
+const (
+	OpenAPIContractPolicyObserve = "observe"
+	OpenAPIContractPolicyWarn    = "warn"
+	OpenAPIContractPolicyBlock   = "block"
+)
+
+// NormalizeOpenAPIContractPolicy returns the canonical policy. Empty values
+// intentionally resolve to observe so legacy rows and hand-built fixtures
+// retain the pre-policy deployment behaviour.
+func NormalizeOpenAPIContractPolicy(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case OpenAPIContractPolicyWarn:
+		return OpenAPIContractPolicyWarn
+	case OpenAPIContractPolicyBlock:
+		return OpenAPIContractPolicyBlock
+	default:
+		return OpenAPIContractPolicyObserve
+	}
+}
+
+// IsValidOpenAPIContractPolicy reports whether raw is one of the explicit
+// policy values. The empty string is accepted by callers as "observe" for
+// backwards-compatible defaults, but is not an explicit wire value.
+func IsValidOpenAPIContractPolicy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case OpenAPIContractPolicyObserve, OpenAPIContractPolicyWarn, OpenAPIContractPolicyBlock:
+		return true
+	default:
+		return false
+	}
+}
 
 // GitHubInstallMutationRequest is the CSRF envelope used by customer-facing
 // GitHub connection mutations. The concrete handlers live in cmd/apid, while
@@ -88,6 +127,7 @@ type GitHubDeploymentPolicyPatch struct {
 type OpenAPIContractDiffResponse struct {
 	AppID                string                    `json:"app_id"`
 	Scope                string                    `json:"scope"`
+	Policy               string                    `json:"policy"`
 	Source               string                    `json:"source"`
 	BaselineDeploymentID string                    `json:"baseline_deployment_id,omitempty"`
 	BaselineSHA256       string                    `json:"baseline_sha256,omitempty"`

@@ -180,6 +180,10 @@ type CreateAppRequest struct {
 	// create-time has no "clear" path because the column starts
 	// NULL.
 	OverflowNode *string `json:"overflow_node,omitempty"`
+	// OpenAPIContractPolicy controls production OpenAPI breaking-change
+	// handling. Omitted defaults to observe (safe rollout); warn records
+	// telemetry without blocking and block rejects breaking promotions.
+	OpenAPIContractPolicy *string `json:"openapi_contract_policy,omitempty"`
 }
 
 // UpsertDevSessionRequest describes the application shape for an expiring,
@@ -325,6 +329,10 @@ type UpdateAppRequest struct {
 	// empty the imported per-app OpenAPI document is used.
 	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
 	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
+	// OpenAPIContractPolicy controls production OpenAPI breaking-change
+	// handling. Omitted leaves the current policy unchanged; values are
+	// observe, warn, or block. Existing apps default to observe.
+	OpenAPIContractPolicy *string `json:"openapi_contract_policy,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) opts the app into
 	// 503 + Retry-After mode via PATCH. Pointer distinguishes
 	// "don't touch" (nil) from "explicit false" (*bool=false).
@@ -960,6 +968,10 @@ type AppResponse struct {
 	// OnlyAllowDeclaredRoutes reflects the opt-in gateway route contract.
 	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
 	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
+	// OpenAPIContractPolicy is the app's production OpenAPI promotion policy.
+	// It is always present so clients can render the rollout posture without a
+	// second request; legacy rows are projected as observe.
+	OpenAPIContractPolicy string `json:"openapi_contract_policy"`
 	// MaintenanceMode (ADR-091 amendment) is the coarse-grained
 	// maintenance toggle for the whole app. When true the
 	// gatewayd applier (applyAppsMaintenanceMode, §4.1.2.0)

@@ -406,6 +406,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Free tier does not support app_protocol='grpc'; upgrade to Hobby or higher.")
 		}
 	}
+	if req.OpenAPIContractPolicy != nil && !api.IsValidOpenAPIContractPolicy(*req.OpenAPIContractPolicy) {
+		return api.ErrInvalidOpenAPIContractPolicy(*req.OpenAPIContractPolicy)
+	}
 	if req.WarmSnapshotMinRequests != nil {
 		v := *req.WarmSnapshotMinRequests
 		if v < 1 || v > 100 {
@@ -1004,6 +1007,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetOnlyAllowDeclaredRoutes: req.OnlyAllowDeclaredRoutes != nil,
 		DeclaredRoutes:             declaredRoutesState(req.DeclaredRoutes),
 		SetDeclaredRoutes:          req.DeclaredRoutes != nil,
+		OpenAPIContractPolicy:      req.OpenAPIContractPolicy,
+		SetOpenAPIContractPolicy:   req.OpenAPIContractPolicy != nil,
 		// ADR-124: per-app wire-protocol selector. Same
 		// Set*/optional-pointer convention as RouteMetricsEnabled
 		// above — nil pointer means "don't touch the column"
@@ -1292,6 +1297,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		oldApp["public_auth"] = app.PublicAuthMode
 		newApp["public_auth"] = updated.PublicAuthMode
 	}
+	if req.OpenAPIContractPolicy != nil {
+		oldApp["openapi_contract_policy"] = api.NormalizeOpenAPIContractPolicy(app.OpenAPIContractPolicy)
+		newApp["openapi_contract_policy"] = api.NormalizeOpenAPIContractPolicy(updated.OpenAPIContractPolicy)
+	}
 	if req.EgressAllowlist != nil {
 		oldApp["egress_allowlist"] = egressStringList(app.EgressAllowlist)
 		newApp["egress_allowlist"] = egressStringList(updated.EgressAllowlist)
@@ -1405,6 +1414,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"has_basic_creds": req.PublicAuth.Mode == api.AppPublicAuthModeBasic,
 			"public_auth_ip_allowlist_entry_count": countIPAllowlistAudit(
 				req.PublicAuth.Mode, req.PublicAuth.IPAllowlist),
+		})
+	}
+	if req.OpenAPIContractPolicy != nil && api.NormalizeOpenAPIContractPolicy(app.OpenAPIContractPolicy) != api.NormalizeOpenAPIContractPolicy(updated.OpenAPIContractPolicy) {
+		s.audit.Emit(r.Context(), "app.openapi_contract_policy_changed", &acct.ID, map[string]any{
+			"app_id": updated.ID,
+			"slug":   updated.Slug,
+			"old":    api.NormalizeOpenAPIContractPolicy(app.OpenAPIContractPolicy),
+			"new":    api.NormalizeOpenAPIContractPolicy(updated.OpenAPIContractPolicy),
 		})
 	}
 	resp := s.appResponse(updated, acct.Plan)

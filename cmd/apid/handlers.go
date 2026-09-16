@@ -153,14 +153,15 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
-		"app_id":           created.ID,
-		"slug":             created.Slug,
-		"type":             string(created.Type),
-		"ram_mb":           created.RAMMB,
-		"cpu_millicores":   created.CPUMillicores,
-		"resource_profile": api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
-		"max_concurrency":  created.MaxConcurrency,
-		"runtime":          created.Runtime,
+		"app_id":                  created.ID,
+		"slug":                    created.Slug,
+		"type":                    string(created.Type),
+		"ram_mb":                  created.RAMMB,
+		"cpu_millicores":          created.CPUMillicores,
+		"resource_profile":        api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
+		"max_concurrency":         created.MaxConcurrency,
+		"runtime":                 created.Runtime,
+		"openapi_contract_policy": api.NormalizeOpenAPIContractPolicy(created.OpenAPIContractPolicy),
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponse(created, acct.Plan)
@@ -394,6 +395,13 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.AppProtocol != nil {
 		appProtocol = *req.AppProtocol
 	}
+	if req.OpenAPIContractPolicy != nil && !api.IsValidOpenAPIContractPolicy(*req.OpenAPIContractPolicy) {
+		return state.App{}, api.ErrInvalidOpenAPIContractPolicy(*req.OpenAPIContractPolicy)
+	}
+	openapiContractPolicy := api.OpenAPIContractPolicyObserve
+	if req.OpenAPIContractPolicy != nil {
+		openapiContractPolicy = api.NormalizeOpenAPIContractPolicy(*req.OpenAPIContractPolicy)
+	}
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		RAMMB: ram, CPUMillicores: cpuMillicores, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
@@ -442,8 +450,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// hand-built App{}s land safely; this branch never
 		// reaches the floor in practice because every exit
 		// path above assigns appProtocol explicitly.
-		AppProtocol: appProtocol,
-		Manifest:    stateManifestFromAPI(lifecycle),
+		AppProtocol:           appProtocol,
+		OpenAPIContractPolicy: openapiContractPolicy,
+		Manifest:              stateManifestFromAPI(lifecycle),
 	}, nil
 }
 
@@ -646,6 +655,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	// rewritten any "::ffff:" v4-mapped entry to its v4 form by
 	// the time it lands in the store, so we never see one here.
 	ea := egressStringList(a.EgressAllowlist)
+	openapiContractPolicy := api.NormalizeOpenAPIContractPolicy(a.OpenAPIContractPolicy)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		RAMMB: a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
@@ -713,6 +723,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// applied before a request can wake the app.
 		OnlyAllowDeclaredRoutes: a.OnlyAllowDeclaredRoutes,
 		DeclaredRoutes:          declaredRouteResponses(a.DeclaredRoutes),
+		OpenAPIContractPolicy:   openapiContractPolicy,
 		// ADR-124: per-app wire-protocol selector (DB
 		// round-trip). Surfaced so dashboards can show
 		// "protocol: http1 / http2 / grpc" alongside the

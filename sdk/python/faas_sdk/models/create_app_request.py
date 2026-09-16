@@ -23,6 +23,10 @@ from ..models.create_app_request_execution_mode import (
     CreateAppRequestExecutionMode,
     check_create_app_request_execution_mode,
 )
+from ..models.create_app_request_openapi_contract_policy import (
+    CreateAppRequestOpenapiContractPolicy,
+    check_create_app_request_openapi_contract_policy,
+)
 from ..models.create_app_request_restart_policy import (
     CreateAppRequestRestartPolicy,
     check_create_app_request_restart_policy,
@@ -105,6 +109,8 @@ class CreateAppRequest:
     """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit to use the per-plan default
     ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403
     plan_app_protocol_grpc_not_allowed."""
+    openapi_contract_policy: CreateAppRequestOpenapiContractPolicy | Unset = UNSET
+    """Production OpenAPI breaking-change policy. Omit for the observe default; set to observe, warn, or block."""
     warm_snapshot_enabled: bool | Unset = UNSET
     """Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan
     default. Free/Hobby PATCH-true is rejected."""
@@ -211,6 +217,10 @@ class CreateAppRequest:
         if not isinstance(self.app_protocol, Unset):
             app_protocol = self.app_protocol
 
+        openapi_contract_policy: str | Unset = UNSET
+        if not isinstance(self.openapi_contract_policy, Unset):
+            openapi_contract_policy = self.openapi_contract_policy
+
         warm_snapshot_enabled = self.warm_snapshot_enabled
 
         warm_snapshot_min_requests = self.warm_snapshot_min_requests
@@ -282,6 +292,8 @@ class CreateAppRequest:
             field_dict["maintenance_mode"] = maintenance_mode
         if app_protocol is not UNSET:
             field_dict["app_protocol"] = app_protocol
+        if openapi_contract_policy is not UNSET:
+            field_dict["openapi_contract_policy"] = openapi_contract_policy
         if warm_snapshot_enabled is not UNSET:
             field_dict["warm_snapshot_enabled"] = warm_snapshot_enabled
         if warm_snapshot_min_requests is not UNSET:
@@ -421,6 +433,13 @@ class CreateAppRequest:
         else:
             app_protocol = check_create_app_request_app_protocol(_app_protocol)
 
+        _openapi_contract_policy = d.pop("openapi_contract_policy", UNSET)
+        openapi_contract_policy: CreateAppRequestOpenapiContractPolicy | Unset
+        if isinstance(_openapi_contract_policy, Unset):
+            openapi_contract_policy = UNSET
+        else:
+            openapi_contract_policy = check_create_app_request_openapi_contract_policy(_openapi_contract_policy)
+
         warm_snapshot_enabled = d.pop("warm_snapshot_enabled", UNSET)
 
         warm_snapshot_min_requests = d.pop("warm_snapshot_min_requests", UNSET)
@@ -465,6 +484,7 @@ class CreateAppRequest:
             route_metrics_enabled=route_metrics_enabled,
             maintenance_mode=maintenance_mode,
             app_protocol=app_protocol,
+            openapi_contract_policy=openapi_contract_policy,
             warm_snapshot_enabled=warm_snapshot_enabled,
             warm_snapshot_min_requests=warm_snapshot_min_requests,
             warm_snapshot_min_ms=warm_snapshot_min_ms,

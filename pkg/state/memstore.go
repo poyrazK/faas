@@ -3312,6 +3312,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
 	}
+	app.OpenAPIContractPolicy = OpenAPIContractPolicyOrObserve(app.OpenAPIContractPolicy)
 	// workload_class is NOT NULL with a closed CHECK in PostgreSQL;
 	// mirror the PgStore's HTTP fallback for hand-built callers that
 	// leave the Go zero value unset.
@@ -3394,6 +3395,7 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
 	}
+	app.OpenAPIContractPolicy = OpenAPIContractPolicyOrObserve(app.OpenAPIContractPolicy)
 	// Keep the quota-aware path in parity with CreateApp and PgStore:
 	// an omitted workload class is the canonical HTTP default.
 	if app.WorkloadClass == "" {
@@ -4775,6 +4777,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		for i := range a.DeclaredRoutes {
 			a.DeclaredRoutes[i].Methods = append([]string(nil), a.DeclaredRoutes[i].Methods...)
 		}
+	}
+	if p.SetOpenAPIContractPolicy {
+		a.OpenAPIContractPolicy = OpenAPIContractPolicyOrObserve(derefString(p.OpenAPIContractPolicy))
 	}
 	// Issue #462 / ADR-058 / PR-A: per-app scaling policy. The
 	// Set bit is the canonical "unset vs explicit zero" signal;

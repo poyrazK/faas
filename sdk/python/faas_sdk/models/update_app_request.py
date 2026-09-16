@@ -68,6 +68,18 @@ from ..models.update_app_request_execution_mode_type_3_type_1 import (
     UpdateAppRequestExecutionModeType3Type1,
     check_update_app_request_execution_mode_type_3_type_1,
 )
+from ..models.update_app_request_openapi_contract_policy_type_1 import (
+    UpdateAppRequestOpenapiContractPolicyType1,
+    check_update_app_request_openapi_contract_policy_type_1,
+)
+from ..models.update_app_request_openapi_contract_policy_type_2_type_1 import (
+    UpdateAppRequestOpenapiContractPolicyType2Type1,
+    check_update_app_request_openapi_contract_policy_type_2_type_1,
+)
+from ..models.update_app_request_openapi_contract_policy_type_3_type_1 import (
+    UpdateAppRequestOpenapiContractPolicyType3Type1,
+    check_update_app_request_openapi_contract_policy_type_3_type_1,
+)
 from ..models.update_app_request_restart_policy_type_1 import (
     UpdateAppRequestRestartPolicyType1,
     check_update_app_request_restart_policy_type_1,
@@ -189,6 +201,15 @@ class UpdateAppRequest:
     """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set
     explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403
     plan_app_protocol_grpc_not_allowed."""
+    openapi_contract_policy: (
+        None
+        | Unset
+        | UpdateAppRequestOpenapiContractPolicyType1
+        | UpdateAppRequestOpenapiContractPolicyType2Type1
+        | UpdateAppRequestOpenapiContractPolicyType3Type1
+    ) = UNSET
+    """Production OpenAPI breaking-change policy. Omit for no change; set to observe, warn, or block. Existing apps
+    default to observe."""
     scaling_policy: None | ScalingPolicy | Unset = UNSET
     """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the jsonb column."""
     require_signed: bool | None | Unset = UNSET
@@ -440,6 +461,18 @@ class UpdateAppRequest:
         if not isinstance(self.app_protocol, Unset):
             app_protocol = self.app_protocol
 
+        openapi_contract_policy: None | str | Unset
+        if isinstance(self.openapi_contract_policy, Unset):
+            openapi_contract_policy = UNSET
+        elif isinstance(self.openapi_contract_policy, str):
+            openapi_contract_policy = self.openapi_contract_policy
+        elif isinstance(self.openapi_contract_policy, str):
+            openapi_contract_policy = self.openapi_contract_policy
+        elif isinstance(self.openapi_contract_policy, str):
+            openapi_contract_policy = self.openapi_contract_policy
+        else:
+            openapi_contract_policy = self.openapi_contract_policy
+
         scaling_policy: dict[str, Any] | None | Unset
         if isinstance(self.scaling_policy, Unset):
             scaling_policy = UNSET
@@ -585,6 +618,8 @@ class UpdateAppRequest:
             field_dict["maintenance_mode"] = maintenance_mode
         if app_protocol is not UNSET:
             field_dict["app_protocol"] = app_protocol
+        if openapi_contract_policy is not UNSET:
+            field_dict["openapi_contract_policy"] = openapi_contract_policy
         if scaling_policy is not UNSET:
             field_dict["scaling_policy"] = scaling_policy
         if require_signed is not UNSET:
@@ -1040,6 +1075,58 @@ class UpdateAppRequest:
         else:
             app_protocol = check_update_app_request_app_protocol(_app_protocol)
 
+        def _parse_openapi_contract_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestOpenapiContractPolicyType1
+            | UpdateAppRequestOpenapiContractPolicyType2Type1
+            | UpdateAppRequestOpenapiContractPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                openapi_contract_policy_type_1 = check_update_app_request_openapi_contract_policy_type_1(data)
+
+                return openapi_contract_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                openapi_contract_policy_type_2_type_1 = check_update_app_request_openapi_contract_policy_type_2_type_1(
+                    data
+                )
+
+                return openapi_contract_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                openapi_contract_policy_type_3_type_1 = check_update_app_request_openapi_contract_policy_type_3_type_1(
+                    data
+                )
+
+                return openapi_contract_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestOpenapiContractPolicyType1
+                | UpdateAppRequestOpenapiContractPolicyType2Type1
+                | UpdateAppRequestOpenapiContractPolicyType3Type1,
+                data,
+            )
+
+        openapi_contract_policy = _parse_openapi_contract_policy(d.pop("openapi_contract_policy", UNSET))
+
         def _parse_scaling_policy(data: object) -> None | ScalingPolicy | Unset:
             if data is None:
                 return data
@@ -1264,6 +1351,7 @@ class UpdateAppRequest:
             declared_routes=declared_routes,
             maintenance_mode=maintenance_mode,
             app_protocol=app_protocol,
+            openapi_contract_policy=openapi_contract_policy,
             scaling_policy=scaling_policy,
             require_signed=require_signed,
             warm_snapshot_enabled=warm_snapshot_enabled,
