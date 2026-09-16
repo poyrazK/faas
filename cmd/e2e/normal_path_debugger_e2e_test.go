@@ -142,6 +142,12 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 	if err := f.store.MarkDeploymentLive(f.ctx, mirrorDeployment.ID); err != nil {
 		t.Fatalf("mark debugger mirror deployment live: %v", err)
 	}
+	mirrorInstance, err := f.store.CreateInstance(f.ctx, f.app.ID, mirrorDeployment.ID,
+		string(state.StateRunning), 256, f.nodeID, "")
+	if err != nil {
+		t.Fatalf("create debugger mirror instance: %v", err)
+	}
+	f.vmmd.SetVersion(mirrorInstance.ID, "debugger-replay")
 
 	body, statusCode = doReq(t, f.h, f.key, http.MethodPost,
 		"/v1/apps/normal-debugger/mirrors", api.CreateMirrorRuleRequest{
@@ -157,10 +163,6 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 		t.Fatalf("decode debugger mirror rule: %v body=%s", err, body)
 	}
 
-	// The mirror admission creates a fresh mirror-mode instance. The default
-	// response keeps the fake VMMD deterministic without teaching the test
-	// about the scheduler's generated instance id.
-	f.vmmd.SetDefaultVersion("debugger-replay")
 	replayHeaders := map[string]string{"Idempotency-Key": "debugger-replay-once"}
 	body, statusCode = doReq(t, f.h, f.key, http.MethodPost,
 		"/v1/apps/normal-debugger/debug/requests/"+request.ID+"/replay", nil, replayHeaders)
