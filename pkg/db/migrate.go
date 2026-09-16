@@ -8,7 +8,9 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -80,7 +82,9 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("db: set goose dialect: %w", err)
 	}
-	option, outOfOrder, err := historicalMigrationOption(ctx, sqlDB)
+	ledger := ledgerTableName(cfg.ConnConfig.RuntimeParams)
+	goose.SetTableName(ledger)
+	option, outOfOrder, err := historicalMigrationOption(ctx, sqlDB, ledger)
 	if err != nil {
 		return fmt.Errorf("db: inspect migration ledger: %w", err)
 	}
@@ -95,6 +99,40 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("db: goose up: %w", annotateSchemaDrift(err))
 	}
 	return nil
+}
+
+// defaultLedgerTable is goose's unqualified ledger name; it resolves through
+// search_path like any other unqualified relation.
+const defaultLedgerTable = "goose_db_version"
+
+// ledgerTableName pins the migration ledger to the schema the pool is pinned
+// to. An unqualified goose_db_version resolves through search_path, and that
+// is a hazard whenever the path has more than one entry: with
+// search_path=faas_test_x,public and a migrated public, goose in a brand-new
+// faas_test_x finds public.goose_db_version, reports "no migrations to run",
+// and leaves faas_test_x empty — the next query fails with
+//
+//	ERROR: relation "accounts" does not exist (SQLSTATE 42P01)
+//
+// That is what took `unit tests (pg shard 2a)` red intermittently: pgstore_
+// paddle_overage_schema_test legitimately migrates public (its probe reads
+// public. by design) and drops it afterwards, and under `go test -p 4` any
+// pgtest schema another package created inside that window was poisoned.
+// The earlier "relation goose_db_version does not exist" variant is the same
+// race seen from the other side — public's ledger vanishing between goose's
+// two reads.
+//
+// Qualifying the ledger with the FIRST schema in search_path makes the
+// migration self-contained: the ledger, and every table goose creates, land
+// in that schema regardless of what any other schema holds. Pools with no
+// search_path (production) keep the unqualified default and are unchanged.
+func ledgerTableName(runtimeParams map[string]string) string {
+	first := strings.TrimSpace(strings.SplitN(runtimeParams["search_path"], ",", 2)[0])
+	first = strings.Trim(first, `"`)
+	if first == "" || first == "public" || strings.HasPrefix(first, "$") {
+		return defaultLedgerTable
+	}
+	return pgx.Identifier{first, defaultLedgerTable}.Sanitize()
 }
 
 // duplicateObjectSQLStates are the Postgres error codes that mean "the thing
@@ -201,6 +239,8 @@ func Status(ctx context.Context, pool *pgxpool.Pool) (MigrationStatus, error) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return MigrationStatus{}, fmt.Errorf("db: set goose dialect: %w", err)
 	}
+	ledger := ledgerTableName(cfg.ConnConfig.RuntimeParams)
+	goose.SetTableName(ledger)
 
 	// GetDBVersionContext creates goose_db_version if absent, which is what
 	// MigrateUp would do anyway — Status stays read-only in every other
@@ -214,7 +254,7 @@ func Status(ctx context.Context, pool *pgxpool.Pool) (MigrationStatus, error) {
 	if err != nil {
 		return MigrationStatus{}, fmt.Errorf("db: collect migrations: %w", err)
 	}
-	applied, err := appliedMigrationVersions(ctx, sqlDB)
+	applied, err := appliedMigrationVersions(ctx, sqlDB, ledger)
 	if err != nil {
 		return MigrationStatus{}, fmt.Errorf("db: list applied migrations: %w", err)
 	}

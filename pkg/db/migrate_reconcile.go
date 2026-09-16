@@ -126,7 +126,7 @@ func migrationOptionsForHistoricalGaps(current int64, known map[int64]struct{}, 
 // historicalMigrationOption reads the database ledger and returns an
 // allow-missing option only when every historical gap is allowed by
 // migrationOptionsForHistoricalGaps. The caller must hold MigrationLockKey.
-func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.OptionsFunc, []int64, error) {
+func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB, ledger string) (goose.OptionsFunc, []int64, error) {
 	reportedCurrent, err := goose.GetDBVersionContext(ctx, sqlDB)
 	if err != nil {
 		if errNoLedgerYet(err) {
@@ -135,7 +135,7 @@ func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.Option
 		}
 		return nil, nil, err
 	}
-	applied, err := appliedMigrationVersions(ctx, sqlDB)
+	applied, err := appliedMigrationVersions(ctx, sqlDB, ledger)
 	if err != nil {
 		if errNoLedgerYet(err) {
 			logNoLedger(err)
@@ -148,7 +148,7 @@ func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.Option
 		return nil, nil, nil
 	}
 
-	known, err := ledgerMigrationVersions(ctx, sqlDB)
+	known, err := ledgerMigrationVersions(ctx, sqlDB, ledger)
 	if err != nil {
 		if errNoLedgerYet(err) {
 			logNoLedger(err)
@@ -165,16 +165,18 @@ func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.Option
 	return option, allowed, nil
 }
 
-func ledgerMigrationVersions(ctx context.Context, sqlDB *sql.DB) (map[int64]struct{}, error) {
-	return migrationVersions(ctx, sqlDB, false)
+func ledgerMigrationVersions(ctx context.Context, sqlDB *sql.DB, ledger string) (map[int64]struct{}, error) {
+	return migrationVersions(ctx, sqlDB, ledger, false)
 }
 
-func appliedMigrationVersions(ctx context.Context, sqlDB *sql.DB) (map[int64]struct{}, error) {
-	return migrationVersions(ctx, sqlDB, true)
+func appliedMigrationVersions(ctx context.Context, sqlDB *sql.DB, ledger string) (map[int64]struct{}, error) {
+	return migrationVersions(ctx, sqlDB, ledger, true)
 }
 
-func migrationVersions(ctx context.Context, sqlDB *sql.DB, appliedOnly bool) (map[int64]struct{}, error) {
-	query := `SELECT version_id FROM goose_db_version`
+// migrationVersions reads the ledger goose was pointed at (ledgerTableName),
+// never an unqualified name that could resolve to another schema's table.
+func migrationVersions(ctx context.Context, sqlDB *sql.DB, ledger string, appliedOnly bool) (map[int64]struct{}, error) {
+	query := `SELECT version_id FROM ` + ledger
 	if appliedOnly {
 		// Goose records both apply and rollback events. Only the newest event
 		// for each version describes its current state; an older true row must
@@ -182,7 +184,7 @@ func migrationVersions(ctx context.Context, sqlDB *sql.DB, appliedOnly bool) (ma
 		query = `SELECT version_id
 			FROM (
 				SELECT DISTINCT ON (version_id) version_id, is_applied
-				FROM goose_db_version
+				FROM ` + ledger + `
 				ORDER BY version_id, id DESC
 			) AS latest
 			WHERE is_applied = true`

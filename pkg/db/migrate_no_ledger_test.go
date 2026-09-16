@@ -68,7 +68,7 @@ func TestFreshSchemaHasNoLedger(t *testing.T) {
 func TestMigrationVersions_MissingLedgerIsDetected(t *testing.T) {
 	sqlDB := sqlDBOnFreshSchema(t)
 
-	_, err := appliedMigrationVersions(context.Background(), sqlDB)
+	_, err := appliedMigrationVersions(context.Background(), sqlDB, defaultLedgerTable)
 	if err == nil {
 		t.Skip("appliedMigrationVersions no longer surfaces the missing ledger; " +
 			"nothing left for errNoLedgerYet to classify")
@@ -85,7 +85,7 @@ func TestMigrationVersions_MissingLedgerIsDetected(t *testing.T) {
 func TestHistoricalMigrationOption_ToleratesAMissingLedger(t *testing.T) {
 	sqlDB := sqlDBOnFreshSchema(t)
 
-	option, outOfOrder, err := historicalMigrationOption(context.Background(), sqlDB)
+	option, outOfOrder, err := historicalMigrationOption(context.Background(), sqlDB, defaultLedgerTable)
 	if err != nil {
 		t.Fatalf("inspecting a database with no ledger failed: %v\n"+
 			"A database with no goose_db_version has no history to reconcile; "+
