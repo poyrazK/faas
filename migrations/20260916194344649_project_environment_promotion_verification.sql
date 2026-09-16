@@ -28,6 +28,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose Down
+-- +goose StatementBegin
 ALTER TABLE project_environment_promotion_workloads
     DROP CONSTRAINT IF EXISTS project_environment_promotion_workloads_verification_status_check,
     DROP COLUMN IF EXISTS verification_error,
@@ -39,3 +40,4 @@ ALTER TABLE project_environment_promotions
     DROP COLUMN IF EXISTS verification_started_at,
     DROP COLUMN IF EXISTS verification_error,
     DROP COLUMN IF EXISTS verification_status;
+-- +goose StatementEnd
