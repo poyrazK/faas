@@ -75,9 +75,9 @@ func newProjectEnvironmentPromotionFixture(t *testing.T, label string) *projectE
 	putPromotionConfig(t, h, key, project.Slug, "staging", "promotion-staging-config", `{"region":"eu","release":"candidate"}`)
 	putPromotionConfig(t, h, key, project.Slug, "production", "promotion-production-config", `{"region":"us","release":"stable"}`)
 
-	apiSource := createPromotionDeployment(t, store, apiApp.ID, "staging", "source-api-v1", "1", "/artifacts/api-v1.ext4")
-	workerSource := createPromotionDeployment(t, store, workerApp.ID, "staging", "source-worker-v1", "2", "/artifacts/worker-v1.ext4")
-	apiTarget := createPromotionDeployment(t, store, apiApp.ID, "production", "target-api-old", "3", "/artifacts/api-old.ext4")
+	apiSource := createPromotionDeployment(t, store, apiApp.ID, "staging", "sha256:"+strings.Repeat("1", 64), "1", "/artifacts/api-v1.ext4")
+	workerSource := createPromotionDeployment(t, store, workerApp.ID, "staging", "sha256:"+strings.Repeat("2", 64), "2", "/artifacts/worker-v1.ext4")
+	apiTarget := createPromotionDeployment(t, store, apiApp.ID, "production", "sha256:"+strings.Repeat("3", 64), "3", "/artifacts/api-old.ext4")
 	if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
 		DeploymentID: apiSource.ID, SidecarName: "logger", StorageKey: "sidecars/logger.ext4",
 		Bytes: 23, ContentDigest: "sha256:" + strings.Repeat("a", 64),
@@ -394,7 +394,7 @@ func TestE2E_ProjectEnvironmentPromotion_StalePreviewRejected(t *testing.T) {
 
 	// Publish a new source release after the preview. This changes the
 	// promotion hash while leaving the old token otherwise well-formed.
-	createPromotionDeployment(t, f.store, f.apiApp.ID, "staging", "source-api-v2", "4", "/artifacts/api-v2.ext4")
+	createPromotionDeployment(t, f.store, f.apiApp.ID, "staging", "sha256:"+strings.Repeat("4", 64), "4", "/artifacts/api-v2.ext4")
 	promotePath := "/v1/projects/" + f.project.Slug + "/environments/production/promote"
 	assertPromotionProblem(t, f.h, f.key, http.MethodPost, promotePath, api.PromoteProjectEnvironmentRequest{
 		FromEnvironment: "staging", PromotionToken: preview.PromotionToken,
