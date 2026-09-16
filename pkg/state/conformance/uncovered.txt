@@ -155,6 +155,7 @@ CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
 CreateProjectEnvironmentApproval
+CreateProjectEnvironmentPromotion
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
@@ -535,6 +536,8 @@ ProjectByID
 ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByToken
+ProjectEnvironmentPromotionByID
+ProjectEnvironmentPromotionByIdempotencyKey
 ProvisionedStaticEgressIPExists
 PruneAppLogDrainDeliveryAnalytics
 PruneDataUpstreamProbesOlderThan
@@ -675,6 +678,8 @@ UpdateOrgMemberRole
 UpdateOrgName
 UpdateOrgPlan
 UpdateOrgStatus
+UpdateProjectEnvironmentPromotion
+UpdateProjectEnvironmentPromotionWorkload
 UpdateSessionBinding
 UpdateSpansSummary
 UpdateTenantSurfaceCert

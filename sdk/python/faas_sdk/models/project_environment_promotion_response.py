@@ -17,6 +17,7 @@ T = TypeVar("T", bound="ProjectEnvironmentPromotionResponse")
 class ProjectEnvironmentPromotionResponse:
     """Result of a guarded project environment promotion."""
 
+    promotion_id: str
     project_slug: str
     from_environment: str
     to_environment: str
@@ -25,6 +26,8 @@ class ProjectEnvironmentPromotionResponse:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        promotion_id = self.promotion_id
+
         project_slug = self.project_slug
 
         from_environment = self.from_environment
@@ -42,6 +45,7 @@ class ProjectEnvironmentPromotionResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "promotion_id": promotion_id,
                 "project_slug": project_slug,
                 "from_environment": from_environment,
                 "to_environment": to_environment,
@@ -57,6 +61,8 @@ class ProjectEnvironmentPromotionResponse:
         from ..models.project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 
         d = dict(src_dict)
+        promotion_id = d.pop("promotion_id")
+
         project_slug = d.pop("project_slug")
 
         from_environment = d.pop("from_environment")
@@ -73,6 +79,7 @@ class ProjectEnvironmentPromotionResponse:
             workloads.append(workloads_item)
 
         project_environment_promotion_response = cls(
+            promotion_id=promotion_id,
             project_slug=project_slug,
             from_environment=from_environment,
             to_environment=to_environment,

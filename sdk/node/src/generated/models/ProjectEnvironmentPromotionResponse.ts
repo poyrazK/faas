@@ -7,6 +7,7 @@ import type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvir
  * Result of a guarded project environment promotion.
  */
 export type ProjectEnvironmentPromotionResponse = {
+  promotion_id: string;
   project_slug: string;
   from_environment: string;
   to_environment: string;

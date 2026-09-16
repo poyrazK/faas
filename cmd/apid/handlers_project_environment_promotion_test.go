@@ -64,6 +64,7 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	executeReq, executeRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
 	executeReq.SetPathValue("environment", "production")
+	executeReq.Header.Set("Idempotency-Key", "promotion-test-1")
 	srv.promoteProjectEnvironment(executeRec, executeReq, acct)
 	if executeRec.Code != http.StatusConflict {
 		t.Fatalf("missing approval status=%d body=%s", executeRec.Code, executeRec.Body.String())
@@ -81,6 +82,7 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	executeReq, executeRec = projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
 	executeReq.SetPathValue("environment", "production")
+	executeReq.Header.Set("Idempotency-Key", "promotion-test-1")
 	srv.promoteProjectEnvironment(executeRec, executeReq, acct)
 	if executeRec.Code != http.StatusOK {
 		t.Fatalf("promotion status=%d body=%s", executeRec.Code, executeRec.Body.String())
@@ -91,6 +93,32 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	if len(response.Workloads) != 1 || response.Workloads[0].Status != "promoted" {
 		t.Fatalf("promotion response=%+v", response)
+	}
+	if response.PromotionID == "" {
+		t.Fatal("promotion response did not include durable promotion id")
+	}
+	statusReq, statusRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID, "shop", nil)
+	statusReq.SetPathValue("environment", "production")
+	statusReq.SetPathValue("promotion", response.PromotionID)
+	srv.getProjectEnvironmentPromotionStatus(statusRec, statusReq, acct)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("promotion status=%d body=%s", statusRec.Code, statusRec.Body.String())
+	}
+	var status api.ProjectEnvironmentPromotionStatusResponse
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != "succeeded" || len(status.Workloads) != 1 || status.Workloads[0].Status != "promoted" {
+		t.Fatalf("promotion status response=%+v", status)
+	}
+	// A replay with the same idempotency key returns the durable result even
+	// though the original target now points at the promoted deployment.
+	replayReq, replayRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
+	replayReq.SetPathValue("environment", "production")
+	replayReq.Header.Set("Idempotency-Key", "promotion-test-1")
+	srv.promoteProjectEnvironment(replayRec, replayReq, acct)
+	if replayRec.Code != http.StatusOK || replayRec.Body.String() != executeRec.Body.String() {
+		t.Fatalf("promotion replay status=%d body=%s want=%s", replayRec.Code, replayRec.Body.String(), executeRec.Body.String())
 	}
 	live, err := store.LiveDeploymentForScope(ctx, app.ID, "production")
 	if err != nil {

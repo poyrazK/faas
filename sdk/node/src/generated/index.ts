@@ -428,6 +428,8 @@ export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironme
 export type { ProjectEnvironmentPromotionChange } from './models/ProjectEnvironmentPromotionChange.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './models/ProjectEnvironmentPromotionPreviewResponse.js';
 export type { ProjectEnvironmentPromotionResponse } from './models/ProjectEnvironmentPromotionResponse.js';
+export type { ProjectEnvironmentPromotionStatusResponse } from './models/ProjectEnvironmentPromotionStatusResponse.js';
+export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './models/ProjectEnvironmentPromotionStatusWorkloadResponse.js';
 export type { ProjectEnvironmentPromotionWorkloadResponse } from './models/ProjectEnvironmentPromotionWorkloadResponse.js';
 export type { ProjectEnvironmentResponse } from './models/ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';

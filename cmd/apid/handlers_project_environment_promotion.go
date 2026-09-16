@@ -37,7 +37,9 @@ type projectEnvironmentPromotionTokenWire struct {
 type projectEnvironmentPromotionPlan struct {
 	ProjectID string
 	Preview   api.ProjectEnvironmentPromotionPreviewResponse
+	Apps      map[string]state.App
 	Sources   map[string]state.Deployment
+	Targets   map[string]state.Deployment
 }
 
 func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -54,7 +56,9 @@ func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *ht
 
 func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct state.Account, projectSlug, fromEnvironment, toEnvironment string) (projectEnvironmentPromotionPlan, *api.Problem) {
 	plan := projectEnvironmentPromotionPlan{
+		Apps:    make(map[string]state.App),
 		Sources: make(map[string]state.Deployment),
+		Targets: make(map[string]state.Deployment),
 	}
 	if fromEnvironment == "" {
 		return plan, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -98,6 +102,7 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 	changes := make([]api.ProjectEnvironmentPromotionChange, 0, len(apps))
 	blockingReasons := make([]string, 0)
 	for _, app := range apps {
+		plan.Apps[app.Slug] = app
 		source, sourceErr := s.store.LiveDeploymentForScope(ctx, app.ID, fromEnvironment)
 		if sourceErr != nil && !errors.Is(sourceErr, state.ErrNotFound) {
 			return plan, api.ErrCapacity("could not inspect source environment deployments")
@@ -105,6 +110,9 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		target, targetErr := s.store.LiveDeploymentForScope(ctx, app.ID, toEnvironment)
 		if targetErr != nil && !errors.Is(targetErr, state.ErrNotFound) {
 			return plan, api.ErrCapacity("could not inspect target environment deployments")
+		}
+		if targetErr == nil {
+			plan.Targets[app.Slug] = target
 		}
 		if sourceErr == nil {
 			plan.Sources[app.Slug] = source
@@ -139,6 +147,12 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	projectSlug := r.PathValue("slug")
 	toEnvironment := strings.TrimSpace(r.PathValue("environment"))
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 255 {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Idempotency-Key required", "environment promotions require an Idempotency-Key of 1..255 characters"))
+		return
+	}
 	var req api.PromoteProjectEnvironmentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -154,6 +168,38 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 	if err != nil || wire.AccountID != acct.ID || wire.ProjectSlug != projectSlug || wire.FromEnvironment != fromEnvironment || wire.ToEnvironment != toEnvironment {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion token does not match", "preview the exact source and target environments again"))
+		return
+	}
+	existing, existingWorkloads, lookupErr := s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
+	if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
+		return
+	}
+	if lookupErr == nil {
+		if existing.ProjectID != wire.ProjectID || existing.FromEnvironment != fromEnvironment ||
+			existing.ToEnvironment != toEnvironment || existing.PromotionHash != wire.PromotionHash {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Idempotency-Key already used", "use a new key for a different environment promotion"))
+			return
+		}
+		if existing.Status == "succeeded" {
+			writeJSON(w, http.StatusOK, projectEnvironmentPromotionResponse(existing, existingWorkloads))
+			return
+		}
+		plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
+		if problem == nil {
+			problem = validateProjectEnvironmentPromotionResume(wire, existing, existingWorkloads, plan)
+		}
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		response, problem := s.executeProjectEnvironmentPromotion(r.Context(), acct, existing, existingWorkloads, plan)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
@@ -194,35 +240,211 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-
-	results := make([]api.ProjectEnvironmentPromotionWorkloadResponse, 0, len(plan.Preview.Changes))
-	for _, change := range plan.Preview.Changes {
-		result := api.ProjectEnvironmentPromotionWorkloadResponse{
-			WorkloadSlug: change.WorkloadSlug, WorkloadName: change.WorkloadName,
-			SourceDeploymentID: change.SourceDeploymentID, TargetDeploymentID: change.TargetDeploymentID,
-		}
-		if change.Kind == "unchanged" {
-			result.Status = "unchanged"
-			results = append(results, result)
-			continue
-		}
-		promoted, err := promoteProjectEnvironmentDeployment(r.Context(), s.store, plan.Sources[change.WorkloadSlug], toEnvironment)
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not promote workload "+change.WorkloadSlug))
+	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), state.ProjectEnvironmentPromotion{
+		AccountID: acct.ID, ProjectID: plan.ProjectID, ProjectSlug: projectSlug,
+		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
+		PromotionHash: plan.Preview.PromotionHash, IdempotencyKey: idempotencyKey, Status: "running",
+	}, projectEnvironmentPromotionWorkloads(plan))
+	if err != nil {
+		if !errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.ErrCapacity("could not create environment promotion"))
 			return
 		}
-		result.Status = "promoted"
-		result.TargetDeploymentID = promoted.ID
-		results = append(results, result)
+		promotion, workloads, err = s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
+			return
+		}
+		if promotion.ProjectID != wire.ProjectID || promotion.FromEnvironment != fromEnvironment ||
+			promotion.ToEnvironment != toEnvironment || promotion.PromotionHash != wire.PromotionHash {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Idempotency-Key already used", "use a new key for a different environment promotion"))
+			return
+		}
+		if promotion.Status == "succeeded" {
+			writeJSON(w, http.StatusOK, projectEnvironmentPromotionResponse(promotion, workloads))
+			return
+		}
+		plan, problem = s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
+		if problem == nil {
+			problem = validateProjectEnvironmentPromotionResume(wire, promotion, workloads, plan)
+		}
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
-	s.audit.Emit(r.Context(), "project.environment.promoted", &acct.ID, map[string]any{
-		"project_slug": projectSlug, "from_environment": fromEnvironment, "to_environment": toEnvironment,
-		"promotion_hash": plan.Preview.PromotionHash, "workload_count": len(results),
+	response, problem := s.executeProjectEnvironmentPromotion(r.Context(), acct, promotion, workloads, plan)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) getProjectEnvironmentPromotionStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Environment promotion not found", "no promotion exists with that id"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
+		return
+	}
+	writeJSON(w, http.StatusOK, projectEnvironmentPromotionStatusResponse(promotion, workloads))
+}
+
+func projectEnvironmentPromotionWorkloads(plan projectEnvironmentPromotionPlan) []state.ProjectEnvironmentPromotionWorkload {
+	workloads := make([]state.ProjectEnvironmentPromotionWorkload, 0, len(plan.Preview.Changes))
+	for _, change := range plan.Preview.Changes {
+		status := "pending"
+		if change.Kind == "unchanged" {
+			status = "unchanged"
+		}
+		workloads = append(workloads, state.ProjectEnvironmentPromotionWorkload{
+			WorkloadSlug: change.WorkloadSlug, WorkloadName: change.WorkloadName,
+			SourceDeploymentID:         change.SourceDeploymentID,
+			PreviousTargetDeploymentID: change.TargetDeploymentID,
+			TargetDeploymentID:         change.TargetDeploymentID, Status: status,
+		})
+	}
+	return workloads
+}
+
+func validateProjectEnvironmentPromotionResume(wire projectEnvironmentPromotionTokenWire, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) *api.Problem {
+	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash || wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash {
+		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+			"Promotion configuration is stale", "the environment configuration changed; start a new promotion")
+	}
+	changes := make(map[string]api.ProjectEnvironmentPromotionChange, len(plan.Preview.Changes))
+	for _, change := range plan.Preview.Changes {
+		changes[change.WorkloadSlug] = change
+	}
+	for _, workload := range workloads {
+		change, ok := changes[workload.WorkloadSlug]
+		if !ok || change.SourceDeploymentID != workload.SourceDeploymentID {
+			return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+				"Promotion source is stale", "a source workload changed; start a new promotion")
+		}
+		if workload.Status == "promoted" {
+			if change.TargetDeploymentID != workload.TargetDeploymentID {
+				return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+					"Promotion target changed", "the target workload changed after promotion; inspect the promotion before retrying")
+			}
+			continue
+		}
+		if target := plan.Targets[workload.WorkloadSlug]; target.ID != "" && target.Reason == projectEnvironmentPromotionDeploymentReason(promotion.ID) {
+			continue
+		}
+		if change.TargetDeploymentID != workload.PreviousTargetDeploymentID {
+			return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+				"Promotion target is stale", "the target workload changed; start a new promotion")
+		}
+	}
+	return nil
+}
+
+func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) (api.ProjectEnvironmentPromotionResponse, *api.Problem) {
+	if promotion.Status == "succeeded" {
+		return projectEnvironmentPromotionResponse(promotion, workloads), nil
+	}
+	if _, err := s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "running", "", nil); err != nil {
+		return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion")
+	}
+	changes := make(map[string]api.ProjectEnvironmentPromotionChange, len(plan.Preview.Changes))
+	for _, change := range plan.Preview.Changes {
+		changes[change.WorkloadSlug] = change
+	}
+	for _, workload := range workloads {
+		if workload.Status == "promoted" || workload.Status == "unchanged" {
+			continue
+		}
+		change, ok := changes[workload.WorkloadSlug]
+		if !ok {
+			return s.failProjectEnvironmentPromotion(ctx, acct, promotion, workload, "workload is no longer in the promotion plan")
+		}
+		if existing, found, err := projectEnvironmentPromotionDeployment(ctx, s.store, plan.Apps[workload.WorkloadSlug].ID, promotion.ToEnvironment, promotion.ID); err != nil {
+			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not inspect environment promotion checkpoint")
+		} else if found {
+			updated, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, "")
+			if updateErr != nil {
+				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
+			}
+			workload = updated
+			continue
+		}
+		promoted, err := promoteProjectEnvironmentDeployment(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
+		if err != nil {
+			return s.failProjectEnvironmentPromotion(ctx, acct, promotion, workload, "could not promote workload "+change.WorkloadSlug)
+		}
+		if _, err := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", promoted.ID, ""); err != nil {
+			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
+		}
+	}
+	now := time.Now().UTC()
+	updated, err := s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "succeeded", "", &now)
+	if err != nil {
+		return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not complete environment promotion")
+	}
+	_, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(ctx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err != nil {
+		return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not load environment promotion result")
+	}
+	s.audit.Emit(ctx, "project.environment.promoted", &acct.ID, map[string]any{
+		"promotion_id": promotion.ID, "project_slug": promotion.ProjectSlug,
+		"from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment,
+		"promotion_hash": promotion.PromotionHash, "workload_count": len(finalWorkloads),
 	})
-	writeJSON(w, http.StatusOK, api.ProjectEnvironmentPromotionResponse{
-		ProjectSlug: projectSlug, FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
-		PromotionHash: plan.Preview.PromotionHash, Workloads: results,
-	})
+	return projectEnvironmentPromotionResponse(updated, finalWorkloads), nil
+}
+
+func (s *server) failProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, message string) (api.ProjectEnvironmentPromotionResponse, *api.Problem) {
+	_, _ = s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "failed", workload.TargetDeploymentID, message)
+	_, _ = s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "failed", message, nil)
+	return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity(message)
+}
+
+func projectEnvironmentPromotionResponse(promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload) api.ProjectEnvironmentPromotionResponse {
+	results := make([]api.ProjectEnvironmentPromotionWorkloadResponse, 0, len(workloads))
+	for _, workload := range workloads {
+		results = append(results, api.ProjectEnvironmentPromotionWorkloadResponse{
+			WorkloadSlug: workload.WorkloadSlug, WorkloadName: workload.WorkloadName,
+			Status: workload.Status, SourceDeploymentID: workload.SourceDeploymentID,
+			TargetDeploymentID: workload.TargetDeploymentID,
+		})
+	}
+	return api.ProjectEnvironmentPromotionResponse{
+		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
+		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
+		PromotionHash: promotion.PromotionHash, Workloads: results,
+	}
+}
+
+func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload) api.ProjectEnvironmentPromotionStatusResponse {
+	items := make([]api.ProjectEnvironmentPromotionStatusWorkloadResponse, 0, len(workloads))
+	for _, workload := range workloads {
+		items = append(items, api.ProjectEnvironmentPromotionStatusWorkloadResponse{
+			WorkloadSlug: workload.WorkloadSlug, WorkloadName: workload.WorkloadName,
+			Status: workload.Status, SourceDeploymentID: workload.SourceDeploymentID,
+			PreviousTargetDeploymentID: workload.PreviousTargetDeploymentID,
+			TargetDeploymentID:         workload.TargetDeploymentID, Error: workload.Error,
+		})
+	}
+	return api.ProjectEnvironmentPromotionStatusResponse{
+		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
+		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
+		PromotionHash: promotion.PromotionHash, Status: promotion.Status, Error: promotion.Error,
+		CreatedAt: promotion.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt: promotion.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		CompletedAt: func() string {
+			if promotion.CompletedAt == nil {
+				return ""
+			}
+			return promotion.CompletedAt.UTC().Format(time.RFC3339Nano)
+		}(),
+		Workloads: items,
+	}
 }
 
 func projectEnvironmentPromotionExecutionProblem(plan projectEnvironmentPromotionPlan) *api.Problem {
@@ -259,7 +481,25 @@ func (s *server) revalidateProjectEnvironmentPromotionPlan(ctx context.Context, 
 	return nil
 }
 
-func promoteProjectEnvironmentDeployment(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment string) (state.Deployment, error) {
+func projectEnvironmentPromotionDeploymentReason(promotionID string) string {
+	return "environment promotion/" + promotionID
+}
+
+func projectEnvironmentPromotionDeployment(ctx context.Context, store state.Store, appID, targetEnvironment, promotionID string) (state.Deployment, bool, error) {
+	deployments, err := store.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		return state.Deployment{}, false, err
+	}
+	reason := projectEnvironmentPromotionDeploymentReason(promotionID)
+	for _, deployment := range deployments {
+		if deployment.Scope == targetEnvironment && deployment.Reason == reason && deployment.Status == state.DeployLive {
+			return deployment, true, nil
+		}
+	}
+	return state.Deployment{}, false, nil
+}
+
+func promoteProjectEnvironmentDeployment(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string) (state.Deployment, error) {
 	rootfsPath, rootfsKey, rootfsBytes := source.RootfsPath, source.RootfsKey, source.RootfsBytes
 	candidate := source
 	candidate.ID = ""
@@ -293,7 +533,7 @@ func promoteProjectEnvironmentDeployment(ctx context.Context, store state.Store,
 	candidate.CanaryStages = nil
 	candidate.StageState = nil
 	candidate.DeployedVia = "api"
-	candidate.Reason = "environment promotion"
+	candidate.Reason = projectEnvironmentPromotionDeploymentReason(promotionID)
 
 	created, err := store.CreateDeployment(ctx, candidate)
 	if err != nil {

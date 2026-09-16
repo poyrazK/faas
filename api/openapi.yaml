@@ -10535,6 +10535,11 @@ paths:
         required: true
         description: Target environment receiving the promotion.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Stable key for retrying this promotion without duplicating deployments.
+        schema: { type: string, minLength: 1, maxLength: 255 }
     post:
       tags: [projects]
       operationId: promoteProjectEnvironment
@@ -10560,6 +10565,38 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/promotions/{promotion}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the promotion status operation.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment associated with the promotion status operation.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: promotion
+        in: path
+        required: true
+        description: Durable promotion operation identifier.
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentPromotionStatus
+      summary: Get durable project environment promotion status.
+      description: Returns the operation status and non-secret per-workload checkpoints for a promotion.
+      responses:
+        '200':
+          description: Durable promotion status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/delete-preview:
@@ -22062,8 +22099,9 @@ components:
     ProjectEnvironmentPromotionResponse:
       description: Result of a guarded project environment promotion.
       type: object
-      required: [project_slug, from_environment, to_environment, promotion_hash, workloads]
+      required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, workloads]
       properties:
+        promotion_id: { type: string, minLength: 1 }
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
@@ -22071,6 +22109,42 @@ components:
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionWorkloadResponse' }
+
+    ProjectEnvironmentPromotionStatusWorkloadResponse:
+      description: Durable checkpoint for one workload in an environment promotion.
+      type: object
+      required: [workload_slug, workload_name, status]
+      properties:
+        workload_slug: { type: string }
+        workload_name: { type: string }
+        status:
+          type: string
+          enum: [pending, promoted, unchanged, failed]
+        source_deployment_id: { type: string }
+        previous_target_deployment_id: { type: string }
+        target_deployment_id: { type: string }
+        error: { type: string }
+
+    ProjectEnvironmentPromotionStatusResponse:
+      description: Durable status for a project environment promotion operation.
+      type: object
+      required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, status, created_at, updated_at, workloads]
+      properties:
+        promotion_id: { type: string, minLength: 1 }
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusWorkloadResponse' }
 
     UpdateProjectEnvironmentRequest:
       description: Protection policy update for a project environment.

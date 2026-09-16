@@ -1535,11 +1535,33 @@ func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, tar
 	return out, c.do(ctx, http.MethodPost, path, req, &out)
 }
 
+// PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
+// explicit retry key. An empty key keeps the normal SDK auto-mint behavior.
+func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
+	var out ProjectEnvironmentPromotionResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+}
+
 // PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
 // alias used by SDK coverage. Prefer PromoteProjectEnvironment for new Go
 // callers.
 func (c *Client) PostProjectsSlugEnvironmentsEnvironmentPromote(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	return c.PromoteProjectEnvironment(ctx, projectSlug, targetEnvironment, req)
+}
+
+// GetProjectEnvironmentPromotionStatus returns the durable operation and its
+// per-workload checkpoints.
+func (c *Client) GetProjectEnvironmentPromotionStatus(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
+	var out ProjectEnvironmentPromotionStatusResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion is the
+// route-shaped SDK alias used by SDK coverage.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
+	return c.GetProjectEnvironmentPromotionStatus(ctx, projectSlug, targetEnvironment, promotionID)
 }
 
 // PreviewDeleteProject returns the state related to a project deletion.

@@ -17,8 +17,10 @@ def _get_kwargs(
     environment: str,
     *,
     body: PromoteProjectEnvironmentRequest,
+    idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -92,6 +94,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
+    idempotency_key: str,
 ) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
     """Execute a guarded promotion between project environments.
 
@@ -104,6 +107,7 @@ def sync_detailed(
     Args:
         slug (str):
         environment (str):
+        idempotency_key (str):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -119,6 +123,7 @@ def sync_detailed(
         slug=slug,
         environment=environment,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -134,6 +139,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
+    idempotency_key: str,
 ) -> Problem | ProjectEnvironmentPromotionResponse | None:
     """Execute a guarded promotion between project environments.
 
@@ -146,6 +152,7 @@ def sync(
     Args:
         slug (str):
         environment (str):
+        idempotency_key (str):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -162,6 +169,7 @@ def sync(
         environment=environment,
         client=client,
         body=body,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -171,6 +179,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
+    idempotency_key: str,
 ) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
     """Execute a guarded promotion between project environments.
 
@@ -183,6 +192,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         environment (str):
+        idempotency_key (str):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -198,6 +208,7 @@ async def asyncio_detailed(
         slug=slug,
         environment=environment,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -211,6 +222,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
+    idempotency_key: str,
 ) -> Problem | ProjectEnvironmentPromotionResponse | None:
     """Execute a guarded promotion between project environments.
 
@@ -223,6 +235,7 @@ async def asyncio(
     Args:
         slug (str):
         environment (str):
+        idempotency_key (str):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -240,5 +253,6 @@ async def asyncio(
             environment=environment,
             client=client,
             body=body,
+            idempotency_key=idempotency_key,
         )
     ).parsed

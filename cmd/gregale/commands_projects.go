@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,7 +37,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview|promote>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview|promote|status>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -51,6 +53,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentPromotionPreview(args[1:])
 	case "promote":
 		return cmdProjectsEnvironmentPromote(args[1:])
+	case "status":
+		return cmdProjectsEnvironmentPromotionStatus(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
@@ -58,13 +62,14 @@ func cmdProjectsEnvironments(args []string) int {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes")
+	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
 	yes := fs.Bool("yes", false, "confirm the promotion")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this promotion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes] [--idempotency-key <KEY>]", "projects environments")
 		return 1
 	}
 	if *from == *to {
@@ -102,15 +107,22 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 		}
 	}
 	approvalToken := ""
+	key := strings.TrimSpace(*idempotencyKey)
+	if key == "" {
+		digest := sha256.Sum256([]byte("project-environment-promotion\x00" + preview.PromotionToken))
+		key = "project-promotion-" + hex.EncodeToString(digest[:])
+	}
 	if preview.ApprovalRequired {
-		approval, approvalErr := client.ApproveProjectEnvironment(context.Background(), positional[0], *to,
+		approvalCtx := api.ContextWithIdempotencyKey(context.Background(), key+"-approval")
+		approval, approvalErr := client.ApproveProjectEnvironment(approvalCtx, positional[0], *to,
 			api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken})
 		if approvalErr != nil {
 			return printErr("Protected environment approval failed", approvalErr)
 		}
 		approvalToken = approval.ApprovalToken
 	}
-	promoted, err := client.PromoteProjectEnvironment(context.Background(), positional[0], *to, api.PromoteProjectEnvironmentRequest{
+	executeCtx := api.ContextWithIdempotencyKey(context.Background(), key)
+	promoted, err := client.PromoteProjectEnvironment(executeCtx, positional[0], *to, api.PromoteProjectEnvironmentRequest{
 		FromEnvironment: *from, PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
 	})
 	if err != nil {
@@ -122,6 +134,36 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Promoted %s: %s -> %s\n", promoted.ProjectSlug, promoted.FromEnvironment, promoted.ToEnvironment)
 	for _, workload := range promoted.Workloads {
 		_, _ = fmt.Fprintf(osStdout, "  %-20s %s\n", workload.WorkloadSlug, workload.Status)
+	}
+	return 0
+}
+
+func cmdProjectsEnvironmentPromotionStatus(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-status", flag.ContinueOnError)
+	to := fs.String("to", "", "target environment")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || strings.TrimSpace(positional[1]) == "" || !api.ValidProjectEnvironmentSlug(*to) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments status <project-slug> <promotion-id> --to <environment>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	status, err := client.GetProjectEnvironmentPromotionStatus(context.Background(), positional[0], *to, positional[1])
+	if err != nil {
+		return printErr("Promotion status failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(status))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Promotion %s: %s -> %s (%s)\n", status.PromotionID, status.FromEnvironment, status.ToEnvironment, status.Status)
+	for _, workload := range status.Workloads {
+		line := fmt.Sprintf("  %-20s %s", workload.WorkloadSlug, workload.Status)
+		if workload.Error != "" {
+			line += " — " + workload.Error
+		}
+		_, _ = fmt.Fprintln(osStdout, line)
 	}
 	return 0
 }

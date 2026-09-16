@@ -5576,6 +5576,42 @@ type ProjectEnvironmentConfig struct {
 	CreatedAt       time.Time
 }
 
+// ProjectEnvironmentPromotion is the durable operation envelope for a
+// project-environment promotion. The operation remains available after the
+// request ends so a caller can inspect or resume a partial promotion.
+type ProjectEnvironmentPromotion struct {
+	ID              string
+	AccountID       string
+	ProjectID       string
+	ProjectSlug     string
+	FromEnvironment string
+	ToEnvironment   string
+	PromotionHash   string
+	IdempotencyKey  string
+	Status          string
+	Error           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	CompletedAt     *time.Time
+}
+
+// ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
+// Deployment IDs are strings intentionally: the operation remains readable
+// if a legacy or test deployment identifier is not a UUID.
+type ProjectEnvironmentPromotionWorkload struct {
+	ID                         string
+	PromotionID                string
+	WorkloadSlug               string
+	WorkloadName               string
+	SourceDeploymentID         string
+	PreviousTargetDeploymentID string
+	TargetDeploymentID         string
+	Status                     string
+	Error                      string
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+}
+
 // IsZero reports whether this is an unset Project (Go zero value).
 // store-layer scans can return such a value via the concrete-type
 // `Project{}` initializer that the pgx `Scan` into a value receiver

@@ -422,6 +422,8 @@ export type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfi
 export type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './ProjectEnvironmentPromotionPreviewResponse.js';
 export type { ProjectEnvironmentPromotionResponse } from './ProjectEnvironmentPromotionResponse.js';
+export type { ProjectEnvironmentPromotionStatusResponse } from './ProjectEnvironmentPromotionStatusResponse.js';
+export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';
 export type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvironmentPromotionWorkloadResponse.js';
 export type { ProjectEnvironmentResponse } from './ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './ProjectResponse.js';

@@ -184,9 +184,38 @@ type ProjectEnvironmentPromotionWorkloadResponse struct {
 // ProjectEnvironmentPromotionResponse is returned after a guarded promotion
 // has applied all changed workloads in the current preview.
 type ProjectEnvironmentPromotionResponse struct {
+	PromotionID     string                                        `json:"promotion_id"`
 	ProjectSlug     string                                        `json:"project_slug"`
 	FromEnvironment string                                        `json:"from_environment"`
 	ToEnvironment   string                                        `json:"to_environment"`
 	PromotionHash   string                                        `json:"promotion_hash"`
 	Workloads       []ProjectEnvironmentPromotionWorkloadResponse `json:"workloads"`
+}
+
+// ProjectEnvironmentPromotionStatusWorkloadResponse is one durable
+// promotion checkpoint, including any retryable failure detail.
+type ProjectEnvironmentPromotionStatusWorkloadResponse struct {
+	WorkloadSlug               string `json:"workload_slug"`
+	WorkloadName               string `json:"workload_name"`
+	Status                     string `json:"status"`
+	SourceDeploymentID         string `json:"source_deployment_id,omitempty"`
+	PreviousTargetDeploymentID string `json:"previous_target_deployment_id,omitempty"`
+	TargetDeploymentID         string `json:"target_deployment_id,omitempty"`
+	Error                      string `json:"error,omitempty"`
+}
+
+// ProjectEnvironmentPromotionStatusResponse is the durable status view for
+// one promotion operation.
+type ProjectEnvironmentPromotionStatusResponse struct {
+	PromotionID     string                                              `json:"promotion_id"`
+	ProjectSlug     string                                              `json:"project_slug"`
+	FromEnvironment string                                              `json:"from_environment"`
+	ToEnvironment   string                                              `json:"to_environment"`
+	PromotionHash   string                                              `json:"promotion_hash"`
+	Status          string                                              `json:"status"`
+	Error           string                                              `json:"error,omitempty"`
+	CreatedAt       string                                              `json:"created_at"`
+	UpdatedAt       string                                              `json:"updated_at"`
+	CompletedAt     string                                              `json:"completed_at,omitempty"`
+	Workloads       []ProjectEnvironmentPromotionStatusWorkloadResponse `json:"workloads"`
 }

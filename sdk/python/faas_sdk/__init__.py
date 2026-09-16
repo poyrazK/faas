@@ -18,8 +18,6 @@ Public surface:
   parser for the long-lived `/v1/apps/{slug}/logs` endpoint.
 * `ExecutionEvent`, `watch_execution`, `awatch_execution` - typed,
   resumable streams for disposable agent executions.
-* `run_execution`, `arun_execution` - create, stream, and return the
-  terminal receipt in one call.
 """
 
 from ._rfc7807 import (
@@ -39,14 +37,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .executions import (
-    ExecutionEvent,
-    ExecutionID,
-    arun_execution,
-    awatch_execution,
-    run_execution,
-    watch_execution,
-)
+from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -86,7 +77,5 @@ __all__ = (
     "ExecutionID",
     "watch_execution",
     "awatch_execution",
-    "run_execution",
-    "arun_execution",
     "__version__",
 )

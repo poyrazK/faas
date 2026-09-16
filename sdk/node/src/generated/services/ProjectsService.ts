@@ -13,6 +13,7 @@ import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvi
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
+import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
@@ -636,6 +637,7 @@ export class ProjectsService {
   public static promoteProjectEnvironment({
     slug,
     environment,
+    idempotencyKey,
     requestBody,
   }: {
     /**
@@ -646,6 +648,10 @@ export class ProjectsService {
      * Target environment receiving the promotion.
      */
     environment: string,
+    /**
+     * Stable key for retrying this promotion without duplicating deployments.
+     */
+    idempotencyKey: string,
     requestBody: PromoteProjectEnvironmentRequest,
   }): CancelablePromise<ProjectEnvironmentPromotionResponse> {
     return __request(OpenAPI, {
@@ -655,6 +661,9 @@ export class ProjectsService {
         'slug': slug,
         'environment': environment,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
@@ -662,6 +671,48 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get durable project environment promotion status.
+   * Returns the operation status and non-secret per-workload checkpoints for a promotion.
+   * @returns ProjectEnvironmentPromotionStatusResponse Durable promotion status.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentPromotionStatus({
+    slug,
+    environment,
+    promotion,
+  }: {
+    /**
+     * Project slug owning the promotion status operation.
+     */
+    slug: string,
+    /**
+     * Target environment associated with the promotion status operation.
+     */
+    environment: string,
+    /**
+     * Durable promotion operation identifier.
+     */
+    promotion: string,
+  }): CancelablePromise<ProjectEnvironmentPromotionStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/promotions/{promotion}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

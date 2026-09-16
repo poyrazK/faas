@@ -650,12 +650,14 @@ type MemStore struct {
 	// repo_full_name) partial uniques from migration 00073 so
 	// ProjectBySlug / ProjectByRepo are O(1) lookups the same way
 	// PgStore's btrees are.
-	projects                    map[string]Project
-	projectsByAccountSlug       map[string]map[string]string // account_id → slug → id
-	projectsByInstallRepo       map[installRepoKey]string    // install_id, repo_full_name → id
-	projectEnvironments         map[string]ProjectEnvironment
-	projectEnvironmentApprovals map[string]ProjectEnvironmentApproval
-	projectEnvironmentConfigs   map[string][]ProjectEnvironmentConfig
+	projects                             map[string]Project
+	projectsByAccountSlug                map[string]map[string]string // account_id → slug → id
+	projectsByInstallRepo                map[installRepoKey]string    // install_id, repo_full_name → id
+	projectEnvironments                  map[string]ProjectEnvironment
+	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
+	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
+	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
+	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
@@ -1041,13 +1043,15 @@ func NewMemStore() *MemStore {
 		computeNodeHeartbeats: map[string][]ComputeNodeHeartbeat{},
 		// sessions is empty here; populated by CreateSession at each
 		// dashboard login (handlers_auth*.go + handlers_mfa reissue).
-		sessions:                    map[string]Session{},
-		projects:                    map[string]Project{},
-		projectsByAccountSlug:       map[string]map[string]string{},
-		projectsByInstallRepo:       map[installRepoKey]string{},
-		projectEnvironments:         map[string]ProjectEnvironment{},
-		projectEnvironmentApprovals: map[string]ProjectEnvironmentApproval{},
-		projectEnvironmentConfigs:   map[string][]ProjectEnvironmentConfig{},
+		sessions:                             map[string]Session{},
+		projects:                             map[string]Project{},
+		projectsByAccountSlug:                map[string]map[string]string{},
+		projectsByInstallRepo:                map[installRepoKey]string{},
+		projectEnvironments:                  map[string]ProjectEnvironment{},
+		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
+		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
+		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
+		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
 	// Auto-seed default-local. Done after the struct literal so the
 	// seeded row carries a real id and created_at timestamp. Mirrors
