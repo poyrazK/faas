@@ -1,4 +1,5 @@
 // handler_pure_mega4_test.go — Coverage Mega-PR #4 cluster 8:
+// adr: 122
 // fill pkg/gateway coverage on the small pure helpers in
 // handler_apply_edge_rule_cache_helpers.go +
 // handler_apply_edge_rule_budget.go +

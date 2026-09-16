@@ -1,5 +1,6 @@
 package appmetrics_test
 
+// adr: 045
 // Issue #396 / ADR-045 PR 2 — pkg/appmetrics tests.
 //
 // Coverage matrix (mirrors the TestAppMetrics_* naming convention

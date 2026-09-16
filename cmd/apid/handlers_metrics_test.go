@@ -1,5 +1,6 @@
 package main
 
+// adr: 042
 // Issue #273 / ADR-042 — per-app metrics handler tests.
 //
 // Coverage matrix:
