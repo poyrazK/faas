@@ -48,6 +48,12 @@ gregale dev --postgres --postgres-region eu-central-1 # choose database placemen
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
 ```
 
+The dashboard at `/dashboard/developers` lists the active environments for
+the signed-in account. It shows each stable URL, runtime, current instance
+state, latest sync result, useful links for logs/request analytics/config, and
+the lease expiry. The dashboard uses the same account-scoped developer
+environment list as the CLI, and developer environments have their own quota.
+
 `--open` launches the stable developer URL in the default browser after the
 first successful sync. It opens at most once per session, including with
 `--once`; a browser-launch failure is non-fatal and leaves a copyable URL in

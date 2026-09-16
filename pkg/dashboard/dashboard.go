@@ -177,6 +177,37 @@ type PreviewListItem struct {
 	DestroyAction string
 }
 
+// DeveloperEnvironmentsData backs /dashboard/developers. It gives the
+// remote `gregale dev` loop a browser-visible home without introducing a
+// second control-plane model: the handler projects the existing developer
+// preview rows, instance state, and latest deployment.
+type DeveloperEnvironmentsData struct {
+	Environments []DeveloperEnvironmentItem
+	Used         int
+	Limit        int
+}
+
+// DeveloperEnvironmentItem is one active `gregale dev` environment. The
+// latest deployment is intentionally represented by DeploymentItem so its
+// status and timestamp stay aligned with the app detail dashboard.
+type DeveloperEnvironmentItem struct {
+	Slug             string
+	ParentSlug       string
+	Runtime          string
+	Status           string
+	URL              string
+	StateBadge       string
+	StateBadgeGlyph  string
+	StateBadgeLabel  string
+	ExpiresAt        *time.Time
+	HasDeployment    bool
+	LatestDeployment DeploymentItem
+	DetailsURL       string
+	LogsURL          string
+	AnalyticsURL     string
+	EnvironmentURL   string
+}
+
 // ManifestView is the runner-scaffold snapshot shown on the app detail
 // page. Names are JSONish to avoid a second copy of pkg/api.AppManifest.
 type ManifestView struct {

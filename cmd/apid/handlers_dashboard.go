@@ -74,6 +74,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
+//	GET /dashboard/developers       → active remote developer environments
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
@@ -113,6 +114,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// dashboard's CSRF envelope — wired in a follow-up
 			// commit if/when the form gets JS).
 			s.renderPreviewsList(w, r, log, acct)
+		case path == "/dashboard/developers":
+			s.renderDeveloperEnvironments(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
 			// Customer runtime log destinations with durable delivery health.

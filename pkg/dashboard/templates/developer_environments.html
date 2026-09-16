@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1080px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+    .badge.active, .badge.live, .badge.running { background: #d1fae5; color: #065f46; }
+    .badge.pending, .badge.building, .badge.imaging, .badge.snapshotting, .badge.waking { background: #dbeafe; color: #1e40af; }
+    .badge.failed, .badge.cancelled { background: #fee2e2; color: #991b1b; }
+    .badge.evicted_cold, .badge.sleeping { background: #fef3c7; color: #92400e; }
+    .muted { color: #6b7280; }
+    .empty { padding: 2rem 0; max-width: 40rem; }
+    .empty h2 { margin-top: 0; }
+    .empty pre { background: #f3f4f6; padding: 0.6rem 0.8rem; border-radius: 6px; overflow-x: auto; }
+    .actions { white-space: nowrap; }
+    .actions a { margin-right: 0.6rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/developers">Developer environments</a>
+      <a href="/dashboard/previews">Previews</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>{{.Title}}</h1>
+    {{with .Data}}
+      <p class="muted">{{.Used}}/{{.Limit}} environments in use. These leases are separate from your production app quota.</p>
+      {{if .Environments}}
+        <table>
+          <thead><tr><th>Environment</th><th>URL</th><th>Runtime</th><th>Instance</th><th>Latest sync</th><th>Lease</th><th>Open</th></tr></thead>
+          <tbody>
+            {{range .Environments}}
+              <tr>
+                <td><code>{{.Slug}}</code><br><span class="muted">from {{.ParentSlug}}</span></td>
+                <td><a href="{{.URL}}">{{.URL}}</a></td>
+                <td>{{if .Runtime}}<code>{{.Runtime}}</code>{{else}}<span class="muted">inferred</span>{{end}}</td>
+                <td><span class="badge {{.StateBadge}}">{{.StateBadgeGlyph}} {{.StateBadgeLabel}}</span><br><span class="badge {{.Status}}">{{.Status}}</span></td>
+                <td>
+                  {{if .HasDeployment}}
+                    <a href="{{.DetailsURL}}/deployments/{{.LatestDeployment.ID}}"><span class="badge {{.LatestDeployment.Status}}">{{.LatestDeployment.Status}}</span></a><br>
+                    <time datetime="{{.LatestDeployment.CreatedAt}}">{{.LatestDeployment.CreatedAt}}</time>
+                  {{else}}<span class="muted">No sync yet</span>{{end}}
+                </td>
+                <td>{{if .ExpiresAt}}<time datetime="{{.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ExpiresAt.Format "2006-01-02 15:04 MST"}}</time>{{else}}<span class="muted">—</span>{{end}}</td>
+                <td class="actions"><a href="{{.DetailsURL}}">Details</a><a href="{{.LogsURL}}">Logs</a><a href="{{.AnalyticsURL}}">Requests</a><a href="{{.EnvironmentURL}}">Config</a></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <div class="empty">
+          <h2>No developer environments yet</h2>
+          <p>Start the remote edit-to-live loop from your project directory:</p>
+          <pre>gregale dev --open</pre>
+          <p class="muted">This page will show the stable URL, current wake state, latest sync, logs, request analytics, config controls, and lease expiry.</p>
+        </div>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>
