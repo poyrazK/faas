@@ -938,7 +938,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/replay)"},
+			{Name: "requests", Short: "Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/inspect/replay)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
 			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])"},
 			{Name: "regressions", Short: "Regressions (live watch, lifecycle actions, per-app/--all, rollback)"},

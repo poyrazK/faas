@@ -1111,7 +1111,7 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/replay)
+Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/inspect/replay)
 
 ### debug coverage
 
