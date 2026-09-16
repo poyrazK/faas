@@ -109,6 +109,18 @@ type fakeInstats struct {
 	byApp map[string]int64
 }
 
+type fakeQueueStats struct {
+	byApp map[string]state.QueueStats
+	err   error
+}
+
+func (q *fakeQueueStats) QueueState(_ context.Context, appID string) (state.QueueStats, error) {
+	if q.err != nil {
+		return state.QueueStats{}, q.err
+	}
+	return q.byApp[appID], nil
+}
+
 func (i *fakeInstats) MaxInflightForApp(appID string) (int64, bool) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -362,6 +374,68 @@ func TestTrigger_FiltersNonConcurrentRequestsApps(t *testing.T) {
 	}
 	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "app1" {
 		t.Errorf("engine.admitCalls = %v, want [app1] (app2 filtered by metric)", engine.admitCalls)
+	}
+}
+
+func TestTrigger_AdmitOnQueueDepthTarget(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID:             "worker-1",
+		WorkloadClass:  state.WorkloadClassWorker,
+		MaxConcurrency: 5,
+		ScalingPolicy: &state.ScalingPolicy{
+			Target: &state.ScalingTarget{Metric: "queue_depth", Value: 10},
+		},
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"worker-1": 1}}
+	engine := &fakeEngine{}
+	queue := &fakeQueueStats{byApp: map[string]state.QueueStats{
+		"worker-1": {Depth: 25},
+	}}
+	tr := New(store, nil, engine, ledger, Options{
+		Metrics:          wire.NewOpsMetrics("schedd"),
+		QueueStatsReader: queue,
+	})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "worker-1" {
+		t.Fatalf("engine.admitCalls = %v, want [worker-1]", engine.admitCalls)
+	}
+}
+
+func TestDecideQueueDepthColdStartAndCap(t *testing.T) {
+	tests := []struct {
+		name       string
+		stats      QueueDepthStats
+		outcome    Outcome
+		admit      bool
+		admissions int
+	}{
+		{
+			name: "cold start",
+			stats: QueueDepthStats{
+				TargetValue: 10, MaxConcurrency: 5, QueueDepth: 11,
+			},
+			outcome: OutcomeAdmit, admit: true, admissions: 2,
+		},
+		{
+			name: "at cap",
+			stats: QueueDepthStats{
+				TargetValue: 10, MaxConcurrency: 2, Concurrency: 2, QueueDepth: 30,
+			},
+			outcome: OutcomeRejectAtCap,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decideQueueDepth(tt.stats)
+			if got.Outcome != tt.outcome || got.ShouldAdmit != tt.admit {
+				t.Fatalf("decision = %+v, want outcome=%q admit=%v", got, tt.outcome, tt.admit)
+			}
+			if got.Admissions != tt.admissions {
+				t.Fatalf("admissions = %d, want %d", got.Admissions, tt.admissions)
+			}
+		})
 	}
 }
 

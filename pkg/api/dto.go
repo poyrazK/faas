@@ -705,7 +705,7 @@ type RenameAppRequest struct {
 //	  time. 0 = "use plan max_concurrency".
 //	Target: the per-instance signal the engine watches for the
 //	  scale-up trigger. Closed metric set: "rps" |
-//	  "concurrent_requests" | "p99_latency_ms". Empty Metric =
+//	  "concurrent_requests" | "queue_depth" | "p99_latency_ms". Empty Metric =
 //	  "disabled" (the engine falls back to the legacy
 //	  autoscale_target_rps / autoscale_target_cpu_pct columns).
 //	ScaleOutCooldownS: minimum seconds between two scale-out

@@ -1549,27 +1549,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)
 	trigger.WithOwnerNodeID(ownerNodeID)
 	loop.WithScaleUp(trigger)
-	// The concurrent_requests trigger consumes the instance-stats reader
-	// directly and must not depend on the optional Prometheus scrape URL.
-	// Keep this wiring independent so disabling GatewayMetricsURL only
-	// disables the RPS/recent-load path, not in-flight based scale-out.
-	if reader != nil {
-		targetsTrigger := targets.New(
-			store, reader,
-			schedTargetsEngine{engine: engine},
-			schedTargetsLedger{ledger: engine.Ledger()},
-			targets.Options{
-				Logger:   log,
-				Metrics:  ops,
-				Interval: cfg.ScaleUpInterval,
-			},
-		)
-		targetsTrigger.WithOwnerNodeID(ownerNodeID)
-		loop.WithTargets(targetsTrigger)
-		log.Info("concurrent_requests target trigger enabled",
-			"interval", cfg.ScaleUpInterval,
-			"owner_node_id", ownerNodeID)
-	}
+	// The target trigger consumes the optional instance-stats reader for
+	// concurrent_requests, and the store queue reader for queue_depth.
+	// Construct it unconditionally: worker-only deployments may not have
+	// instance stats enabled, but queue-depth autoscaling must still run.
+	// Tick treats a missing reader as no-signal for that metric.
+	targetsTrigger := targets.New(
+		store, reader,
+		schedTargetsEngine{engine: engine},
+		schedTargetsLedger{ledger: engine.Ledger()},
+		targets.Options{
+			Logger:           log,
+			Metrics:          ops,
+			Interval:         cfg.ScaleUpInterval,
+			QueueStatsReader: store,
+		},
+	)
+	targetsTrigger.WithOwnerNodeID(ownerNodeID)
+	loop.WithTargets(targetsTrigger)
+	log.Info("reactive target trigger enabled",
+		"interval", cfg.ScaleUpInterval,
+		"owner_node_id", ownerNodeID,
+		"concurrent_requests_reader", reader != nil,
+		"queue_depth_reader", true)
 	// Issue #557 / ADR-071: proactive min-instances floor
 	// reconciler. Walks every app the schedd owns each tick and
 	// admits instances up to the effective floor (max of legacy

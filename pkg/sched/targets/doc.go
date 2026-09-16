@@ -1,14 +1,10 @@
-// Package targets is the per-app concurrent_requests scale-up
-// trigger (PR-C, issue #462). It runs as a schedd loop worker on
-// a 1s tick and admits an additional instance of an app when its
-// measured per-instance inflight count exceeds the customer's
-// target.concurrent_requests value AND the per-app
-// scale_out_cooldown has elapsed. The trigger is purely advisory
-// — it never forces an admission beyond plan.MaxConcurrency and
-// never holds a request. A request that arrives via the gateway
-// still calls Engine.AdmitInstance and gets the at-capacity no-op
-// on its own; the trigger just races ahead of request-driven wakes
-// when the signal is hot.
+// Package targets is the per-app concurrent_requests and queue_depth
+// scale-up trigger (PR-C, issue #462). It runs as a schedd loop worker
+// on a 1s tick and admits additional instances when either the measured
+// per-instance inflight count or the queue backlog exceeds its target
+// budget and the per-app scale_out_cooldown has elapsed. The trigger is
+// purely advisory — it never forces an admission beyond the configured
+// per-app/plan cap and never holds a request.
 //
 // Mirrors pkg/sched/scaleup in shape (Tick + Outcome + decide +
 // closed-set metric pre-instantiation) but reads from a different
@@ -29,6 +25,8 @@
 //   - ledger: pkg/sched.NodeLedger.Concurrency(appID) gives the
 //     current per-app live instance count used as the divisor
 //     and the cooldown discriminator.
+//   - queueStats: state.Store.QueueState supplies queue depth for
+//     queue_depth targets. A missing reader is treated as no signal.
 //   - engine: pkg/sched.Engine.AdmitInstance performs the actual
 //     admission. The trigger never bypasses it.
 //

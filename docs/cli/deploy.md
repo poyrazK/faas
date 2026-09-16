@@ -140,7 +140,7 @@ scaling:
   min_instances: 0
   max_instances: 5
   target:
-    metric: concurrent_requests # rps, concurrent_requests, or p99_latency_ms
+    metric: concurrent_requests # rps, concurrent_requests, queue_depth, or p99_latency_ms
     value: 2
   scale_out_cooldown_s: 5
   scale_in_cooldown_s: 60

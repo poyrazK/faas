@@ -1547,7 +1547,8 @@ type ScalingPolicy struct {
 	// value struct is legal and round-trips (e.g. `{metric: "rps",
 	// value: 0}` — the engine reads Metric rather than Value for
 	// "disabled"). PR-A only persists the shape; PR-B wires the
-	// `concurrent_requests` metric, PR-C the engine cooldown.
+	// `concurrent_requests` and `queue_depth` metrics, PR-C the engine
+	// cooldown.
 	Target *ScalingTarget
 	// ScaleOutCooldownS is the minimum number of seconds between
 	// two scale-out events for the same app. Floor = 1 s (no
@@ -1565,10 +1566,10 @@ type ScalingPolicy struct {
 
 // ScalingTarget is the (metric, value) pair the engine watches for
 // the scale-up trigger. The metric surface is closed: `rps`,
-// `concurrent_requests`, `p99_latency_ms`. Empty Metric = "disabled"
+// `concurrent_requests`, `queue_depth`, `p99_latency_ms`. Empty Metric = "disabled"
 // (the engine falls back to the legacy autoscale_target_rps column).
 type ScalingTarget struct {
-	Metric string  // "" | "rps" | "concurrent_requests" | "p99_latency_ms"
+	Metric string  // "" | "rps" | "concurrent_requests" | "queue_depth" | "p99_latency_ms"
 	Value  float64 // target value (units depend on Metric)
 }
 

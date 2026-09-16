@@ -4896,18 +4896,20 @@ func ErrInvalidCooldown(field string, got, minSeconds, maxSeconds int) *Problem 
 }
 
 // ErrScalingTargetIncompatibleWithWorkloadClass (issue #462 /
-// ADR-058 / PR-D carve-out) is the 422 returned when a
-// worker-class app sets `target.metric = concurrent_requests`.
-// The signal source is `pkg/vmmd/activity.ActivityTracker` (PR-B)
-// which counts in-flight requests — a worker-class app has none
-// (no inbound HTTP), so the metric is forever 0 and the engine
-// would never admit. The customer-facing reject closes the
-// misconfiguration at PATCH time; PR-D carves out the engine
-// side as a defense-in-depth check.
+// ADR-058 / PR-D carve-out) is the 422 returned when a target's
+// signal does not match the app's workload shape. HTTP-style apps
+// cannot use queue_depth, while worker-class apps cannot use
+// concurrent_requests because they have no inbound request signal.
 func ErrScalingTargetIncompatibleWithWorkloadClass(metric string) *Problem {
+	detail := fmt.Sprintf("target.metric=%q is not compatible with this workload class.", metric)
+	if metric == "concurrent_requests" {
+		detail = "target.metric=\"concurrent_requests\" is not compatible with worker-class apps; use an rps, queue_depth, or p99_latency_ms target instead."
+	} else if metric == "queue_depth" {
+		detail = "target.metric=\"queue_depth\" is only compatible with job or worker apps."
+	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeScalingTargetIncompatibleWithWorkloadClass,
 		"Target metric is not compatible with this app's workload class",
-		fmt.Sprintf("target.metric=%q is not compatible with worker-class apps; use an rps or p99_latency_ms target instead.", metric)).
+		detail).
 		WithDocs(docsBase + "/apps#scaling-policy")
 }
 
