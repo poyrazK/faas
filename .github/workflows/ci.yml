@@ -537,7 +537,9 @@ jobs:
           files: coverage/cover-shard1.out
           flags: unittests
           use_oidc: true
-          fail_ci_if_error: true
+          # Coverage reporting is best-effort; an OIDC/Codecov outage must
+          # not turn a passing unit-test shard red.
+          fail_ci_if_error: false
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -658,7 +660,7 @@ jobs:
           files: coverage/${{ matrix.coverage_file }}
           flags: unittests
           use_oidc: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -735,7 +737,7 @@ jobs:
           files: coverage/cover-shard3.out
           flags: unittests
           use_oidc: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -811,7 +813,7 @@ jobs:
           files: coverage/cover-shard4.out
           flags: unittests
           use_oidc: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
