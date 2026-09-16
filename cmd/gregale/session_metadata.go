@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +15,16 @@ import (
 
 // cliSessionMetadata is deliberately non-secret. It binds the locally stored
 // token to the exact server key that an interactive login minted, allowing
-// logout to revoke only that credential. TokenSHA256 prevents stale metadata
-// from revoking a different token after a manual keychain replacement.
+// logout to revoke only that credential. TokenFingerprint prevents stale
+// metadata from revoking a different token after a manual keychain replacement.
 type cliSessionMetadata struct {
-	KeyID       string `json:"key_id"`
-	APIBase     string `json:"api_base"`
-	TokenSHA256 string `json:"token_sha256"`
+	KeyID            string `json:"key_id"`
+	APIBase          string `json:"api_base"`
+	TokenFingerprint string `json:"token_fingerprint,omitempty"`
+	FingerprintSalt  string `json:"fingerprint_salt,omitempty"`
+	// TokenSHA256 is read-only compatibility for sessions created before the
+	// keyed fingerprint format. Legacy metadata is consumed once at logout.
+	TokenSHA256 string `json:"token_sha256,omitempty"`
 	Managed     bool   `json:"managed"`
 }
 
@@ -30,9 +36,11 @@ func cliSessionMetadataPath() (string, error) {
 	return filepath.Join(dir, "gregale", "session.json"), nil
 }
 
-func tokenSHA256(token string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
-	return hex.EncodeToString(sum[:])
+func tokenFingerprint(token string, salt []byte) string {
+	mac := hmac.New(sha256.New, salt)
+	_, _ = mac.Write([]byte("gregale-cli-session\x00"))
+	_, _ = mac.Write([]byte(strings.TrimSpace(token)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func saveManagedSession(token, keyID, baseURL string) error {
@@ -47,11 +55,16 @@ func saveManagedSession(token, keyID, baseURL string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("generate session fingerprint salt: %w", err)
+	}
 	data, err := json.Marshal(cliSessionMetadata{
-		KeyID:       keyID,
-		APIBase:     normalizeAPIBase(baseURL),
-		TokenSHA256: tokenSHA256(token),
-		Managed:     true,
+		KeyID:            keyID,
+		APIBase:          normalizeAPIBase(baseURL),
+		TokenFingerprint: tokenFingerprint(token, salt),
+		FingerprintSalt:  base64.RawURLEncoding.EncodeToString(salt),
+		Managed:          true,
 	})
 	if err != nil {
 		return err
@@ -103,8 +116,25 @@ func loadManagedSession() (cliSessionMetadata, error) {
 }
 
 func (m cliSessionMetadata) matches(token string) bool {
-	return m.Managed && m.KeyID != "" && m.TokenSHA256 != "" &&
-		m.TokenSHA256 == tokenSHA256(token)
+	if !m.Managed || m.KeyID == "" {
+		return false
+	}
+	if m.TokenFingerprint != "" && m.FingerprintSalt != "" {
+		salt, err := base64.RawURLEncoding.DecodeString(m.FingerprintSalt)
+		if err != nil || len(salt) != 32 {
+			return false
+		}
+		want, err := base64.RawURLEncoding.DecodeString(m.TokenFingerprint)
+		if err != nil {
+			return false
+		}
+		got, err := base64.RawURLEncoding.DecodeString(tokenFingerprint(token, salt))
+		return err == nil && hmac.Equal(got, want)
+	}
+	// Older releases stored an unkeyed token digest. Avoid continuing that
+	// weak format: accept the already-bound key ID for one final logout and
+	// remove the metadata immediately afterward.
+	return m.TokenSHA256 != ""
 }
 
 func clearManagedSession() {

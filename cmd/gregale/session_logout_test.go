@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -81,5 +82,28 @@ func TestNonOwningToken_LogoutDoesNotRevokeServerKey(t *testing.T) {
 	}
 	if deletes != 0 {
 		t.Fatalf("DELETE calls = %d, want 0", deletes)
+	}
+}
+
+func TestManagedSessionFingerprintRejectsReplacedToken(t *testing.T) {
+	salt := []byte("01234567890123456789012345678901")
+	meta := cliSessionMetadata{
+		KeyID:            "cli-key-1",
+		Managed:          true,
+		FingerprintSalt:  base64.RawURLEncoding.EncodeToString(salt),
+		TokenFingerprint: tokenFingerprint(testAPIKey('a'), salt),
+	}
+	if !meta.matches(testAPIKey('a')) {
+		t.Fatal("managed token did not match its fingerprint")
+	}
+	if meta.matches(testAPIKey('b')) {
+		t.Fatal("replacement token matched stale session metadata")
+	}
+}
+
+func TestLegacyManagedSessionIsConsumedForRevocation(t *testing.T) {
+	meta := cliSessionMetadata{KeyID: "legacy-key", Managed: true, TokenSHA256: "legacy-digest"}
+	if !meta.matches(testAPIKey('a')) {
+		t.Fatal("legacy managed metadata must permit one final server revocation")
 	}
 }
