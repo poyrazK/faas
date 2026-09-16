@@ -322,10 +322,9 @@ func TestDrain_PermanentInvokeTerminates(t *testing.T) {
 	}
 }
 
-// TestDrain_EvictedColdInvocationTerminates pins the retry boundary for a
-// parked app. The invocation must become terminal without calling the
-// gateway or creating another instance row.
-func TestDrain_EvictedColdInvocationTerminates(t *testing.T) {
+// TestDrain_EvictedColdInvocationColdWakes pins the same scale-to-zero
+// contract as public traffic: a parked app remains runnable from async work.
+func TestDrain_EvictedColdInvocationColdWakes(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
 	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
@@ -354,26 +353,26 @@ func TestDrain_EvictedColdInvocationTerminates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InvocationByID: %v", err)
 	}
-	if got.State != state.InvocationFailed {
-		t.Fatalf("invocation state = %q, want failed", got.State)
+	if got.State != state.InvocationCompleted {
+		t.Fatalf("invocation state = %q, want completed", got.State)
 	}
-	if got.CompletedAt == nil || got.LastError == "" {
-		t.Fatalf("terminal invocation metadata incomplete: completed_at=%v last_error=%q", got.CompletedAt, got.LastError)
+	if got.CompletedAt == nil || got.LastError != "" {
+		t.Fatalf("completed invocation metadata: completed_at=%v last_error=%q", got.CompletedAt, got.LastError)
 	}
-	if ds.calls.Load() != 0 {
-		t.Fatalf("gateway calls = %d, want 0", ds.calls.Load())
+	if ds.calls.Load() != 1 {
+		t.Fatalf("gateway calls = %d, want 1", ds.calls.Load())
 	}
 	instances, err := store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
 		t.Fatalf("ListInstancesForApp: %v", err)
 	}
-	if len(instances) != 0 {
-		t.Fatalf("instance rows = %d, want 0", len(instances))
+	if len(instances) != 1 || instances[0].State != string(state.StateRunning) {
+		t.Fatalf("instance rows = %+v, want one running", instances)
 	}
 
 	d.Tick(ctx)
-	if ds.calls.Load() != 0 {
-		t.Fatalf("post-terminal gateway calls = %d, want 0", ds.calls.Load())
+	if ds.calls.Load() != 1 {
+		t.Fatalf("post-terminal gateway calls = %d, want 1", ds.calls.Load())
 	}
 }
 

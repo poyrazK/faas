@@ -582,6 +582,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// inert. schedd is now a long-running aware subscriber.
 	notif, err := db.SubscribeWithReconnect(ctx, l.pool, []string{
 		db.NotifyAppChanged,
+		db.NotifyAppWake,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
 		db.NotifyCronRunNow, // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
@@ -924,7 +925,14 @@ func (l *Loop) Run(ctx context.Context) error {
 				// Defensive — wrapper guarantees open until ctx done.
 				return nil
 			}
-			l.handleNotification(ctx, n)
+			if n.Channel == db.NotifyAppWake {
+				if err := l.handleAppWake(ctx, n); err != nil {
+					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
+					continue
+				}
+			} else {
+				l.handleNotification(ctx, n)
+			}
 			if n.OutboxID != 0 {
 				if err := db.AcknowledgeNotification(ctx, l.pool, n); err != nil && ctx.Err() == nil {
 					l.log.Warn("sched: acknowledge durable notification", "id", n.OutboxID, "channel", n.Channel, "err", err)
@@ -1620,6 +1628,37 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) {
 	l.handleNotification(ctx, n)
 }
 
+// HandleDurableNotification reports whether the work completed so the outbox
+// can retry transient wake failures instead of acknowledging a lost prewarm.
+func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification) error {
+	if n.Channel == db.NotifyAppWake {
+		return l.handleAppWake(ctx, n)
+	}
+	l.handleNotification(ctx, n)
+	return nil
+}
+
+func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
+	var p struct {
+		AppID  string `json:"app_id"`
+		WakeID string `json:"wake_id"`
+	}
+	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+		return fmt.Errorf("sched: decode app_wake payload: %w", err)
+	}
+	if p.AppID == "" || p.WakeID == "" {
+		return errors.New("sched: app_wake payload requires app_id and wake_id")
+	}
+	out, err := l.engine.EnsureWake(withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID), p.AppID, TriggerAppWake)
+	if err != nil {
+		return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
+	}
+	if out.Instance != nil {
+		l.log.Info("sched: explicit app wake completed", "app", p.AppID, "wake_id", out.Instance.WakeID, "instance", out.Instance.InstanceID)
+	}
+	return nil
+}
+
 // handleNotification decodes the JSON payload and applies the policy.
 //
 //   - app_changed: `kind=parked` tears down the app's live instances and
@@ -1633,6 +1672,10 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) {
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
+	case db.NotifyAppWake:
+		if err := l.handleAppWake(ctx, n); err != nil {
+			l.log.Warn("sched: explicit app wake failed", "err", err)
+		}
 	case db.NotifyAppChanged:
 		var p struct {
 			Kind             string `json:"kind"`
@@ -1644,15 +1687,15 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: bad app_changed payload", "err", err)
 			return
 		}
-		if p.Kind == "parked" {
+		if p.Kind == "parked" || p.Kind == "account_suspended" {
 			if p.AppID == "" {
-				l.log.Warn("sched: parked app notification missing app_id")
+				l.log.Warn("sched: park lifecycle notification missing app_id", "kind", p.Kind)
 				return
 			}
 			if acted, err := l.engine.ParkApp(ctx, p.AppID); err != nil {
 				l.log.Warn("sched: park app failed", "app", p.AppID, "acted", acted, "err", err)
 			} else {
-				l.log.Info("sched: parked app reconciled", "app", p.AppID, "instances", acted)
+				l.log.Info("sched: parked app reconciled", "app", p.AppID, "kind", p.Kind, "instances", acted)
 			}
 			return
 		}
@@ -1844,13 +1887,20 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
-	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps
-	// from the table source of truth on every reaper tick so a schedd restart,
-	// LISTEN reconnect, or transient notification loss cannot leave a VM live
-	// behind an evicted_cold app. This runs before the normal idle snapshot so
-	// successfully parked rows are excluded from the same tick's accounting.
+	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps and
+	// suspended accounts from the table source of truth on every reaper tick so
+	// a restart or missed lifecycle notification cannot leave unbillable VMs
+	// live. This runs before the normal idle snapshot.
 	for _, app := range apps {
-		if app.Status != state.AppEvictedCold {
+		mustPark := app.Status == state.AppEvictedCold
+		if !mustPark {
+			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
+				mustPark = account.Status == state.AccountSuspended
+			} else {
+				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
+			}
+		}
+		if !mustPark {
 			continue
 		}
 		if acted, err := l.engine.ParkApp(ctx, app.ID); err != nil {

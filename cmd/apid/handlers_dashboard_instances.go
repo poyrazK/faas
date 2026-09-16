@@ -226,14 +226,20 @@ func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request)
 		s.log.Info("dashboard app parked", "app", app.ID, "account", acct.ID)
 		returnDashboardInstanceAction(w, r, slug, dashboardInstanceActionParked, "")
 	case "wake":
-		st := state.AppActive
-		if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not wake app"))
+		if !acct.Active() {
+			api.WriteProblem(w, api.ErrAccountSuspended())
 			return
 		}
-		_ = s.notif.Notify(r.Context(), db.NotifyAppChanged, fmt.Sprintf(`{"kind":"woken","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
-		s.log.Info("dashboard app woken", "app", app.ID, "account", acct.ID)
-		returnDashboardInstanceAction(w, r, slug, dashboardInstanceActionWoken, "")
+		if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		wakeID, err = s.enqueueExplicitAppWake(r.Context(), acct, app)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
+			return
+		}
+		returnDashboardInstanceAction(w, r, slug, dashboardInstanceActionWoken, wakeID)
 	case "restart":
 		if app.Status != state.AppActive {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,

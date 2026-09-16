@@ -92,11 +92,16 @@ func EnforceQuota(
 	switch res.Action {
 	case "stop":
 		// Free hard stop. Flip the account, fan out, park instances.
+		transitioned := false
 		if account.Status != state.AccountSuspended {
 			if err := store.UpdateAccountStatus(ctx, account.ID, state.AccountSuspended); err != nil {
 				return act, fmt.Errorf("meter: suspend %s: %w", account.ID, err)
 			}
+			transitioned = true
 			log.Info("meter: free-tier hard stop", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
+		}
+		if transitioned {
+			notifyAccountAppLifecycle(ctx, store, notif, account.ID, "account_suspended", log)
 		}
 		ins, err := store.ListInstancesForAccount(ctx, account.ID)
 		if err != nil {
@@ -182,4 +187,20 @@ func EnforceQuota(
 		log.Info("meter: paid-tier quota warning", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
 	}
 	return act, nil
+}
+
+func notifyAccountAppLifecycle(ctx context.Context, store state.Store, notif Notifier, accountID, kind string, log *slog.Logger) {
+	apps, err := store.ListApps(ctx, accountID)
+	if err != nil {
+		log.Warn("meter: account lifecycle list apps", "account", accountID, "kind", kind, "err", err)
+		return
+	}
+	for _, app := range apps {
+		payload, _ := json.Marshal(map[string]string{
+			"kind": kind, "account_id": accountID, "app_id": app.ID,
+		})
+		if err := notif.Notify(ctx, db.NotifyAppChanged, string(payload)); err != nil {
+			log.Warn("meter: account lifecycle notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
+		}
+	}
 }

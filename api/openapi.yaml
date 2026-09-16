@@ -6037,9 +6037,13 @@ paths:
     post:
       tags: [apps]
       operationId: wakeApp
-      summary: Manually wake an instance.
+      summary: Queue a durable instance pre-warm.
       responses:
-        '204': { description: Wake requested. }
+        '202':
+          description: Wake accepted and correlated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWakeResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/ConcurrencyLimit' }
@@ -18391,6 +18395,13 @@ components:
       required: [wake_id]
       properties:
         wake_id: { type: string, format: uuid, description: "Wake id stamped on the replacement instance and wake timeline." }
+
+    AppWakeResponse:
+      description: "Correlation handle for an accepted explicit app wake."
+      type: object
+      required: [wake_id]
+      properties:
+        wake_id: { type: string, format: uuid, description: "Wake id stamped on the admitted instance and wake timeline." }
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."

@@ -80,6 +80,7 @@ export type { AppStaticEgressIPResponse } from './AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './AppStreamingStatus.js';
 export type { AppTrustedSignerListResponse } from './AppTrustedSignerListResponse.js';
 export type { AppUsageSummaryResponse } from './AppUsageSummaryResponse.js';
+export type { AppWakeResponse } from './AppWakeResponse.js';
 export type { AppWakeTimelineResponse } from './AppWakeTimelineResponse.js';
 export type { AppWebhookDeliveryListResponse } from './AppWebhookDeliveryListResponse.js';
 export type { AppWebhookDeliveryResponse } from './AppWebhookDeliveryResponse.js';

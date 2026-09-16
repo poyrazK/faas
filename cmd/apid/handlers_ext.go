@@ -2001,57 +2001,65 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 
 // wakeApp unparks an evicted_cold app.
 func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Active() {
+		api.WriteProblem(w, api.ErrAccountSuspended())
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"App has no live deployment", "deploy the app before requesting a wake"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's live deployment"))
+	if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
 		return
+	}
+	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.AppWakeResponse{WakeID: wakeID})
+}
+
+func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
+	if _, err := s.store.LiveDeployment(ctx, app.ID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App has no live deployment", "deploy the app before requesting a wake")
+		}
+		return api.ErrCapacity("could not resolve the app's live deployment")
 	}
 	if app.Status == state.AppEvictedCold {
-		if err := waitForAppInstancesDrained(r.Context(), s.store, app.ID, 0, 0); err != nil {
+		if err := waitForAppInstancesDrained(ctx, s.store, app.ID, 0, 0); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-					"App is still draining", "wait for the preceding park operation to finish before requesting a wake"))
-				return
+				return api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"App is still draining", "wait for the preceding park operation to finish before requesting a wake")
 			}
-			api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
-			return
+			return api.ErrCapacity("could not verify app instance drain")
 		}
 	}
-	st := state.AppActive
-	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	return nil
+}
+
+func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account, app state.App) (string, error) {
+	wakeUUID, err := uuid.NewV7()
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not wake app"))
-		return
+		wakeUUID = uuid.New()
+		s.log.Warn("app wake: uuid.NewV7 failed, fell back to v4", "app", app.ID, "err", err)
 	}
-	if !claimed {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"App lifecycle transition in progress", "retry after the current park or wake operation completes"))
-		return
+	wakeID := wakeUUID.String()
+	payload, err := json.Marshal(map[string]string{"app_id": app.ID, "wake_id": wakeID})
+	if err != nil {
+		return "", fmt.Errorf("marshal app wake: %w", err)
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"woken","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
-	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppWoken, map[string]any{
-		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
-	}); err != nil {
-		s.log.WarnContext(r.Context(), "enqueue app.woken webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	if err := s.notif.Notify(ctx, db.NotifyAppWake, string(payload)); err != nil {
+		return "", err
 	}
-	if app.Status != state.AppActive {
-		s.audit.Emit(r.Context(), "app.woken", &acct.ID, map[string]any{
-			"app_id": app.ID,
-			"slug":   app.Slug,
-			"status": st,
-		})
-	}
-	s.log.Info("app woken", "app", app.ID, "account", acct.ID)
-	w.WriteHeader(http.StatusNoContent)
+	s.audit.Emit(ctx, "app.wake_requested", &acct.ID, map[string]any{
+		"app_id": app.ID, "slug": app.Slug, "wake_id": wakeID,
+	})
+	s.log.Info("app wake requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
+	return wakeID, nil
 }
 
 // restartApp queues a park followed by a fresh wake from the newly captured

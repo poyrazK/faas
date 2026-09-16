@@ -1960,13 +1960,19 @@ func TestWaitForAppInstancesDrainedTimesOut(t *testing.T) {
 	}
 }
 
-// TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
+// TestWakeApp_HappyPath queues a durable scheduler wake. The API owns the
+// command receipt; schedd owns the parked -> active transition and emits the
+// completed app.woken event only after an instance is ready.
 func TestWakeApp_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "wake-me")
 	appID := dep.AppID
 	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
 		t.Fatalf("mark deployment live: %v", err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(t.Context(), appID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("park app: %v", err)
 	}
 	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
 		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
@@ -1976,29 +1982,97 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.do(t, "POST", "/v1/apps/wake-me/park", nil, nil)
 	rec := e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
-	if rec.Code != 204 {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
-	if app.Status != state.AppActive {
-		t.Errorf("status = %s, want active", app.Status)
+	var response api.AppWakeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode wake response: %v", err)
 	}
-	assertLifecycleAudit(t, e, "app.woken", appID, "")
+	if response.WakeID == "" {
+		t.Fatal("wake response omitted wake_id")
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
+	if app.Status != state.AppEvictedCold {
+		t.Errorf("status = %s, want scheduler-owned evicted_cold until capacity is ready", app.Status)
+	}
+	assertLifecycleAudit(t, e, "app.wake_requested", appID, response.WakeID)
+	assertLifecycleAuditCount(t, e, "app.woken", 0)
+	notif.mu.Lock()
+	var wakeNotices []capturedNotification
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			wakeNotices = append(wakeNotices, emitted)
+		}
+	}
+	notif.mu.Unlock()
+	if len(wakeNotices) != 1 {
+		t.Fatalf("app_wake notifications = %d, want 1: %+v", len(wakeNotices), wakeNotices)
+	}
+	var wakePayload struct {
+		AppID  string `json:"app_id"`
+		WakeID string `json:"wake_id"`
+	}
+	if err := json.Unmarshal([]byte(wakeNotices[0].Payload), &wakePayload); err != nil {
+		t.Fatalf("decode app_wake payload: %v", err)
+	}
+	if wakePayload.AppID != appID || wakePayload.WakeID != response.WakeID {
+		t.Fatalf("app_wake payload = %+v, want app=%s wake=%s", wakePayload, appID, response.WakeID)
+	}
 	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
-		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
+	if len(deliveries) != 0 {
+		t.Fatalf("wake deliveries = %+v, want none before scheduler completion", deliveries)
+	}
+}
+
+func TestWakeApp_SuspendedAccountRejectedBeforeQueue(t *testing.T) {
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-suspended")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
 	}
 
-	rec = e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("idempotent wake status %d: %s", rec.Code, rec.Body)
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-suspended/wake", nil, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeBillingPastDue)
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			t.Fatalf("suspended account queued app wake: %+v", emitted)
+		}
 	}
-	assertLifecycleAudit(t, e, "app.woken", appID, "")
+}
+
+func TestWakeApp_NotifierFailureDoesNotClaimLifecycleOrReportSuccess(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-notify-failure")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(t.Context(), dep.AppID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.notif = &failingNotifier{err: errors.New("notification outbox unavailable")}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-notify-failure/wake", nil, nil)
+	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeCapacity)
+	current, err := e.store.AppByID(t.Context(), dep.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %q, want evicted_cold", current.Status)
+	}
+	assertLifecycleAuditCount(t, e, "app.wake_requested", 0)
+	assertLifecycleAuditCount(t, e, "app.woken", 0)
 }
 
 func TestWakeApp_RejectsAppWithoutLiveDeployment(t *testing.T) {

@@ -44,6 +44,10 @@ import (
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
 
+// dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
+// import pkg/wire without creating an import cycle.
+const dashboardBillingURL = "https://gregale.dev/dashboard/billing"
+
 // AsProblem walks err's chain and returns the first *Problem. Returns nil
 // if none of the wrapped errors is a *Problem. Used by gRPC handlers in
 // pkg/vmmdgrpc to lift a Manager-emitted error without leaking internal
@@ -2390,6 +2394,16 @@ func ErrAdmissionRefused(observedCents, capCents int64) *Problem {
 			observedCents, capCents)).
 		WithLimit(capCents, observedCents).
 		WithDocs(docsBase + "/billing#spend-cap")
+}
+
+// ErrAccountSuspended is the shared execution-boundary response for an
+// account whose lifecycle forbids new or existing workload capacity. Past-due
+// accounts remain active during their grace period; callers use Account.Active
+// before returning this problem.
+func ErrAccountSuspended() *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodeBillingPastDue,
+		"Account suspended", "resolve billing to continue: "+dashboardBillingURL).
+		WithDocs(docsBase + "/billing")
 }
 
 // ErrExportRateLimited is returned by GET /v1/account/export when

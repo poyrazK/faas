@@ -90,6 +90,7 @@ export type { AppStaticEgressIPResponse } from './models/AppStaticEgressIPRespon
 export type { AppStreamingStatus } from './models/AppStreamingStatus.js';
 export type { AppTrustedSignerListResponse } from './models/AppTrustedSignerListResponse.js';
 export type { AppUsageSummaryResponse } from './models/AppUsageSummaryResponse.js';
+export type { AppWakeResponse } from './models/AppWakeResponse.js';
 export type { AppWakeTimelineResponse } from './models/AppWakeTimelineResponse.js';
 export type { AppWebhookDeliveryListResponse } from './models/AppWebhookDeliveryListResponse.js';
 export type { AppWebhookDeliveryResponse } from './models/AppWebhookDeliveryResponse.js';

@@ -3149,25 +3149,93 @@ func cmdPark(args []string) int {
 }
 
 func cmdWake(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale wake <slug>", "park-wake")
+	fs := newFlagSet("wake", flag.ContinueOnError)
+	wait := fs.Bool("wait", false, "wait for the requested wake to reach running")
+	waitTimeout := fs.Duration("timeout", time.Minute, "maximum time to wait for the requested wake")
+	pollInterval := fs.Duration("poll-interval", 250*time.Millisecond, "interval between instance status checks")
+	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if fs.NArg() != 1 || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
+		PrintUsage(os.Stderr, "usage: gregale wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
+		return 1
+	}
+	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.Wake(context.Background(), args[0]); err != nil {
+	response, err := client.Wake(context.Background(), slug)
+	if err != nil {
 		return printErr("Wake failed", err)
 	}
-	if jsonOutput {
-		return jsonOut(writeJSON(map[string]string{
-			"slug":   args[0],
-			"status": "waking",
-		}))
+	if strings.TrimSpace(response.WakeID) == "" {
+		return printErr("Wake failed", errors.New("server accepted the wake without returning a wake_id"))
 	}
-	PrintOK(osStdout, "Waking…")
+	status := "waking"
+	instanceID := ""
+	if *wait {
+		instance, waitErr := waitForAppWake(context.Background(), client, slug, response.WakeID, *waitTimeout, *pollInterval)
+		if waitErr != nil {
+			return printErr("Wake failed", waitErr)
+		}
+		status = instance.State
+		instanceID = instance.ID
+	}
+	if jsonOutput {
+		receipt := map[string]string{
+			"slug":    slug,
+			"status":  status,
+			"wake_id": response.WakeID,
+		}
+		if instanceID != "" {
+			receipt["instance_id"] = instanceID
+		}
+		return jsonOut(writeJSON(receipt))
+	}
+	if *wait {
+		PrintOK(osStdout, "Wake completed (%s, instance %s)", response.WakeID, instanceID)
+		return 0
+	}
+	PrintOK(osStdout, "Wake queued (%s)", response.WakeID)
 	return 0
+}
+
+func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	var lastReadErr error
+	for {
+		instances, err := client.ListInstancesWithHistory(waitCtx, slug, true)
+		if err != nil {
+			lastReadErr = err
+		} else {
+			for _, instance := range instances {
+				if instance.WakeID != wakeID {
+					continue
+				}
+				switch instance.State {
+				case "running":
+					return instance, nil
+				case "failed", "stopped", "parked", "evicting_account_deleting":
+					return api.InstanceResponse{}, fmt.Errorf("wake %s reached terminal state %s", wakeID, instance.State)
+				}
+			}
+		}
+
+		select {
+		case <-waitCtx.Done():
+			if lastReadErr != nil {
+				return api.InstanceResponse{}, fmt.Errorf("wake %s did not reach running within %s (last status read failed: %w)", wakeID, timeout, lastReadErr)
+			}
+			return api.InstanceResponse{}, fmt.Errorf("wake %s did not reach running within %s", wakeID, timeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 // cmdTrafficSet implements `gregale traffic set` (issue #556 PR-A).

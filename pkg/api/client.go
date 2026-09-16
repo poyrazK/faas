@@ -1858,8 +1858,9 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 func (c *Client) Park(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
 }
-func (c *Client) Wake(ctx context.Context, slug string) error {
-	return c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, nil)
+func (c *Client) Wake(ctx context.Context, slug string) (AppWakeResponse, error) {
+	var out AppWakeResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, &out)
 }
 
 // RestartApp queues a fresh snapshot restart and returns its wake correlation

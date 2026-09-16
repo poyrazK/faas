@@ -1124,6 +1124,12 @@ type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+// AppWakeResponse is returned when an explicit pre-warm request has been
+// durably queued for the scheduler.
+type AppWakeResponse struct {
+	WakeID string `json:"wake_id"`
+}
+
 // ParkedDeploymentRef is the reference shape returned in
 // AppResponse.ParkedDeployment (issue #554 / ADR-079 follow-up).
 // Lives in pkg/api/dto.go per pkg-api-cannot-import-pkg-state so

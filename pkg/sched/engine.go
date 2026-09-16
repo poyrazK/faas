@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"path/filepath"
 	"sort"
@@ -44,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
@@ -1882,13 +1884,29 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// preserves the restart correlation id while doing so.
 	leaderCtx = withRequestedWakeID(leaderCtx, requestedWakeID(ctx))
 	out := CoordOutcome{}
+	lifecycleChanged := false
 	defer func() {
 		call.Complete(out)
 		e.wakeCoord.Release(appID, call)
 	}()
+	// Claim the parked -> active lifecycle before booting. This makes a later
+	// explicit park win the race: park changes active back to evicted_cold and
+	// its scheduler notification destroys any in-flight instance. Only the
+	// coordinator leader can claim, so concurrent/replayed wakes produce one
+	// lifecycle event.
+	if loadedApp != nil && loadedApp.Status == state.AppEvictedCold {
+		lifecycleChanged, err = compareAndSetAppStatus(leaderCtx, e.store, appID, state.AppEvictedCold, state.AppActive)
+		if err != nil {
+			out.Err = fmt.Errorf("sched: EnsureWake: activate parked app: %w", err)
+			return out, out.Err
+		}
+	}
 	//nolint:contextcheck // leader wake uses the detached, TTL-bounded context.
 	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
 	if err != nil {
+		if lifecycleChanged {
+			_, _ = compareAndSetAppStatus(context.WithoutCancel(leaderCtx), e.store, appID, state.AppActive, state.AppEvictedCold)
+		}
 		out.Err = err
 		return out, err
 	}
@@ -1901,14 +1919,74 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// against the existing live targets (per the AdmitInstance
 	// AtCapacity contract).
 	if len(results) == 0 || results[0].AtCapacity {
+		if lifecycleChanged {
+			_, _ = compareAndSetAppStatus(context.WithoutCancel(leaderCtx), e.store, appID, state.AppActive, state.AppEvictedCold)
+		}
 		out.Err = ErrAtCapacity
 		return out, ErrAtCapacity
+	}
+	if lifecycleChanged {
+		latestApp, readErr := e.store.AppByID(leaderCtx, appID)
+		if readErr != nil {
+			out.Err = fmt.Errorf("sched: EnsureWake: verify app lifecycle after boot: %w", readErr)
+			return out, out.Err
+		}
+		latestAccount, accountErr := e.store.AccountByID(leaderCtx, latestApp.AccountID)
+		if accountErr != nil {
+			out.Err = fmt.Errorf("sched: EnsureWake: verify account lifecycle after boot: %w", accountErr)
+			return out, out.Err
+		}
+		if latestApp.Status != state.AppActive || !latestAccount.Active() {
+			_, parkErr := e.ParkApp(context.WithoutCancel(leaderCtx), appID)
+			if !latestAccount.Active() {
+				out.Err = errors.Join(ErrPermanentWake, api.ErrAccountSuspended(), parkErr)
+			} else {
+				out.Err = errors.Join(ErrPermanentWake, api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"App was parked during wake", "the newer park request took precedence"), parkErr)
+			}
+			return out, out.Err
+		}
 	}
 	out.Instance = coordinateWakeResult(results[0])
 	for _, result := range results[1:] {
 		out.Additional = append(out.Additional, coordinateWakeResult(result))
 	}
+	if lifecycleChanged && out.Instance != nil {
+		payload := map[string]any{
+			"app_id":      appID,
+			"slug":        loadedApp.Slug,
+			"status":      state.AppActive,
+			"instance_id": out.Instance.InstanceID,
+			"wake_id":     out.Instance.WakeID,
+			"occurred_at": time.Now().UTC(),
+		}
+		if err := webhook.Emit(leaderCtx, e.store, appID, state.AppWebhookEventAppWoken, payload); err != nil {
+			e.log.Warn("sched: enqueue app.woken webhook", "app", appID, "wake_id", out.Instance.WakeID, "err", err)
+		}
+		if e.audit != nil {
+			e.audit.Emit(leaderCtx, "app.woken", &loadedApp.AccountID, payload)
+		}
+	}
 	return out, nil
+}
+
+type appStatusCompareAndSetter interface {
+	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
+}
+
+func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string, from, to state.AppStatus) (bool, error) {
+	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
+		return atomicStore.CompareAndSetAppStatus(ctx, appID, from, to)
+	}
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return false, err
+	}
+	if app.Status != from {
+		return false, nil
+	}
+	_, err = store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &to})
+	return err == nil, err
 }
 
 // AdmitInstance attempts to admit one additional instance for appID,
@@ -5375,7 +5453,11 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	if app.Status != state.AppEvictedCold {
+	account, accountErr := e.store.AccountByID(ctx, app.AccountID)
+	if accountErr != nil {
+		return 0, fmt.Errorf("sched: park app: load account %s: %w", app.AccountID, accountErr)
+	}
+	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended {
 		return 0, nil
 	}
 
@@ -5391,7 +5473,11 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	if app.Status != state.AppEvictedCold {
+	account, accountErr = e.store.AccountByID(ctx, app.AccountID)
+	if accountErr != nil {
+		return 0, fmt.Errorf("sched: park app: reload account %s: %w", app.AccountID, accountErr)
+	}
+	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended {
 		return 0, nil
 	}
 
@@ -5466,6 +5552,9 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 			acted++
 		}
 	}
+	if !account.Active() {
+		e.ops.ObserveAccountLifecycleViolations(acted)
+	}
 
 	return acted, errors.Join(errs...)
 }
@@ -5537,6 +5626,7 @@ func (e *Engine) ReconcileLifecycleInstance(ctx context.Context, instanceID stri
 			return false, fmt.Errorf("sched: lifecycle reconcile: destroy evicting instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
+		e.ops.ObserveAccountLifecycleViolations(1)
 		return true, nil
 	}
 	if !state.IsLive(ins.State) {
@@ -5559,6 +5649,7 @@ func (e *Engine) ReconcileLifecycleInstance(ctx context.Context, instanceID stri
 			return false, fmt.Errorf("sched: lifecycle reconcile: destroy account-deleting instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
+		e.ops.ObserveAccountLifecycleViolations(1)
 		return true, nil
 	}
 
@@ -6524,19 +6615,6 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, err
 	}
-	// A liveness-exhausted app is deliberately parked until an explicit
-	// unpark operation changes its lifecycle back to active. Treating the
-	// parked app as wakeable lets a pending async invocation retry forever:
-	// every retry creates a fresh FAILED instance row before the same
-	// underlying artifact error is observed. Join the scheduler sentinel
-	// with the public problem so the drain can terminally fail the row while
-	// the RPC surface still carries an actionable error.
-	if app.Status == state.AppEvictedCold {
-		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, errors.Join(
-			ErrPermanentWake,
-			api.NewProblem(409, api.CodeConflict, "App is parked", "the app is evicted_cold; wake the app before invoking"),
-		)
-	}
 	scope := ScopeFrom(ctx)
 	var dep state.Deployment
 	if scope == "" {
@@ -6566,6 +6644,9 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: account: %w", err)
+	}
+	if !acct.Active() {
+		return state.App{}, state.Account{}, api.Limits{}, errors.Join(ErrPermanentWake, api.ErrAccountSuspended())
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {

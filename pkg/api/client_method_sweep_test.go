@@ -356,10 +356,14 @@ func TestSweep_Park(t *testing.T) {
 }
 
 func TestSweep_Wake(t *testing.T) {
-	srv, _ := newSweepServer(t, 202, `{"ok":true}`)
+	srv, _ := newSweepServer(t, 202, `{"wake_id":"wake-1"}`)
 	c := NewClient(srv.URL, "fp_test")
-	if err := c.Wake(context.Background(), "myapp"); err != nil {
+	out, err := c.Wake(context.Background(), "myapp")
+	if err != nil {
 		t.Fatalf("err = %v", err)
+	}
+	if out.WakeID != "wake-1" {
+		t.Fatalf("wake id = %q, want wake-1", out.WakeID)
 	}
 }
 

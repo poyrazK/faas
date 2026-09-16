@@ -152,6 +152,7 @@ from .app_streaming_status_status import AppStreamingStatusStatus
 from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
+from .app_wake_response import AppWakeResponse
 from .app_wake_timeline_response import AppWakeTimelineResponse
 from .app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineResponseTriggerClassHistogram
 from .app_wake_timeline_response_trigger_histogram import AppWakeTimelineResponseTriggerHistogram
@@ -1282,6 +1283,7 @@ __all__ = (
     "AppTrustedSignerListResponse",
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
+    "AppWakeResponse",
     "AppWakeTimelineResponse",
     "AppWakeTimelineResponseTriggerClassHistogram",
     "AppWakeTimelineResponseTriggerHistogram",

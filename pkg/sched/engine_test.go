@@ -1117,39 +1117,173 @@ func TestEngineWake_ColdBoot(t *testing.T) {
 	}
 }
 
-// TestEngineWake_EvictedColdIsPermanent pins the lifecycle gate used by the
-// invocation drain. A parked app must be explicitly woken before traffic can
-// create another instance; otherwise a pending invocation can create an
-// unbounded stream of FAILED rows while the app is known to be unavailable.
-func TestEngineWake_EvictedColdIsPermanent(t *testing.T) {
+func TestEnsureWake_EvictedColdActivatesAndEmitsOneCompletedEvent(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	parked := state.AppEvictedCold
 	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
 		t.Fatalf("park app: %v", err)
 	}
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-
-	_, err := e.Wake(context.Background(), app.ID, "", "", "")
-	if err == nil {
-		t.Fatal("Wake returned nil for evicted_cold app")
-	}
-	if !errors.Is(err, ErrPermanentWake) {
-		t.Fatalf("Wake error = %v, want ErrPermanentWake", err)
-	}
-	if p := api.AsProblem(err); p == nil || p.Code != api.CodeConflict {
-		t.Fatalf("Wake problem = %v, want conflict problem", p)
-	}
-	if vmm.coldBoots != 0 || vmm.restores != 0 {
-		t.Fatalf("vmmd calls = cold=%d restore=%d, want 0/0", vmm.coldBoots, vmm.restores)
-	}
-	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+	hook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: acct.ID, AppID: app.ID, TargetURL: "https://example.com/woken",
+		SecretSealed: []byte("sealed"), EventFilter: []string{string(state.AppWebhookEventAppWoken)},
+		RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
 	if err != nil {
-		t.Fatalf("ListInstancesForApp: %v", err)
+		t.Fatal(err)
 	}
-	if len(instances) != 0 {
-		t.Fatalf("instance rows = %d, want 0", len(instances))
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").
+		WithAudit(audit.New(store, testLog(), nil, "schedd"))
+
+	const requestedWakeID = "0198f89a-0000-7000-8000-000000000001"
+	ctx := withRequestedWakeID(context.Background(), requestedWakeID)
+	out, err := e.EnsureWake(ctx, app.ID, TriggerGateway)
+	if err != nil {
+		t.Fatalf("EnsureWake: %v", err)
+	}
+	if out.Instance == nil || out.Instance.WakeID != requestedWakeID {
+		t.Fatalf("wake outcome = %+v, want requested wake id", out)
+	}
+	current, err := store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppActive {
+		t.Fatalf("app status = %q, want active", current.Status)
+	}
+	if vmm.coldBoots != 1 {
+		t.Fatalf("cold boots = %d, want 1", vmm.coldBoots)
+	}
+	deliveries, _, err := store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken {
+		t.Fatalf("deliveries = %+v, want one app.woken", deliveries)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(deliveries[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["instance_id"] != out.Instance.InstanceID || payload["wake_id"] != out.Instance.WakeID {
+		t.Fatalf("webhook payload = %+v, want correlated instance/wake ids", payload)
+	}
+
+	// A repeated request sees already-available capacity and must not emit a
+	// second lifecycle event.
+	if _, err := e.EnsureWake(withRequestedWakeID(context.Background(), "0198f89a-0000-7000-8000-000000000002"), app.ID, TriggerAppWake); err != nil {
+		t.Fatalf("repeated EnsureWake: %v", err)
+	}
+	deliveries, _, err = store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("deliveries after no-op wake = %d, want 1", len(deliveries))
+	}
+}
+
+func TestEngineWakeRejectsInactiveAccounts(t *testing.T) {
+	for _, status := range []state.AccountStatus{state.AccountSuspended, state.AccountDeletedPending} {
+		t.Run(string(status), func(t *testing.T) {
+			store := state.NewMemStore()
+			acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+			if err := store.UpdateAccountStatus(t.Context(), acct.ID, status); err != nil {
+				t.Fatal(err)
+			}
+			vmm := &fakeVMM{}
+			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			_, err := e.EnsureWake(context.Background(), app.ID, TriggerGateway)
+			if err == nil || !errors.Is(err, ErrPermanentWake) {
+				t.Fatalf("EnsureWake error = %v, want permanent wake rejection", err)
+			}
+			if p := api.AsProblem(err); p == nil || p.Status != http.StatusPaymentRequired || p.Code != api.CodeBillingPastDue {
+				t.Fatalf("problem = %+v, want 402/%s", p, api.CodeBillingPastDue)
+			}
+			if vmm.coldBoots != 0 || vmm.restores != 0 {
+				t.Fatalf("vmmd calls = cold=%d restore=%d, want 0/0", vmm.coldBoots, vmm.restores)
+			}
+		})
+	}
+}
+
+func TestEnsureWakeFailedParkedBootRestoresLifecycleWithoutEvent(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: acct.ID, AppID: app.ID, TargetURL: "https://example.com/woken",
+		EventFilter: []string{string(state.AppWebhookEventAppWoken)}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, store, &fakeVMM{wakeErr: errors.New("boot failed")}, &fakeNotifier{}, "1.10.0")
+	if _, err := e.EnsureWake(t.Context(), app.ID, TriggerAppWake); err == nil {
+		t.Fatal("EnsureWake returned nil on boot failure")
+	}
+	current, err := store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %q, want evicted_cold rollback", current.Status)
+	}
+	deliveries, _, err := store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 0 {
+		t.Fatalf("failed wake emitted app.woken deliveries: %+v", deliveries)
+	}
+}
+
+func TestEnsureWakeConcurrentParkWinsWithoutWokenEvent(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: acct.ID, AppID: app.ID, TargetURL: "https://example.com/woken",
+		EventFilter: []string{string(state.AppWebhookEventAppWoken)}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{bootStarted: make(chan struct{}, 1), bootRelease: make(chan struct{})}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	done := make(chan error, 1)
+	go func() {
+		_, wakeErr := e.EnsureWake(context.Background(), app.ID, TriggerGateway)
+		done <- wakeErr
+	}()
+	<-vmm.bootStarted
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	close(vmm.bootRelease)
+	if err := <-done; err == nil || !errors.Is(err, ErrPermanentWake) {
+		t.Fatalf("EnsureWake error = %v, want later park to win", err)
+	}
+	instances, err := store.ListInstancesForApp(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instances) != 1 || instances[0].State != string(state.StateParked) {
+		t.Fatalf("instances = %+v, want one parked instance", instances)
+	}
+	deliveries, _, err := store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 0 {
+		t.Fatalf("park-won wake emitted app.woken deliveries: %+v", deliveries)
 	}
 }
 
@@ -2394,6 +2528,42 @@ func TestEngineParkAppSnapshotsRunningInstance(t *testing.T) {
 	}
 	if vmm.snapshots != 1 {
 		t.Errorf("idempotent snapshots = %d, want 1", vmm.snapshots)
+	}
+}
+
+func TestEngineParkAppDrainsSuspendedAccountWithoutChangingAppLifecycle(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := e.Wake(t.Context(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := store.UpdateAccountStatus(t.Context(), acct.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+
+	acted, err := e.ParkApp(t.Context(), app.ID)
+	if err != nil {
+		t.Fatalf("ParkApp: %v", err)
+	}
+	if acted != 1 {
+		t.Fatalf("ParkApp acted = %d, want 1", acted)
+	}
+	instance, err := store.InstanceByID(t.Context(), res.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instance.State != string(state.StateParked) {
+		t.Fatalf("instance state = %q, want parked", instance.State)
+	}
+	current, err := store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppActive {
+		t.Fatalf("app status = %q, want active preserved for reactivation", current.Status)
 	}
 }
 

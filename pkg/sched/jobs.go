@@ -115,6 +115,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if err != nil {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob resolve account: %w", err)
 	}
+	if !account.Active() {
+		return JobWakeResult{}, errors.Join(ErrPermanentWake, api.ErrAccountSuspended())
+	}
 	plan := account.Plan
 	if plan == api.PlanFree {
 		// Free plans return 404 at apid; if a row sneaks through

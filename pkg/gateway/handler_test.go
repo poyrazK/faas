@@ -357,6 +357,29 @@ func TestColdWakeReturns200AndHeader(t *testing.T) {
 	}
 }
 
+func TestSuspendedAccountFailsBeforeWakeOrProxy(t *testing.T) {
+	for _, status := range []string{"suspended", "deleted_pending"} {
+		t.Run(status, func(t *testing.T) {
+			h, backend, _ := newTestHandler(t)
+			backend.app.AccountStatus = status
+
+			req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusPaymentRequired {
+				t.Fatalf("status = %d, want 402; body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"code":"`+api.CodeBillingPastDue+`"`) {
+				t.Fatalf("body = %s, want stable %q problem code", rec.Body.String(), api.CodeBillingPastDue)
+			}
+			if got := atomic.LoadInt32(&backend.admits); got != 0 {
+				t.Fatalf("admit calls = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.app.Plan = api.PlanFree // cap=1, so shouldWake returns false when target is seeded

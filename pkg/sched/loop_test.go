@@ -78,6 +78,42 @@ func TestHandleSnapshotPrime(t *testing.T) {
 	}
 }
 
+func TestHandleAppWakeStartsParkedAppWithRequestedCorrelation(t *testing.T) {
+	const wakeID = "0198f89a-0000-7000-8000-000000000003"
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	loop := NewLoop(nil, engine, testLog())
+
+	loop.handleNotification(t.Context(), db.Notification{
+		Channel: db.NotifyAppWake,
+		Payload: `{"app_id":"` + app.ID + `","wake_id":"` + wakeID + `"}`,
+	})
+
+	current, err := store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppActive {
+		t.Fatalf("app status = %q, want active", current.Status)
+	}
+	instance, err := store.RunningInstanceForApp(t.Context(), app.ID)
+	if err != nil {
+		t.Fatalf("running instance: %v", err)
+	}
+	if instance.WakeID != wakeID {
+		t.Fatalf("instance wake id = %q, want %s", instance.WakeID, wakeID)
+	}
+	if vmm.coldBoots != 1 {
+		t.Fatalf("cold boots = %d, want 1", vmm.coldBoots)
+	}
+}
+
 func TestHandleSnapshotPrimeFailureMarksDeploymentAndStageFailed(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)

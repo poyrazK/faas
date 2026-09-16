@@ -13,6 +13,7 @@ import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
+import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -1641,8 +1642,8 @@ export class AppsService {
     });
   }
   /**
-   * Manually wake an instance.
-   * @returns void
+   * Queue a durable instance pre-warm.
+   * @returns AppWakeResponse Wake accepted and correlated.
    * @throws ApiError
    */
   public static wakeApp({
@@ -1652,7 +1653,7 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<AppWakeResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/wake',

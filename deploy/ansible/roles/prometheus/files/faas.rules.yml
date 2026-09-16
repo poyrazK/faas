@@ -20,6 +20,22 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: account_lifecycle
+    interval: 30s
+    rules:
+      - alert: FaasInactiveAccountHasLiveInstance
+        expr: increase(schedd_account_lifecycle_violations_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: page
+          component: schedd
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "A non-active account retained live compute"
+          description: "Schedd found and repaired a live or waking instance owned by a suspended or deletion-pending account. Verify all scheduler admission producers enforce Account.Active and confirm no additional instances remain resident."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInactiveAccountHasLiveInstance.md"
+
   - name: postgres_capacity
     interval: 30s
     rules:

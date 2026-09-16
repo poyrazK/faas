@@ -2469,3 +2469,14 @@ func TestOpsMetrics_SetServiceReplicaStatus(t *testing.T) {
 	var nilMetrics *wire.OpsMetrics
 	nilMetrics.SetServiceReplicaStatus("ignored", 1, 1, 0, 0, 0)
 }
+
+func TestOpsMetrics_AccountLifecycleViolations(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.ObserveAccountLifecycleViolations(2)
+	body := render(t, m)
+	if want := "schedd_account_lifecycle_violations_total 2"; !strings.Contains(body, want) {
+		t.Fatalf("missing %q in /metrics:\n%s", want, body)
+	}
+	var nilMetrics *wire.OpsMetrics
+	nilMetrics.ObserveAccountLifecycleViolations(1)
+}
