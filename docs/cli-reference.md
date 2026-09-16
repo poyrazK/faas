@@ -798,7 +798,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
 | `--create-only` | create or reserve the app without uploading a deployment |  |
-| `--timeout <SECONDS>` | maximum wait seconds for deploy (default 300) |  |
+| `--timeout <SECONDS>` | maximum wait seconds for deploy (default 1200) |  |
 | `--idempotency-key <KEY>` | stable logical retry key for this deployment |  |
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment |  |
 | `--secret-scan <on|off>` | scan .env files before packing | one of `on` · `off` |
@@ -1887,4 +1887,3 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
-

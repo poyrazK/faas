@@ -711,7 +711,7 @@ var cliCommands = []cliCommand{
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
 			{Name: "create-only", Short: "create or reserve the app without uploading a deployment"},
-			{Name: "timeout", Short: "maximum wait seconds for deploy (default 300)", Value: "SECONDS"},
+			{Name: "timeout", Short: "maximum wait seconds for deploy (default 1200)", Value: "SECONDS"},
 			{Name: "idempotency-key", Short: "stable logical retry key for this deployment", Value: "KEY"},
 			{Name: "secrets-file", Short: "seal KEY=VALUE pairs before the first deployment", Value: "PATH"},
 			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},

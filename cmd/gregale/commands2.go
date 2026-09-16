@@ -1542,7 +1542,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// This supports service templates whose secrets must be configured before
 	// their first process starts, while reusing the normal shape/runtime path.
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
-	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum seconds to wait for deployment readiness (default 300)")
+	waitTimeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait for deployment readiness (default %d)", defaultDeployWaitTimeoutSeconds))
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
@@ -4792,7 +4792,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	if err != nil {
 		if waitCtx.Err() != nil {
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+				warnDeploymentWaitTimeout(appSlug, dep.ID, waitTimeout)
 				return 3
 			}
 			return 130
@@ -4832,7 +4832,7 @@ streamLoop:
 		select {
 		case <-waitCtx.Done():
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+				warnDeploymentWaitTimeout(appSlug, dep.ID, waitTimeout)
 				return 3
 			}
 			return 130
@@ -4924,7 +4924,7 @@ streamLoop:
 		case err := <-dec.Errors():
 			if waitCtx.Err() != nil {
 				if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-					PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+					warnDeploymentWaitTimeout(appSlug, dep.ID, waitTimeout)
 					return 3
 				}
 				return 130
@@ -4938,7 +4938,7 @@ streamLoop:
 	}
 	if waitCtx.Err() != nil {
 		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+			warnDeploymentWaitTimeout(appSlug, dep.ID, waitTimeout)
 			return 3
 		}
 		return 130
@@ -4962,7 +4962,7 @@ streamLoop:
 		return terminalDeployment(final)
 	}
 	if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-		PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+		warnDeploymentWaitTimeout(appSlug, dep.ID, waitTimeout)
 		return 3
 	}
 	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)

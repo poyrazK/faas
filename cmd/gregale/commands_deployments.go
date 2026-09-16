@@ -367,7 +367,7 @@ func cmdDeployment(args []string) int {
 func cmdDeploymentWait(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
-	timeoutSeconds := fs.Int("timeout", 600, "maximum seconds to wait")
+	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}

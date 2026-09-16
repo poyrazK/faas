@@ -15,10 +15,12 @@ import (
 // into a slow or failed command.
 const (
 	deploymentReceiptFetchTimeout = 3 * time.Second
-	// defaultDeployWaitTimeout preserves the historical five-minute
-	// deploy wait while allowing `gregale deploy --timeout` to override
-	// the bounded wait for slower builds or CI jobs.
-	defaultDeployWaitTimeout = 5 * time.Minute
+	// defaultDeployWaitTimeout covers the server's complete build budget
+	// (currently 15 minutes) plus five minutes for security scanning,
+	// snapshot preparation, readiness, and the post-readiness smoke. The
+	// explicit --timeout flag remains available for unusually slow builds.
+	defaultDeployWaitTimeout        = time.Duration(api.BuildE2ETimeoutSeconds+5*60) * time.Second
+	defaultDeployWaitTimeoutSeconds = int(defaultDeployWaitTimeout / time.Second)
 )
 
 // deploymentWithReceipt fetches the durable deployment row after readiness.
@@ -104,14 +106,33 @@ func waitForDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.Deplo
 	return pollDeploymentFinalUntilContext(ctx, c, dep, deadline)
 }
 
+// deploymentWaitResumeCommand is deliberately emitted as a complete command
+// so a timed-out deploy can be resumed without reconstructing flags from logs.
+func deploymentWaitResumeCommand(deploymentID string, deadline time.Duration) string {
+	seconds := int(deadline / time.Second)
+	if seconds <= 0 {
+		seconds = defaultDeployWaitTimeoutSeconds
+	}
+	return fmt.Sprintf("gregale deployment wait %s --timeout %d", deploymentID, seconds)
+}
+
+func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Duration) {
+	PrintWarn(osStderr,
+		"deployment wait timed out after %s; server continues processing; resume with: %s; follow logs with: gregale logs %s --deployment %s --follow",
+		deadline, deploymentWaitResumeCommand(deploymentID, deadline), appSlug, deploymentID)
+}
+
 // writeWaitedDeploymentReceiptUntil emits a single terminal-or-timeout JSON
 // object using the caller's wait deadline. A timeout still returns the
 // accepted deployment id so automation can resume with `deployment wait`.
 func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration) int {
 	final, ok := waitForDeploymentReceiptUntil(ctx, c, dep, deadline)
 	if !ok {
-		PrintWarn(osStderr, "deployment did not reach a terminal state before the wait deadline; deployment=%s", dep.ID)
-		if code := jsonOut(writeJSON(newDeployReceipt(dep, prov, appURL, sourceSHA256))); code != 0 {
+		PrintWarn(osStderr, "deployment did not reach a terminal state before the wait deadline; server continues processing; resume with: %s", deploymentWaitResumeCommand(dep.ID, deadline))
+		receipt := newDeployReceipt(dep, prov, appURL, sourceSHA256)
+		receipt.TimedOut = true
+		receipt.ResumeCommand = deploymentWaitResumeCommand(dep.ID, deadline)
+		if code := jsonOut(writeJSON(receipt)); code != 0 {
 			return code
 		}
 		return 3

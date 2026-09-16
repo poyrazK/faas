@@ -55,12 +55,14 @@ Deploy waits for readiness by default. Use `--no-wait` for queue-only CI steps,
 or bound the wait explicitly with `--timeout` (seconds):
 
 ```bash
-gregale deploy --timeout 900
+gregale deploy --timeout 1200
 gregale deploy --no-wait
 ```
 
-The default wait is 300 seconds. A timed-out wait returns a non-zero exit code
-but retains the accepted deployment ID in `--json` output; resume it with
+The default wait is 1200 seconds (20 minutes), covering the server's 15-minute
+cold-build budget plus post-build scanning and snapshot preparation. A timed-out
+wait returns a non-zero exit code but retains the accepted deployment ID in
+`--json` output, along with an exact `resume_command`; resume it with
 `gregale deployment wait <deployment-id> --timeout ...`.
 
 Every deploy also has a stable retry key derived from the app, source digest,
