@@ -1401,36 +1401,38 @@ type SLODuration struct {
 // GET /v1/apps/{slug}/slo?window= (issue #696 / ADR-082).
 // Field-for-field mirror of pkg/api.AppSLOResponse.
 type AppSLOResponse struct {
-	AppID           string      `json:"app_id"`
-	AppSlug         string      `json:"app_slug"`
-	Window          string      `json:"window"`
-	Source          string      `json:"source"`
-	AsOf            string      `json:"as_of"`
-	RequestDuration SLODuration `json:"request_duration"`
-	ErrorRatePct    float64     `json:"error_rate_pct"`
-	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
-	InstanceHours   float64     `json:"instance_hours"`
-	GBHours         float64     `json:"gb_hours"`
-	WakeQueueP95MS  float64     `json:"wake_queue_p95_ms"`
-	RequestsTotal   int64       `json:"requests_total"`
-	ThrottledTotal  int64       `json:"throttled_total"`
+	AppID                 string      `json:"app_id"`
+	AppSlug               string      `json:"app_slug"`
+	Window                string      `json:"window"`
+	Source                string      `json:"source"`
+	AsOf                  string      `json:"as_of"`
+	RequestDuration       SLODuration `json:"request_duration"`
+	ErrorRatePct          float64     `json:"error_rate_pct"`
+	ColdBootRatePct       float64     `json:"cold_boot_rate_pct"`
+	InstanceHours         float64     `json:"instance_hours"`
+	GBHours               float64     `json:"gb_hours"`
+	WakeQueueP95MS        *float64    `json:"wake_queue_p95_ms"`
+	WakeQueueSampleStatus string      `json:"wake_queue_sample_status"`
+	RequestsTotal         int64       `json:"requests_total"`
+	ThrottledTotal        int64       `json:"throttled_total"`
 }
 
 // AccountSLOResponse is the account-wide SLO rollup returned
 // by GET /v1/account/slo?window= (issue #696 / ADR-082).
 // Field-for-field mirror of pkg/api.AccountSLOResponse.
 type AccountSLOResponse struct {
-	Window          string      `json:"window"`
-	Source          string      `json:"source"`
-	AsOf            string      `json:"as_of"`
-	RequestDuration SLODuration `json:"request_duration"`
-	ErrorRatePct    float64     `json:"error_rate_pct"`
-	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
-	InstanceHours   float64     `json:"instance_hours"`
-	GBHours         float64     `json:"gb_hours"`
-	WakeQueueP95MS  float64     `json:"wake_queue_p95_ms"`
-	RequestsTotal   int64       `json:"requests_total"`
-	ThrottledTotal  int64       `json:"throttled_total"`
+	Window                string      `json:"window"`
+	Source                string      `json:"source"`
+	AsOf                  string      `json:"as_of"`
+	RequestDuration       SLODuration `json:"request_duration"`
+	ErrorRatePct          float64     `json:"error_rate_pct"`
+	ColdBootRatePct       float64     `json:"cold_boot_rate_pct"`
+	InstanceHours         float64     `json:"instance_hours"`
+	GBHours               float64     `json:"gb_hours"`
+	WakeQueueP95MS        *float64    `json:"wake_queue_p95_ms"`
+	WakeQueueSampleStatus string      `json:"wake_queue_sample_status"`
+	RequestsTotal         int64       `json:"requests_total"`
+	ThrottledTotal        int64       `json:"throttled_total"`
 }
 
 // Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The wire

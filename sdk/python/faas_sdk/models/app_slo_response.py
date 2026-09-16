@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_slo_response_wake_queue_sample_status import (
+    AppSLOResponseWakeQueueSampleStatus,
+    check_app_slo_response_wake_queue_sample_status,
+)
 from ..models.app_slo_response_window import AppSLOResponseWindow, check_app_slo_response_window
 
 if TYPE_CHECKING:
@@ -25,9 +29,9 @@ class AppSLOResponse:
     not a 5m slice for the dashboard. The fields overlap only
     on latency percentiles, error rate, and cold-boot rate — the
     remaining fields (`throttled_total`, `instance_hours`,
-    `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
-    remains in the wire shape for compatibility and is zero until
-    the underlying histogram has an app label.
+    `gb_hours`) are net-new per the issue. `wake_queue_p95_ms` is
+    nullable and paired with `wake_queue_sample_status`; the value is
+    unavailable until the underlying histogram has a tenant label.
 
     On Prometheus failure the endpoint returns 200 with
     zeroed fields and `source: "degraded: <reason>"`. When
@@ -60,8 +64,10 @@ class AppSLOResponse:
     """Sum of instance × minute / 60 over the window (from `usage_minutes`)."""
     gb_hours: float
     """Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)."""
-    wake_queue_p95_ms: float
-    """Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app."""
+    wake_queue_p95_ms: float | None
+    """Tenant-scoped wake-queue p95, or null when the source is unavailable or has no sample."""
+    wake_queue_sample_status: AppSLOResponseWakeQueueSampleStatus
+    """Availability of wake_queue_p95_ms. unavailable means tenant-scoped telemetry is not emitted."""
     requests_total: int
     throttled_total: int
     """Per-app rate-limit count over the window."""
@@ -88,7 +94,10 @@ class AppSLOResponse:
 
         gb_hours = self.gb_hours
 
+        wake_queue_p95_ms: float | None
         wake_queue_p95_ms = self.wake_queue_p95_ms
+
+        wake_queue_sample_status: str = self.wake_queue_sample_status
 
         requests_total = self.requests_total
 
@@ -109,6 +118,7 @@ class AppSLOResponse:
                 "instance_hours": instance_hours,
                 "gb_hours": gb_hours,
                 "wake_queue_p95_ms": wake_queue_p95_ms,
+                "wake_queue_sample_status": wake_queue_sample_status,
                 "requests_total": requests_total,
                 "throttled_total": throttled_total,
             }
@@ -141,7 +151,14 @@ class AppSLOResponse:
 
         gb_hours = d.pop("gb_hours")
 
-        wake_queue_p95_ms = d.pop("wake_queue_p95_ms")
+        def _parse_wake_queue_p95_ms(data: object) -> float | None:
+            if data is None:
+                return data
+            return cast(float | None, data)
+
+        wake_queue_p95_ms = _parse_wake_queue_p95_ms(d.pop("wake_queue_p95_ms"))
+
+        wake_queue_sample_status = check_app_slo_response_wake_queue_sample_status(d.pop("wake_queue_sample_status"))
 
         requests_total = d.pop("requests_total")
 
@@ -159,6 +176,7 @@ class AppSLOResponse:
             instance_hours=instance_hours,
             gb_hours=gb_hours,
             wake_queue_p95_ms=wake_queue_p95_ms,
+            wake_queue_sample_status=wake_queue_sample_status,
             requests_total=requests_total,
             throttled_total=throttled_total,
         )

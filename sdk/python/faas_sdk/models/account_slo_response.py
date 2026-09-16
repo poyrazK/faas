@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.account_slo_response_wake_queue_sample_status import (
+    AccountSLOResponseWakeQueueSampleStatus,
+    check_account_slo_response_wake_queue_sample_status,
+)
 from ..models.account_slo_response_window import AccountSLOResponseWindow, check_account_slo_response_window
 
 if TYPE_CHECKING:
@@ -48,8 +52,10 @@ class AccountSLOResponse:
     """Sum of instance-minutes / 60 across all apps for the account."""
     gb_hours: float
     """Sum of mb_seconds / 3600 / 1024 across all apps for the account."""
-    wake_queue_p95_ms: float
-    """Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps."""
+    wake_queue_p95_ms: float | None
+    """Account-scoped wake-queue p95, or null when the source is unavailable or has no sample."""
+    wake_queue_sample_status: AccountSLOResponseWakeQueueSampleStatus
+    """Availability of the account wake-queue p95. unavailable means account-scoped telemetry is not emitted."""
     requests_total: int
     throttled_total: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -71,7 +77,10 @@ class AccountSLOResponse:
 
         gb_hours = self.gb_hours
 
+        wake_queue_p95_ms: float | None
         wake_queue_p95_ms = self.wake_queue_p95_ms
+
+        wake_queue_sample_status: str = self.wake_queue_sample_status
 
         requests_total = self.requests_total
 
@@ -90,6 +99,7 @@ class AccountSLOResponse:
                 "instance_hours": instance_hours,
                 "gb_hours": gb_hours,
                 "wake_queue_p95_ms": wake_queue_p95_ms,
+                "wake_queue_sample_status": wake_queue_sample_status,
                 "requests_total": requests_total,
                 "throttled_total": throttled_total,
             }
@@ -118,7 +128,16 @@ class AccountSLOResponse:
 
         gb_hours = d.pop("gb_hours")
 
-        wake_queue_p95_ms = d.pop("wake_queue_p95_ms")
+        def _parse_wake_queue_p95_ms(data: object) -> float | None:
+            if data is None:
+                return data
+            return cast(float | None, data)
+
+        wake_queue_p95_ms = _parse_wake_queue_p95_ms(d.pop("wake_queue_p95_ms"))
+
+        wake_queue_sample_status = check_account_slo_response_wake_queue_sample_status(
+            d.pop("wake_queue_sample_status")
+        )
 
         requests_total = d.pop("requests_total")
 
@@ -134,6 +153,7 @@ class AccountSLOResponse:
             instance_hours=instance_hours,
             gb_hours=gb_hours,
             wake_queue_p95_ms=wake_queue_p95_ms,
+            wake_queue_sample_status=wake_queue_sample_status,
             requests_total=requests_total,
             throttled_total=throttled_total,
         )

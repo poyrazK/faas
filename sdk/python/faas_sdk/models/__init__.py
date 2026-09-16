@@ -16,6 +16,7 @@ from .account_response_plan import AccountResponsePlan
 from .account_response_requested_plan import AccountResponseRequestedPlan
 from .account_response_status import AccountResponseStatus
 from .account_slo_response import AccountSLOResponse
+from .account_slo_response_wake_queue_sample_status import AccountSLOResponseWakeQueueSampleStatus
 from .account_slo_response_window import AccountSLOResponseWindow
 from .account_usage_response import AccountUsageResponse
 from .add_tenant_hostname_request import AddTenantHostnameRequest
@@ -144,6 +145,7 @@ from .app_secret_response import AppSecretResponse
 from .app_security_request import AppSecurityRequest
 from .app_security_response import AppSecurityResponse
 from .app_slo_response import AppSLOResponse
+from .app_slo_response_wake_queue_sample_status import AppSLOResponseWakeQueueSampleStatus
 from .app_slo_response_window import AppSLOResponseWindow
 from .app_static_egress_ip_response import AppStaticEgressIPResponse
 from .app_streaming_status import AppStreamingStatus
@@ -1174,6 +1176,7 @@ __all__ = (
     "AccountResponseRequestedPlan",
     "AccountResponseStatus",
     "AccountSLOResponse",
+    "AccountSLOResponseWakeQueueSampleStatus",
     "AccountSLOResponseWindow",
     "AccountUsageResponse",
     "AddTenantHostnameRequest",
@@ -1306,6 +1309,7 @@ __all__ = (
     "AppSecurityRequest",
     "AppSecurityResponse",
     "AppSLOResponse",
+    "AppSLOResponseWakeQueueSampleStatus",
     "AppSLOResponseWindow",
     "AppsMetricsResponse",
     "AppsMetricsResponseAppsType0",

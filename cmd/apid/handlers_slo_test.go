@@ -71,6 +71,9 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 	if got.ThrottledTotal != 0 {
 		t.Errorf("throttled_total = %d, want 0", got.ThrottledTotal)
 	}
+	if got.WakeQueueP95MS != nil || got.WakeQueueSampleStatus != api.SLOSampleStatusUnavailable {
+		t.Errorf("wake queue = %v status=%q, want null/unavailable", got.WakeQueueP95MS, got.WakeQueueSampleStatus)
+	}
 }
 
 func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) {

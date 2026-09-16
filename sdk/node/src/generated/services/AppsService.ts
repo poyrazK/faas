@@ -835,8 +835,8 @@ export class AppsService {
    *
    * `1h` | `24h` (default) | `7d`
    *
-   * `wake_queue_p95_ms` is the FLEET p95
-   * (`gateway_wake_queue_wait_seconds` is unlabeled). On
+   * `wake_queue_p95_ms` is null and `wake_queue_sample_status` is
+   * `unavailable` while the wake-queue histogram lacks tenant labels. On
    * Prometheus failure the endpoint returns 200 with zeroed
    * fields and `source: "degraded: <reason>"`, matching the
    * public status page contract. When Postgres is down but

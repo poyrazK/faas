@@ -4760,8 +4760,10 @@ func IsValidSLORange(rng string) bool {
 // Source is "degraded: postgres unavailable" — the latency/error/
 // cold-boot numbers stay non-zero.
 //
-// All numeric fields are zero-on-missing (no *float64 pointers, no
-// omitempty). The dashboard's "no data" branch renders on
+// Numeric fields are zero-on-missing except WakeQueueP95MS. That metric is
+// intentionally nullable because its source histogram is not tenant-scoped;
+// WakeQueueSampleStatus explains whether the value is available, absent, or
+// unavailable. The dashboard's "no data" branch renders on
 // RequestsTotal == 0 AND InstanceHours == 0 over the longest window.
 type AppSLOResponse struct {
 	AppID           string      `json:"app_id"`
@@ -4774,12 +4776,12 @@ type AppSLOResponse struct {
 	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
 	InstanceHours   float64     `json:"instance_hours"`
 	GBHours         float64     `json:"gb_hours"`
-	// WakeQueueP95MS remains zero until the wake-queue histogram carries an
-	// app label. The wire field is retained for compatibility; an unlabeled
-	// fleet value cannot be exposed as an app projection.
-	WakeQueueP95MS float64 `json:"wake_queue_p95_ms"`
-	RequestsTotal  int64   `json:"requests_total"`
-	ThrottledTotal int64   `json:"throttled_total"`
+	// The source histogram has no tenant label, so the value is null and the
+	// sample status is unavailable until tenant-safe observations exist.
+	WakeQueueP95MS        *float64 `json:"wake_queue_p95_ms"`
+	WakeQueueSampleStatus string   `json:"wake_queue_sample_status"`
+	RequestsTotal         int64    `json:"requests_total"`
+	ThrottledTotal        int64    `json:"throttled_total"`
 }
 
 // AppWakeTimelineResponse is the JSON mirror of the per-app
@@ -4953,20 +4955,25 @@ type WakeTimelineJSONRow struct {
 // InstanceHours/GBHours zeroed with "degraded: postgres unavailable"
 // in Source.
 type AccountSLOResponse struct {
-	Window          string      `json:"window"`
-	Source          string      `json:"source"`
-	AsOf            string      `json:"as_of"`
-	RequestDuration SLODuration `json:"request_duration"`
-	ErrorRatePct    float64     `json:"error_rate_pct"`
-	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
-	InstanceHours   float64     `json:"instance_hours"`
-	GBHours         float64     `json:"gb_hours"`
-	// WakeQueueP95MS is retained for wire compatibility and remains zero
-	// until wake-queue observations can be scoped to the account's apps.
-	WakeQueueP95MS float64 `json:"wake_queue_p95_ms"`
-	RequestsTotal  int64   `json:"requests_total"`
-	ThrottledTotal int64   `json:"throttled_total"`
+	Window                string      `json:"window"`
+	Source                string      `json:"source"`
+	AsOf                  string      `json:"as_of"`
+	RequestDuration       SLODuration `json:"request_duration"`
+	ErrorRatePct          float64     `json:"error_rate_pct"`
+	ColdBootRatePct       float64     `json:"cold_boot_rate_pct"`
+	InstanceHours         float64     `json:"instance_hours"`
+	GBHours               float64     `json:"gb_hours"`
+	WakeQueueP95MS        *float64    `json:"wake_queue_p95_ms"`
+	WakeQueueSampleStatus string      `json:"wake_queue_sample_status"`
+	RequestsTotal         int64       `json:"requests_total"`
+	ThrottledTotal        int64       `json:"throttled_total"`
 }
+
+const (
+	SLOSampleStatusAvailable   = "available"
+	SLOSampleStatusNoSample    = "no_sample"
+	SLOSampleStatusUnavailable = "unavailable"
+)
 
 // ProjectScanRequest is the multipart body for POST /v1/projects/scan.
 // Defined as a DTO (rather than an inline handler struct) so the

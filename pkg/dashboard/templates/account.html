@@ -213,7 +213,7 @@
             <dl>
               <dt>Requests</dt><dd>{{.Data.SLOAccount.RequestsTotal}}</dd>
               <dt>Throttled</dt><dd>{{.Data.SLOAccount.ThrottledTotal}}</dd>
-              <dt>Wake queue p95 <small style="color:#888">(fleet)</small></dt><dd>{{printf "%.1f" .Data.SLOAccount.WakeQueueP95MS}} ms</dd>
+              <dt>Wake queue p95</dt><dd>{{if eq .Data.SLOAccount.WakeQueueSampleStatus "available"}}{{printf "%.1f" .Data.SLOAccount.WakeQueueP95MS}} ms{{else}}Unavailable <small style="color:#888">(tenant-scoped telemetry is not emitted)</small>{{end}}</dd>
               <dt>Instance hours <small style="color:#888">(sum across all apps)</small></dt><dd>{{printf "%.3f" .Data.SLOAccount.InstanceHours}}</dd>
               <dt>GB hours <small style="color:#888">(sum across all apps)</small></dt><dd>{{printf "%.4f" .Data.SLOAccount.GBHours}}</dd>
             </dl>

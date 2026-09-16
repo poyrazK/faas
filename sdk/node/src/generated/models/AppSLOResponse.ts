@@ -11,9 +11,9 @@ import type { SLODuration } from './SLODuration.js';
  * not a 5m slice for the dashboard. The fields overlap only
  * on latency percentiles, error rate, and cold-boot rate — the
  * remaining fields (`throttled_total`, `instance_hours`,
- * `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
- * remains in the wire shape for compatibility and is zero until
- * the underlying histogram has an app label.
+ * `gb_hours`) are net-new per the issue. `wake_queue_p95_ms` is
+ * nullable and paired with `wake_queue_sample_status`; the value is
+ * unavailable until the underlying histogram has a tenant label.
  *
  * On Prometheus failure the endpoint returns 200 with
  * zeroed fields and `source: "degraded: <reason>"`. When
@@ -55,9 +55,13 @@ export type AppSLOResponse = {
    */
   gb_hours: number;
   /**
-   * Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app.
+   * Tenant-scoped wake-queue p95, or null when the source is unavailable or has no sample.
    */
-  wake_queue_p95_ms: number;
+  wake_queue_p95_ms: number | null;
+  /**
+   * Availability of wake_queue_p95_ms. unavailable means tenant-scoped telemetry is not emitted.
+   */
+  wake_queue_sample_status: 'available' | 'no_sample' | 'unavailable';
   requests_total: number;
   /**
    * Per-app rate-limit count over the window.

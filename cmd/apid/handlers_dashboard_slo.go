@@ -101,17 +101,17 @@ func (s *server) fetchDashboardSLO(ctx context.Context, log *slog.Logger, app st
 	rangeSeries := appmetrics.FetchRange(dctx, s.promqlClient, log, app.ID, window)
 
 	view := &views.AppSLOView{
-		Window:          window,
-		Source:          src,
-		AsOf:            time.Now().UTC().Format(time.RFC3339Nano),
-		RequestDuration: views.SLOLatencyView{P50MS: scalar.RequestDuration.P50MS, P95MS: scalar.RequestDuration.P95MS, P99MS: scalar.RequestDuration.P99MS},
-		ErrorRatePct:    scalar.ErrorRatePct,
-		ColdBootRatePct: scalar.ColdBootRatePct,
-		InstanceHours:   scalar.InstanceHours,
-		GBHours:         scalar.GBHours,
-		WakeQueueP95MS:  scalar.WakeQueueP95MS,
-		RequestsTotal:   scalar.RequestsTotal,
-		ThrottledTotal:  scalar.ThrottledTotal,
+		Window:                window,
+		Source:                src,
+		AsOf:                  time.Now().UTC().Format(time.RFC3339Nano),
+		RequestDuration:       views.SLOLatencyView{P50MS: scalar.RequestDuration.P50MS, P95MS: scalar.RequestDuration.P95MS, P99MS: scalar.RequestDuration.P99MS},
+		ErrorRatePct:          scalar.ErrorRatePct,
+		ColdBootRatePct:       scalar.ColdBootRatePct,
+		InstanceHours:         scalar.InstanceHours,
+		GBHours:               scalar.GBHours,
+		WakeQueueSampleStatus: scalar.WakeQueueSampleStatus,
+		RequestsTotal:         scalar.RequestsTotal,
+		ThrottledTotal:        scalar.ThrottledTotal,
 		LatencySparkline: views.LatencySparklineView{
 			P50: rangeSeries.Latency.P50,
 			P95: rangeSeries.Latency.P95,
@@ -128,6 +128,9 @@ func (s *server) fetchDashboardSLO(ctx context.Context, log *slog.Logger, app st
 		ColdBootSparkline:     rangeSeries.ColdBootRate,
 		ColdBootSparklineHTML: views.RenderColdBootRateSparkline(rangeSeries.ColdBootRate, 120, 30),
 		Step:                  rangeSeries.Step,
+	}
+	if scalar.WakeQueueP95MS != nil {
+		view.WakeQueueP95MS = *scalar.WakeQueueP95MS
 	}
 	if src != appmetrics.SourcePrometheus && log != nil {
 		// Hash app.ID so the per-app dashboard-render WARN line
@@ -175,17 +178,17 @@ func (s *server) fetchDashboardAccountSLO(ctx context.Context, log *slog.Logger,
 	rangeSeries := appmetrics.FetchRangeAccount(dctx, s.promqlClient, log, appIDs, window)
 
 	view := &views.AccountSLOView{
-		Window:          window,
-		Source:          src,
-		AsOf:            time.Now().UTC().Format(time.RFC3339Nano),
-		RequestDuration: views.SLOLatencyView{P50MS: scalar.RequestDuration.P50MS, P95MS: scalar.RequestDuration.P95MS, P99MS: scalar.RequestDuration.P99MS},
-		ErrorRatePct:    scalar.ErrorRatePct,
-		ColdBootRatePct: scalar.ColdBootRatePct,
-		InstanceHours:   scalar.InstanceHours,
-		GBHours:         scalar.GBHours,
-		WakeQueueP95MS:  scalar.WakeQueueP95MS,
-		RequestsTotal:   scalar.RequestsTotal,
-		ThrottledTotal:  scalar.ThrottledTotal,
+		Window:                window,
+		Source:                src,
+		AsOf:                  time.Now().UTC().Format(time.RFC3339Nano),
+		RequestDuration:       views.SLOLatencyView{P50MS: scalar.RequestDuration.P50MS, P95MS: scalar.RequestDuration.P95MS, P99MS: scalar.RequestDuration.P99MS},
+		ErrorRatePct:          scalar.ErrorRatePct,
+		ColdBootRatePct:       scalar.ColdBootRatePct,
+		InstanceHours:         scalar.InstanceHours,
+		GBHours:               scalar.GBHours,
+		WakeQueueSampleStatus: scalar.WakeQueueSampleStatus,
+		RequestsTotal:         scalar.RequestsTotal,
+		ThrottledTotal:        scalar.ThrottledTotal,
 		LatencySparkline: views.LatencySparklineView{
 			P50: rangeSeries.Latency.P50,
 			P95: rangeSeries.Latency.P95,
@@ -202,6 +205,9 @@ func (s *server) fetchDashboardAccountSLO(ctx context.Context, log *slog.Logger,
 		ColdBootSparkline:     rangeSeries.ColdBootRate,
 		ColdBootSparklineHTML: views.RenderColdBootRateSparkline(rangeSeries.ColdBootRate, 120, 30),
 		Step:                  rangeSeries.Step,
+	}
+	if scalar.WakeQueueP95MS != nil {
+		view.WakeQueueP95MS = *scalar.WakeQueueP95MS
 	}
 	if src != appmetrics.SourcePrometheus && log != nil {
 		// Hash acct.ID — see the per-app HashShort comment

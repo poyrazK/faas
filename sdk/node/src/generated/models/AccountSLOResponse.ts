@@ -35,9 +35,13 @@ export type AccountSLOResponse = {
    */
   gb_hours: number;
   /**
-   * Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps.
+   * Account-scoped wake-queue p95, or null when the source is unavailable or has no sample.
    */
-  wake_queue_p95_ms: number;
+  wake_queue_p95_ms: number | null;
+  /**
+   * Availability of the account wake-queue p95. unavailable means account-scoped telemetry is not emitted.
+   */
+  wake_queue_sample_status: 'available' | 'no_sample' | 'unavailable';
   requests_total: number;
   throttled_total: number;
 };

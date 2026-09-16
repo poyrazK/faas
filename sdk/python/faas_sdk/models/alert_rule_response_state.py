@@ -1,8 +1,9 @@
 from typing import Literal
 
-AlertRuleResponseState = Literal["firing", "ok"]
+AlertRuleResponseState = Literal["degraded", "firing", "ok"]
 
 ALERT_RULE_RESPONSE_STATE_VALUES: set[AlertRuleResponseState] = {
+    "degraded",
     "firing",
     "ok",
 }

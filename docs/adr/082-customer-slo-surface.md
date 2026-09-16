@@ -45,9 +45,10 @@ existing `/metrics` endpoints:
 
 Rationale: the field shapes overlap (latency percentiles, error rate,
 cold-boot rate) but the new endpoints add `throttled_total`,
-`instance_hours`, `gb_hours`. `wake_queue_p95_ms` is retained as a
-zero-valued compatibility field until its source histogram gains an app
-label; fleet data is never presented as an account or app value. Co-locating them on
+`instance_hours`, `gb_hours`. `wake_queue_p95_ms` is nullable and paired
+with `wake_queue_sample_status`; it is explicitly `unavailable` until its
+source histogram gains a tenant label. Fleet data is never presented as an
+account or app value. Co-locating them on
 `/metrics` would force `?range=` and `?window=` to live in the same
 query-param namespace, and the existing 7-range closed vocabulary
 (`5m|15m|1h|6h|24h|7d|15d`) is a SUPERSET of the SLO 3-window closed
@@ -69,7 +70,8 @@ Every field on the SLO surface is already emitted:
 - `gateway_request_duration_seconds_bucket{app,class="2xx"}` — latency.
 - `gateway_requests_total{app}` — request count / error rate.
 - `gateway_cold_boot_total{app}` — cold-boot rate.
-- `gateway_wake_queue_wait_seconds_bucket` (unlabeled, fleet) — wake queue.
+- `gateway_wake_queue_wait_seconds_bucket` (unlabeled, fleet) — intentionally
+  not queried for tenant projections.
 - `gateway_rate_limited_total{app, plan}` — throttled count.
 
 `instance_hours` and `gb_hours` come from `usage_minutes` (existing
@@ -147,7 +149,7 @@ sibling; no slug for the account-scope one).
 - **New CLI subcommand**: `gregale slo` and `gregale account slo`.
 - **No schema changes**, no migrations.
 - **No new Prometheus metrics** — no cardinality impact.
-- **No new metric labels** — wake-queue remains unlabeled fleet-wide.
+- **No new metric labels** — wake-queue remains unavailable on tenant SLOs.
 - The dashboard gains an SLO card (PR-B territory — the first PR here
   ships the API surface; the card can be a block-level layout that
   iterates over time).
@@ -313,9 +315,8 @@ the same "degraded:" contract the API surface ships.
    today (fleet-wide). Per-app queue p95 requires adding an `app`
    label to `gateway_wake_queue_wait_seconds`. That is a separate
    metric change and warrants its own ADR if the customer demand
-   surfaces. Today's SLO exposes the fleet-wide number with the
-   same "fleet-wide" labelling the existing `/metrics` endpoints
-   use.
+   surfaces. Today's SLO returns a null value with
+   `wake_queue_sample_status=unavailable`.
 4. **Free-plan instance_hours / gb_hours = 0** — by design. Free has
    no billable units, so the SLO field is zeroed for shape parity.
    The Free customer sees the latency/error/cold-boot SLO; the

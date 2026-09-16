@@ -132,7 +132,7 @@ func (s *server) getAccountSLO(w http.ResponseWriter, r *http.Request, acct stat
 // failure). Safe when fetcher is nil — every Prometheus
 // field is zeroed and the source carries the reason.
 func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Account, window string) (api.AppSLOResponse, string) {
-	resp := api.AppSLOResponse{}
+	resp := api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}
 	if s.promqlClient == nil {
 		// Try the Postgres rollup regardless — the dashboard
 		// benefits from showing instance_hours even when
@@ -200,8 +200,9 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 		return degradedAppSLO(err, s.log, "cold_boot", app.ID, window)
 	}
 
-	// wake_queue_p95 remains zero because its source histogram has no app
-	// label. Returning the fleet value here would leak other tenants' load.
+	// The wake-queue histogram has no app label. Keep the value null and its
+	// explicit sample status unavailable rather than publishing a false zero or
+	// leaking another tenant's queue latency.
 
 	// 8. throttled_total — vector query (gateway_rate_limited_total
 	// is labelled {app, plan}; QueryMap collapses two label
@@ -237,7 +238,7 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 // its app IDs before any Prometheus query, then every selector uses that
 // closed set. The Postgres rollup is scoped by account ID as before.
 func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window string) (api.AccountSLOResponse, string) {
-	resp := api.AccountSLOResponse{}
+	resp := api.AccountSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}
 	if s.promqlClient == nil {
 		// Best-effort: still try the Postgres rollup.
 		if s.store != nil {
@@ -320,8 +321,8 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		return degradedAccountSLO(err, s.log, "cold_boot", acct.ID, window)
 	}
 
-	// wake_queue_p95 remains zero because its source histogram has no app or
-	// account label and therefore cannot be exposed as a tenant projection.
+	// The wake-queue histogram has no app or account label. Keep the tenant
+	// projection explicitly unavailable.
 
 	// 8. throttled_total. An absent rate-limit counter is a
 	// healthy zero, not a missing SLO panel. Keep the fallback in PromQL so
@@ -387,14 +388,14 @@ func degradedAppSLO(err error, log *slog.Logger, label, appID, window string) (a
 	if log != nil {
 		log.Warn("handlers_slo: query failed", "label", label, "app_id", appID, "window", window, "err", msg)
 	}
-	return api.AppSLOResponse{}, appmetrics.SourceDegradedPrefix + msg
+	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + msg
 }
 
 // degradedAccountSLO mirrors degradedAppSLO for the
 // account-scoped surface. Same CodeQL-safe sanitiser
 // pattern.
 func degradedAccountSLO(err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
-	return degradedAccountSLOPartial(api.AccountSLOResponse{}, err, log, label, accountID, window)
+	return degradedAccountSLOPartial(api.AccountSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, err, log, label, accountID, window)
 }
 
 func degradedAccountSLOPartial(resp api.AccountSLOResponse, err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {

@@ -33,17 +33,18 @@ import (
 // per-app view uses; the difference is the PromQL had no
 // `app=…` label filter when the source data was emitted.
 type AccountSLOView struct {
-	Window          string
-	Source          string
-	AsOf            string
-	RequestDuration SLOLatencyView
-	ErrorRatePct    float64
-	ColdBootRatePct float64
-	InstanceHours   float64
-	GBHours         float64
-	WakeQueueP95MS  float64
-	RequestsTotal   int64
-	ThrottledTotal  int64
+	Window                string
+	Source                string
+	AsOf                  string
+	RequestDuration       SLOLatencyView
+	ErrorRatePct          float64
+	ColdBootRatePct       float64
+	InstanceHours         float64
+	GBHours               float64
+	WakeQueueP95MS        float64
+	WakeQueueSampleStatus string
+	RequestsTotal         int64
+	ThrottledTotal        int64
 
 	LatencySparkline      LatencySparklineView
 	LatencySparklineHTML  template.HTML

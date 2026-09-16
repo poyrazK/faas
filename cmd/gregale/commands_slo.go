@@ -131,8 +131,10 @@ func renderAppSLO(w io.Writer, s api.AppSLOResponse) {
 	_, _ = fmt.Fprintf(w, "Cold boot:   %.2f%%\n", s.ColdBootRatePct)
 	_, _ = fmt.Fprintf(w, "Requests:    %d (total in window)\n", s.RequestsTotal)
 	_, _ = fmt.Fprintf(w, "Throttled:   %d (rate-limited in window)\n", s.ThrottledTotal)
-	if s.WakeQueueP95MS > 0 {
-		_, _ = fmt.Fprintf(w, "Wake queue:  %.0fms p95 (fleet-wide)\n", s.WakeQueueP95MS)
+	if s.WakeQueueP95MS != nil && s.WakeQueueSampleStatus == api.SLOSampleStatusAvailable {
+		_, _ = fmt.Fprintf(w, "Wake queue:  %.0fms p95\n", *s.WakeQueueP95MS)
+	} else {
+		_, _ = fmt.Fprintln(w, "Wake queue:  unavailable (tenant-scoped telemetry is not emitted)")
 	}
 	_, _ = fmt.Fprintf(w, "Instance-h:  %.3f\n", s.InstanceHours)
 	_, _ = fmt.Fprintf(w, "GB-hours:    %.4f\n", s.GBHours)
@@ -158,8 +160,10 @@ func renderAccountSLO(w io.Writer, s api.AccountSLOResponse) {
 	_, _ = fmt.Fprintf(w, "Cold boot:   %.2f%%\n", s.ColdBootRatePct)
 	_, _ = fmt.Fprintf(w, "Requests:    %d (total in window)\n", s.RequestsTotal)
 	_, _ = fmt.Fprintf(w, "Throttled:   %d (rate-limited in window)\n", s.ThrottledTotal)
-	if s.WakeQueueP95MS > 0 {
-		_, _ = fmt.Fprintf(w, "Wake queue:  %.0fms p95 (fleet-wide)\n", s.WakeQueueP95MS)
+	if s.WakeQueueP95MS != nil && s.WakeQueueSampleStatus == api.SLOSampleStatusAvailable {
+		_, _ = fmt.Fprintf(w, "Wake queue:  %.0fms p95\n", *s.WakeQueueP95MS)
+	} else {
+		_, _ = fmt.Fprintln(w, "Wake queue:  unavailable (tenant-scoped telemetry is not emitted)")
 	}
 	_, _ = fmt.Fprintf(w, "Instance-h:  %.3f (sum across all apps)\n", s.InstanceHours)
 	_, _ = fmt.Fprintf(w, "GB-hours:    %.4f (sum across all apps)\n", s.GBHours)

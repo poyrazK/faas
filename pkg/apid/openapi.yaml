@@ -1927,7 +1927,8 @@ paths:
                 cold_boot_rate_pct: 4.20
                 instance_hours: 12.0
                 gb_hours: 3.0
-                wake_queue_p95_ms: 14.0
+                wake_queue_p95_ms: null
+                wake_queue_sample_status: unavailable
                 requests_total: 12000
                 throttled_total: 23
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -4313,8 +4314,8 @@ paths:
 
           `1h` | `24h` (default) | `7d`
 
-        `wake_queue_p95_ms` is the FLEET p95
-        (`gateway_wake_queue_wait_seconds` is unlabeled). On
+        `wake_queue_p95_ms` is null and `wake_queue_sample_status` is
+        `unavailable` while the wake-queue histogram lacks tenant labels. On
         Prometheus failure the endpoint returns 200 with zeroed
         fields and `source: "degraded: <reason>"`, matching the
         public status page contract. When Postgres is down but
@@ -4353,7 +4354,8 @@ paths:
                 cold_boot_rate_pct: 3.10
                 instance_hours: 0.0
                 gb_hours: 0.0
-                wake_queue_p95_ms: 12.0
+                wake_queue_p95_ms: null
+                wake_queue_sample_status: unavailable
                 requests_total: 4321
                 throttled_total: 0
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -27141,9 +27143,9 @@ components:
         not a 5m slice for the dashboard. The fields overlap only
         on latency percentiles, error rate, and cold-boot rate — the
         remaining fields (`throttled_total`, `instance_hours`,
-        `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
-        remains in the wire shape for compatibility and is zero until
-        the underlying histogram has an app label.
+        `gb_hours`) are net-new per the issue. `wake_queue_p95_ms` is
+        nullable and paired with `wake_queue_sample_status`; the value is
+        unavailable until the underlying histogram has a tenant label.
 
         On Prometheus failure the endpoint returns 200 with
         zeroed fields and `source: "degraded: <reason>"`. When
@@ -27151,7 +27153,7 @@ components:
         `instance_hours` / `gb_hours` are zeroed and `source` is
         `"degraded: postgres unavailable"`.
       type: object
-      required: [app_id, app_slug, window, source, as_of, request_duration, error_rate_pct, cold_boot_rate_pct, instance_hours, gb_hours, wake_queue_p95_ms, requests_total, throttled_total]
+      required: [app_id, app_slug, window, source, as_of, request_duration, error_rate_pct, cold_boot_rate_pct, instance_hours, gb_hours, wake_queue_p95_ms, wake_queue_sample_status, requests_total, throttled_total]
       properties:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_slug: { type: string }
@@ -27169,8 +27171,12 @@ components:
         instance_hours: { type: number, description: "Sum of instance × minute / 60 over the window (from `usage_minutes`)." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }
         wake_queue_p95_ms:
-          type: number
-          description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app."
+          type: [number, "null"]
+          description: "Tenant-scoped wake-queue p95, or null when the source is unavailable or has no sample."
+        wake_queue_sample_status:
+          type: string
+          enum: [available, no_sample, unavailable]
+          description: "Availability of wake_queue_p95_ms. unavailable means tenant-scoped telemetry is not emitted."
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64, description: "Per-app rate-limit count over the window." }
       x-since: "2026-08"
@@ -27306,7 +27312,7 @@ components:
         `source` follows the same `"degraded: <reason>"` contract
         as the per-app endpoint.
       type: object
-      required: [window, source, as_of, request_duration, error_rate_pct, cold_boot_rate_pct, instance_hours, gb_hours, wake_queue_p95_ms, requests_total, throttled_total]
+      required: [window, source, as_of, request_duration, error_rate_pct, cold_boot_rate_pct, instance_hours, gb_hours, wake_queue_p95_ms, wake_queue_sample_status, requests_total, throttled_total]
       properties:
         window:
           type: string
@@ -27318,7 +27324,8 @@ components:
         cold_boot_rate_pct: { type: number }
         instance_hours: { type: number, description: "Sum of instance-minutes / 60 across all apps for the account." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 across all apps for the account." }
-        wake_queue_p95_ms: { type: number, description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps." }
+        wake_queue_p95_ms: { type: [number, "null"], description: "Account-scoped wake-queue p95, or null when the source is unavailable or has no sample." }
+        wake_queue_sample_status: { type: string, enum: [available, no_sample, unavailable], description: "Availability of the account wake-queue p95. unavailable means account-scoped telemetry is not emitted." }
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64 }
       x-since: "2026-08"

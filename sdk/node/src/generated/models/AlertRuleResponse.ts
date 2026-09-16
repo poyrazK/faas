@@ -34,9 +34,9 @@ export type AlertRuleResponse = {
    */
   action: 'webhook' | 'rollback' | 'demote' | 'promote';
   /**
-   * Cool-down state machine.
+   * Evaluation state. degraded means the rule's own metric source is unavailable.
    */
-  state: 'ok' | 'firing';
+  state: 'ok' | 'firing' | 'degraded';
   last_fired_at?: string;
   last_evaluated_at?: string;
   created_at: string;

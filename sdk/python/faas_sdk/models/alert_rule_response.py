@@ -42,7 +42,7 @@ class AlertRuleResponse:
     """Literal "***" — the plaintext is never returned."""
     cooldown_minutes: int
     state: AlertRuleResponseState
-    """Cool-down state machine."""
+    """Evaluation state. degraded means the rule's own metric source is unavailable."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     action: AlertRuleResponseAction = "webhook"

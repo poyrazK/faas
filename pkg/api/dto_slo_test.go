@@ -6,8 +6,12 @@ package api
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
+
+func sloFloat64(value float64) *float64 { return &value }
 
 // TestSLORanges_PinsClosedSet asserts the SLO window vocabulary
 // is exactly {1h, 24h, 7d} — the strict subset of the
@@ -101,19 +105,20 @@ func TestSLODefaultWindow_Pins24h(t *testing.T) {
 // with pkg/api.
 func TestAppSLOResponse_JSONRoundtrip(t *testing.T) {
 	in := AppSLOResponse{
-		AppID:           "0123456789abcdef0123456789abcdef",
-		AppSlug:         "my-app",
-		Window:          "24h",
-		Source:          "prometheus",
-		AsOf:            "2026-08-07T15:30:00.000Z",
-		RequestDuration: SLODuration{P50MS: 14.2, P95MS: 87.0, P99MS: 312.5},
-		ErrorRatePct:    0.41,
-		ColdBootRatePct: 3.10,
-		InstanceHours:   12.0,
-		GBHours:         3.0,
-		WakeQueueP95MS:  12.0,
-		RequestsTotal:   4321,
-		ThrottledTotal:  0,
+		AppID:                 "0123456789abcdef0123456789abcdef",
+		AppSlug:               "my-app",
+		Window:                "24h",
+		Source:                "prometheus",
+		AsOf:                  "2026-08-07T15:30:00.000Z",
+		RequestDuration:       SLODuration{P50MS: 14.2, P95MS: 87.0, P99MS: 312.5},
+		ErrorRatePct:          0.41,
+		ColdBootRatePct:       3.10,
+		InstanceHours:         12.0,
+		GBHours:               3.0,
+		WakeQueueP95MS:        sloFloat64(12.0),
+		WakeQueueSampleStatus: SLOSampleStatusAvailable,
+		RequestsTotal:         4321,
+		ThrottledTotal:        0,
 	}
 	raw, err := json.Marshal(in)
 	if err != nil {
@@ -123,7 +128,7 @@ func TestAppSLOResponse_JSONRoundtrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if out != in {
+	if !reflect.DeepEqual(out, in) {
 		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", out, in)
 	}
 }
@@ -133,17 +138,18 @@ func TestAppSLOResponse_JSONRoundtrip(t *testing.T) {
 // json-tag typo on AccountSLOResponse must fail this test.
 func TestAccountSLOResponse_JSONRoundtrip(t *testing.T) {
 	in := AccountSLOResponse{
-		Window:          "7d",
-		Source:          "degraded: postgres unavailable",
-		AsOf:            "2026-08-07T15:30:00.000Z",
-		RequestDuration: SLODuration{P50MS: 22.1, P95MS: 91.0, P99MS: 410.0},
-		ErrorRatePct:    0.55,
-		ColdBootRatePct: 4.20,
-		InstanceHours:   12.0,
-		GBHours:         3.0,
-		WakeQueueP95MS:  14.0,
-		RequestsTotal:   12000,
-		ThrottledTotal:  23,
+		Window:                "7d",
+		Source:                "degraded: postgres unavailable",
+		AsOf:                  "2026-08-07T15:30:00.000Z",
+		RequestDuration:       SLODuration{P50MS: 22.1, P95MS: 91.0, P99MS: 410.0},
+		ErrorRatePct:          0.55,
+		ColdBootRatePct:       4.20,
+		InstanceHours:         12.0,
+		GBHours:               3.0,
+		WakeQueueP95MS:        sloFloat64(14.0),
+		WakeQueueSampleStatus: SLOSampleStatusAvailable,
+		RequestsTotal:         12000,
+		ThrottledTotal:        23,
 	}
 	raw, err := json.Marshal(in)
 	if err != nil {
@@ -153,8 +159,26 @@ func TestAccountSLOResponse_JSONRoundtrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if out != in {
+	if !reflect.DeepEqual(out, in) {
 		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", out, in)
+	}
+}
+
+func TestSLOUnavailableWakeQueueSerializesAsNull(t *testing.T) {
+	for name, value := range map[string]any{
+		"app":     AppSLOResponse{WakeQueueSampleStatus: SLOSampleStatusUnavailable},
+		"account": AccountSLOResponse{WakeQueueSampleStatus: SLOSampleStatusUnavailable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(raw)
+			if !strings.Contains(body, `"wake_queue_p95_ms":null`) || !strings.Contains(body, `"wake_queue_sample_status":"unavailable"`) {
+				t.Fatalf("unavailable wake queue encoded ambiguously: %s", body)
+			}
+		})
 	}
 }
 

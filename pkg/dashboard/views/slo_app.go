@@ -54,17 +54,18 @@ type SLOLatencyView struct {
 // slices render the empty-state badge the same shape the
 // Source "degraded:" branch uses.
 type AppSLOView struct {
-	Window          string         // echoed window, e.g. "24h"
-	Source          string         // "prometheus" / "degraded: <reason>"
-	AsOf            string         // RFC3339Nano UTC
-	RequestDuration SLOLatencyView // p50/p95/p99 latency
-	ErrorRatePct    float64
-	ColdBootRatePct float64
-	InstanceHours   float64
-	GBHours         float64
-	WakeQueueP95MS  float64
-	RequestsTotal   int64
-	ThrottledTotal  int64
+	Window                string         // echoed window, e.g. "24h"
+	Source                string         // "prometheus" / "degraded: <reason>"
+	AsOf                  string         // RFC3339Nano UTC
+	RequestDuration       SLOLatencyView // p50/p95/p99 latency
+	ErrorRatePct          float64
+	ColdBootRatePct       float64
+	InstanceHours         float64
+	GBHours               float64
+	WakeQueueP95MS        float64
+	WakeQueueSampleStatus string
+	RequestsTotal         int64
+	ThrottledTotal        int64
 
 	// LatencySparkline is the triple of percentile series
 	// the renderer draws as a 3-line sparkline. Each sub-slice
