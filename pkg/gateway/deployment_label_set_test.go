@@ -1,6 +1,7 @@
+// adr: 127
 // deployment_label_set_test.go — table-driven tests for the
 // per-app bounded admission set backing the deployment_id
-// label on gateway_request_duration_seconds (ADR-127 §Decision
+// label on gateway_request_duration_by_deployment_seconds (ADR-127 §Decision
 // 4 / Debugger UX v1).
 //
 // The set is per-app (cap varies by plan) rather than global,
