@@ -38,7 +38,7 @@ func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	resp := api.OpenAPIContractDiffResponse{
-		AppID: app.ID, Scope: scope, Source: check.ProposedSource, ProposedSHA256: check.Diff.ProposedSHA256,
+		AppID: app.ID, Scope: scope, Policy: api.NormalizeOpenAPIContractPolicy(app.OpenAPIContractPolicy), Source: check.ProposedSource, ProposedSHA256: check.Diff.ProposedSHA256,
 		Blocking: len(check.Diff.Breaks) > 0,
 		Breaks:   contractBreaks(check.Diff), Additions: contractAdditions(check.Diff),
 	}

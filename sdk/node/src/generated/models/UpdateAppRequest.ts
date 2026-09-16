@@ -112,6 +112,10 @@ export type UpdateAppRequest = {
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
   /**
+   * Production OpenAPI breaking-change policy. Omit for no change; set to observe, warn, or block. Existing apps default to observe.
+   */
+  openapi_contract_policy?: 'observe' | 'warn' | 'block';
+  /**
    * Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the jsonb column.
    */
   scaling_policy?: (null | ScalingPolicy);

@@ -1445,6 +1445,9 @@ const (
 	// CodeOpenAPIPolicyStale means the policy changed after the caller
 	// planned it, so the caller must fetch a fresh plan before applying.
 	CodeOpenAPIPolicyStale = "openapi_policy_stale"
+	// CodeOpenAPIContractPolicyInvalid is returned when an app promotion
+	// policy is outside the observe/warn/block closed set.
+	CodeOpenAPIContractPolicyInvalid = "openapi_contract_policy_invalid"
 
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
@@ -1767,7 +1770,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeOpenAPIContractPolicyInvalid:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2819,6 +2822,14 @@ func ErrAPIContractDiffDisabled() *Problem {
 func ErrAPIContractBreakingChange(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
 		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrInvalidOpenAPIContractPolicy rejects a policy outside observe/warn/block.
+func ErrInvalidOpenAPIContractPolicy(policy string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeOpenAPIContractPolicyInvalid,
+		"Invalid OpenAPI contract policy",
+		fmt.Sprintf("openapi_contract_policy must be one of: observe, warn, block; got %q", policy)).
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 

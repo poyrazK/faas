@@ -93,6 +93,10 @@ export type CreateAppRequest = {
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
   /**
+   * Production OpenAPI breaking-change policy. Omit for the observe default; set to observe, warn, or block.
+   */
+  openapi_contract_policy?: 'observe' | 'warn' | 'block';
+  /**
    * Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan default. Free/Hobby PATCH-true is rejected.
    */
   warm_snapshot_enabled?: boolean;

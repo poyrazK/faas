@@ -131,6 +131,7 @@ from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
+from .app_response_openapi_contract_policy import AppResponseOpenapiContractPolicy
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
 from .app_response_workload_class import AppResponseWorkloadClass
@@ -250,6 +251,7 @@ from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
+from .create_app_request_openapi_contract_policy import CreateAppRequestOpenapiContractPolicy
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
@@ -739,6 +741,7 @@ from .open_api_contract_break import OpenAPIContractBreak
 from .open_api_contract_break_kind import OpenAPIContractBreakKind
 from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
+from .open_api_contract_diff_response_policy import OpenAPIContractDiffResponsePolicy
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
@@ -1047,6 +1050,9 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_openapi_contract_policy_type_1 import UpdateAppRequestOpenapiContractPolicyType1
+from .update_app_request_openapi_contract_policy_type_2_type_1 import UpdateAppRequestOpenapiContractPolicyType2Type1
+from .update_app_request_openapi_contract_policy_type_3_type_1 import UpdateAppRequestOpenapiContractPolicyType3Type1
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -1258,6 +1264,7 @@ __all__ = (
     "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
     "AppResponseEvictionPriority",
+    "AppResponseOpenapiContractPolicy",
     "AppResponseRuntime",
     "AppResponseType",
     "AppResponseWorkloadClass",
@@ -1373,6 +1380,7 @@ __all__ = (
     "CreateAppRequestCrawlerPolicy",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
+    "CreateAppRequestOpenapiContractPolicy",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
@@ -1854,6 +1862,7 @@ __all__ = (
     "OpenAPIContractBreakKind",
     "OpenAPIContractBreakMethod",
     "OpenAPIContractDiffResponse",
+    "OpenAPIContractDiffResponsePolicy",
     "OpenAPIContractDiffResponseSource",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
@@ -2150,6 +2159,9 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestOpenapiContractPolicyType1",
+    "UpdateAppRequestOpenapiContractPolicyType2Type1",
+    "UpdateAppRequestOpenapiContractPolicyType3Type1",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",

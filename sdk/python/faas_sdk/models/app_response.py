@@ -12,6 +12,10 @@ from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app
 from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
+from ..models.app_response_openapi_contract_policy import (
+    AppResponseOpenapiContractPolicy,
+    check_app_response_openapi_contract_policy,
+)
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
@@ -163,6 +167,9 @@ class AppResponse:
     app_protocol: AppResponseAppProtocol | Unset = UNSET
     """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal).
     Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'."""
+    openapi_contract_policy: AppResponseOpenapiContractPolicy | Unset = UNSET
+    """Production OpenAPI breaking-change policy. observe (default) records no gate, warn records telemetry without
+    blocking, block rejects breaking promotions."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -342,6 +349,10 @@ class AppResponse:
         if not isinstance(self.app_protocol, Unset):
             app_protocol = self.app_protocol
 
+        openapi_contract_policy: str | Unset = UNSET
+        if not isinstance(self.openapi_contract_policy, Unset):
+            openapi_contract_policy = self.openapi_contract_policy
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -425,6 +436,8 @@ class AppResponse:
             field_dict["auth_default_flipped_at"] = auth_default_flipped_at
         if app_protocol is not UNSET:
             field_dict["app_protocol"] = app_protocol
+        if openapi_contract_policy is not UNSET:
+            field_dict["openapi_contract_policy"] = openapi_contract_policy
 
         return field_dict
 
@@ -709,6 +722,13 @@ class AppResponse:
         else:
             app_protocol = check_app_response_app_protocol(_app_protocol)
 
+        _openapi_contract_policy = d.pop("openapi_contract_policy", UNSET)
+        openapi_contract_policy: AppResponseOpenapiContractPolicy | Unset
+        if isinstance(_openapi_contract_policy, Unset):
+            openapi_contract_policy = UNSET
+        else:
+            openapi_contract_policy = check_app_response_openapi_contract_policy(_openapi_contract_policy)
+
         app_response = cls(
             id=id,
             slug=slug,
@@ -757,6 +777,7 @@ class AppResponse:
             public_auth=public_auth,
             auth_default_flipped_at=auth_default_flipped_at,
             app_protocol=app_protocol,
+            openapi_contract_policy=openapi_contract_policy,
         )
 
         app_response.additional_properties = d

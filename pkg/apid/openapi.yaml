@@ -18157,6 +18157,11 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
+        openapi_contract_policy:
+          description: "Production OpenAPI breaking-change policy. observe (default) records no gate, warn records telemetry without blocking, block rejects breaking promotions."
+          type: string
+          enum: [observe, warn, block]
+          example: observe
 
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."
@@ -18512,6 +18517,11 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
+        openapi_contract_policy:
+          description: "Production OpenAPI breaking-change policy. Omit for the observe default; set to observe, warn, or block."
+          type: string
+          enum: [observe, warn, block]
+          example: observe
         # Issue #470 / ADR-055: optional at create-time. Omitted
         # → apid applies the plan default (Pro/Scale = true;
         # Free/Hobby = false — the only legal state on those
@@ -18748,6 +18758,11 @@ components:
           type: [string, "null"]
           enum: [http1, http2, grpc]
           example: http1
+        openapi_contract_policy:
+          description: "Production OpenAPI breaking-change policy. Omit for no change; set to observe, warn, or block. Existing apps default to observe."
+          type: [string, "null"]
+          enum: [observe, warn, block, null]
+          example: warn
         # Issue #462 / ADR-058 (PR-A): per-app scaling policy.
         # Omitted → no change. Non-null → atomic full-overwrite
         # of the jsonb column `apps.scaling_policy` (the
@@ -25664,8 +25679,8 @@ components:
         Read-only OpenAPI contract comparison for the authoritative imported
         app document (or the projected edge-rule fallback) and the latest
         captured deployment snapshot.
-        `blocking` is true when a production promotion would be rejected
-        while the contract-diff feature flag is enabled.
+        `blocking` is true when the proposed snapshot contains breaks;
+        whether those breaks reject a promotion is controlled by `policy`.
       type: object
       required: [app_id, scope, source, proposed_sha256, blocking, breaks, additions]
       properties:
@@ -25674,6 +25689,10 @@ components:
           format: uuid
         scope:
           type: string
+        policy:
+          type: string
+          enum: [observe, warn, block]
+          description: "Per-app production contract policy. observe is the safe default; warn records telemetry; block rejects breaking promotions."
         source:
           type: string
           enum: [manual_import, edge_rules]

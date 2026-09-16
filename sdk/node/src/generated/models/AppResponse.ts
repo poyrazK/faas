@@ -142,5 +142,9 @@ export type AppResponse = {
    * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'.
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
+  /**
+   * Production OpenAPI breaking-change policy. observe (default) records no gate, warn records telemetry without blocking, block rejects breaking promotions.
+   */
+  openapi_contract_policy?: 'observe' | 'warn' | 'block';
 };
 

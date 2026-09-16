@@ -421,7 +421,10 @@ adds or closes.
     a `preview` capability state.
 11. Finish the OpenAPI declared-versus-observed diff and route-policy preview as
     one workflow, then add an explicit hash-confirmed policy apply with a
-    repeatable no-op path and rollback-on-error behavior.
+    repeatable no-op path and rollback-on-error behavior. Roll out promotion
+    enforcement per app with `observe` (default), `warn`, and explicit
+    `block` modes; existing apps remain behavior-compatible until an owner
+    opts into a stricter mode.
 12. Create the API-hosting GA scorecard and a release gate that reads its
     evidence rather than a manual checklist.
 
@@ -439,9 +442,10 @@ adds or closes.
 - Managed resources require durable intent, idempotent or discoverable provider
   operations, lease fencing, encrypted credentials, deletion, recovery,
   accounting, and qualification before customer enablement.
-- OpenAPI-derived policy is advisory/diff-only until the customer explicitly
-  applies it. A schema must never silently change production authentication or
-  routing.
+- OpenAPI-derived routing/auth policy is advisory/diff-only until the customer
+  explicitly applies it. Promotion compatibility is separately controlled by
+  the app's `openapi_contract_policy` (`observe`/`warn`/`block`) and never
+  silently changes production authentication or routing.
 - Request bodies, headers, database statements, environment values, and signed
   URLs are sensitive. Do not collect them for product analytics. Debug capture
   is explicit, redacted, bounded, audited, and expires.

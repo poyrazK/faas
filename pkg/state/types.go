@@ -1059,6 +1059,10 @@ type App struct {
 	// DeclaredRoutes is an optional explicit route list. When populated, the
 	// gateway uses it instead of the imported OpenAPI document.
 	DeclaredRoutes []DeclaredRoute
+	// OpenAPIContractPolicy controls production OpenAPI breaking-change
+	// handling. Empty legacy values are projected as "observe" by the API and
+	// promotion gate; new rows persist the explicit observe default.
+	OpenAPIContractPolicy string
 	// RequireSigned gates OCI image deploys (issue #472 / ADR-054) on
 	// a valid cosign signature from a trusted publisher. When true,
 	// imaged's buildImageLayer calls pkg/cosign.VerifyImageSignature
@@ -1383,6 +1387,13 @@ func EvictionPriorityOrBestEffort(p string) string {
 		return string(api.EvictionPriorityBestEffort)
 	}
 	return p
+}
+
+// OpenAPIContractPolicyOrObserve snaps the empty Go zero to the safe rollout
+// default. It keeps legacy callers and hand-built App fixtures compatible with
+// the migration's NOT NULL DEFAULT 'observe' column.
+func OpenAPIContractPolicyOrObserve(p string) string {
+	return api.NormalizeOpenAPIContractPolicy(p)
 }
 
 // PreviewPrStateOpen / Closed / Stale / TornDown are the four
@@ -4724,6 +4735,12 @@ type UpdateAppParams struct {
 	SetOnlyAllowDeclaredRoutes bool
 	DeclaredRoutes             *[]DeclaredRoute
 	SetDeclaredRoutes          bool
+	// OpenAPIContractPolicy is the per-app production OpenAPI promotion
+	// policy. SetOpenAPIContractPolicy distinguishes an omitted PATCH from an
+	// explicit observe/warn/block choice. The apid layer validates the closed
+	// set before the store is called.
+	OpenAPIContractPolicy    *string
+	SetOpenAPIContractPolicy bool
 	// AppProtocol (ADR-124) is the per-app wire-protocol
 	// selector stored on the apps row as text NOT NULL DEFAULT
 	// 'http1'. Closed set {http1, http2, grpc} enforced by

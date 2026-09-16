@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.open_api_contract_diff_response_policy import (
+    OpenAPIContractDiffResponsePolicy,
+    check_open_api_contract_diff_response_policy,
+)
 from ..models.open_api_contract_diff_response_source import (
     OpenAPIContractDiffResponseSource,
     check_open_api_contract_diff_response_source,
@@ -27,8 +31,8 @@ class OpenAPIContractDiffResponse:
     """Read-only OpenAPI contract comparison for the authoritative imported
     app document (or the projected edge-rule fallback) and the latest
     captured deployment snapshot.
-    `blocking` is true when a production promotion would be rejected
-    while the contract-diff feature flag is enabled.
+    `blocking` is true when the proposed snapshot contains breaks;
+    whether those breaks reject a promotion is controlled by `policy`.
 
     """
 
@@ -40,6 +44,9 @@ class OpenAPIContractDiffResponse:
     blocking: bool
     breaks: list[OpenAPIContractBreak]
     additions: list[OpenAPIContractAddition]
+    policy: OpenAPIContractDiffResponsePolicy | Unset = UNSET
+    """Per-app production contract policy. observe is the safe default; warn records telemetry; block rejects
+    breaking promotions."""
     baseline_deployment_id: UUID | Unset = UNSET
     baseline_sha256: str | Unset = UNSET
     baseline_captured_at: datetime.datetime | Unset = UNSET
@@ -66,6 +73,10 @@ class OpenAPIContractDiffResponse:
             additions_item = additions_item_data.to_dict()
             additions.append(additions_item)
 
+        policy: str | Unset = UNSET
+        if not isinstance(self.policy, Unset):
+            policy = self.policy
+
         baseline_deployment_id: str | Unset = UNSET
         if not isinstance(self.baseline_deployment_id, Unset):
             baseline_deployment_id = str(self.baseline_deployment_id)
@@ -89,6 +100,8 @@ class OpenAPIContractDiffResponse:
                 "additions": additions,
             }
         )
+        if policy is not UNSET:
+            field_dict["policy"] = policy
         if baseline_deployment_id is not UNSET:
             field_dict["baseline_deployment_id"] = baseline_deployment_id
         if baseline_sha256 is not UNSET:
@@ -128,6 +141,13 @@ class OpenAPIContractDiffResponse:
 
             additions.append(additions_item)
 
+        _policy = d.pop("policy", UNSET)
+        policy: OpenAPIContractDiffResponsePolicy | Unset
+        if isinstance(_policy, Unset):
+            policy = UNSET
+        else:
+            policy = check_open_api_contract_diff_response_policy(_policy)
+
         _baseline_deployment_id = d.pop("baseline_deployment_id", UNSET)
         baseline_deployment_id: UUID | Unset
         if isinstance(_baseline_deployment_id, Unset):
@@ -152,6 +172,7 @@ class OpenAPIContractDiffResponse:
             blocking=blocking,
             breaks=breaks,
             additions=additions,
+            policy=policy,
             baseline_deployment_id=baseline_deployment_id,
             baseline_sha256=baseline_sha256,
             baseline_captured_at=baseline_captured_at,
