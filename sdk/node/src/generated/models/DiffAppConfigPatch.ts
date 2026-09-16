@@ -2,12 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ScalingPolicy } from './ScalingPolicy.js';
 /**
  * Per-app scalar patch. Pointer-aware: nil = "don't touch";
  * explicit zero / explicit value = "set to this". Matches
  * [UpdateAppRequest] semantics but exposes only the fields
- * the engine computes against (no ScalingPolicy /
- * PublicAuth / OverflowNode).
+ * the engine computes against (no PublicAuth /
+ * OverflowNode).
  *
  */
 export type DiffAppConfigPatch = {
@@ -30,5 +31,9 @@ export type DiffAppConfigPatch = {
    * Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol. Pointer-aware: omitted → no change; non-null → set to this value.
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
+  /**
+   * Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy.
+   */
+  scaling_policy?: (null | ScalingPolicy);
 };
 
