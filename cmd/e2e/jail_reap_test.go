@@ -35,8 +35,15 @@ func TestRunnerReapsStaleJailsBeforePreflightLeakcheck(t *testing.T) {
 		t.Error("the pre-flight leakcheck is not preceded by reap_test_microvms; a previous run's " +
 			"leftover chroots would turn this run into \"no test executed\"")
 	}
-	if !regexp.MustCompile(`reap_stale_jails "\$\{FAAS_E2E_JAIL_ROOT:-/srv/fc/jail\}"`).MatchString(runner) {
+	// reap_test_microvms lives in the lib beside reap_stale_jails (both must
+	// be errexit-safe: the pre-flight runs under set -e).
+	lib := readCIScript(t, "native-e2e-reap.sh")
+	if !regexp.MustCompile(`reap_stale_jails "\$\{FAAS_E2E_JAIL_ROOT:-/srv/fc/jail\}"`).MatchString(lib) {
 		t.Error("reap_test_microvms does not call reap_stale_jails on the jail root")
+	}
+	if regexp.MustCompile(`(?m)^reap_test_microvms\(\) \{`).MatchString(runner) {
+		t.Error("reap_test_microvms is defined in the runner again; it belongs in native-e2e-reap.sh " +
+			"where the errexit contract can exercise it")
 	}
 }
 

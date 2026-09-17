@@ -127,4 +127,23 @@ rm -rf "${jail_tmp}"
 grep -qE '^reap_test_microvms$' "${repo_root}/scripts/ci/run-native-e2e.sh" ||
   fail "run-native-e2e.sh does not reap before the pre-flight leakcheck; a previous run's leftovers block this one"
 
+# 11. reap_test_microvms must survive errexit with nothing to reap. Stub every
+#     host command it calls so the test touches no real process, netns, mount
+#     or cgroup, and make each stub return the "nothing matched" status.
+#     Run in a SEPARATE `bash -e` process: inside `( ... ) || fail` or an `if`
+#     condition, bash ignores errexit, and the check could never trip.
+set +e
+bash -e -c '
+  source "$1"
+  pgrep()  { return 1; }; pkill() { return 1; }; kill() { return 1; }
+  ip()     { return 1; }; umount() { return 1; }; rmdir() { return 1; }
+  awk()    { return 0; }; sleep() { :; }
+  FAAS_E2E_JAIL_ROOT="$(mktemp -d)"
+  reap_test_microvms
+' _ "${repo_root}/scripts/ci/native-e2e-reap.sh" >/dev/null 2>&1
+reap_rc=$?
+set -e
+[[ "${reap_rc}" -eq 0 ]] ||
+  fail "reap_test_microvms exits ${reap_rc} under set -e when there is nothing to reap; the pre-flight would abort silently"
+
 echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lane)"
