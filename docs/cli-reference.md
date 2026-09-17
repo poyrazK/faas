@@ -454,7 +454,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--preview-ttl-hours <HOURS>` | preview lease in hours (1-720) |  |
 | `--root-dir <DIR>` | repository-relative source root for the root workload |  |
 | `--ignore <PATHS>` | comma-separated ignored change paths |  |
-| `--rollout <MODE>` | production rollout mode: `standard` or health-gated `safe` (Pro/Scale) |  |
+| `--rollout <MODE>` | production rollout mode: standard\|safe (safe requires Pro/Scale) | one of `standard` · `safe` |
 | `--dry-run` | show the workflow without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
