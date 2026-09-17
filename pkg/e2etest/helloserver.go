@@ -30,7 +30,7 @@ func helloServerBinary() ([]byte, error) {
 			helloServerErr = err
 			return
 		}
-		defer os.RemoveAll(dir)
+		defer func() { _ = os.RemoveAll(dir) }()
 		out := filepath.Join(dir, "hello-server")
 		if err := buildHelloServer("linux", runtime.GOARCH, out); err != nil {
 			helloServerErr = err
@@ -53,7 +53,7 @@ func buildHelloServer(goos, goarch, out string) error {
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 	if b, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("helloserver: go build in %s: %v\n%s", src, err, b)
+		return fmt.Errorf("helloserver: go build in %s: %w\n%s", src, err, b)
 	}
 	return nil
 }
