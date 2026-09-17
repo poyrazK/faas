@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"time"
@@ -173,7 +174,7 @@ func scanAppPrivateNetworkAttachment(row privateNetworkAttachmentScanner) (AppPr
 	var cidrText string
 	if err := row.Scan(&out.ID, &out.AccountID, &out.AppID, &out.NetworkID, &out.Region,
 		&cidrText, &out.Status, &out.StatusDetail, &out.CreatedAt, &out.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return AppPrivateNetworkAttachment{}, ErrNotFound
 		}
 		return AppPrivateNetworkAttachment{}, mapErr(err)
