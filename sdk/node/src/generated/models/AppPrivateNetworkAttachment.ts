@@ -13,6 +13,10 @@ export type AppPrivateNetworkAttachment = {
   network_id: string;
   region: string;
   cidrs: Array<string>;
+  /**
+   * Stable Gregale member address for this app when the fabric is enabled.
+   */
+  address?: string;
   status: 'pending' | 'ready' | 'error';
   status_detail?: string;
   created_at?: string;
