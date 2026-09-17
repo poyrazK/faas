@@ -25,6 +25,15 @@ type edgeRuleGenerationStore interface {
 	NextEdgeRuleGeneration(context.Context) (int64, error)
 }
 
+// edgeRuleMutationLocker is optional so MemStore-backed unit tests and
+// legacy single-box adapters retain the process-local fallback. Production
+// PgStore implements it with a session-scoped PostgreSQL advisory lock,
+// closing the cross-apid race where two mutations for one app could publish
+// generations out of order.
+type edgeRuleMutationLocker interface {
+	AcquireEdgeRuleMutationLock(context.Context, string) (func(), error)
+}
+
 type edgeRuleConvergence struct {
 	notif      Notifier
 	events     <-chan db.Notification
@@ -43,20 +52,32 @@ var edgeRuleMutationMu sync.Mutex
 
 func (s *server) prepareEdgeRuleMutation(ctx context.Context, appID, ruleID, operation string, hosts ...string) (*edgeRuleConvergence, error) {
 	edgeRuleMutationMu.Lock()
+	unlock := func() { edgeRuleMutationMu.Unlock() }
+	if locker, ok := s.store.(edgeRuleMutationLocker); ok {
+		release, err := locker.AcquireEdgeRuleMutationLock(ctx, appID)
+		if err != nil {
+			edgeRuleMutationMu.Unlock()
+			return nil, err
+		}
+		unlock = func() {
+			release()
+			edgeRuleMutationMu.Unlock()
+		}
+	}
 	allocator, ok := s.store.(edgeRuleGenerationStore)
 	if !ok {
-		edgeRuleMutationMu.Unlock()
+		unlock()
 		return nil, errors.New("edge-rule generation store is unavailable")
 	}
 	generation, err := allocator.NextEdgeRuleGeneration(ctx)
 	if err != nil {
-		edgeRuleMutationMu.Unlock()
+		unlock()
 		return nil, err
 	}
 	conv := &edgeRuleConvergence{
 		notif: s.notif, generation: generation, appID: appID, ruleID: ruleID,
 		operation: operation, hosts: canonicalEdgeRuleHosts(hosts), expected: map[string]struct{}{},
-		cancel: func() {}, unlock: edgeRuleMutationMu.Unlock,
+		cancel: func() {}, unlock: unlock,
 	}
 	nodes, err := s.store.ListComputeNodes(ctx, false)
 	if err != nil {

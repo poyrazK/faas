@@ -19,6 +19,28 @@ type edgeRuleBarrierNotifier struct {
 	published chan string
 }
 
+type edgeRuleLockTestStore struct {
+	state.Store
+	mu       sync.Mutex
+	acquired []string
+	released []string
+}
+
+func (s *edgeRuleLockTestStore) NextEdgeRuleGeneration(context.Context) (int64, error) {
+	return 1, nil
+}
+
+func (s *edgeRuleLockTestStore) AcquireEdgeRuleMutationLock(_ context.Context, appID string) (func(), error) {
+	s.mu.Lock()
+	s.acquired = append(s.acquired, appID)
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.released = append(s.released, appID)
+		s.mu.Unlock()
+	}, nil
+}
+
 func (n *edgeRuleBarrierNotifier) Notify(_ context.Context, channel, raw string) error {
 	if channel != db.NotifyEdgeRuleChanged {
 		return nil
@@ -115,4 +137,31 @@ func TestEdgeRuleFleetRequirementDistinguishesSplitAndSingleBox(t *testing.T) {
 		t.Fatalf("single-box mutation without compute registry: %v", err)
 	}
 	conv.abort(t.Context())
+}
+
+func TestPrepareEdgeRuleMutationHoldsDistributedLockUntilClose(t *testing.T) {
+	store := &edgeRuleLockTestStore{Store: state.NewMemStore()}
+	notifier := &edgeRuleBarrierNotifier{events: make(chan db.Notification, 2)}
+	srv := newServer(store, slog.Default(), "example.com", notifier)
+	srv.WithEdgeRuleFleetRequired(false)
+
+	conv, err := srv.prepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
+	if err != nil {
+		t.Fatalf("prepare edge-rule mutation: %v", err)
+	}
+	store.mu.Lock()
+	if got := store.acquired; len(got) != 1 || got[0] != "app-1" {
+		t.Fatalf("acquired locks = %v, want [app-1]", got)
+	}
+	if len(store.released) != 0 {
+		t.Fatalf("released locks before convergence close = %v", store.released)
+	}
+	store.mu.Unlock()
+
+	conv.abort(t.Context())
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := store.released; len(got) != 1 || got[0] != "app-1" {
+		t.Fatalf("released locks = %v, want [app-1]", got)
+	}
 }

@@ -58,6 +58,40 @@ func (s *PgStore) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
+// AcquireEdgeRuleMutationLock serializes edge-rule mutations for one app
+// across every apid process in the fleet. The caller must retain the returned
+// release function until the mutation's prepare/write/apply barrier is done.
+//
+// A session-scoped advisory lock is intentional here: the edge-rule mutation
+// spans the notification barrier and the row write, so a transaction-scoped
+// lock would be released before the gateway acknowledgements arrive. The
+// pool connection stays checked out for the lifetime of the lock and is
+// always returned by release; this prevents a later mutation from publishing
+// a newer generation before an older mutation has committed its policy.
+func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string) (func(), error) {
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return nil, errors.New("state: edge-rule mutation lock requires app id")
+	}
+	if s == nil || s.pool == nil {
+		return nil, errors.New("state: pgstore has nil pool")
+	}
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("state: acquire edge-rule mutation lock connection: %w", err)
+	}
+	if _, err := conn.Exec(ctx, `select pg_advisory_lock(hashtextextended($1, 0))`, appID); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("state: acquire edge-rule mutation lock for %q: %w", appID, err)
+	}
+	return func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
+		cancel()
+		conn.Release()
+	}, nil
+}
+
 // Compile-time check.
 var _ Store = (*PgStore)(nil)
 
