@@ -30,11 +30,11 @@ func (s *edgeRuleLockTestStore) NextEdgeRuleGeneration(context.Context) (int64, 
 	return 1, nil
 }
 
-func (s *edgeRuleLockTestStore) AcquireEdgeRuleMutationLock(_ context.Context, appID string) (func(), error) {
+func (s *edgeRuleLockTestStore) AcquireEdgeRuleMutationLock(_ context.Context, appID string) (func(context.Context), error) {
 	s.mu.Lock()
 	s.acquired = append(s.acquired, appID)
 	s.mu.Unlock()
-	return func() {
+	return func(context.Context) {
 		s.mu.Lock()
 		s.released = append(s.released, appID)
 		s.mu.Unlock()
@@ -67,7 +67,7 @@ func TestEdgeRuleApplyWaitsForEveryServingGateway(t *testing.T) {
 		events: make(chan db.Notification, 4), published: make(chan string, 1),
 	}
 	conv := &edgeRuleConvergence{
-		notif: notifier, events: notifier.events, cancel: func() {}, unlock: func() {},
+		notif: notifier, events: notifier.events, cancel: func() {}, unlock: func(context.Context) {},
 		generation: 42, appID: "app-1", operation: "updated",
 		hosts:    []string{"api.example.com"},
 		expected: map[string]struct{}{"node-a": {}, "node-b": {}},
@@ -103,7 +103,7 @@ func TestEdgeRuleApplySurvivesCanceledRequestContext(t *testing.T) {
 	unlocked := false
 	conv := &edgeRuleConvergence{
 		notif: notifier, events: notifier.events, cancel: func() {},
-		unlock: func() { unlocked = true }, generation: 41,
+		unlock: func(context.Context) { unlocked = true }, generation: 41,
 		appID: "app-1", operation: "updated", hosts: []string{"api.example.com"},
 		expected: map[string]struct{}{"node-a": {}},
 	}

@@ -68,7 +68,7 @@ func (s *PgStore) Ping(ctx context.Context) error {
 // pool connection stays checked out for the lifetime of the lock and is
 // always returned by release; this prevents a later mutation from publishing
 // a newer generation before an older mutation has committed its policy.
-func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string) (func(), error) {
+func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string) (func(context.Context), error) {
 	appID = strings.TrimSpace(appID)
 	if appID == "" {
 		return nil, errors.New("state: edge-rule mutation lock requires app id")
@@ -84,8 +84,8 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 		conn.Release()
 		return nil, fmt.Errorf("state: acquire edge-rule mutation lock for %q: %w", appID, err)
 	}
-	return func() {
-		unlockCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	return func(ctx context.Context) {
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
 		cancel()
 		conn.Release()
