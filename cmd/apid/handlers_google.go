@@ -15,12 +15,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/oauthpkce"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
 	googleAuthStateCookie = "faas_google_state"
 	googleAuthNonceCookie = "faas_google_nonce"
+	googleAuthPKCECookie  = "faas_google_pkce"
 	googleAuthPath        = "/v1/auth/google"
 	googleCallbackPath    = "/v1/auth/google/callback"
 	// schemeHTTP + schemeHTTPS are the URL schemes used in the OAuth
@@ -68,6 +70,11 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 		return
 	}
 	nonce := hex.EncodeToString(nonceBytes)
+	codeVerifier, codeChallenge, err := oauthpkce.Generate()
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to generate OAuth PKCE verifier"))
+		return
+	}
 
 	// Set CSRF Cookie
 	http.SetCookie(w, &http.Cookie{
@@ -88,6 +95,15 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   300, // 5 minutes
 	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleAuthPKCECookie,
+		Value:    codeVerifier,
+		Path:     googleCallbackPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes
+	})
 
 	redirectURI := s.oauthConfig.Google.RedirectURI
 	if redirectURI == "" {
@@ -100,11 +116,13 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 	}
 
 	googleAuthURL := fmt.Sprintf(
-		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&state=%s&nonce=%s",
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&state=%s&nonce=%s&code_challenge=%s&code_challenge_method=%s",
 		url.QueryEscape(clientID),
 		url.QueryEscape(redirectURI),
 		url.QueryEscape(stateToken),
 		url.QueryEscape(nonce),
+		url.QueryEscape(codeChallenge),
+		oauthpkce.MethodS256,
 	)
 
 	http.Redirect(w, r, googleAuthURL, http.StatusFound)
@@ -164,6 +182,11 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "missing_code", "Authorization Error", "missing code parameter from Google"))
 		return
 	}
+	pkceCookie, err := r.Cookie(googleAuthPKCECookie)
+	if err != nil || !oauthpkce.ValidVerifier(pkceCookie.Value) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_pkce", "Invalid OAuth Request", "missing or invalid OAuth PKCE verifier cookie"))
+		return
+	}
 
 	clientID := s.oauthConfig.Google.ClientID
 	clientSecret := s.oauthConfig.Google.ClientSecret
@@ -188,6 +211,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"client_secret": {clientSecret},
 			"redirect_uri":  {redirectURI},
 			"grant_type":    {"authorization_code"},
+			"code_verifier": {pkceCookie.Value},
 		}.Encode()))
 	if err == nil {
 		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -51,9 +52,19 @@ func TestGoogleAuthRedirect(t *testing.T) {
 	if !strings.Contains(loc, "&nonce=") {
 		t.Errorf("expected OAuth redirect to carry a nonce, got %s", loc)
 	}
+	query, err := url.ParseQuery(loc[strings.Index(loc, "?")+1:])
+	if err != nil {
+		t.Fatalf("parse OAuth redirect query: %v", err)
+	}
+	if query.Get("code_challenge") == "" {
+		t.Errorf("expected OAuth redirect to carry a PKCE code_challenge")
+	}
+	if got := query.Get("code_challenge_method"); got != "S256" {
+		t.Errorf("code_challenge_method = %q, want S256", got)
+	}
 
 	cookies := resp.Cookies()
-	var foundStateCookie, foundNonceCookie bool
+	var foundStateCookie, foundNonceCookie, foundPKCECookie bool
 	for _, c := range cookies {
 		if c.Name == googleAuthStateCookie {
 			foundStateCookie = true
@@ -70,6 +81,15 @@ func TestGoogleAuthRedirect(t *testing.T) {
 				t.Errorf("nonce cookie path = %q, want %q", c.Path, googleCallbackPath)
 			}
 		}
+		if c.Name == googleAuthPKCECookie {
+			foundPKCECookie = true
+			if c.Value == "" {
+				t.Errorf("expected non-empty PKCE verifier cookie value")
+			}
+			if c.Path != googleCallbackPath {
+				t.Errorf("PKCE cookie path = %q, want %q", c.Path, googleCallbackPath)
+			}
+		}
 	}
 
 	if !foundStateCookie {
@@ -77,6 +97,9 @@ func TestGoogleAuthRedirect(t *testing.T) {
 	}
 	if !foundNonceCookie {
 		t.Errorf("expected faas_google_nonce cookie to be set")
+	}
+	if !foundPKCECookie {
+		t.Errorf("expected faas_google_pkce verifier cookie to be set")
 	}
 }
 
@@ -150,6 +173,32 @@ func TestGoogleAuthCallbackRequiresNonceCookie(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "invalid_nonce") {
 		t.Fatalf("expected invalid_nonce problem, got %s", w.Body.String())
+	}
+}
+
+func TestGoogleAuthCallbackRequiresPKCECookie(t *testing.T) {
+	store := state.NewMemStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(auth.SignInConfig{
+		Google: auth.SignInProvider{
+			Status:       auth.SignInProviderConfigured,
+			ClientID:     "test_google_client_id",
+			ClientSecret: "test_google_client_secret",
+		},
+	})
+
+	req := httptest.NewRequest("GET", "/v1/auth/google/callback?state=state&code=test_code", nil)
+	req.AddCookie(&http.Cookie{Name: googleAuthStateCookie, Value: "state"})
+	req.AddCookie(&http.Cookie{Name: googleAuthNonceCookie, Value: "nonce"})
+	w := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for missing PKCE cookie, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid_pkce") {
+		t.Fatalf("expected invalid_pkce problem, got %s", w.Body.String())
 	}
 }
 

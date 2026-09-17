@@ -6,7 +6,8 @@
 // unrelated to dashboard auth and lives behind sessionAuth.
 //
 // Flow:
-//  1. GET /v1/auth/github → sets a 16-byte CSRF state cookie scoped
+//  1. GET /v1/auth/github → sets a 16-byte CSRF state cookie and an
+//     RFC 7636 S256 verifier cookie scoped
 //     to /v1/auth/github/callback and redirects to github.com/login/
 //     oauth/authorize with the state + scope=user:email.
 //  2. GET /v1/auth/github/callback → verifies the state cookie ==
@@ -40,11 +41,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/oauthpkce"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
 	githubAuthStateCookie = "faas_github_state"
+	githubAuthPKCECookie  = "faas_github_pkce"
 	githubAuthPath        = "/v1/auth/github"
 	githubCallbackPath    = "/v1/auth/github/callback"
 
@@ -98,10 +101,24 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 		return
 	}
 	stateToken := hex.EncodeToString(stateTokenBytes)
+	codeVerifier, codeChallenge, err := oauthpkce.Generate()
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to generate OAuth PKCE verifier"))
+		return
+	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     githubAuthStateCookie,
 		Value:    stateToken,
+		Path:     githubCallbackPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     githubAuthPKCECookie,
+		Value:    codeVerifier,
 		Path:     githubCallbackPath,
 		HttpOnly: true,
 		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
@@ -120,11 +137,13 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 	}
 
 	githubAuthURL := fmt.Sprintf(
-		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&state=%s&scope=%s&allow_signup=true",
+		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&state=%s&scope=%s&allow_signup=true&code_challenge=%s&code_challenge_method=%s",
 		url.QueryEscape(clientID),
 		url.QueryEscape(redirectURI),
 		url.QueryEscape(stateToken),
 		url.QueryEscape(githubAuthScope),
+		url.QueryEscape(codeChallenge),
+		oauthpkce.MethodS256,
 	)
 	http.Redirect(w, r, githubAuthURL, http.StatusFound)
 }
@@ -179,6 +198,11 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"GitHub sign-in is not configured on this host. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
 		return
 	}
+	pkceCookie, err := r.Cookie(githubAuthPKCECookie)
+	if err != nil || !oauthpkce.ValidVerifier(pkceCookie.Value) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_pkce", "Invalid OAuth Request", "missing or invalid OAuth PKCE verifier cookie"))
+		return
+	}
 	clientID := s.oauthConfig.GitHub.ClientID
 	clientSecret := s.oauthConfig.GitHub.ClientSecret
 
@@ -204,6 +228,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 		"client_secret": {clientSecret},
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
+		"code_verifier": {pkceCookie.Value},
 	}
 	tokenReq, err := http.NewRequestWithContext(r.Context(),
 		http.MethodPost, "https://github.com/login/oauth/access_token",

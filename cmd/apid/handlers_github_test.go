@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth"
+	"github.com/onebox-faas/faas/pkg/oauthpkce"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -48,6 +49,9 @@ type fakeGitHubAPI struct {
 	// Accept: application/json. Used by the Accept-header regression
 	// (case #13).
 	acceptSeen *atomic.Int32
+	// verifierSeen counts token exchanges carrying the RFC 7636
+	// code_verifier form field.
+	verifierSeen *atomic.Int32
 }
 
 func newFakeGitHubAPI(t *testing.T) *fakeGitHubAPI {
@@ -58,12 +62,16 @@ func newFakeGitHubAPI(t *testing.T) *fakeGitHubAPI {
 		userStatus:   http.StatusOK,
 		emailsStatus: http.StatusOK,
 		acceptSeen:   &atomic.Int32{},
+		verifierSeen: &atomic.Int32{},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login/oauth/access_token":
 			if strings.EqualFold(r.Header.Get("Accept"), "application/json") {
 				f.acceptSeen.Add(1)
+			}
+			if err := r.ParseForm(); err == nil && r.Form.Get("code_verifier") != "" {
+				f.verifierSeen.Add(1)
 			}
 			w.WriteHeader(f.tokenStatus)
 			_, _ = w.Write(f.tokenBody)
@@ -206,11 +214,19 @@ func TestGitHubAuthRedirect(t *testing.T) {
 	if q.Get("allow_signup") != "true" {
 		t.Errorf("allow_signup = %q, want true", q.Get("allow_signup"))
 	}
+	if got := q.Get("code_challenge_method"); got != oauthpkce.MethodS256 {
+		t.Errorf("code_challenge_method = %q, want %s", got, oauthpkce.MethodS256)
+	}
+	codeChallenge := q.Get("code_challenge")
+	if codeChallenge == "" {
+		t.Fatalf("expected non-empty PKCE code_challenge")
+	}
 	stateToken := q.Get("state")
 	if stateToken == "" {
 		t.Fatalf("expected non-empty state query param")
 	}
 	var seenState bool
+	var verifier string
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == githubAuthStateCookie {
 			seenState = true
@@ -221,9 +237,21 @@ func TestGitHubAuthRedirect(t *testing.T) {
 				t.Errorf("state cookie path = %q, want %q", c.Path, githubCallbackPath)
 			}
 		}
+		if c.Name == githubAuthPKCECookie {
+			verifier = c.Value
+			if c.Path != githubCallbackPath {
+				t.Errorf("PKCE cookie path = %q, want %q", c.Path, githubCallbackPath)
+			}
+		}
 	}
 	if !seenState {
 		t.Errorf("expected faas_github_state CSRF cookie to be set")
+	}
+	if verifier == "" {
+		t.Fatalf("expected faas_github_pkce verifier cookie to be set")
+	}
+	if !oauthpkce.Verify(verifier, codeChallenge) {
+		t.Errorf("PKCE cookie verifier does not produce redirect challenge")
 	}
 }
 
@@ -350,6 +378,22 @@ func TestGitHubAuthCallback_OAuthMisconfigured(t *testing.T) {
 	}
 }
 
+func TestGitHubAuthCallbackRequiresPKCECookie(t *testing.T) {
+	h := newGitHubTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/github/callback?state=any&code=any", nil)
+	req.AddCookie(&http.Cookie{Name: githubAuthStateCookie, Value: "any"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	var p map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &p)
+	if p["code"] != "invalid_pkce" {
+		t.Errorf("code = %v, want invalid_pkce", p["code"])
+	}
+}
+
 // --- 3. End-to-end mock-GitHub cases ------------------------------------
 
 // newSignedGitHubRequest builds a callback request with a state cookie
@@ -359,6 +403,7 @@ func newSignedGitHubRequest(queryState, code string) *http.Request {
 	r := httptest.NewRequest(http.MethodGet,
 		"/v1/auth/github/callback?state="+url.QueryEscape(queryState)+"&code="+url.QueryEscape(code), nil)
 	r.AddCookie(&http.Cookie{Name: githubAuthStateCookie, Value: queryState})
+	r.AddCookie(&http.Cookie{Name: githubAuthPKCECookie, Value: strings.Repeat("a", 43)})
 	return r
 }
 
@@ -791,6 +836,9 @@ func TestGitHubAuthCallback_TokenExchangeSendsAcceptJSON(t *testing.T) {
 	}
 	if got := f.acceptSeen.Load(); got < 1 {
 		t.Errorf("access_token request did not carry Accept: application/json; saw %d", got)
+	}
+	if got := f.verifierSeen.Load(); got < 1 {
+		t.Errorf("access_token request did not carry code_verifier; saw %d", got)
 	}
 }
 

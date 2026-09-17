@@ -20,6 +20,15 @@ non-owning: logout clears local state but does not revoke a shared CI key.
 
 Interactive users can enable MFA from the account settings page. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
+## Dashboard OAuth and PKCE
+
+The Google and GitHub dashboard authorization-code redirects use RFC 7636
+Proof Key for Code Exchange with the `S256` method. Gregale binds a random
+code verifier to the browser callback and sends it to the provider token
+endpoint, preventing an intercepted authorization code from being redeemed
+without the originating browser. This profile covers dashboard sign-in only;
+the separate GitHub App installation callback is not part of the PKCE contract.
+
 ## OIDC token exchange
 
 Gregale publishes its supported OAuth token-service capabilities at the RFC

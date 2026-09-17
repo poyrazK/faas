@@ -395,6 +395,25 @@
       ]
     },
     {
+      "id": "rfc-7636-pkce",
+      "name": "Proof Key for Code Exchange",
+      "version": "RFC 7636",
+      "category": "identity",
+      "surface": "dashboard OAuth authorization-code login",
+      "status": "partial",
+      "scope": "Google and GitHub dashboard authorization-code redirects generate an RFC 7636 S256 code verifier, bind its challenge to the consent request, and send the verifier to the provider token endpoint.",
+      "limitations": "The separate GitHub App installation callback is unchanged; provider-side PKCE policy and support remain outside Gregale's control, and Gregale does not expose a general OAuth authorization server.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc7636",
+      "evidence": "pkg/oauthpkce/pkce.go; cmd/apid/handlers_google.go; cmd/apid/handlers_github.go; docs/auth.md",
+      "conformance": [
+        {
+          "fixture": "oauth-pkce-s256",
+          "tier": "unit",
+          "target": "pkg/oauthpkce/pkce_test.go::TestS256VerifierAndChallenge"
+        }
+      ]
+    },
+    {
       "id": "rfc-7807-problem-details",
       "name": "HTTP Problem Details",
       "version": "RFC 7807",
