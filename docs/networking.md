@@ -9,6 +9,17 @@ gregale app APP_ID network attach NETWORK_ID --region REGION --cidrs CIDR[,CIDR.
 gregale app APP_ID network detach
 ```
 
+Gregale-owned private networks are account-scoped API resources. They are not
+DigitalOcean VPCs and do not require cloud credentials. Use `GET/POST
+/v1/networks` and `GET/DELETE /v1/networks/{id}` with the API or SDK.
+
+The first fabric slice persists the network definition and reserves stable
+member addresses (network+1 is reserved as the gateway; allocation starts at
+network+2). Host bridges and cross-node overlays consume those rows in a later
+runtime slice. Set `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the
+resource API; app attachment remains separately gated by
+`FAAS_PRIVATE_NETWORK_ENABLED=1` and stays fail-closed until reconciliation.
+
 `network show` combines the app's outbound CIDR allowlist, static egress
 address (when available), same-account service discovery, and captured
 upstream observations. Upstream hostnames stay redacted; only the safe hash
@@ -35,7 +46,8 @@ Route activation is idempotent, and any connector or host-route failure leaves
 the row in `error` with traffic blocked. Until a connector is configured, the
 API remains an intent surface and every attachment stays `pending`.
 
-The first connector is operator-managed and is enabled in schedd with
+Legacy external-network attachments still use the operator-managed connector
+and are enabled in schedd with
 `FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,
 for example `[{"id":"corp-vpc","region":"fra1","ready":true}]`. This
 keeps cloud credentials out of the control plane while the provider adapter is

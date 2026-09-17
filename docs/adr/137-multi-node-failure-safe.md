@@ -97,7 +97,10 @@ The arbiter collapses the decision into one tick:
 `Decide(ctx, node, instance)` for each live instance, and
 dispatches to the chosen handler. Per-instance race safety
 comes from the existing `instances.lease_token` CAS (the same
-mechanism live-migration uses today).
+mechanism live-migration uses today). The source-side lease metadata
+is persisted in `migration_leases`; vmmd's in-memory tracker is only
+a cache for paused-VM handles and is repopulated from that row during
+expiry/ack cleanup after a restart.
 
 **Trade-off accepted:** the arbiter adds one goroutine to
 cmd/schedd's main loop (1s ticker). The decision logic is
@@ -147,6 +150,7 @@ snapshot-cache lookup, not on the wake itself.
   (`compute_nodes_recovery_audit`), 00585
   (`deployments_snapshot_backoff`)
 - `pkg/sched/recovery_arbiter.go` (decision policy)
+- `migration_leases` (durable source-side migration lease metadata)
 - `pkg/sched/recreate.go` (Engine.RecreateInstance primitive)
 - `pkg/sched/snapshot_backoff.go` (Retry-After surface)
 - `cmd/e2e/twonode_failure_safe_metal_test.go` (acceptance

@@ -60,9 +60,10 @@ const (
 	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
-	executionsFile        = "executions.go" // ADR-171 — disposable one-shot execution DTOs
-	projectsFile          = "projects.go"   // issue #2201 — durable project lifecycle and recovery DTOs
-	devSyncFile           = "dev_sync.go"   // developer edit-to-live history
+	executionsFile        = "executions.go"      // ADR-171 — disposable one-shot execution DTOs
+	projectsFile          = "projects.go"        // issue #2201 — durable project lifecycle and recovery DTOs
+	devSyncFile           = "dev_sync.go"        // developer edit-to-live history
+	privateNetworkFile    = "private_network.go" // Gregale-owned private network fabric DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -931,6 +932,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
+		filepath.Join(root, "pkg", "api", privateNetworkFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

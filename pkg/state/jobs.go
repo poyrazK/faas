@@ -180,6 +180,15 @@ func (e *JobQuotaError) Is(target error) bool {
 // (ErrJobQuota) consumes Scope / Limit / Observed.
 var ErrJobQuotaExceeded = errors.New("state: job quota exceeded")
 
+// JobQuotaCreator is the optional atomic job-template admission seam. The
+// caller supplies the already-resolved plan cap; implementations serialize
+// the count and insert so concurrent POST /v1/jobs requests cannot overshoot
+// JobMaxPerAccount. It is optional on JobStore for compatibility with small
+// test doubles that only need the basic CRUD methods.
+type JobQuotaCreator interface {
+	JobCreateIfUnderQuota(ctx context.Context, accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage, limit int) (Job, error)
+}
+
 // newUUIDString is a thin shim over uuid.NewString so the memstore
 // can mint row ids without pulling in a context argument. The pgstore
 // path uses gen_random_uuid() at the SQL boundary, so this helper is
@@ -208,10 +217,10 @@ func newUUIDString() string {
 //   - apid's admission-control gate (and meterd's billing sweep) own
 //     JobCountByAccount + JobConcurrentByAccount.
 //
-// Failure modes are noted per method. The lock semantics follow the
-// cron pgstore precedent: SELECT FOR UPDATE on the parent row to
-// serialise count-then-insert, transaction-scoped so the count read
-// and the insert are atomic.
+// Failure modes are noted per method. The optional JobQuotaCreator follows
+// the cron pgstore precedent: SELECT FOR UPDATE on the parent row serialises
+// count-then-insert, transaction-scoped so the count read and insert are
+// atomic. The primitive JobCountByAccount remains available for read paths.
 type JobStore interface {
 	// --- jobs (template) ---
 
@@ -390,7 +399,7 @@ type JobStore interface {
 	// both writes in one transaction prevents cleanup from destroying the only
 	// copy of successful job output before it is durable.
 	JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
-	// JobTaskRetry reverses a failed/timeout/oom transition back to
+	// JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
 	// queued and stamps next_attempt_at with the per-attempt backoff
 	// (JobBackoffBaseSeconds * 2^(attempt-1), capped at
 	// JobBackoffMaxSeconds — caller computes the timestamp). The

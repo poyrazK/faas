@@ -64,6 +64,6 @@ Every service role has handlers: a `daemon-reload` listener first, then `systemc
 
 - Adding an env var to a daemon without declaring it fails `make test`. Declaring it `unit`/`dropin`/`envfile` without wiring it fails the same test. Setting something in ansible nobody reads fails it too.
 - Adding a daemon means adding it to the registry with a `Role`; the renderer, the topology file test, the per-role generator targets and `daemons.json` follow.
-- Operators regain three features that were paid for or documented: streaming, geo rules, and honest job-run failures instead of silent pending rows. Jobs dispatch stays off until Mega-1.5 ships the vmmd RPC; the unit says so.
+- Operators regain three features that were paid for or documented: streaming, geo rules, and honest job-run failures instead of silent pending rows. The vmmd JobColdBoot RPC is now shipped and the public-beta schedd unit enables `FAAS_JOBS_DISPATCH=1`.
 - `ansible-lint` adds one pinned pip dependency to CI. The `name[casing]`, `var-naming[no-role-prefix]` and `yaml[line-length]` rules are skipped deliberately; everything else is a merge blocker.
 - Out of scope, tracked separately: the control-plane bootstrap still builds the guest kernel from source when no signed release kernel is staged (compute nodes require the signed one); the operator-copied `*.toml.example` path on the control plane remains until the control-plane join adopts the manifest renderer the compute join already uses.

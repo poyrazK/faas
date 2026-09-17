@@ -77,6 +77,7 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
 		return
 	}
+	var fabric state.PrivateNetworkStore
 	var req api.AppPrivateNetworkAttachmentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -86,6 +87,35 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("network_id", req.NetworkID, err.Error()))
 		return
 	}
+	if api.PrivateNetworkFabricEnabled() {
+		var fabricOK bool
+		fabric, fabricOK = s.store.(state.PrivateNetworkStore)
+		if !fabricOK {
+			api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
+			return
+		}
+		network, networkErr := fabric.GetPrivateNetwork(r.Context(), acct.ID, req.NetworkID)
+		if networkErr != nil {
+			if errors.Is(networkErr, state.ErrNotFound) {
+				api.WriteProblem(w, api.ErrPrivateNetworkInvalid("network_id", req.NetworkID, "the network is not owned by this account"))
+				return
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not read private network"))
+			return
+		}
+		if strings.TrimSpace(req.Region) == "" {
+			req.Region = network.Region
+		} else if req.Region != network.Region {
+			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("region", req.Region, "the region must match the Gregale network"))
+			return
+		}
+		if len(req.CIDRs) == 0 {
+			req.CIDRs = []string{network.CIDR.String()}
+		} else if len(req.CIDRs) != 1 || strings.TrimSpace(req.CIDRs[0]) != network.CIDR.String() {
+			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("cidrs", strings.Join(req.CIDRs, ","), "Gregale-owned attachments must route the network CIDR"))
+			return
+		}
+	}
 	if err := api.ValidatePrivateNetworkIdentifier(req.Region); err != nil {
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("region", req.Region, err.Error()))
 		return
@@ -94,6 +124,21 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 	if err != nil {
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("cidrs", strings.Join(req.CIDRs, ","), err.Error()))
 		return
+	}
+	var previous state.AppPrivateNetworkAttachment
+	if fabric != nil {
+		previous, _ = store.GetAppPrivateNetworkAttachment(r.Context(), acct.ID, app.ID)
+		if _, allocErr := fabric.AllocatePrivateNetworkAddress(r.Context(), acct.ID, req.NetworkID, "app", app.ID); allocErr != nil {
+			switch {
+			case errors.Is(allocErr, state.ErrNotFound):
+				api.WriteProblem(w, api.ErrPrivateNetworkInvalid("network_id", req.NetworkID, "the network is no longer available"))
+			case errors.Is(allocErr, state.ErrConflict):
+				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Private network address capacity reached", "no member address is available in this network"))
+			default:
+				api.WriteProblem(w, api.ErrCapacity("could not reserve private network address"))
+			}
+			return
+		}
 	}
 	attachment, err := store.UpsertAppPrivateNetworkAttachment(r.Context(), state.AppPrivateNetworkAttachment{
 		AccountID:    acct.ID,
@@ -105,12 +150,18 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		StatusDetail: privateNetworkPendingDetail,
 	})
 	if err != nil {
+		if fabric != nil {
+			_ = fabric.ReleasePrivateNetworkAddress(r.Context(), acct.ID, req.NetworkID, "app", app.ID)
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("network_id", req.NetworkID, "the attachment conflicts with another account binding"))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not save private network attachment"))
 		return
+	}
+	if fabric != nil && previous.NetworkID != "" && previous.NetworkID != req.NetworkID {
+		_ = fabric.ReleasePrivateNetworkAddress(r.Context(), acct.ID, previous.NetworkID, "app", app.ID)
 	}
 	_ = s.notif.Notify(r.Context(), "app_changed", fmt.Sprintf(
 		`{"kind":"private_network_attachment","app_id":"%s","account_id":"%s","network_id":%q,"region":%q,"status":%q}`,
@@ -141,6 +192,16 @@ func (s *server) clearAppPrivateNetworkAttachment(w http.ResponseWriter, r *http
 	if !ok {
 		api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
 		return
+	}
+	if api.PrivateNetworkFabricEnabled() {
+		fabric, fabricOK := s.store.(state.PrivateNetworkStore)
+		if !fabricOK {
+			api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
+			return
+		}
+		if attachment, getErr := store.GetAppPrivateNetworkAttachment(r.Context(), acct.ID, app.ID); getErr == nil {
+			_ = fabric.ReleasePrivateNetworkAddress(r.Context(), acct.ID, attachment.NetworkID, "app", app.ID)
+		}
 	}
 	err := store.DeleteAppPrivateNetworkAttachment(r.Context(), acct.ID, app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {

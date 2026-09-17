@@ -140,6 +140,31 @@ type ManagedRealtimePublishResponse struct {
 	Queued int `json:"queued"`
 }
 
+// ManagedRealtimeConnectionResponse is the safe control-plane projection of
+// a live socket. It intentionally excludes socket handles and credentials.
+type ManagedRealtimeConnectionResponse struct {
+	ID          string   `json:"id"`
+	EndpointID  string   `json:"endpoint_id"`
+	AppID       string   `json:"app_id"`
+	AccountID   string   `json:"account_id"`
+	Principal   string   `json:"principal,omitempty"`
+	ConnectedAt string   `json:"connected_at"`
+	LastSeenAt  string   `json:"last_seen_at"`
+	ExpiresAt   string   `json:"expires_at"`
+	Channels    []string `json:"channels,omitempty"`
+}
+
+// ManagedRealtimeConnectionListResponse reports a bounded fleet snapshot.
+// Partial is true when one or more active realtime nodes did not answer.
+type ManagedRealtimeConnectionListResponse struct {
+	Connections      []ManagedRealtimeConnectionResponse `json:"connections"`
+	Limit            int                                 `json:"limit"`
+	Truncated        bool                                `json:"truncated"`
+	Partial          bool                                `json:"partial"`
+	NodesQueried     int                                 `json:"nodes_queried"`
+	NodesUnavailable int                                 `json:"nodes_unavailable"`
+}
+
 type ManagedRealtimeEndpointResponse struct {
 	ID                         string            `json:"id"`
 	AppID                      string            `json:"app_id"`

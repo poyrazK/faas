@@ -2378,6 +2378,15 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
 }
 
+// RetryJobTask re-queues one failed, timeout, OOM, or cancelled task while
+// its configured retry budget remains. The server applies the same capped
+// exponential backoff as automatic retries and reopens a dead-letter run.
+func (c *Client) RetryJobTask(ctx context.Context, name, runID string, taskIndex int) (JobTaskRetryResponse, error) {
+	var out JobTaskRetryResponse
+	path := "/v1/jobs/" + name + "/runs/" + runID + "/tasks/" + strconv.Itoa(taskIndex) + "/retry"
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
 // GetJobTaskLogs returns the task's durable combined stdout/stderr tail
 // (issue #1184 Workstream A). Wire shape:
 // JobTaskLogResponse (task_status + log_content + truncated +
@@ -4489,6 +4498,31 @@ func (c *Client) ClearAppPrivateNetworkAttachment(ctx context.Context, slug stri
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/network/private", nil, nil)
 }
 
+// ListPrivateNetworks returns the caller's Gregale-owned private networks.
+func (c *Client) ListPrivateNetworks(ctx context.Context) (PrivateNetworkListResponse, error) {
+	var out PrivateNetworkListResponse
+	return out, c.do(ctx, "GET", "/v1/networks", nil, &out)
+}
+
+// CreatePrivateNetwork creates a Gregale-owned private address space. The
+// network is ready as a control-plane definition; app attachments converge
+// asynchronously on the host fabric.
+func (c *Client) CreatePrivateNetwork(ctx context.Context, req CreatePrivateNetworkRequest) (PrivateNetwork, error) {
+	var out PrivateNetwork
+	return out, c.do(ctx, "POST", "/v1/networks", req, &out)
+}
+
+// GetPrivateNetwork reads one of the caller's Gregale-owned networks.
+func (c *Client) GetPrivateNetwork(ctx context.Context, id string) (PrivateNetwork, error) {
+	var out PrivateNetwork
+	return out, c.do(ctx, "GET", "/v1/networks/"+id, nil, &out)
+}
+
+// DeletePrivateNetwork removes a network with no active app attachments.
+func (c *Client) DeletePrivateNetwork(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/networks/"+id, nil, nil)
+}
+
 // SetGithubWebhookSecret sets the per-tenant webhook secret for
 // the given installation_id (PR-D / ADR-012 §7 amendment). The
 // server hex-decodes SecretHex and writes the raw bytes to
@@ -4804,6 +4838,25 @@ func (c *Client) FinalizeManagedRealtimeAuth(ctx context.Context, slug, id strin
 
 func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, nil)
+}
+
+// ListManagedRealtimeConnections returns a bounded point-in-time inventory of
+// live connections for one endpoint. Partial is surfaced in the response when
+// one or more active realtime nodes could not be queried.
+func (c *Client) ListManagedRealtimeConnections(ctx context.Context, slug, endpointID, channel string, limit int) (ManagedRealtimeConnectionListResponse, error) {
+	var out ManagedRealtimeConnectionListResponse
+	query := url.Values{}
+	if channel != "" {
+		query.Set("channel", channel)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/connections"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // SendManagedRealtimeConnection queues a binary-safe message for one live

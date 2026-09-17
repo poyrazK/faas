@@ -1961,6 +1961,15 @@ type JobTaskLogResponse struct {
 	MaxBytes   int    `json:"max_bytes"`
 }
 
+// JobTaskRetryResponse is returned by POST
+// /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry.
+type JobTaskRetryResponse struct {
+	Task          JobTaskResponse `json:"task"`
+	Run           JobRunResponse  `json:"run"`
+	RetriedAt     string          `json:"retried_at"`
+	NextAttemptAt string          `json:"next_attempt_at"`
+}
+
 // ListJobsResponse is the body of GET /v1/jobs.
 type ListJobsResponse struct {
 	Jobs       []JobResponse `json:"jobs"`

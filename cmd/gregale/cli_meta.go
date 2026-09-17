@@ -559,6 +559,7 @@ var cliCommands = []cliCommand{
 			{Name: "runs", Short: "List runs for one job"},
 			{Name: "cancel", Short: "Cancel a run"},
 			{Name: "tasks", Short: "List tasks for one run"},
+			{Name: "retry", Short: "Retry one failed task"},
 			{Name: "logs", Short: "Tail logs for one task"},
 		},
 	},
@@ -1251,6 +1252,10 @@ var cliCommands = []cliCommand{
 			{Name: "create", Short: "Create a managed realtime endpoint"},
 			{Name: "update", Short: "Update endpoint callback, auth, or connection policy"},
 			{Name: "delete", Short: "Delete a managed realtime endpoint"},
+			{Name: "connections", Short: "List live connections for an endpoint", Flags: []cliFlag{
+				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
+				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
+			}},
 			{Name: "send", Short: "Send a message to one live connection"},
 			{Name: "close", Short: "Close one live connection"},
 			{Name: "subscribe", Short: "Subscribe one live connection to a channel"},

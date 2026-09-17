@@ -30,6 +30,27 @@ import (
 func (m *MemStore) JobCreate(_ context.Context, accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.jobCreateLocked(accountID, name, kind, imageRef, command, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides)
+}
+
+// JobCreateIfUnderQuota combines the per-account count and insert under the
+// MemStore mutex, mirroring PgStore's account-row lock transaction.
+func (m *MemStore) JobCreateIfUnderQuota(_ context.Context, accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage, limit int) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, j := range m.jobs {
+		if j.AccountID == accountID && j.Status != "deleted" {
+			count++
+		}
+	}
+	if count >= limit {
+		return Job{}, &JobQuotaError{Scope: JobQuotaScopePerAccount, Limit: limit, Observed: count}
+	}
+	return m.jobCreateLocked(accountID, name, kind, imageRef, command, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides)
+}
+
+func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (Job, error) {
 	// Soft-tombstone invisibility — match pgstore's WHERE status<>'deleted'.
 	for _, j := range m.jobs {
 		if j.AccountID == accountID && j.Name == name && j.Status != "deleted" {
@@ -697,7 +718,7 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, status strin
 	return nil
 }
 
-// JobTaskRetry reverses a failed/timeout/oom transition back to
+// JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
 // queued. The attempt counter is incremented and the prior instance_id
 // + lease columns are cleared.
 func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
@@ -711,6 +732,9 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	if !ok {
 		return ErrNotFound
 	}
+	if t.Status != "failed" && t.Status != "timeout" && t.Status != "oom" && t.Status != "cancelled" {
+		return ErrConflict
+	}
 	t.Status = "queued"
 	t.Attempt++
 	t.InstanceID = nil
@@ -721,6 +745,8 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	t.ErrorClass = nil
 	t.ErrorMessage = nil
 	t.ExitCode = nil
+	t.LogContent = ""
+	t.LogTruncated = false
 	t.LeaseToken = nil
 	t.LeaseExpiresAt = nil
 	t.LastLeaseNode = nil

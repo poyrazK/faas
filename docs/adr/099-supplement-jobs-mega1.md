@@ -53,11 +53,13 @@ order is the canonical reference.
    `pkg/fcvm/config.go::VsockJobExitPort=1026` +
    `VsockJobExitMsgType=4`.
 
-5. **Lease primitive is local.** `pkg/sched/lease.go::Leaser[T]`
-   defines the local API surface. **Mega-1 does NOT import
-   `pkg/dispatch`** — the types mirror `pkg/dispatch.Leaser[T]`
-   so ADR-134's post-Mega-1 refactor is a mechanical swap. ADR-099
-   v1 left this decision open.
+5. **Lease API is local; migration leases are durable.**
+   `pkg/sched/lease.go::Leaser[T]` defines the local job-task API and
+   **Mega-1 does NOT import `pkg/dispatch`** — the types mirror
+   `pkg/dispatch.Leaser[T]` so ADR-134's post-Mega-1 refactor is a
+   mechanical swap. Workstream B now persists source-side migration
+   leases in `migration_leases`; vmmd retains an in-memory cache only
+   for paused-VM handles and falls back to the durable row after restart.
 
 6. **Pg_notify payload is versioned.** Migration 00575 replaces
    the existing `job_tasks_notify_trg` with two channels

@@ -253,6 +253,10 @@ type Server struct {
 	// longer has state='migrating', but the source still owns the
 	// paused VM until Ack destroys it.
 	migrationStore state.Store
+	// migrationLeases is the optional durable source-side lease record. The
+	// in-memory tracker remains the hot cache for paused-VM handles; this store
+	// survives vmmd restarts and supplies those handles to Ack/Cancel/expiry.
+	migrationLeases state.MigrationLeaseStore
 	// nodeID is this vmmd's registered compute-node identity. Lease
 	// expiry uses it to distinguish a source VM that still belongs
 	// here from a row already committed to a peer; without that
@@ -331,6 +335,10 @@ func (s *Server) WithEvents(p *events.Platform) *Server {
 func (s *Server) WithMigrationStore(store state.Store) *Server {
 	if s != nil {
 		s.migrationStore = store
+		s.migrationLeases = nil
+		if leases, ok := store.(state.MigrationLeaseStore); ok {
+			s.migrationLeases = leases
+		}
 	}
 	return s
 }
@@ -345,12 +353,18 @@ func (s *Server) WithNodeID(nodeID string) *Server {
 	return s
 }
 
-// MigrationLeaser exposes the server's migration tracker through the common
-// lease interface. The returned adapter shares the exact tracker used by the
-// Phase 1/3/4/5 handlers, so callers cannot accidentally create a second
-// lease namespace for this vmmd.
+// MigrationLeaser exposes the server's migration lease authority through the
+// common lease interface. Durable storage is preferred when configured so
+// callers retain lease state across vmmd restarts; the hot tracker remains the
+// compatibility fallback for in-memory/unit-test fixtures.
 func (s *Server) MigrationLeaser() sched.Leaser[any] {
-	if s == nil || s.migrations == nil {
+	if s == nil {
+		return nil
+	}
+	if s.migrationLeases != nil {
+		return NewPGMigrationLeaser(s.migrationLeases, nil)
+	}
+	if s.migrations == nil {
 		return nil
 	}
 	return NewMigrationLeaser(s.migrations)

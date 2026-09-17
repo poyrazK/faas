@@ -137,6 +137,8 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
+	privateNetworks           map[string]PrivateNetwork
+	privateNetworkAddresses   map[string]PrivateNetworkAddress
 	appDeletionClaims         map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
@@ -233,6 +235,10 @@ type MemStore struct {
 	jobs     map[string]Job
 	jobRuns  map[string]JobRun
 	jobTasks map[string]map[int]JobTask // run_id → task_index → task
+	// migrationLeases mirrors the durable source-side migration lease table.
+	// It lets vmmd migration tests exercise restart-safe lease semantics without
+	// requiring Postgres.
+	migrationLeases map[string]MigrationLease // lease_token → lease
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -750,8 +756,14 @@ type idemEntry struct {
 // tests are truthful for M7. Aggregated into `usageByMonth` for the
 // per-app read shape the rest of the system expects.
 type usageMinute struct {
-	AccountID  string
-	AppID      string
+	AccountID string
+	AppID     string
+	// MeterKind and JobID mirror migration 00257. App rows use
+	// MeterKind="app" and leave JobID empty; job rows use
+	// MeterKind="job" and carry the jobs.id. AppID remains the
+	// aggregate compatibility key for the in-memory read surface.
+	MeterKind  string
+	JobID      string
 	InstanceID string
 	Minute     time.Time
 	MBSeconds  int64
@@ -849,6 +861,8 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},
 		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
+		privateNetworks:           map[string]PrivateNetwork{},
+		privateNetworkAddresses:   map[string]PrivateNetworkAddress{},
 		appDeletionClaims:         map[string]struct{}{},
 		githubDeployBranches:      map[string]map[string]string{},
 		githubDeployPolicies:      map[string]GitHubDeployPolicy{},
@@ -896,6 +910,7 @@ func NewMemStore() *MemStore {
 		jobs:                      map[string]Job{},
 		jobRuns:                   map[string]JobRun{},
 		jobTasks:                  map[string]map[int]JobTask{},
+		migrationLeases:           map[string]MigrationLease{},
 		workflowRuns:              map[string]WorkflowRun{},
 		workflowSteps:             map[string]map[string]WorkflowStep{},
 		workflowEvents:            map[string][]WorkflowEvent{},
@@ -10456,6 +10471,10 @@ func (m *MemStore) InsertTriggerDeadLetter(_ context.Context, recordID, triggerI
 	}
 	if detail == nil {
 		detail = []byte("{}")
+	} else if !json.Valid(detail) {
+		if encoded, err := json.Marshal(string(detail)); err == nil {
+			detail = encoded
+		}
 	}
 	m.triggerDeadLetters = append(m.triggerDeadLetters, sqlc.TriggerDeadLetter{
 		RecordID:  pgtype.UUID{Bytes: parseMemUUIDString(recordID), Valid: true},
@@ -14476,7 +14495,11 @@ func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, si
 // migrations/00055_usage_minutes_cpu.sql, and
 // migrations/00065_usage_minutes_egress.sql for the production
 // rationale.
-func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64) error {
+func (m *MemStore) AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64) error {
+	return m.appendUsage(ctx, accountID, appID, instanceID, minute, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes, coldBootCount, tailSeconds, "app", "")
+}
+
+func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64, meterKind, jobID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := minute.UTC().Truncate(time.Minute)
@@ -14505,7 +14528,7 @@ func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID s
 		}
 	}
 	m.usage = append(m.usage, usageMinute{
-		AccountID: accountID, AppID: appID, InstanceID: instanceID,
+		AccountID: accountID, AppID: appID, MeterKind: meterKind, JobID: jobID, InstanceID: instanceID,
 		Minute: key, MBSeconds: mbSeconds, Requests: requests,
 		CPUUsec: cpuUsec, TXBytes: txBytes, NetTxBytes: netTxBytes,
 		NetRxBytes: netRxBytes, ColdBootCount: coldBootCount,

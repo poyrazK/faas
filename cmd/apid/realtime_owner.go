@@ -58,6 +58,17 @@ func (o localRealtimeNodeOperator) RemoveEndpoint(ctx context.Context, endpointI
 	return o.client.RemoveEndpoint(ctx, endpointID)
 }
 
+// ListConnectionInventory returns the local snapshot in the same shape used
+// by the fleet resolver. The public handler can therefore use the same read
+// path in single-box and split-node deployments.
+func (o localRealtimeOwner) ListConnectionInventory(ctx context.Context) (realtime.ConnectionInventory, error) {
+	connections, err := o.client.Connections(ctx)
+	if err != nil {
+		return realtime.ConnectionInventory{}, err
+	}
+	return realtime.ConnectionInventory{Connections: connections, NodesQueried: 1}, nil
+}
+
 type remoteRealtimeNodeOperator struct{ client *realtime.Client }
 
 func (o remoteRealtimeNodeOperator) Send(ctx context.Context, _, connectionID string, message realtime.Message) error {
@@ -300,6 +311,39 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 		lastErr = errors.New("no active realtime nodes accepted publish")
 	}
 	return 0, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
+}
+
+// ListConnectionInventory aggregates point-in-time snapshots from active
+// realtime nodes. A node that cannot be reached does not erase healthy
+// results; the response carries the unavailable count so callers can decide
+// whether to retry before taking action on an incomplete view.
+func (o *leasedRealtimeOwner) ListConnectionInventory(ctx context.Context) (realtime.ConnectionInventory, error) {
+	var inventory realtime.ConnectionInventory
+	if o.nodes == nil {
+		return inventory, errManagedRealtimeOwnerUnavailable
+	}
+	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	if err != nil {
+		return inventory, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+	}
+	for _, node := range nodes {
+		op, err := o.nodeOperator(node)
+		if err != nil {
+			inventory.NodesUnavailable++
+			continue
+		}
+		connections, err := op.Connections(ctx)
+		if err != nil {
+			inventory.NodesUnavailable++
+			continue
+		}
+		inventory.NodesQueried++
+		inventory.Connections = append(inventory.Connections, connections...)
+	}
+	if inventory.NodesQueried == 0 && inventory.NodesUnavailable > 0 {
+		return inventory, fmt.Errorf("%w: no active realtime nodes responded", errManagedRealtimeOwnerUnavailable)
+	}
+	return inventory, nil
 }
 
 // RegisterEndpoint and RemoveEndpoint fan out durable endpoint state to every

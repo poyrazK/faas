@@ -4444,6 +4444,24 @@ type ExecutionPlanLimits struct {
 	PIDsMax                int
 }
 
+// JobRetryDelay returns the capped exponential delay before the next task
+// attempt. attempt is one-based: the first retry waits the base interval.
+// Keeping this calculation in api prevents schedd and apid from drifting
+// when explicit customer retries are added to the HTTP surface.
+func JobRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := time.Duration(JobBackoffBaseSeconds) * time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= time.Duration(JobBackoffMaxSeconds)*time.Second {
+			return time.Duration(JobBackoffMaxSeconds) * time.Second
+		}
+	}
+	return delay
+}
+
 // DefaultComputeNodeCeilingMB is the per-compute-node admission ceiling
 // schedd hands out when no operator override is present. It mirrors
 // RAMAdmissionCeilingMB (85% of the tenant budget) because a single

@@ -5498,8 +5498,8 @@ type AppPrivateNetworkAttachmentResponse struct {
 // /v1/apps/{slug}/network/private. A PUT replaces the app's attachment intent.
 type AppPrivateNetworkAttachmentRequest struct {
 	NetworkID string   `json:"network_id"`
-	Region    string   `json:"region"`
-	CIDRs     []string `json:"cidrs"`
+	Region    string   `json:"region,omitempty"`
+	CIDRs     []string `json:"cidrs,omitempty"`
 }
 
 // AdminSetGithubWebhookSecretRequest is the body shape for
@@ -8698,6 +8698,16 @@ type JobTaskLogResponse struct {
 	LogContent string `json:"log_content"`
 	Truncated  bool   `json:"truncated"`
 	MaxBytes   int    `json:"max_bytes"`
+}
+
+// JobTaskRetryResponse is returned by POST
+// /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry. The task is queued for a
+// fresh attempt and the run aggregate is reopened when necessary.
+type JobTaskRetryResponse struct {
+	Task          JobTaskResponse `json:"task"`
+	Run           JobRunResponse  `json:"run"`
+	RetriedAt     string          `json:"retried_at"`
+	NextAttemptAt string          `json:"next_attempt_at"`
 }
 
 // ListJobsResponse is the body of GET /v1/jobs. Page-based

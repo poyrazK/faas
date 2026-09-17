@@ -30,6 +30,7 @@ faas_verify_readyz_delay_s: 2
 # private address; the registry's loopback URL is only the single-box default.
 faas_verify_private_readyz_units:
   - faas-vmmd.service
+  - faas-schedd.service
   - faas-imaged.service
   - faas-builderd.service
 faas_verify_run_doctor: true

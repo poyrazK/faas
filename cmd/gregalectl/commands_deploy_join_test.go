@@ -211,6 +211,21 @@ func TestFleetVerifyUsesPrivateTransportAddressForComputeReadiness(t *testing.T)
 	if strings.Contains(tasks, "regex_replace('127\\.0\\.0\\.1', ansible_host)") {
 		t.Fatal("fleet_verify must not use the provider SSH address for private readiness probes")
 	}
+	defaultsBody, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "fleet_verify", "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := string(defaultsBody)
+	for _, unit := range []string{
+		"faas-vmmd.service",
+		"faas-schedd.service",
+		"faas-imaged.service",
+		"faas-builderd.service",
+	} {
+		if !strings.Contains(defaults, "  - "+unit) {
+			t.Errorf("fleet_verify must probe %s on the compute private address", unit)
+		}
+	}
 }
 
 func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {

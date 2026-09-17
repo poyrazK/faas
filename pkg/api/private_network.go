@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -12,9 +13,40 @@ const (
 	PrivateNetworkAttachmentStatusReady   = "ready"
 	PrivateNetworkAttachmentStatusError   = "error"
 	PrivateNetworkAttachmentMaxCIDRs      = 64
+	PrivateNetworkStatusReady             = "ready"
+	PrivateNetworkStatusError             = "error"
+	PrivateNetworkMinPrefixBits           = 16
+	PrivateNetworkMaxPrefixBits           = 28
 )
 
 var privateNetworkIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+// PrivateNetwork is the customer-visible Gregale-owned network definition.
+// Status describes the control-plane definition; an app attachment still
+// reports its own pending/ready state while host networking converges.
+type PrivateNetwork struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Region       string     `json:"region"`
+	CIDR         string     `json:"cidr"`
+	Status       string     `json:"status"`
+	StatusDetail string     `json:"status_detail,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+}
+
+// PrivateNetworkListResponse wraps the account-scoped network collection.
+type PrivateNetworkListResponse struct {
+	Networks []PrivateNetwork `json:"networks"`
+}
+
+// CreatePrivateNetworkRequest creates a Gregale-owned IPv4 network. The
+// region is a Gregale placement label, not a DigitalOcean region identifier.
+type CreatePrivateNetworkRequest struct {
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	CIDR   string `json:"cidr"`
+}
 
 // ValidatePrivateNetworkIdentifier validates the stable operator/provider
 // identifier carried by an attachment. It deliberately shares the DNS-safe
@@ -73,6 +105,23 @@ func ValidatePrivateNetworkCIDRs(raw []string, max int) ([]netip.Prefix, error) 
 		seen = append(seen, prefix)
 	}
 	return seen, nil
+}
+
+// ValidatePrivateNetworkCIDR validates the address space Gregale owns for a
+// network definition. Network definitions are intentionally narrower than
+// attachment destination lists: a /16-/28 IPv4 RFC1918 range leaves room for
+// the network gateway and deterministic workload address allocation.
+func ValidatePrivateNetworkCIDR(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	prefixes, err := ValidatePrivateNetworkCIDRs([]string{value}, 1)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	prefix := prefixes[0]
+	if bits := prefix.Bits(); bits < PrivateNetworkMinPrefixBits || bits > PrivateNetworkMaxPrefixBits {
+		return netip.Prefix{}, fmt.Errorf("prefix length must be between /%d and /%d", PrivateNetworkMinPrefixBits, PrivateNetworkMaxPrefixBits)
+	}
+	return prefix, nil
 }
 
 func prefixesOverlap(a, b netip.Prefix) bool {

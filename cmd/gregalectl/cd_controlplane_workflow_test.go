@@ -165,6 +165,33 @@ func TestCDControlPlaneVerifiesPostgresBackupContractAfterActivation(t *testing.
 	}
 }
 
+func TestCDControlPlaneConvergesKeylessBackupIdentityBeforeActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	bundle := strings.Index(workflow, `"${BUNDLE_ROOT}/host-config/faas-rclone-backup-identity.py"`)
+	install := strings.Index(workflow, `/usr/local/lib/faas/faas-rclone-backup-identity.py`)
+	archive := strings.Index(workflow, `ALTER SYSTEM SET archive_command`)
+	deploy := strings.Index(workflow, `deployctl deploy ${RELEASE_ID}`)
+	if bundle < 0 || install < 0 || archive < 0 || deploy < 0 {
+		t.Fatalf("control-plane workflow is missing backup identity convergence: bundle=%d install=%d archive=%d deploy=%d", bundle, install, archive, deploy)
+	}
+	if !(bundle < install && install < archive && archive < deploy) {
+		t.Fatalf("backup identity must be bundled and converged before activation: bundle=%d install=%d archive=%d deploy=%d", bundle, install, archive, deploy)
+	}
+	for _, required := range []string{
+		"faas-pg-basebackup-push.service faas-pg-wal-prune.service",
+		"FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py",
+		"offhostbox:faas-pg-wal/%f",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane workflow is missing backup identity contract %q", required)
+		}
+	}
+}
+
 func TestCDControlPlanePromotesDPAArtifactWithRelease(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

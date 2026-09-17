@@ -23,6 +23,7 @@ POST /v1/apps/{slug}/realtime/endpoints
 GET|PATCH|DELETE /v1/apps/{slug}/realtime/endpoints/{id}
 POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate
 POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize
+GET /v1/apps/{slug}/realtime/endpoints/{id}/connections
 POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send
 POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close
 PUT|DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}
@@ -157,6 +158,9 @@ gregale realtime close my-app ENDPOINT_ID CONNECTION_ID --reason 'client migrate
 
 printf '{"event":"refresh"}' | \
   gregale realtime publish my-app ENDPOINT_ID room-a --data-stdin
+
+# Inspect active connections before targeting one for management.
+gregale realtime connections my-app ENDPOINT_ID --channel room-a --limit 100
 ```
 
 `--data-stdin` is binary-safe and bounded to the same 1 MiB decoded payload

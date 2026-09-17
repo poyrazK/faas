@@ -1654,6 +1654,12 @@ const (
 	// to a different account. Distinct from CodeNotFound so the
 	// dashboard can render a job-specific empty state.
 	CodeJobTaskNotFound = "job_task_not_found"
+	// CodeJobTaskNotRetriable marks an explicit retry against a task that is
+	// still queued/running or already succeeded. 409.
+	CodeJobTaskNotRetriable = "job_task_not_retriable"
+	// CodeJobTaskMaxRetriesReached marks an explicit retry after the task's
+	// configured retry budget has been exhausted. 409.
+	CodeJobTaskMaxRetriesReached = "job_task_max_retries_reached"
 	// CodeJobRunCancelled marks POST /v1/jobs/{name}/runs/{id}/cancel
 	// when the run is already in a terminal state (succeeded /
 	// failed / cancelled / dead_letter). 409.
@@ -2144,7 +2150,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
-	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Eight
+	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Ten
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying
 	// only the Code, so any of these eight codes that landed on a
@@ -2162,6 +2168,10 @@ func StatusForCode(code string) int {
 	//   409 job_has_live_instances — soft-delete denied; live
 	//                                kind='job_task' instances
 	//                                still need to drain.
+	//   409 job_task_not_retriable — explicit retry targets a queued,
+	//                                running, or succeeded task.
+	//   409 job_task_max_retries_reached — explicit retry exhausted
+	//                                the task's configured retry budget.
 	//   410 job_deadline_exceeded  — wall-clock deadline cap
 	//                                (distinct from cancel — the
 	//                                customer authored the
@@ -2177,7 +2187,7 @@ func StatusForCode(code string) int {
 	//                                (length > 64 or embedded NUL).
 	case CodeJobsNotAllowed, CodeJobTaskNotFound, CodeJobImageMissing:
 		return http.StatusNotFound
-	case CodeJobRunCancelled, CodeJobHasLiveInstances:
+	case CodeJobRunCancelled, CodeJobHasLiveInstances, CodeJobTaskNotRetriable, CodeJobTaskMaxRetriesReached:
 		return http.StatusConflict
 	case CodeJobDeadlineExceeded:
 		return http.StatusGone
@@ -3580,6 +3590,24 @@ func ErrJobTaskNotFound(runID, taskIndex string) *Problem {
 		"Job task not found",
 		fmt.Sprintf("no job task at run %s / task %s on this account.", runID, taskIndex)).
 		WithDocs(docsBase + "/jobs#tasks")
+}
+
+// ErrJobTaskNotRetriable marks an explicit retry against a task whose current
+// state cannot be re-queued.
+func ErrJobTaskNotRetriable(runID, taskIndex, status string) *Problem {
+	return NewProblem(http.StatusConflict, CodeJobTaskNotRetriable,
+		"Job task cannot be retried",
+		fmt.Sprintf("task %s in run %s is in status %s; only failed, timeout, oom, or cancelled tasks can be retried.", taskIndex, runID, status)).
+		WithDocs(docsBase + "/jobs#retry")
+}
+
+// ErrJobTaskMaxRetriesReached marks an explicit retry after the configured
+// retry budget has been exhausted.
+func ErrJobTaskMaxRetriesReached(runID, taskIndex string, attempts, maxRetries int) *Problem {
+	return NewProblem(http.StatusConflict, CodeJobTaskMaxRetriesReached,
+		"Job task retry budget exhausted",
+		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d.", taskIndex, runID, attempts, maxRetries)).
+		WithDocs(docsBase + "/jobs#retry")
 }
 
 // ErrJobRunCancelled marks POST /v1/jobs/{name}/runs/{id}/cancel

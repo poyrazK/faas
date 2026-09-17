@@ -861,7 +861,16 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 		Payload: payload,
 		Headers: jsonOrEmpty(rec.Headers),
 	}
-	out, err := s.dispatcher.Invoke(recCtx, req.AppID, inv)
+	var (
+		out        state.Invocation
+		statusCode int
+		err        error
+	)
+	if statusDispatcher, ok := s.dispatcher.(StatusAwareSynthDispatcher); ok {
+		out, statusCode, err = statusDispatcher.InvokeWithStatus(recCtx, req.AppID, inv)
+	} else {
+		out, err = s.dispatcher.Invoke(recCtx, req.AppID, inv)
+	}
 	if err != nil {
 		s.log.Warn("gateway synth: invoke (batch)",
 			"inv", logsanitize.Field(inv.ID),
@@ -921,7 +930,14 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 	// If state==succeeded from the dispatcher, success.
 	// Otherwise (e.g. function returned 5xx, dispatcher
 	// captured it) it's a retry.
-	if string(out.State) == batchDispatchStatusSucceeded {
+	// The production synth adapter preserves the downstream HTTP status
+	// while leaving the durable invocation in dispatching state; the
+	// schedd's single-record drain completes that row after the response.
+	// A trigger batch has no second completion step, so a successful 2xx
+	// response is the durable success signal. Keep the synthetic succeeded
+	// state for older/fake dispatchers that do not expose status.
+	if (statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices) ||
+		string(out.State) == batchDispatchStatusSucceeded {
 		return batchDispatchResult{
 			ItemIdentifier: rec.ItemIdentifier,
 			Status:         batchDispatchStatusSucceeded,

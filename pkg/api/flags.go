@@ -62,6 +62,19 @@ func PrivateNetworkEnabled() bool {
 	return false
 }
 
+// PrivateNetworkFabricEnabled reports whether Gregale-owned network
+// definitions and address allocation are live. It is separate from
+// PrivateNetworkEnabled so operators can stage the durable fabric before
+// allowing apps to attach to it. The flag is read on every request.
+func PrivateNetworkFabricEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_PRIVATE_NETWORK_FABRIC_ENABLED")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // DomainDoctorEnabled reports whether the per-domain doctor probe
 // engine is live. Reads FAAS_DOMAIN_DOCTOR_ENABLED at every call
 // (mirrors TenantSurfacesEnabled — operator can flip the env var

@@ -1,4 +1,7 @@
+// spec: §6.3
 package gateway
+
+// spec: §6.3
 
 import (
 	"context"
@@ -103,6 +106,34 @@ func TestControlMuxMetrics(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "gateway_requests_total") {
 		t.Errorf("metrics body missing gateway_requests_total:\n%s", string(body))
+	}
+}
+
+func TestControlMuxRequestMetricsAreBoundedToScaleUpInput(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveRequest("app-1", "pro", "200")
+	mux := ControlMux(m, nil, nil)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/metrics/gateway-requests")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("request metrics status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "gateway_requests_total") {
+		t.Fatalf("request metrics body missing gateway_requests_total:\n%s", text)
+	}
+	if strings.Contains(text, "gateway_request_duration_seconds") {
+		t.Fatalf("request metrics endpoint leaked the full gateway registry:\n%s", text)
 	}
 }
 

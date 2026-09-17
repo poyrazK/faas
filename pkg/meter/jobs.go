@@ -3,18 +3,10 @@
 // Distinct from the app sampler at sampler.go. Job-task instances
 // have kind="job_task" and carry no AppID; the billing key is
 // (account_id, job_id, instance_id). The current usage_minutes
-// schema is keyed on (account_id, app_id, instance_id) — for the
-// mega-PR we ship with a deliberate widening:
-//
-//   - AppID is set to the JOB ID for kind="job_task" instances
-//     (the column is reused; no schema change). The rollup
-//     continues to group by (account_id, app_id, day) — a
-//     job's rows land in usage_daily with app_id=<job id>,
-//     distinguishable by the absence of an apps row at that id.
-//   - A future M-extra will widen usage_minutes to add a job_id
-//     column and usage_daily to add a kind discriminator; this
-//     is a non-breaking widening (the existing app_id column
-//     keeps working).
+// schema is widened by migration 00257: job rows use app_id=NULL,
+// job_id=<jobs.id>, and meter_kind='job'. The daily compatibility
+// rollup keeps app_id=<job id> because usage_daily's existing primary
+// key is app_id-based, while its meter_kind column distinguishes jobs.
 //
 // Sampler wiring (cmd/meterd/main.go): on each 1m tick, call
 // sampler.SampleAndRoll (app rows) THEN sampler.SampleJobsAndRoll
@@ -46,6 +38,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // JobMetrics holds the 7 Prometheus counters / gauges / histograms
@@ -156,9 +149,8 @@ func (m *JobMetrics) Registry() *prometheus.Registry { return m.reg }
 // usage_minutes. Parallel to SampleAndRoll but:
 //
 //   - reads the per-account job ledger (NOT ListAllApps)
-//   - writes AppID=<job id> on usage_minutes (the column is
-//     reused per the file doc; a future widening adds a
-//     dedicated job_id column + kind discriminator)
+//   - writes through state.JobUsageAppender so usage_minutes rows
+//     use the dedicated job_id + meter_kind columns
 //   - returns the rows it wrote for the test surface + telemetry
 //
 // Idempotent on (instance_id, minute) via the existing
@@ -179,6 +171,13 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 	instances, err := s.store.ListJobInstances(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("meter: SampleJobsAndRoll list: %w", err)
+	}
+	if len(instances) == 0 {
+		return nil, nil
+	}
+	appender, ok := s.store.(state.JobUsageAppender)
+	if !ok {
+		return nil, fmt.Errorf("meter: job usage appender unavailable")
 	}
 	var out []JobRolledRow
 	for _, ins := range instances {
@@ -201,12 +200,7 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 			AdmissionMB: admissionMB,
 			MBSeconds:   MBSecondsPerMinute(admissionMB),
 		}
-		// AppID is set to the JOB ID so the rollup groups
-		// correctly. A subsequent M-extra widens the schema
-		// to add a dedicated job_id column; until then, this
-		// reuse is the documented mega-PR shape.
-		appIDForUsage := ins.JobID
-		if err := s.store.AppendUsage(ctx, accountID, appIDForUsage, ins.ID, minute, row.MBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		if err := appender.AppendJobUsage(ctx, accountID, ins.JobID, ins.ID, minute, row.MBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 			return out, err
 		}
 		out = append(out, row)

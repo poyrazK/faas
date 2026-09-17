@@ -27,12 +27,12 @@
 //                                       success).
 //
 // The lease is the dying vmmd's authority. It is minted at
-// Phase 1 and consulted only at Phase 3 (new owner proves
-// the token before Restore). Phase 4 / 5 perform the
-// corresponding source-VM action and then delete the tracker
-// entry. On lease expiry the vmmd reconciles the durable
-// instance row before resuming or destroying the source; an
-// external cleanup error retains the entry for retry.
+// Phase 1 and persisted in migration_leases, then consulted at
+// Phase 3 (new owner proves the token before Restore). Phase 4 / 5
+// perform the corresponding source-VM action and delete both the
+// cache entry and durable row. On lease expiry the vmmd reconciles
+// the durable instance row before resuming or destroying the source;
+// an external cleanup error retains the entry for retry.
 
 package vmmdgrpc
 
@@ -316,6 +316,23 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		s.ops.Observe(op, time.Since(start), err2)
 		return nil, grpcerr.ToStatus(err2)
 	}
+	if s.migrationLeases != nil {
+		if err := s.migrationLeases.ReserveMigrationLease(ctx, state.MigrationLease{
+			InstanceID:     m.instanceID,
+			LeaseToken:     m.leaseToken,
+			SourceNodeID:   s.nodeID,
+			CreatedAt:      m.createdAt,
+			LeaseExpiresAt: m.leaseExpiresAt,
+		}); err != nil {
+			s.migrations.deleteByLeaseToken(m.leaseToken)
+			if errors.Is(err, state.ErrConflict) {
+				err = api.NewProblem(int(codes.AlreadyExists), api.CodeConflict,
+					"Migration already active", "a durable migration lease already exists for this instance")
+			}
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+	}
 
 	_, err = snapshotter.SnapshotKeepAlive(ctx, req.GetInstanceId(), fcvm.SnapshotSpec{
 		StageMemPath:      "",
@@ -325,6 +342,9 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	})
 	if err != nil {
 		s.migrations.deleteByLeaseToken(m.leaseToken)
+		if s.migrationLeases != nil {
+			_ = s.migrationLeases.DeleteMigrationLease(ctx, m.leaseToken)
+		}
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
@@ -340,8 +360,22 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 			}
 		}
 		s.migrations.deleteByLeaseToken(m.leaseToken)
+		if s.migrationLeases != nil {
+			_ = s.migrationLeases.DeleteMigrationLease(ctx, m.leaseToken)
+		}
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if s.migrationLeases != nil {
+		if err := s.migrationLeases.CompleteMigrationLease(ctx, m.leaseToken, memKey, vmstateKey); err != nil {
+			// The source VM is paused and the in-memory tracker still has the
+			// handles, so retain the lease for the expiry loop when durable
+			// completion is temporarily unavailable.
+			if s.log != nil {
+				s.log.Warn("vmmd: durable migration lease completion failed",
+					"instance_id", m.instanceID, "err", err)
+			}
+		}
 	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.PrepareLiveMigrationResponse{
@@ -377,6 +411,49 @@ func (s *Server) validateMigrationLease(ctx context.Context, instanceID, leaseTo
 		return errNoLease{instanceID: instanceID}
 	}
 	_, err := s.migrations.get(instanceID, leaseToken)
+	return err
+}
+
+// migrationLeaseForPhase loads the paused-VM metadata from the in-memory
+// cache first and falls back to the durable lease table after a vmmd restart.
+// The fallback is deliberately scoped to Ack/Cancel/expiry; Adopt validates
+// ownership against the durable instance row because the destination has no
+// source-side tracker.
+func (s *Server) migrationLeaseForPhase(ctx context.Context, instanceID, leaseToken string) (*activeMigration, error) {
+	if s.migrations != nil {
+		if m, err := s.migrations.get(instanceID, leaseToken); err == nil {
+			return m, nil
+		}
+	}
+	if s.migrationLeases == nil {
+		return nil, errNoLease{instanceID: instanceID}
+	}
+	lease, err := s.migrationLeases.GetMigrationLease(ctx, instanceID, leaseToken)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil, errNoLease{instanceID: instanceID}
+		}
+		return nil, err
+	}
+	return &activeMigration{
+		instanceID:     lease.InstanceID,
+		leaseToken:     lease.LeaseToken,
+		createdAt:      lease.CreatedAt,
+		leaseExpiresAt: lease.LeaseExpiresAt,
+		memKey:         lease.MemStorageKey,
+		vmstateKey:     lease.VMStateStorageKey,
+		pending:        lease.Pending,
+	}, nil
+}
+
+func (s *Server) deleteDurableMigrationLease(ctx context.Context, leaseToken string) error {
+	if s.migrationLeases == nil {
+		return nil
+	}
+	err := s.migrationLeases.DeleteMigrationLease(ctx, leaseToken)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
 	return err
 }
 
@@ -504,11 +581,7 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if s.migrations == nil {
-		s.ops.Observe(op, time.Since(start), nil)
-		return &vmmdpb.AcknowledgeMigrationResponse{}, nil
-	}
-	m, getErr := s.migrations.get(req.GetInstanceId(), req.GetLeaseToken())
+	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
 		// Stale ack — lease already cleared. Idempotent
 		// success. The error is intentionally swallowed so
@@ -529,7 +602,18 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	s.migrations.deleteByLeaseToken(req.GetLeaseToken())
+	if s.migrations != nil {
+		s.migrations.deleteByLeaseToken(req.GetLeaseToken())
+	}
+	if err := s.deleteDurableMigrationLease(ctx, req.GetLeaseToken()); err != nil {
+		// The source VM is already destroyed and snapshot cleanup succeeded;
+		// leave the operation idempotently successful while the row is retried
+		// by the next reconciliation pass.
+		if s.log != nil {
+			s.log.Warn("vmmd: durable migration lease delete failed",
+				"instance_id", req.GetInstanceId(), "err", err)
+		}
+	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.AcknowledgeMigrationResponse{}, nil
 }
@@ -554,11 +638,7 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if s.migrations == nil {
-		s.ops.Observe(op, time.Since(start), nil)
-		return &vmmdpb.CancelLiveMigrationResponse{}, nil
-	}
-	m, getErr := s.migrations.get(req.GetInstanceId(), req.GetLeaseToken())
+	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
 		// Stale cancel — idempotent success. The error is
 		// intentionally swallowed: a re-sent cancel on a
@@ -588,7 +668,15 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	s.migrations.deleteByLeaseToken(req.GetLeaseToken())
+	if s.migrations != nil {
+		s.migrations.deleteByLeaseToken(req.GetLeaseToken())
+	}
+	if err := s.deleteDurableMigrationLease(ctx, req.GetLeaseToken()); err != nil {
+		if s.log != nil {
+			s.log.Warn("vmmd: durable migration lease delete failed",
+				"instance_id", req.GetInstanceId(), "err", err)
+		}
+	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.CancelLiveMigrationResponse{}, nil
 }
@@ -689,7 +777,7 @@ func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration
 // Started by cmd/vmmd's runWithDeps next to the cpuCache /
 // netCache / activity goroutines. Exits on vmmd shutdown.
 func (s *Server) LeaseExpiryLoop(ctx context.Context) {
-	if s == nil || s.migrations == nil {
+	if s == nil || (s.migrations == nil && s.migrationLeases == nil) {
 		return
 	}
 	tick := time.NewTicker(5 * time.Second)
@@ -699,7 +787,37 @@ func (s *Server) LeaseExpiryLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
-			entries := s.migrations.listExpired(now)
+			var entries []*activeMigration
+			seen := make(map[string]struct{})
+			if s.migrations != nil {
+				for _, m := range s.migrations.listExpired(now) {
+					entries = append(entries, m)
+					seen[m.leaseToken] = struct{}{}
+				}
+			}
+			if s.migrationLeases != nil {
+				leases, err := s.migrationLeases.ListExpiredMigrationLeases(ctx, now)
+				if err != nil {
+					if s.log != nil {
+						s.log.Warn("vmmd: durable migration lease sweep failed", "err", err)
+					}
+				} else {
+					for _, lease := range leases {
+						if _, ok := seen[lease.LeaseToken]; ok {
+							continue
+						}
+						entries = append(entries, &activeMigration{
+							instanceID:     lease.InstanceID,
+							leaseToken:     lease.LeaseToken,
+							createdAt:      lease.CreatedAt,
+							leaseExpiresAt: lease.LeaseExpiresAt,
+							memKey:         lease.MemStorageKey,
+							vmstateKey:     lease.VMStateStorageKey,
+							pending:        lease.Pending,
+						})
+					}
+				}
+			}
 			for _, m := range entries {
 				if err := s.cleanupExpiredMigration(ctx, m); err != nil {
 					if s.log != nil {
@@ -719,7 +837,17 @@ func (s *Server) LeaseExpiryLoop(ctx context.Context) {
 					}
 					continue
 				}
-				if s.migrations.deleteByLeaseToken(m.leaseToken) && s.log != nil {
+				if s.migrations != nil {
+					s.migrations.deleteByLeaseToken(m.leaseToken)
+				}
+				if err := s.deleteDurableMigrationLease(ctx, m.leaseToken); err != nil {
+					if s.log != nil {
+						s.log.Warn("vmmd: durable migration lease delete failed",
+							"instance_id", m.instanceID, "err", err)
+					}
+					continue
+				}
+				if s.log != nil {
 					s.log.Info("vmmd: migration lease expired",
 						"instance_id", m.instanceID,
 						"lease_seconds", int(time.Since(m.createdAt).Seconds()),

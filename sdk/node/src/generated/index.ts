@@ -164,6 +164,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './models/CreateOb
 export type { CreateObjectUploadRouteRequest } from './models/CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
+export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
@@ -320,6 +321,7 @@ export type { JobRunCancelledResponse } from './models/JobRunCancelledResponse.j
 export type { JobRunResponse } from './models/JobRunResponse.js';
 export type { JobTaskLogResponse } from './models/JobTaskLogResponse.js';
 export type { JobTaskResponse } from './models/JobTaskResponse.js';
+export type { JobTaskRetryResponse } from './models/JobTaskRetryResponse.js';
 export type { KafkaSASLConfig } from './models/KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './models/KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './models/KafkaTLSConfig.js';
@@ -353,6 +355,8 @@ export type { ManagedPostgresUsageLineItem } from './models/ManagedPostgresUsage
 export type { ManagedPostgresUsageOperatorResponse } from './models/ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedRealtimeCloseRequest } from './models/ManagedRealtimeCloseRequest.js';
+export type { ManagedRealtimeConnectionListResponse } from './models/ManagedRealtimeConnectionListResponse.js';
+export type { ManagedRealtimeConnectionResponse } from './models/ManagedRealtimeConnectionResponse.js';
 export type { ManagedRealtimeEndpointResponse } from './models/ManagedRealtimeEndpointResponse.js';
 export type { ManagedRealtimeMessageRequest } from './models/ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './models/ManagedRealtimePublishResponse.js';
@@ -444,6 +448,8 @@ export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhookPayload.js';
 export type { PrewarmIntentResponse } from './models/PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './models/PrewarmRequest.js';
+export type { PrivateNetwork } from './models/PrivateNetwork.js';
+export type { PrivateNetworkListResponse } from './models/PrivateNetworkListResponse.js';
 export type { Problem } from './models/Problem.js';
 export type { ProgrammaticAPIKey } from './models/ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse.js';

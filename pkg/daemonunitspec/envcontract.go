@@ -354,6 +354,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PRIVATE_INGRESS_TCP_PORTS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; exact compute service ports reachable from the control plane"},
 	{Name: "FAAS_PRIVATE_NETWORKS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "JSON array of operator-managed private networks consumed by the provider-neutral reconciler"},
 	{Name: "FAAS_PRIVATE_NETWORK_ENABLED", Owners: []string{"schedd", "shared"}, Source: EnvSourceDefault, Note: "dark-launch switch for provider-neutral private-network attachment intent; disabled by default until a connector is deployed"},
+	{Name: "FAAS_PRIVATE_NETWORK_FABRIC_ENABLED", Owners: []string{"apid", "schedd", "shared"}, Source: EnvSourceDefault, Note: "dark-launch switch for Gregale-owned private network CRUD and attachment addresses; disabled by default until the fabric is deployed"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; \"shared\" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement)"},
