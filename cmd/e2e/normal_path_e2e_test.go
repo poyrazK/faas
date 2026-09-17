@@ -790,7 +790,7 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-push\n", 10*time.Second)
 	// The trigger batch contract treats an empty failure list as a successful
 	// delivery. This is the function response the fake guest returns for the
-	// synthetic /_triggers/queue/<trigger-id> request.
+	// synthetic /_triggers/esm/<trigger-id> request.
 	f.vmmd.SetResponse(instance.ID, normalPathResponse{
 		status:  http.StatusOK,
 		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
@@ -853,7 +853,7 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 				t.Fatalf("trigger record state=%q, want succeeded", record.State)
 			}
 			request := f.vmmd.LastRequest()
-			if request == nil || request.Instance != instance.ID || request.RequestUri != "/_triggers/queue/"+trigger.ID {
+			if request == nil || request.Instance != instance.ID || request.RequestUri != "/_triggers/esm/"+trigger.ID {
 				t.Fatalf("push request=%#v, want trigger path", request)
 			}
 			if !normalPathJSONEqual(f.vmmd.LastBody(), payload) {

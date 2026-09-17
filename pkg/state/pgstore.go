@@ -26725,7 +26725,11 @@ func (s *PgStore) MarkTriggerRecordDeadLetter(ctx context.Context, id, lastError
 func (s *PgStore) InsertTriggerDeadLetter(ctx context.Context, recordID, triggerID, reason, routedTo string, detail []byte) error {
 	var detailArg any = []byte("{}")
 	if detail != nil {
-		detailArg = detail
+		if json.Valid(detail) {
+			detailArg = detail
+		} else if encoded, err := json.Marshal(string(detail)); err == nil {
+			detailArg = encoded
+		}
 	}
 	_, err := s.pool.Exec(ctx,
 		`insert into trigger_dead_letter (record_id, trigger_id, reason, routed_to, detail)
