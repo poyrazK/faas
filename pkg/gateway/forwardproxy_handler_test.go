@@ -183,6 +183,12 @@ func (s *stubVmmdClient) UpdateStaticEgressIP(context.Context, *vmmdpb.UpdateSta
 	return &vmmdpb.UpdateStaticEgressIPAck{}, nil
 }
 
+// UpdatePrivateNetwork is outside the gateway hot path; return success so the
+// generated client seam remains complete as vmmd gains networking RPCs.
+func (s *stubVmmdClient) UpdatePrivateNetwork(context.Context, *vmmdpb.UpdatePrivateNetworkRequest, ...grpc.CallOption) (*vmmdpb.UpdatePrivateNetworkAck, error) {
+	return &vmmdpb.UpdatePrivateNetworkAck{}, nil
+}
+
 // Logs (issue #254 / Move 4) — the gateway hot path never dials
 // the per-instance log stream directly; apid dials schedd for
 // that. The stub returns Unimplemented so any accidental test
