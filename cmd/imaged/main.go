@@ -319,6 +319,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: %w", err)
 	}
+	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
+	if err != nil {
+		return fmt.Errorf("imaged: reconcile snapshot repository index: %w", err)
+	}
+	if _, ok := storageBackend.(storage.SnapshotRepositoryIndexer); ok {
+		log.Info("imaged: snapshot repository index reconciled", "deployment_count", indexedSnapshots)
+	}
 	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
 		log.Info("imaged: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
 	} else {
@@ -749,6 +756,28 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	return loop.Run(ctx)
+}
+
+type snapshotRepositoryIndexStore interface {
+	ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error)
+}
+
+// reconcileSnapshotRepositoryIndex keeps the registry mutation on imaged,
+// which owns the lifecycle credential. Schedd consumes the resulting index
+// through its read-only storage credential when it audits snapshot drift.
+func reconcileSnapshotRepositoryIndex(ctx context.Context, store snapshotRepositoryIndexStore, backend storage.StorageBackend) (int, error) {
+	indexer, ok := backend.(storage.SnapshotRepositoryIndexer)
+	if !ok {
+		return 0, nil
+	}
+	deploymentIDs, err := store.ListSnapshotDeploymentIDs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list snapshot deployment IDs: %w", err)
+	}
+	if err := indexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs); err != nil {
+		return 0, err
+	}
+	return len(deploymentIDs), nil
 }
 
 func prestageOnlyFromEnv(getenv func(string) string) bool {

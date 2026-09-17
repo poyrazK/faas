@@ -978,7 +978,10 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 	}
 }
 
-func TestDiskDriftCaptureRepositoryIndexUsesCanonicalDeploymentID(t *testing.T) {
+// TestDiskDriftCaptureRepositoryIndexRemainsReadOnly pins the split-credential
+// contract: imaged owns registry index mutation; schedd only audits it.
+// ADR-054 §3.
+func TestDiskDriftCaptureRepositoryIndexRemainsReadOnly(t *testing.T) {
 	const (
 		deploymentID = "550e8400-e29b-41d4-a716-446655440000"
 		captureID    = "660e8400-e29b-41d4-a716-446655440001"
@@ -1007,8 +1010,8 @@ func TestDiskDriftCaptureRepositoryIndexUsesCanonicalDeploymentID(t *testing.T) 
 	if err != nil || drift != 0 {
 		t.Fatalf("capture drift=%d err=%v", drift, err)
 	}
-	if len(lister.reconciledDeploymentIDs) != 1 || lister.reconciledDeploymentIDs[0] != deploymentID {
-		t.Fatalf("repository index IDs = %v, want [%s]", lister.reconciledDeploymentIDs, deploymentID)
+	if len(lister.reconciledDeploymentIDs) != 0 {
+		t.Fatalf("schedd mutated repository index for IDs %v", lister.reconciledDeploymentIDs)
 	}
 }
 
