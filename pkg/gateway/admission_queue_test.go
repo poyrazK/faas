@@ -115,7 +115,7 @@ func TestWakeAdmissionQueueIsFairAcrossPlans(t *testing.T) {
 func TestWakeAdmissionQueueReportsPriorityPreemption(t *testing.T) {
 	q := newWakeAdmissionQueue(1, 4, nil)
 	preempted := make(chan admissionPreemption, 1)
-	q.setPreemptSink(func(event admissionPreemption) { preempted <- event })
+	q.setPreemptSink(func(_ context.Context, event admissionPreemption) { preempted <- event })
 	release := make(chan struct{})
 	started := make(chan struct{})
 	go func() {

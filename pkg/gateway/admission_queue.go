@@ -237,6 +237,8 @@ type admissionPreemption struct {
 	toPlan   string
 }
 
+type admissionPreemptSink func(context.Context, admissionPreemption)
+
 // wakeAdmissionQueue bounds concurrent cold-wake admissions in one gateway
 // process. Each queued item is a WakeGate leader, so one bursting app cannot
 // consume one scheduler slot per incoming request. Priority orders distinct
@@ -250,7 +252,7 @@ type wakeAdmissionQueue struct {
 	waiting       admissionTicketHeap
 	queuedByPlan  map[string]int
 	onDepthChange func(plan string, depth int)
-	onPreempt     func(admissionPreemption)
+	onPreempt     admissionPreemptSink
 }
 
 func newWakeAdmissionQueue(capacity, queueCap int, onDepthChange func(plan string, depth int)) *wakeAdmissionQueue {
@@ -272,15 +274,15 @@ func newWakeAdmissionQueue(capacity, queueCap int, onDepthChange func(plan strin
 
 // setPreemptSink installs the optional observer for priority reordering. It is
 // called during handler wiring, before requests can enter the queue.
-func (q *wakeAdmissionQueue) setPreemptSink(fn func(admissionPreemption)) {
+func (q *wakeAdmissionQueue) setPreemptSink(fn admissionPreemptSink) {
 	if q != nil {
 		previous := q.onPreempt
-		q.onPreempt = func(event admissionPreemption) {
+		q.onPreempt = func(ctx context.Context, event admissionPreemption) {
 			if previous != nil {
-				previous(event)
+				previous(ctx, event)
 			}
 			if fn != nil {
-				fn(event)
+				fn(ctx, event)
 			}
 		}
 	}
@@ -335,7 +337,7 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 	updates := []admissionDepthUpdate{{plan: plan, depth: q.queuedByPlan[plan]}}
 	q.mu.Unlock()
 	q.notifyDepth(updates)
-	q.notifyPreempt(preemptions)
+	q.notifyPreempt(ctx, preemptions)
 
 	start := time.Now()
 	timer := time.NewTimer(policy.MaxWait)
@@ -434,11 +436,11 @@ func (q *wakeAdmissionQueue) notifyDepth(updates []admissionDepthUpdate) {
 	}
 }
 
-func (q *wakeAdmissionQueue) notifyPreempt(events []admissionPreemption) {
+func (q *wakeAdmissionQueue) notifyPreempt(ctx context.Context, events []admissionPreemption) {
 	if q == nil || q.onPreempt == nil {
 		return
 	}
 	for _, event := range events {
-		q.onPreempt(event)
+		q.onPreempt(ctx, event)
 	}
 }

@@ -1167,7 +1167,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		MirrorMaxConcurrentPerRule: api.MirrorMaxConcurrentPerRule,
 	}
 	if h.admissionQueue != nil {
-		h.admissionQueue.setPreemptSink(func(event admissionPreemption) {
+		h.admissionQueue.setPreemptSink(func(_ context.Context, event admissionPreemption) {
 			if m != nil {
 				m.ObserveWakeAdmissionPreempt(event.fromPlan, event.toPlan)
 			}
@@ -1367,9 +1367,9 @@ func (h *Handler) WithWakePageAudit(audit RequireAuthnAuditor) *Handler {
 func (h *Handler) WithWakeAdmissionAudit(audit RequireAuthnAuditor) *Handler {
 	h.wakeAdmissionAudit = audit
 	if h.admissionQueue != nil {
-		h.admissionQueue.setPreemptSink(func(event admissionPreemption) {
+		h.admissionQueue.setPreemptSink(func(ctx context.Context, event admissionPreemption) {
 			if audit != nil {
-				audit.Emit(context.Background(), "wake.preempted", nil, map[string]any{
+				audit.Emit(ctx, "wake.preempted", nil, map[string]any{
 					"from_app_id": event.fromApp,
 					"from_plan":   event.fromPlan,
 					"to_app_id":   event.toApp,
