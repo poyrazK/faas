@@ -27122,7 +27122,132 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 		return DeadLetterEvent{}, err
 	}
 
+	now, err := replayDeadLetterEventTx(ctx, tx, accountID, appID, ev)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
+	ev.ReplayedAt = &now
+	if err = tx.Commit(ctx); err != nil {
+		return DeadLetterEvent{}, err
+	}
+	return ev, nil
+}
+
+// ReplayDeadLetterEvents replays up to limit pending events in one transaction.
+// Row locks use SKIP LOCKED so concurrent operators do not contend on the
+// same ledger page; each source reset and audit stamp commits atomically.
+func (s *PgStore) ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	rows, err := tx.Query(ctx, `
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1 and app_id = $2 and replayed_at is null
+		 order by last_failed_at desc, id desc
+		 limit $3
+		 for update skip locked`, accountID, appID, limit)
+	if err != nil {
+		return 0, err
+	}
+	events, err := scanDeadLetterEvents(rows)
+	if err != nil {
+		return 0, err
+	}
+	replayed := 0
+	for _, ev := range events {
+		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, appID, ev); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return 0, err
+		}
+		replayed++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return replayed, nil
+}
+
+// DeleteDeadLetterEvent purges the ledger row while leaving its source row in
+// dead_letter. This is an explicit operator acknowledgement, not a replay or
+// destructive source deletion.
+func (s *PgStore) DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error {
+	tag, err := s.pool.Exec(ctx, `delete from dead_letter_events where id = $1 and app_id = $2 and account_id = $3`, eventID, appID, accountID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteDeadLetterEvents purges up to limit ledger rows in one transaction.
+// Source invocation and trigger rows remain dead-lettered for audit safety.
+func (s *PgStore) DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	rows, err := tx.Query(ctx, `
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1 and app_id = $2
+		 order by last_failed_at desc, id desc
+		 limit $3
+		 for update skip locked`, accountID, appID, limit)
+	if err != nil {
+		return 0, err
+	}
+	events, err := scanDeadLetterEvents(rows)
+	if err != nil {
+		return 0, err
+	}
+	purged := 0
+	for _, ev := range events {
+		tag, err := tx.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2 and app_id = $3`, ev.ID, accountID, appID)
+		if err != nil {
+			return 0, err
+		}
+		purged += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return purged, nil
+}
+
+const (
+	deadLetterEventsDefaultLimit = 20
+	deadLetterEventsMaxLimit     = 200
+)
+
+func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID string, ev DeadLetterEvent) (time.Time, error) {
 	var tag pgconn.CommandTag
+	var err error
 	switch ev.Source {
 	case "invocation":
 		tag, err = tx.Exec(ctx, `
@@ -27146,24 +27271,19 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 			_, err = tx.Exec(ctx, `delete from trigger_dead_letter where record_id = $1`, ev.SourceID)
 		}
 	default:
-		return DeadLetterEvent{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
+		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}
 	if err != nil {
-		return DeadLetterEvent{}, err
+		return time.Time{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		return DeadLetterEvent{}, ErrNotFound
+		return time.Time{}, ErrNotFound
 	}
-
 	now := time.Now().UTC()
-	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, eventID); err != nil {
-		return DeadLetterEvent{}, err
+	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, ev.ID); err != nil {
+		return time.Time{}, err
 	}
-	ev.ReplayedAt = &now
-	if err = tx.Commit(ctx); err != nil {
-		return DeadLetterEvent{}, err
-	}
-	return ev, nil
+	return now, nil
 }
 
 func scanDeadLetterEvents(rows pgx.Rows) ([]DeadLetterEvent, error) {

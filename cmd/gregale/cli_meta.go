@@ -128,7 +128,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
+	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline":
 		return "Delivery"
 	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions":
 		return "Observe"
@@ -1227,6 +1227,27 @@ var cliCommands = []cliCommand{
 			{Name: "dead-letter", Short: "Inspect the dead-letter queue"},
 			{Name: "ack", Short: "Ack a wake"},
 		},
+	},
+	{
+		Name:    "dlq",
+		DocSlug: "dlq",
+		Short:   "Inspect, replay, or purge unified dead-letter events",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List app dead-letter events", Flags: []cliFlag{
+				{Name: "limit", Short: "max events (1..200)", Value: "N"},
+				{Name: "before", Short: "pagination cursor", Value: "ID"},
+			}},
+			{Name: "inspect", Short: "Inspect one dead-letter event"},
+			{Name: "replay", Short: "Replay one event or --all", Flags: []cliFlag{
+				{Name: "all", Short: "replay pending events"},
+				{Name: "limit", Short: "maximum events (1..200)", Value: "N"},
+			}},
+			{Name: "purge", Short: "Purge one event or --all", Flags: []cliFlag{
+				{Name: "all", Short: "purge all events"},
+				{Name: "limit", Short: "page size (1..200)", Value: "N"},
+			}},
+		},
+		Positionals: []string{"<app>", "[<event-id>]"},
 	},
 	{
 		Name:    "registry",

@@ -185,6 +185,8 @@ export type { DataUpstreamListResponse } from './models/DataUpstreamListResponse
 export type { DataUpstreamResponse } from './models/DataUpstreamResponse.js';
 export type { DeadLetterEvent } from './models/DeadLetterEvent.js';
 export type { DeadLetterEventsResponse } from './models/DeadLetterEventsResponse.js';
+export type { DeadLetterPurgeResponse } from './models/DeadLetterPurgeResponse.js';
+export type { DeadLetterReplayAllResponse } from './models/DeadLetterReplayAllResponse.js';
 export type { DebugCompareRequest } from './models/DebugCompareRequest.js';
 export type { DebugCompareResponse } from './models/DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './models/DebugCompareRouteStats.js';

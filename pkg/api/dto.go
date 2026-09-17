@@ -4381,6 +4381,19 @@ type DeadLetterEventsResponse struct {
 	NextBefore string            `json:"next_before,omitempty"`
 }
 
+// DeadLetterReplayAllResponse reports how many pending unified dead-letter
+// events were atomically reset for an app.
+type DeadLetterReplayAllResponse struct {
+	AppSlug  string `json:"app_slug"`
+	Replayed int    `json:"replayed"`
+}
+
+// DeadLetterPurgeResponse reports how many unified ledger rows were removed.
+type DeadLetterPurgeResponse struct {
+	AppSlug string `json:"app_slug"`
+	Purged  int    `json:"purged"`
+}
+
 // --- IAM-4 (ADR-035) — auth audit event surface -----------------------------
 //
 // AuditEventResponse is one row of the customer's own security event

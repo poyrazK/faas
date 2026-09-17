@@ -61,6 +61,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
+| [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`realtime`](#realtime) | Manage realtime endpoints, policies, connections, channels, and auth |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
@@ -1547,6 +1548,44 @@ Inspect the dead-letter queue
 ### queue ack
 
 Ack a wake
+
+
+## dlq
+
+Inspect, replay, or purge unified dead-letter events
+
+`gregale dlq [<subcommand>] <app> [<event-id>]`
+
+### dlq list
+
+List app dead-letter events
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | max events (1..200) |  |
+| `--before <ID>` | pagination cursor |  |
+
+### dlq inspect
+
+Inspect one dead-letter event
+
+### dlq replay
+
+Replay one event or --all
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | replay pending events |  |
+| `--limit <N>` | maximum events (1..200) |  |
+
+### dlq purge
+
+Purge one event or --all
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | purge all events |  |
+| `--limit <N>` | page size (1..200) |  |
 
 
 ## registry

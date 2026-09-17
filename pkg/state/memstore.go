@@ -223,6 +223,7 @@ type MemStore struct {
 	// dashboard and handler tests.
 	triggerDeadLetters  []sqlc.TriggerDeadLetter
 	deadLetterSnapshots map[string]DeadLetterEvent
+	deadLetterPurged    map[string]struct{}
 	// jobs / jobRuns / jobTasks mirror the ADR-099 / issue #1184
 	// Workstream A tables (migrations/00255-00257, 00571-00578) for
 	// handler / dispatch-tick tests. Keyed by id / run_id. The task
@@ -904,6 +905,7 @@ func NewMemStore() *MemStore {
 		prewarmIntents:      map[string]PrewarmIntent{},
 		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
 		deadLetterSnapshots: map[string]DeadLetterEvent{},
+		deadLetterPurged:    map[string]struct{}{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
@@ -21837,6 +21839,9 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		eventID := unifiedDeadLetterEventID("invocation", inv.ID)
+		if _, purged := m.deadLetterPurged[eventID]; purged {
+			continue
+		}
 		failedAt := inv.CreatedAt
 		if inv.CompletedAt != nil {
 			failedAt = *inv.CompletedAt
@@ -21879,6 +21884,9 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			createdAt = dl.CreatedAt.Time
 		}
 		eventID := unifiedDeadLetterEventID("trigger_record", recordID)
+		if _, purged := m.deadLetterPurged[eventID]; purged {
+			continue
+		}
 		ev := DeadLetterEvent{
 			ID:            eventID,
 			AccountID:     trigger.AccountID.String(),
@@ -21903,6 +21911,9 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		seen[ev.ID] = struct{}{}
 	}
 	for id, ev := range m.deadLetterSnapshots {
+		if _, purged := m.deadLetterPurged[id]; purged {
+			continue
+		}
 		if _, ok := seen[id]; !ok && ev.AppID == appID {
 			out = append(out, ev)
 		}
@@ -21958,6 +21969,10 @@ func (m *MemStore) DeadLetterEventByID(_ context.Context, appID, eventID string)
 func (m *MemStore) ReplayDeadLetterEvent(_ context.Context, accountID, appID, eventID string) (DeadLetterEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.replayDeadLetterEventLocked(accountID, appID, eventID)
+}
+
+func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string) (DeadLetterEvent, error) {
 	var event *DeadLetterEvent
 	for _, ev := range m.deadLetterEventsLocked(appID) {
 		if ev.ID == eventID {
@@ -22012,6 +22027,82 @@ func (m *MemStore) ReplayDeadLetterEvent(_ context.Context, accountID, appID, ev
 	}
 	m.deadLetterSnapshots[eventID] = *event
 	return *event, nil
+}
+
+// ReplayDeadLetterEvents replays up to limit pending events while holding the
+// MemStore mutex, mirroring the atomic batch semantics of PgStore.
+func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID string, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	events := m.deadLetterEventsLocked(appID)
+	replayed := 0
+	for _, ev := range events {
+		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil {
+			continue
+		}
+		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return replayed, err
+		}
+		replayed++
+	}
+	return replayed, nil
+}
+
+// DeleteDeadLetterEvent purges only the unified ledger projection. The source
+// remains dead-lettered so an operator cannot accidentally execute work while
+// acknowledging the event.
+func (m *MemStore) DeleteDeadLetterEvent(_ context.Context, accountID, appID, eventID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	events := m.deadLetterEventsLocked(appID)
+	for _, ev := range events {
+		if ev.ID != eventID || ev.AccountID != accountID {
+			continue
+		}
+		if m.deadLetterPurged == nil {
+			m.deadLetterPurged = make(map[string]struct{})
+		}
+		m.deadLetterPurged[eventID] = struct{}{}
+		delete(m.deadLetterSnapshots, eventID)
+		return nil
+	}
+	return ErrNotFound
+}
+
+// DeleteDeadLetterEvents purges up to limit unified ledger rows while leaving
+// their dead-lettered source records untouched.
+func (m *MemStore) DeleteDeadLetterEvents(_ context.Context, accountID, appID string, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	events := m.deadLetterEventsLocked(appID)
+	purged := 0
+	for _, ev := range events {
+		if purged >= limit || ev.AccountID != accountID {
+			continue
+		}
+		if m.deadLetterPurged == nil {
+			m.deadLetterPurged = make(map[string]struct{})
+		}
+		m.deadLetterPurged[ev.ID] = struct{}{}
+		delete(m.deadLetterSnapshots, ev.ID)
+		purged++
+	}
+	return purged, nil
 }
 
 // ListExpiredTriggerRecordsForReaper is intentionally unsupported by

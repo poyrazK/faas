@@ -2075,7 +2075,10 @@ func (s *server) handler() http.Handler {
 	// Issue #1278: unified app-scoped DLQ ledger. Queue and trigger-specific
 	// endpoints remain available for backwards compatibility.
 	mux.HandleFunc("GET /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeadLetterEvents))))
+	mux.HandleFunc("POST /v1/apps/{slug}/dlq:replay_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayAllDeadLetterEvents)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.purgeDeadLetterEvents)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeadLetterEvent))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteDeadLetterEvent)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayDeadLetterEvent)))))
 	// ADR-134 PR-C: replay a dead_letter queue row back to
 	// pending. Idempotent-wrapped because a retried POST after a

@@ -505,6 +505,9 @@ func run(args []string) (status int) {
 		// Tier C extension: tail + send|receive|state|peek|
 		// dead-letter|ack. Dispatcher lives in commands5.go.
 		return cmdQueueDispatch(args[1:])
+	case "dlq":
+		// Issue #1278: unified app-scoped dead-letter operator surface.
+		return cmdDLQ(args[1:])
 	case "mfa":
 		// IAM-2 / issue #186: MFA enrollment + step-up + recovery.
 		// Routes through authedClient(); the dispatcher itself lives

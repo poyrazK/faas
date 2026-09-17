@@ -361,6 +361,8 @@ from .dead_letter_event_headers import DeadLetterEventHeaders
 from .dead_letter_event_payload import DeadLetterEventPayload
 from .dead_letter_event_source import DeadLetterEventSource
 from .dead_letter_events_response import DeadLetterEventsResponse
+from .dead_letter_purge_response import DeadLetterPurgeResponse
+from .dead_letter_replay_all_response import DeadLetterReplayAllResponse
 from .debug_compare_request import DebugCompareRequest
 from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
@@ -1041,6 +1043,7 @@ from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
 from .scaling_policy import ScalingPolicy
+from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
@@ -1582,6 +1585,8 @@ __all__ = (
     "DeadLetterEventPayload",
     "DeadLetterEventSource",
     "DeadLetterEventsResponse",
+    "DeadLetterPurgeResponse",
+    "DeadLetterReplayAllResponse",
     "DebugCompareRequest",
     "DebugCompareResponse",
     "DebugCompareRouteStats",
@@ -2238,6 +2243,7 @@ __all__ = (
     "RotateOrgAPIKeyResponse",
     "RouteRow",
     "ScalingPolicy",
+    "ScalingPolicyConcurrencyOverflow",
     "ScalingTarget",
     "ScalingTargetMetric",
     "ScanResult",

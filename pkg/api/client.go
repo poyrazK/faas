@@ -2951,6 +2951,42 @@ func (c *Client) ReplayDeadLetterEvent(ctx context.Context, slug, eventID string
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/dlq/"+eventID+"/replay", nil, &out)
 }
 
+// ReplayAllDeadLetterEvents atomically replays up to limit pending unified
+// dead-letter events for an app.
+func (c *Client) ReplayAllDeadLetterEvents(ctx context.Context, slug string, limit int) (DeadLetterReplayAllResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/dlq:replay_all"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out DeadLetterReplayAllResponse
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
+// DeleteDeadLetterEvent purges one app-scoped ledger row without touching its
+// dead-lettered source record.
+func (c *Client) DeleteDeadLetterEvent(ctx context.Context, slug, eventID string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/dlq/"+eventID, nil, nil)
+}
+
+// PurgeDeadLetterEvents removes up to limit unified ledger rows while leaving
+// their dead-lettered source records untouched.
+func (c *Client) PurgeDeadLetterEvents(ctx context.Context, slug string, limit int) (DeadLetterPurgeResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/dlq"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out DeadLetterPurgeResponse
+	return out, c.do(ctx, "DELETE", path, nil, &out)
+}
+
 // Generated-name compatibility helpers kept alongside the ergonomic methods
 // above so sdk-check can prove every OpenAPI path has a Go entry point.
 func (c *Client) GetAppsSlugDlq(ctx context.Context, slug string, limit int, before string) (DeadLetterEventsResponse, error) {
@@ -2963,6 +2999,18 @@ func (c *Client) GetAppsSlugDlqId(ctx context.Context, slug, eventID string) (De
 
 func (c *Client) PostAppsSlugDlqIdReplay(ctx context.Context, slug, eventID string) (DeadLetterEvent, error) {
 	return c.ReplayDeadLetterEvent(ctx, slug, eventID)
+}
+
+func (c *Client) PostAppsSlugDlqReplayAll(ctx context.Context, slug string, limit int) (DeadLetterReplayAllResponse, error) {
+	return c.ReplayAllDeadLetterEvents(ctx, slug, limit)
+}
+
+func (c *Client) DeleteAppsSlugDlqId(ctx context.Context, slug, eventID string) error {
+	return c.DeleteDeadLetterEvent(ctx, slug, eventID)
+}
+
+func (c *Client) DeleteAppsSlugDlq(ctx context.Context, slug string, limit int) (DeadLetterPurgeResponse, error) {
+	return c.PurgeDeadLetterEvents(ctx, slug, limit)
 }
 
 // CreateDelayedTask schedules a delayed-task row to fire at the

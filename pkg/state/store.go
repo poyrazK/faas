@@ -3792,6 +3792,9 @@ type Store interface {
 	ListDeadLetterEvents(ctx context.Context, appID string, limit int, before string) ([]DeadLetterEvent, error)
 	DeadLetterEventByID(ctx context.Context, appID, eventID string) (DeadLetterEvent, error)
 	ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error)
+	ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
+	DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error
+	DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
 	// ListExpiredTriggerRecordsForReaper (ADR-134 PR-E) returns
 	// trigger_records IDs whose result_retention_until is in
 	// the past.

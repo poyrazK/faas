@@ -95,3 +95,76 @@ func TestUnifiedDeadLetter_AppScopePreventsCrossAppRead(t *testing.T) {
 		t.Fatalf("cross-app inspect status = %d, want 404; body=%s", crossApp.Code, crossApp.Body.String())
 	}
 }
+
+func TestUnifiedDeadLetter_ReplayAllAndPurge(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "dlq-operator")
+	first := seedDeadLetterRow(t, e, appID, "first")
+	second := seedDeadLetterRow(t, e, appID, "second")
+
+	replay := e.do(t, http.MethodPost, "/v1/apps/dlq-operator/dlq:replay_all?limit=1", nil,
+		map[string]string{"Idempotency-Key": "unified-dlq-replay-all-1"})
+	if replay.Code != http.StatusAccepted {
+		t.Fatalf("replay-all status = %d; body=%s", replay.Code, replay.Body.String())
+	}
+	var batch api.DeadLetterReplayAllResponse
+	if err := json.Unmarshal(replay.Body.Bytes(), &batch); err != nil {
+		t.Fatalf("decode replay-all: %v", err)
+	}
+	if batch.Replayed != 1 {
+		t.Fatalf("replayed = %d, want 1", batch.Replayed)
+	}
+
+	page := e.do(t, http.MethodGet, "/v1/apps/dlq-operator/dlq", nil, nil)
+	var events api.DeadLetterEventsResponse
+	if err := json.Unmarshal(page.Body.Bytes(), &events); err != nil {
+		t.Fatalf("decode page: %v", err)
+	}
+	if len(events.Events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events.Events))
+	}
+
+	// Purging the un-replayed source removes only the ledger projection.
+	purgeID := ""
+	purgeSourceID := ""
+	for _, event := range events.Events {
+		if event.ReplayedAt == nil {
+			purgeID = event.ID
+			purgeSourceID = event.SourceID
+			break
+		}
+	}
+	if purgeID == "" {
+		t.Fatal("replay-all unexpectedly replayed both sources")
+	}
+	purge := e.do(t, http.MethodDelete, "/v1/apps/dlq-operator/dlq/"+purgeID, nil,
+		map[string]string{"Idempotency-Key": "unified-dlq-purge-1"})
+	if purge.Code != http.StatusNoContent {
+		t.Fatalf("purge status = %d; body=%s", purge.Code, purge.Body.String())
+	}
+	inspect := e.do(t, http.MethodGet, "/v1/apps/dlq-operator/dlq/"+purgeID, nil, nil)
+	if inspect.Code != http.StatusNotFound {
+		t.Fatalf("purged inspect status = %d, want 404; body=%s", inspect.Code, inspect.Body.String())
+	}
+	inv, err := e.store.InvocationByID(t.Context(), purgeSourceID)
+	if err != nil {
+		t.Fatalf("source after purge: %v", err)
+	}
+	if inv.State != state.InvocationDeadLetter {
+		t.Fatalf("source after purge = %q, want dead_letter", inv.State)
+	}
+	bulk := e.do(t, http.MethodDelete, "/v1/apps/dlq-operator/dlq?limit=10", nil,
+		map[string]string{"Idempotency-Key": "unified-dlq-purge-all-1"})
+	if bulk.Code != http.StatusOK {
+		t.Fatalf("bulk purge status = %d; body=%s", bulk.Code, bulk.Body.String())
+	}
+	var purged api.DeadLetterPurgeResponse
+	if err := json.Unmarshal(bulk.Body.Bytes(), &purged); err != nil {
+		t.Fatalf("decode bulk purge: %v", err)
+	}
+	if purged.Purged != 1 {
+		t.Fatalf("bulk purged = %d, want 1", purged.Purged)
+	}
+	_ = first
+	_ = second // retain named sources to make the two-row setup explicit.
+}

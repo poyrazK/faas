@@ -94,3 +94,65 @@ func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 	}
 	writeJSON(w, http.StatusAccepted, deadLetterEventResponse(ev))
 }
+
+func (s *server) replayAllDeadLetterEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limit := deadLetterEventsMaxLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 || n > deadLetterEventsMaxLimit {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest,
+				"Invalid dead-letter replay limit", "limit must be between 1 and 200"))
+			return
+		}
+		limit = n
+	}
+	replayed, err := s.store.ReplayDeadLetterEvents(r.Context(), acct.ID, app.ID, limit)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("dead-letter replay"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.DeadLetterReplayAllResponse{AppSlug: app.Slug, Replayed: replayed})
+}
+
+func (s *server) deleteDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteDeadLetterEvent(r.Context(), acct.ID, app.ID, r.PathValue("id")); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
+			return
+		}
+		api.WriteProblem(w, api.ErrInternal("dead-letter purge"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) purgeDeadLetterEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limit := deadLetterEventsMaxLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 || n > deadLetterEventsMaxLimit {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest,
+				"Invalid dead-letter purge limit", "limit must be between 1 and 200"))
+			return
+		}
+		limit = n
+	}
+	purged, err := s.store.DeleteDeadLetterEvents(r.Context(), acct.ID, app.ID, limit)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("dead-letter purge"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.DeadLetterPurgeResponse{AppSlug: app.Slug, Purged: purged})
+}

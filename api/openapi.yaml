@@ -13325,6 +13325,49 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [queues]
+      operationId: purgeDeadLetterEvents
+      summary: Purge dead-letter events from the app ledger.
+      description: Removes up to `limit` ledger projections; source records remain dead-lettered.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueCursorLimit'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Number of ledger events purged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterPurgeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/dlq:replay_all:
+    post:
+      tags: [queues]
+      operationId: replayAllDeadLetterEvents
+      summary: Replay pending dead-letter events for an app.
+      description: |
+        Atomically resets up to `limit` pending queue invocation and broker
+        trigger records to pending and stamps each ledger row with replayed_at.
+        Concurrent operators claim disjoint rows.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueCursorLimit'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Number of events accepted for replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterReplayAllResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/dlq/{id}:
     get:
@@ -13340,6 +13383,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeadLetterEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [queues]
+      operationId: deleteDeadLetterEvent
+      summary: Purge one dead-letter event from the app ledger.
+      description: Removes only the ledger projection; the source remains dead-lettered.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/Id32'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Dead-letter event purged. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -28216,6 +28273,22 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeadLetterEvent' }
         next_before: { type: string, pattern: '^[a-f0-9]{32}$' }
+
+    DeadLetterReplayAllResponse:
+      description: "Count of unified dead-letter events accepted for replay."
+      type: object
+      required: [app_slug, replayed]
+      properties:
+        app_slug: { type: string }
+        replayed: { type: integer, minimum: 0 }
+
+    DeadLetterPurgeResponse:
+      description: "Count of unified dead-letter ledger rows purged."
+      type: object
+      required: [app_slug, purged]
+      properties:
+        app_slug: { type: string }
+        purged: { type: integer, minimum: 0 }
 
     DelayedTaskResponse:
       description: "Delayed task create/get shape. ScheduledAt is the customer-facing UTC dispatch time. State is populated on get, omitted on create (always `pending` there)."

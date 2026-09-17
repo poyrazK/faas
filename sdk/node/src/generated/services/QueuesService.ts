@@ -5,6 +5,8 @@
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsResponse.js';
+import type { DeadLetterPurgeResponse } from '../models/DeadLetterPurgeResponse.js';
+import type { DeadLetterReplayAllResponse } from '../models/DeadLetterReplayAllResponse.js';
 import type { QueueDeadLetterResponse } from '../models/QueueDeadLetterResponse.js';
 import type { QueuePeekResponse } from '../models/QueuePeekResponse.js';
 import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
@@ -368,6 +370,107 @@ export class QueuesService {
     });
   }
   /**
+   * Purge dead-letter events from the app ledger.
+   * Removes up to `limit` ledger projections; source records remain dead-lettered.
+   * @returns DeadLetterPurgeResponse Number of ledger events purged.
+   * @throws ApiError
+   */
+  public static purgeDeadLetterEvents({
+    slug,
+    limit = 20,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeadLetterPurgeResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/dlq',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Replay pending dead-letter events for an app.
+   * Atomically resets up to `limit` pending queue invocation and broker
+   * trigger records to pending and stamps each ledger row with replayed_at.
+   * Concurrent operators claim disjoint rows.
+   *
+   * @returns DeadLetterReplayAllResponse Number of events accepted for replay.
+   * @throws ApiError
+   */
+  public static replayAllDeadLetterEvents({
+    slug,
+    limit = 20,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeadLetterReplayAllResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/dlq:replay_all',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Get one dead-letter event for an app.
    * @returns DeadLetterEvent The dead-letter event.
    * @throws ApiError
@@ -391,6 +494,52 @@ export class QueuesService {
       path: {
         'slug': slug,
         'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Purge one dead-letter event from the app ledger.
+   * Removes only the ledger projection; the source remains dead-lettered.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteDeadLetterEvent({
+    slug,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/dlq/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
       },
       errors: {
         401: `code: unauthorized`,
