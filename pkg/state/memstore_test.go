@@ -5769,7 +5769,7 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 	// the memstore path (the column starts at nil); use the pgtest
 	// path for the seeded filter check, then UpdateTrigger to
 	// install one.
-	trig, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "orders", "", true, []byte(`{"brokers":["localhost:9092"]}`), 100, 1000, 3, 1024, "commit", api.Limits{})
+	trig, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "orders", true, []byte(`{"brokers":["localhost:9092"]}`), "", 100, 1000, 3, 1024, "commit", api.Limits{})
 	if err != nil {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 	}
@@ -5829,16 +5829,16 @@ func TestMemStoreTriggerPersistsCreateAndUpdateFields(t *testing.T) {
 	}
 
 	config := []byte(`{"mode":"delayed_task"}`)
-	created, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", "delayed_task", true,
-		config, 12, 345, 2, 8192, "commit", api.Limits{})
+	created, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+		config, "delayed_task", 12, 345, 2, 8192, "commit", api.Limits{})
 	if err != nil {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 	}
 	config[0] = 'x'
 	if string(created.Config) != `{"mode":"delayed_task"}` ||
-		!created.Source.Valid || created.Source.String != "delayed_task" ||
 		created.BatchSizeMax != 12 || created.BatchWindowMs != 345 ||
-		created.MaxAttempts != 2 || created.PayloadMaxBytes != 8192 {
+		created.MaxAttempts != 2 || created.PayloadMaxBytes != 8192 ||
+		!created.Source.Valid || created.Source.String != "delayed_task" {
 		t.Fatalf("created trigger did not preserve inputs: %+v", created)
 	}
 
@@ -5878,8 +5878,8 @@ func TestMemStoreListDueInvocationsExcludesEnabledQueueTriggerOwner(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", "queue", true,
-		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{}); err != nil {
+	if _, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+		[]byte(`{"mode":"queue"}`), "queue", 1, 20, 1, 8192, "commit", api.Limits{}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := m.ListDueInvocations(ctx, time.Now().Add(time.Second), 10)
@@ -5904,21 +5904,21 @@ func TestMemStoreQueueTriggerOwnershipIsUnique(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", "queue", true,
-		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{})
+	first, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+		[]byte(`{"mode":"queue"}`), "queue", 1, 20, 1, 8192, "commit", api.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs-2", "queue", true,
-		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{}); !errors.Is(err, ErrConflict) {
+	if _, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs-2", true,
+		[]byte(`{"mode":"queue"}`), "queue", 1, 20, 1, 8192, "commit", api.Limits{}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate enabled owner error=%v, want ErrConflict", err)
 	}
 	disabled := false
 	if _, err := m.UpdateTrigger(ctx, first.ID.String(), &disabled, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("disable first owner: %v", err)
 	}
-	second, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs-2", "queue", true,
-		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{})
+	second, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs-2", true,
+		[]byte(`{"mode":"queue"}`), "queue", 1, 20, 1, 8192, "commit", api.Limits{})
 	if err != nil {
 		t.Fatalf("create replacement owner: %v", err)
 	}

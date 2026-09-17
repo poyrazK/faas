@@ -10112,7 +10112,7 @@ func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
 // (#14) reads from ListEnabledTriggers + ClaimTriggerRecords; both
 // are stubbed here so tests can run without a live Postgres.
 
-func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug, source string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug string, enabled bool, config []byte, source string, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	perApp := 0
@@ -10153,9 +10153,9 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		BatchSizeMax:         batchSizeMax,
 		BatchWindowMs:        batchWindowMs,
 		MaxAttempts:          maxAttempts,
+		Source:               nullableTriggerSource(source),
 		PayloadMaxBytes:      payloadMaxBytes,
 		BrokerPoisonStrategy: brokerPoisonStrategy,
-		Source:               pgtype.Text{String: source, Valid: source != ""},
 		CreatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		UpdatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}

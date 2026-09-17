@@ -55,15 +55,19 @@ func NewUnixClient(socket string) *Client {
 // RegisterEndpoint makes an endpoint available on this realtimed node.
 func (c *Client) RegisterEndpoint(ctx context.Context, endpoint Endpoint) error {
 	request := endpointRequest{
-		ID:                endpoint.ID,
-		AppID:             endpoint.AppID,
-		AccountID:         endpoint.AccountID,
-		CallbackURL:       endpoint.CallbackURL,
-		ConnectPath:       endpoint.ConnectPath,
-		MessagePath:       endpoint.MessagePath,
-		DisconnectPath:    endpoint.DisconnectPath,
-		CallbackAuthToken: endpoint.CallbackAuthToken,
-		AuthToken:         endpoint.AuthToken,
+		ID:                      endpoint.ID,
+		AppID:                   endpoint.AppID,
+		AccountID:               endpoint.AccountID,
+		CallbackURL:             endpoint.CallbackURL,
+		ConnectPath:             endpoint.ConnectPath,
+		MessagePath:             endpoint.MessagePath,
+		DisconnectPath:          endpoint.DisconnectPath,
+		CallbackAuthToken:       endpoint.CallbackAuthToken,
+		AuthToken:               endpoint.AuthToken,
+		AllowedOrigins:          append([]string(nil), endpoint.AllowedOrigins...),
+		MaxConnections:          endpoint.MaxConnections,
+		MaxMessageBytes:         endpoint.MaxMessageBytes,
+		MaxConnectionAgeSeconds: int64(endpoint.MaxConnectionAge / time.Second),
 	}
 	return c.do(ctx, http.MethodPost, "/internal/endpoints", request, nil)
 }

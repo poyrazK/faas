@@ -20,10 +20,12 @@
 // async_invoke traffic keeps its single-record semantics), so the
 // poller is the seam that decides which rows opt in.
 //
-// Ack completes the underlying invocation after the trigger record succeeds.
-// Retry Nacks leave it pending; terminal Nacks move it to dead_letter. The
-// trigger_records row remains the delivery-attempt FSM while invocations stays
-// the customer-visible lifecycle.
+// Poll claims the invocation row before it is handed to the gateway. Ack
+// transitions that claim to completed and Nack returns it to pending (or
+// dead-letters it after the trigger's attempt budget). This makes the
+// Postgres-backed queue behave like the external brokers: a scheduler crash
+// leaves a leased row for the expiry reaper, while a gateway failure is
+// redelivered without creating a second invocation.
 
 package sched
 
@@ -53,10 +55,8 @@ type queuePoller struct {
 
 	// mu protects itemsInFlight — the dispatcher passes item
 	// identifiers to Ack/Nack and we record them here so a
-	// subsequent Poll sees consistent state. The field also leaves
-	// room for a future queue-poller variant (e.g. an
-	// external Postgres with a separate CDC log) needs to track
-	// in-flight items to dedupe.
+	// subsequent Poll sees consistent state while the durable row
+	// transition is committed.
 	mu            sync.Mutex
 	itemsInFlight map[string]struct{}
 }
@@ -92,22 +92,43 @@ func (q *queuePoller) Kind() string { return "queue" }
 // old queue receive batch size from drain.go).
 //
 // Returned SourceRecord.ItemIdentifier is the invocation id (a
-// UUID); the dispatch tick uses it for Ack/Nack bookkeeping.
+// UUID); the dispatch tick uses it for the durable Ack/Nack transition.
 func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	const pollLimit = 256
-	rows, err := q.pool.Query(ctx,
-		`select i.id, i.payload::text, i.headers::text, i.metadata::text,
-		        i.created_at
-		   from invocations i
-		   left join trigger_records tr
-		     on tr.trigger_id = $1
-		    and tr.item_identifier = i.id::text
-		  where i.app_id = $2
-		    and i.source = $3
-		    and i.state = 'pending'
-		    and (tr.id is null or (tr.state in ('pending','retry') and tr.next_fire_at <= now()))
-		  order by i.created_at asc
-		  limit $4`,
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return PollResult{Error: fmt.Errorf("poller_queue: begin claim: %w", err)}
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx,
+		`with claimed as (
+			select i.id
+			  from invocations i
+			  left join trigger_records tr
+			    on tr.trigger_id = $1
+			   and tr.item_identifier = i.id::text
+			 where i.app_id = $2
+			   and i.source = $3
+			   and i.state = 'pending'
+			   and i.due_at <= now()
+			   and (tr.id is null or (tr.state in ('pending','retry') and tr.next_fire_at <= now()))
+			 order by i.created_at asc
+			 limit $4
+			 for update of i skip locked
+		), updated as (
+			update invocations i
+			   set state = 'dispatching',
+			       lease_expires_at = now() + interval '60 seconds',
+			       received_at = coalesce(i.received_at, now()),
+			       attempts = i.attempts + 1
+			  from claimed c
+			 where i.id = c.id
+			 returning i.id::text, i.payload::text, i.headers::text,
+			           '{}'::text, i.created_at
+		)
+		select id, payload, headers, metadata, created_at
+		  from updated
+		 order by created_at asc, id asc`,
 		t.ID, t.AppID, q.source, pollLimit,
 	)
 	if err != nil {
@@ -137,6 +158,9 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	if err := rows.Err(); err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: rows iter: %w", err)}
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return PollResult{Error: fmt.Errorf("poller_queue: commit claim: %w", err)}
+	}
 	// Track in-flight items so a subsequent Ack/Nack on the same
 	// trigger sees a consistent set.
 	q.mu.Lock()
@@ -147,8 +171,10 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	return PollResult{Records: out}
 }
 
-// Ack completes the customer-visible invocation after successful dispatch and
-// removes it from the poller's in-flight set.
+// Ack completes the claimed invocation after the worker gateway reports
+// success. This is the durable push-consumer acknowledgement: the
+// trigger_records row records the trigger-level audit state while the
+// invocations row leaves the generic drain queue.
 func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) error {
 	if err := q.finishInvocations(ctx, t, ids, "completed", "succeeded", "success", "", `{"trigger_dispatch":"succeeded"}`); err != nil {
 		return err
@@ -161,14 +187,18 @@ func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) err
 	return nil
 }
 
-// Nack leaves transient broker errors pending for the trigger retry FSM. A
-// terminal dispatch failure moves the customer-visible invocation to the
-// dead-letter state.
+// Nack requeues the claimed invocation for a later push attempt, or marks
+// it dead_letter when the trigger's attempt budget is exhausted. The
+// trigger_records retry FSM remains the source of the exact next-fire time;
+// the invocation due_at is a short wake guard to avoid a hot poll loop.
 func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
-	if reason != triggerReasonBrokerError {
+	terminal := reason == triggerReasonPoisonRecord || reason == triggerReasonPayloadTooLarge || reason == triggerReasonRateLimited
+	if terminal {
 		if err := q.finishInvocations(ctx, t, ids, "dead_letter", "dead_letter", "dead_letter", reason, `{"trigger_dispatch":"dead_letter"}`); err != nil {
 			return err
 		}
+	} else if err := q.retryInvocations(ctx, t, ids, reason); err != nil {
+		return err
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -176,6 +206,14 @@ func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, re
 		delete(q.itemsInFlight, id)
 	}
 	return nil
+}
+
+// NackTerminal is the queue-specific terminal disposition used when a
+// record is rejected before a trigger_records row exists (for example, a
+// wake-rate-limit denial). External brokers retain the older Ack-after-DLQ
+// behavior, so dispatch_triggers.go discovers this optional capability.
+func (q *queuePoller) NackTerminal(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
+	return q.Nack(ctx, t, ids, reason)
 }
 
 func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids []string, invocationState, recordState, outcome, lastError, result string) error {
@@ -198,13 +236,42 @@ func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids
 		   set state = $4,
 		       outcome = $5,
 		       result = $6::jsonb,
-		       completed_at = now()
+		       completed_at = now(),
+		       lease_expires_at = null,
+		       last_error = $9
 		 where id::text = any($3::text[])
 		   and app_id = $7
 		   and source = $8
-		   and state = 'pending'`, recordState, t.ID, ids, invocationState, outcome, result, t.AppID, q.source, lastError)
+		   and state = 'dispatching'`, recordState, t.ID, ids, invocationState, outcome, result, t.AppID, q.source, lastError)
 	if err != nil {
 		return fmt.Errorf("poller_queue: finish invocations: %w", err)
+	}
+	return nil
+}
+
+func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := q.pool.Exec(ctx, `
+		update invocations i
+		   set state = 'pending',
+		       outcome = null,
+		       completed_at = null,
+		       due_at = coalesce((
+		           select tr.next_fire_at
+		             from trigger_records tr
+		            where tr.trigger_id = $1
+		              and tr.item_identifier = i.id::text
+		       ), now() + interval '1 second'),
+		       lease_expires_at = null,
+		       last_error = $4
+		 where i.id::text = any($2::text[])
+		   and i.app_id = $3
+		   and i.source = $5
+		   and i.state = 'dispatching'`, t.ID, ids, t.AppID, reason, q.source)
+	if err != nil {
+		return fmt.Errorf("poller_queue: retry invocations: %w", err)
 	}
 	return nil
 }
@@ -243,7 +310,6 @@ func parseJSONMetadata(s string) map[string]any {
 	return out
 }
 
-// newQueuePoller is called directly by Loop.newPollerForTrigger. Queue
-// triggers are the only poller kind that needs schedd's database pool, so
-// keeping the dependency on Loop avoids the former process-global startup
-// side channel and makes multiple Loop instances safe in one process.
+// Queue pollers receive their pool through Loop.newPollerForTrigger. Keeping
+// this dependency on the Loop avoids cross-loop state when multiple schedulers
+// share a process in tests or during staged handoff.

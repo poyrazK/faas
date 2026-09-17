@@ -47,6 +47,7 @@ func (m *MemStore) CreateManagedRealtimeEndpointIfUnderQuota(_ context.Context, 
 	in.UpdatedAt = in.CreatedAt
 	in.CallbackAuthTokenSealed = append([]byte(nil), in.CallbackAuthTokenSealed...)
 	in.AuthTokenSealed = append([]byte(nil), in.AuthTokenSealed...)
+	in.AllowedOrigins = append([]string(nil), in.AllowedOrigins...)
 	m.managedRealtimeEndpoints[in.ID] = in
 	return in, nil
 }
@@ -60,6 +61,7 @@ func (m *MemStore) ManagedRealtimeEndpointByID(_ context.Context, id string) (Ma
 	}
 	e.CallbackAuthTokenSealed = append([]byte(nil), e.CallbackAuthTokenSealed...)
 	e.AuthTokenSealed = append([]byte(nil), e.AuthTokenSealed...)
+	e.AllowedOrigins = append([]string(nil), e.AllowedOrigins...)
 	return e, nil
 }
 
@@ -87,6 +89,18 @@ func (m *MemStore) UpdateManagedRealtimeEndpoint(_ context.Context, id string, p
 	}
 	if p.AuthTokenSealed != nil {
 		e.AuthTokenSealed = append([]byte(nil), (*p.AuthTokenSealed)...)
+	}
+	if p.AllowedOrigins != nil {
+		e.AllowedOrigins = append([]string(nil), (*p.AllowedOrigins)...)
+	}
+	if p.MaxConnections != nil {
+		e.MaxConnections = *p.MaxConnections
+	}
+	if p.MaxMessageBytes != nil {
+		e.MaxMessageBytes = *p.MaxMessageBytes
+	}
+	if p.MaxConnectionAgeSeconds != nil {
+		e.MaxConnectionAgeSeconds = *p.MaxConnectionAgeSeconds
 	}
 	if p.Enabled != nil {
 		e.Enabled = *p.Enabled
@@ -130,6 +144,7 @@ func listManagedRealtimeEndpoints(rows map[string]ManagedRealtimeEndpoint, keep 
 		if keep(e) {
 			e.CallbackAuthTokenSealed = append([]byte(nil), e.CallbackAuthTokenSealed...)
 			e.AuthTokenSealed = append([]byte(nil), e.AuthTokenSealed...)
+			e.AllowedOrigins = append([]string(nil), e.AllowedOrigins...)
 			out = append(out, e)
 		}
 	}

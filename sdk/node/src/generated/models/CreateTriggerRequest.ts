@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FilterCriteria } from './FilterCriteria.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { TriggerKind } from './TriggerKind.js';
 /**
  * Trigger create payload. Kind is immutable after create. Per-kind
@@ -25,6 +26,10 @@ export type CreateTriggerRequest = {
   batch_size_max?: number | null;
   batch_window_ms?: number | null;
   max_attempts?: number | null;
+  /**
+   * Optional retry delay and jitter configuration; max_attempts remains the trigger attempt cap.
+   */
+  retry_policy?: RetryPolicyDTO;
   payload_max_bytes?: number | null;
   /**
    * Kafka-only poison-record handling strategy. null/omitted

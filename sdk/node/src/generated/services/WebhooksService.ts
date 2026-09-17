@@ -52,7 +52,10 @@ export class WebhooksService {
    * APP_WEBHOOK namespace, and is NEVER returned in plaintext
    * — the response shape carries the masked constant. event_filter
    * is an optional allowlist; empty subscribes to every currently
-   * supported producer-backed event.
+   * supported producer-backed event. delivery_format defaults to
+   * `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+   * mode (`application/cloudevents+json`) while retaining the existing
+   * signed webhook headers.
    *
    * @returns AppWebhookResponse Webhook created.
    * @throws ApiError

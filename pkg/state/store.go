@@ -20,6 +20,10 @@ var ErrNotFound = errors.New("state: not found")
 
 const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
 
+func nullableTriggerSource(source string) pgtype.Text {
+	return pgtype.Text{String: source, Valid: source != ""}
+}
+
 // githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
 // `repo:OWNER/REPO:...` subject form. It is used only as a first-use bridge
 // from an already OAuth-verified repository binding to an OIDC trust policy.
@@ -3255,7 +3259,7 @@ type Store interface {
 	DeleteTrigger(ctx context.Context, id, appID string) error
 	ListTriggersForApp(ctx context.Context, appID string) ([]sqlc.Trigger, error)
 	ListEnabledTriggers(ctx context.Context) ([]sqlc.Trigger, error)
-	CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug, source string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error)
+	CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug string, enabled bool, config []byte, source string, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error)
 	ClaimTriggerRecords(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error)
 	// InsertTriggerRecord persists a single broker-delivered record
 	// into the trigger_records FSM queue so a subsequent

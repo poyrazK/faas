@@ -13,6 +13,10 @@ export type CreateAppWebhookRequest = {
   webhook_secret: string;
   event_filter?: Array<'app.parked' | 'app.woken' | 'usage_statement.finalized'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
+  /**
+   * Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode.
+   */
+  delivery_format?: 'json' | 'cloudevents';
   enabled?: boolean;
 };
 

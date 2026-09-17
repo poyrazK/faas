@@ -26196,7 +26196,7 @@ func (s *PgStore) PruneDataUpstreamProbesOlderThan(ctx context.Context, cutoff t
 // or already deleted. The cron kind routes through the existing
 // CreateCronIfUnderQuota path because cron needs the crons row + the
 // schedule+path cron-specific schema.
-func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug, source string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug string, enabled bool, config []byte, source string, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: begin tx: %w", err)
@@ -26277,7 +26277,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 	row := tx.QueryRow(ctx,
 		`insert into triggers (account_id, app_id, kind, slug, enabled, config,
 		                       batch_size_max, batch_window_ms, max_attempts,
-		                       cron_id, source, payload_max_bytes,
+			cron_id, source, payload_max_bytes,
 		                       broker_poison_strategy)
 		 values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
 		 returning id, account_id, app_id, kind, slug, enabled, config,
@@ -26286,7 +26286,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		           created_at, updated_at`,
 		accountID, appID, kind, slug, enabled, config,
 		batchSizeMax, batchWindowMs, maxAttempts,
-		pgtype.UUID{}, pgtype.Text{String: source, Valid: source != ""}, payloadMaxBytes, bps)
+		pgtype.UUID{}, nullableTriggerSource(source), payloadMaxBytes, bps)
 	t := sqlc.Trigger{}
 	if err := row.Scan(
 		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,

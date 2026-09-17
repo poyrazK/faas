@@ -15,6 +15,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -70,11 +71,15 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 	id := r.PathValue("id")
 	principal := acct.ID
 	reason := state.CancelReasonUser
-	if r.ContentLength > 0 {
+	if r.ContentLength != 0 {
 		var req struct {
 			Reason string `json:"reason"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&req) // tolerate empty body
+		if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"invalid cancel body", "body must be JSON with an optional reason"))
+			return
+		}
 		if req.Reason != "" {
 			parsed := state.CancelReason(req.Reason)
 			if !parsed.IsValid() {
@@ -160,7 +165,7 @@ func (s *server) handleReorderDeployment(w http.ResponseWriter, r *http.Request,
 	var req struct {
 		Priority *int `json:"priority"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Priority == nil {
+	if err := decodeJSON(r, &req); err != nil || req.Priority == nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"priority required",
 			"body must be {\"priority\": <int in [0,1000]>}"))
@@ -253,7 +258,11 @@ func (s *server) handleClearObsoleteDeployments(w http.ResponseWriter, r *http.R
 	var req struct {
 		OlderThan string `json:"older_than"` // duration, e.g. "168h"
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req) // body optional
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"invalid clear-obsolete body", "body must be JSON with an optional older_than"))
+		return
+	}
 	olderThan := 168 * time.Hour
 	if req.OlderThan != "" {
 		if d, err := time.ParseDuration(req.OlderThan); err == nil {

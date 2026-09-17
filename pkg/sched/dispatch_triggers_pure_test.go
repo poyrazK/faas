@@ -1,3 +1,4 @@
+// adr: 118
 // dispatch_triggers_pure_test.go — fill pkg/sched/dispatch_triggers.go
 // coverage of the pure helper surface. Targets the 0%-covered
 // pure helpers: closeBatch, buildDispatchEnvelope, batchItemIDs,
@@ -168,6 +169,18 @@ func TestClaimedItemIDs_Multiple(t *testing.T) {
 	}
 }
 
+func TestUnclaimedItemIDsAndRecordsForClaimed(t *testing.T) {
+	batch := []SourceRecord{{ItemIdentifier: "a"}, {ItemIdentifier: "b"}, {ItemIdentifier: "c"}}
+	claimed := []sqlc.TriggerRecord{{ItemIdentifier: "b"}, {ItemIdentifier: "c"}}
+	if got := unclaimedItemIDs(batch, claimed); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("unclaimedItemIDs = %v, want [a]", got)
+	}
+	got := recordsForClaimed(batch, claimed)
+	if len(got) != 2 || got[0].ItemIdentifier != "b" || got[1].ItemIdentifier != "c" {
+		t.Fatalf("recordsForClaimed = %#v, want [b c]", got)
+	}
+}
+
 // --- byteReadCloser ----------------------------------------------
 
 func TestByteReadCloser_ReadAll(t *testing.T) {
@@ -274,6 +287,17 @@ func TestComputeRetryBackoff_NegativeTreatedAsOne(t *testing.T) {
 	d := computeRetryBackoff(-5)
 	if d > 1200*time.Millisecond || d < 800*time.Millisecond {
 		t.Errorf("attempts=-5: got %v, want [0.8s, 1.2s]", d)
+	}
+}
+
+func TestComputeTriggerRetryBackoffUsesConfiguredPolicy(t *testing.T) {
+	configured := sqlc.Trigger{Config: []byte(`{"retry_policy":{"base_seconds":2,"max_seconds":10}}`)}
+	if got := computeTriggerRetryBackoff(configured, 1); got != 2*time.Second {
+		t.Fatalf("configured retry backoff = %v, want 2s", got)
+	}
+	legacy := sqlc.Trigger{Config: []byte(`{"mode":"queue"}`)}
+	if got := computeTriggerRetryBackoff(legacy, 1); got < 800*time.Millisecond || got > 1200*time.Millisecond {
+		t.Fatalf("legacy retry backoff = %v, want historical [800ms,1200ms]", got)
 	}
 }
 

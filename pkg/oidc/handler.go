@@ -35,6 +35,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -80,6 +81,8 @@ type AuditEmitter interface {
 	Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 }
 
+const maxExchangeBodyBytes int64 = 1 << 20
+
 // defaultAlgorithms is the closed alg set for first-use GitHub Actions policy
 // creation. Existing customer policies may use the verifier's wider supported
 // set when explicitly configured.
@@ -99,8 +102,38 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Body == nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad request", "request body is required"))
+		return
+	}
+	if r.ContentLength > maxExchangeBodyBytes {
+		api.WriteProblem(w, api.ErrRequestBodyTooLarge(maxExchangeBodyBytes, r.ContentLength))
+		return
+	}
 	var req ExchangeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxExchangeBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			api.WriteProblem(w, api.ErrRequestBodyTooLarge(maxExchangeBodyBytes, maxExchangeBodyBytes+1))
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad request", err.Error()))
+		return
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			api.WriteProblem(w, api.ErrRequestBodyTooLarge(maxExchangeBodyBytes, maxExchangeBodyBytes+1))
+			return
+		}
+		if err == nil {
+			err = errors.New("request body must contain a single JSON value")
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad request", err.Error()))
 		return

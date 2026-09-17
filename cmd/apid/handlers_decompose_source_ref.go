@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -46,8 +45,7 @@ func (s *server) scanProjectSourceRef(w http.ResponseWriter, r *http.Request, ac
 
 func decodeProjectSourceRefScanRequest(r *http.Request) (api.ProjectSourceRefScanRequest, *api.Problem) {
 	var req api.ProjectSourceRefScanRequest
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	if err := decoder.Decode(&req); err != nil {
+	if err := decodeJSONSized(r, &req, defaultJSONBodyMaxBytes); err != nil {
 		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error())
 	}
 	req.Repo = strings.TrimSpace(req.Repo)

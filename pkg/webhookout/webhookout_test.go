@@ -626,6 +626,76 @@ func TestWebhook_Dispatch_Headers_WebhookSet(t *testing.T) {
 	}
 }
 
+// TestWebhook_Dispatch_CloudEventsStructured is the executable standards
+// fixture for the opt-in CloudEvents 1.0 delivery format. It pins the
+// structured-mode content type, required context attributes, account_id
+// extension, and preservation of the existing HMAC signature over the exact
+// wire body.
+func TestWebhook_Dispatch_CloudEventsStructured(t *testing.T) {
+	var (
+		body        []byte
+		contentType string
+		signature   string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentType = r.Header.Get("Content-Type")
+		signature = r.Header.Get("X-Faas-Webhook-Signature")
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	evt := newTestEvent()
+	evt.Source = "urn:gregale:app:" + evt.AppID
+	evt.Type = "app.parked"
+	evt.Subject = "apps/" + evt.AppID
+	evt.AccountID = "acct_test"
+	evt.Data = json.RawMessage(`{"reason":"idle"}`)
+	d := webhookout.NewDispatcher(webhookout.DispatcherOptions{
+		HTTPClient: srv.Client(),
+		HeaderSet:  webhookout.HeaderSetWebhook,
+		Format:     webhookout.DeliveryFormatCloudEvents,
+	})
+	res := d.Dispatch(context.Background(), testTarget(srv.URL), evt)
+	if res.Err != nil {
+		t.Fatalf("err = %v", res.Err)
+	}
+	if contentType != "application/cloudevents+json" {
+		t.Fatalf("content type = %q, want application/cloudevents+json", contentType)
+	}
+	var envelope struct {
+		SpecVersion     string          `json:"specversion"`
+		ID              string          `json:"id"`
+		Source          string          `json:"source"`
+		Type            string          `json:"type"`
+		Subject         string          `json:"subject"`
+		Time            string          `json:"time"`
+		DataContentType string          `json:"datacontenttype"`
+		Data            json.RawMessage `json:"data"`
+		AccountID       string          `json:"account_id"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode CloudEvents body: %v", err)
+	}
+	if envelope.SpecVersion != "1.0" || envelope.ID != evt.ID ||
+		envelope.Source != evt.Source || envelope.Type != evt.Type ||
+		envelope.Subject != evt.Subject || envelope.Time == "" ||
+		envelope.DataContentType != "application/json" ||
+		envelope.AccountID != evt.AccountID {
+		t.Fatalf("CloudEvents context = %+v, want id=%q source=%q type=%q subject=%q account_id=%q",
+			envelope, evt.ID, evt.Source, evt.Type, evt.Subject, evt.AccountID)
+	}
+	if string(envelope.Data) != string(evt.Data) {
+		t.Fatalf("data = %s, want %s", envelope.Data, evt.Data)
+	}
+	if !strings.HasPrefix(signature, "sha256=") {
+		t.Fatalf("signature = %q, want sha256= prefix", signature)
+	}
+	if err := webhookout.NewSigner([]byte(testSecret)).Verify(evt.OccurredAt.Unix(), evt.ID, body, strings.TrimPrefix(signature, "sha256=")); err != nil {
+		t.Fatalf("CloudEvents body signature verification: %v", err)
+	}
+}
+
 // TestWebhook_Dispatch_AttemptHeaderIncrements: the X-Faas-Alert-Attempt
 // header must increment on retry so the customer's verifier can tell
 // which attempt it's looking at.

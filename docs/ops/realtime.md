@@ -36,6 +36,15 @@ operations are routed through the leased owner directory, while publish is
 broadcast to active nodes. The daemon-socket example below remains useful for
 node-local bootstrap and recovery tooling.
 
+Realtime v2 endpoint policies can add `allowed_origins`,
+`max_connections`, `max_message_bytes`, and `max_connection_age_seconds` to
+the endpoint resource. Origins are exact `http://` or `https://` origins (up
+to 16 entries); wildcards are intentionally not supported. A zero numeric
+value inherits the node-wide `FAAS_REALTIME_*` default, and endpoint values
+cannot exceed the daemon's global cap. Empty `allowed_origins` preserves the
+legacy non-browser/client behavior; a non-empty list is enforced during the
+WebSocket handshake.
+
 Endpoint writes are best-effort fan-out operations. apid performs an immediate
 reconciliation at boot and every 30 seconds, replaying enabled rows and
 removing disabled rows on active nodes. If a node is restarting or unreachable,

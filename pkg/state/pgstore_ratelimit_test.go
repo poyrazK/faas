@@ -98,8 +98,8 @@ func TestPGQueueTriggerOwnsLegacyInvocationDrain(t *testing.T) {
 	accountID, appID, _ := seedLiveDeploy(t, store, ctx, "queue-owner", "queue-owner")
 	limits := api.MustLimitsFor(api.PlanPro)
 	trigger, err := store.CreateTriggerIfUnderQuota(
-		ctx, appID, "queue", "jobs", "queue", true,
-		[]byte(`{"mode":"queue"}`), 10, 1000, 3, 1<<20, "commit", limits,
+		ctx, appID, "queue", "jobs", true,
+		[]byte(`{"mode":"queue"}`), "queue", 10, 1000, 3, 1<<20, "commit", limits,
 	)
 	if err != nil {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
@@ -108,8 +108,8 @@ func TestPGQueueTriggerOwnsLegacyInvocationDrain(t *testing.T) {
 		t.Fatalf("trigger source=%+v, want queue", trigger.Source)
 	}
 	if _, err := store.CreateTriggerIfUnderQuota(
-		ctx, appID, "queue", "jobs-duplicate", "queue", true,
-		[]byte(`{"mode":"queue"}`), 10, 1000, 3, 1<<20, "commit", limits,
+		ctx, appID, "queue", "jobs-duplicate", true,
+		[]byte(`{"mode":"queue"}`), "queue", 10, 1000, 3, 1<<20, "commit", limits,
 	); err == nil {
 		t.Fatal("second enabled queue owner succeeded, want unique ownership error")
 	}

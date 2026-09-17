@@ -169,10 +169,14 @@ type storeLike interface {
 	TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID, itemIdentifier string) (string, error)
 }
 
+type terminalNacker interface {
+	NackTerminal(context.Context, sqlc.Trigger, []string, string) error
+}
+
 // triggerWakeup is the channel-side wakeup signal the schedd's
-// pg_notify subscriber delivers on every NotifyTriggerReady +
-// NotifyTriggerChanged payload. The Loop's run() method selects
-// on it alongside the 1s ticker.
+// pg_notify subscriber delivers on trigger-record mutations, trigger
+// mutations, and bound queue invocation_due payloads. The Loop's run()
+// method selects on it alongside the 1s ticker.
 //
 // WakeupTriggers sends a single token; runTriggerTick reads at
 // most one trigger per ticker arm so a burst of broker messages
@@ -489,14 +493,48 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: claim",
 			"trigger_id", t.ID.String(),
 			"err", claimErr)
+		// Queue pollers durably claim invocation rows before this
+		// trigger-record claim. Put the whole batch back when the
+		// audit-row claim fails; otherwise those rows would remain in
+		// dispatching until the lease reaper runs.
+		if err := poller.Nack(ctx, t, batchItemIDs(batch), triggerReasonBrokerError); err != nil {
+			l.log.Warn("sched trigger tick: poller nack after claim failure",
+				"trigger_id", t.ID.String(), "err", err)
+		}
 		return fmt.Errorf("dispatchOneTrigger claim: %w", claimErr)
 	}
 	if len(claimed) == 0 {
+		// The poller has already claimed these records. A zero-row
+		// trigger claim can happen after an insert conflict or while a
+		// prior trigger-record retry is still cooling down; do not leave
+		// the underlying queue rows leased indefinitely.
+		if err := poller.Nack(ctx, t, batchItemIDs(batch), triggerReasonBrokerError); err != nil {
+			l.log.Warn("sched trigger tick: poller nack after empty claim",
+				"trigger_id", t.ID.String(), "err", err)
+		}
+		return nil
+	}
+	// InsertTriggerRecord is intentionally best-effort per record, so a
+	// partial claim is possible. Release only the queue records without a
+	// corresponding claimed trigger row; the claimed subset continues
+	// through the gateway path below.
+	if unclaimed := unclaimedItemIDs(batch, claimed); len(unclaimed) > 0 {
+		if err := poller.Nack(ctx, t, unclaimed, triggerReasonBrokerError); err != nil {
+			l.log.Warn("sched trigger tick: poller nack for unclaimed records",
+				"trigger_id", t.ID.String(), "err", err)
+		}
+	}
+	claimedBatch := recordsForClaimed(batch, claimed)
+	if len(claimedBatch) == 0 {
+		// A stale trigger-record claim cannot safely be posted with a
+		// different broker batch. Release the claimed broker handles and
+		// let the next poll reconcile the two durable queues.
+		_ = poller.Nack(ctx, t, claimedItemIDs(claimed), triggerReasonBrokerError)
 		return nil
 	}
 
 	// 6. Post the batch envelope to the gateway.
-	envelope := buildDispatchEnvelope(t, batch)
+	envelope := buildDispatchEnvelope(t, claimedBatch)
 	respBody, postErr := l.postBatch(ctx, envelope)
 	if postErr != nil {
 		l.log.Warn("sched trigger tick: gateway post",
@@ -649,7 +687,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			attempts := retryAttempts[i]
 			// Review finding #9: exponential backoff + ±20%
 			// jitter replaces the prior hardcoded 2s.
-			backoff := computeRetryBackoff(attempts)
+			backoff := computeTriggerRetryBackoff(t, attempts)
 			nextFireAt := time.Now().Add(backoff)
 			if err := store.MarkTriggerRecordRetry(ctx, id, "", nextFireAt); err != nil {
 				l.log.Warn("sched trigger tick: mark retry",
@@ -920,6 +958,14 @@ func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource,
 		return
 	}
 	l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
+	if terminal, ok := poller.(terminalNacker); ok {
+		// Queue rows have not yet produced trigger_records, so Ack would
+		// incorrectly mark the invocation successful. Move them directly
+		// to the queue's terminal state; external brokers keep the legacy
+		// Ack-after-DLQ offset advance.
+		_ = terminal.NackTerminal(ctx, t, items, triggerReasonRateLimited)
+		return
+	}
 	_ = poller.Ack(ctx, t, items)
 }
 
@@ -1008,6 +1054,44 @@ func claimedItemIDs(claimed []sqlc.TriggerRecord) []string {
 	return out
 }
 
+// unclaimedItemIDs returns the broker identifiers from batch that are not
+// represented by ClaimTriggerRecords. Queue pollers claim the invocation row
+// before the trigger-record insert/claim sequence, so these identifiers must
+// be released when a partial claim occurs.
+func unclaimedItemIDs(batch []SourceRecord, claimed []sqlc.TriggerRecord) []string {
+	if len(batch) == 0 {
+		return nil
+	}
+	claimedSet := make(map[string]struct{}, len(claimed))
+	for _, c := range claimed {
+		claimedSet[c.ItemIdentifier] = struct{}{}
+	}
+	out := make([]string, 0, len(batch))
+	for _, r := range batch {
+		if _, ok := claimedSet[r.ItemIdentifier]; !ok {
+			out = append(out, r.ItemIdentifier)
+		}
+	}
+	return out
+}
+
+func recordsForClaimed(batch []SourceRecord, claimed []sqlc.TriggerRecord) []SourceRecord {
+	if len(batch) == 0 || len(claimed) == 0 {
+		return nil
+	}
+	claimedSet := make(map[string]struct{}, len(claimed))
+	for _, c := range claimed {
+		claimedSet[c.ItemIdentifier] = struct{}{}
+	}
+	out := make([]SourceRecord, 0, len(claimed))
+	for _, r := range batch {
+		if _, ok := claimedSet[r.ItemIdentifier]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // byteReadCloser is a tiny io.ReadCloser for a []byte.
 type byteReadCloser struct {
 	b   []byte
@@ -1071,6 +1155,33 @@ func computeRetryBackoff(attempts int32) time.Duration {
 	// the dispatch tick absorbs. math/rand/v2 is correct here.
 	jitter := time.Duration(float64(base) * (0.8 + 0.01*float64(rand.Uint64()%41)))
 	return jitter
+}
+
+// computeTriggerRetryBackoff selects a trigger's configured retry curve,
+// falling back to the historical inline curve for rows created before
+// retry_policy was introduced. The policy lives in the trigger config JSONB
+// so this path remains compatible with existing sqlc models and migrations.
+func computeTriggerRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration {
+	var envelope struct {
+		RetryPolicy struct {
+			MaxAttempts   int     `json:"max_attempts"`
+			BaseSeconds   float64 `json:"base_seconds"`
+			MaxSeconds    float64 `json:"max_seconds"`
+			JitterSeconds float64 `json:"jitter_seconds"`
+		} `json:"retry_policy"`
+	}
+	if len(t.Config) > 0 && json.Unmarshal(t.Config, &envelope) == nil {
+		policy := dispatch.RetryPolicy{
+			MaxAttempts:   envelope.RetryPolicy.MaxAttempts,
+			BaseSeconds:   envelope.RetryPolicy.BaseSeconds,
+			MaxSeconds:    envelope.RetryPolicy.MaxSeconds,
+			JitterSeconds: envelope.RetryPolicy.JitterSeconds,
+		}
+		if !policy.Zero() {
+			return policy.Backoff(int(attempts))
+		}
+	}
+	return computeRetryBackoff(attempts)
 }
 
 // Compile-time guarantee the helpers we use are wired.

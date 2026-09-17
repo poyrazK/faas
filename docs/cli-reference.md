@@ -304,6 +304,10 @@ Toggle require_signed on deploys
 
 Inspect or update the outbound CIDR allowlist
 
+### app network
+
+Show effective networking and inspect observed connectivity
+
 ### app routes
 
 List admitted per-route labels for one app (ADR-093)
@@ -1523,7 +1527,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|releases|history|config|diff|preview|promote|status|rollback)
+Manage project environments (list|create|protect|unprotect|releases|history|config [set]|diff|preview|promote|status|rollback)
 
 ### projects update
 

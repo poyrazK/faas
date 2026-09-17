@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -354,5 +355,14 @@ func TestExtractRequestToken_BodyRestoreAfterRead(t *testing.T) {
 	got, _ := io.ReadAll(req.Body)
 	if string(got) != body {
 		t.Fatalf("body drifted post-extract: got %q, want %q", got, body)
+	}
+}
+
+func TestExtractRequestToken_RejectsOversizeBody(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", int(csrfRequestBodyMaxBytes)+1)))
+	req.Header.Set("Content-Type", "application/json")
+	_, err := extractRequestToken(req)
+	if !errors.Is(err, ErrCSRFInvalid) {
+		t.Fatalf("extractRequestToken error = %v, want ErrCSRFInvalid", err)
 	}
 }

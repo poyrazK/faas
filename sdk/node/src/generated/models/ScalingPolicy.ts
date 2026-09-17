@@ -16,7 +16,7 @@ export type ScalingPolicy = {
    */
   max_instances?: number;
   /**
-   * Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | p99_latency_ms. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out).
+   * Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out).
    */
   target?: (null | ScalingTarget);
   /**

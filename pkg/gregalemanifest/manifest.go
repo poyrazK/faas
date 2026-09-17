@@ -115,6 +115,11 @@ type Trigger struct {
 	BatchSizeMax  int `yaml:"batch_size_max,omitempty"`
 	BatchWindowMs int `yaml:"batch_window_ms,omitempty"`
 	MaxAttempts   int `yaml:"max_attempts,omitempty"`
+	// RetryPolicy controls the exponential retry delay curve. The
+	// trigger-level MaxAttempts remains the authoritative attempt cap;
+	// this nested object configures delay and jitter and is persisted
+	// into the trigger config JSONB.
+	RetryPolicy *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
 	// PayloadMaxBytes (migration 00274) bounds the per-record
 	// broker payload size. The migration's SQL CHECK admits
 	// [1024, 67108864]; per-plan caps in pkg/api/limits.go
@@ -162,6 +167,16 @@ type Trigger struct {
 	// SkipIfRunning preserves absent versus explicit false in the manifest.
 	Timezone      string `yaml:"timezone,omitempty"`
 	SkipIfRunning *bool  `yaml:"skip_if_running,omitempty"`
+}
+
+// RetryPolicyConfig is the manifest form of api.RetryPolicyDTO. Zero
+// values inherit platform defaults; a non-zero policy is validated
+// before the trigger is applied.
+type RetryPolicyConfig struct {
+	MaxAttempts   int     `yaml:"max_attempts,omitempty"`
+	BaseSeconds   float64 `yaml:"base_seconds,omitempty"`
+	MaxSeconds    float64 `yaml:"max_seconds,omitempty"`
+	JitterSeconds float64 `yaml:"jitter_seconds,omitempty"`
 }
 
 // FilterOp is the closed vocabulary of comparison operators a
@@ -723,6 +738,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			if t.MaxAttempts != 0 && (t.MaxAttempts < 1 || t.MaxAttempts > 25) {
 				return fmt.Errorf("trigger[%d]: max_attempts=%d out of range [1, 25]", i, t.MaxAttempts)
 			}
+			if err := validateRetryPolicy(i, t.RetryPolicy); err != nil {
+				return err
+			}
 			// payload_max_bytes mirrors the migration 00274 SQL
 			// CHECK floor + ceiling. 0 means "use the plan
 			// default". Surface the customer-facing error rather
@@ -801,6 +819,28 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		}
 	}
 
+	return nil
+}
+
+func validateRetryPolicy(idx int, policy *RetryPolicyConfig) error {
+	if policy == nil {
+		return nil
+	}
+	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
+		return fmt.Errorf("trigger[%d]: retry_policy.max_attempts must be between 1 and 25 when set", idx)
+	}
+	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
+		return fmt.Errorf("trigger[%d]: retry_policy.base_seconds must be finite and non-negative", idx)
+	}
+	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
+		return fmt.Errorf("trigger[%d]: retry_policy.max_seconds must be finite and non-negative", idx)
+	}
+	if policy.MaxSeconds > 0 && policy.BaseSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
+		return fmt.Errorf("trigger[%d]: retry_policy.max_seconds must be at least base_seconds", idx)
+	}
+	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
+		return fmt.Errorf("trigger[%d]: retry_policy.jitter_seconds must be between 0 and 1", idx)
+	}
 	return nil
 }
 

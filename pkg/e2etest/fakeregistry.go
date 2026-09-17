@@ -57,11 +57,11 @@ type blobEntry struct {
 }
 
 // HelloImage returns an image that, when fed through imaged's pull pipeline,
-// produces an app layer containing a single regular file at app/hello.txt with
-// body `helloBody`. The Cmd it advertises is `["/bin/sh","-c","cat app/hello.txt"]`
-// — that's what `manifestFromImageConfig` will pick up as the Entrypoint, so
-// the resulting layer is bootable by guest-init if it ever gets that far (the
-// quota test never lets it get that far; the metal test does).
+// produces an app layer containing /hello-server (a static binary, see
+// testdata/helloserver) and app/hello.txt with body `helloBody`. The Cmd it
+// advertises is `["/hello-server"]`, which serves that body on :8080 and
+// answers /healthz — so the image is a real, if minimal, app: what a
+// scratch-based customer image looks like, with no shell and no libc.
 //
 // The image has exactly one layer whose diff_id is the hardcoded constant
 // `helloLayerDiffID` (sha256:bbbb…). Tests that need the two-drive scheme to
@@ -81,8 +81,8 @@ func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImage(repo, helloBody, true)
 }
 
-// CPUBoundImage returns a single-layer image whose entrypoint is a tight
-// shell loop (`while :; do :; done`). Used by the cpu-fairness e2e
+// CPUBoundImage returns a single-layer image whose entrypoint is hello-server
+// in -spin mode: it serves as usual and burns one CPU in a goroutine. Used by the cpu-fairness e2e
 // (cmd/e2e/cpu_fairness_test.go, issue #301 / ADR-044) to drive a
 // sustained 100% CPU workload on a single Hobby-tier VM so the per-plan
 // cpu.max = 200ms/100ms cap engages and the test can measure the
@@ -93,12 +93,11 @@ func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 // suite uses — `oci.LayersAboveBase` sees a matching diff_id prefix and
 // the above-base layer (here: a noop regular file) lands in `above`.
 //
-// The Cmd is intentionally a POSIX shell busy-loop, not `dd` or
-// `openssl speed`: the goal is *CPU saturation*, not I/O or crypto
-// throughput. `while :; do :; done` is the smallest possible pure-CPU
-// loop the guest's `/bin/sh` supports, and the kernel scheduler's
-// throttle ratio is the only thing that can throttle it — exactly the
-// signal the issue's `vmmd_cpu_throttle_ratio{slice}` gauge measures.
+// The spin is a pure userland loop, not `dd` or `openssl speed`: the goal
+// is *CPU saturation*, not I/O or crypto throughput, and the kernel
+// scheduler's throttle ratio is the only thing that can throttle it —
+// exactly the signal the issue's `vmmd_cpu_throttle_ratio{slice}` gauge
+// measures. (It used to be a `/bin/sh` busy-loop; the image has no shell.)
 //
 // Pair with HelloImage for the quiet side of the experiment:
 //   - CPUBoundImage (hot)        on plan=Hobby → saturates tenant-hobby.slice
@@ -111,11 +110,11 @@ func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 // the cpu.weight differential (4 vs 8 / 4 vs 16) would dominate and
 // the test would not isolate cpu.max enforcement.
 func CPUBoundImage(repo string) (fakeImage, string) {
-	return layeredHelloImageWithCmd(repo, []string{"/bin/sh", "-c", "while :; do :; done"})
+	return layeredHelloImageWithCmd(repo, []string{"/hello-server", "-spin"})
 }
 
 // WedgedLoopImage (issue #554 / ADR-079, AC #1 metal test) is the
-// busy-loop variant that ALSO traps SIGTERM via `trap ” TERM`,
+// busy-loop variant that ALSO ignores SIGTERM and never binds :8080,
 // so a "graceful" shutdown signal can't reach the process. vmmd's
 // liveness probe classifies the wedged process as
 // `conn_refused` (no :8080 listener) and the consecutive-fail
@@ -128,8 +127,7 @@ func CPUBoundImage(repo string) (fakeImage, string) {
 // a signal that would let it shut down). Used by
 // cmd/vmmd/liveness_metal_test.go (TestMetalLivenessCycle_AC1).
 func WedgedLoopImage(repo string) (fakeImage, string) {
-	cmd := []string{"/bin/sh", "-c", "trap '' TERM; while :; do :; done"}
-	return layeredHelloImageWithCmd(repo, cmd)
+	return layeredHelloImageWithCmd(repo, []string{"/hello-server", "-spin", "-ignore-term", "-no-listen"})
 }
 
 // layeredHelloImageWithCmd is layeredHelloImage with a custom Cmd.
@@ -236,7 +234,7 @@ func layeredHelloImage(repo, helloBody string, aboveBase bool) (fakeImage, strin
 		"architecture": "amd64",
 		"os":           "linux",
 		"config": map[string]any{
-			"Cmd":          []string{"/bin/sh", "-c", "cat app/hello.txt"},
+			"Cmd":          []string{"/hello-server"},
 			"Env":          []string{},
 			"WorkingDir":   "/",
 			"ExposedPorts": map[string]any{"8080/tcp": struct{}{}},
@@ -312,6 +310,22 @@ func buildHelloLayer(body string) []byte {
 	var layerBuf bytes.Buffer
 	zw := gzip.NewWriter(&layerBuf)
 	tw := tar.NewWriter(zw)
+	// The app itself: a static server (see testdata/helloserver) that serves
+	// app/hello.txt on / and answers /healthz. The image contains nothing
+	// else — no shell, no libc — so the platform must run it as the
+	// scratch-based customer image it is. It rides in every layer this
+	// helper builds, so each image variant (hello, above-base, cpu-bound,
+	// wedged) carries it regardless of which layer ends up above the base.
+	server, err := helloServerBinary()
+	if err != nil {
+		panic(fmt.Sprintf("fakeregistry: build hello-server fixture: %v", err))
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "hello-server", Mode: 0o755, Size: int64(len(server)), Typeflag: tar.TypeReg}); err != nil {
+		panic(fmt.Sprintf("fakeregistry: write server header: %v", err))
+	}
+	if _, err := tw.Write(server); err != nil {
+		panic(fmt.Sprintf("fakeregistry: write server: %v", err))
+	}
 	hdr := &tar.Header{
 		Name:     "app/hello.txt",
 		Mode:     0o644,

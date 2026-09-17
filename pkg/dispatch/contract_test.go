@@ -63,6 +63,15 @@ func TestRetryPolicy_BackoffCurve(t *testing.T) {
 	}
 }
 
+func TestRetryPolicy_BackoffHonorsBaseSeconds(t *testing.T) {
+	p := dispatch.RetryPolicy{BaseSeconds: 2, MaxSeconds: 10, JitterSeconds: 0}
+	for attempt, want := range map[int]time.Duration{1: 2 * time.Second, 2: 4 * time.Second, 3: 8 * time.Second, 4: 10 * time.Second} {
+		if got := p.Backoff(attempt); got != want {
+			t.Errorf("Backoff(%d) = %v, want %v", attempt, got, want)
+		}
+	}
+}
+
 // TestRetryPolicy_BackoffAttemptsFloor asserts attempt < 1
 // clamps to 1 — matches the inline curve at
 // dispatch_triggers.go:1010-1012. Without this clamp a producer

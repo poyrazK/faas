@@ -1,6 +1,5 @@
-package sched
-
 // adr: 100
+package sched
 
 import (
 	"runtime"
@@ -63,7 +62,7 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 // the second call must be a no-op.
 //
 // The queue poller's Close is a no-op (rows are durable in
-// Postgres; the ack path is empty); calling it twice is the safest
+// Postgres; the pool is owned by schedd); calling it twice is the safest
 // "no broker required" assertion we can make here. Network-bound
 // pollers (kafka / nats / redis_streams / sqs_compat) get their own
 // Close() coverage in pkg/sched/poller_<kind>_test.go (commits

@@ -815,6 +815,23 @@ func TestDecodeJSON_RejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDecodeJSON_RejectsOversizeBody(t *testing.T) {
+	body := append([]byte(`{"slug":"`), bytes.Repeat([]byte{'x'}, int(defaultJSONBodyMaxBytes))...)
+	body = append(body, `"}`...)
+	req, _ := http.NewRequest("POST", "/", bytes.NewReader(body))
+	var dst struct {
+		Slug string `json:"slug"`
+	}
+	err := decodeJSON(req, &dst)
+	var maxErr *http.MaxBytesError
+	if !errors.As(err, &maxErr) {
+		t.Fatalf("decodeJSON error = %v, want *http.MaxBytesError", err)
+	}
+	if maxErr.Limit != defaultJSONBodyMaxBytes {
+		t.Fatalf("limit = %d, want %d", maxErr.Limit, defaultJSONBodyMaxBytes)
+	}
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func contains(s, sub string) bool {

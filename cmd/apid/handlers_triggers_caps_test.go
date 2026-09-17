@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -234,6 +235,98 @@ func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
 	}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateQueueTriggerPersistsFirstClassSource(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "queue-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID:  app.ID,
+		Kind:   api.TriggerKindQueue,
+		Slug:   "jobs",
+		Config: json.RawMessage(`{"mode":"delayed_task"}`),
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	var trigger api.Trigger
+	if err := json.Unmarshal(rec.Body.Bytes(), &trigger); err != nil {
+		t.Fatalf("decode trigger: %v", err)
+	}
+	if trigger.Source == nil || *trigger.Source != "delayed_task" {
+		t.Fatalf("source = %v, want delayed_task", trigger.Source)
+	}
+	stored, err := e.store.TriggerByID(t.Context(), trigger.ID)
+	if err != nil {
+		t.Fatalf("TriggerByID: %v", err)
+	}
+	if !stored.Source.Valid || stored.Source.String != "delayed_task" {
+		t.Fatalf("stored source = %+v, want delayed_task", stored.Source)
+	}
+}
+
+func TestTriggerRetryPolicyRoundTripsAndUpdates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "retry-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	policy := &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.1}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs",
+		Config: json.RawMessage(`{"mode":"queue"}`), RetryPolicy: policy,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var trigger api.Trigger
+	if err := json.Unmarshal(rec.Body.Bytes(), &trigger); err != nil {
+		t.Fatalf("decode trigger: %v", err)
+	}
+	if trigger.RetryPolicy == nil || trigger.RetryPolicy.BaseSeconds != 2 || trigger.RetryPolicy.MaxSeconds != 30 {
+		t.Fatalf("retry policy = %+v, want %+v", trigger.RetryPolicy, policy)
+	}
+	if trigger.MaxAttempts != 4 || !bytes.Contains(trigger.Config, []byte(`"retry_policy"`)) {
+		t.Fatalf("trigger cap/config = %d/%s, want max_attempts=4 and retry_policy", trigger.MaxAttempts, trigger.Config)
+	}
+	updatedPolicy := &api.RetryPolicyDTO{BaseSeconds: 5, MaxSeconds: 60, JitterSeconds: 0}
+	patch := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{RetryPolicy: updatedPolicy}, nil)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", patch.Code, patch.Body.String())
+	}
+	var updated api.Trigger
+	if err := json.Unmarshal(patch.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated trigger: %v", err)
+	}
+	if updated.RetryPolicy == nil || updated.RetryPolicy.BaseSeconds != 5 || updated.RetryPolicy.MaxSeconds != 60 {
+		t.Fatalf("updated retry policy = %+v, want %+v", updated.RetryPolicy, updatedPolicy)
+	}
+}
+
+func TestCreateTriggerRejectsInvalidRetryPolicy(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "retry-invalid-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs",
+		Config:      json.RawMessage(`{"mode":"queue"}`),
+		RetryPolicy: &api.RetryPolicyDTO{BaseSeconds: 2, MaxSeconds: 1},
+	}, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: %s", rec.Code, rec.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeTriggerInvalidRetryPolicy {
+		t.Fatalf("code = %q, want trigger_invalid_retry_policy", problem.Code)
 	}
 }
 

@@ -52,6 +52,10 @@ const defaultAppWebhookEnabled = true
 // always reflects the closed set.
 const defaultAppWebhookRetryPolicy = "default"
 
+// defaultAppWebhookDeliveryFormat preserves the historical JSON envelope
+// unless a customer explicitly opts into CloudEvents structured mode.
+const defaultAppWebhookDeliveryFormat = "json"
+
 // defaultAppWebhookEventFilter is the empty filter (every event)
 // the customer gets when they omit event_filter. Mirrors the
 // alert-rule default (empty failure_source).
@@ -94,6 +98,19 @@ func validateWebhookRetryPolicy(p string) *api.Problem {
 	}
 	return api.ErrAppWebhookInvalid(fmt.Sprintf("retry_policy %q is not in the closed vocabulary; allowed: %s",
 		p, strings.Join(api.AllowedAppWebhookRetryPolicies, ", ")))
+}
+
+// validateWebhookDeliveryFormat rejects wire envelopes outside the closed
+// API vocabulary. Omission is handled by the caller so an explicitly supplied
+// empty value cannot sneak through as an invalid stored format.
+func validateWebhookDeliveryFormat(format string) *api.Problem {
+	for _, allowed := range api.AllowedAppWebhookDeliveryFormats {
+		if format == allowed {
+			return nil
+		}
+	}
+	return api.ErrAppWebhookInvalid(fmt.Sprintf("delivery_format %q is not in the closed vocabulary; allowed: %s",
+		format, strings.Join(api.AllowedAppWebhookDeliveryFormats, ", ")))
 }
 
 // validateWebhookURL is the body-side length / scheme check. The
@@ -208,6 +225,12 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.DeliveryFormat != "" {
+		if prob := validateWebhookDeliveryFormat(req.DeliveryFormat); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if prob := resolveAndCheckEgress(r.Context(), req.TargetURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -230,6 +253,10 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	if retryPolicy == "" {
 		retryPolicy = defaultAppWebhookRetryPolicy
 	}
+	deliveryFormat := req.DeliveryFormat
+	if deliveryFormat == "" {
+		deliveryFormat = defaultAppWebhookDeliveryFormat
+	}
 	enabled := defaultAppWebhookEnabled
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -239,13 +266,14 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		eventFilter = defaultAppWebhookEventFilter()
 	}
 	row, err := s.store.CreateAppWebhookIfUnderQuota(r.Context(), state.AppWebhook{
-		AccountID:    acct.ID,
-		AppID:        app.ID,
-		TargetURL:    req.TargetURL,
-		SecretSealed: sealed,
-		EventFilter:  eventFilter,
-		RetryPolicy:  state.AppWebhookRetryPolicy(retryPolicy),
-		Enabled:      enabled,
+		AccountID:      acct.ID,
+		AppID:          app.ID,
+		TargetURL:      req.TargetURL,
+		SecretSealed:   sealed,
+		EventFilter:    eventFilter,
+		RetryPolicy:    state.AppWebhookRetryPolicy(retryPolicy),
+		DeliveryFormat: state.AppWebhookDeliveryFormat(deliveryFormat),
+		Enabled:        enabled,
 	}, limits)
 	if err != nil {
 		var quotaErr *state.AppWebhookQuotaError
@@ -262,11 +290,12 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	s.audit.Emit(r.Context(), "app.webhook_created", &acct.ID, map[string]any{
-		"webhook_id":   row.ID,
-		"app_id":       app.ID,
-		"target_url":   row.TargetURL,
-		"retry_policy": string(row.RetryPolicy),
-		"enabled":      row.Enabled,
+		"webhook_id":      row.ID,
+		"app_id":          app.ID,
+		"target_url":      row.TargetURL,
+		"retry_policy":    string(row.RetryPolicy),
+		"delivery_format": string(row.DeliveryFormat),
+		"enabled":         row.Enabled,
 	})
 	writeJSON(w, http.StatusCreated, appWebhookResponse(row))
 }
@@ -354,6 +383,13 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		}
 		params.RetryPolicy = (*state.AppWebhookRetryPolicy)(req.RetryPolicy)
 	}
+	if req.DeliveryFormat != nil {
+		if prob := validateWebhookDeliveryFormat(*req.DeliveryFormat); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		params.DeliveryFormat = (*state.AppWebhookDeliveryFormat)(req.DeliveryFormat)
+	}
 	if req.Enabled != nil {
 		params.Enabled = req.Enabled
 	}
@@ -389,11 +425,12 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	s.audit.Emit(r.Context(), "app.webhook_updated", &acct.ID, map[string]any{
-		"webhook_id":   row.ID,
-		"app_id":       app.ID,
-		"target_url":   row.TargetURL,
-		"enabled":      row.Enabled,
-		"retry_policy": string(row.RetryPolicy),
+		"webhook_id":      row.ID,
+		"app_id":          app.ID,
+		"target_url":      row.TargetURL,
+		"enabled":         row.Enabled,
+		"retry_policy":    string(row.RetryPolicy),
+		"delivery_format": string(row.DeliveryFormat),
 	})
 	writeJSON(w, http.StatusOK, appWebhookResponse(row))
 }
@@ -611,15 +648,16 @@ func (s *server) retryAppWebhookDelivery(w http.ResponseWriter, r *http.Request,
 // shape is a list, not a string).
 func appWebhookResponse(r state.AppWebhook) api.AppWebhookResponse {
 	return api.AppWebhookResponseFromRow(api.AppWebhookRow{
-		ID:          r.ID,
-		AppID:       r.AppID,
-		AccountID:   r.AccountID,
-		TargetURL:   r.TargetURL,
-		EventFilter: r.EventFilter,
-		RetryPolicy: string(r.RetryPolicy),
-		Enabled:     r.Enabled,
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:             r.ID,
+		AppID:          r.AppID,
+		AccountID:      r.AccountID,
+		TargetURL:      r.TargetURL,
+		EventFilter:    r.EventFilter,
+		RetryPolicy:    string(r.RetryPolicy),
+		DeliveryFormat: string(r.DeliveryFormat),
+		Enabled:        r.Enabled,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
 	})
 }
 

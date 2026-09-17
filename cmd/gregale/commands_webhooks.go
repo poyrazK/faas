@@ -39,6 +39,8 @@ import (
 // guard (CI lint) and the local typo check before the round-trip.
 var webhookClosedVocab = []string{"default", "aggressive", "none"}
 
+var webhookDeliveryFormatVocab = []string{"json", "cloudevents"}
+
 // webhookDeliveryStatusVocab is the closed delivery-status vocabulary
 // mirrored from the migration's CHECK constraint
 // (migrations/00141_app_webhook_deliveries.sql:69-71). Surfacing a
@@ -117,8 +119,8 @@ func cmdWebhooksList(args []string) int {
 		return jsonOut(writeNDJSON(out))
 	}
 	for _, w := range out {
-		fmt.Printf("%-32s %-50s %-10s %s\n",
-			w.ID, truncate(w.TargetURL, 50), w.RetryPolicy, enabledStr(w.Enabled))
+		fmt.Printf("%-32s %-50s %-12s %-12s %s\n",
+			w.ID, truncate(w.TargetURL, 50), w.RetryPolicy, w.DeliveryFormat, enabledStr(w.Enabled))
 	}
 	return 0
 }
@@ -131,6 +133,7 @@ func cmdWebhooksAdd(args []string) int {
 	var events multiFlag
 	fs.Var(&events, "event", "event name (repeat for multiple); empty = all events")
 	policy := fs.String("retry-policy", "default", "retry policy: default|aggressive|none")
+	format := fs.String("delivery-format", "json", "delivery format: json|cloudevents")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -138,7 +141,7 @@ func cmdWebhooksAdd(args []string) int {
 		return 1
 	}
 	if *slug == "" || *target == "" {
-		PrintUsage(os.Stderr, "usage: gregale webhooks add --app <slug> --target-url <url> [--event <evt>]... [--retry-policy default|aggressive|none] [--secret <hmac-secret>]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks add --app <slug> --target-url <url> [--event <evt>]... [--retry-policy default|aggressive|none] [--delivery-format json|cloudevents] [--secret <hmac-secret>]", "webhooks")
 		return 1
 	}
 	generatedSecret := false
@@ -157,6 +160,9 @@ func cmdWebhooksAdd(args []string) int {
 	if !strInSlice(*policy, webhookClosedVocab) {
 		return printErr("Invalid --retry-policy", fmt.Errorf("must be one of %s; got %q", strings.Join(webhookClosedVocab, ", "), *policy))
 	}
+	if !strInSlice(*format, webhookDeliveryFormatVocab) {
+		return printErr("Invalid --delivery-format", fmt.Errorf("must be one of %s; got %q", strings.Join(webhookDeliveryFormatVocab, ", "), *format))
+	}
 	for _, ev := range events {
 		if !validAppWebhookEvent(ev) {
 			return printErr("Invalid --event", fmt.Errorf("unknown event %q (allowed: %s)", ev, strings.Join(webhookEventVocab, ", ")))
@@ -167,9 +173,10 @@ func cmdWebhooksAdd(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	req := api.CreateAppWebhookRequest{
-		TargetURL:   *target,
-		EventFilter: events,
-		RetryPolicy: *policy,
+		TargetURL:      *target,
+		EventFilter:    events,
+		RetryPolicy:    *policy,
+		DeliveryFormat: *format,
 	}
 	req.WebhookSecret = *secret
 	out, err := client.CreateAppWebhook(context.Background(), *slug, req)
@@ -197,13 +204,14 @@ func cmdWebhooksUpdate(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	target := fs.String("target-url", "", "new target URL")
 	policy := fs.String("retry-policy", "", "new retry policy (default|aggressive|none)")
+	format := fs.String("delivery-format", "", "new delivery format (json|cloudevents)")
 	enable := fs.Bool("enable", false, "enable")
 	disable := fs.Bool("disable", false, "disable")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks update <id> --app <slug> [--target-url X] [--retry-policy X] [--enable|--disable]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks update <id> --app <slug> [--target-url X] [--retry-policy X] [--delivery-format X] [--enable|--disable]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -212,6 +220,9 @@ func cmdWebhooksUpdate(args []string) int {
 	}
 	if *policy != "" && !strInSlice(*policy, webhookClosedVocab) {
 		return printErr("Invalid --retry-policy", fmt.Errorf("must be one of %s; got %q", strings.Join(webhookClosedVocab, ", "), *policy))
+	}
+	if *format != "" && !strInSlice(*format, webhookDeliveryFormatVocab) {
+		return printErr("Invalid --delivery-format", fmt.Errorf("must be one of %s; got %q", strings.Join(webhookDeliveryFormatVocab, ", "), *format))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -225,6 +236,10 @@ func cmdWebhooksUpdate(args []string) int {
 	if *policy != "" {
 		p := *policy
 		req.RetryPolicy = &p
+	}
+	if *format != "" {
+		f := *format
+		req.DeliveryFormat = &f
 	}
 	if *enable {
 		t := true

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FilterCriteria } from './FilterCriteria.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 /**
  * Partial trigger update. nil means "leave unchanged" (same
  * semantics as UpdateCronRequest). Kind is NOT a member — it
@@ -18,6 +19,10 @@ export type UpdateTriggerRequest = {
   batch_size_max?: number | null;
   batch_window_ms?: number | null;
   max_attempts?: number | null;
+  /**
+   * Retry delay and jitter configuration; pass {} to clear the stored curve.
+   */
+  retry_policy?: RetryPolicyDTO;
   payload_max_bytes?: number | null;
   /**
    * Kafka-only poison-record handling strategy. null/omitted

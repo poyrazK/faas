@@ -165,6 +165,7 @@ from .app_webhook_delivery_response_event import AppWebhookDeliveryResponseEvent
 from .app_webhook_delivery_response_payload import AppWebhookDeliveryResponsePayload
 from .app_webhook_delivery_response_status import AppWebhookDeliveryResponseStatus
 from .app_webhook_response import AppWebhookResponse
+from .app_webhook_response_delivery_format import AppWebhookResponseDeliveryFormat
 from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilterItem
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
@@ -258,6 +259,7 @@ from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
 from .create_app_webhook_request import CreateAppWebhookRequest
+from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
 from .create_consumer_key_request import CreateConsumerKeyRequest
@@ -1089,6 +1091,7 @@ from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPol
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
 from .update_app_webhook_request import UpdateAppWebhookRequest
+from .update_app_webhook_request_delivery_format import UpdateAppWebhookRequestDeliveryFormat
 from .update_app_webhook_request_event_filter_item import UpdateAppWebhookRequestEventFilterItem
 from .update_app_webhook_request_retry_policy import UpdateAppWebhookRequestRetryPolicy
 from .update_cors_preset_request import UpdateCorsPresetRequest
@@ -1333,6 +1336,7 @@ __all__ = (
     "AppWebhookDeliveryResponsePayload",
     "AppWebhookDeliveryResponseStatus",
     "AppWebhookResponse",
+    "AppWebhookResponseDeliveryFormat",
     "AppWebhookResponseEventFilterItem",
     "AppWebhookResponseRetryPolicy",
     "AppWebhookResponseWebhookSecretSealedMasked",
@@ -1419,6 +1423,7 @@ __all__ = (
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
     "CreateAppWebhookRequest",
+    "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
     "CreateConsumerKeyRequest",
@@ -2222,6 +2227,7 @@ __all__ = (
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
     "UpdateAppWebhookRequest",
+    "UpdateAppWebhookRequestDeliveryFormat",
     "UpdateAppWebhookRequestEventFilterItem",
     "UpdateAppWebhookRequestRetryPolicy",
     "UpdateCorsPresetRequest",

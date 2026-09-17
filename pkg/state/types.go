@@ -1547,7 +1547,8 @@ type ScalingPolicy struct {
 	// value struct is legal and round-trips (e.g. `{metric: "rps",
 	// value: 0}` — the engine reads Metric rather than Value for
 	// "disabled"). PR-A only persists the shape; PR-B wires the
-	// `concurrent_requests` metric, PR-C the engine cooldown.
+	// `concurrent_requests` and `queue_depth` metrics, PR-C the engine
+	// cooldown.
 	Target *ScalingTarget
 	// ScaleOutCooldownS is the minimum number of seconds between
 	// two scale-out events for the same app. Floor = 1 s (no
@@ -1565,10 +1566,10 @@ type ScalingPolicy struct {
 
 // ScalingTarget is the (metric, value) pair the engine watches for
 // the scale-up trigger. The metric surface is closed: `rps`,
-// `concurrent_requests`, `p99_latency_ms`. Empty Metric = "disabled"
+// `concurrent_requests`, `queue_depth`, `p99_latency_ms`. Empty Metric = "disabled"
 // (the engine falls back to the legacy autoscale_target_rps column).
 type ScalingTarget struct {
-	Metric string  // "" | "rps" | "concurrent_requests" | "p99_latency_ms"
+	Metric string  // "" | "rps" | "concurrent_requests" | "queue_depth" | "p99_latency_ms"
 	Value  float64 // target value (units depend on Metric)
 }
 
@@ -2974,6 +2975,23 @@ const (
 	AppWebhookRetryNone       AppWebhookRetryPolicy = "none"
 )
 
+// AppWebhookDeliveryFormat selects the outbound webhook envelope. JSON is
+// the historical Gregale wire contract; CloudEvents is opt-in per
+// subscription and uses CloudEvents 1.0 structured mode.
+type AppWebhookDeliveryFormat string
+
+const (
+	AppWebhookDeliveryFormatJSON        AppWebhookDeliveryFormat = "json"
+	AppWebhookDeliveryFormatCloudEvents AppWebhookDeliveryFormat = "cloudevents"
+)
+
+// ValidAppWebhookDeliveryFormat reports whether format belongs to the closed
+// storage/API vocabulary. The empty value is accepted as the legacy default
+// at write boundaries.
+func ValidAppWebhookDeliveryFormat(format AppWebhookDeliveryFormat) bool {
+	return format == "" || format == AppWebhookDeliveryFormatJSON || format == AppWebhookDeliveryFormatCloudEvents
+}
+
 // AppWebhookDeliveryStatus is the dispatcher's state machine on
 // app_webhook_deliveries. The closed set matches the migration 00141
 // status CHECK; new states land as a controller addition first.
@@ -2996,6 +3014,7 @@ type UpdateAppWebhookParams struct {
 	TargetURL           *string
 	EventFilter         *[]string // nil = don't touch; non-nil replaces
 	RetryPolicy         *AppWebhookRetryPolicy
+	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
@@ -3005,16 +3024,17 @@ type UpdateAppWebhookParams struct {
 // (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
 // on a read — the apid response carries a masked constant.
 type AppWebhook struct {
-	ID           string
-	AppID        string
-	AccountID    string
-	TargetURL    string
-	SecretSealed []byte // age/X25519 ciphertext; never logged
-	EventFilter  []string
-	RetryPolicy  AppWebhookRetryPolicy
-	Enabled      bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID             string
+	AppID          string
+	AccountID      string
+	TargetURL      string
+	SecretSealed   []byte // age/X25519 ciphertext; never logged
+	EventFilter    []string
+	RetryPolicy    AppWebhookRetryPolicy
+	DeliveryFormat AppWebhookDeliveryFormat
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -3031,6 +3051,10 @@ type ManagedRealtimeEndpoint struct {
 	DisconnectPath          string
 	CallbackAuthTokenSealed []byte
 	AuthTokenSealed         []byte
+	AllowedOrigins          []string
+	MaxConnections          int
+	MaxMessageBytes         int64
+	MaxConnectionAgeSeconds int64
 	Enabled                 bool
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
@@ -3043,6 +3067,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	DisconnectPath          *string
 	CallbackAuthTokenSealed *[]byte
 	AuthTokenSealed         *[]byte
+	AllowedOrigins          *[]string
+	MaxConnections          *int
+	MaxMessageBytes         *int64
+	MaxConnectionAgeSeconds *int64
 	Enabled                 *bool
 }
 

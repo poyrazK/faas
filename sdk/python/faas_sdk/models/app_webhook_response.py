@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_webhook_response_delivery_format import (
+    AppWebhookResponseDeliveryFormat,
+    check_app_webhook_response_delivery_format,
+)
 from ..models.app_webhook_response_event_filter_item import (
     AppWebhookResponseEventFilterItem,
     check_app_webhook_response_event_filter_item,
@@ -33,7 +37,8 @@ class AppWebhookResponse:
             {'id': '0123456789abcdef0123456789abcdef', 'app_id': 'fedcba9876543210fedcba9876543210', 'account_id':
                 '8b1f5e5d-273e-5a18-ae00-58fceba4fe6c', 'target_url': 'https://example.com/hook',
                 'webhook_secret_sealed_masked': '***', 'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default',
-                'enabled': True, 'created_at': '2026-08-06T10:00:00Z', 'updated_at': '2026-08-06T10:00:00Z'}
+                'delivery_format': 'json', 'enabled': True, 'created_at': '2026-08-06T10:00:00Z', 'updated_at':
+                '2026-08-06T10:00:00Z'}
 
     """
 
@@ -44,6 +49,7 @@ class AppWebhookResponse:
     webhook_secret_sealed_masked: AppWebhookResponseWebhookSecretSealedMasked
     event_filter: list[AppWebhookResponseEventFilterItem]
     retry_policy: AppWebhookResponseRetryPolicy
+    delivery_format: AppWebhookResponseDeliveryFormat
     enabled: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -67,6 +73,8 @@ class AppWebhookResponse:
 
         retry_policy: str = self.retry_policy
 
+        delivery_format: str = self.delivery_format
+
         enabled = self.enabled
 
         created_at = self.created_at.isoformat()
@@ -84,6 +92,7 @@ class AppWebhookResponse:
                 "webhook_secret_sealed_masked": webhook_secret_sealed_masked,
                 "event_filter": event_filter,
                 "retry_policy": retry_policy,
+                "delivery_format": delivery_format,
                 "enabled": enabled,
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -116,6 +125,8 @@ class AppWebhookResponse:
 
         retry_policy = check_app_webhook_response_retry_policy(d.pop("retry_policy"))
 
+        delivery_format = check_app_webhook_response_delivery_format(d.pop("delivery_format"))
+
         enabled = d.pop("enabled")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -130,6 +141,7 @@ class AppWebhookResponse:
             webhook_secret_sealed_masked=webhook_secret_sealed_masked,
             event_filter=event_filter,
             retry_policy=retry_policy,
+            delivery_format=delivery_format,
             enabled=enabled,
             created_at=created_at,
             updated_at=updated_at,

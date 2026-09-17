@@ -116,6 +116,11 @@ type Trigger struct {
 	BatchSizeMax  int             `json:"batch_size_max"`
 	BatchWindowMs int             `json:"batch_window_ms"`
 	MaxAttempts   int             `json:"max_attempts"`
+	// RetryPolicy controls the retry delay curve for failed records.
+	// MaxAttempts on the trigger remains the authoritative attempt cap;
+	// this policy carries the delay/jitter settings (and is persisted in
+	// Config for backward-compatible storage).
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 
 	// PayloadMaxBytes (migration 00274) bounds the per-record
 	// broker payload size. Records above this cap are DLQ'd at
@@ -187,6 +192,7 @@ type CreateTriggerRequest struct {
 	BatchSizeMax  *int            `json:"batch_size_max,omitempty"`
 	BatchWindowMs *int            `json:"batch_window_ms,omitempty"`
 	MaxAttempts   *int            `json:"max_attempts,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	// PayloadMaxBytes is the broker-payload byte cap per record.
 	// nil → default 6291456 (6 MiB); the SQL CHECK rejects values
 	// outside [1024, 67108864].
@@ -221,6 +227,7 @@ type UpdateTriggerRequest struct {
 	BatchSizeMax         *int            `json:"batch_size_max,omitempty"`
 	BatchWindowMs        *int            `json:"batch_window_ms,omitempty"`
 	MaxAttempts          *int            `json:"max_attempts,omitempty"`
+	RetryPolicy          *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	PayloadMaxBytes      *int            `json:"payload_max_bytes,omitempty"`
 	BrokerPoisonStrategy *string         `json:"broker_poison_strategy,omitempty"`
 	// FilterCriteria is a partial update — supplying a non-nil

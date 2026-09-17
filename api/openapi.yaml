@@ -12083,7 +12083,10 @@ paths:
         APP_WEBHOOK namespace, and is NEVER returned in plaintext
         — the response shape carries the masked constant. event_filter
         is an optional allowlist; empty subscribes to every currently
-        supported producer-backed event.
+        supported producer-backed event. delivery_format defaults to
+        `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+        mode (`application/cloudevents+json`) while retaining the existing
+        signed webhook headers.
       requestBody:
         required: true
         content:
@@ -12094,6 +12097,7 @@ paths:
               webhook_secret: "shh"
               event_filter: ["app.parked", "app.woken"]
               retry_policy: "default"
+              delivery_format: "json"
               enabled: true
       responses:
         '201':
@@ -19174,7 +19178,7 @@ components:
           minimum: 0
           example: 5
         target:
-          description: "Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | p99_latency_ms. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out)."
+          description: "Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out)."
           oneOf:
             - type: "null"
             - $ref: '#/components/schemas/ScalingTarget'
@@ -19252,10 +19256,10 @@ components:
       properties:
         metric:
           type: string
-          enum: [rps, concurrent_requests, p99_latency_ms]
+          enum: [rps, concurrent_requests, queue_depth, p99_latency_ms]
           example: "rps"
         value:
-          description: "Target value (units depend on Metric). Must be >= 0."
+          description: "Target value (units depend on Metric). Must be >= 0; queue_depth requires a positive per-worker backlog budget."
           type: number
           minimum: 0
           example: 1.0
@@ -21861,6 +21865,10 @@ components:
           minimum: 1
           maximum: 25
           description: "Omitted create values use min(5, the account plan cap)."
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: "Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap."
         payload_max_bytes:
           type: integer
           minimum: 1024
@@ -21934,6 +21942,11 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          type: [object, "null"]
+          description: "Optional retry delay and jitter configuration; max_attempts remains the trigger attempt cap."
         payload_max_bytes: { type: [integer, "null"], minimum: 1024, maximum: 67108864 }
         broker_poison_strategy:
           type: [string, "null"]
@@ -21967,6 +21980,11 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          type: [object, "null"]
+          description: "Retry delay and jitter configuration; pass {} to clear the stored curve."
         payload_max_bytes: { type: [integer, "null"], minimum: 1024, maximum: 67108864 }
         broker_poison_strategy:
           type: [string, "null"]
@@ -28943,7 +28961,7 @@ components:
         An outbound webhook subscription. Carries the masked HMAC secret;
         the sealed ciphertext is server-side only.
       type: object
-      required: [id, app_id, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, enabled, created_at, updated_at]
+      required: [id, app_id, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
       properties:
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
@@ -28957,6 +28975,7 @@ components:
             enum: ["app.parked", "app.woken", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -28968,6 +28987,7 @@ components:
         webhook_secret_sealed_masked: "***"
         event_filter: ["app.parked", "app.woken"]
         retry_policy: "default"
+        delivery_format: "json"
         enabled: true
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
@@ -28977,7 +28997,7 @@ components:
       description: |
         Durable managed realtime endpoint configuration. Credentials are
         write-only and represented by a constant mask on every response.
-      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, enabled, created_at, updated_at]
+      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -28988,6 +29008,13 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token_masked: { type: string, enum: ["***"] }
         auth_token_masked: { type: string, enum: ["***"] }
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: { type: string, format: uri }
+        max_connections: { type: integer, minimum: 0, maximum: 10000 }
+        max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
+        max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -29003,6 +29030,13 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/disconnect" }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: { type: string, format: uri }
+        max_connections: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+        max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0 }
+        max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, default: 0 }
         enabled: { type: boolean, default: true }
 
     UpdateManagedRealtimeEndpointRequest:
@@ -29015,6 +29049,13 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: { type: string, format: uri }
+        max_connections: { type: integer, minimum: 0, maximum: 10000 }
+        max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
+        max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
 
     ManagedRealtimeMessageRequest:
@@ -29160,12 +29201,18 @@ components:
             enum: ["app.parked", "app.woken", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
+        delivery_format:
+          type: string
+          enum: [json, cloudevents]
+          default: json
+          description: "Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode."
         enabled: { type: boolean, default: true }
       example:
         target_url: "https://example.com/hook"
         webhook_secret: "shh"
         event_filter: ["app.parked", "app.woken"]
         retry_policy: "default"
+        delivery_format: "json"
         enabled: true
 
     UpdateAppWebhookRequest:
@@ -29184,9 +29231,14 @@ components:
             enum: ["app.parked", "app.woken", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format:
+          type: string
+          enum: [json, cloudevents]
+          description: "Wire envelope for future deliveries; existing delivery rows are unchanged."
         enabled: { type: boolean }
       example:
         target_url: "https://example.com/hook2"
+        delivery_format: "cloudevents"
         enabled: true
 
     RotateAppWebhookSecretResponse:

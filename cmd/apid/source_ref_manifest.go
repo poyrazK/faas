@@ -254,11 +254,15 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		}
 		createReq := api.CreateTriggerRequest{
 			Kind: kind, Slug: declaration.Slug, Config: marshalConfig(declaration.Config),
+			RetryPolicy:          retryPolicyDTOFromManifest(declaration.RetryPolicy),
 			BatchSizeMax:         positiveIntPointer(declaration.BatchSizeMax),
 			BatchWindowMs:        positiveIntPointer(declaration.BatchWindowMs),
 			MaxAttempts:          positiveIntPointer(declaration.MaxAttempts),
 			PayloadMaxBytes:      positiveIntPointer(declaration.PayloadMaxBytes),
 			BrokerPoisonStrategy: nonEmptyStringPointer(declaration.BrokerPoisonStrategy),
+		}
+		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
+			return staged, problem
 		}
 		bsm, bwm, attempts, payload, poison, capProblem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if capProblem != nil {
@@ -268,7 +272,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if sealProblem != nil {
 			return staged, sealProblem
 		}
-		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, triggerSource(kind, createReq.Config), declaration.IsEnabled(), sealed, bsm, bwm, attempts, payload, poison, limits)
+		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, declaration.IsEnabled(), sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
 		if createErr != nil {
 			return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, false)
 		}

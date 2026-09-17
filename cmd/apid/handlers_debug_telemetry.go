@@ -1192,7 +1192,7 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	var req api.DebugCompareRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid compare body"))
 		return
 	}

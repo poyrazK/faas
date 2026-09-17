@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -64,7 +65,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	hooks := realtime.HTTPHooks{DurableQueue: outbox}
+	hooks := realtime.HTTPHooks{
+		Client:       newCallbackHTTPClient(callbackTimeout),
+		DurableQueue: outbox,
+	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:   envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
 		MaxMessageBytes:  int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
@@ -175,4 +179,24 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return value
+}
+
+// newCallbackHTTPClient is the production transport for customer-managed
+// realtime callbacks. Callback URLs are customer-controlled, so the dialer
+// must re-check the resolved address on every attempt; validating DNS only
+// when an endpoint is created leaves a DNS-rebinding window at delivery time.
+// Keep redirects disabled as a second boundary: a callback must not redirect
+// its bearer credential or event payload to another host.
+func newCallbackHTTPClient(timeout time.Duration) *http.Client {
+	client := oci.NewEgressHTTPClient()
+	// The loopback escape hatch is explicitly dev/test-only and defaults to
+	// the guarded transport on production hosts.
+	if testClient := oci.NewEgressHTTPClientAllowLoopback(); testClient != nil {
+		client = testClient
+	}
+	client.Timeout = timeout
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return client
 }

@@ -4138,6 +4138,67 @@ func TestUpdateAppScalingPolicy_WorkerClassRPSAccepted(t *testing.T) {
 	}
 }
 
+// TestUpdateAppScalingPolicy_QueueDepthRequiresWorkerClass keeps the
+// queue-driven autoscaling target from being attached to an HTTP app. The
+// queue reader is only meaningful for job/worker workloads.
+func TestUpdateAppScalingPolicy_QueueDepthRequiresWorkerClass(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-http-queue-depth")
+	rec := e.do(t, "PATCH", "/v1/apps/pro-http-queue-depth", api.UpdateAppRequest{
+		ScalingPolicy: &api.ScalingPolicy{
+			ScaleOutCooldownS: 1,
+			ScaleInCooldownS:  5,
+			Target: &api.ScalingTarget{
+				Metric: "queue_depth",
+				Value:  10,
+			},
+		},
+		SetScalingPolicy: true,
+	}, nil)
+	assertProblem(t, rec, 422, api.CodeScalingTargetIncompatibleWithWorkloadClass)
+}
+
+// TestUpdateAppScalingPolicy_WorkerQueueDepthAccepted is the positive
+// counterpart: a worker may opt into queue-depth autoscaling.
+func TestUpdateAppScalingPolicy_WorkerQueueDepthAccepted(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedAppWithWorkloadClass(t, e, "pro-worker-queue-depth", state.WorkloadClassWorker)
+	rec := e.do(t, "PATCH", "/v1/apps/pro-worker-queue-depth", api.UpdateAppRequest{
+		ScalingPolicy: &api.ScalingPolicy{
+			ScaleOutCooldownS: 1,
+			ScaleInCooldownS:  5,
+			Target: &api.ScalingTarget{
+				Metric: "queue_depth",
+				Value:  10,
+			},
+		},
+		SetScalingPolicy: true,
+	}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestUpdateAppScalingPolicy_QueueDepthTargetMustBePositive avoids a
+// permanently hot target: zero means no useful backlog budget and is
+// rejected even though other scaling metrics retain their >= 0 contract.
+func TestUpdateAppScalingPolicy_QueueDepthTargetMustBePositive(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedAppWithWorkloadClass(t, e, "pro-worker-queue-depth-zero", state.WorkloadClassWorker)
+	rec := e.do(t, "PATCH", "/v1/apps/pro-worker-queue-depth-zero", api.UpdateAppRequest{
+		ScalingPolicy: &api.ScalingPolicy{
+			ScaleOutCooldownS: 1,
+			ScaleInCooldownS:  5,
+			Target: &api.ScalingTarget{
+				Metric: "queue_depth",
+				Value:  0,
+			},
+		},
+		SetScalingPolicy: true,
+	}, nil)
+	assertProblem(t, rec, 422, api.CodeValidation)
+}
+
 // TestUpdateAppScalingPolicy_UnknownFieldRejected pins the
 // strict-unmarshal contract. A typo on the wire
 // (`min_instance` instead of `min_instances`) must surface as

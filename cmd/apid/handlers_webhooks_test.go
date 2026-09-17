@@ -78,6 +78,9 @@ func TestCreateAppWebhook_HappyPath(t *testing.T) {
 	if out.RetryPolicy != "default" {
 		t.Errorf("retry_policy: got %q, want %q", out.RetryPolicy, "default")
 	}
+	if out.DeliveryFormat != "json" {
+		t.Errorf("delivery_format: got %q, want json default", out.DeliveryFormat)
+	}
 	if len(out.EventFilter) != 1 || out.EventFilter[0] != "app.parked" {
 		t.Errorf("event_filter: got %v, want [app.parked]", out.EventFilter)
 	}
@@ -91,6 +94,38 @@ func TestCreateAppWebhook_HappyPath(t *testing.T) {
 	// Plaintext must NEVER land on disk.
 	if strings.Contains(string(row.SecretSealed), "shh-test") {
 		t.Errorf("plaintext leaked into sealed ciphertext (regression)")
+	}
+}
+
+func TestCreateAppWebhook_CloudEventsFormatRoundTrip(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	mustSeedApp(t, e, "wh-cloudevents")
+	req := webhookReq()
+	req.DeliveryFormat = "cloudevents"
+	out := mustCreateWebhook(t, e, "wh-cloudevents", req)
+	if out.DeliveryFormat != "cloudevents" {
+		t.Fatalf("delivery_format: got %q, want cloudevents", out.DeliveryFormat)
+	}
+	row, err := e.store.AppWebhookByID(t.Context(), out.ID)
+	if err != nil {
+		t.Fatalf("AppWebhookByID: %v", err)
+	}
+	if row.DeliveryFormat != "cloudevents" {
+		t.Fatalf("stored delivery_format: got %q, want cloudevents", row.DeliveryFormat)
+	}
+}
+
+func TestCreateAppWebhook_DeliveryFormatOutOfVocabulary(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	mustSeedApp(t, e, "wh-bad-format")
+	req := webhookReq()
+	req.DeliveryFormat = "cloud-events"
+	rec := e.do(t, "POST", "/v1/apps/wh-bad-format/webhooks", req, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "delivery_format") {
+		t.Errorf("body missing delivery_format validation: %s", rec.Body)
 	}
 }
 

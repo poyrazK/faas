@@ -376,6 +376,7 @@ var cliCommands = []cliCommand{
 			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
+			{Name: "network", Short: "Show effective networking and inspect observed connectivity"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 		},
 		Positionals: []string{"<slug>"},
@@ -1228,7 +1229,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads"},
-			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|releases|history|config|diff|preview|promote|status|rollback)"},
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|releases|history|config [set]|diff|preview|promote|status|rollback)"},
 			{Name: "update", Short: "Update repository or production branch", Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository owner/name; empty unbinds", Value: "OWNER/NAME"},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},

@@ -114,6 +114,14 @@ type InstatsReader interface {
 	MaxInflightForApp(appID string) (n int64, ok bool)
 }
 
+// QueueStatsReader is the read-only queue signal used by the
+// queue_depth target. state.Store already implements this surface; keeping
+// it optional preserves the existing trigger seam for deployments that have
+// not enabled queue-backed workers yet.
+type QueueStatsReader interface {
+	QueueState(ctx context.Context, appID string) (state.QueueStats, error)
+}
+
 // Stats is the snapshot of inputs the pure decide() function reads.
 // Splitting this out keeps decide() trivially testable — no mocks,
 // no goroutines, no engine. The trigger's Tick assembles one Stats
@@ -130,6 +138,19 @@ type Stats struct {
 	Now                 time.Time // injected for testability
 }
 
+// QueueDepthStats is the snapshot consumed by decideQueueDepth. TargetValue
+// is interpreted as the desired maximum queued messages per worker instance.
+// QueueDepth is the live queue depth returned by state.Store.QueueState.
+type QueueDepthStats struct {
+	TargetValue       float64
+	MaxConcurrency    int
+	Concurrency       int
+	QueueDepth        int
+	LastScaleOutAt    time.Time
+	ScaleOutCooldownS int
+	Now               time.Time
+}
+
 // Decision is the decide() result. ShouldAdmit=true triggers the
 // Engine.AdmitInstance call in Tick.
 type Decision struct {
@@ -137,6 +158,9 @@ type Decision struct {
 	Outcome          Outcome
 	Headroom         int
 	ObservedInflight int64
+	// ObservedQueueDepth is populated by the queue_depth path so callers
+	// and focused tests can inspect the signal that drove the decision.
+	ObservedQueueDepth int
 	// Desired is the estimated resident-instance count, capped at
 	// MaxConcurrency. Admissions is the number of new instances this
 	// decision should request, before the per-tick burst bound.
@@ -217,19 +241,63 @@ func decide(s Stats) Decision {
 	}
 }
 
+// decideQueueDepth is the pure queue backlog decision function. A target is
+// a per-instance backlog budget: with N workers, a queue depth greater than
+// target*N requests another worker. A positive queue with zero workers
+// always admits one (the cold-start path). The same cooldown and cap rules
+// as the concurrent_requests trigger apply.
+func decideQueueDepth(s QueueDepthStats) Decision {
+	if s.TargetValue <= 0 || s.QueueDepth <= 0 {
+		return Decision{Outcome: OutcomeNoSignal, ObservedQueueDepth: s.QueueDepth}
+	}
+	if s.Concurrency > 0 && !s.LastScaleOutAt.IsZero() {
+		cooldown := time.Duration(s.ScaleOutCooldownS) * time.Second
+		if s.Now.Sub(s.LastScaleOutAt) < cooldown {
+			return Decision{Outcome: OutcomeCooldownHeld, ObservedQueueDepth: s.QueueDepth}
+		}
+	}
+	workers := s.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if float64(s.QueueDepth) <= s.TargetValue*float64(workers) {
+		return Decision{Outcome: OutcomeNoSignal, ObservedQueueDepth: s.QueueDepth}
+	}
+	headroom := s.MaxConcurrency - s.Concurrency
+	if headroom <= 0 {
+		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0, ObservedQueueDepth: s.QueueDepth}
+	}
+	desired := int(math.Ceil(float64(s.QueueDepth) / s.TargetValue))
+	if desired <= s.Concurrency {
+		desired = s.Concurrency + 1
+	}
+	if desired > s.MaxConcurrency {
+		desired = s.MaxConcurrency
+	}
+	return Decision{
+		ShouldAdmit:        true,
+		Outcome:            OutcomeAdmit,
+		Headroom:           headroom,
+		ObservedQueueDepth: s.QueueDepth,
+		Desired:            desired,
+		Admissions:         desired - s.Concurrency,
+	}
+}
+
 // Trigger is the per-app concurrent_requests scale-up trigger
 // worker (PR-C, issue #462). Constructed via New(); the only public
 // methods are Tick() and Interval(). Nil-safe on every receiver
 // and every dep so schedd can wire the trigger before every
 // downstream dependency is fully online.
 type Trigger struct {
-	appStore AppStore
-	instats  InstatsReader
-	engine   Engine
-	ledger   Ledger
-	metrics  *wire.OpsMetrics
-	log      *slog.Logger
-	interval time.Duration
+	appStore   AppStore
+	instats    InstatsReader
+	queueStats QueueStatsReader
+	engine     Engine
+	ledger     Ledger
+	metrics    *wire.OpsMetrics
+	log        *slog.Logger
+	interval   time.Duration
 
 	// ownerNodeID is the durable shard key this schedd scales. Empty
 	// preserves the central/legacy posture and reads all apps.
@@ -260,6 +328,10 @@ type Options struct {
 	// api.ScaleUpDecisionIntervalSeconds (1s) — same cadence as
 	// pkg/sched/scaleup.
 	Interval time.Duration
+	// QueueStatsReader supplies the queue depth for queue_depth targets.
+	// It is optional so existing RPS/concurrency-only deployments retain
+	// their current behavior.
+	QueueStatsReader QueueStatsReader
 }
 
 // New constructs the trigger. instats is REQUIRED (unlike the
@@ -277,6 +349,7 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 	return &Trigger{
 		appStore:         appStore,
 		instats:          instats,
+		queueStats:       opts.QueueStatsReader,
 		engine:           engine,
 		ledger:           ledger,
 		metrics:          opts.Metrics,
@@ -337,7 +410,7 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // only side effect is the Engine.AdmitInstance call on the admit
 // branch and the metric observations.
 func (t *Trigger) Tick(ctx context.Context) error {
-	if t == nil || t.appStore == nil || t.instats == nil {
+	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil) {
 		return nil
 	}
 	now := time.Now()
@@ -352,42 +425,81 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
 	for _, app := range apps {
-		// Filter: this trigger only serves apps with a
-		// concurrent_requests target. Other metric axes
-		// (rps / cpu) are handled by pkg/sched/scaleup.
 		policy := app.ScalingPolicy
-		if policy == nil || policy.Target == nil || policy.Target.Metric != "concurrent_requests" {
+		if policy == nil || policy.Target == nil {
+			continue
+		}
+		metric := policy.Target.Metric
+		if metric != "concurrent_requests" && metric != "queue_depth" {
+			// Other metric axes (rps / cpu) are handled by
+			// pkg/sched/scaleup.
 			continue
 		}
 		conc := 0
 		if t.ledger != nil {
 			conc = t.ledger.Concurrency(app.ID)
 		}
-		// Pull a fresh max-inflight reading into the ring buffer,
-		// then read the windowed value. The ring buffer keeps the
-		// most recent sample so a single-tick spike does not
-		// immediately scale — mirrors pkg/sched/scaleup's ring
-		// discipline.
-		if n, ok := t.instats.MaxInflightForApp(app.ID); ok {
-			t.ring.Observe(now, app.ID, n)
-		}
-		perInst, haveInflight := t.ring.AppMaxInflight(app.ID, now)
 		var lastScaleOut time.Time
 		if app.LastScaleOutAt != nil {
 			lastScaleOut = *app.LastScaleOutAt
 		}
-		stats := Stats{
-			AppID:               app.ID,
-			TargetValue:         policy.Target.Value,
-			MaxConcurrency:      app.MaxConcurrency,
-			Concurrency:         conc,
-			PerInstanceInflight: perInst,
-			HaveInflight:        haveInflight,
-			LastScaleOutAt:      lastScaleOut,
-			ScaleOutCooldownS:   policy.ScaleOutCooldownS,
-			Now:                 now,
+		var dec Decision
+		switch metric {
+		case "concurrent_requests":
+			if t.instats == nil {
+				continue
+			}
+			// Pull a fresh max-inflight reading into the ring buffer,
+			// then read the windowed value. The ring buffer keeps the
+			// most recent sample so a single-tick spike does not
+			// immediately scale.
+			if n, ok := t.instats.MaxInflightForApp(app.ID); ok {
+				t.ring.Observe(now, app.ID, n)
+			}
+			perInst, haveInflight := t.ring.AppMaxInflight(app.ID, now)
+			dec = decide(Stats{
+				AppID:               app.ID,
+				TargetValue:         policy.Target.Value,
+				MaxConcurrency:      app.MaxConcurrency,
+				Concurrency:         conc,
+				PerInstanceInflight: perInst,
+				HaveInflight:        haveInflight,
+				LastScaleOutAt:      lastScaleOut,
+				ScaleOutCooldownS:   policy.ScaleOutCooldownS,
+				Now:                 now,
+			})
+		case "queue_depth":
+			if t.queueStats == nil {
+				// The target is valid but the local schedd has no queue
+				// reader yet. Treat it as no-signal until the dependency
+				// is wired; never admit blindly on a missing backlog.
+				if t.metrics != nil {
+					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
+				}
+				continue
+			}
+			queue, err := t.queueStats.QueueState(ctx, app.ID)
+			if err != nil {
+				t.log.Warn("targets: queue state failed", "app_id", app.ID, "err", err)
+				if t.metrics != nil {
+					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
+				}
+				continue
+			}
+			maxInstances := app.MaxConcurrency
+			if policy.MaxInstances > 0 && policy.MaxInstances < maxInstances {
+				maxInstances = policy.MaxInstances
+			}
+			dec = decideQueueDepth(QueueDepthStats{
+				TargetValue:       policy.Target.Value,
+				MaxConcurrency:    maxInstances,
+				Concurrency:       conc,
+				QueueDepth:        queue.Depth,
+				LastScaleOutAt:    lastScaleOut,
+				ScaleOutCooldownS: policy.ScaleOutCooldownS,
+				Now:               now,
+			})
 		}
-		dec := decide(stats)
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {

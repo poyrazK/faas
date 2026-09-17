@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -136,8 +140,11 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 }
 
 func cmdProjectsEnvironmentConfig(args []string) int {
+	if len(args) > 0 && (args[0] == "set" || args[0] == "apply") {
+		return cmdProjectsEnvironmentConfigSet(args[1:])
+	}
 	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments config <project-slug> <environment-slug>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments config <project-slug> <environment-slug> | config set <project-slug> <environment-slug> (--file PATH|--stdin) [--dry-run] [--if-hash HASH] [--yes]", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -152,6 +159,188 @@ func cmdProjectsEnvironmentConfig(args []string) int {
 		return jsonOut(writeJSON(config))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Environment config %s/%s\n  version: %d\n  hash: %s\n  updated: %s\n  values: %s\n", config.ProjectSlug, config.Environment, config.Version, config.ConfigHash, config.UpdatedAt, config.Values)
+	return 0
+}
+
+type projectEnvironmentConfigChangePreview struct {
+	Key    string          `json:"key"`
+	Kind   string          `json:"kind"`
+	Before json.RawMessage `json:"before,omitempty"`
+	After  json.RawMessage `json:"after,omitempty"`
+}
+
+type projectEnvironmentConfigApplyPreview struct {
+	ProjectSlug    string                                  `json:"project_slug"`
+	Environment    string                                  `json:"environment"`
+	CurrentVersion int64                                   `json:"current_version"`
+	CurrentHash    string                                  `json:"current_hash"`
+	NextHash       string                                  `json:"next_hash"`
+	Changes        []projectEnvironmentConfigChangePreview `json:"changes"`
+}
+
+func cmdProjectsEnvironmentConfigSet(args []string) int {
+	flags, positional := splitArgsForFlags(args, "stdin", "dry-run", "yes")
+	fs := newFlagSet("projects-environments-config-set", flag.ContinueOnError)
+	file := fs.String("file", "", "JSON configuration file")
+	fromStdin := fs.Bool("stdin", false, "read JSON configuration from stdin")
+	dryRun := fs.Bool("dry-run", false, "preview the change without writing it")
+	expectedHash := fs.String("if-hash", "", "only apply if the current config hash matches HASH")
+	yes := fs.Bool("yes", false, "confirm the configuration update")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments config set <project-slug> <environment-slug> (--file PATH|--stdin) [--dry-run] [--if-hash HASH] [--yes]", "projects environments")
+		return 1
+	}
+	if (*file == "") == !*fromStdin {
+		return printErr("Invalid config source", errors.New("exactly one of --file or --stdin is required"))
+	}
+	raw, err := readProjectEnvironmentConfigInput(*file, *fromStdin)
+	if err != nil {
+		return printErr("Could not read environment config", err)
+	}
+	canonical, nextHash, err := api.NormalizeProjectEnvironmentConfig(raw)
+	if err != nil {
+		return printErr("Invalid environment config", err)
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	projectSlug, environmentSlug := positional[0], positional[1]
+	current, err := client.GetProjectEnvironmentConfig(context.Background(), projectSlug, environmentSlug)
+	if err != nil {
+		return printErr("Could not load environment config", err)
+	}
+	currentHash := current.ConfigHash
+	if currentHash == "" {
+		currentHash = api.EmptyProjectEnvironmentConfigHash()
+	}
+	if want := strings.TrimSpace(*expectedHash); want != "" && want != currentHash {
+		return printErr("Environment config changed", fmt.Errorf("current hash is %s, expected %s; review the diff and retry", currentHash, want))
+	}
+	changes, err := projectEnvironmentConfigChanges(current.Values, canonical)
+	if err != nil {
+		return printErr("Could not compare environment config", err)
+	}
+	preview := projectEnvironmentConfigApplyPreview{
+		ProjectSlug: projectSlug, Environment: environmentSlug,
+		CurrentVersion: current.Version, CurrentHash: currentHash,
+		NextHash: nextHash, Changes: changes,
+	}
+	if *dryRun {
+		return renderProjectEnvironmentConfigPreview(preview)
+	}
+	if len(changes) == 0 {
+		if jsonOutput {
+			return jsonOut(writeJSON(current))
+		}
+		_, _ = fmt.Fprintf(osStdout, "Environment config %s/%s is already at hash %s\n", projectSlug, environmentSlug, currentHash)
+		return 0
+	}
+	if !*yes {
+		if jsonOutput {
+			if code := jsonOut(writeJSON(preview)); code != 0 {
+				return code
+			}
+			return printErr("Confirmation required", errors.New("environment config update requires --yes in JSON mode"))
+		}
+		if !stdoutIsTTY() || !stdinIsTTY() {
+			return printErr("Confirmation required", errors.New("environment config update requires --yes when stdin or stdout is not a TTY"))
+		}
+		_, _ = fmt.Fprintf(osStdout, "Apply %d config change(s) to %s/%s? [y/N] ", len(changes), projectSlug, environmentSlug)
+		line, readErr := readConfirmationLine(osStdin)
+		if readErr != nil || (strings.ToLower(strings.TrimSpace(line)) != "y" && strings.ToLower(strings.TrimSpace(line)) != "yes") {
+			return printErr("Aborted by user", errors.New("environment config update was not confirmed"))
+		}
+	}
+	updated, err := client.UpdateProjectEnvironmentConfig(context.Background(), projectSlug, environmentSlug, api.UpdateProjectEnvironmentConfigRequest{Values: canonical})
+	if err != nil {
+		return printErr("Could not update environment config", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(updated))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Updated environment config %s/%s to version %d (%s)\n", updated.ProjectSlug, updated.Environment, updated.Version, updated.ConfigHash)
+	return 0
+}
+
+func readProjectEnvironmentConfigInput(path string, fromStdin bool) ([]byte, error) {
+	limit := int64(api.MaxProjectEnvironmentConfigBytes) + 1
+	if fromStdin {
+		return io.ReadAll(io.LimitReader(osStdin, limit))
+	}
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, limit))
+}
+
+func projectEnvironmentConfigChanges(beforeRaw, afterRaw []byte) ([]projectEnvironmentConfigChangePreview, error) {
+	decode := func(raw []byte) (map[string]json.RawMessage, error) {
+		values := map[string]json.RawMessage{}
+		trimmed := strings.TrimSpace(string(raw))
+		if trimmed == "" || trimmed == "null" {
+			return values, nil
+		}
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	}
+	before, err := decode(beforeRaw)
+	if err != nil {
+		return nil, err
+	}
+	after, err := decode(afterRaw)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(before))
+	seen := make(map[string]struct{}, len(before))
+	for key := range before {
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	for key := range after {
+		if _, ok := seen[key]; !ok {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	changes := make([]projectEnvironmentConfigChangePreview, 0, len(keys))
+	for _, key := range keys {
+		beforeValue, beforeOK := before[key]
+		afterValue, afterOK := after[key]
+		if beforeOK && afterOK && bytes.Equal(bytes.TrimSpace(beforeValue), bytes.TrimSpace(afterValue)) {
+			continue
+		}
+		change := projectEnvironmentConfigChangePreview{Key: key, Before: beforeValue, After: afterValue}
+		switch {
+		case !beforeOK:
+			change.Kind = "added"
+		case !afterOK:
+			change.Kind = "removed"
+		default:
+			change.Kind = "changed"
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil
+}
+
+func renderProjectEnvironmentConfigPreview(preview projectEnvironmentConfigApplyPreview) int {
+	if jsonOutput {
+		return jsonOut(writeJSON(preview))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Environment config preview %s/%s\n  current: v%d %s\n  next:    %s\n", preview.ProjectSlug, preview.Environment, preview.CurrentVersion, preview.CurrentHash, preview.NextHash)
+	if len(preview.Changes) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "  no changes")
+		return 0
+	}
+	for _, change := range preview.Changes {
+		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, change.Before, change.After)
+	}
 	return 0
 }
 

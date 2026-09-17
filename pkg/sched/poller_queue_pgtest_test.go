@@ -47,8 +47,8 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 		{name: "delayed task", source: state.InvocationDelayedTask, slug: "timers"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", tc.slug, string(tc.source), true,
-				[]byte(`{"mode":"`+string(tc.source)+`"}`), 10, 20, 3, 1<<20, "commit", limits)
+			trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", tc.slug, true,
+				[]byte(`{"mode":"`+string(tc.source)+`"}`), string(tc.source), 10, 20, 3, 1<<20, "commit", limits)
 			if err != nil {
 				t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 			}
@@ -90,6 +90,10 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatalf("EnqueueInvocation failure: %v", err)
+			}
+			failedPoll := poller.Poll(ctx, trigger)
+			if failedPoll.Error != nil || len(failedPoll.Records) != 1 || failedPoll.Records[0].ItemIdentifier != failed.ID {
+				t.Fatalf("Poll failure record=%+v err=%v", failedPoll.Records, failedPoll.Error)
 			}
 			failedRecordID, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), failed.ID, failed.Payload, []byte(`{}`), []byte(`{}`))
 			if err != nil {

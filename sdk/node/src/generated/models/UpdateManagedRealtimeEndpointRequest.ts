@@ -12,6 +12,10 @@ export type UpdateManagedRealtimeEndpointRequest = {
   disconnect_path?: string;
   callback_auth_token?: string;
   auth_token?: string;
+  allowed_origins?: Array<string>;
+  max_connections?: number;
+  max_message_bytes?: number;
+  max_connection_age_seconds?: number;
   enabled?: boolean;
 };
 

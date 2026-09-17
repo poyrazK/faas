@@ -36,6 +36,9 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
+	if in.DeliveryFormat == "" {
+		in.DeliveryFormat = AppWebhookDeliveryFormatJSON
+	}
 	if in.CreatedAt.IsZero() {
 		in.CreatedAt = time.Now()
 	}
@@ -104,6 +107,9 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
+	if in.DeliveryFormat == "" {
+		in.DeliveryFormat = AppWebhookDeliveryFormatJSON
+	}
 	if in.CreatedAt.IsZero() {
 		in.CreatedAt = time.Now()
 	}
@@ -141,6 +147,9 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	}
 	if p.RetryPolicy != nil {
 		w.RetryPolicy = *p.RetryPolicy
+	}
+	if p.DeliveryFormat != nil {
+		w.DeliveryFormat = *p.DeliveryFormat
 	}
 	if p.Enabled != nil {
 		w.Enabled = *p.Enabled
