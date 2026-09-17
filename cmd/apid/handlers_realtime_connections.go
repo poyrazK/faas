@@ -357,7 +357,7 @@ func managedRealtimeDrainConnectionIDs(values []string) (map[string]struct{}, *a
 func managedRealtimeDrainCandidates(connections []realtime.ConnectionInfo, row state.ManagedRealtimeEndpoint, acct state.Account, request api.ManagedRealtimeDrainRequest, connectionIDs map[string]struct{}) ([]realtime.ConnectionInfo, bool) {
 	connections = append([]realtime.ConnectionInfo(nil), connections...)
 	sort.Slice(connections, func(i, j int) bool { return connections[i].ID < connections[j].ID })
-	selected := make([]realtime.ConnectionInfo, 0, min(request.Limit, len(connections)))
+	selected := make([]realtime.ConnectionInfo, 0, min(managedRealtimeConnectionsLimitMax, len(connections)))
 	seen := make(map[string]struct{}, len(connections))
 	truncated := false
 	for _, connection := range connections {
