@@ -2029,6 +2029,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// writer as the auth gates so wake.page_served joins the eventual
 	// scheduler wake by its real wake_id.
 	handler.WithWakePageAudit(deps.requireAuthnAudit)
+	// Tiered wake admission uses the same shared audit stream so operators can
+	// correlate a higher-tier queue override with the two affected app IDs.
+	handler.WithWakeAdmissionAudit(deps.requireAuthnAudit)
 	// Per-instance request concurrency saturation uses the same shared
 	// gateway audit stream so operators can correlate a full VM with the
 	// wake/reaper timeline.

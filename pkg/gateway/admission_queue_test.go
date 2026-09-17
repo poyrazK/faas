@@ -23,9 +23,9 @@ func TestWakeAdmissionPolicyForPlan(t *testing.T) {
 		priority int
 	}{
 		{api.PlanFree, 16, 10 * time.Second, 1},
-		{api.PlanHobby, 16, 30 * time.Second, 1},
-		{api.PlanPro, 64, 30 * time.Second, 1},
-		{api.PlanScale, 128, 30 * time.Second, 1},
+		{api.PlanHobby, 16, 30 * time.Second, 2},
+		{api.PlanPro, 64, 30 * time.Second, 3},
+		{api.PlanScale, 128, 30 * time.Second, 4},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.plan), func(t *testing.T) {
@@ -107,8 +107,38 @@ func TestWakeAdmissionQueueIsFairAcrossPlans(t *testing.T) {
 	}
 	first := <-order
 	second := <-order
-	if first != string(api.PlanFree) || second != string(api.PlanScale) {
-		t.Fatalf("queue order = [%s %s], want FIFO [free scale]", first, second)
+	if first != string(api.PlanScale) || second != string(api.PlanFree) {
+		t.Fatalf("queue order = [%s %s], want priority [scale free]", first, second)
+	}
+}
+
+func TestWakeAdmissionQueueReportsPriorityPreemption(t *testing.T) {
+	q := newWakeAdmissionQueue(1, 4, nil)
+	preempted := make(chan admissionPreemption, 1)
+	q.setPreemptSink(func(event admissionPreemption) { preempted <- event })
+	release := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		_, _, _ = q.Do(context.Background(), "app-running", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+	<-started
+	go func() {
+		_, _, _ = q.Do(context.Background(), "app-free", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error { return nil })
+	}()
+	waitForAdmissionQueueDepth(t, q, 1)
+	_, _, _ = q.Do(context.Background(), "app-scale", "scale", WakeAdmissionPolicyForPlan(api.PlanScale), func(context.Context) error { return nil })
+	close(release)
+	select {
+	case got := <-preempted:
+		if got.fromApp != "app-free" || got.toApp != "app-scale" {
+			t.Fatalf("preemption = %+v, want app-free -> app-scale", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for preemption event")
 	}
 }
 
@@ -212,6 +242,7 @@ func TestWakeGateDropPolicyRejectsFollower(t *testing.T) {
 func TestWakeAdmissionMetricsAndRetryAfter(t *testing.T) {
 	m := NewMetrics()
 	m.ObserveWakeAdmission(string(api.PlanPro), nil, true, 120*time.Millisecond)
+	m.ObserveWakeAdmissionPreempt(string(api.PlanFree), string(api.PlanScale))
 	m.SetWakeAdmissionQueueDepth(string(api.PlanPro), 3)
 
 	rec := httptest.NewRecorder()
@@ -232,6 +263,7 @@ func TestWakeAdmissionMetricsAndRetryAfter(t *testing.T) {
 		"gateway_wake_admission_queue_depth",
 		"gateway_wake_admission_total",
 		"gateway_wake_admission_wait_seconds",
+		"gateway_wake_admission_preempt_total",
 	} {
 		if !strings.Contains(body, name) {
 			t.Errorf("metrics missing %q:\n%s", name, body)
@@ -239,6 +271,9 @@ func TestWakeAdmissionMetricsAndRetryAfter(t *testing.T) {
 	}
 	if !strings.Contains(body, `gateway_wake_admission_queue_depth{plan="pro"} 3`) {
 		t.Errorf("metrics missing pro queue depth:\n%s", body)
+	}
+	if !strings.Contains(body, `gateway_wake_admission_preempt_total{from_plan="free",to_plan="scale"} 1`) {
+		t.Errorf("metrics missing preemption series:\n%s", body)
 	}
 }
 

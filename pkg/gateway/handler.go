@@ -1080,6 +1080,9 @@ type Handler struct {
 	// stream. It uses the existing narrow best-effort auditor seam so this
 	// package stays independent of cmd/gatewayd-internal and pkg/state.
 	wakePageAudit RequireAuthnAuditor
+	// wakeAdmissionAudit records priority overrides in the shared events
+	// stream. It is best-effort and nil in tests.
+	wakeAdmissionAudit RequireAuthnAuditor
 	// wakePageMu / wakePageCycles correlate pages served before a detached
 	// wake returns with the scheduler-issued wake ID. That ID is not known
 	// until EnsureWarm/Admit completes, so pending visits are flushed by the
@@ -1162,6 +1165,13 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// schedd's Engine to here so the cap reflects "VMs in
 		// flight" (admit → round-trip complete), not "admit attempts".
 		MirrorMaxConcurrentPerRule: api.MirrorMaxConcurrentPerRule,
+	}
+	if h.admissionQueue != nil {
+		h.admissionQueue.setPreemptSink(func(event admissionPreemption) {
+			if m != nil {
+				m.ObserveWakeAdmissionPreempt(event.fromPlan, event.toPlan)
+			}
+		})
 	}
 	h.vmConcurrency = newVMConcurrencyManager(func(plan string, delta int64) {
 		if m != nil {
@@ -1349,6 +1359,25 @@ func (h *Handler) WithAccountLimiter(l *Limiter) *Handler {
 // in tests and on installations that do not enable the audit stream.
 func (h *Handler) WithWakePageAudit(audit RequireAuthnAuditor) *Handler {
 	h.wakePageAudit = audit
+	return h
+}
+
+// WithWakeAdmissionAudit installs the best-effort sink for wake.preempted
+// rows emitted when a higher-tier cold wake bypasses a lower-tier queued wake.
+func (h *Handler) WithWakeAdmissionAudit(audit RequireAuthnAuditor) *Handler {
+	h.wakeAdmissionAudit = audit
+	if h.admissionQueue != nil {
+		h.admissionQueue.setPreemptSink(func(event admissionPreemption) {
+			if audit != nil {
+				audit.Emit(context.Background(), "wake.preempted", nil, map[string]any{
+					"from_app_id": event.fromApp,
+					"from_plan":   event.fromPlan,
+					"to_app_id":   event.toApp,
+					"to_plan":     event.toPlan,
+				})
+			}
+		})
+	}
 	return h
 }
 
