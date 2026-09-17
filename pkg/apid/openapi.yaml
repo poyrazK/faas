@@ -59,8 +59,9 @@ tags:
       finalizes via POST /v1/uploads/{id}/commit. Per-account open-
       session cap is 5; per-plan SourceTarballMaxMB caps total_size
       (Free/Hobby 100 MB, Pro/Scale 250 MB). The legacy single-shot
-      `source-tarball` endpoint stays active in PR-1; PR-3 deprecates
-      it with RFC 8594 Sunset headers.
+      `source-tarball` endpoint stays active during the migration and
+      advertises RFC 9745 Deprecation, RFC 8594 Sunset, and RFC 8288
+      successor/deprecation links on every response.
   - name: previews
     description: |
       Preview environments (issue #961 / ADR-095). A preview is a
@@ -5388,6 +5389,10 @@ paths:
 
         Audit kind: `deploy.local_tarball` (distinct from
         `deploy.source_ref`).
+
+        Every response carries the RFC 9745 `Deprecation` date,
+        RFC 8594 `Sunset` date, and RFC 8288 `Link` relations. Clients
+        should migrate to `POST /v1/uploads` before the sunset date.
       requestBody:
         required: true
         content:
@@ -5406,6 +5411,13 @@ paths:
       responses:
         '202':
           description: The local-tarball deployment whose build has been accepted and queued.
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -5438,8 +5450,8 @@ paths:
 
   # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only
   # foundation; CLI wiring lands in PR-2). Legacy `source-tarball`
-  # endpoint above stays active in PR-1; PR-3 deprecates it with
-  # RFC 8594 Sunset headers.
+  # endpoint above stays active during migration and advertises
+  # RFC 9745 Deprecation, RFC 8594 Sunset, and RFC 8288 links.
   /v1/uploads:
     post:
       tags: [uploads]
@@ -16120,6 +16132,31 @@ components:
       name: faas_sid
       description: Browser dashboard session cookie. The browser sends this HttpOnly cookie automatically.
 
+  headers:
+    Deprecation:
+      description: |
+        RFC 9745 Item Structured Field Date indicating when the operation
+        entered its deprecated state. Gregale currently emits
+        `@1789603200` (2026-09-17T00:00:00Z) on legacy routes.
+      schema:
+        type: string
+        pattern: '^@[0-9]+$'
+        example: '@1789603200'
+    Sunset:
+      description: |
+        RFC 8594 HTTP-date after which the operation is expected to be
+        unavailable. Gregale currently emits `Thu, 01 Oct 2026 00:00:00 GMT`.
+      schema:
+        type: string
+        example: 'Thu, 01 Oct 2026 00:00:00 GMT'
+    Link:
+      description: |
+        RFC 8288 links for the successor operation and the deprecation
+        documentation. Multiple links are comma-separated in this field.
+      schema:
+        type: string
+        example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
+
   parameters:
     PublicStatusEventID:
       name: public_id
@@ -19670,7 +19707,7 @@ components:
 
     # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only).
     # PR-2 wires the CLI; PR-3 deprecates the legacy single-shot
-    # source-tarball endpoint with RFC 8594 Sunset headers.
+    # source-tarball endpoint with RFC 9745/RFC 8594 lifecycle headers.
     UploadStartRequest:
       description: "Body of POST /v1/uploads. `total_size` must be ≤ the per-plan SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 + `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row only — the server does NOT re-verify it at commit time (ADR-115 trust boundary)."
       type: object

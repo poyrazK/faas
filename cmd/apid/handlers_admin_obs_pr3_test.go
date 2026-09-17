@@ -32,7 +32,7 @@
 //
 //  5. The Deprecation header on the OLD path
 //     (/v1/compute-nodes/events) and its ABSENCE on the new
-//     path (/v1/admin/obs/nodes/events) — the RFC 8594 + 8288
+//     path (/v1/admin/obs/nodes/events) — the RFC 9745 + 8594 + 8288
 //     contract lives here.
 //
 // The grep-style PII / sealed-blob tests live in
@@ -457,24 +457,17 @@ func TestObsNodesEvents_AbsentDeprecationHeader(t *testing.T) {
 }
 
 func TestObsSecurity_DeprecationHeader_OnOldPath(t *testing.T) {
-	// The OLD path /v1/compute-nodes/events carries the RFC 8594
-	// + 8288 Deprecation header (the new path is the successor
-	// per the Link rel="successor-version"). operator-only.
+	// The OLD path /v1/compute-nodes/events carries the RFC 9745
+	// + RFC 8594 + RFC 8288 lifecycle headers (the new path is the
+	// successor per the Link rel="successor-version"). Operator-only.
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
 	rec := e.do(t, "GET", "/v1/compute-nodes/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("compute-nodes/events: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Deprecation"); got != "true" {
-		t.Errorf("Deprecation: got %q, want \"true\" (RFC 8594)", got)
-	}
-	if got := rec.Header().Get("Sunset"); got != "Wed, 01 Oct 2026 00:00:00 GMT" {
-		t.Errorf("Sunset: got %q, want RFC 8594 / RFC 7231 IMF-fixdate", got)
-	}
-	wantLink := `</v1/admin/obs/nodes/events>; rel="successor-version"`
-	if got := rec.Header().Get("Link"); got != wantLink {
-		t.Errorf("Link: got %q, want %q (RFC 8288)", got, wantLink)
-	}
+	assertRFC9745LifecycleHeaders(t, rec,
+		`</v1/admin/obs/nodes/events>; rel="successor-version"`,
+		"https://github.com/poyrazK/faas/blob/main/docs/adr/091-operator-obs-backend.md")
 }
 
 func TestObsSecurity_DeprecationHeader_AbsentOnNewPath(t *testing.T) {

@@ -351,15 +351,26 @@ func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 	s.authMw.ClearSessionCookie(w)
 }
 
-// withDeprecation stamps the RFC 8594 + RFC 8288 deprecation headers
-// on the wrapped operator route so clients (and the operator UI's
-// lint) can detect a sunsetting endpoint. Three headers are set before
+// The legacy routes share one lifecycle date. Deprecation is an RFC 9745
+// Item Structured Field Date; Sunset is the RFC 8594 HTTP-date at which the
+// route is scheduled for removal. The dates are intentionally explicit so a
+// release cannot silently change the wire contract as the clock advances.
+const (
+	legacyDeprecationDate = "@1789603200"                   // 2026-09-17T00:00:00Z (RFC 9745)
+	legacySunsetDate      = "Thu, 01 Oct 2026 00:00:00 GMT" // RFC 8594
+
+	legacySourceTarballLink = `</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"`
+	legacyAdminObsLink      = `</v1/admin/obs/nodes/events>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/091-operator-obs-backend.md>; rel="deprecation"`
+)
+
+// withDeprecation stamps the RFC 9745 + RFC 8594 + RFC 8288 lifecycle
+// headers on the wrapped operator route so clients (and the operator UI's
+// lint) can detect a deprecated endpoint. The headers are written before
 // the handler runs:
 //
-//   - Deprecation: true                         (RFC 8594 §2)
-//   - Sunset: Wed, 01 Oct 2026 00:00:00 GMT     (RFC 8594 §3)
-//   - Link: </v1/admin/obs/nodes/events>;       (RFC 8288 —
-//     rel="successor-version"                     successor-version)
+//   - Deprecation: @1789603200 (RFC 9745)
+//   - Sunset: Thu, 01 Oct 2026 00:00:00 GMT (RFC 8594)
+//   - Link: successor-version + deprecation relations (RFC 8288)
 //
 // The headers are written OUTSIDE the handler so they carry even on
 // auth-rejected paths (403 from the email allowlist, 401 from the
@@ -377,12 +388,8 @@ func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 // that ships a successor feature. Easy to bump per-PR because the
 // constant lives in one place.
 func (s *server) withDeprecation(next accountHandler) accountHandler {
-	const (
-		sunset = "Wed, 01 Oct 2026 00:00:00 GMT"
-		link   = `</v1/admin/obs/nodes/events>; rel="successor-version"`
-	)
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		setDeprecationHeaders(w, sunset, link)
+		setDeprecationHeaders(w, legacyDeprecationDate, legacySunsetDate, legacyAdminObsLink)
 		next(w, r, acct)
 	}
 }
@@ -392,16 +399,15 @@ func (s *server) withDeprecation(next accountHandler) accountHandler {
 // preserves the headers even when authentication rejects the request before
 // an account is available.
 func (s *server) withDeprecationHTTP(link string, next http.Handler) http.Handler {
-	const sunset = "Wed, 01 Oct 2026 00:00:00 GMT"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setDeprecationHeaders(w, sunset, link)
+		setDeprecationHeaders(w, legacyDeprecationDate, legacySunsetDate, link)
 		next.ServeHTTP(w, r)
 	})
 }
 
-func setDeprecationHeaders(w http.ResponseWriter, sunset, link string) {
+func setDeprecationHeaders(w http.ResponseWriter, deprecation, sunset, link string) {
 	h := w.Header()
-	h.Set("Deprecation", "true")
+	h.Set("Deprecation", deprecation)
 	h.Set("Sunset", sunset)
 	h.Set("Link", link)
 }

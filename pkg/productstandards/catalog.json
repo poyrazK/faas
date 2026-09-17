@@ -361,6 +361,44 @@
       ]
     },
     {
+      "id": "rfc-8288-web-linking",
+      "name": "Web Linking",
+      "version": "RFC 8288",
+      "category": "api-contract",
+      "surface": "deprecated endpoint migration links",
+      "status": "supported",
+      "scope": "Deprecated routes emit a standards-compliant Link header with successor-version and deprecation relations so clients can discover migration targets and documentation.",
+      "limitations": "Gregale claims the Link syntax and registered relations used by the lifecycle headers; it does not claim a general link-relation registry or hypermedia API for every resource.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc8288",
+      "evidence": "cmd/apid/auth_facade.go; cmd/apid/handlers_source_tarball_test.go; api/openapi.yaml components.headers.Link",
+      "conformance": [
+        {
+          "fixture": "web-linking-deprecation-relations",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+        }
+      ]
+    },
+    {
+      "id": "rfc-8594-sunset",
+      "name": "Sunset HTTP Header",
+      "version": "RFC 8594",
+      "category": "api-contract",
+      "surface": "deprecated endpoint lifecycle",
+      "status": "supported",
+      "scope": "Legacy deployment and operator routes advertise the scheduled removal date with an IMF-fixdate Sunset header.",
+      "limitations": "Sunset dates are Gregale lifecycle commitments for the published routes; they do not imply that every endpoint has a sunset schedule or that removal is automatic.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc8594",
+      "evidence": "cmd/apid/auth_facade.go; cmd/apid/handlers_source_tarball_test.go; api/openapi.yaml components.headers.Sunset",
+      "conformance": [
+        {
+          "fixture": "sunset-http-date",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+        }
+      ]
+    },
+    {
       "id": "rfc-9116-security-txt",
       "name": "security.txt",
       "version": "RFC 9116",
@@ -395,6 +433,30 @@
           "fixture": "rfc9457-problem-wire",
           "tier": "unit",
           "target": "pkg/api/errors_test.go::TestWriteProblemUsesRFC9457Defaults"
+        }
+      ]
+    },
+    {
+      "id": "rfc-9745-deprecation",
+      "name": "Deprecation HTTP Header",
+      "version": "RFC 9745",
+      "category": "api-contract",
+      "surface": "deprecated endpoint lifecycle",
+      "status": "supported",
+      "scope": "Legacy deployment and operator routes emit the RFC 9745 Item Structured Field Date and a deprecation link, including on authentication failures.",
+      "limitations": "The implementation covers route-level lifecycle signaling; Gregale does not yet expose a platform-wide deprecation registry or automated client notification service.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc9745",
+      "evidence": "cmd/apid/auth_facade.go; cmd/apid/handlers_source_tarball_test.go; cmd/apid/handlers_admin_obs_pr3_test.go; api/openapi.yaml components.headers.Deprecation",
+      "conformance": [
+        {
+          "fixture": "deprecation-structured-date",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+        },
+        {
+          "fixture": "deprecation-admin-route",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_admin_obs_pr3_test.go::TestObsSecurity_DeprecationHeader_OnOldPath"
         }
       ]
     },

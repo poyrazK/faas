@@ -15,8 +15,8 @@
 // lose already-shipped bytes. The two paths share only
 // validateTarballShape + apidsource.Enqueue at the commit
 // step. The legacy endpoint stays active in PR-1; PR-2 wires
-// the CLI to this surface; PR-3 deprecates the legacy
-// endpoint with RFC 8594 Sunset headers.
+// the CLI to this surface; PR-3 deprecates the legacy endpoint
+// with RFC 9745 Deprecation, RFC 8594 Sunset, and RFC 8288 links.
 //
 // `.part` file lifecycle (spoolRoot at cmd/apid/deploy_inputs.go:37):
 //

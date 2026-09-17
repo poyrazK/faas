@@ -11,7 +11,7 @@
 //	                                       ADR-091 §3.7.4)
 //	GET /v1/admin/obs/nodes/events       — SSE stream; successor to
 //	                                       /v1/compute-nodes/events which
-//	                                       carries the RFC 8594 + 8288
+//	                                       carries the RFC 9745 + 8594 + 8288
 //	                                       Deprecation header (the old path
 //	                                       is wrapped by s.withDeprecation
 //	                                       in cmd/apid/auth_facade.go).
@@ -23,9 +23,9 @@
 // table verbatim, and the operator already has admin scope).
 //
 // ADR-091 §3.7.9 (PR #3-introduced): the Deprecation header set on
-// /v1/compute-nodes/events follows RFC 8594 + 8288 (Deprecation:
-// true, Sunset: 2026-10-01, Link: </v1/admin/obs/nodes/events>;
-// rel="successor-version"). 410 Gone on the old path is a follow-up
+// /v1/compute-nodes/events follows RFC 9745 + RFC 8594 + RFC 8288
+// (structured Deprecation date, Sunset HTTP-date, and successor/
+// deprecation Link relations). 410 Gone on the old path is a follow-up
 // cleanup PR after one release. The new path does NOT carry the
 // header.
 package main
@@ -246,7 +246,7 @@ func (s *server) obsEvents(w http.ResponseWriter, r *http.Request, acct state.Ac
 // The old path keeps the same shape and carries the Deprecation
 // header (set by s.withDeprecation in cmd/apid/auth_facade.go).
 // This path does NOT carry the header — the new path is the
-// successor (per RFC 8594 §2.1 "successor-version" rel).
+// successor (per RFC 8288's "successor-version" relation).
 func (s *server) obsNodesEventsSSE(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if ok, prob := s.adminAllows(acct); !ok {
 		api.WriteProblem(w, prob)

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -130,15 +131,43 @@ func TestSourceTarball_HappyPath_NoSidecar(t *testing.T) {
 }
 
 func assertSourceTarballDeprecationHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
+	assertRFC9745LifecycleHeaders(t, rec,
+		`</v1/uploads>; rel="successor-version"`,
+		"https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md")
+}
+
+// assertRFC9745LifecycleHeaders pins the shared deprecation wire contract.
+// RFC 9745 uses an Item Structured Field Date (`@unix-seconds`), while RFC
+// 8594 retains the IMF-fixdate form for Sunset. RFC 8288 allows the successor
+// and deprecation links to be carried as one comma-separated Link header.
+func assertRFC9745LifecycleHeaders(t *testing.T, rec *httptest.ResponseRecorder, successor, deprecationDoc string) {
 	t.Helper()
-	if got := rec.Header().Get("Deprecation"); got != "true" {
-		t.Errorf("Deprecation: got %q, want %q", got, "true")
+	gotDeprecation := rec.Header().Get("Deprecation")
+	if gotDeprecation != "@1789603200" {
+		t.Fatalf("Deprecation: got %q, want @1789603200 (RFC 9745)", gotDeprecation)
 	}
-	if got := rec.Header().Get("Sunset"); got != "Wed, 01 Oct 2026 00:00:00 GMT" {
-		t.Errorf("Sunset: got %q, want RFC 7231 IMF-fixdate", got)
+	deprecationUnix, err := strconv.ParseInt(strings.TrimPrefix(gotDeprecation, "@"), 10, 64)
+	if err != nil || deprecationUnix < 0 {
+		t.Fatalf("Deprecation: got %q, want @<non-negative unix seconds>", gotDeprecation)
 	}
-	if got := rec.Header().Get("Link"); got != `</v1/uploads>; rel="successor-version"` {
-		t.Errorf("Link: got %q, want resumable upload successor", got)
+	gotSunset := rec.Header().Get("Sunset")
+	if gotSunset != "Thu, 01 Oct 2026 00:00:00 GMT" {
+		t.Errorf("Sunset: got %q, want RFC 8594 IMF-fixdate", gotSunset)
+	}
+	sunsetTime, err := http.ParseTime(gotSunset)
+	if err != nil {
+		t.Fatalf("Sunset: %q is not an HTTP-date: %v", gotSunset, err)
+	}
+	if deprecationUnix > sunsetTime.Unix() {
+		t.Errorf("Deprecation: %d is after Sunset: %d", deprecationUnix, sunsetTime.Unix())
+	}
+	gotLink := rec.Header().Get("Link")
+	if !strings.Contains(gotLink, successor) {
+		t.Errorf("Link: got %q, want successor relation %q", gotLink, successor)
+	}
+	wantDeprecationLink := `<` + deprecationDoc + `>; rel="deprecation"`
+	if !strings.Contains(gotLink, wantDeprecationLink) {
+		t.Errorf("Link: got %q, want deprecation relation %q", gotLink, wantDeprecationLink)
 	}
 }
 

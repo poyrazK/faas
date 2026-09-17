@@ -19,7 +19,7 @@
 //     them through the projection helpers without a test
 //     failing here.
 //
-//  2. The Deprecation header contract (RFC 8594 + 8288):
+//  2. The deprecation lifecycle contract (RFC 9745 + 8594 + 8288):
 //     the OLD path /v1/compute-nodes/events carries the
 //     header trio; the NEW path does NOT. Pinning both
 //     halves in the same test file so a future "copy the
