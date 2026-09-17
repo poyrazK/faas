@@ -27,5 +27,13 @@ export type ScalingPolicy = {
    * Minimum seconds between two scale-in events. Floor 5 (matches the reaper's 5 s idle window); ceiling 86400 (1 day). Out-of-range → 422 invalid_cooldown.
    */
   scale_in_cooldown_s?: number;
+  /**
+   * Behavior when the app concurrency boundary is saturated. queue waits up to max_queue_wait_ms; drop returns 429 immediately. Empty uses queue.
+   */
+  concurrency_overflow?: 'queue' | 'drop';
+  /**
+   * Maximum admission wait in milliseconds. 0 uses the plan default; capped at 120000.
+   */
+  max_queue_wait_ms?: number;
 };
 
