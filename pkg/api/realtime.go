@@ -160,6 +160,7 @@ type ManagedRealtimeConnectionListResponse struct {
 	Connections      []ManagedRealtimeConnectionResponse `json:"connections"`
 	Limit            int                                 `json:"limit"`
 	Truncated        bool                                `json:"truncated"`
+	NextCursor       string                              `json:"next_cursor,omitempty"`
 	Partial          bool                                `json:"partial"`
 	NodesQueried     int                                 `json:"nodes_queried"`
 	NodesUnavailable int                                 `json:"nodes_unavailable"`

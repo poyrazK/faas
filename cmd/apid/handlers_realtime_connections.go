@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -35,6 +36,41 @@ const (
 	managedRealtimeConnectionsLimitMax     = 1000
 	managedRealtimeDrainConnectionIDsMax   = 100
 )
+
+type managedRealtimeConnectionCursor struct {
+	Version   int    `json:"v"`
+	AfterID   string `json:"after_id"`
+	Channel   string `json:"channel,omitempty"`
+	Principal string `json:"principal,omitempty"`
+}
+
+func encodeManagedRealtimeConnectionCursor(channel, principal, afterID string) (string, error) {
+	payload, err := json.Marshal(managedRealtimeConnectionCursor{
+		Version: 1, AfterID: afterID, Channel: channel, Principal: principal,
+	})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeManagedRealtimeConnectionCursor(raw, channel, principal string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return "", fmt.Errorf("cursor is not valid base64url")
+	}
+	var cursor managedRealtimeConnectionCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Version != 1 || cursor.AfterID == "" {
+		return "", fmt.Errorf("cursor is invalid or expired")
+	}
+	if cursor.Channel != channel || cursor.Principal != principal {
+		return "", fmt.Errorf("cursor does not match the requested filters")
+	}
+	return cursor.AfterID, nil
+}
 
 // localRealtimeOwner adapts the Unix management client to realtimeOwner. The
 // local adapter verifies the connection's endpoint ID before issuing the
@@ -155,6 +191,16 @@ func (s *server) listManagedRealtimeConnections(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
+	principal := strings.TrimSpace(r.URL.Query().Get("principal"))
+	if len(principal) > 256 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("principal exceeds 256 bytes"))
+		return
+	}
+	afterID, err := decodeManagedRealtimeConnectionCursor(r.URL.Query().Get("cursor"), channel, principal)
+	if err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
 	inventory, err := lister.ListConnectionInventory(r.Context())
 	if err != nil && inventory.NodesQueried == 0 {
 		api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
@@ -170,6 +216,12 @@ func (s *server) listManagedRealtimeConnections(w http.ResponseWriter, r *http.R
 			continue
 		}
 		if channel != "" && !realtimeConnectionHasChannel(connection, channel) {
+			continue
+		}
+		if principal != "" && connection.Principal != principal {
+			continue
+		}
+		if afterID != "" && connection.ID <= afterID {
 			continue
 		}
 		if len(connections) == limit {
@@ -188,10 +240,19 @@ func (s *server) listManagedRealtimeConnections(w http.ResponseWriter, r *http.R
 			Channels:    append([]string(nil), connection.Channels...),
 		})
 	}
+	nextCursor := ""
+	if truncated && len(connections) > 0 {
+		nextCursor, err = encodeManagedRealtimeConnectionCursor(channel, principal, connections[len(connections)-1].ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not encode realtime connection cursor"))
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, api.ManagedRealtimeConnectionListResponse{
 		Connections:      connections,
 		Limit:            limit,
 		Truncated:        truncated,
+		NextCursor:       nextCursor,
 		Partial:          inventory.NodesUnavailable > 0,
 		NodesQueried:     inventory.NodesQueried,
 		NodesUnavailable: inventory.NodesUnavailable,

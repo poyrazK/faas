@@ -17,6 +17,8 @@ def _get_kwargs(
     *,
     limit: int | Unset = 100,
     channel: str | Unset = UNSET,
+    principal: str | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -24,6 +26,10 @@ def _get_kwargs(
     params["limit"] = limit
 
     params["channel"] = channel
+
+    params["principal"] = principal
+
+    params["cursor"] = cursor
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -101,18 +107,24 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
     channel: str | Unset = UNSET,
+    principal: str | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> Response[ManagedRealtimeConnectionListResponse | Problem]:
     """List live connections for a managed realtime endpoint.
 
-     Returns a bounded point-in-time inventory. `partial` is true when one
-    or more active realtime nodes could not be queried; healthy node
-    results remain in the response.
+     Returns a bounded point-in-time inventory, optionally filtered by
+    channel or authenticated principal. Results are ordered by connection
+    ID; use the opaque `next_cursor` value to continue a truncated page.
+    `partial` is true when one or more active realtime nodes could not be
+    queried; healthy node results remain in the response.
 
     Args:
         slug (str):
         id (str):
         limit (int | Unset):  Default: 100.
         channel (str | Unset):
+        principal (str | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,6 +139,8 @@ def sync_detailed(
         id=id,
         limit=limit,
         channel=channel,
+        principal=principal,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -143,18 +157,24 @@ def sync(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
     channel: str | Unset = UNSET,
+    principal: str | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> ManagedRealtimeConnectionListResponse | Problem | None:
     """List live connections for a managed realtime endpoint.
 
-     Returns a bounded point-in-time inventory. `partial` is true when one
-    or more active realtime nodes could not be queried; healthy node
-    results remain in the response.
+     Returns a bounded point-in-time inventory, optionally filtered by
+    channel or authenticated principal. Results are ordered by connection
+    ID; use the opaque `next_cursor` value to continue a truncated page.
+    `partial` is true when one or more active realtime nodes could not be
+    queried; healthy node results remain in the response.
 
     Args:
         slug (str):
         id (str):
         limit (int | Unset):  Default: 100.
         channel (str | Unset):
+        principal (str | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,6 +190,8 @@ def sync(
         client=client,
         limit=limit,
         channel=channel,
+        principal=principal,
+        cursor=cursor,
     ).parsed
 
 
@@ -180,18 +202,24 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
     channel: str | Unset = UNSET,
+    principal: str | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> Response[ManagedRealtimeConnectionListResponse | Problem]:
     """List live connections for a managed realtime endpoint.
 
-     Returns a bounded point-in-time inventory. `partial` is true when one
-    or more active realtime nodes could not be queried; healthy node
-    results remain in the response.
+     Returns a bounded point-in-time inventory, optionally filtered by
+    channel or authenticated principal. Results are ordered by connection
+    ID; use the opaque `next_cursor` value to continue a truncated page.
+    `partial` is true when one or more active realtime nodes could not be
+    queried; healthy node results remain in the response.
 
     Args:
         slug (str):
         id (str):
         limit (int | Unset):  Default: 100.
         channel (str | Unset):
+        principal (str | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,6 +234,8 @@ async def asyncio_detailed(
         id=id,
         limit=limit,
         channel=channel,
+        principal=principal,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -220,18 +250,24 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
     channel: str | Unset = UNSET,
+    principal: str | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> ManagedRealtimeConnectionListResponse | Problem | None:
     """List live connections for a managed realtime endpoint.
 
-     Returns a bounded point-in-time inventory. `partial` is true when one
-    or more active realtime nodes could not be queried; healthy node
-    results remain in the response.
+     Returns a bounded point-in-time inventory, optionally filtered by
+    channel or authenticated principal. Results are ordered by connection
+    ID; use the opaque `next_cursor` value to continue a truncated page.
+    `partial` is true when one or more active realtime nodes could not be
+    queried; healthy node results remain in the response.
 
     Args:
         slug (str):
         id (str):
         limit (int | Unset):  Default: 100.
         channel (str | Unset):
+        principal (str | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -248,5 +284,7 @@ async def asyncio(
             client=client,
             limit=limit,
             channel=channel,
+            principal=principal,
+            cursor=cursor,
         )
     ).parsed

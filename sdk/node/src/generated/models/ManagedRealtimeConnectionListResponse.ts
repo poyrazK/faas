@@ -11,6 +11,10 @@ export type ManagedRealtimeConnectionListResponse = {
   limit: number;
   truncated: boolean;
   /**
+   * Opaque cursor for the next page when truncated is true.
+   */
+  next_cursor?: string;
+  /**
    * True when one or more active realtime nodes did not answer.
    */
   partial: boolean;

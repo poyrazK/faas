@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -116,13 +117,13 @@ func TestManagedRealtimeConnectionInventoryFiltersAndReportsSnapshot(t *testing.
 	}
 	connected := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	e.s.WithRealtimeOwner(&recordingRealtimeOwner{connections: []realtime.ConnectionInfo{
-		{ID: "conn-b", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-b", Connected: connected, LastSeen: connected.Add(time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-b"}},
+		{ID: "conn-b", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-a", Connected: connected, LastSeen: connected.Add(time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-a"}},
 		{ID: "conn-a", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-a", Connected: connected, LastSeen: connected.Add(2 * time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-a"}},
 		{ID: "conn-c", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-c", Connected: connected, LastSeen: connected.Add(3 * time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-a"}},
 		{ID: "other-endpoint", EndpointID: "other", AppID: app.ID, AccountID: e.acct.ID, Principal: "ignored", Connected: connected, LastSeen: connected, Expires: connected},
 		{ID: "other-account", EndpointID: endpointID, AppID: app.ID, AccountID: "other-account", Principal: "ignored", Connected: connected, LastSeen: connected, Expires: connected},
 	}})
-	rec := e.do(t, http.MethodGet, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections?channel=room-a&limit=1", nil, nil)
+	rec := e.do(t, http.MethodGet, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections?channel=room-a&principal=user-a&limit=1", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
 	}
@@ -134,8 +135,22 @@ func TestManagedRealtimeConnectionInventoryFiltersAndReportsSnapshot(t *testing.
 		t.Fatalf("inventory metadata: %+v", response)
 	}
 	connection := response.Connections[0]
-	if connection.ID != "conn-a" || connection.Principal != "user-a" || len(connection.Channels) != 1 || connection.Channels[0] != "room-a" || !response.Truncated {
+	if connection.ID != "conn-a" || connection.Principal != "user-a" || len(connection.Channels) != 1 || connection.Channels[0] != "room-a" || !response.Truncated || response.NextCursor == "" {
 		t.Fatalf("inventory connection: %+v", connection)
+	}
+	next := e.do(t, http.MethodGet, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections?channel=room-a&principal=user-a&limit=1&cursor="+url.QueryEscape(response.NextCursor), nil, nil)
+	if next.Code != http.StatusOK {
+		t.Fatalf("next inventory page: %d %s", next.Code, next.Body)
+	}
+	var nextResponse api.ManagedRealtimeConnectionListResponse
+	if err := json.Unmarshal(next.Body.Bytes(), &nextResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(nextResponse.Connections) != 1 || nextResponse.Connections[0].ID != "conn-b" || nextResponse.Truncated || nextResponse.NextCursor != "" {
+		t.Fatalf("next inventory page: %+v", nextResponse)
+	}
+	if mismatched := e.do(t, http.MethodGet, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections?channel=room-b&principal=user-a&limit=1&cursor="+url.QueryEscape(response.NextCursor), nil, nil); mismatched.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched cursor status: %d %s", mismatched.Code, mismatched.Body)
 	}
 }
 

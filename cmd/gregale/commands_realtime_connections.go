@@ -16,8 +16,10 @@ func cmdRealtimeConnections(args []string) int {
 	fs := newFlagSet("realtime connections", flag.ContinueOnError)
 	limit := fs.Int("limit", 100, "maximum connections to return (1-1000)")
 	channel := fs.String("channel", "", "only connections subscribed to this channel")
+	principal := fs.String("principal", "", "only connections for this authenticated principal")
+	cursor := fs.String("cursor", "", "continue from a previous response's next_cursor")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" {
-		PrintUsage(osStderr, "usage: gregale realtime connections APP_SLUG ENDPOINT_ID [--channel CHANNEL] [--limit N]", "realtime")
+		PrintUsage(osStderr, "usage: gregale realtime connections APP_SLUG ENDPOINT_ID [--channel CHANNEL] [--principal PRINCIPAL] [--limit N] [--cursor TOKEN]", "realtime")
 		return 1
 	}
 	if *limit < 1 || *limit > realtimeConnectionsCLILimitMax {
@@ -26,11 +28,14 @@ func cmdRealtimeConnections(args []string) int {
 	if *channel != "" && !realtime.ValidateChannel(*channel) {
 		return printErr("Invalid channel", fmt.Errorf("channel must be non-empty, at most 256 bytes, and contain no '/', '?', '#', or whitespace padding"))
 	}
+	if len(strings.TrimSpace(*principal)) > 256 {
+		return printErr("Invalid principal", fmt.Errorf("principal must be at most 256 bytes"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	response, err := client.ListManagedRealtimeConnections(context.Background(), fs.Arg(0), fs.Arg(1), *channel, *limit)
+	response, err := client.ListManagedRealtimeConnectionsWithOptions(context.Background(), fs.Arg(0), fs.Arg(1), *channel, strings.TrimSpace(*principal), *cursor, *limit)
 	if err != nil {
 		return printErr("Could not list realtime connections", err)
 	}
@@ -50,11 +55,15 @@ func cmdRealtimeConnections(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-39s %-25s %-25s %-25s %s\n", connection.ID, connection.Principal, connection.ConnectedAt, connection.LastSeenAt, channels)
 	}
 	if response.Truncated {
-		_, _ = fmt.Fprintf(osStdout, "Showing %d connection(s); increase --limit to see more.\n", response.Limit)
+		if response.NextCursor != "" {
+			_, _ = fmt.Fprintf(osStdout, "Showing %d connection(s); use --cursor %s to continue.\n", response.Limit, response.NextCursor)
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "Showing %d connection(s); increase --limit to see more.\n", response.Limit)
+		}
 	}
 	return 0
 }
 
 func normalizeRealtimeConnectionsArgs(args []string) []string {
-	return normalizeRealtimeValueArgs(args, map[string]bool{"--channel": true, "--limit": true}, nil)
+	return normalizeRealtimeValueArgs(args, map[string]bool{"--channel": true, "--limit": true, "--principal": true, "--cursor": true}, nil)
 }

@@ -203,9 +203,11 @@ export class RealtimeService {
   }
   /**
    * List live connections for a managed realtime endpoint.
-   * Returns a bounded point-in-time inventory. `partial` is true when one
-   * or more active realtime nodes could not be queried; healthy node
-   * results remain in the response.
+   * Returns a bounded point-in-time inventory, optionally filtered by
+   * channel or authenticated principal. Results are ordered by connection
+   * ID; use the opaque `next_cursor` value to continue a truncated page.
+   * `partial` is true when one or more active realtime nodes could not be
+   * queried; healthy node results remain in the response.
    *
    * @returns ManagedRealtimeConnectionListResponse The live connection inventory.
    * @throws ApiError
@@ -215,6 +217,8 @@ export class RealtimeService {
     id,
     limit = 100,
     channel,
+    principal,
+    cursor,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -232,6 +236,14 @@ export class RealtimeService {
      * Return only connections subscribed to this channel.
      */
     channel?: string,
+    /**
+     * Return only connections authenticated as this principal.
+     */
+    principal?: string,
+    /**
+     * Opaque next_cursor returned by a previous inventory response.
+     */
+    cursor?: string,
   }): CancelablePromise<ManagedRealtimeConnectionListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -243,6 +255,8 @@ export class RealtimeService {
       query: {
         'limit': limit,
         'channel': channel,
+        'principal': principal,
+        'cursor': cursor,
       },
       errors: {
         400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,

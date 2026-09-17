@@ -12741,14 +12741,26 @@ paths:
         required: false
         schema: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
         description: Return only connections subscribed to this channel.
+      - name: principal
+        in: query
+        required: false
+        schema: { type: string, maxLength: 256 }
+        description: Return only connections authenticated as this principal.
+      - name: cursor
+        in: query
+        required: false
+        schema: { type: string, maxLength: 2048 }
+        description: Opaque next_cursor returned by a previous inventory response.
     get:
       tags: [realtime]
       operationId: listManagedRealtimeConnections
       summary: List live connections for a managed realtime endpoint.
       description: |
-        Returns a bounded point-in-time inventory. `partial` is true when one
-        or more active realtime nodes could not be queried; healthy node
-        results remain in the response.
+        Returns a bounded point-in-time inventory, optionally filtered by
+        channel or authenticated principal. Results are ordered by connection
+        ID; use the opaque `next_cursor` value to continue a truncated page.
+        `partial` is true when one or more active realtime nodes could not be
+        queried; healthy node results remain in the response.
       responses:
         '200':
           description: The live connection inventory.
@@ -30072,6 +30084,7 @@ components:
           items: { $ref: '#/components/schemas/ManagedRealtimeConnectionResponse' }
         limit: { type: integer, minimum: 1, maximum: 1000 }
         truncated: { type: boolean }
+        next_cursor: { type: string, maxLength: 2048, description: Opaque cursor for the next page when truncated is true. }
         partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
         nodes_queried: { type: integer, minimum: 0 }
         nodes_unavailable: { type: integer, minimum: 0 }

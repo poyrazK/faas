@@ -164,6 +164,11 @@ printf '{"event":"refresh"}' | \
 # Inspect active connections before targeting one for management.
 gregale realtime connections my-app ENDPOINT_ID --channel room-a --limit 100
 
+# Filter by authenticated principal and continue a large inventory with the
+# opaque next_cursor printed by the previous page.
+gregale realtime connections my-app ENDPOINT_ID --principal user-123 --limit 100
+gregale realtime connections my-app ENDPOINT_ID --principal user-123 --cursor NEXT_CURSOR
+
 # Preview or perform a bounded, auditable drain. A reason is required.
 gregale realtime drain my-app ENDPOINT_ID --channel room-a --reason 'deploy migration' --dry-run
 gregale realtime drain my-app ENDPOINT_ID --principal user-123 --reason 'account removal'

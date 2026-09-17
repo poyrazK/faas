@@ -1704,7 +1704,9 @@ List live connections for an endpoint
 | Flag | Meaning | |
 |---|---|---|
 | `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--principal <PRINCIPAL>` | only connections for this authenticated principal |  |
 | `--limit <N>` | maximum connections to return (1-1000) |  |
+| `--cursor <TOKEN>` | continue from a previous response&#39;s next_cursor |  |
 
 ### realtime drain
 

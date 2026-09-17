@@ -4915,10 +4915,22 @@ func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id str
 // live connections for one endpoint. Partial is surfaced in the response when
 // one or more active realtime nodes could not be queried.
 func (c *Client) ListManagedRealtimeConnections(ctx context.Context, slug, endpointID, channel string, limit int) (ManagedRealtimeConnectionListResponse, error) {
+	return c.ListManagedRealtimeConnectionsWithOptions(ctx, slug, endpointID, channel, "", "", limit)
+}
+
+// ListManagedRealtimeConnectionsWithOptions returns a bounded point-in-time
+// inventory with optional principal filtering and cursor pagination.
+func (c *Client) ListManagedRealtimeConnectionsWithOptions(ctx context.Context, slug, endpointID, channel, principal, cursor string, limit int) (ManagedRealtimeConnectionListResponse, error) {
 	var out ManagedRealtimeConnectionListResponse
 	query := url.Values{}
 	if channel != "" {
 		query.Set("channel", channel)
+	}
+	if principal != "" {
+		query.Set("principal", principal)
+	}
+	if cursor != "" {
+		query.Set("cursor", cursor)
 	}
 	if limit > 0 {
 		query.Set("limit", strconv.Itoa(limit))

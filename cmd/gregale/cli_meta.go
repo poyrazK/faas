@@ -1313,7 +1313,9 @@ var cliCommands = []cliCommand{
 			{Name: "delete", Short: "Delete a managed realtime endpoint"},
 			{Name: "connections", Short: "List live connections for an endpoint", Flags: []cliFlag{
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
+				{Name: "principal", Short: "only connections for this authenticated principal", Value: "PRINCIPAL"},
 				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
+				{Name: "cursor", Short: "continue from a previous response's next_cursor", Value: "TOKEN"},
 			}},
 			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Flags: []cliFlag{
 				{Name: "reason", Short: "required audit reason", Req: true, Value: "TEXT"},
