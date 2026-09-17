@@ -136,7 +136,12 @@ func cmdDLQReplay(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) < 1 || len(pos) > 2 || (*all && len(pos) != 1) || (!*all && len(pos) != 2) {
+	if *all {
+		if len(pos) != 1 {
+			PrintUsage(os.Stderr, usage, "dlq")
+			return 1
+		}
+	} else if len(pos) != 2 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
 	}
@@ -180,7 +185,12 @@ func cmdDLQPurge(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) < 1 || len(pos) > 2 || (*all && len(pos) != 1) || (!*all && len(pos) != 2) {
+	if *all {
+		if len(pos) != 1 {
+			PrintUsage(os.Stderr, usage, "dlq")
+			return 1
+		}
+	} else if len(pos) != 2 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
 	}
