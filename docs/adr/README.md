@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 179 | [Unified app-scoped dead-letter ledger and replay](179-unified-dead-letter-ledger.md) | accepted | issue #1278; additive projection over invocation and trigger dead-letter state |
 | 177 | [Durable container host-port leasing](177-container-host-port-leasing.md) | accepted | Node-local, restart-safe listener allocation for declared container ports |
 | 175 | [Sidecar scratch and disk-I/O policy](175-sidecar-scratch-and-disk-io-policy.md) | accepted | Customer-selectable ephemeral scratch and guest I/O isolation for sidecars |
 | 174 | [Terminal compute-node retirement](174-compute-node-retirement.md) | accepted | operator safety follow-up to ADR-137 |
