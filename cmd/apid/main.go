@@ -1617,6 +1617,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (runOpenAPIDocSubscriber, started in bgBefore above)
 	// flushes per-app on either pg_notify channel.
 	srv.WithSpecCache(openapidiff.NewSpecCache())
+	// Named nodes are the split production topology. Edge-rule mutations on
+	// that topology must obtain ACKs from its registered compute gateways;
+	// the unnamed legacy single-box path intentionally has no fleet registry.
+	srv.WithEdgeRuleFleetRequired(cfg.NodeName != "")
 
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/

@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type edgeRuleBarrierNotifier struct {
@@ -97,4 +99,20 @@ func TestEdgeRuleApplySurvivesCanceledRequestContext(t *testing.T) {
 	if len(notifier.phases) != 1 || notifier.phases[0] != "apply" {
 		t.Fatalf("published phases = %v, want [apply]", notifier.phases)
 	}
+}
+
+func TestEdgeRuleFleetRequirementDistinguishesSplitAndSingleBox(t *testing.T) {
+	notifier := &edgeRuleBarrierNotifier{events: make(chan db.Notification, 2)}
+	srv := newServer(state.NewMemStore(), slog.Default(), "example.com", notifier)
+	srv.WithEdgeRuleFleetRequired(true)
+	if _, err := srv.prepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com"); err == nil {
+		t.Fatal("named fleet accepted a policy mutation with no serving gateways")
+	}
+
+	srv.WithEdgeRuleFleetRequired(false)
+	conv, err := srv.prepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
+	if err != nil {
+		t.Fatalf("single-box mutation without compute registry: %v", err)
+	}
+	conv.abort(t.Context())
 }

@@ -65,6 +65,11 @@ type server struct {
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
 	notif          Notifier
+	// edgeRuleFleetRequired is true on named multi-box control planes. Those
+	// deployments must see at least one active serving gateway before a policy
+	// mutation can commit; legacy single-box/dev installs have no compute
+	// registry and apply the same generation locally without fleet ACKs.
+	edgeRuleFleetRequired bool
 	// invocationCompletion multiplexes the durable invocation_done
 	// notification stream for synchronous invoke waiters. Nil keeps the
 	// legacy per-request LISTEN path for tests and degraded boot.
@@ -780,6 +785,12 @@ func (s *server) WithInvocationCompletionWaiter(w *invocationCompletionWaiter) *
 // freshness check.
 func (s *server) WithSpecCache(cache *openapidiff.SpecCache) *server {
 	s.specCache = cache
+	return s
+}
+
+// WithEdgeRuleFleetRequired enables the named multi-box policy barrier.
+func (s *server) WithEdgeRuleFleetRequired(required bool) *server {
+	s.edgeRuleFleetRequired = required
 	return s
 }
 

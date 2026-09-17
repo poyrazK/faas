@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
@@ -74,10 +73,11 @@ func (s *server) prepareEdgeRuleMutation(ctx context.Context, appID, ruleID, ope
 		}
 		conv.expected[node.Name] = struct{}{}
 	}
-	// A production mutation with no serving gateway authority is unsafe: it
+	// A fleet mutation with no serving gateway authority is unsafe: it
 	// could report success while an unregistered edge continues serving stale
-	// policy. MemStore tests/local development intentionally have no fleet.
-	if _, production := s.store.(*state.PgStore); production && len(conv.expected) == 0 {
+	// policy. Unnamed legacy single-box installs and local development
+	// intentionally have no compute registry.
+	if s.edgeRuleFleetRequired && len(conv.expected) == 0 {
 		conv.close()
 		return nil, errors.New("no active serving gateways are registered")
 	}
