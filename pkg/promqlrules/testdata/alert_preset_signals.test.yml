@@ -18,8 +18,7 @@
 #      an account_id label (admitted via accountLabelSet, overflow
 #      `__other__`).
 #   6. FaasAlertPresetAnyFiringAccount — count by account_id of
-#      any of (1, 2, 3, 4, 5) firing. All 5 alert-preset signals
-#      contribute as of PR-D.
+#      distinct per-preset ALERTS series that are actually firing.
 #
 # Why this fixture exists: TestFaasRulesSyntax validates the rule
 # file parse-only; TestFaasRulesAcceptance (rules_test.go:67-99)
@@ -257,10 +256,12 @@ tests:
       # correlation rule's `count by (account_id) (...) >= 1`.
       - series: 'meterd_api_reachable{account_id="acct-corr",app_id="app-corr"}'
         values: '0+0x60'
+      - series: 'gateway_requests_total{app="app-corr",plan="pro",code="503"}'
+        values: '0+1x60'
       - series: 'meterd_account_spend_eur{account_id="acct-corr"}'
         values: '25+0x60'
     alert_rule_test:
-      - eval_time: 6m
+      - eval_time: 12m
         alertname: FaasAlertPresetAnyFiringAccount
         exp_alerts:
           - exp_labels:
@@ -270,11 +271,25 @@ tests:
               account_id: "acct-corr"
             exp_annotations:
               summary: "Account acct-corr has >=1 alert_preset firing"
-              description: "One or more alert_preset signal(s) for account acct-corr are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
+              description: "One or more alert_preset signal(s) for account acct-corr are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. The correlation includes only per-preset alerts whose own hold period has elapsed; multiple apps firing the same preset count once. Cross-reference the per-preset alerts above for the active signal."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
 
   # ──────────────────────────────────────────────────────────────
-  # Test 8 — correlation rule fires when ONLY the queue signal is
+  # Test 8 — a raw predicate can be true while its source alert is
+  # still pending. The account correlation must stay inactive until
+  # the source alert's own 1h hold elapses.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "pending spend signal → no account correlation"
+    input_series:
+      - series: 'meterd_account_spend_eur{account_id="acct-pending"}'
+        values: '25+0x120'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasAlertPresetAnyFiringAccount
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 9 — correlation rule fires when ONLY the queue signal is
   # firing (the other 4 account-labeled signals are healthy). Pre-
   # PR-D this case would NOT fire — the queue signal was excluded
   # from the correlation. Post-PR-D it fires because queue now
@@ -308,11 +323,11 @@ tests:
               account_id: "acct-queue-only"
             exp_annotations:
               summary: "Account acct-queue-only has >=1 alert_preset firing"
-              description: "One or more alert_preset signal(s) for account acct-queue-only are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
+              description: "One or more alert_preset signal(s) for account acct-queue-only are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. The correlation includes only per-preset alerts whose own hold period has elapsed; multiple apps firing the same preset count once. Cross-reference the per-preset alerts above for the active signal."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
 
   # ──────────────────────────────────────────────────────────────
-  # Test 9 — negative case. All signals within bounds → no alerts.
+  # Test 10 — negative case. All signals within bounds → no alerts.
   # ──────────────────────────────────────────────────────────────
   - interval: 30s
     name: "all signals OK → no alert_preset alert fires"
