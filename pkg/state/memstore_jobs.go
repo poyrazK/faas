@@ -62,20 +62,21 @@ func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, comma
 	}
 	now := time.Now().UTC()
 	j := Job{
-		ID:             newUUIDString(),
-		AccountID:      accountID,
-		Kind:           kind,
-		Name:           name,
-		ImageRef:       imageRef,
-		RAMMB:          ramMB,
-		TaskTimeoutS:   taskTimeoutSec,
-		MaxParallelism: maxParallelism,
-		RetryMax:       retryMax,
-		EnvOverrides:   envOverrides,
-		Status:         "active",
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		Command:        command,
+		ID:                         newUUIDString(),
+		AccountID:                  accountID,
+		Kind:                       kind,
+		Name:                       name,
+		ImageRef:                   imageRef,
+		RAMMB:                      ramMB,
+		TaskTimeoutS:               taskTimeoutSec,
+		MaxParallelism:             maxParallelism,
+		RetryMax:                   retryMax,
+		EnvOverrides:               envOverrides,
+		Status:                     "active",
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+		Command:                    command,
+		ImageMaterializationStatus: "pending",
 	}
 	m.jobs[j.ID] = j
 	return j, nil
@@ -147,6 +148,11 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 	}
 	if imageRef != nil {
 		j.ImageRef = *imageRef
+		j.ImageResolvedDigest = ""
+		j.ImageStorageKey = ""
+		j.ImageMaterializationStatus = "pending"
+		j.ImageMaterializationError = ""
+		j.ImageMaterializedAt = nil
 	}
 	if ramMB != nil {
 		j.RAMMB = *ramMB
@@ -165,6 +171,62 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 	}
 	if status != nil {
 		j.Status = *status
+	}
+	j.UpdatedAt = time.Now().UTC()
+	m.jobs[id] = j
+	return j, nil
+}
+
+// JobListPendingImageMaterialization mirrors the PostgreSQL worker queue.
+func (m *MemStore) JobListPendingImageMaterialization(_ context.Context, limit int) ([]Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Job
+	for _, j := range m.jobs {
+		if j.Status != "deleted" && j.ImageMaterializationStatus == "pending" {
+			out = append(out, j)
+		}
+	}
+	sort.Slice(out, func(i, k int) bool {
+		if out[i].UpdatedAt.Equal(out[k].UpdatedAt) {
+			return out[i].ID < out[k].ID
+		}
+		return out[i].UpdatedAt.Before(out[k].UpdatedAt)
+	})
+	if limit <= 0 {
+		limit = 64
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// JobSetImageMaterialization mirrors the atomic PostgreSQL publication path.
+func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if status != "pending" && status != "ready" && status != "failed" {
+		return Job{}, fmt.Errorf("state: invalid job image materialization status %q", status)
+	}
+	if status == "ready" && (resolvedDigest == "" || storageKey == "") {
+		return Job{}, fmt.Errorf("state: ready job image materialization requires digest and storage key")
+	}
+	j, ok := m.jobs[id]
+	if !ok || j.Status == "deleted" {
+		return Job{}, ErrNotFound
+	}
+	if j.ImageRef != sourceRef {
+		return Job{}, ErrConflict
+	}
+	j.ImageMaterializationStatus = status
+	j.ImageResolvedDigest = resolvedDigest
+	j.ImageStorageKey = storageKey
+	j.ImageMaterializationError = failure
+	j.ImageMaterializedAt = nil
+	if status == "ready" {
+		now := time.Now().UTC()
+		j.ImageMaterializedAt = &now
 	}
 	j.UpdatedAt = time.Now().UTC()
 	m.jobs[id] = j
@@ -568,6 +630,11 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 	now := time.Now().UTC()
 	for _, tasks := range m.jobTasks {
 		for _, t := range tasks {
+			run, runOK := m.jobRuns[t.RunID]
+			job, jobOK := m.jobs[run.JobID]
+			if !runOK || !jobOK || job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" {
+				continue
+			}
 			if t.Status != "queued" {
 				continue
 			}

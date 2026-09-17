@@ -8667,20 +8667,29 @@ type CreateJobRunRequest struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
-	ID             string            `json:"id"`
-	AccountID      string            `json:"account_id"`
-	Name           string            `json:"name"`
-	Kind           string            `json:"kind"`
-	ImageRef       string            `json:"image_ref"`
-	Command        []string          `json:"command"`
-	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
-	RAMMB          int               `json:"ram_mb"`
-	TaskTimeoutSec int               `json:"task_timeout_sec"`
-	MaxParallelism int               `json:"max_parallelism"`
-	RetryMax       int               `json:"retry_max"`
-	Status         string            `json:"status"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
+	ID        string `json:"id"`
+	AccountID string `json:"account_id"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	ImageRef  string `json:"image_ref"`
+	// ImageResolvedDigest is the immutable manifest selected from image_ref
+	// by imaged. It is empty while the image is pending materialization.
+	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
+	// ImageStorageKey is the canonical ext4 artifact vmmd boots.
+	ImageStorageKey string `json:"image_storage_key,omitempty"`
+	// ImageMaterializationStatus is pending, ready, or failed.
+	ImageMaterializationStatus string            `json:"image_materialization_status"`
+	ImageMaterializationError  string            `json:"image_materialization_error,omitempty"`
+	ImageMaterializedAt        string            `json:"image_materialized_at,omitempty"`
+	Command                    []string          `json:"command"`
+	EnvOverrides               map[string]string `json:"env_overrides,omitempty"`
+	RAMMB                      int               `json:"ram_mb"`
+	TaskTimeoutSec             int               `json:"task_timeout_sec"`
+	MaxParallelism             int               `json:"max_parallelism"`
+	RetryMax                   int               `json:"retry_max"`
+	Status                     string            `json:"status"`
+	CreatedAt                  string            `json:"created_at"`
+	UpdatedAt                  string            `json:"updated_at"`
 }
 
 // JobRunResponse is the wire projection of state.JobRun.

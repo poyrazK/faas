@@ -1355,6 +1355,15 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			}
 		}
 		return nil
+	case db.NotifyJobChanged:
+		var p jobChangedPayload
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			return fmt.Errorf("decode job_changed payload: %w", err)
+		}
+		if p.JobID == "" || p.Kind == "deleted" {
+			return nil
+		}
+		return h.MaterializeJob(ctx, p.JobID)
 	case "trusted_signer_changed":
 		// Issue #472 / ADR-054: apid emits this on every CRUD op on
 		// app_trusted_signers. We refresh the in-memory cache so a
@@ -1388,6 +1397,11 @@ type deploymentChangedPayload struct {
 	// Status is the post-transition deployment status (e.g. "live",
 	// "superseded"). imaged uses it to detect supersede for F5 cleanup.
 	Status string `json:"status,omitempty"`
+}
+
+type jobChangedPayload struct {
+	Kind  string `json:"kind"`
+	JobID string `json:"job_id"`
 }
 
 // PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were

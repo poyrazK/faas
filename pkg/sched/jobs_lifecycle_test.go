@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,14 @@ type instanceBeforeClaimStore struct {
 	state.Store
 }
 
+func (s instanceBeforeClaimStore) JobListPendingImageMaterialization(ctx context.Context, limit int) ([]state.Job, error) {
+	return s.Store.(state.JobImageMaterializationStore).JobListPendingImageMaterialization(ctx, limit)
+}
+
+func (s instanceBeforeClaimStore) JobSetImageMaterialization(ctx context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (state.Job, error) {
+	return s.Store.(state.JobImageMaterializationStore).JobSetImageMaterialization(ctx, id, sourceRef, status, resolvedDigest, storageKey, failure)
+}
+
 func (s instanceBeforeClaimStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error {
 	if _, err := s.Store.InstanceByID(ctx, instanceID); err != nil {
 		return errors.New("job task claimed before referenced instance exists")
@@ -118,6 +127,12 @@ func seedJobRun(t *testing.T, store state.Store, jobEnv, runEnv json.RawMessage)
 	if err != nil {
 		t.Fatalf("JobCreate: %v", err)
 	}
+	if _, ok := store.(state.JobImageMaterializationStore); ok {
+		if _, err := store.(state.JobImageMaterializationStore).JobSetImageMaterialization(ctx, job.ID, job.ImageRef,
+			"ready", "sha256:"+strings.Repeat("a", 64), "jobs/"+job.ID+".ext4", ""); err != nil {
+			t.Fatalf("JobSetImageMaterialization: %v", err)
+		}
+	}
 	run, _, err := store.JobRunCreate(ctx, job.ID, acct.ID, "manual", nil, nil, nil, runEnv, 1)
 	if err != nil {
 		t.Fatalf("JobRunCreate: %v", err)
@@ -127,7 +142,7 @@ func seedJobRun(t *testing.T, store state.Store, jobEnv, runEnv json.RawMessage)
 
 func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	store := state.NewMemStore()
-	acct, _, run := seedJobRun(t, store, json.RawMessage(`{"JOB":"job-value","SHARED":"job"}`), json.RawMessage(`{"RUN":"run-value","SHARED":"run"}`))
+	acct, job, run := seedJobRun(t, store, json.RawMessage(`{"JOB":"job-value","SHARED":"job"}`), json.RawMessage(`{"RUN":"run-value","SHARED":"run"}`))
 	vmm := &recordingJobVMM{}
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
 		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
@@ -142,7 +157,7 @@ func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	if vmm.spec.InstanceID != result.InstanceID || vmm.spec.RunID != run.ID || vmm.spec.AccountID != acct.ID {
 		t.Fatalf("VMM spec identity = %+v, result=%+v", vmm.spec, result)
 	}
-	if vmm.spec.ImageRef != "registry.example/fn@sha256:abc" || vmm.spec.RAMMB != 256 || vmm.spec.TaskTimeoutSec != 30 {
+	if vmm.spec.ImageRef != "jobs/"+job.ID+".ext4" || vmm.spec.RAMMB != 256 || vmm.spec.TaskTimeoutSec != 30 {
 		t.Fatalf("VMM spec execution fields = %+v", vmm.spec)
 	}
 	if vmm.spec.Env["JOB"] != "job-value" || vmm.spec.Env["RUN"] != "run-value" || vmm.spec.Env["SHARED"] != "run" {

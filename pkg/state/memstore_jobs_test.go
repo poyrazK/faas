@@ -50,6 +50,10 @@ func TestMemStoreJobs(t *testing.T) {
 	if len(created.Command) != 3 {
 		t.Fatalf("JobCreate.Command len = %d, want 3", len(created.Command))
 	}
+	if _, err := ms.JobSetImageMaterialization(ctx, created.ID, created.ImageRef,
+		"ready", "sha256:"+strings.Repeat("a", 64), "jobs/"+created.ID+".ext4", ""); err != nil {
+		t.Fatalf("JobSetImageMaterialization: %v", err)
+	}
 	if !strings.Contains(string(created.EnvOverrides), "DATABASE_URL") {
 		t.Fatalf("JobCreate.EnvOverrides = %s, missing DATABASE_URL", string(created.EnvOverrides))
 	}

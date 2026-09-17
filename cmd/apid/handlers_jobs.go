@@ -46,19 +46,26 @@ import (
 // API).
 func jobResponse(j state.Job) api.JobResponse {
 	resp := api.JobResponse{
-		ID:             j.ID,
-		AccountID:      j.AccountID,
-		Name:           j.Name,
-		Kind:           j.Kind,
-		ImageRef:       j.ImageRef,
-		Command:        j.Command,
-		RAMMB:          j.RAMMB,
-		TaskTimeoutSec: j.TaskTimeoutS,
-		MaxParallelism: j.MaxParallelism,
-		RetryMax:       j.RetryMax,
-		Status:         j.Status,
-		CreatedAt:      j.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:      j.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:                         j.ID,
+		AccountID:                  j.AccountID,
+		Name:                       j.Name,
+		Kind:                       j.Kind,
+		ImageRef:                   j.ImageRef,
+		ImageResolvedDigest:        j.ImageResolvedDigest,
+		ImageStorageKey:            j.ImageStorageKey,
+		ImageMaterializationStatus: j.ImageMaterializationStatus,
+		ImageMaterializationError:  j.ImageMaterializationError,
+		Command:                    j.Command,
+		RAMMB:                      j.RAMMB,
+		TaskTimeoutSec:             j.TaskTimeoutS,
+		MaxParallelism:             j.MaxParallelism,
+		RetryMax:                   j.RetryMax,
+		Status:                     j.Status,
+		CreatedAt:                  j.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                  j.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if j.ImageMaterializedAt != nil && !j.ImageMaterializedAt.IsZero() {
+		resp.ImageMaterializedAt = j.ImageMaterializedAt.UTC().Format(time.RFC3339)
 	}
 	if len(j.EnvOverrides) > 0 {
 		var env map[string]string

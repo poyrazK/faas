@@ -35,7 +35,8 @@ import (
 // --- Domain types (mirrors schema in migrations/00255, 00256, 00257,
 //     00571, 00572, 00574, 00575, 00576, 00577, 00578) --------------
 
-// Job is one row of public.jobs (migrations/00255 + 00572 for command).
+// Job is one row of public.jobs (migrations/00255 + 00572 for command and
+// the image-materialization columns added by the Epic #1184 follow-up).
 // Kind is the closed vocabulary ('app' | 'function') enforced by the
 // jobs_kind_check constraint; Status is ('active' | 'paused' | 'deleted')
 // enforced by jobs_status_check. EnvOverrides is jsonb so the customer-
@@ -59,6 +60,16 @@ type Job struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	Command        []string // migrations/00572
+	// ImageResolvedDigest is the immutable OCI manifest digest selected from
+	// ImageRef by imaged. Empty until materialization succeeds.
+	ImageResolvedDigest string
+	// ImageStorageKey is the canonical ext4 artifact consumed by vmmd
+	// (jobs/<job-id>.ext4). It is populated atomically with a ready status.
+	ImageStorageKey string
+	// ImageMaterializationStatus is pending, ready, or failed.
+	ImageMaterializationStatus string
+	ImageMaterializationError  string
+	ImageMaterializedAt        *time.Time
 }
 
 // JobRun is one row of public.job_runs (migrations/00255 + 00574 for
@@ -187,6 +198,15 @@ var ErrJobQuotaExceeded = errors.New("state: job quota exceeded")
 // test doubles that only need the basic CRUD methods.
 type JobQuotaCreator interface {
 	JobCreateIfUnderQuota(ctx context.Context, accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage, limit int) (Job, error)
+}
+
+// JobImageMaterializationStore is the narrow persistence seam used by imaged
+// to publish the resolved OCI digest and canonical ext4 storage key. It stays
+// optional so small Store test doubles do not need to implement the worker
+// queue surface.
+type JobImageMaterializationStore interface {
+	JobListPendingImageMaterialization(ctx context.Context, limit int) ([]Job, error)
+	JobSetImageMaterialization(ctx context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (Job, error)
 }
 
 // newUUIDString is a thin shim over uuid.NewString so the memstore

@@ -5,12 +5,11 @@
 // the per-instance chroot, jailer cgroup, vsock device, and the
 // two-drive base/per-instance layout), with three deltas:
 //
-//  1. drive1 is the customer-supplied job IMAGE, not an app layer.
-//     The StorageBackend key lives in JobColdBootSpec.ImageRef and
+//  1. drive1 is the materialized job IMAGE, not an app layer. The
+//     StorageBackend key lives in JobColdBootSpec.ImageRef and
 //     resolves through the same restoreSourceFromStorage path the
-//     app path uses (single-backend semantic). The image is the
-//     customer-prepared rootfs (OCI / Dockerfile build) they want
-//     the command to run on top of.
+//     app path uses (single-backend semantic). imaged publishes the
+//     OCI-derived ext4 under jobs/<job-id>.ext4 before dispatch.
 //
 //  2. There is NO readiness probe. The guest's job supervisor
 //     (guest/init/job_supervisor_linux.go, M8) reads job.json, runs
@@ -63,7 +62,7 @@ import (
 //	  "run_id":          "...",                         // stamped from spec
 //	  "task_index":      7,                             // stamped from spec
 //	  "lease_token":     "...",                         // stamped from spec
-//	  "image_ref":       "oci://...",                   // echoed from spec
+//	  "image_ref":       "jobs/<job-id>.ext4",          // storage key echoed from spec
 //	  "command":         ["/bin/sh", "-c", "..."],     // argv form
 //	  "env":             {"KEY":"VAL", ...},            // merged per M5 plan
 //	  "task_timeout_s":  300,                           // per-task cap

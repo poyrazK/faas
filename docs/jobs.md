@@ -1,7 +1,11 @@
 # Jobs
 
-Jobs are bounded run-to-completion workloads. Create a job from a digest-pinned
-image, then dispatch one or more tasks; each run retains task status and logs.
+Jobs are bounded run-to-completion workloads. Create a job from an OCI image
+reference, then dispatch one or more tasks; each run retains task status and
+logs. A newly-created or image-updated job is `pending` until imaged resolves
+the reference and publishes its immutable ext4 rootfs. Tasks remain queued
+until that artifact is `ready`; pull/build failures are exposed as
+`image_materialization_status=failed` plus an actionable error.
 
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2

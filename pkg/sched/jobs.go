@@ -99,6 +99,12 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		_ = e.store.JobTaskCancel(ctx, runID, taskIndex)
 		return JobWakeResult{}, ErrJobNotActive
 	}
+	if job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" {
+		// The dispatch query normally filters these tasks before WakeJob is
+		// called. Keep the guard here as defense in depth for direct callers
+		// and stale queue snapshots; no VM or admission slot is created.
+		return JobWakeResult{}, ErrJobImageNotReady
+	}
 
 	// 2. Admit. Per-account concurrency was already gated at the
 	// dispatch tick (so we don't burn a ledger slot on a request
@@ -233,11 +239,13 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
 	}
 	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
-		AccountID:      accountID,
-		RunID:          runID,
-		TaskIndex:      taskIndex,
-		InstanceID:     instanceID,
-		ImageRef:       job.ImageRef,
+		AccountID:  accountID,
+		RunID:      runID,
+		TaskIndex:  taskIndex,
+		InstanceID: instanceID,
+		// vmmd's ImageRef field is a StorageBackend key at this boundary;
+		// the customer-facing OCI source remains in jobs.image_ref.
+		ImageRef:       job.ImageStorageKey,
 		Command:        append([]string(nil), job.Command...),
 		Env:            env,
 		RAMMB:          ramMB,
@@ -813,6 +821,8 @@ type JobVmmSpec struct {
 	RunID          string
 	TaskIndex      int
 	InstanceID     string
+	// ImageRef is the resolved StorageBackend key (jobs/<job-id>.ext4).
+	// The source OCI reference remains in state.Job.ImageRef.
 	ImageRef       string
 	Command        []string
 	Env            map[string]string
@@ -1027,6 +1037,10 @@ var ErrJobTaskAlreadyClaimed = errors.New("sched: job task already claimed")
 // ErrJobNotActive marks a WakeJob against a paused / deleted job.
 // The task is cancelled before returning.
 var ErrJobNotActive = errors.New("sched: job is not active")
+
+// ErrJobImageNotReady marks a queued task whose OCI source has not yet been
+// materialized into the immutable ext4 artifact vmmd consumes.
+var ErrJobImageNotReady = errors.New("sched: job image is not materialized")
 
 // ErrJobRunTerminal marks a CancelJob against a run that's already
 // succeeded / failed / cancelled / dead_letter. Idempotent no-op.

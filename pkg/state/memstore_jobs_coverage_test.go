@@ -53,6 +53,10 @@ func newJobAndRun(t *testing.T, ms *MemStore, accountID, name string) (Job, JobR
 	if err != nil {
 		t.Fatalf("setup JobCreate: %v", err)
 	}
+	if _, err := ms.JobSetImageMaterialization(ctx, created.ID, created.ImageRef,
+		"ready", "sha256:"+strings.Repeat("a", 64), "jobs/"+created.ID+".ext4", ""); err != nil {
+		t.Fatalf("setup JobSetImageMaterialization: %v", err)
+	}
 	parallelism := 2
 	run, fanned, err := ms.JobRunCreate(ctx,
 		created.ID, created.AccountID, "manual",

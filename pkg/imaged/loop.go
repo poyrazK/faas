@@ -193,9 +193,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		// build-queue durability surface (in-process worker + SKIP
 		// LOCKED) and is the single consumer of the build_queued
 		// channel. imaged reacts to NotifyDeploymentChanged +
-		// NotifySnapshotBoot for the deploy pipeline.
+		// NotifySnapshotBoot for the deploy pipeline, and job_changed
+		// for OCI job-image materialization.
 		notif, err = db.SubscribeWithReconnect(ctx, l.pool, []string{
 			db.NotifyDeploymentChanged,
+			db.NotifyJobChanged,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,
@@ -215,6 +217,11 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	l.recoverBuildHandoffs(ctx)
 	l.reconcileStaleDeployments(ctx)
+	if l.handler != nil {
+		if err := l.handler.MaterializePendingJobs(ctx); err != nil {
+			l.log.Warn("imaged: reconcile pending job images", "err", err)
+		}
+	}
 	// A daemon that restarts more often than gcEvery would otherwise never
 	// reclaim anything because every restart resets the ticker. Run one sweep
 	// after recovery so cleanup makes progress on frequently updated nodes.

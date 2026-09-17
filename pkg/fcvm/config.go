@@ -217,10 +217,10 @@ type ColdBootSpec struct {
 // per-job-task cold-boot payload. Mirrors ColdBootSpec for the
 // run-to-completion workload class; the key differences are:
 //
-//   - ImageRef is the customer-specified OCI digest (NOT the app's
-//     pre-built layer). The manager resolves it via the storage
-//     backend on first cold-boot; subsequent runs reuse the
-//     staged layer (same as app cold-boot path).
+//   - ImageRef is the canonical materialized StorageBackend key
+//     (jobs/<job-id>.ext4), not the customer-facing OCI source ref.
+//     imaged resolves and publishes that artifact before schedd can
+//     claim a task; vmmd only stages the immutable ext4 key.
 //   - Command is the argv (exec form, no shell). guest/init/
 //     job_supervisor_linux.go (M8) supervises it as a child of PID 1.
 //   - Env is merged into the guest's process env: systemEnv ⊕
