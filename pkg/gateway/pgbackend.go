@@ -332,7 +332,7 @@ type PGBackend struct {
 	mirrorStore mirrorRulesStore
 
 	smokeMu         sync.Mutex
-	smokeChallenges map[string]deploymentSmokeChallenge
+	smokeChallenges map[string][]deploymentSmokeChallenge
 }
 
 type deploymentSmokeChallenge struct {
@@ -638,15 +638,17 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		appsPicker:      map[string]*appPicker{},
 		mirrorRules:     map[string][]MirrorRuleRow{},
 		staleTargets:    map[string]time.Time{},
-		smokeChallenges: map[string]deploymentSmokeChallenge{},
+		smokeChallenges: map[string][]deploymentSmokeChallenge{},
 	}
 }
 
 func smokeChallengeKey(appID, deploymentID string) string { return appID + "\x00" + deploymentID }
 
-// AuthorizeDeploymentSmoke installs one short-lived challenge delivered over
-// the private database notification channel. Tokens are memory-only and may
-// be replayed only until expiresAt.
+// AuthorizeDeploymentSmoke installs a short-lived challenge delivered over
+// the private database notification channel. At-least-once snapshot delivery
+// can start concurrent verifiers for one deployment, so unexpired tokens must
+// coexist instead of overwriting each other. Tokens are memory-only and may be
+// replayed only until expiresAt.
 func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, expiresAt time.Time) {
 	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
 		return
@@ -654,12 +656,21 @@ func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, 
 	b.smokeMu.Lock()
 	defer b.smokeMu.Unlock()
 	now := time.Now()
-	for key, challenge := range b.smokeChallenges {
-		if !challenge.expiresAt.After(now) {
+	for key, challenges := range b.smokeChallenges {
+		live := challenges[:0]
+		for _, challenge := range challenges {
+			if challenge.expiresAt.After(now) {
+				live = append(live, challenge)
+			}
+		}
+		if len(live) == 0 {
 			delete(b.smokeChallenges, key)
+		} else {
+			b.smokeChallenges[key] = live
 		}
 	}
-	b.smokeChallenges[smokeChallengeKey(appID, deploymentID)] = deploymentSmokeChallenge{token: token, expiresAt: expiresAt}
+	key := smokeChallengeKey(appID, deploymentID)
+	b.smokeChallenges[key] = append(b.smokeChallenges[key], deploymentSmokeChallenge{token: token, expiresAt: expiresAt})
 }
 
 // ValidateDeploymentSmoke authenticates the edge-health bypass. A valid token
@@ -671,12 +682,26 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 	b.smokeMu.Lock()
 	defer b.smokeMu.Unlock()
 	key := smokeChallengeKey(appID, deploymentID)
-	challenge, ok := b.smokeChallenges[key]
-	if !ok || !challenge.expiresAt.After(time.Now()) {
-		delete(b.smokeChallenges, key)
+	challenges, ok := b.smokeChallenges[key]
+	if !ok {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(challenge.token), []byte(token)) == 1
+	now := time.Now()
+	live := challenges[:0]
+	matched := 0
+	for _, challenge := range challenges {
+		if !challenge.expiresAt.After(now) {
+			continue
+		}
+		live = append(live, challenge)
+		matched |= subtle.ConstantTimeCompare([]byte(challenge.token), []byte(token))
+	}
+	if len(live) == 0 {
+		delete(b.smokeChallenges, key)
+	} else {
+		b.smokeChallenges[key] = live
+	}
+	return matched == 1
 }
 
 // appPicker (PR-B / issue #556) is the per-app picker state the

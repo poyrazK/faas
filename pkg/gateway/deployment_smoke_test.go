@@ -27,6 +27,19 @@ func TestDeploymentSmokeChallengeIsBoundAndExpires(t *testing.T) {
 	}
 }
 
+func TestConcurrentDeploymentSmokeChallengesDoNotOverwrite(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil)
+	expiresAt := time.Now().Add(time.Minute)
+	b.AuthorizeDeploymentSmoke("app-1", "dep-1", "token-a", expiresAt)
+	b.AuthorizeDeploymentSmoke("app-1", "dep-1", "token-b", expiresAt)
+
+	for _, token := range []string{"token-a", "token-b"} {
+		if !b.ValidateDeploymentSmoke("app-1", "dep-1", token) {
+			t.Fatalf("concurrent challenge %q was overwritten", token)
+		}
+	}
+}
+
 func TestAuthorizedDeploymentSmokeRequiresCachedChallenge(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)
 	h := &Handler{backend: b}
