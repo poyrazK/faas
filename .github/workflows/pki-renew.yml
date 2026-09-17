@@ -25,6 +25,7 @@ jobs:
       - name: Render the live fleet inventory
         shell: bash
         env:
+          CONTROL_PLANE_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
         run: |
@@ -36,18 +37,24 @@ jobs:
             --manifest-file "$manifest" \
             --output-dir "$inventory_root"
 
-          # This job runs on the production control-plane host.  The issuer
-          # is therefore local to the runner; trying to SSH back through the
-          # compute deploy key makes renewal depend on an unrelated account
-          # and was the reason the first production run never started.
-          sudo -n test -r /etc/faas/tls/ca/ca.key
-
           install -m 0600 /dev/null "$RUNNER_TEMP/pki-deploy-key"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$RUNNER_TEMP/pki-deploy-key"
           test -s "$RUNNER_TEMP/pki-deploy-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/pki-control-key"
+          printf '%s\n' "$CONTROL_PLANE_SSH_KEY" > "$RUNNER_TEMP/pki-control-key"
+          test -s "$RUNNER_TEMP/pki-control-key"
           install -m 0600 /dev/null "$RUNNER_TEMP/pki-known-hosts"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$RUNNER_TEMP/pki-known-hosts"
           test -s "$RUNNER_TEMP/pki-known-hosts"
+          # The runner service is intentionally hardened with
+          # NoNewPrivileges, so even passwordless sudo cannot cross the local
+          # process boundary.  Reach the issuer through the already-provisioned
+          # root SSH key instead; loopback keeps this independent of public SSH.
+          ssh-keyscan -H 127.0.0.1 >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
+          ssh -i "$RUNNER_TEMP/pki-control-key" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/pki-known-hosts" \
+            root@127.0.0.1 test -r /etc/faas/tls/ca/ca.key
           mkdir -p "$inventory_root/inventory/group_vars"
           cat >> "$inventory_root/inventory/group_vars/all.yml" <<'EOF'
           ansible_ssh_private_key_file: __PKI_DEPLOY_KEY__
@@ -59,11 +66,25 @@ jobs:
             -e "s|__PKI_DEPLOY_KEY__|$RUNNER_TEMP/pki-deploy-key|" \
             -e "s|__PKI_KNOWN_HOSTS__|$RUNNER_TEMP/pki-known-hosts|" \
             "$inventory_root/inventory/group_vars/all.yml"
-          cat > "$inventory_root/inventory/group_vars/control_plane.yml" <<'EOF'
-          # The sole CA issuer is the self-hosted runner itself.  Keep remote
-          # compute nodes on their manifest-defined SSH users and key.
-          ansible_connection: local
+          control_host="$(awk '
+            /^\[control_plane\]$/ { in_group=1; next }
+            /^\[/ { in_group=0 }
+            in_group && NF { print $1; exit }
+          ' "$inventory_root/inventory/hosts.ini")"
+          test -n "$control_host"
+          control_vars="$inventory_root/inventory/host_vars/${control_host}.yml"
+          test -f "$control_vars"
+          sed -i 's|^ansible_host:.*|ansible_host: "127.0.0.1"|' "$control_vars"
+          cat >> "$control_vars" <<'EOF'
+          # The issuer is the self-hosted runner's machine, but the hardened
+          # runner process cannot sudo.  Cross sshd with the control-plane key
+          # while compute hosts retain the compute-only deployment key.
+          ansible_user: root
+          ansible_ssh_private_key_file: __PKI_CONTROL_KEY__
           EOF
+          sed -i \
+            -e "s|__PKI_CONTROL_KEY__|$RUNNER_TEMP/pki-control-key|" \
+            "$control_vars"
           echo "PKI_INVENTORY=$inventory_root/inventory/hosts.ini" >> "$GITHUB_ENV"
 
       - name: Run serialized fleet renewal
@@ -71,4 +92,4 @@ jobs:
 
       - name: Remove transient SSH material
         if: always()
-        run: rm -rf "$RUNNER_TEMP/pki-live-inventory" "$RUNNER_TEMP/pki-deploy-key" "$RUNNER_TEMP/pki-known-hosts"
+        run: rm -rf "$RUNNER_TEMP/pki-live-inventory" "$RUNNER_TEMP/pki-deploy-key" "$RUNNER_TEMP/pki-control-key" "$RUNNER_TEMP/pki-known-hosts"
