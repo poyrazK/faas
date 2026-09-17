@@ -32,7 +32,7 @@ func (c *StoreConnector) Check(ctx context.Context, attachment state.AppPrivateN
 		return CheckResult{}, err
 	}
 	if network.Region != attachment.Region {
-		return CheckResult{}, fmt.Errorf("Gregale network %q belongs to region %q, not %q", network.ID, network.Region, attachment.Region)
+		return CheckResult{}, fmt.Errorf("gregale network %q belongs to region %q, not %q", network.ID, network.Region, attachment.Region)
 	}
 	if len(attachment.CIDRs) != 1 || attachment.CIDRs[0] != network.CIDR {
 		return CheckResult{}, fmt.Errorf("attachment CIDR must match Gregale network %s", network.CIDR)
