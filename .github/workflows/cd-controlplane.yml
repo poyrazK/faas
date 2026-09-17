@@ -54,6 +54,10 @@ jobs:
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      # APID publishes source archives and removes expired app artifacts, so
+      # it needs the same package lifecycle capability that imaged receives on
+      # compute hosts. Keep the shared storage.env credential read-only.
+      APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       # The critical / best-effort service split is owned by
       # pkg/daemonunitspec (Entry.Critical) and shipped as
@@ -150,6 +154,57 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
+
+      - name: Converge APID lifecycle storage credential
+        run: |
+          set -euo pipefail
+          [[ -n "${APID_STORAGE_LIFECYCLE_ENV:-}" ]] || {
+            echo "::error::production secret COMPUTE_IMAGED_STORAGE_ENV is required for APID source publication" >&2
+            exit 1
+          }
+          stage="$RUNNER_TEMP/apid-storage-${GITHUB_RUN_ID}"
+          printf '%s\n' "$APID_STORAGE_LIFECYCLE_ENV" > "$stage"
+          chmod 0600 "$stage"
+          python3 - "$stage" <<'PY'
+          import sys
+
+          values = {}
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              for raw in stream:
+                  line = raw.rstrip("\r\n")
+                  if not line:
+                      continue
+                  key, sep, value = line.partition("=")
+                  assert sep and key in {"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"}
+                  assert key not in values and value
+                  values[key] = value
+          assert set(values) == {"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"}
+          PY
+          remote_stage="/tmp/gregale-apid-storage-${GITHUB_RUN_ID}.env"
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "$stage" "root@${CP_HOST}:${remote_stage}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" "bash -s -- '${remote_stage}'" <<'REMOTE'
+            set -euo pipefail
+            remote_stage="$1"
+            trap 'rm -f -- "$remote_stage"' EXIT
+            test -s /etc/faas/storage.env
+            grep -Fqx "FAAS_STORAGE_BACKEND=oci" /etc/faas/storage.env
+            getent group faas >/dev/null
+            install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
+            cat > /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf <<'CREDENTIALS'
+          [Service]
+          EnvironmentFile=/etc/faas/apid-storage.env
+          CREDENTIALS
+            chmod 0644 /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            rm -f -- \
+              /etc/faas/oci-e2e.env \
+              /etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf \
+              /etc/systemd/system/faas-apid.service.d/99-oci-e2e.conf \
+              /etc/systemd/system/faas-schedd.service.d/99-oci-e2e.conf
+            systemctl daemon-reload
+          REMOTE
 
       - name: Quarantine invalid legacy node exporter unit
         run: |
@@ -575,6 +630,35 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             "root@${{ env.CP_HOST }}" \
             "/opt/faas/current/host-config/faas-pg-backup-contract-preflight.sh"
+
+      - name: Verify canonical storage credential source
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          assert_process_credential() {
+            unit="$1"
+            env_file="$2"
+            file_user="$(sed -n 's/^FAAS_OCI_USERNAME=//p' "$env_file" | tail -1)"
+            file_password="$(sed -n 's/^FAAS_OCI_PASSWORD=//p' "$env_file" | tail -1)"
+            [[ -n "$file_user" && -n "$file_password" ]]
+            pid="$(systemctl show "$unit" -p MainPID --value)"
+            [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+            process_user="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^FAAS_OCI_USERNAME=//p' | tail -1)"
+            process_password="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^FAAS_OCI_PASSWORD=//p' | tail -1)"
+            [[ "$process_user" == "$file_user" && "$process_password" == "$file_password" ]] || {
+              echo "$unit is not using $env_file credentials" >&2
+              exit 1
+            }
+          }
+          assert_process_credential faas-apid /etc/faas/apid-storage.env
+          assert_process_credential faas-schedd /etc/faas/storage.env
+          sudo -u faas-apid /opt/faas/current/bin/gregalectl artifact lifecycle-check \
+            --env-file /etc/faas/storage.env \
+            --lifecycle-env-file /etc/faas/apid-storage.env \
+            --json
+          REMOTE
 
       - name: Converge Prometheus config and rules
         run: |

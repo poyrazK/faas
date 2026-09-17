@@ -69,6 +69,41 @@ func TestCDControlPlaneReusesVerifiedImmutableRelease(t *testing.T) {
 	}
 }
 
+func TestCDControlPlaneConvergesAPIDLifecycleStorageBeforeActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	cleanup := strings.Index(workflow, "Converge APID lifecycle storage credential")
+	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	verify := strings.Index(workflow, "Verify canonical storage credential source")
+	if cleanup < 0 || activate < 0 || verify < 0 {
+		t.Fatalf("control-plane storage convergence is incomplete: cleanup=%d activate=%d verify=%d", cleanup, activate, verify)
+	}
+	if !(cleanup < activate && activate < verify) {
+		t.Fatalf("legacy storage overrides must be removed before activation and verified after: cleanup=%d activate=%d verify=%d", cleanup, activate, verify)
+	}
+	for _, required := range []string{
+		"APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}",
+		"/etc/faas/apid-storage.env",
+		"/etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf",
+		"/etc/faas/oci-e2e.env",
+		"/etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf",
+		"/etc/systemd/system/faas-apid.service.d/99-oci-e2e.conf",
+		"/etc/systemd/system/faas-schedd.service.d/99-oci-e2e.conf",
+		"process_password",
+		"/proc/$pid/environ",
+		"assert_process_credential faas-apid /etc/faas/apid-storage.env",
+		"assert_process_credential faas-schedd /etc/faas/storage.env",
+		"gregalectl artifact lifecycle-check",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane workflow is missing storage convergence contract %q", required)
+		}
+	}
+}
+
 func TestCDControlPlanePromotesVersionedStatusPage(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

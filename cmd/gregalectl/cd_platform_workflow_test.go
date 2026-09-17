@@ -95,6 +95,19 @@ func TestNormalAnsibleConvergenceRemovesLegacyOCIOverrides(t *testing.T) {
 			}
 		}
 	}
+	controlBody, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "control_plane_service", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"/etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf",
+		"/etc/systemd/system/faas-apid.service.d/99-oci-e2e.conf",
+		"restart faas-apid",
+	} {
+		if !strings.Contains(string(controlBody), required) {
+			t.Fatalf("control_plane_service role does not remove legacy apid storage override %q", required)
+		}
+	}
 }
 
 func TestCDStageWorkflowsAreReusableByPlatformRollout(t *testing.T) {

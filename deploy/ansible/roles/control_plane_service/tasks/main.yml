@@ -78,8 +78,8 @@
     mode: "0640"
 
 # Production storage has one authority: /etc/faas/storage.env. Older OCI E2E
-# runs installed an EnvironmentFile and schedd drop-in that override it. Remove
-# both on every normal convergence so a repair rollout cannot silently retain
+# runs installed EnvironmentFiles and daemon drop-ins that override it. Remove
+# all of them on every normal convergence so a repair rollout cannot silently retain
 # test registry credentials or local-storage behavior.
 - name: control_plane_service — remove legacy OCI E2E storage overrides
   ansible.builtin.file:
@@ -87,8 +87,12 @@
     state: absent
   loop:
     - /etc/faas/oci-e2e.env
+    - /etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf
+    - /etc/systemd/system/faas-apid.service.d/99-oci-e2e.conf
     - /etc/systemd/system/faas-schedd.service.d/99-oci-e2e.conf
-  notify: restart faas-schedd
+  notify:
+    - restart faas-apid
+    - restart faas-schedd
 
 # Manifest-generated split-box host_vars opt into a managed meterd routing
 # file. Legacy/operator-owned boxes keep the old example-only contract so an
