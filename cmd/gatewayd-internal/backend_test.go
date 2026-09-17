@@ -496,6 +496,43 @@ func TestHandleInvalidation_RunningRefreshesLiveTargets(t *testing.T) {
 	}
 }
 
+// TestHandleInvalidation_JobLifecycleIsNotAnAppInvalidation (issue #2763)
+// pins the cross-daemon contract for job-task instance_changed payloads.
+// Job instances have no app_id by design; the explicit kind discriminator
+// keeps their normal running/stopped lifecycle out of the malformed-app
+// warning path and out of the app target cache.
+func TestHandleInvalidation_JobLifecycleIsNotAnAppInvalidation(t *testing.T) {
+	for _, state := range []string{"running", "stopped"} {
+		f := &fakeInvalidator{}
+		payload := `{"kind":"job","instance_id":"job-instance-1","app_id":"","state":"` + state + `"}`
+		handleInvalidation(context.Background(), f, db.Notification{
+			Channel: db.NotifyInstanceChanged,
+			Payload: payload,
+		}, testLogger())
+
+		f.mu.Lock()
+		got := len(f.evicted)
+		f.mu.Unlock()
+		if got != 0 {
+			t.Errorf("state=%q: evicted %d job entries, want 0", state, got)
+		}
+	}
+}
+
+func TestHandleInvalidation_JobPayloadStillRequiresInstanceID(t *testing.T) {
+	f := &fakeInvalidator{}
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyInstanceChanged,
+		Payload: `{"kind":"job","instance_id":"","app_id":"","state":"running"}`,
+	}, testLogger())
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.evicted) != 0 {
+		t.Fatalf("evicted malformed job payload: %v", f.evicted)
+	}
+}
+
 // TestHandleInvalidation_TenantSurfaceChanged (ADR-100 / issue
 // #879) pins the cert-remint dispatch: a db.NotifyTenantSurfaceChanged
 // event must trigger RequestCertForSurface with the bare surface
