@@ -1,3 +1,5 @@
+// adr: 160 — scale-up metrics ingestion is bounded and fails closed.
+
 package scaleup
 
 import (
@@ -101,5 +103,19 @@ func TestHTTPPromScraper_EmptyURL(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("empty URL returned %v, want empty", got)
+	}
+}
+
+func TestHTTPPromScraper_RejectsOversizedResponse(t *testing.T) {
+	s := &HTTPPromScraper{
+		URL:    "http://localhost/metrics",
+		Client: &fakeHTTPFetcher{body: strings.Repeat("x", metricsResponseMaxBytes+1)},
+	}
+	got, err := s.Scrape(context.Background())
+	if err == nil {
+		t.Fatal("Scrape unexpectedly accepted an oversized response")
+	}
+	if len(got) != 0 {
+		t.Fatalf("oversized response map = %v, want empty", got)
 	}
 }

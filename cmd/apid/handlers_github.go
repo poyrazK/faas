@@ -31,7 +31,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -216,7 +215,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	}
 	tokenReq.Header.Set("Accept", "application/json")
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenResp, err := http.DefaultClient.Do(tokenReq)
+	tokenResp, err := oauthHTTPClient().Do(tokenReq)
 	if err != nil {
 		s.log.Error("github oauth token exchange failed", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable", "GitHub Unreachable", "token exchange failed"))
@@ -227,10 +226,15 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// Read the body first so we can decide whether to parse JSON
 	// (the Accept header may not have stuck — older GitHub OAuth
 	// apps respond with form-encoded).
-	bodyBytes, _ := io.ReadAll(tokenResp.Body)
+	bodyBytes, err := readOAuthBody(tokenResp.Body)
+	if err != nil {
+		s.log.Error("github oauth token exchange response unreadable", "status", tokenResp.StatusCode, "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "oauth_exchange_failed", "OAuth Failed", "failed to read access token response from GitHub"))
+		return
+	}
 	accessToken := parseGitHubAccessToken(bodyBytes)
 	if accessToken == "" {
-		s.log.Error("github oauth token exchange no access_token", "status", tokenResp.StatusCode, "body", string(bodyBytes))
+		s.log.Error("github oauth token exchange no access_token", "status", tokenResp.StatusCode)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "oauth_exchange_failed", "OAuth Failed", "failed to obtain access token from GitHub"))
 		return
 	}
@@ -363,7 +367,7 @@ func fetchGitHubUser(ctx context.Context, accessToken string) (GitHubUserInfo, e
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "faas-oidc-login")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient().Do(req)
 	if err != nil {
 		return GitHubUserInfo{}, err
 	}
@@ -371,8 +375,12 @@ func fetchGitHubUser(ctx context.Context, accessToken string) (GitHubUserInfo, e
 	if resp.StatusCode != http.StatusOK {
 		return GitHubUserInfo{}, fmt.Errorf("status %d", resp.StatusCode)
 	}
+	body, err := readOAuthBody(resp.Body)
+	if err != nil {
+		return GitHubUserInfo{}, err
+	}
 	var info GitHubUserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.Unmarshal(body, &info); err != nil {
 		return GitHubUserInfo{}, err
 	}
 	return info, nil
@@ -390,7 +398,7 @@ func fetchGitHubVerifiedPrimaryEmail(ctx context.Context, accessToken string) (s
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "faas-oidc-login")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -398,8 +406,12 @@ func fetchGitHubVerifiedPrimaryEmail(ctx context.Context, accessToken string) (s
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
+	body, err := readOAuthBody(resp.Body)
+	if err != nil {
+		return "", err
+	}
 	var emails []GitHubEmail
-	if err := json.NewDecoder(resp.Body).Decode(&emails); err != nil {
+	if err := json.Unmarshal(body, &emails); err != nil {
 		return "", err
 	}
 	for _, e := range emails {

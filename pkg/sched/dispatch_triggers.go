@@ -88,6 +88,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+const gatewayDispatchResponseMaxBytes = 1 << 20
+
 // trigger DLQ reason constants (match the CHECK on
 // trigger_dead_letter.reason in migrations/00297_triggers.sql).
 // CI lint rule goconst would otherwise flag the per-reason
@@ -875,10 +877,24 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, readErr := readGatewayDispatchResponse(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("status %d: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, raw)
 	}
-	return io.ReadAll(resp.Body)
+	return readGatewayDispatchResponse(resp.Body)
+}
+
+func readGatewayDispatchResponse(body io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, gatewayDispatchResponseMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > gatewayDispatchResponseMaxBytes {
+		return nil, fmt.Errorf("gateway response exceeds %d bytes", gatewayDispatchResponseMaxBytes)
+	}
+	return raw, nil
 }
 
 // deadLetterAll marks every record as dead_letter + inserts a
