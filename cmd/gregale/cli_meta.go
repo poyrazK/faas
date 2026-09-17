@@ -1068,7 +1068,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "logs",
 		DocSlug:     "logs",
-		Short:       "Read app or deployment logs (slug defaults to linked context)",
+		Short:       "Read app or deployment logs (gregale logs <slug>; slug defaults to linked context)",
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "follow", Short: "stream logs until interrupted"},

@@ -50,7 +50,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Read app or deployment logs (slug defaults to linked context) |
+| [`logs`](#logs) | Read app or deployment logs (gregale logs &lt;slug&gt;; slug defaults to linked context) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
@@ -1319,7 +1319,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Read app or deployment logs (slug defaults to linked context)
+Read app or deployment logs (gregale logs &lt;slug&gt;; slug defaults to linked context)
 
 `gregale logs [<slug>] [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
