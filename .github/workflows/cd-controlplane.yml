@@ -280,6 +280,8 @@ jobs:
             "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
           install -m 0755 deploy/scripts/faas-pg-backup-contract-preflight.sh \
             "${BUNDLE_ROOT}/host-config/faas-pg-backup-contract-preflight.sh"
+          install -m 0755 deploy/scripts/faas-rclone-backup-identity.py \
+            "${BUNDLE_ROOT}/host-config/faas-rclone-backup-identity.py"
           install -m 0644 docs/DPA.md "${BUNDLE_ROOT}/host-config/dpa.md"
           install -m 0644 deploy/statuspage/index.html \
             "${BUNDLE_ROOT}/statuspage/index.html"
@@ -495,6 +497,51 @@ jobs:
             printf 'faas_map  faas-outboundd  faas\n' >> "$ident_file"
             systemctl reload postgresql@16-main.service
           fi
+
+          # Keep off-host PostgreSQL recovery working when the VM moves from
+          # the broad default Compute Engine identity to gregale-control.
+          # The wrapper uses that role identity only to mint a short-lived
+          # token for the append-only backup writer.
+          install -d -o root -g root -m 0755 /usr/local/lib/faas
+          install -o root -g root -m 0755 \
+            "$release_dir/host-config/faas-rclone-backup-identity.py" \
+            /usr/local/lib/faas/faas-rclone-backup-identity.py
+          for unit in faas-pg-basebackup-push.service faas-pg-wal-prune.service; do
+            install -d -o root -g root -m 0755 "/etc/systemd/system/${unit}.d"
+            cat > "/etc/systemd/system/${unit}.d/90-gcp-backup-identity.conf" <<'IDENTITY'
+          [Service]
+          Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py
+          IDENTITY
+            chmod 0644 "/etc/systemd/system/${unit}.d/90-gcp-backup-identity.conf"
+          done
+          systemctl daemon-reload
+
+          # PostgreSQL does not inherit the systemd service environment, so
+          # archive_command names the wrapper directly. ALTER SYSTEM gives an
+          # atomic, cluster-version-independent update and pg_reload_conf
+          # applies it without restarting the database.
+          read -r -d '' archive_command <<'ARCHIVE_COMMAND' || true
+          if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx '[offhostbox]' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f "offhostbox:faas-pg-wal/%f" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo "off-host WAL push failed for %f" >&2; fi; exit 0
+          ARCHIVE_COMMAND
+          runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 \
+            --set=archive_command="$archive_command" <<'SQL'
+          ALTER SYSTEM SET archive_command TO :'archive_command';
+          SELECT pg_reload_conf();
+          SQL
+          archive_ready=0
+          for _ in $(seq 1 10); do
+            effective_archive_command="$(runuser -u postgres -- psql -X -A -t -c 'SHOW archive_command' | tr -d '\r\n')"
+            if [[ "$effective_archive_command" == *'/usr/local/lib/faas/faas-rclone-backup-identity.py'* &&
+                  "$effective_archive_command" == *'offhostbox:faas-pg-wal/%f'* ]]; then
+              archive_ready=1
+              break
+            fi
+            sleep 1
+          done
+          (( archive_ready == 1 )) || {
+            echo "PostgreSQL did not activate the keyless backup identity command" >&2
+            exit 1
+          }
           REMOTE
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \

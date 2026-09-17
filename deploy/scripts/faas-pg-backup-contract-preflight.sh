@@ -10,6 +10,7 @@ WAL_PATH="${OFF_HOST_BACKUP_WAL_PATH:-faas-pg-wal}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 RUNUSER_BIN="${RUNUSER_BIN:-runuser}"
 PSQL_BIN="${PSQL_BIN:-psql}"
+BACKUP_IDENTITY_HELPER="${BACKUP_IDENTITY_HELPER:-/usr/local/lib/faas/faas-rclone-backup-identity.py}"
 
 usage() {
   cat <<'EOF'
@@ -33,8 +34,9 @@ static_check() {
   local prune="$root/deploy/scripts/faas-pg-wal-prune.sh"
   local push_unit="$root/deploy/systemd/faas-pg-basebackup-push.service"
   local prune_unit="$root/deploy/systemd/faas-pg-wal-prune.service"
+  local identity_helper="$root/deploy/scripts/faas-rclone-backup-identity.py"
 
-  for file in "$vars" "$postgres" "$restore" "$push" "$prune" "$push_unit" "$prune_unit"; do
+  for file in "$vars" "$postgres" "$restore" "$push" "$prune" "$push_unit" "$prune_unit" "$identity_helper"; do
     [[ -f "$file" ]] || fail "missing source: $file"
   done
 
@@ -64,6 +66,10 @@ static_check() {
     || fail "WAL prune unit remote drift"
   grep -Fq 'Environment=OFF_HOST_BACKUP_WAL_PATH=faas-pg-wal' "$prune_unit" \
     || fail "WAL prune unit path drift"
+  grep -Fq 'Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py' "$push_unit" \
+    || fail "basebackup push does not use the keyless backup identity helper"
+  grep -Fq 'Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py' "$prune_unit" \
+    || fail "WAL prune does not use the keyless backup identity helper"
   grep -Fq 'off_host_backup_wal_path' "$postgres" \
     || fail "PostgreSQL archive command is not tied to the canonical WAL variable"
   grep -Fq 'ALTER SYSTEM RESET archive_command' "$postgres" \
@@ -82,6 +88,8 @@ runtime_check() {
   fi
 
   local base_env wal_env archive_command expected
+  [[ -x "$BACKUP_IDENTITY_HELPER" ]] \
+    || fail "keyless backup identity helper is missing or not executable: ${BACKUP_IDENTITY_HELPER}"
   base_env="$("$SYSTEMCTL_BIN" show faas-pg-basebackup-push.service -p Environment --value 2>/dev/null)" \
     || fail "cannot read faas-pg-basebackup-push.service environment"
   wal_env="$("$SYSTEMCTL_BIN" show faas-pg-wal-prune.service -p Environment --value 2>/dev/null)" \
@@ -94,6 +102,10 @@ runtime_check() {
     || fail "WAL prune remote differs from ${REMOTE}"
   [[ "$wal_env" == *"OFF_HOST_BACKUP_WAL_PATH=${WAL_PATH}"* ]] \
     || fail "WAL prune path differs from ${WAL_PATH}"
+  [[ "$base_env" == *"FAAS_RCLONE_BIN=${BACKUP_IDENTITY_HELPER}"* ]] \
+    || fail "basebackup push does not use ${BACKUP_IDENTITY_HELPER}"
+  [[ "$wal_env" == *"FAAS_RCLONE_BIN=${BACKUP_IDENTITY_HELPER}"* ]] \
+    || fail "WAL prune does not use ${BACKUP_IDENTITY_HELPER}"
 
   archive_command="$($RUNUSER_BIN -u postgres -- "$PSQL_BIN" -X -A -t -c 'SHOW archive_command' 2>/dev/null | tr -d '\r\n')" \
     || fail "cannot read effective PostgreSQL archive_command"
@@ -102,6 +114,8 @@ runtime_check() {
     || fail "archive_command is missing the local authoritative archive"
   [[ "$archive_command" == *"$expected"* ]] \
     || fail "archive_command does not target ${expected}"
+  [[ "$archive_command" == *"$BACKUP_IDENTITY_HELPER"* ]] \
+    || fail "archive_command does not use ${BACKUP_IDENTITY_HELPER}"
   ok "effective PostgreSQL archive_command targets ${expected}"
   ok "systemd push/prune environments agree with the canonical namespace"
 }

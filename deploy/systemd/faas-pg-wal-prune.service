@@ -16,6 +16,7 @@ Environment=FAAS_PG_BACKUP_STATE_ROOT=/var/lib/faas/backup-state
 Environment=FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG=/var/lib/pgsql/backup-rclone.conf
 Environment=OFF_HOST_BACKUP_REMOTE=offhostbox
 Environment=OFF_HOST_BACKUP_WAL_PATH=faas-pg-wal
+Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py
 ExecStart=/usr/local/lib/faas/faas-pg-wal-prune.sh --apply
 TimeoutStartSec=2h
 Nice=10
