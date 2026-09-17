@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -95,6 +96,19 @@ func TestHTTPGatewaySynthOrdinaryServerErrorIsRetryable(t *testing.T) {
 	}
 	if errors.Is(err, ErrPermanentInvoke) {
 		t.Fatalf("Invoke error = %v, must remain retryable", err)
+	}
+}
+
+func TestHTTPGatewaySynthRejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":"` + strings.Repeat("x", gatewayInvocationResponseMaxBytes) + `"}`))
+	}))
+	defer srv.Close()
+
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	_, err := h.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1"})
+	if !errors.Is(err, httpjson.ErrResponseTooLarge) {
+		t.Fatalf("Invoke oversized error = %v, want ErrResponseTooLarge", err)
 	}
 }
 

@@ -201,6 +201,17 @@ func TestCache_OversizedKeysetRejected(t *testing.T) {
 	}
 }
 
+func TestCache_OversizedDocumentRejected(t *testing.T) {
+	t.Parallel()
+	srv := newServer(t, strings.Repeat("x", edgejwks.MaxResponseBytes+1), http.StatusOK, nil)
+	c := edgejwks.NewCache(edgejwks.Options{HTTPClient: srv.Client()})
+	mustRegister(t, c, srv.URL)
+	_, _, err := c.Get(context.Background(), srv.URL, "")
+	if err == nil || !strings.Contains(err.Error(), "response body too large") {
+		t.Fatalf("expected response-size error, got %v", err)
+	}
+}
+
 func TestCache_DistinctURLsCacheSeparately(t *testing.T) {
 	t.Parallel()
 	body, _ := makeValidJWKS(t, "k1")

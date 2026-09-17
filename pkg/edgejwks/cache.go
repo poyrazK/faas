@@ -23,7 +23,6 @@ package edgejwks
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,6 +30,7 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/onebox-faas/faas/pkg/httpjson"
 )
 
 // Cache is the narrow interface pkg/gateway sees. cmd-side constructs
@@ -62,6 +62,11 @@ type Cache interface {
 // reject the URL with an error; rotating to a sane IdP re-registers
 // and succeeds.
 const MaxKeysPerJWKSURL = 1024
+
+// MaxResponseBytes caps a single JWKS document before it is decoded. It is
+// deliberately independent of MaxKeysPerJWKSURL because one malformed key can
+// still be very large even when the key-count limit is respected.
+const MaxResponseBytes = 2 << 20
 
 // MinRefreshInterval is the minimum time between automatic
 // background refreshes per URL. The cache always re-fetches
@@ -217,7 +222,7 @@ func (e *urlEntry) fetch(ctx context.Context, hc *http.Client, timeout time.Dura
 		return fmt.Errorf("edgejwks: fetch %s: status %d", rawURL, resp.StatusCode)
 	}
 	var set jose.JSONWebKeySet
-	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
+	if err := httpjson.Decode(resp.Body, MaxResponseBytes, &set); err != nil {
 		return fmt.Errorf("edgejwks: decode jwks from %s: %w", rawURL, err)
 	}
 	if len(set.Keys) > MaxKeysPerJWKSURL {

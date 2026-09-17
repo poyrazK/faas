@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -534,6 +535,22 @@ func TestDoJSONRetriesTransientResponses(t *testing.T) {
 	}
 	if calls != 3 || !out["ok"] {
 		t.Fatalf("calls=%d out=%v, want three attempts and ok response", calls, out)
+	}
+}
+
+func TestDoJSONRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"data":"`+strings.Repeat("x", maxResponseBody)+`"}`)
+	}))
+	defer server.Close()
+	p, err := NewProvider(testConfig(server.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	err = p.doJSON(context.Background(), http.MethodGet, "/v1/large", nil, &out, "")
+	if !errors.Is(err, httpjson.ErrResponseTooLarge) {
+		t.Fatalf("doJSON oversized error = %v, want ErrResponseTooLarge", err)
 	}
 }
 

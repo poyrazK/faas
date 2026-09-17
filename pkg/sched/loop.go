@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
@@ -47,6 +48,11 @@ import (
 // row. Deployment priming is intentionally separate and keeps its existing
 // build/snapshot budget.
 const reaperParkTimeout = 2 * time.Minute
+
+// gatewayInvocationResponseMaxBytes bounds the JSON envelope returned by the
+// internal gateway. Invocation results are customer-controlled, so the
+// scheduler must not decode an unbounded upstream body into memory.
+const gatewayInvocationResponseMaxBytes = 1 << 20
 
 // lifecycleReconcileMaxPerTick bounds the durable deletion sweep. Deletion
 // cleanup is retryable and oldest-first at the store layer, so a bounded pass
@@ -3090,7 +3096,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		Result     json.RawMessage `json:"result"`
 		StatusCode int             `json:"status_code"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := httpjson.Decode(resp.Body, gatewayInvocationResponseMaxBytes, &out); err != nil {
 		return inv, 0, fmt.Errorf("sched: invocation response: %w", err)
 	}
 	if out.State != "" {

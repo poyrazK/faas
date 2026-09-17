@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -31,6 +32,8 @@ const (
 	productionBaseURL  = "https://api.polar.sh"
 	sandboxBaseURL     = "https://sandbox-api.polar.sh"
 	maxErrorBody       = 64 << 10
+	maxResponseBody    = 4 << 20
+	polarHTTPTimeout   = 20 * time.Second
 	maxRequestAttempts = 3
 	retryBaseDelay     = 100 * time.Millisecond
 	bytesPerGiB        = int64(1 << 30)
@@ -152,7 +155,7 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		},
 		successURL: cfg.SuccessURL,
 		returnURL:  cfg.ReturnURL,
-		client:     &http.Client{Timeout: 20 * time.Second},
+		client:     &http.Client{Timeout: polarHTTPTimeout},
 		log:        log,
 		dedupe:     dedupe,
 		webhookTol: time.Duration(cfg.ToleranceSeconds) * time.Second,
@@ -1156,7 +1159,7 @@ func (p *Provider) request(ctx context.Context, method, path string, in, out any
 	base := strings.TrimRight(p.baseURL, "/")
 	client := p.client
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: polarHTTPTimeout}
 	}
 	for attempt := 1; attempt <= maxRequestAttempts; attempt++ {
 		var body io.Reader
@@ -1207,7 +1210,7 @@ func (p *Provider) request(ctx context.Context, method, path string, in, out any
 			_ = resp.Body.Close()
 			return nil
 		}
-		err = json.NewDecoder(resp.Body).Decode(out)
+		err = httpjson.Decode(resp.Body, maxResponseBody, out)
 		_ = resp.Body.Close()
 		if err != nil {
 			return fmt.Errorf("polar: decode %s %s: %w", method, path, err)

@@ -38,6 +38,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/httpjson"
 )
 
 // cloudflareDNSBaseURL is the Cloudflare API v4 base. Override
@@ -50,6 +52,11 @@ const cloudflareDNSBaseURL = "https://api.cloudflare.com/client/v4"
 // then runs faas — within seconds). Set low enough that a
 // operator-managed zone rotation doesn't take 24h to surface.
 const cloudflareZoneIDCacheTTL = 5 * time.Minute
+
+// cloudflareResponseMaxBytes caps successful JSON responses. Zone and record
+// lookups are intentionally small; a larger body is an upstream failure, not
+// useful provider data.
+const cloudflareResponseMaxBytes = 1 << 20
 
 // CloudflareRecordProvider implements DNSProvider against the
 // Cloudflare API for the leader-election DNS handoff (Tier A8 /
@@ -218,7 +225,7 @@ func (p *CloudflareRecordProvider) queryZoneID(ctx context.Context) (string, err
 		return "", fmt.Errorf("cloudflare dns: zone %s: status %d: %s", p.zone, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var out cfZonesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := httpjson.Decode(resp.Body, cloudflareResponseMaxBytes, &out); err != nil {
 		return "", fmt.Errorf("cloudflare dns: decode zone response: %w", err)
 	}
 	for _, z := range out.Result {
@@ -279,7 +286,7 @@ func (p *CloudflareRecordProvider) findRecord(ctx context.Context, zoneID, name 
 	var out struct {
 		Result []cfDNSRecord `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := httpjson.Decode(resp.Body, cloudflareResponseMaxBytes, &out); err != nil {
 		return nil, fmt.Errorf("cloudflare dns: decode records response: %w", err)
 	}
 	for i := range out.Result {

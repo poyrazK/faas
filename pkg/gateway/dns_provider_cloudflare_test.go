@@ -76,6 +76,17 @@ func TestCloudflare_Constructor_PropagatesUnsealError(t *testing.T) {
 	}
 }
 
+func TestCloudflare_RejectsOversizedZoneResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"result":"`+strings.Repeat("x", cloudflareResponseMaxBytes)+`"}`)
+	}))
+	defer srv.Close()
+	p := &CloudflareRecordProvider{zone: "example.com", apiURL: srv.URL, hc: srv.Client()}
+	if _, err := p.queryZoneID(context.Background()); err == nil || !strings.Contains(err.Error(), "response body too large") {
+		t.Fatalf("expected response-size error, got %v", err)
+	}
+}
+
 // Test: UpsertRecord happy path — record doesn't exist → POST /dns_records.
 // Asserts: exactly one POST, no PUT (create vs update split).
 func TestCloudflare_UpsertRecord_CreatesNewRecord(t *testing.T) {
