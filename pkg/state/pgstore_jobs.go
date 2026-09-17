@@ -35,8 +35,9 @@ import (
 // in schema-add order; image materialization columns follow it.
 const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeout_s,
        max_parallelism, retry_max, env_overrides, status, created_at,
-       updated_at, command, image_resolved_digest, image_storage_key,
-       image_materialization_status, image_materialization_error,
+       updated_at, command, coalesce(image_resolved_digest, ''),
+       coalesce(image_storage_key, ''), image_materialization_status,
+       coalesce(image_materialization_error, ''),
        image_materialized_at`
 
 // jobRunSelectCols is the canonical column order for job_runs.
