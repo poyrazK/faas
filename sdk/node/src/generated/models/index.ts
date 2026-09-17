@@ -361,6 +361,8 @@ export type { ManagedPostgresUsageLineItem } from './ManagedPostgresUsageLineIte
 export type { ManagedPostgresUsageOperatorResponse } from './ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageResponse.js';
 export type { ManagedRealtimeCloseRequest } from './ManagedRealtimeCloseRequest.js';
+export type { ManagedRealtimeConnectionListResponse } from './ManagedRealtimeConnectionListResponse.js';
+export type { ManagedRealtimeConnectionResponse } from './ManagedRealtimeConnectionResponse.js';
 export type { ManagedRealtimeEndpointResponse } from './ManagedRealtimeEndpointResponse.js';
 export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './ManagedRealtimePublishResponse.js';

@@ -4806,6 +4806,25 @@ func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id str
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, nil)
 }
 
+// ListManagedRealtimeConnections returns a bounded point-in-time inventory of
+// live connections for one endpoint. Partial is surfaced in the response when
+// one or more active realtime nodes could not be queried.
+func (c *Client) ListManagedRealtimeConnections(ctx context.Context, slug, endpointID, channel string, limit int) (ManagedRealtimeConnectionListResponse, error) {
+	var out ManagedRealtimeConnectionListResponse
+	query := url.Values{}
+	if channel != "" {
+		query.Set("channel", channel)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/connections"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // SendManagedRealtimeConnection queues a binary-safe message for one live
 // connection owned by the endpoint.
 func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeMessageRequest) error {

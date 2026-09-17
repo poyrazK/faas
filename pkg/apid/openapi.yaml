@@ -12534,6 +12534,41 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+        description: Maximum number of live connections to return.
+      - name: channel
+        in: query
+        required: false
+        schema: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
+        description: Return only connections subscribed to this channel.
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimeConnections
+      summary: List live connections for a managed realtime endpoint.
+      description: |
+        Returns a bounded point-in-time inventory. `partial` is true when one
+        or more active realtime nodes could not be queried; healthy node
+        results remain in the response.
+      responses:
+        '200':
+          description: The live connection inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeConnectionListResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29547,6 +29582,38 @@ components:
         enabled: true
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
+
+    ManagedRealtimeConnectionResponse:
+      type: object
+      description: Safe control-plane projection of one live managed realtime connection.
+      required: [id, endpoint_id, app_id, account_id, connected_at, last_seen_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        endpoint_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        principal: { type: string, maxLength: 256 }
+        connected_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        channels:
+          type: array
+          items: { type: string, maxLength: 256 }
+          maxItems: 256
+
+    ManagedRealtimeConnectionListResponse:
+      type: object
+      description: Bounded point-in-time live connection inventory.
+      required: [connections, limit, truncated, partial, nodes_queried, nodes_unavailable]
+      properties:
+        connections:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeConnectionResponse' }
+        limit: { type: integer, minimum: 1, maximum: 1000 }
+        truncated: { type: boolean }
+        partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
+        nodes_queried: { type: integer, minimum: 0 }
+        nodes_unavailable: { type: integer, minimum: 0 }
 
     ManagedRealtimeEndpointResponse:
       type: object

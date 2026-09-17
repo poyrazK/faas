@@ -1587,6 +1587,15 @@ Update endpoint callback, auth, or connection policy
 
 Delete a managed realtime endpoint
 
+### realtime connections
+
+List live connections for an endpoint
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--limit <N>` | maximum connections to return (1-1000) |  |
+
 ### realtime send
 
 Send a message to one live connection

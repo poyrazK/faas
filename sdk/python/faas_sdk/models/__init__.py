@@ -702,6 +702,8 @@ from .managed_postgres_usage_operator_response_guardrail_state import ManagedPos
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
+from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
+from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
 from .managed_realtime_endpoint_response_auth_algorithms_item import ManagedRealtimeEndpointResponseAuthAlgorithmsItem
 from .managed_realtime_endpoint_response_auth_mode import ManagedRealtimeEndpointResponseAuthMode
@@ -1915,6 +1917,8 @@ __all__ = (
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedRealtimeCloseRequest",
+    "ManagedRealtimeConnectionListResponse",
+    "ManagedRealtimeConnectionResponse",
     "ManagedRealtimeEndpointResponse",
     "ManagedRealtimeEndpointResponseAuthAlgorithmsItem",
     "ManagedRealtimeEndpointResponseAuthMode",

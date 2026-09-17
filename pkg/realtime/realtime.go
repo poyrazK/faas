@@ -220,6 +220,16 @@ type ConnectionInfo struct {
 	Channels   []string  `json:"channels,omitempty"`
 }
 
+// ConnectionInventory is a point-in-time fleet snapshot. NodesQueried counts
+// nodes that returned a snapshot; NodesUnavailable records active nodes that
+// could not be reached. A partial inventory is still useful to operators and
+// must be surfaced to callers instead of being mistaken for an empty fleet.
+type ConnectionInventory struct {
+	Connections      []ConnectionInfo
+	NodesQueried     int
+	NodesUnavailable int
+}
+
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
