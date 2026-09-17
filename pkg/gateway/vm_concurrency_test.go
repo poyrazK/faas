@@ -5,6 +5,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -41,6 +42,57 @@ func TestVMConcurrencyManagerEnforcesPerInstanceLimit(t *testing.T) {
 		t.Fatalf("idle vm-a gate should be removed while vm-b is active; gates=%d", len(m.gates))
 	}
 	releaseB()
+}
+
+// TestVMConcurrencyManager500RequestSpikeNeverExceedsTenConnections models
+// the EPIC #1278 acceptance case: a 500-request burst against an app capped
+// at ten concurrent guest connections must never occupy an eleventh slot.
+func TestVMConcurrencyManager500RequestSpikeNeverExceedsTenConnections(t *testing.T) {
+	const (
+		requests = 500
+		limit    = 10
+	)
+	m := newVMConcurrencyManager(nil)
+	start := make(chan struct{})
+	var active atomic.Int64
+	var maximum atomic.Int64
+	var wg sync.WaitGroup
+	errs := make(chan error, requests)
+
+	for i := 0; i < requests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			release, _, err := m.acquire(context.Background(), "vm-a", "pro", limit)
+			if err != nil {
+				errs <- err
+				return
+			}
+			inflight := active.Add(1)
+			for {
+				previous := maximum.Load()
+				if inflight <= previous || maximum.CompareAndSwap(previous, inflight) {
+					break
+				}
+			}
+			time.Sleep(100 * time.Microsecond)
+			active.Add(-1)
+			release()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("request failed during 500-request spike: %v", err)
+	}
+	if got := maximum.Load(); got > limit {
+		t.Fatalf("maximum simultaneous guest connections = %d, want <= %d", got, limit)
+	}
+	if got := active.Load(); got != 0 {
+		t.Fatalf("active connections after spike = %d, want 0", got)
+	}
 }
 
 func TestVMConcurrencyManagerWaitsAndHonorsCancellation(t *testing.T) {

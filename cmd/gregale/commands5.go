@@ -661,7 +661,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
@@ -677,6 +677,8 @@ func cmdAppScale(slug string, args []string) int {
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
+	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
+	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
 	rps := fs.Int("autoscale-target-rps", 0, "per-instance RPS target for reactive scale-up (Hobby+/0 = disable)")
@@ -743,6 +745,17 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["max-concurrency"] {
 		v := *conc
 		req.MaxConcurrency = &v
+	}
+	if explicit["concurrency-overflow"] || explicit["max-queue-wait-ms"] {
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		policy, err := cliScalingPolicyPatch(context.Background(), client, slug, *concurrencyOverflow, *maxQueueWaitMS, explicit["concurrency-overflow"], explicit["max-queue-wait-ms"])
+		if err != nil {
+			return printErr("Invalid concurrency policy", err)
+		}
+		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
 		v := *idle
@@ -829,7 +842,7 @@ func cmdAppScale(slug string, args []string) int {
 		}
 		req.AppProtocol = &v
 	}
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil &&
+	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.ScalingPolicy == nil &&
 		req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&

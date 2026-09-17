@@ -464,6 +464,36 @@ func TestMemStoreJobs_JobRunIncrementDeadLetter(t *testing.T) {
 	}
 }
 
+// TestMemStoreJobs_JobRunReopenDeadLetter — happy + ErrNotFound when the
+// run has no dead-letter entries to reopen.
+func TestMemStoreJobs_JobRunReopenDeadLetter(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	_, run, _ := newJobAndRun(t, ms, "acct-DLR", "dlr1")
+
+	if err := ms.JobRunReopenDeadLetter(ctx, run.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("JobRunReopenDeadLetter(empty): err = %v, want ErrNotFound", err)
+	}
+	if err := ms.JobRunIncrementDeadLetter(ctx, run.ID); err != nil {
+		t.Fatalf("JobRunIncrementDeadLetter: %v", err)
+	}
+	if err := ms.JobRunReopenDeadLetter(ctx, run.ID); err != nil {
+		t.Fatalf("JobRunReopenDeadLetter: %v", err)
+	}
+	got, err := ms.JobRunGetByID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("JobRunGetByID: %v", err)
+	}
+	if got.DeadLetterCount != 0 || got.AggregateStatus != "running" || got.FinishedAt != nil {
+		t.Fatalf("reopened run = count=%d status=%q finished=%v, want 0/running/nil",
+			got.DeadLetterCount, got.AggregateStatus, got.FinishedAt)
+	}
+	if err := ms.JobRunReopenDeadLetter(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("JobRunReopenDeadLetter(missing): err = %v, want ErrNotFound", err)
+	}
+}
+
 // TestMemStoreJobs_JobTaskMarkClaimed — happy + ErrNotFound on
 // non-queued task + ErrNotFound on missing runID.
 func TestMemStoreJobs_JobTaskMarkClaimed(t *testing.T) {
@@ -781,6 +811,36 @@ func TestMemStoreJobs_ListJobInstances(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Fatalf("ListJobInstances len = %d, want 0 on fresh store", len(out))
+	}
+}
+
+// TestMemStoreJobs_ListOrphanedJobInstances covers the owned-instance filter
+// and the default limit. A terminal task leaves its instance behind as an
+// orphan, while a still-claimed sibling remains owned and is excluded.
+func TestMemStoreJobs_ListOrphanedJobInstances(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-OJI", "oji1")
+	now := time.Now().UTC()
+	if _, err := ms.CreateAndClaimJobInstance(ctx, "orphan-instance", job.ID, run.ID, 0,
+		"running", 128, "node-1", "wake-orphan", "lease-orphan", now.Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("CreateAndClaimJobInstance(orphan): %v", err)
+	}
+	if _, err := ms.CreateAndClaimJobInstance(ctx, "owned-instance", job.ID, run.ID, 1,
+		"running", 128, "node-1", "wake-owned", "lease-owned", now.Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("CreateAndClaimJobInstance(owned): %v", err)
+	}
+	if err := ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", now); err != nil {
+		t.Fatalf("JobTaskMarkTerminal: %v", err)
+	}
+
+	got, err := ms.ListOrphanedJobInstances(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListOrphanedJobInstances: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "orphan-instance" {
+		t.Fatalf("orphan instances = %+v, want only orphan-instance", got)
 	}
 }
 

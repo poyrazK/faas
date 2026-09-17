@@ -3300,9 +3300,10 @@ const (
 
 	// Gateway wake admission defaults are plan policy, kept here with the
 	// rest of the platform's quotas so gateway and scheduler-facing code do
-	// not grow separate copies of customer limits. Priority is intentionally
-	// equal across plans; plan-aware priority would let sustained paid
-	// traffic starve other customers.
+	// not grow separate copies of customer limits. Higher tiers are selected
+	// first when the bounded cross-app queue is contended. The queue remains
+	// bounded and each request has a finite wait budget, so a lower tier cannot
+	// occupy a slot indefinitely.
 	// A waiter costs no additional VM admission because WakeGate coalesces the
 	// whole app generation. Keep enough room for an ordinary first burst after
 	// snapshot invalidation instead of rejecting siblings behind the one boot.
@@ -3313,9 +3314,9 @@ const (
 	GatewayWakeAdmissionFreeMaxWait     = 10 * time.Second
 	GatewayWakeAdmissionPaidMaxWait     = 30 * time.Second
 	GatewayWakeAdmissionFreePriority    = 1
-	GatewayWakeAdmissionHobbyPriority   = 1
-	GatewayWakeAdmissionProPriority     = 1
-	GatewayWakeAdmissionScalePriority   = 1
+	GatewayWakeAdmissionHobbyPriority   = 2
+	GatewayWakeAdmissionProPriority     = 3
+	GatewayWakeAdmissionScalePriority   = 4
 	// MaxConcurrencyQueueWaitMS bounds the customer-controlled admission
 	// wait override. The zero value keeps the plan-derived default.
 	MaxConcurrencyQueueWaitMS = 120_000
