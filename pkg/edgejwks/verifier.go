@@ -4,8 +4,9 @@
 // cache, picks the right key by kid, verifies the signature, and
 // returns the parsed claims. The closed-set algorithm vocabulary
 // (RS256/RS384/RS512/ES256/ES384/ES512) is enforced by
-// pkg/api/dto.go::EdgeRuleJWTAction.Validate; the verifier trusts its
-// input and passes rule.Algorithms straight to jose.ParseSigned.
+// pkg/api/dto.go::EdgeRuleJWTAction.Validate and repeated at parse time.
+// Each selected JWK must bind its `alg` metadata to the JWS algorithm;
+// an optional JWK `use` must be `sig` (RFC 8725 §3.1, RFC 7517).
 //
 // Clock-skew is 60s by default (matches Auth0/Okta/Cognito defaults).
 // If a customer later needs a different skew, add an Option.
@@ -36,6 +37,7 @@ var (
 	ErrJWTWrongAudience  = errors.New("edgejwks: audience mismatch")
 	ErrJWTMissingClaim   = errors.New("edgejwks: required claim missing or wrong")
 	ErrJWTWrongAlgorithm = errors.New("edgejwks: algorithm not in rule vocabulary")
+	ErrJWTKeyMetadata    = errors.New("edgejwks: jwk metadata mismatch")
 	ErrJWTNoMatchingKey  = errors.New("edgejwks: no matching kid in jwks")
 )
 
@@ -77,6 +79,11 @@ type VerifierRule struct {
 	Algorithms            []string
 	RequiredClaims        map[string]string
 	RequiredClaimPatterns map[string]string
+}
+
+var allowedSignatureAlgorithms = map[string]struct{}{
+	string(jose.RS256): {}, string(jose.RS384): {}, string(jose.RS512): {},
+	string(jose.ES256): {}, string(jose.ES384): {}, string(jose.ES512): {},
 }
 
 // joseVerifier is the production impl.
@@ -127,8 +134,19 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 	if rule.JWKSURL == "" {
 		return nil, fmt.Errorf("%w: rule.JWKSURL empty", ErrJWTWrongAlgorithm)
 	}
+	if strings.TrimSpace(rule.Issuer) == "" {
+		return nil, ErrJWTWrongIssuer
+	}
 	if rawToken == "" {
 		return nil, ErrJWTMissingToken
+	}
+	if len(rule.Algorithms) == 0 {
+		return nil, fmt.Errorf("%w: rule.Algorithms empty", ErrJWTWrongAlgorithm)
+	}
+	for _, algorithm := range rule.Algorithms {
+		if _, ok := allowedSignatureAlgorithms[algorithm]; !ok {
+			return nil, fmt.Errorf("%w: %q", ErrJWTWrongAlgorithm, algorithm)
+		}
 	}
 	// Parse the JWS envelope first to extract the kid header. We pass
 	// the algorithm whitelist so a token with alg=HS256 (or any
@@ -144,6 +162,7 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 	}
 	hdr := jws.Signatures[0].Header
 	kid := hdr.KeyID
+	alg := string(hdr.Algorithm)
 
 	// Fetch the keyset (Register must have happened in MatchJWT, but
 	// Get is safe even if not — returns ok=false).
@@ -170,7 +189,18 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 	// that the IdP no longer signs with, in which case the verify
 	// fails; we fall through to the next.
 	var lastErr error
+	metadataRejected := false
 	for _, k := range candidates {
+		// RFC 8725 §3.1 requires the key's permitted algorithm to be
+		// bound to the JWS header. An omitted `alg` is not a binding;
+		// reject it rather than allowing a multi-algorithm rule to
+		// select a key for an unintended operation. RFC 7517's `use`
+		// is optional, but when present this verifier only accepts
+		// signing keys.
+		if k.Algorithm != alg || (k.Use != "" && k.Use != "sig") {
+			metadataRejected = true
+			continue
+		}
 		// Use the public key for verify. JSONWebKey.Public() drops
 		// private material so we never accidentally hand a private
 		// key to Verify even if the IdP publishes one.
@@ -260,6 +290,9 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 	}
 	if lastErr != nil {
 		return nil, mapParseError(lastErr)
+	}
+	if metadataRejected {
+		return nil, fmt.Errorf("%w: kid=%q alg=%q", ErrJWTKeyMetadata, kid, alg)
 	}
 	return nil, fmt.Errorf("%w: no usable key", ErrJWTNoMatchingKey)
 }

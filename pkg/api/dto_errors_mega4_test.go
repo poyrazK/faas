@@ -256,6 +256,9 @@ func TestEdgeRuleJWTActionValidate_Mega4(t *testing.T) {
 	if p := (&EdgeRuleJWTAction{}).Validate(); p == nil {
 		t.Error("empty: p=nil")
 	}
+	if p := (&EdgeRuleJWTAction{Issuer: " ", JWKSURL: "https://example.com/jwks", Algorithms: []string{"RS256"}}).Validate(); p == nil {
+		t.Error("blank issuer: p=nil")
+	}
 	if p := (&EdgeRuleJWTAction{Issuer: "i", JWKSURL: "http://example.com/jwks", Algorithms: []string{"RS256"}}).Validate(); p == nil {
 		t.Error("http (no https): p=nil")
 	}

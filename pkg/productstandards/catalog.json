@@ -371,6 +371,30 @@
       ]
     },
     {
+      "id": "rfc-7517-jwk",
+      "name": "JSON Web Key",
+      "version": "RFC 7517",
+      "category": "identity",
+      "surface": "workload-identity JWKS publication and JWT key selection",
+      "status": "partial",
+      "scope": "Workload identity publishes a public JWK Set with stable kid, alg, and use=sig metadata; JWT consumers select keys by kid and verify the advertised algorithm binding.",
+      "limitations": "Gregale implements the public signing-key and verification subset; it does not claim a general JWK management API, private-key distribution, or every optional JWK parameter.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc7517",
+      "evidence": "pkg/workloadidentity/identity.go; pkg/workloadidentity/identity_test.go; pkg/edgejwks/verifier.go",
+      "conformance": [
+        {
+          "fixture": "jwk-signing-metadata",
+          "tier": "unit",
+          "target": "pkg/workloadidentity/identity_test.go::TestJWKSAdvertisesRFC7517SigningMetadata"
+        },
+        {
+          "fixture": "jwk-selected-algorithm-binding",
+          "tier": "unit",
+          "target": "pkg/edgejwks/verifier_test.go::TestVerify_RejectsJWKMetadataMismatch"
+        }
+      ]
+    },
+    {
       "id": "rfc-7807-problem-details",
       "name": "HTTP Problem Details",
       "version": "RFC 7807",
@@ -424,6 +448,35 @@
           "fixture": "sunset-http-date",
           "tier": "unit",
           "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+        }
+      ]
+    },
+    {
+      "id": "rfc-8725-jwt-bcp",
+      "name": "JSON Web Token Best Current Practices",
+      "version": "RFC 8725 (BCP 225)",
+      "category": "identity",
+      "surface": "edge JWT and OIDC bearer verification",
+      "status": "partial",
+      "scope": "JWT verification uses an explicit asymmetric algorithm allowlist, issuer validation, and JWK metadata binding for the selected signing key.",
+      "limitations": "Gregale implements the signing, issuer, audience, claim, and key-selection subset needed by edge rules and OIDC exchange; explicit JWT typing and a mandatory audience remain profile-specific rather than globally required.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc8725",
+      "evidence": "pkg/edgejwks/verifier.go; pkg/edgejwks/verifier_test.go; pkg/api/dto.go; api/openapi.yaml EdgeRuleJWTAction",
+      "conformance": [
+        {
+          "fixture": "jwt-algorithm-allowlist",
+          "tier": "unit",
+          "target": "pkg/edgejwks/verifier_test.go::TestVerify_WrongAlgorithm"
+        },
+        {
+          "fixture": "jwt-jwk-metadata-binding",
+          "tier": "unit",
+          "target": "pkg/edgejwks/verifier_test.go::TestVerify_RejectsJWKMetadataMismatch"
+        },
+        {
+          "fixture": "jwt-issuer-binding",
+          "tier": "unit",
+          "target": "pkg/edgejwks/verifier_test.go::TestVerify_WrongIssuer"
         }
       ]
     },

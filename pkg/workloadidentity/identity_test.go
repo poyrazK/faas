@@ -47,6 +47,24 @@ func TestMintAndVerify(t *testing.T) {
 	}
 }
 
+func TestJWKSAdvertisesRFC7517SigningMetadata(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := NewSigner(key, DefaultIssuer, "kid-1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := signer.JWKS().Keys
+	if len(keys) != 1 {
+		t.Fatalf("JWKS key count = %d, want 1", len(keys))
+	}
+	if keys[0].KeyID != "kid-1" || keys[0].Algorithm != string(jose.RS256) || keys[0].Use != "sig" {
+		t.Fatalf("JWK metadata = kid=%q alg=%q use=%q, want kid-1/RS256/sig", keys[0].KeyID, keys[0].Algorithm, keys[0].Use)
+	}
+}
+
 func TestMintRejectsInvalidAudience(t *testing.T) {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	signer, _ := NewSigner(key, DefaultIssuer, "", 0)

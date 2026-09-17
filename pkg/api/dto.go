@@ -6273,7 +6273,7 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("jwt action is required")
 	}
-	if a.Issuer == "" {
+	if strings.TrimSpace(a.Issuer) == "" {
 		return ErrValidation("jwt action requires issuer")
 	}
 	if !strings.HasPrefix(a.JWKSURL, "https://") {

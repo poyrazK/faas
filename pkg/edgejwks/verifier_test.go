@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -119,6 +120,20 @@ func TestVerify_ValidToken(t *testing.T) {
 	}
 	if claims.Issuer != "https://idp.example.com/" {
 		t.Fatalf("expected iss=..., got %q", claims.Issuer)
+	}
+}
+
+func TestVerify_RejectsMissingIssuer(t *testing.T) {
+	t.Parallel()
+	_, pub := rs256Fixture(t, "k1")
+	url, _ := jwksServer(t, pub, nil)
+	v := newVerifier(t, url, "k1", pub)
+	_, err := v.Verify(context.Background(), "not-a-token", edgejwks.VerifierRule{
+		JWKSURL:    url,
+		Algorithms: []string{"RS256"},
+	})
+	if !errors.Is(err, edgejwks.ErrJWTWrongIssuer) {
+		t.Fatalf("error = %v, want ErrJWTWrongIssuer", err)
 	}
 }
 
@@ -234,6 +249,53 @@ func TestVerify_WrongAlgorithm(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected ErrJWTWrongAlgorithm")
+	}
+}
+
+func TestVerify_RejectsUnsupportedRuleAlgorithm(t *testing.T) {
+	t.Parallel()
+	_, pub := rs256Fixture(t, "k1")
+	url, _ := jwksServer(t, pub, nil)
+	v := newVerifier(t, url, "k1", pub)
+	_, err := v.Verify(context.Background(), "not-a-token", edgejwks.VerifierRule{
+		JWKSURL:    url,
+		Issuer:     "https://idp.example.com/",
+		Algorithms: []string{"HS256"},
+	})
+	if !errors.Is(err, edgejwks.ErrJWTWrongAlgorithm) {
+		t.Fatalf("error = %v, want ErrJWTWrongAlgorithm", err)
+	}
+}
+
+func TestVerify_RejectsJWKMetadataMismatch(t *testing.T) {
+	t.Parallel()
+	priv, base := rs256Fixture(t, "k1")
+	tok := mintToken(t, priv, "k1", jwt.Claims{
+		Issuer:  "https://idp.example.com/",
+		Subject: "alice",
+		Expiry:  jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+	}, nil)
+	cases := map[string]func(*jose.JSONWebKey){
+		"algorithm mismatch": func(k *jose.JSONWebKey) { k.Algorithm = string(jose.RS384) },
+		"algorithm missing":  func(k *jose.JSONWebKey) { k.Algorithm = "" },
+		"encryption use":     func(k *jose.JSONWebKey) { k.Use = "enc" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			pub := base
+			mutate(&pub)
+			url, _ := jwksServer(t, pub, nil)
+			v := newVerifier(t, url, "k1", pub)
+			_, err := v.Verify(context.Background(), tok, edgejwks.VerifierRule{
+				JWKSURL:    url,
+				Issuer:     "https://idp.example.com/",
+				Algorithms: []string{"RS256"},
+			})
+			if !errors.Is(err, edgejwks.ErrJWTKeyMetadata) {
+				t.Fatalf("error = %v, want ErrJWTKeyMetadata", err)
+			}
+		})
 	}
 }
 
