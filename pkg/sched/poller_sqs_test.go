@@ -1,3 +1,4 @@
+// adr: 100 — SQS-compatible trigger source and acknowledgement contract.
 // poller_sqs_test.go — sqs_poller config validation tests.
 //
 // Scope (audit round 2 finding #2, PR #910): decodeSQSConfig used
