@@ -31,6 +31,8 @@
 //   complete a synchronous invoke through the same bridge and long-poll path.
 //   deliver a queue row through the real synthetic gateway bridge and preserve
 //   its payload/result projection.
+//   deliver a queue row through a first-class queue trigger without a manual
+//   receive call, and persist both invocation and trigger-record success.
 //   deliver multiple queue rows without dropping messages.
 //   exhaust queue retries and expose the preserved row in dead-letter reads.
 //   hold a delayed task until scheduled_at, then deliver it through the real
@@ -771,6 +773,97 @@ func TestE2E_NormalPath_QueueUsesRealGatewayBridge(t *testing.T) {
 		}
 	}
 	t.Fatalf("queue receive did not return %q within 15s", sent.ID)
+}
+
+// TestE2E_NormalPath_QueueTriggerPushesWithoutReceive proves the queue
+// binding is a real push consumer rather than a metadata-only trigger. Once a
+// queue trigger is bound to source=queue, schedd must claim and dispatch the
+// row through the batch synth path; callers must not need to poll
+// /queues/receive to make progress.
+func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
+	f := newNormalPathFixture(t, "normal-queue-push")
+	if f == nil {
+		return
+	}
+	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-push")
+	f.vmmd.SetVersion(instance.ID, "queue-push")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-push\n", 10*time.Second)
+	// The trigger batch contract treats an empty failure list as a successful
+	// delivery. This is the function response the fake guest returns for the
+	// synthetic /_triggers/queue/<trigger-id> request.
+	f.vmmd.SetResponse(instance.ID, normalPathResponse{
+		status:  http.StatusOK,
+		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		body:    []byte(`{"batchItemFailures":[]}`),
+	})
+
+	createdBody, statusCode := doReq(t, f.h, f.key, http.MethodPost,
+		"/v1/triggers", api.CreateTriggerRequest{
+			AppID:  f.app.ID,
+			Kind:   api.TriggerKindQueue,
+			Slug:   "queue-push",
+			Config: json.RawMessage(`{"mode":"queue"}`),
+		})
+	if statusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/triggers: status=%d body=%s", statusCode, createdBody)
+	}
+	var trigger api.Trigger
+	if err := json.Unmarshal(createdBody, &trigger); err != nil {
+		t.Fatalf("decode trigger response: %v body=%s", err, createdBody)
+	}
+	if trigger.ID == "" || trigger.Source == nil || *trigger.Source != "queue" {
+		t.Fatalf("trigger=%+v, want queue source binding", trigger)
+	}
+
+	payload := json.RawMessage(`{"push":true}`)
+	sentBody, statusCode := doReq(t, f.h, f.key, http.MethodPost,
+		"/v1/apps/normal-queue-push/queues/send", api.QueueSendRequest{Payload: payload})
+	if statusCode != http.StatusCreated {
+		t.Fatalf("POST /queues/send: status=%d body=%s", statusCode, sentBody)
+	}
+	var sent api.QueueSendResponse
+	if err := json.Unmarshal(sentBody, &sent); err != nil {
+		t.Fatalf("decode queue send response: %v body=%s", err, sentBody)
+	}
+
+	invocation := waitForNormalPathInvocationState(t, f.store, sent.ID, state.InvocationCompleted, 20*time.Second)
+	if invocation.Outcome == nil || *invocation.Outcome != state.OutcomeSuccess {
+		t.Fatalf("invocation outcome=%v, want success", invocation.Outcome)
+	}
+	if invocation.Source != state.InvocationQueue {
+		t.Fatalf("invocation source=%q, want queue", invocation.Source)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		recordsBody, recordsStatus := doReq(t, f.h, f.key, http.MethodGet,
+			"/v1/triggers/"+trigger.ID+"/records", nil)
+		if recordsStatus != http.StatusOK {
+			t.Fatalf("GET trigger records: status=%d body=%s", recordsStatus, recordsBody)
+		}
+		var records api.ListTriggerRecordsResponse
+		if err := json.Unmarshal(recordsBody, &records); err != nil {
+			t.Fatalf("decode trigger records: %v body=%s", err, recordsBody)
+		}
+		for _, record := range records.Records {
+			if record.ItemIdentifier != sent.ID {
+				continue
+			}
+			if record.State != "succeeded" {
+				t.Fatalf("trigger record state=%q, want succeeded", record.State)
+			}
+			request := f.vmmd.LastRequest()
+			if request == nil || request.Instance != instance.ID || request.RequestUri != "/_triggers/queue/"+trigger.ID {
+				t.Fatalf("push request=%#v, want trigger path", request)
+			}
+			if !normalPathJSONEqual(f.vmmd.LastBody(), payload) {
+				t.Fatalf("push payload=%q, want %q", f.vmmd.LastBody(), payload)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("trigger record for queue invocation %q did not reach succeeded", sent.ID)
 }
 
 // TestE2E_NormalPath_QueueDeliversMultipleMessages catches queue worker
