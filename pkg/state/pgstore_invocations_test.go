@@ -142,7 +142,9 @@ func TestPg_ExpiredQueueLeaseRedelivery(t *testing.T) {
 			t.Fatalf("expire lease %s: %v", id, err)
 		}
 	}
-	reclaimAt := time.Now().UTC()
+	// PostgreSQL stores timestamptz at microsecond precision; normalize the
+	// test clock so the due_at round-trip can be compared exactly.
+	reclaimAt := time.Now().UTC().Truncate(time.Microsecond)
 	n, err := s.RequeueExpiredInvocations(ctx, reclaimAt, 10)
 	if err != nil {
 		t.Fatalf("RequeueExpiredInvocations: %v", err)
