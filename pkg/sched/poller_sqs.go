@@ -297,7 +297,7 @@ func (s *sqsPoller) Nack(ctx context.Context, _ sqlc.Trigger, ids []string, reas
 	if len(ids) == 0 {
 		return nil
 	}
-	if reason == triggerReasonPoisonRecord {
+	if reason == triggerReasonPoisonRecord || reason == triggerReasonMaxAttempts {
 		return s.deleteReceipts(ctx, ids)
 	}
 	body, _ := json.Marshal(map[string]any{

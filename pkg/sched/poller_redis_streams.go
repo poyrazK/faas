@@ -289,7 +289,7 @@ func (r *redisPoller) Nack(ctx context.Context, _ sqlc.Trigger, ids []string, re
 	if len(ids) == 0 {
 		return nil
 	}
-	if reason == triggerReasonPoisonRecord {
+	if reason == triggerReasonPoisonRecord || reason == triggerReasonMaxAttempts {
 		if err := r.client.XAck(ctx, r.stream, r.group, ids...).Err(); err != nil {
 			return fmt.Errorf("redis_poller: xack (poison): %w", err)
 		}

@@ -447,7 +447,12 @@ func (k *kafkaPoller) Nack(commitCtx context.Context, t sqlc.Trigger, ids []stri
 			continue
 		}
 		var err error
-		if reason == triggerReasonPoisonRecord {
+		if reason == triggerReasonMaxAttempts {
+			// Retry exhaustion is terminal regardless of the poison
+			// strategy: committing advances the broker and prevents a
+			// configured seek-to-offset policy from redelivering forever.
+			err = k.reader.CommitMessages(commitCtx, msg)
+		} else if reason == triggerReasonPoisonRecord {
 			// Audit #10: the strategy column gates the
 			// poison-specific terminal broker op. The empty
 			// default ("") is treated as "commit" — matches the

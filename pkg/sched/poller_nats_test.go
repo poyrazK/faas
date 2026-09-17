@@ -132,7 +132,8 @@ func TestNATSPoller_TranslateAckToBroker(t *testing.T) {
 //
 //  1. Broker delivers a message.
 //  2. Dispatcher Nacks with reason="broker_error".
-//  3. stubMsg.NakWithDelay(2s) was called; Term-with-reason if reason="poison_record".
+//  3. stubMsg.NakWithDelay(2s) handles transient failures; terminal
+//     reasons use Term-with-reason.
 //  4. Acked flag stays false (Ack and Nak are mutually exclusive).
 func TestNATSPoller_TranslateNackToBroker(t *testing.T) {
 	t.Parallel()
@@ -142,10 +143,11 @@ func TestNATSPoller_TranslateNackToBroker(t *testing.T) {
 		wantNacked bool
 		wantTerm   bool
 		wantDelay  time.Duration
+		wantReason string
 	}{
-		{"broker_error", "broker_error", true, false, 2 * time.Second},
-		{"poison_record", "poison_record", false, true, 0},
-		{"max_attempts", "max_attempts", true, false, 2 * time.Second},
+		{"broker_error", "broker_error", true, false, 2 * time.Second, ""},
+		{"poison_record", "poison_record", false, true, 0, "poison"},
+		{"max_attempts", "max_attempts", false, true, 0, "max_attempts"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -170,6 +172,9 @@ func TestNATSPoller_TranslateNackToBroker(t *testing.T) {
 			}
 			if got := stub.term.Load(); got != tc.wantTerm {
 				t.Fatalf("term=%v, want %v", got, tc.wantTerm)
+			}
+			if tc.wantReason != "" && stub.reason != tc.wantReason {
+				t.Fatalf("term reason=%q, want %q", stub.reason, tc.wantReason)
 			}
 			if tc.wantNacked && stub.delay != tc.wantDelay {
 				t.Fatalf("delay=%v, want %v", stub.delay, tc.wantDelay)

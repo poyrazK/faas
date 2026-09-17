@@ -547,8 +547,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: gateway post",
 			"trigger_id", t.ID.String(),
 			"err", postErr)
-		l.markRetryAll(ctx, claimed, postErr.Error(), store)
-		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(claimed))
+		retryItems, exhaustedItems := l.markRetryAll(ctx, t, claimed, postErr.Error(), store)
+		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryItems))
+		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(exhaustedItems))
 		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6: SKIP LOCKED may return fewer rows
 		// than len(batch). Nack only the records we actually
@@ -557,7 +558,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		// saw Ack/Nack on records that had no trigger_records row
 		// to retry, and the poller's in-flight bookkeeping
 		// dropped those entries on the floor.
-		_ = poller.Nack(ctx, t, claimedItemIDs(claimed), triggerReasonBrokerError)
+		if len(retryItems) > 0 {
+			_ = poller.Nack(ctx, t, retryItems, triggerReasonBrokerError)
+		}
+		if len(exhaustedItems) > 0 {
+			items := claimedItemIDs(exhaustedItems)
+			l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store)
+			_ = poller.Nack(ctx, t, items, triggerReasonMaxAttempts)
+		}
 		return nil
 	}
 
@@ -607,16 +615,26 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	retryItems := []string{}
 	dlqItems := []string{}
 	_, isQueuePoller := poller.(*queuePoller)
+	queueRetry := func(c sqlc.TriggerRecord, itemID, lastError string) {
+		attempts := c.Attempts + 1
+		if retryExhausted(attempts, t.MaxAttempts) {
+			dlqIDs = append(dlqIDs, c.ID.String())
+			dlqItems = append(dlqItems, itemID)
+			dlqAttempts = append(dlqAttempts, attempts)
+			dlqReasons = append(dlqReasons, triggerReasonMaxAttempts)
+			dlqErrors = append(dlqErrors, lastError)
+			return
+		}
+		retryIDs = append(retryIDs, c.ID.String())
+		retryItems = append(retryItems, itemID)
+		retryAttempts = append(retryAttempts, attempts)
+	}
 
 	for _, c := range claimed {
 		itemID := c.ItemIdentifier
 		status, found := statusByID[itemID]
 		if !found {
-			retryIDs = append(retryIDs, c.ID.String())
-			retryItems = append(retryItems, itemID)
-			// Review finding #10: report the post-increment
-			// Attempts value.
-			retryAttempts = append(retryAttempts, c.Attempts+1)
+			queueRetry(c, itemID, "missing dispatch result")
 			continue
 		}
 		switch status.Status {
@@ -624,9 +642,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			succeedIDs = append(succeedIDs, c.ID.String())
 			succeedItems = append(succeedItems, itemID)
 		case "retry", "broker_error":
-			retryIDs = append(retryIDs, c.ID.String())
-			retryItems = append(retryItems, itemID)
-			retryAttempts = append(retryAttempts, c.Attempts+1)
+			queueRetry(c, itemID, status.Error)
 		case "dead_letter":
 			dlqIDs = append(dlqIDs, c.ID.String())
 			dlqItems = append(dlqItems, itemID)
@@ -642,9 +658,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			dlqReasons = append(dlqReasons, reason)
 			dlqErrors = append(dlqErrors, status.Error)
 		default:
-			retryIDs = append(retryIDs, c.ID.String())
-			retryItems = append(retryItems, itemID)
-			retryAttempts = append(retryAttempts, c.Attempts+1)
+			queueRetry(c, itemID, status.Error)
 		}
 	}
 	// Record terminal dispositions and end-to-end consumer latency before
@@ -739,13 +753,6 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		}
 	}
 	if len(dlqIDs) > 0 {
-		if isQueuePoller {
-			if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
-				l.log.Warn("sched trigger tick: finalize queue dead letters",
-					"trigger_id", t.ID.String(), "err", err)
-				return nil
-			}
-		}
 		for i, id := range dlqIDs {
 			reason := dlqReasons[i]
 			lastErr := dlqErrors[i]
@@ -781,9 +788,28 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if !isQueuePoller {
-			if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
+		// Retry exhaustion is terminal but differs from a poison record:
+		// Kafka must commit it even when the trigger's poison strategy is
+		// seek-to-offset. Keep the broker disposition aligned with the
+		// durable DLQ reason, including when one batch contains both.
+		poisonItems := make([]string, 0, len(dlqItems))
+		maxAttemptItems := make([]string, 0, len(dlqItems))
+		for i, item := range dlqItems {
+			if dlqReasons[i] == triggerReasonMaxAttempts {
+				maxAttemptItems = append(maxAttemptItems, item)
+			} else {
+				poisonItems = append(poisonItems, item)
+			}
+		}
+		if len(poisonItems) > 0 {
+			if err := poller.Nack(ctx, t, poisonItems, triggerReasonPoisonRecord); err != nil {
 				l.log.Warn("sched trigger tick: poller nack (dlq)",
+					"trigger_id", t.ID.String(), "err", err)
+			}
+		}
+		if len(maxAttemptItems) > 0 {
+			if err := poller.Nack(ctx, t, maxAttemptItems, triggerReasonMaxAttempts); err != nil {
+				l.log.Warn("sched trigger tick: poller nack (max attempts)",
 					"trigger_id", t.ID.String(), "err", err)
 			}
 		}
@@ -1050,17 +1076,37 @@ func (l *Loop) deadLetterAllWithMark(ctx context.Context, triggerID string, ids 
 	}
 }
 
-// markRetryAll marks every record as state='retry'.
-func (l *Loop) markRetryAll(ctx context.Context, claimed []sqlc.TriggerRecord, errMsg string, store storeLike) {
+// markRetryAll marks records below the attempt cap as state='retry' and
+// returns records that must move directly to the DLQ. Keeping the cap check
+// here is important for transport failures: there is no gateway response to
+// classify, but a queue item must still stop redelivering at max_attempts.
+func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.TriggerRecord, errMsg string, store storeLike) (retryItems []string, exhausted []sqlc.TriggerRecord) {
 	if store == nil || len(claimed) == 0 {
-		return
+		return nil, nil
 	}
 	nextFireAt := time.Now().Add(2 * time.Second)
 	for _, c := range claimed {
+		if retryExhausted(c.Attempts+1, t.MaxAttempts) {
+			exhausted = append(exhausted, c)
+			continue
+		}
 		if err := store.MarkTriggerRecordRetry(ctx, c.ID.String(), errMsg, nextFireAt); err != nil {
 			l.log.Warn("sched trigger tick: mark retry", "id", c.ID.String(), "err", err)
 		}
+		// Even when the audit-row update fails, release the broker
+		// handle so the durable source can be retried and the next tick
+		// can repair the row. Dropping it here would strand the item in
+		// the poller's in-flight set.
+		retryItems = append(retryItems, c.ItemIdentifier)
 	}
+	return retryItems, exhausted
+}
+
+// retryExhausted reports whether the next delivery would consume the final
+// allowed attempt. A zero max_attempts preserves the legacy unlimited-retry
+// posture used by older trigger rows.
+func retryExhausted(nextAttempt, maxAttempts int32) bool {
+	return maxAttempts > 0 && nextAttempt >= maxAttempts
 }
 
 // batchItemIDs walks the batch and returns the item identifiers

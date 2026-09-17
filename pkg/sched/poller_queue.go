@@ -192,7 +192,7 @@ func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) err
 // trigger_records retry FSM remains the source of the exact next-fire time;
 // the invocation due_at is a short wake guard to avoid a hot poll loop.
 func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
-	terminal := reason == triggerReasonPoisonRecord || reason == triggerReasonPayloadTooLarge || reason == triggerReasonRateLimited
+	terminal := reason == triggerReasonPoisonRecord || reason == triggerReasonMaxAttempts || reason == triggerReasonPayloadTooLarge || reason == triggerReasonRateLimited
 	if terminal {
 		if err := q.finishInvocations(ctx, t, ids, "dead_letter", "dead_letter", "dead_letter", reason, `{"trigger_dispatch":"dead_letter"}`); err != nil {
 			return err

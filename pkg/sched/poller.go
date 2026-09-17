@@ -126,7 +126,7 @@ type triggerSource interface {
 
 	// Nack signals broker-side retry / re-delivery. Reason is
 	// the dispatcher-tagged string ('broker_error',
-	// 'poison_record', 'payload_too_large') — each poller
+	// 'max_attempts', 'poison_record', 'payload_too_large') — each poller
 	// decides whether to map it onto broker-native semantics
 	// (kafka: log-and-skip; nats: Nak(delay); redis: XClaim;
 	// sqs: Release; queue: no-op). Nack failure is logged but
