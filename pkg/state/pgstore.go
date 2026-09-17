@@ -17520,12 +17520,13 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 // pathological for an app with no matching events: a filter miss scans the
 // account's history before it can return an empty page (issue #2688).
 //
-// Resolve the app first, then build a bounded candidate set from the four
-// event identity keys. Each branch is driven by an expression index on the
-// event payload and compares relationship columns as UUIDs (rather than
-// casting indexed UUID columns to text). UNION removes the rare duplicate
-// where an event carries more than one app identity. The account/anonymous
-// subject policy and user filters remain identical to ListCustomerEvents.
+// Resolve the app first, then build a bounded candidate set from the event
+// identity keys (app, deployment, build, and the two instance aliases). Each
+// branch is driven by an expression index on the event payload and compares
+// relationship columns as UUIDs (rather than casting indexed UUID columns to
+// text). UNION removes the rare duplicate where an event carries more than
+// one app identity. The account/anonymous subject policy and user filters
+// remain identical to ListCustomerEvents.
 func (s *PgStore) listCustomerEventsByApp(ctx context.Context, filter CustomerEventFilter) ([]Event, error) {
 	appID, err := uuid.Parse(strings.TrimSpace(filter.AppID))
 	if err != nil {
