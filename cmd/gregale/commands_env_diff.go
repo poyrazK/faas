@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -45,8 +46,14 @@ func envDiff(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
+	if resolveErr == nil {
+		*app = resolvedApp
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+		return printErr("Could not read local project context", resolveErr)
+	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env diff --app <slug>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env diff --app <slug> (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	client, err := authedClient()

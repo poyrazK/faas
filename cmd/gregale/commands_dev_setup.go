@@ -95,6 +95,10 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Could not read current directory", err)
 	}
+	linkedContext, _, linkedErr := linkedProjectContext(cwd)
+	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
+		return printErr("Could not read local project context", linkedErr)
+	}
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
@@ -106,7 +110,14 @@ func cmdDevSetup(args []string) int {
 
 	project := *name
 	if project == "" {
-		project = sanitizeSlug(filepath.Base(sourceDir))
+		if linkedErr == nil {
+			if linkedContext.App == "" {
+				return printErr("No app selected", fmt.Errorf("linked project %q has multiple or no workloads; pass --name or relink with --app <slug>", linkedContext.Project))
+			}
+			project = linkedContext.App
+		} else {
+			project = sanitizeSlug(filepath.Base(sourceDir))
+		}
 	}
 	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
 		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))

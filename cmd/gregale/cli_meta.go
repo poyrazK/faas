@@ -122,7 +122,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Advanced"
 	}
 	switch command.Name {
-	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "upload-cache", "usage", "version", "completion", "man", "whoami":
+	case "account", "billing", "capabilities", "context", "dashboard", "doctor", "invitations", "invoices", "keys", "link", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "unlink", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
@@ -778,7 +778,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "dev",
 		DocSlug: "dev",
-		Short:   "Sync the dirty working tree to a stable remote developer environment",
+		Short:   "Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -886,8 +886,8 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "env",
 		DocSlug: "env",
-		Short:   "Pull/push .env <-> sealed secrets (--app <slug>)",
-		Flags:   []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}},
+		Short:   "Pull/push .env <-> sealed secrets (--app <slug> or linked context)",
+		Flags:   []cliFlag{{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"}},
 		Subcommands: []cliSub{
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)"},
 			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
@@ -1031,9 +1031,30 @@ var cliCommands = []cliCommand{
 		Flags:   []cliFlag{{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"}},
 	},
 	{
+		Name:        "link",
+		DocSlug:     "link",
+		Short:       "Link this checkout to a Gregale project",
+		Positionals: []string{"<project-slug>"},
+		Flags: []cliFlag{
+			{Name: "app", Short: "workload/app slug for app-scoped commands", Value: "slug"},
+			{Name: "environment", Short: "default project environment scope", Value: "environment"},
+			{Name: "no-gitignore", Short: "do not add .gregale/ to .gitignore"},
+		},
+	},
+	{
 		Name:    "logout",
 		DocSlug: "auth",
 		Short:   "Revoke the managed CLI session and remove the stored token",
+	},
+	{
+		Name:    "unlink",
+		DocSlug: "link",
+		Short:   "Remove the linked project from this checkout",
+	},
+	{
+		Name:    "context",
+		DocSlug: "link",
+		Short:   "Show the linked project and default app context",
 	},
 	{
 		Name:    "signup",
@@ -1047,8 +1068,8 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "logs",
 		DocSlug:     "logs",
-		Short:       "Read app or deployment logs (logs <slug>; logs tail <slug> is the follow alias)",
-		Positionals: []string{"<slug>"},
+		Short:       "Read app or deployment logs (slug defaults to linked context)",
+		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "follow", Short: "stream logs until interrupted"},
 			{Name: "deployment", Short: "deployment id (default: latest)", Value: "ID"},
@@ -1064,12 +1085,12 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "metrics",
 		DocSlug: "metrics",
-		Short:   "Per-app or account-wide metrics (gregale metrics <slug> [--range 5m] | --account)",
+		Short:   "Per-app or account-wide metrics (slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
 			{Name: "account", Short: "account-wide roll-up"},
 		},
-		Positionals: []string{"<slug>"},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    "analytics",
@@ -1097,10 +1118,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "open",
 		DocSlug: "open",
-		Short:   "Open the app's URL (or its dashboard page) in your browser",
+		Short:   "Open the app's URL (slug defaults to linked context)",
 		Subcommands: []cliSub{
 			{Name: "docs", Short: "Open a CLI docs page (open docs [<slug>])"},
 		},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    "orgs",

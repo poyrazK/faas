@@ -237,8 +237,14 @@ func envPull(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
+	if resolveErr == nil {
+		*app = resolvedApp
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+		return printErr("Could not read local project context", resolveErr)
+	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [-o .env]", "env")
+		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [-o .env] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	client, err := authedClient()
@@ -327,8 +333,14 @@ func envPush(args []string) int {
 		PrintFail(os.Stderr, "%s", secretScanErr)
 		return 1
 	}
+	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
+	if resolveErr == nil {
+		*app = resolvedApp
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+		return printErr("Could not read local project context", resolveErr)
+	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [-f .env | --from-stdin] [--restart]", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [-f .env | --from-stdin] [--restart] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	if *fromStdin && *in != ".env" {

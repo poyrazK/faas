@@ -148,6 +148,12 @@ func run(args []string) (status int) {
 		return cmdCompletion(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
+	case "link":
+		return cmdLink(args[1:])
+	case "unlink":
+		return cmdUnlink(args[1:])
+	case "context":
+		return cmdContext(args[1:])
 	case "capabilities":
 		return cmdCapabilities(args[1:])
 	case "man":

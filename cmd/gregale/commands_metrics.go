@@ -23,6 +23,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -62,9 +63,20 @@ func cmdMetrics(args []string) int {
 		PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
 		return 1
 	}
-	if !*account && len(pos) != 1 {
+	if !*account && len(pos) > 1 {
 		PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
 		return 1
+	}
+	if !*account && len(pos) == 0 {
+		slug, resolveErr := resolveAppFlagOrContext("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, metricsCmdUsage+" (or run `gregale link <project-slug>`)", metricsCmdDocsTopic)
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+		pos = []string{slug}
 	}
 	client, err := authedClient()
 	if err != nil {

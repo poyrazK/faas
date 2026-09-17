@@ -2003,7 +2003,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	slug := *name
 	if slug == "" {
-		slug = deriveName()
+		cwdForContext, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			return printErr("Could not read current directory", cwdErr)
+		}
+		var nameErr error
+		slug, nameErr = linkedDefaultAppName(cwdForContext)
+		if nameErr != nil {
+			return printErr("Could not read local project context", nameErr)
+		}
 	}
 	if !api.ValidAppSlug(slug) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -4309,14 +4317,28 @@ func cmdOpen(args []string) int {
 	}
 	fs := newFlagSet("open", flag.ContinueOnError)
 	dash := fs.Bool("dashboard", false, "open the dashboard page instead of the live URL")
-	if err := fs.Parse(args); err != nil {
+	flags, positional := splitArgsForFlags(args, "dashboard")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale open <slug> [--dashboard]", "open")
+	if len(positional) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale open [<slug>] [--dashboard] (slug defaults to linked project context)", "open")
 		return 1
 	}
-	slug := fs.Arg(0)
+	slug := ""
+	if len(positional) == 1 {
+		slug = positional[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveAppFlagOrContext("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale open [<slug>] [--dashboard] (slug defaults to linked project context)", "open")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -4588,9 +4610,23 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD]", "logs")
 		return 1
 	}
-	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD]", "logs")
+	if fs.NArg() > 1 {
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD] (slug defaults to linked project context)", "logs")
 		return 1
+	}
+	slug := ""
+	if fs.NArg() == 1 {
+		slug = fs.Arg(0)
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveAppFlagOrContext("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale logs [<slug>] ... (slug defaults to linked project context)", "logs")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
 	}
 	archiveRequested := *archive || *archiveInstance != "" || *archiveDate != ""
 	var archiveSelector *api.ArchiveLogSelector
@@ -4627,7 +4663,7 @@ func cmdLogs(args []string) int {
 			return 2
 		}
 	}
-	return runLogs(context.Background(), fs.Arg(0), *deployment, api.LogFilter{
+	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
 		Grep:  *grep,
 		Since: *since,
 		Level: *level,
@@ -4654,9 +4690,23 @@ func cmdLogsTail(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs tail <slug> [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error]", "logs")
 		return 1
 	}
-	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale logs tail <slug> [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error]", "logs")
+	if fs.NArg() > 1 {
+		PrintUsage(os.Stderr, "usage: gregale logs tail [<slug>] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] (slug defaults to linked project context)", "logs")
 		return 1
+	}
+	slug := ""
+	if fs.NArg() == 1 {
+		slug = fs.Arg(0)
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveAppFlagOrContext("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale logs tail [<slug>] ... (slug defaults to linked project context)", "logs")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
 	}
 	if *follow {
 		PrintFail(os.Stderr, "--follow is redundant with `logs tail` (alias always follows); drop the flag")
@@ -4672,7 +4722,7 @@ func cmdLogsTail(args []string) int {
 			return 2
 		}
 	}
-	return runLogs(context.Background(), fs.Arg(0), *deployment, api.LogFilter{
+	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
 		Grep:  *grep,
 		Since: *since,
 		Level: *level,

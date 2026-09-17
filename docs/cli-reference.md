@@ -29,11 +29,11 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
-| [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
+| [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;) |
+| [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context) |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]) |
@@ -45,13 +45,16 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
 | [`login`](#login) | Authenticate this machine (--token for CI) |
+| [`link`](#link) | Link this checkout to a Gregale project |
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
+| [`unlink`](#unlink) | Remove the linked project from this checkout |
+| [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias) |
-| [`metrics`](#metrics) | Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] \| --account) |
+| [`logs`](#logs) | Read app or deployment logs (slug defaults to linked context) |
+| [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
-| [`open`](#open) | Open the app&#39;s URL (or its dashboard page) in your browser |
+| [`open`](#open) | Open the app&#39;s URL (slug defaults to linked context) |
 | [`orgs`](#orgs) | Manage orgs + members (orgs ls\|create\|info\|rm\|members ...\|keys ...\|transfer-ownership\|seat-usage\|invitations ...\|me) |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
@@ -899,7 +902,7 @@ Show durable TLS status for all domains
 
 ## dev
 
-Sync the dirty working tree to a stable remote developer environment
+Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)
 
 `gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
 
@@ -1044,13 +1047,13 @@ Remove the imported app OpenAPI document
 
 ## env
 
-Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;)
+Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context)
 
-`gregale env [<subcommand>] --app <slug>`
+`gregale env [<subcommand>] [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to linked context) |  |
 
 ### env pull
 
@@ -1268,11 +1271,38 @@ Authenticate this machine (--token for CI)
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 
 
+## link
+
+Link this checkout to a Gregale project
+
+`gregale link <project-slug> [--app <slug>] [--environment <environment>] [--no-gitignore]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | workload/app slug for app-scoped commands |  |
+| `--environment <environment>` | default project environment scope |  |
+| `--no-gitignore` | do not add .gregale/ to .gitignore |  |
+
+
 ## logout
 
 Revoke the managed CLI session and remove the stored token
 
 `gregale logout`
+
+
+## unlink
+
+Remove the linked project from this checkout
+
+`gregale unlink`
+
+
+## context
+
+Show the linked project and default app context
+
+`gregale context`
 
 
 ## signup
@@ -1289,9 +1319,9 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias)
+Read app or deployment logs (slug defaults to linked context)
 
-`gregale logs <slug> [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1308,9 +1338,9 @@ Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the fo
 
 ## metrics
 
-Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] | --account)
+Per-app or account-wide metrics (slug defaults to linked context)
 
-`gregale metrics <slug> [--range <WINDOW>] [--account]`
+`gregale metrics [<slug>] [--range <WINDOW>] [--account]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1360,9 +1390,9 @@ Disable MFA
 
 ## open
 
-Open the app&#39;s URL (or its dashboard page) in your browser
+Open the app&#39;s URL (slug defaults to linked context)
 
-`gregale open [<subcommand>]`
+`gregale open [<subcommand>] [<slug>]`
 
 ### open docs
 
