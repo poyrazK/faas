@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -334,10 +335,28 @@ func validatePath(path string) error {
 }
 
 func hashFile(path string) (string, error) {
-	body, err := os.ReadFile(path)
+	// Bundle paths come from validatePath-vetted manifest entries rooted below
+	// the operator-controlled release staging directory, never customer input.
+	f, err := os.Open(path) //nolint:forbidigo // trusted validated release-bundle path
 	if err != nil {
 		return "", fmt.Errorf("releasebundle: read %s: %w", path, err)
 	}
-	hash := sha256.Sum256(body)
-	return hex.EncodeToString(hash[:]), nil
+
+	digest, hashErr := hashReader(f)
+	closeErr := f.Close()
+	if hashErr != nil {
+		return "", fmt.Errorf("releasebundle: read %s: %w", path, hashErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("releasebundle: close %s: %w", path, closeErr)
+	}
+	return digest, nil
+}
+
+func hashReader(r io.Reader) (string, error) {
+	hash := sha256.New()
+	if _, err := io.Copy(hash, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

@@ -22,6 +22,7 @@ package releasebundle
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,6 +270,40 @@ func TestHashFile_MissingFileErrors(t *testing.T) {
 	if _, err := hashFile(filepath.Join(t.TempDir(), "no-such")); err == nil {
 		t.Error("missing: want hash error, got nil")
 	}
+}
+
+func TestHashReaderUsesBoundedChunks(t *testing.T) {
+	reader := &boundedHashReader{remaining: 2 << 20, maxRead: 32 << 10}
+	digest, err := hashReader(reader)
+	if err != nil {
+		t.Fatalf("hashReader: %v", err)
+	}
+	if len(digest) != sha256.Size*2 {
+		t.Fatalf("digest length = %d, want %d", len(digest), sha256.Size*2)
+	}
+}
+
+type boundedHashReader struct {
+	remaining int64
+	maxRead   int
+}
+
+func (r *boundedHashReader) Read(p []byte) (int, error) {
+	if len(p) > r.maxRead {
+		return 0, io.ErrShortBuffer
+	}
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > r.remaining {
+		n = int(r.remaining)
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 'x'
+	}
+	r.remaining -= int64(n)
+	return n, nil
 }
 
 // --- validatePath additional cases ------------------------------

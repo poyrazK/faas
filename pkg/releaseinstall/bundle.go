@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -508,11 +509,30 @@ func ValidateManifest(m Manifest) error {
 // intentionally duplicated rather than re-exported to keep the
 // per-deploy boundary clean.
 func hashFile(path string) (string, error) {
-	body, err := os.ReadFile(path)
+	// Release paths are derived from a validated git SHA and manifest entry;
+	// resolveBinary and deployment-bundle validation reject unsafe paths first.
+	f, err := os.Open(path) //nolint:forbidigo // trusted release-manifest path, not customer input
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	return sha256Hex(body), nil
+
+	digest, hashErr := hashReader(f)
+	closeErr := f.Close()
+	if hashErr != nil {
+		return "", fmt.Errorf("read %s: %w", path, hashErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("close %s: %w", path, closeErr)
+	}
+	return digest, nil
+}
+
+func hashReader(r io.Reader) (string, error) {
+	hash := sha256.New()
+	if _, err := io.Copy(hash, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // sha256Hex returns hex-encoded SHA256 of body (64 lowercase chars).
