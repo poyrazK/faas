@@ -61,6 +61,7 @@ func (v *googleJWKSVerifier) Verify(ctx context.Context, rawToken, clientID, non
 	}
 	claims, err := v.verify.Verify(ctx, rawToken, edgejwks.VerifierRule{
 		JWKSURL:        v.jwksURL,
+		Issuer:         "https://accounts.google.com",
 		Audience:       []string{clientID},
 		Algorithms:     []string{"RS256"},
 		RequiredClaims: map[string]string{"nonce": nonce},
