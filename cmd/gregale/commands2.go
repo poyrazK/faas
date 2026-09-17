@@ -2967,9 +2967,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Workflow manifest validation failed", err)
 		}
 	}
-	databaseDeploymentScope, err := manifestPostgresDeploymentScope(slug, sourceDir, *environment)
+	manifestScope, err := manifestDeploymentScope(slug, sourceDir, *environment)
 	if err != nil {
-		return printErr("Manifest database scope resolution failed", err)
+		return printErr("Manifest resource scope resolution failed", err)
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
@@ -2982,6 +2982,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *createOnly {
 			if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 				return printErr("Manifest database bindings failed", err)
+			}
+			if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
+				return printErr("Manifest object-storage bindings failed", err)
 			}
 			if jsonOutput {
 				return jsonOut(writeJSON(map[string]any{
@@ -3002,6 +3005,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest database bindings failed", err)
+	}
+	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
+		return printErr("Manifest object-storage bindings failed", err)
 	}
 	if len(deploySecrets) > 0 {
 		if err := setDeploySecretsWithScope(ctx, client, slug, deploySecrets, *environment); err != nil {
@@ -3048,7 +3054,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
-			Scope:          databaseDeploymentScope,
+			Scope:          manifestScope,
 			SourceURL:      sourceURL,
 			CommitSHA:      commitSHA,
 			Environment:    *environment,
@@ -3210,7 +3216,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
 		Image:          *image,
-		Scope:          databaseDeploymentScope,
+		Scope:          manifestScope,
 		Environment:    *environment,
 		RollbackOn5xx:  rollbackOn5xxPtr,
 		Workflows:      workflowDefs,

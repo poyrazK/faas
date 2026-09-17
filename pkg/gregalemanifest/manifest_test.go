@@ -900,6 +900,56 @@ func TestValidate_DatabaseDependencyRejectsDifferentDatabasesSameTarget(t *testi
 	}
 }
 
+func TestValidate_BucketDependencyDefaults(t *testing.T) {
+	m := &Manifest{Buckets: []BucketDependency{{Bucket: "assets"}}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	dependency := m.Buckets[0]
+	if dependency.EffectiveScope() != api.DefaultEnvScope {
+		t.Fatalf("scope = %q, want %q", dependency.EffectiveScope(), api.DefaultEnvScope)
+	}
+	if dependency.EffectivePermission() != api.ObjectBucketPermissionReadWrite {
+		t.Fatalf("permission = %q, want read_write", dependency.EffectivePermission())
+	}
+	if dependency.EffectiveLabel() != "compute" {
+		t.Fatalf("label = %q, want compute", dependency.EffectiveLabel())
+	}
+}
+
+func TestValidate_BucketDependencyRejectsInvalidShape(t *testing.T) {
+	tests := []struct {
+		name string
+		deps []BucketDependency
+		want string
+	}{
+		{name: "missing bucket", deps: []BucketDependency{{}}, want: "bucket is required"},
+		{name: "invalid app", deps: []BucketDependency{{Bucket: "assets", App: "Bad_App"}}, want: "must match"},
+		{name: "invalid scope", deps: []BucketDependency{{Bucket: "assets", Scope: "Production"}}, want: "scope"},
+		{name: "invalid permission", deps: []BucketDependency{{Bucket: "assets", Permission: "admin"}}, want: "permission"},
+		{name: "invalid label", deps: []BucketDependency{{Bucket: "assets", Label: "\t"}}, want: "label"},
+		{name: "invalid prefix", deps: []BucketDependency{{Bucket: "assets", Prefix: "assets"}}, want: "prefix"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&Manifest{Buckets: tt.deps}).Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidate_BucketDependencyRejectsDuplicate(t *testing.T) {
+	m := &Manifest{Buckets: []BucketDependency{
+		{Bucket: "assets", App: "api", Scope: "production", Prefix: "GREGALE_S3_ASSETS"},
+		{Bucket: "assets", App: "api", Scope: "production", Prefix: "GREGALE_S3_ASSETS"},
+	}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("err = %v, want duplicate dependency", err)
+	}
+}
+
 // jsonRaw is a tiny helper that returns a json.RawMessage from a
 // literal. Keeps the table-driven fixtures readable.
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
