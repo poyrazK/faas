@@ -1757,7 +1757,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// A linked environment is meaningful for real deployments and project
 	// previews. The single-app diff engine has no environment input, so keep
 	// its existing read-only behavior when the scope was not explicit.
-	if !explicit["environment"] && !(preview && !projectRequested) {
+	if !explicit["environment"] && (!preview || projectRequested) {
 		resolvedEnvironment, resolveErr := resolveEnvironmentFlagOrContext(*environment)
 		if resolveErr != nil {
 			return printErr("Could not read local project context", resolveErr)

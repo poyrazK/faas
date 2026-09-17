@@ -439,10 +439,6 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 // the deployment upload. It is intentionally separate from secretsSet: deploy
 // must not perform the extra list/quota reads or print one line per key, and
 // JSON deploys must keep stdout as a single receipt.
-func setDeploySecrets(ctx context.Context, client *Client, app string, pairs []secretsPair) error {
-	return setDeploySecretsWithScope(ctx, client, app, pairs, "")
-}
-
 func setDeploySecretsWithScope(ctx context.Context, client *Client, app string, pairs []secretsPair, scope string) error {
 	for _, pair := range pairs {
 		if err := client.SetSecretWithScope(ctx, app, pair.Key, pair.Value, scope); err != nil {
