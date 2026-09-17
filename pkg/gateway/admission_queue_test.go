@@ -41,6 +41,31 @@ func TestWakeAdmissionPolicyForPlan(t *testing.T) {
 	}
 }
 
+func TestWakeAdmissionPolicyForAppOverrides(t *testing.T) {
+	queue := WakeAdmissionPolicyForApp(api.PlanPro, api.ConcurrencyOverflowQueue, 1250)
+	if queue.MaxWaiters != 64 || queue.MaxWait != 1250*time.Millisecond {
+		t.Fatalf("queue policy = %+v", queue)
+	}
+	drop := WakeAdmissionPolicyForApp(api.PlanPro, api.ConcurrencyOverflowDrop, 1250)
+	if drop.MaxWaiters != 1 || drop.MaxWait != 1250*time.Millisecond {
+		t.Fatalf("drop policy = %+v", drop)
+	}
+}
+
+func TestWriteWakeErrorConcurrencyDrop(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWakeError(rec, &WakeConcurrencyDropError{RetryAfter: 1500 * time.Millisecond})
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "2" {
+		t.Fatalf("Retry-After = %q, want 2", got)
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeConcurrencyThrottled) {
+		t.Fatalf("body missing concurrency code: %s", rec.Body.String())
+	}
+}
+
 func TestWakeAdmissionQueueIsFairAcrossPlans(t *testing.T) {
 	q := newWakeAdmissionQueue(1, 4, nil)
 	block := make(chan struct{})
@@ -154,6 +179,33 @@ func TestWakeGateWaitWithPolicyUsesPerAppCapAndRetryAfter(t *testing.T) {
 	}
 	if err := <-followerDone; err != nil {
 		t.Fatalf("follower returned %v", err)
+	}
+}
+
+func TestWakeGateDropPolicyRejectsFollower(t *testing.T) {
+	g := NewWakeGate(512, 5*time.Second)
+	release := make(chan struct{})
+	leaderDone := make(chan error, 1)
+	go func() {
+		leaderDone <- g.WaitWithPolicy(context.Background(), "app-drop", "acct", WakeAdmissionPolicyForApp(api.PlanPro, api.ConcurrencyOverflowDrop, 2500),
+			func() bool { return true },
+			func(context.Context) error {
+				<-release
+				return nil
+			}, nil, nil)
+	}()
+	for g.InflightWaiters("app-drop") < 1 {
+		time.Sleep(time.Millisecond)
+	}
+	err := g.WaitWithPolicy(context.Background(), "app-drop", "acct", WakeAdmissionPolicyForApp(api.PlanPro, api.ConcurrencyOverflowDrop, 2500),
+		func() bool { return true }, func(context.Context) error { return nil }, nil, nil)
+	var full *WakeQueueFullError
+	if !errors.As(err, &full) || full.Limit != 1 {
+		t.Fatalf("err = %v, want one-slot queue-full error", err)
+	}
+	close(release)
+	if err := <-leaderDone; err != nil {
+		t.Fatalf("leader returned %v", err)
 	}
 }
 

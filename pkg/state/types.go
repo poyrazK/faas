@@ -1565,6 +1565,12 @@ type ScalingPolicy struct {
 	// 86400 s (1 day). Default = 0 means "engine uses the plan
 	// default" (PR-C sets Hobby = 60, Pro = 30, Scale = 15).
 	ScaleInCooldownS int
+	// ConcurrencyOverflow controls the app's saturation behavior. Empty and
+	// "queue" retain the bounded-wait default; "drop" rejects immediately.
+	ConcurrencyOverflow string
+	// MaxQueueWaitMS is an optional per-app admission wait override. Zero
+	// means the gateway uses the plan-derived wait budget.
+	MaxQueueWaitMS int
 }
 
 // ScalingTarget is the (metric, value) pair the engine watches for
@@ -1585,11 +1591,13 @@ type ScalingTarget struct {
 // (mirrors the DTO's `*ScalingTarget`).
 func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 	type policyShape struct {
-		MinInstances      int            `json:"min_instances,omitempty"`
-		MaxInstances      int            `json:"max_instances,omitempty"`
-		Target            *ScalingTarget `json:"target,omitempty"`
-		ScaleOutCooldownS int            `json:"scale_out_cooldown_s,omitempty"`
-		ScaleInCooldownS  int            `json:"scale_in_cooldown_s,omitempty"`
+		MinInstances        int            `json:"min_instances,omitempty"`
+		MaxInstances        int            `json:"max_instances,omitempty"`
+		Target              *ScalingTarget `json:"target,omitempty"`
+		ScaleOutCooldownS   int            `json:"scale_out_cooldown_s,omitempty"`
+		ScaleInCooldownS    int            `json:"scale_in_cooldown_s,omitempty"`
+		ConcurrencyOverflow string         `json:"concurrency_overflow,omitempty"`
+		MaxQueueWaitMS      int            `json:"max_queue_wait_ms,omitempty"`
 	}
 	// The struct conversion pins the jsonb encoder's tag set to the
 	// policyShape local — adding a json tag here does not silently
@@ -1604,11 +1612,13 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 // the in-memory struct.
 func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 	type policyShape struct {
-		MinInstances      int            `json:"min_instances,omitempty"`
-		MaxInstances      int            `json:"max_instances,omitempty"`
-		Target            *ScalingTarget `json:"target,omitempty"`
-		ScaleOutCooldownS int            `json:"scale_out_cooldown_s,omitempty"`
-		ScaleInCooldownS  int            `json:"scale_in_cooldown_s,omitempty"`
+		MinInstances        int            `json:"min_instances,omitempty"`
+		MaxInstances        int            `json:"max_instances,omitempty"`
+		Target              *ScalingTarget `json:"target,omitempty"`
+		ScaleOutCooldownS   int            `json:"scale_out_cooldown_s,omitempty"`
+		ScaleInCooldownS    int            `json:"scale_in_cooldown_s,omitempty"`
+		ConcurrencyOverflow string         `json:"concurrency_overflow,omitempty"`
+		MaxQueueWaitMS      int            `json:"max_queue_wait_ms,omitempty"`
 	}
 	var raw policyShape
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1619,6 +1629,8 @@ func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 	p.Target = raw.Target
 	p.ScaleOutCooldownS = raw.ScaleOutCooldownS
 	p.ScaleInCooldownS = raw.ScaleInCooldownS
+	p.ConcurrencyOverflow = raw.ConcurrencyOverflow
+	p.MaxQueueWaitMS = raw.MaxQueueWaitMS
 	return nil
 }
 

@@ -939,10 +939,12 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		return nil
 	}
 	out := &api.ScalingPolicy{
-		MinInstances:      p.MinInstances,
-		MaxInstances:      p.MaxInstances,
-		ScaleOutCooldownS: p.ScaleOutCooldownS,
-		ScaleInCooldownS:  p.ScaleInCooldownS,
+		MinInstances:        p.MinInstances,
+		MaxInstances:        p.MaxInstances,
+		ScaleOutCooldownS:   p.ScaleOutCooldownS,
+		ScaleInCooldownS:    p.ScaleInCooldownS,
+		ConcurrencyOverflow: p.ConcurrencyOverflow,
+		MaxQueueWaitMS:      p.MaxQueueWaitMS,
 	}
 	if p.Target != nil {
 		out.Target = &api.ScalingTarget{

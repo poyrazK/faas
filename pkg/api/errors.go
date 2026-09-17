@@ -1493,6 +1493,9 @@ const (
 	// no-op when it already has ≥1 cached target, while plan_limit
 	// (the Wake path) is always fatal to the requesting call.
 	CodeAppConcurReached = "app_concurrency_reached"
+	// CodeConcurrencyThrottled is returned when an app explicitly selects
+	// overflow=drop and its concurrency boundary is saturated.
+	CodeConcurrencyThrottled = "concurrency_throttled"
 
 	// Dashboard auth (issue #165, ADR-032). Pre-#165, POST /login
 	// auto-created an account + minted a "web-console" API key + set
@@ -1732,7 +1735,7 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited,
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeExportRateLimited, CodeDeployRateLimited,
 		CodeAuthRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:

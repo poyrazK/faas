@@ -46,6 +46,24 @@ func WakeAdmissionPolicyForPlan(plan api.Plan) WakeAdmissionPolicy {
 	}
 }
 
+// WakeAdmissionPolicyForApp applies the app-level overflow and wait
+// controls on top of the plan defaults. The queue mode preserves the
+// existing bounded waiter budget. Drop mode admits only the single wake
+// leader; followers receive a typed 429 outcome at the handler boundary.
+func WakeAdmissionPolicyForApp(plan api.Plan, overflow string, maxQueueWaitMS int) WakeAdmissionPolicy {
+	p := WakeAdmissionPolicyForPlan(plan)
+	if overflow == api.ConcurrencyOverflowDrop {
+		p.MaxWaiters = 1
+	}
+	if maxQueueWaitMS > 0 {
+		if maxQueueWaitMS > api.MaxConcurrencyQueueWaitMS {
+			maxQueueWaitMS = api.MaxConcurrencyQueueWaitMS
+		}
+		p.MaxWait = time.Duration(maxQueueWaitMS) * time.Millisecond
+	}
+	return p
+}
+
 func (p WakeAdmissionPolicy) normalized(gateCap int, fallbackTTL time.Duration) WakeAdmissionPolicy {
 	if gateCap < 1 {
 		gateCap = 1
@@ -99,6 +117,23 @@ type WakeQueueWaitTimeoutError struct {
 func (e *WakeQueueWaitTimeoutError) Error() string { return ErrWakeQueueWaitTimeout.Error() }
 
 func (e *WakeQueueWaitTimeoutError) Unwrap() error { return ErrWakeQueueWaitTimeout }
+
+// WakeConcurrencyDropError marks an app explicitly configured with
+// concurrency_overflow=drop. It unwraps ErrQueueFull so existing admission
+// metrics still classify the event as an app queue saturation, while the
+// HTTP boundary can distinguish it from the legacy 503 queue response.
+type WakeConcurrencyDropError struct {
+	RetryAfter time.Duration
+}
+
+func (e *WakeConcurrencyDropError) Error() string { return "gateway: concurrency overflow dropped" }
+
+func (e *WakeConcurrencyDropError) Unwrap() error { return ErrQueueFull }
+
+func isWakeConcurrencyDrop(err error) bool {
+	var drop *WakeConcurrencyDropError
+	return errors.As(err, &drop)
+}
 
 // ErrWakeAdmissionQueueFull means the gateway-wide cold-wake scheduler is
 // saturated. It is intentionally separate from ErrQueueFull, which is the

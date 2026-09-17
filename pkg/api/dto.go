@@ -750,6 +750,13 @@ type ScalingPolicy struct {
 	Target            *ScalingTarget `json:"target,omitempty"`
 	ScaleOutCooldownS int            `json:"scale_out_cooldown_s,omitempty"`
 	ScaleInCooldownS  int            `json:"scale_in_cooldown_s,omitempty"`
+	// ConcurrencyOverflow controls what happens when the app's
+	// concurrency boundary is saturated. Empty and "queue" preserve the
+	// legacy bounded-wait behavior; "drop" rejects immediately with 429.
+	ConcurrencyOverflow string `json:"concurrency_overflow,omitempty"`
+	// MaxQueueWaitMS overrides the plan-derived admission wait. Zero uses
+	// the plan default. The handler caps this at MaxConcurrencyQueueWaitMS.
+	MaxQueueWaitMS int `json:"max_queue_wait_ms,omitempty"`
 	// unknownFields is the set of unknown JSON keys encountered
 	// during a strict Unmarshal. Stored as a one-shot value so
 	// the validator can surface a single error without
@@ -792,6 +799,8 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"target":               {},
 		"scale_out_cooldown_s": {},
 		"scale_in_cooldown_s":  {},
+		"concurrency_overflow": {},
+		"max_queue_wait_ms":    {},
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const vmConcurrencyRetryInterval = 10 * time.Millisecond
@@ -236,6 +238,10 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	}
 	if candidate, release, ok := tryReadyTarget(); ok {
 		return candidate, release, false, nil
+	}
+	if app.ConcurrencyOverflow == api.ConcurrencyOverflowDrop {
+		policy := WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS)
+		return pick, nil, true, &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
 	}
 
 	ticker := time.NewTicker(vmConcurrencyRetryInterval)

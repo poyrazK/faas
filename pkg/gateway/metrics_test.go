@@ -74,6 +74,17 @@ func TestMetricsWakeQueueWaitNilSafe(t *testing.T) {
 	m.ObserveWakeQueueWait(50 * time.Millisecond) // must not panic
 }
 
+func TestMetricsConcurrencyThrottled(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveConcurrencyThrottled("app-1", "drop")
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `gateway_concurrency_throttled_total{app="app-1",mode="drop"} 1`) {
+		t.Fatalf("throttle metric missing:\n%s", body)
+	}
+}
+
 func TestRequestTelemetryMetricsExposition(t *testing.T) {
 	m := NewMetrics()
 	m.IncRequestTelemetryOverwritten()

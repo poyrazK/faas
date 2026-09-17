@@ -3316,6 +3316,11 @@ const (
 	GatewayWakeAdmissionHobbyPriority   = 1
 	GatewayWakeAdmissionProPriority     = 1
 	GatewayWakeAdmissionScalePriority   = 1
+	// MaxConcurrencyQueueWaitMS bounds the customer-controlled admission
+	// wait override. The zero value keeps the plan-derived default.
+	MaxConcurrencyQueueWaitMS = 120_000
+	ConcurrencyOverflowQueue  = "queue"
+	ConcurrencyOverflowDrop   = "drop"
 
 	// MirrorMaxLifetimeSeconds (issue #72 / ADR-125) is the hard
 	// upper bound on how long a single mirror goroutine can run.

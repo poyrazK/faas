@@ -36,10 +36,10 @@ func TestScalingPolicyUnmarshalJSON_Mega4(t *testing.T) {
 	t.Run("clean decode populates and clears unknowns", func(t *testing.T) {
 		t.Parallel()
 		var p ScalingPolicy
-		if err := json.Unmarshal([]byte(`{"min_instances": 1, "max_instances": 5}`), &p); err != nil {
+		if err := json.Unmarshal([]byte(`{"min_instances": 1, "max_instances": 5, "concurrency_overflow": "drop", "max_queue_wait_ms": 1250}`), &p); err != nil {
 			t.Fatalf("Unmarshal: %v", err)
 		}
-		if p.MinInstances != 1 || p.MaxInstances != 5 {
+		if p.MinInstances != 1 || p.MaxInstances != 5 || p.ConcurrencyOverflow != "drop" || p.MaxQueueWaitMS != 1250 {
 			t.Errorf("got %+v", p)
 		}
 		if p.HasUnknownFields() {

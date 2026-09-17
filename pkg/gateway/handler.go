@@ -105,6 +105,12 @@ type App struct {
 	DeclaredRoutes []DeclaredRoute
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
+	// ConcurrencyOverflow controls saturation behavior at the wake and
+	// per-instance gates. Empty and "queue" retain the bounded-wait default;
+	// "drop" returns 429 immediately when no slot is available.
+	ConcurrencyOverflow string
+	// MaxQueueWaitMS overrides the plan-derived wait budget for admission.
+	MaxQueueWaitMS int
 	// AutoscaleTargetRPS is the configured per-instance request-rate target.
 	// The gateway uses it as an immediate burst signal while schedd remains the
 	// authority for admissions and sustained autoscaling decisions.
@@ -300,6 +306,15 @@ type App struct {
 	// fall through to the normal wake path for real probes.
 	HealthPath      string
 	HealthPathWakes bool
+}
+
+type concurrencyAdmissionConfig struct {
+	overflow       string
+	maxQueueWaitMS int
+}
+
+func concurrencyConfigForApp(app App) concurrencyAdmissionConfig {
+	return concurrencyAdmissionConfig{overflow: app.ConcurrencyOverflow, maxQueueWaitMS: app.MaxQueueWaitMS}
 }
 
 // DeclaredRoute is the gateway-local projection of an explicitly declared
@@ -5720,7 +5735,7 @@ haveApp:
 			attribute.Int("desired_instances", maxInstances),
 		)
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS)
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(
 			attribute.Bool("cold", cold),
 			attribute.String("wake_id", wakeID),
@@ -5756,6 +5771,13 @@ haveApp:
 			if h.metrics != nil && errors.Is(err, ErrQueueFull) {
 				h.metrics.ObserveWakeAdmission(string(app.Plan), err, false, 0)
 			}
+			if h.metrics != nil {
+				if isWakeConcurrencyDrop(err) {
+					h.metrics.ObserveConcurrencyThrottled(app.ID, api.ConcurrencyOverflowDrop)
+				} else if errors.Is(err, ErrQueueFull) || errors.Is(err, ErrWakeQueueWaitTimeout) {
+					h.metrics.ObserveConcurrencyThrottled(app.ID, api.ConcurrencyOverflowQueue)
+				}
+			}
 			// ADR-122 §Decision: kind=cache stale-on-error path.
 			// On wake failure (queue full, bootstrap abort, etc.)
 			// consult the cache for a stale entry BEFORE falling
@@ -5779,7 +5801,7 @@ haveApp:
 	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
-	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForPlan(app.Plan).MaxWait)
+	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS).MaxWait)
 	defer cancelBurstWait()
 	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 	if burstErr != nil {
@@ -5857,7 +5879,7 @@ haveApp:
 	// the request waits under the plan's bounded capacity-admission allowance.
 	var vmRelease func()
 	var vmWaited bool
-	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForPlan(app.Plan).MaxWait)
+	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS).MaxWait)
 	defer cancelCapacityWait()
 	capacityCtx, capacitySpan := pkgtrace.StartSpan(capacityWaitCtx, "gateway.capacity_wait",
 		attribute.String("app_id", app.ID),
@@ -5877,6 +5899,9 @@ haveApp:
 		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 	}
 	if err != nil {
+		if h.metrics != nil && isWakeConcurrencyDrop(err) {
+			h.metrics.ObserveConcurrencyThrottled(app.ID, api.ConcurrencyOverflowDrop)
+		}
 		writeBurstCapacityError(w, r, err)
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, pick.Target)
 		return
@@ -7306,7 +7331,7 @@ func (s *statusRecorder) finalFlush() {
 // prod app's. Empty = prod (legacy). When the cold-start path calls
 // coldStart and coldStart in turn calls Admit, scope is plumbed
 // through both paths.
-func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) (cold bool, wakeID string, method WakeMethod, err error) {
+func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, configs ...concurrencyAdmissionConfig) (cold bool, wakeID string, method WakeMethod, err error) {
 	// HealthyCount is intentionally process-local for the hot path, but an
 	// empty process-local cache is not authoritative in a multi-node fleet.
 	// The empty-cache reconciliation now runs inside coldStart's WakeGate
@@ -7316,7 +7341,11 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 	if h.backend.HealthyCount(appID) > 0 {
 		return false, "", WakeMethodUnspecified, nil
 	}
-	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS)
+	var config concurrencyAdmissionConfig
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS, config)
 	if err != nil {
 		return false, "", WakeMethodUnspecified, err
 	}
@@ -7346,7 +7375,7 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 // through the WakeGate's single-flight coalescing. shouldWake is held
 // under the gate lock and re-runs HealthyCount; if a peer's admit has
 // just landed, we skip the redundant cold boot.
-func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) (bool, string, WakeMethod, error) {
+func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, configs ...concurrencyAdmissionConfig) (bool, string, WakeMethod, error) {
 	var (
 		admittedWakeID string
 		cold           bool
@@ -7357,7 +7386,11 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		acceptedAt = requestAt
 	}
 	h.beginWakePageCycle(appID, acceptedAt)
-	policy := WakeAdmissionPolicyForPlan(plan)
+	var config concurrencyAdmissionConfig
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+	policy := WakeAdmissionPolicyForApp(plan, config.overflow, config.maxQueueWaitMS)
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
 			// max_concurrency is a ceiling for scheduler-driven scale-up,
@@ -7481,6 +7514,9 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			h.metrics.ObserveLeaderBootstrapAbort(reason)
 		},
 	)
+	if werr != nil && config.overflow == api.ConcurrencyOverflowDrop && errors.Is(werr, ErrQueueFull) {
+		werr = &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
+	}
 	if werr != nil {
 		// A batch RPC can fail while a primary restore has already published
 		// a healthy target. Expansion failure must not discard that capacity.
@@ -7496,6 +7532,11 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 
 func writeWakeError(w http.ResponseWriter, err error) {
 	switch {
+	case isWakeConcurrencyDrop(err):
+		retryAfter := wakeRetryAfterSeconds(err, 1)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeConcurrencyThrottled,
+			"Concurrency limit reached", "the app is configured to drop requests when its concurrency limit is saturated"))
 	case errors.Is(err, ErrWakeQueueWaitTimeout):
 		retryAfter := wakeRetryAfterSeconds(err, 5)
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
@@ -7556,9 +7597,12 @@ func wakeRetryAfterSeconds(err error, fallback int) int {
 	var retryAfter time.Duration
 	var perAppFull *WakeQueueFullError
 	var perAppTimeout *WakeQueueWaitTimeoutError
+	var concurrencyDrop *WakeConcurrencyDropError
 	var globalFull *WakeAdmissionQueueFullError
 	var globalTimeout *WakeAdmissionQueueWaitTimeoutError
 	switch {
+	case errors.As(err, &concurrencyDrop):
+		retryAfter = concurrencyDrop.RetryAfter
 	case errors.As(err, &perAppFull):
 		retryAfter = perAppFull.RetryAfter
 	case errors.As(err, &perAppTimeout):

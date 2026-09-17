@@ -281,7 +281,7 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 		if count > api.ScaleUpMaxBurstPerTick {
 			count = api.ScaleUpMaxBurstPerTick
 		}
-		policy := WakeAdmissionPolicyForPlan(app.Plan)
+		policy := WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS)
 		var admitted int
 		var err error
 		var queued bool
