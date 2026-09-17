@@ -39,6 +39,22 @@ type jobLogVMM struct {
 	lines []LogLine
 }
 
+type delayedJobLogVMM struct {
+	*fakeVMM
+	calls int
+}
+
+func (v *delayedJobLogVMM) Logs(_ context.Context, _ string, _ string, sinceSeq int64, _ time.Time, _ bool) (LogStream, error) {
+	v.calls++
+	if v.calls == 1 {
+		return &jobLogStream{lines: []LogLine{{Seq: 1, Stream: "stderr", Line: "guest-init: stage before-job-supervisor"}}}, nil
+	}
+	if sinceSeq <= 2 {
+		return &jobLogStream{lines: []LogLine{{Seq: 2, Stream: "stdout", Line: "beta-job"}}}, nil
+	}
+	return &jobLogStream{}, nil
+}
+
 type routedDestroyJobVMM struct {
 	*fakeVMM
 	destroyNode     string
@@ -161,6 +177,33 @@ func TestHandleJobExitPersistsCombinedTaskOutputBeforeCleanup(t *testing.T) {
 	}
 	if task.Status != "succeeded" || task.LogContent != "beta-job\nwarning\n" || task.LogTruncated {
 		t.Fatalf("terminal task = %+v, want persisted complete output", task)
+	}
+}
+
+func TestHandleJobExitSettlesLateSerialOutput(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	const (
+		instanceID = "job-late-log-instance"
+		leaseToken = "7a274117-5aca-4a61-9672-e9e21b691f8b"
+	)
+	if err := store.JobTaskMarkClaimed(context.Background(), run.ID, 0, instanceID, leaseToken, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatalf("JobTaskMarkClaimed: %v", err)
+	}
+	vmm := &delayedJobLogVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken); err != nil {
+		t.Fatalf("HandleJobExit: %v", err)
+	}
+	task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+	if err != nil {
+		t.Fatalf("JobTaskGet: %v", err)
+	}
+	if task.LogContent != "guest-init: stage before-job-supervisor\nbeta-job\n" || task.LogTruncated {
+		t.Fatalf("terminal task = %+v, want late serial output persisted", task)
+	}
+	if vmm.calls < 2 {
+		t.Fatalf("Logs calls = %d, want replay after initial snapshot", vmm.calls)
 	}
 }
 
