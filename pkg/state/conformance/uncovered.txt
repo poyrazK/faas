@@ -436,8 +436,6 @@ ListOrphanedApps
 ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
-ListPreviewsForAccount
-ListPreviewsForTeardown
 ListProjectsForAccount
 ListRecentEventsForAccount
 ListRequestTelemetryByApp
@@ -528,7 +526,6 @@ PaddleOverageDedupeSchema
 PeekCliAuthCode
 PerAccountRateLimitAggregate
 Ping
-PreviewAppsByParent
 ProjectByID
 ProjectByRepo
 ProjectBySlug
@@ -625,7 +622,6 @@ SetInstanceMode
 SetInstanceRuntime
 SetMFARequired
 SetMFASecret
-SetPreviewPrState
 SetProjectScanSource
 SoftDeleteAppCascade
 SoftDeleteOrg
@@ -633,7 +629,6 @@ StampAppScaleIn
 StampAppScaleOut
 StampFirstWake
 StampInstanceInvocation
-StampPreviewDestroyCommentedAt
 StartProjectEnvironmentPromotionRollback
 StorageUsage
 SumOpenUploadSessionBytesByAccount
