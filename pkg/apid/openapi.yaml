@@ -28983,7 +28983,7 @@ components:
       description: |
         Durable managed realtime endpoint configuration. Credentials are
         write-only and represented by a constant mask on every response.
-      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, enabled, created_at, updated_at]
+      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -28994,6 +28994,13 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token_masked: { type: string, enum: ["***"] }
         auth_token_masked: { type: string, enum: ["***"] }
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: { type: string, format: uri }
+        max_connections: { type: integer, minimum: 0, maximum: 10000 }
+        max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
+        max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -29009,6 +29016,13 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/disconnect" }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: { type: string, format: uri }
+        max_connections: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+        max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0 }
+        max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, default: 0 }
         enabled: { type: boolean, default: true }
 
     UpdateManagedRealtimeEndpointRequest:
@@ -29021,6 +29035,13 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: { type: string, format: uri }
+        max_connections: { type: integer, minimum: 0, maximum: 10000 }
+        max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
+        max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
 
     ManagedRealtimeMessageRequest:

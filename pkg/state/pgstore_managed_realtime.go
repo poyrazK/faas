@@ -48,16 +48,24 @@ func (s *PgStore) CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context,
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	if in.AllowedOrigins == nil {
+		in.AllowedOrigins = []string{}
+	}
 	row := tx.QueryRow(ctx, `
 		insert into managed_realtime_endpoints
 			(id, app_id, account_id, callback_url, connect_path, message_path,
-			 disconnect_path, callback_auth_token_sealed, auth_token_sealed, enabled)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+			 allowed_origins, max_connections, max_message_bytes,
+			 max_connection_age_seconds, enabled)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		returning id, app_id, account_id, callback_url, connect_path, message_path,
 		          disconnect_path, callback_auth_token_sealed, auth_token_sealed,
-		          enabled, created_at, updated_at
+		          allowed_origins, max_connections, max_message_bytes,
+		          max_connection_age_seconds, enabled, created_at, updated_at
 	`, in.ID, in.AppID, in.AccountID, in.CallbackURL, in.ConnectPath, in.MessagePath,
-		in.DisconnectPath, in.CallbackAuthTokenSealed, in.AuthTokenSealed, in.Enabled)
+		in.DisconnectPath, in.CallbackAuthTokenSealed, in.AuthTokenSealed,
+		in.AllowedOrigins, in.MaxConnections, in.MaxMessageBytes,
+		in.MaxConnectionAgeSeconds, in.Enabled)
 	endpoint, err := scanManagedRealtimeEndpoint(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -75,7 +83,8 @@ func (s *PgStore) ManagedRealtimeEndpointByID(ctx context.Context, id string) (M
 	row := s.pool.QueryRow(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
-		       enabled, created_at, updated_at
+		       allowed_origins, max_connections, max_message_bytes,
+		       max_connection_age_seconds, enabled, created_at, updated_at
 		  from managed_realtime_endpoints where id = $1
 	`, id)
 	e, err := scanManagedRealtimeEndpoint(row)
@@ -111,6 +120,18 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 	if p.AuthTokenSealed != nil {
 		current.AuthTokenSealed = append([]byte(nil), (*p.AuthTokenSealed)...)
 	}
+	if p.AllowedOrigins != nil {
+		current.AllowedOrigins = append([]string(nil), (*p.AllowedOrigins)...)
+	}
+	if p.MaxConnections != nil {
+		current.MaxConnections = *p.MaxConnections
+	}
+	if p.MaxMessageBytes != nil {
+		current.MaxMessageBytes = *p.MaxMessageBytes
+	}
+	if p.MaxConnectionAgeSeconds != nil {
+		current.MaxConnectionAgeSeconds = *p.MaxConnectionAgeSeconds
+	}
 	if p.Enabled != nil {
 		current.Enabled = *p.Enabled
 	}
@@ -118,13 +139,18 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 		update managed_realtime_endpoints set
 			callback_url = $2, connect_path = $3, message_path = $4,
 			disconnect_path = $5, callback_auth_token_sealed = $6,
-			auth_token_sealed = $7, enabled = $8, updated_at = now()
+			auth_token_sealed = $7, allowed_origins = $8,
+			max_connections = $9, max_message_bytes = $10,
+			max_connection_age_seconds = $11, enabled = $12, updated_at = now()
 		where id = $1
 		returning id, app_id, account_id, callback_url, connect_path, message_path,
 		          disconnect_path, callback_auth_token_sealed, auth_token_sealed,
-		          enabled, created_at, updated_at
+		          allowed_origins, max_connections, max_message_bytes,
+		          max_connection_age_seconds, enabled, created_at, updated_at
 	`, id, current.CallbackURL, current.ConnectPath, current.MessagePath,
-		current.DisconnectPath, current.CallbackAuthTokenSealed, current.AuthTokenSealed, current.Enabled)
+		current.DisconnectPath, current.CallbackAuthTokenSealed, current.AuthTokenSealed,
+		current.AllowedOrigins, current.MaxConnections, current.MaxMessageBytes,
+		current.MaxConnectionAgeSeconds, current.Enabled)
 	e, err := scanManagedRealtimeEndpoint(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -150,7 +176,8 @@ func (s *PgStore) ListManagedRealtimeEndpointsForApp(ctx context.Context, appID 
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
-		       enabled, created_at, updated_at
+		       allowed_origins, max_connections, max_message_bytes,
+		       max_connection_age_seconds, enabled, created_at, updated_at
 		  from managed_realtime_endpoints where app_id = $1 order by created_at desc
 	`, appID)
 	if err != nil {
@@ -164,7 +191,8 @@ func (s *PgStore) ListManagedRealtimeEndpointsForAccount(ctx context.Context, ac
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
-		       enabled, created_at, updated_at
+		       allowed_origins, max_connections, max_message_bytes,
+		       max_connection_age_seconds, enabled, created_at, updated_at
 		  from managed_realtime_endpoints where account_id = $1 order by created_at desc
 	`, accountID)
 	if err != nil {
@@ -178,7 +206,8 @@ func (s *PgStore) ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRe
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
-		       enabled, created_at, updated_at
+		       allowed_origins, max_connections, max_message_bytes,
+		       max_connection_age_seconds, enabled, created_at, updated_at
 		  from managed_realtime_endpoints order by created_at desc
 	`)
 	if err != nil {
@@ -193,7 +222,9 @@ type managedRealtimeEndpointScanner interface{ Scan(dest ...any) error }
 func scanManagedRealtimeEndpoint(s managedRealtimeEndpointScanner) (ManagedRealtimeEndpoint, error) {
 	var e ManagedRealtimeEndpoint
 	if err := s.Scan(&e.ID, &e.AppID, &e.AccountID, &e.CallbackURL, &e.ConnectPath, &e.MessagePath,
-		&e.DisconnectPath, &e.CallbackAuthTokenSealed, &e.AuthTokenSealed, &e.Enabled, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		&e.DisconnectPath, &e.CallbackAuthTokenSealed, &e.AuthTokenSealed, &e.AllowedOrigins,
+		&e.MaxConnections, &e.MaxMessageBytes, &e.MaxConnectionAgeSeconds,
+		&e.Enabled, &e.CreatedAt, &e.UpdatedAt); err != nil {
 		return ManagedRealtimeEndpoint{}, err
 	}
 	return e, nil

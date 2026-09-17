@@ -3050,6 +3050,10 @@ type ManagedRealtimeEndpoint struct {
 	DisconnectPath          string
 	CallbackAuthTokenSealed []byte
 	AuthTokenSealed         []byte
+	AllowedOrigins          []string
+	MaxConnections          int
+	MaxMessageBytes         int64
+	MaxConnectionAgeSeconds int64
 	Enabled                 bool
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
@@ -3062,6 +3066,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	DisconnectPath          *string
 	CallbackAuthTokenSealed *[]byte
 	AuthTokenSealed         *[]byte
+	AllowedOrigins          *[]string
+	MaxConnections          *int
+	MaxMessageBytes         *int64
+	MaxConnectionAgeSeconds *int64
 	Enabled                 *bool
 }
 

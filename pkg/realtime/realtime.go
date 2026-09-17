@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -38,7 +39,12 @@ const (
 	defaultMaxAge         = 24 * time.Hour
 	defaultCallbackWait   = 30 * time.Second
 
-	maxChannelLength = 256
+	maxChannelLength        = 256
+	maxAllowedOrigins       = 16
+	maxOriginBytes          = 2048
+	maxEndpointConnections  = 10_000
+	maxEndpointMessageBytes = 1 << 20
+	maxEndpointAge          = 7 * 24 * time.Hour
 )
 
 var (
@@ -119,6 +125,16 @@ type Endpoint struct {
 	// leaves origin policy to Authorize. Browser-facing endpoints should set an
 	// explicit allowlist.
 	CheckOrigin func(*http.Request) bool
+
+	// AllowedOrigins is an exact-match browser origin allowlist. Empty keeps
+	// the legacy allow-all behavior for backwards compatibility; non-empty
+	// values are normalized and enforced by the WebSocket upgrader.
+	AllowedOrigins []string
+
+	// Per-endpoint limits. Zero values inherit the daemon-wide Config limits.
+	MaxConnections   int
+	MaxMessageBytes  int64
+	MaxConnectionAge time.Duration
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -229,6 +245,11 @@ type connection struct {
 	closeReason string
 }
 
+type endpointState struct {
+	Endpoint
+	reserved atomic.Int64
+}
+
 // Manager is the owner of managed realtime sockets for one process/node.
 // The registry is intentionally process-local; connections cannot be moved
 // between nodes. The Snapshot method is suitable for publishing a leased
@@ -240,7 +261,7 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	endpoints sync.Map // map[string]Endpoint
+	endpoints sync.Map // map[string]*endpointState
 	mu        sync.RWMutex
 	conns     map[string]*connection
 	reserved  atomic.Int64
@@ -305,7 +326,48 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			}
 		}
 	}
-	m.endpoints.Store(e.ID, e)
+	if len(e.AllowedOrigins) > maxAllowedOrigins {
+		return fmt.Errorf("realtime: too many allowed origins")
+	}
+	allowedOrigins := make([]string, 0, len(e.AllowedOrigins))
+	for _, raw := range e.AllowedOrigins {
+		if len(raw) == 0 || len(raw) > maxOriginBytes || strings.TrimSpace(raw) != raw {
+			return fmt.Errorf("realtime: invalid allowed origin %q", raw)
+		}
+		normalized, err := normalizeOrigin(raw)
+		if err != nil {
+			return fmt.Errorf("realtime: invalid allowed origin %q: %w", raw, err)
+		}
+		for _, existing := range allowedOrigins {
+			if existing == normalized {
+				return fmt.Errorf("realtime: duplicate allowed origin %q", raw)
+			}
+		}
+		allowedOrigins = append(allowedOrigins, normalized)
+	}
+	e.AllowedOrigins = allowedOrigins
+	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
+		e.MaxConnections = m.cfg.MaxConnections
+	}
+	if e.MaxMessageBytes <= 0 || e.MaxMessageBytes > m.cfg.MaxMessageBytes {
+		e.MaxMessageBytes = m.cfg.MaxMessageBytes
+	}
+	if e.MaxConnectionAge <= 0 || e.MaxConnectionAge > m.cfg.MaxConnectionAge {
+		e.MaxConnectionAge = m.cfg.MaxConnectionAge
+	}
+	if e.MaxConnections > maxEndpointConnections {
+		e.MaxConnections = maxEndpointConnections
+	}
+	if e.MaxMessageBytes > maxEndpointMessageBytes {
+		e.MaxMessageBytes = maxEndpointMessageBytes
+	}
+	if e.MaxConnectionAge > maxEndpointAge {
+		e.MaxConnectionAge = maxEndpointAge
+	}
+	if e.CheckOrigin == nil && len(e.AllowedOrigins) > 0 {
+		e.CheckOrigin = checkAllowedOrigins(e.AllowedOrigins)
+	}
+	m.endpoints.Store(e.ID, &endpointState{Endpoint: e})
 	return nil
 }
 
@@ -342,7 +404,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	endpoint := value.(Endpoint)
+	state := value.(*endpointState)
+	endpoint := state.Endpoint
 	principal := ""
 	if endpoint.AuthToken != "" {
 		header := strings.Fields(r.Header.Get("Authorization"))
@@ -367,12 +430,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if endpoint.CheckOrigin != nil {
 		upgrader.CheckOrigin = endpoint.CheckOrigin
 	}
-	if !m.tryReserve() {
+	if !m.tryReserve(state) {
 		m.rejectedConnections.Add(1)
 		http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
 		return
 	}
-	defer m.reserved.Add(-1)
+	defer m.release(state)
 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -383,15 +446,56 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.runConnection(r.Context(), conn)
 }
 
-func (m *Manager) tryReserve() bool {
+func (m *Manager) tryReserve(state *endpointState) bool {
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
 			return false
 		}
 		if m.reserved.CompareAndSwap(current, current+1) {
+			for {
+				endpointCurrent := state.reserved.Load()
+				if endpointCurrent >= int64(state.MaxConnections) {
+					m.reserved.Add(-1)
+					return false
+				}
+				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
+					return true
+				}
+			}
+		}
+	}
+}
+
+func (m *Manager) release(state *endpointState) {
+	m.reserved.Add(-1)
+	state.reserved.Add(-1)
+}
+
+func normalizeOrigin(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("origin must be an absolute http(s) origin without paths or credentials")
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+}
+
+func checkAllowedOrigins(allowed []string) func(*http.Request) bool {
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
 			return true
 		}
+		normalized, err := normalizeOrigin(origin)
+		if err != nil {
+			return false
+		}
+		for _, candidate := range allowed {
+			if candidate == normalized {
+				return true
+			}
+		}
+		return false
 	}
 }
 
@@ -418,7 +522,7 @@ func (m *Manager) addConnection(endpoint Endpoint, principal string, ws *websock
 			Principal:  principal,
 			Connected:  now,
 			LastSeen:   now,
-			Expires:    now.Add(m.cfg.MaxConnectionAge),
+			Expires:    now.Add(endpoint.MaxConnectionAge),
 		},
 		ws:       ws,
 		endpoint: endpoint,
@@ -462,7 +566,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		return
 	}
 
-	c.ws.SetReadLimit(m.cfg.MaxMessageBytes)
+	c.ws.SetReadLimit(c.endpoint.MaxMessageBytes)
 	// Give the client until the first heartbeat plus a pong window. Setting
 	// only PongWait here would close an otherwise healthy idle socket before
 	// the first ping when Heartbeat is larger than PongWait (the defaults are
@@ -623,8 +727,8 @@ func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) er
 	if !ok {
 		return ErrConnectionNotFound
 	}
-	if int64(len(msg.Data)) > m.cfg.MaxMessageBytes {
-		return fmt.Errorf("realtime: message exceeds %d bytes", m.cfg.MaxMessageBytes)
+	if int64(len(msg.Data)) > c.endpoint.MaxMessageBytes {
+		return fmt.Errorf("realtime: message exceeds %d bytes", c.endpoint.MaxMessageBytes)
 	}
 	msg.Data = append([]byte(nil), msg.Data...)
 	select {
@@ -703,9 +807,13 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 	if !validChannel(channel) {
 		return 0, ErrInvalidChannel
 	}
-	_, endpointRegistered := m.endpoints.Load(endpointID)
-	if int64(len(msg.Data)) > m.cfg.MaxMessageBytes {
-		return 0, fmt.Errorf("realtime: message exceeds %d bytes", m.cfg.MaxMessageBytes)
+	value, endpointRegistered := m.endpoints.Load(endpointID)
+	maxMessageBytes := m.cfg.MaxMessageBytes
+	if endpointRegistered {
+		maxMessageBytes = value.(*endpointState).MaxMessageBytes
+	}
+	if int64(len(msg.Data)) > maxMessageBytes {
+		return 0, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
 	}
 	m.mu.RLock()
 	connections := make([]string, 0, len(m.conns))
@@ -715,6 +823,9 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 			continue
 		}
 		endpointHasConnection = true
+		if !endpointRegistered {
+			maxMessageBytes = c.endpoint.MaxMessageBytes
+		}
 		c.mu.RLock()
 		_, subscribed := c.channels[channel]
 		c.mu.RUnlock()

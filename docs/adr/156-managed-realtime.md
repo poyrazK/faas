@@ -110,6 +110,16 @@ keeping endpoint credentials and customer state in the control plane. A
 temporary node or database failure is logged and retried on the next pass; it
 does not prevent apid from serving requests.
 
+## Realtime v2 endpoint policy
+
+The endpoint resource also carries an exact browser-origin allowlist and
+per-endpoint connection, frame-size, and connection-age limits. Policy is
+stored with the durable endpoint row and sent through the same reconciliation
+path as callback credentials, so every owner node applies the same settings.
+Zero numeric values inherit the daemon-wide limits; explicit values are
+bounded by those global caps. Existing endpoints remain compatible because an
+empty origin list keeps the previous behavior.
+
 Connection-owner leases are ephemeral routing hints. A separate apid cleanup
 loop deletes expired rows in bounded batches (immediately at boot and every
 minute), so crashes cannot grow `managed_realtime_connection_owners` without

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -36,6 +36,10 @@ class ManagedRealtimeEndpointResponse:
     disconnect_path: str
     callback_auth_token_masked: ManagedRealtimeEndpointResponseCallbackAuthTokenMasked
     auth_token_masked: ManagedRealtimeEndpointResponseAuthTokenMasked
+    allowed_origins: list[str]
+    max_connections: int
+    max_message_bytes: int
+    max_connection_age_seconds: int
     enabled: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -60,6 +64,14 @@ class ManagedRealtimeEndpointResponse:
 
         auth_token_masked: str = self.auth_token_masked
 
+        allowed_origins = self.allowed_origins
+
+        max_connections = self.max_connections
+
+        max_message_bytes = self.max_message_bytes
+
+        max_connection_age_seconds = self.max_connection_age_seconds
+
         enabled = self.enabled
 
         created_at = self.created_at.isoformat()
@@ -79,6 +91,10 @@ class ManagedRealtimeEndpointResponse:
                 "disconnect_path": disconnect_path,
                 "callback_auth_token_masked": callback_auth_token_masked,
                 "auth_token_masked": auth_token_masked,
+                "allowed_origins": allowed_origins,
+                "max_connections": max_connections,
+                "max_message_bytes": max_message_bytes,
+                "max_connection_age_seconds": max_connection_age_seconds,
                 "enabled": enabled,
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -110,6 +126,14 @@ class ManagedRealtimeEndpointResponse:
 
         auth_token_masked = check_managed_realtime_endpoint_response_auth_token_masked(d.pop("auth_token_masked"))
 
+        allowed_origins = cast(list[str], d.pop("allowed_origins"))
+
+        max_connections = d.pop("max_connections")
+
+        max_message_bytes = d.pop("max_message_bytes")
+
+        max_connection_age_seconds = d.pop("max_connection_age_seconds")
+
         enabled = d.pop("enabled")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -126,6 +150,10 @@ class ManagedRealtimeEndpointResponse:
             disconnect_path=disconnect_path,
             callback_auth_token_masked=callback_auth_token_masked,
             auth_token_masked=auth_token_masked,
+            allowed_origins=allowed_origins,
+            max_connections=max_connections,
+            max_message_bytes=max_message_bytes,
+            max_connection_age_seconds=max_connection_age_seconds,
             enabled=enabled,
             created_at=created_at,
             updated_at=updated_at,

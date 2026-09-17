@@ -17,6 +17,10 @@ export type ManagedRealtimeEndpointResponse = {
   disconnect_path: string;
   callback_auth_token_masked: '***';
   auth_token_masked: '***';
+  allowed_origins: Array<string>;
+  max_connections: number;
+  max_message_bytes: number;
+  max_connection_age_seconds: number;
   enabled: boolean;
   created_at: string;
   updated_at: string;

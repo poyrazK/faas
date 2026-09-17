@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -58,6 +59,22 @@ func validateRealtimeToken(token, field string, required bool) *api.Problem {
 	return nil
 }
 
+func validateRealtimePolicy(origins []string, maxConnections int, maxMessageBytes, maxConnectionAgeSeconds int64) *api.Problem {
+	if err := api.ValidateRealtimeOrigins(origins); err != nil {
+		return api.ErrRealtimeInvalid(err.Error())
+	}
+	if maxConnections < 0 || maxConnections > api.RealtimeMaxConnections {
+		return api.ErrRealtimeInvalid(fmt.Sprintf("max_connections must be between 0 and %d", api.RealtimeMaxConnections))
+	}
+	if maxMessageBytes < 0 || maxMessageBytes > api.RealtimeMessageMaxBytes {
+		return api.ErrRealtimeInvalid(fmt.Sprintf("max_message_bytes must be between 0 and %d", api.RealtimeMessageMaxBytes))
+	}
+	if maxConnectionAgeSeconds < 0 || maxConnectionAgeSeconds > api.RealtimeMaxConnectionAgeSeconds {
+		return api.ErrRealtimeInvalid(fmt.Sprintf("max_connection_age_seconds must be between 0 and %d", api.RealtimeMaxConnectionAgeSeconds))
+	}
+	return nil
+}
+
 func sealRealtimeToken(plaintext, label string) ([]byte, *api.Problem) {
 	if plaintext == "" {
 		return []byte{}, nil
@@ -78,7 +95,8 @@ func sealRealtimeToken(plaintext, label string) ([]byte, *api.Problem) {
 
 func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealtimeEndpointResponse {
 	out := api.ManagedRealtimeEndpointResponseFromRow(e.ID, e.AppID, e.AccountID, e.CallbackURL,
-		e.ConnectPath, e.MessagePath, e.DisconnectPath, e.Enabled, e.CreatedAt, e.UpdatedAt)
+		e.ConnectPath, e.MessagePath, e.DisconnectPath, e.AllowedOrigins, e.MaxConnections,
+		e.MaxMessageBytes, e.MaxConnectionAgeSeconds, e.Enabled, e.CreatedAt, e.UpdatedAt)
 	if len(e.AuthTokenSealed) == 0 {
 		out.AuthTokenMasked = ""
 	}
@@ -108,6 +126,10 @@ func (s *server) syncManagedRealtimeEndpoint(ctx context.Context, row state.Mana
 		CallbackURL: row.CallbackURL, ConnectPath: row.ConnectPath,
 		MessagePath: row.MessagePath, DisconnectPath: row.DisconnectPath,
 		CallbackAuthToken: string(callbackAuth), AuthToken: string(authToken),
+		AllowedOrigins:   append([]string(nil), row.AllowedOrigins...),
+		MaxConnections:   row.MaxConnections,
+		MaxMessageBytes:  row.MaxMessageBytes,
+		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
 	})
 }
 
@@ -194,6 +216,10 @@ func (s *server) createManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := validateRealtimePolicy(req.AllowedOrigins, req.MaxConnections, req.MaxMessageBytes, req.MaxConnectionAgeSeconds); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	connectPath, prob := normalizeRealtimePath(req.ConnectPath, "connect_path", api.DefaultRealtimeConnectPath)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -231,7 +257,10 @@ func (s *server) createManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 	row, err := store.CreateManagedRealtimeEndpointIfUnderQuota(r.Context(), state.ManagedRealtimeEndpoint{
 		AppID: app.ID, AccountID: acct.ID, CallbackURL: req.CallbackURL,
 		ConnectPath: connectPath, MessagePath: messagePath, DisconnectPath: disconnectPath,
-		CallbackAuthTokenSealed: callbackSealed, AuthTokenSealed: authSealed, Enabled: enabled,
+		CallbackAuthTokenSealed: callbackSealed, AuthTokenSealed: authSealed,
+		AllowedOrigins: append([]string(nil), req.AllowedOrigins...),
+		MaxConnections: req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
+		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled,
 	}, limits.EndpointsPerApp, limits.EndpointsPerAccount)
 	if err != nil {
 		var quotaErr *state.ManagedRealtimeEndpointQuotaError
@@ -340,6 +369,35 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 			return
 		}
 		params.AuthTokenSealed = &sealed
+	}
+	if req.AllowedOrigins != nil {
+		if prob := validateRealtimePolicy(*req.AllowedOrigins, 0, 0, 0); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		origins := append([]string(nil), (*req.AllowedOrigins)...)
+		params.AllowedOrigins = &origins
+	}
+	if req.MaxConnections != nil {
+		if prob := validateRealtimePolicy(nil, *req.MaxConnections, 0, 0); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		params.MaxConnections = req.MaxConnections
+	}
+	if req.MaxMessageBytes != nil {
+		if prob := validateRealtimePolicy(nil, 0, *req.MaxMessageBytes, 0); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		params.MaxMessageBytes = req.MaxMessageBytes
+	}
+	if req.MaxConnectionAgeSeconds != nil {
+		if prob := validateRealtimePolicy(nil, 0, 0, *req.MaxConnectionAgeSeconds); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		params.MaxConnectionAgeSeconds = req.MaxConnectionAgeSeconds
 	}
 	params.Enabled = req.Enabled
 	row, err := store.UpdateManagedRealtimeEndpoint(r.Context(), existing.ID, params)
