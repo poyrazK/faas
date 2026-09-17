@@ -5494,11 +5494,14 @@ type SetAppStaticEgressIPRequest struct {
 // AppPrivateNetworkAttachment describes the provider-neutral private network
 // attachment intent for an app. Status is pending until a connector marks the
 // attachment ready; pending and error must remain fail-closed for traffic.
+// Address is the stable app member address when the Gregale-owned fabric is
+// enabled; it is omitted for external/provider route-only attachments.
 type AppPrivateNetworkAttachment struct {
 	ID           string     `json:"id"`
 	NetworkID    string     `json:"network_id"`
 	Region       string     `json:"region"`
 	CIDRs        []string   `json:"cidrs"`
+	Address      string     `json:"address,omitempty"`
 	Status       string     `json:"status"`
 	StatusDetail string     `json:"status_detail,omitempty"`
 	CreatedAt    *time.Time `json:"created_at,omitempty"`

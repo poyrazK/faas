@@ -18,8 +18,13 @@ addresses (network+1 is reserved as the gateway; allocation starts at
 network+2). When the fabric flag is enabled, schedd first asks every vmmd
 hosting the app to reconcile a dedicated, account-scoped host bridge for that
 network, then activates app routes. A bridge failure leaves the attachment in
-`error` and traffic blocked. Cross-node transport and workload address
-programming are the next runtime layer. Set
+`error` and traffic blocked. Ready Gregale-owned attachments now get a
+node-local private veth side-link into the `gpn-*` bridge, with the stable
+network member address allocated at attach time. Private ingress is DNATed to
+the guest's fixed `10.0.0.2:8080` contract and guest-originated private traffic
+is SNATed back to that member address; the existing `br-tenants` veth remains
+the public-egress path. Cross-node transport is still a separate follow-up.
+Set
 `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the resource API; app
 attachment remains separately gated by
 `FAAS_PRIVATE_NETWORK_ENABLED=1` and stays fail-closed until reconciliation.

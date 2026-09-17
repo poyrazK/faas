@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,7 +48,7 @@ func (s *server) getAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 	}
 	var out *api.AppPrivateNetworkAttachment
 	if err == nil {
-		converted := privateNetworkAttachmentResponse(attachment)
+		converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID))
 		out = &converted
 	}
 	writeJSON(w, http.StatusOK, api.AppPrivateNetworkAttachmentResponse{
@@ -170,7 +171,7 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		"app_id": app.ID, "network_id": attachment.NetworkID, "region": attachment.Region,
 		"cidrs": prefixesToStrings(attachment.CIDRs), "status": attachment.Status,
 	})
-	converted := privateNetworkAttachmentResponse(attachment)
+	converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID))
 	writeJSON(w, http.StatusAccepted, api.AppPrivateNetworkAttachmentResponse{
 		FeatureEnabled: true,
 		PlanAllowed:    limits.PrivateNetworkAllowed,
@@ -217,12 +218,13 @@ func (s *server) clearAppPrivateNetworkAttachment(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment) api.AppPrivateNetworkAttachment {
+func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment, address string) api.AppPrivateNetworkAttachment {
 	out := api.AppPrivateNetworkAttachment{
 		ID:           in.ID,
 		NetworkID:    in.NetworkID,
 		Region:       in.Region,
 		CIDRs:        prefixesToStrings(in.CIDRs),
+		Address:      address,
 		Status:       in.Status,
 		StatusDetail: in.StatusDetail,
 	}
@@ -235,6 +237,21 @@ func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment) api.
 		out.UpdatedAt = &t
 	}
 	return out
+}
+
+func privateNetworkAddress(ctx context.Context, store state.Store, accountID, appID, networkID string) string {
+	if !api.PrivateNetworkFabricEnabled() {
+		return ""
+	}
+	fabric, ok := store.(state.PrivateNetworkStore)
+	if !ok || networkID == "" {
+		return ""
+	}
+	address, err := fabric.AllocatePrivateNetworkAddress(ctx, accountID, networkID, "app", appID)
+	if err != nil {
+		return ""
+	}
+	return address.Address.String()
 }
 
 func prefixesToStrings(prefixes []netip.Prefix) []string {

@@ -76,8 +76,8 @@ type FabricPlan struct {
 
 // BuildFabricPlan returns the host bridge and gateway plan for a network.
 // The bridge is deliberately dedicated to this account/network. Cross-node
-// transport and workload attachment are separate operations layered on this
-// stable identity.
+// transport remains separate; vmmd layers workload side-link attachment on
+// this stable identity when a ready app wake carries an allocated member IP.
 func BuildFabricPlan(spec FabricSpec) (FabricPlan, error) {
 	validated, err := NewFabricSpecFromValues(spec.AccountID, spec.NetworkID, spec.Region, spec.CIDR.String())
 	if err != nil {

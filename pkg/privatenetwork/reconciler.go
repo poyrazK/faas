@@ -67,6 +67,15 @@ type RouteReportingApplier interface {
 	ApplyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix) (RouteApplyReport, error)
 }
 
+// AttachmentRouteReportingApplier is the optional Gregale-owned extension.
+// It carries the network identity and stable member address so an already-live
+// workload can receive the same private side-link as a fresh wake. External
+// provider attachments continue through RouteReportingApplier unchanged.
+type AttachmentRouteReportingApplier interface {
+	RouteReportingApplier
+	ApplyAttachmentWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (RouteApplyReport, error)
+}
+
 // FabricApplier prepares the node-local realization of a Gregale-owned
 // network before route policy is published. It is optional so external
 // provider attachments and older test doubles can keep using RouteApplier
@@ -215,7 +224,9 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 					break
 				}
 			}
-			if reporting, ok := r.applier.(RouteReportingApplier); ok {
+			if reporting, ok := r.applier.(AttachmentRouteReportingApplier); ok {
+				routeReport, checkErr = reporting.ApplyAttachmentWithReport(ctx, attachment)
+			} else if reporting, ok := r.applier.(RouteReportingApplier); ok {
 				routeReport, checkErr = reporting.ApplyWithReport(ctx, attachment.AppID, attachment.CIDRs)
 			} else {
 				checkErr = r.applier.Apply(ctx, attachment.AppID, attachment.CIDRs)

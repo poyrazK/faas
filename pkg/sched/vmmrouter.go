@@ -684,6 +684,23 @@ func (r *VMMRouter) UpdatePrivateNetwork(ctx context.Context, nodeID, appID stri
 	return updater.UpdatePrivateNetwork(ctx, appID, cidrs)
 }
 
+// UpdatePrivateNetworkAttachment is the Gregale-owned live dataplane update.
+// It carries the network/member identity needed to add or remove the private
+// side-link without recycling the guest.
+func (r *VMMRouter) UpdatePrivateNetworkAttachment(ctx context.Context, nodeID, appID, networkID string, address netip.Addr, cidrs []netip.Prefix) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdatePrivateNetworkAttachment(context.Context, string, string, netip.Addr, []netip.Prefix) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network attachment update unsupported by node %q", nodeID)
+	}
+	return updater.UpdatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs)
+}
+
 // ReconcilePrivateNetworkFabric routes the node-local Gregale bridge
 // preparation to one compute node. It remains an additive capability so
 // existing RoutedVMM test doubles do not need a new method.

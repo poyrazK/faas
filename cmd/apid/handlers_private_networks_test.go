@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 009
 func TestPrivateNetworkFabricLifecycle(t *testing.T) {
 	t.Setenv("FAAS_PRIVATE_NETWORK_FABRIC_ENABLED", "true")
 	e := setup(t, api.PlanScale)
@@ -50,6 +51,13 @@ func TestPrivateNetworkFabricLifecycle(t *testing.T) {
 	rec = e.do(t, "PUT", "/v1/apps/network-attached/network/private", api.AppPrivateNetworkAttachmentRequest{NetworkID: created.ID}, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("attachment status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var attachmentResp api.AppPrivateNetworkAttachmentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &attachmentResp); err != nil {
+		t.Fatalf("decode attachment response: %v", err)
+	}
+	if attachmentResp.Attachment == nil || attachmentResp.Attachment.Address != "10.42.1.2" {
+		t.Fatalf("attachment address = %+v, want stable member 10.42.1.2", attachmentResp.Attachment)
 	}
 	if err := e.store.DeletePrivateNetwork(t.Context(), e.acct.ID, created.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("delete attached network err = %v, want conflict", err)

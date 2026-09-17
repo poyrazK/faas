@@ -29452,6 +29452,10 @@ components:
             type: string
             format: ipv4-cidr
           example: [10.20.0.0/16, 10.30.0.0/16]
+        address:
+          type: string
+          format: ipv4
+          description: Stable Gregale member address for this app when the fabric is enabled.
         status:
           type: string
           enum: [pending, ready, error]

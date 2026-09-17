@@ -23,6 +23,13 @@ type PrivateNetworkRouter interface {
 	UpdatePrivateNetwork(context.Context, string, string, []netip.Prefix) error
 }
 
+// PrivateNetworkAttachmentRouter is the live Gregale-owned dataplane seam.
+// The extra identity lets vmmd attach an existing netns to its gpn-* bridge;
+// provider route-only updates retain the smaller PrivateNetworkRouter shape.
+type PrivateNetworkAttachmentRouter interface {
+	UpdatePrivateNetworkAttachment(context.Context, string, string, string, netip.Addr, []netip.Prefix) error
+}
+
 // PrivateNetworkFabricRouter is the additive vmmd capability used to prepare
 // Gregale-owned network bridges on each live compute node.
 type PrivateNetworkFabricRouter interface {
@@ -55,6 +62,30 @@ func (a *PrivateNetworkRouteApplier) Apply(ctx context.Context, appID string, ci
 // error when one or more nodes fail, allowing operators to see which node is
 // unhealthy while the attachment remains fail-closed.
 func (a *PrivateNetworkRouteApplier) ApplyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix) (privatenetwork.RouteApplyReport, error) {
+	return a.applyWithReport(ctx, appID, cidrs, "", netip.Addr{})
+}
+
+func (a *PrivateNetworkRouteApplier) ApplyAttachmentWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (privatenetwork.RouteApplyReport, error) {
+	if api.PrivateNetworkFabricEnabled() {
+		if fabric, ok := a.store.(state.PrivateNetworkStore); ok {
+			if _, err := fabric.GetPrivateNetwork(ctx, attachment.AccountID, attachment.NetworkID); err == nil {
+				address, allocErr := fabric.AllocatePrivateNetworkAddress(ctx, attachment.AccountID, attachment.NetworkID, "app", attachment.AppID)
+				if allocErr != nil {
+					return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network address: %w", allocErr)
+				}
+				if _, ok := a.router.(PrivateNetworkAttachmentRouter); !ok {
+					return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network attachment update unsupported")
+				}
+				return a.applyWithReport(ctx, attachment.AppID, attachment.CIDRs, attachment.NetworkID, address.Address)
+			} else if !errors.Is(err, state.ErrNotFound) {
+				return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network lookup: %w", err)
+			}
+		}
+	}
+	return a.ApplyWithReport(ctx, attachment.AppID, attachment.CIDRs)
+}
+
+func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix, networkID string, address netip.Addr) (privatenetwork.RouteApplyReport, error) {
 	rows, err := a.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
 		return privatenetwork.RouteApplyReport{}, err
@@ -74,13 +105,19 @@ func (a *PrivateNetworkRouteApplier) ApplyWithReport(ctx context.Context, appID 
 	report := privatenetwork.RouteApplyReport{Nodes: make([]privatenetwork.RouteNodeObservation, 0, len(nodes))}
 	var errs []error
 	for _, nodeID := range nodes {
-		if err := a.router.UpdatePrivateNetwork(ctx, nodeID, appID, cidrs); err != nil {
-			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
-			a.log.Warn("schedd: private network vmmd update failed", "app", appID, "node", nodeID, "err", err)
+		var applyErr error
+		if networkID != "" {
+			applyErr = a.router.(PrivateNetworkAttachmentRouter).UpdatePrivateNetworkAttachment(ctx, nodeID, appID, networkID, address, cidrs)
+		} else {
+			applyErr = a.router.UpdatePrivateNetwork(ctx, nodeID, appID, cidrs)
+		}
+		if applyErr != nil {
+			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, applyErr))
+			a.log.Warn("schedd: private network vmmd update failed", "app", appID, "node", nodeID, "err", applyErr)
 			report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{
 				NodeID: nodeID,
 				Status: api.PrivateNetworkAttachmentStatusError,
-				Detail: err.Error(),
+				Detail: applyErr.Error(),
 			})
 			continue
 		}

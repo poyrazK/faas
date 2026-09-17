@@ -210,9 +210,11 @@ service Vmmd {
   rpc UpdateStaticEgressIP(UpdateStaticEgressIPRequest) returns (UpdateStaticEgressIPAck);
 
   // UpdatePrivateNetwork applies provider-verified destination CIDRs to every
-  // live instance of an app without tearing down its network namespace. An
-  // empty list removes private-network connectivity. Public egress policy is
-  // unchanged; the CIDRs are an additive, explicit accept-and-route set.
+  // live instance of an app without tearing down its network namespace. For a
+  // Gregale-owned attachment, the optional identity fields also add/remove
+  // the node-local private side-link. An empty list removes private-network
+  // connectivity. Public egress policy is unchanged; the CIDRs are an
+  // additive, explicit accept-and-route set.
   rpc UpdatePrivateNetwork(UpdatePrivateNetworkRequest) returns (UpdatePrivateNetworkAck);
 
   // ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
@@ -568,6 +570,13 @@ message AppSpec {
   // scheduler boundary. The list is additive to egress_allowlist and does
   // not change public internet access.
   repeated string private_network_cidrs = 19;
+  // private_network_id identifies a Gregale-owned network. Empty preserves
+  // the provider-verified route-only path for older callers.
+  string private_network_id = 20;
+  // private_network_address is the stable app member address allocated by
+  // apid. vmmd validates that it belongs to the first private CIDR before
+  // attaching the workload side-link.
+  string private_network_address = 21;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1198,6 +1207,11 @@ message UpdateStaticEgressIPAck {}
 message UpdatePrivateNetworkRequest {
   string app_id = 1;
   repeated string private_network_cidrs = 2;
+  // Optional Gregale-owned identity. When both fields are present vmmd
+  // attaches the live instances to the node-local gpn-* bridge; empty keeps
+  // the legacy provider route-only update shape.
+  string private_network_id = 3;
+  string private_network_address = 4;
 }
 
 // UpdatePrivateNetworkAck is the empty success response.
