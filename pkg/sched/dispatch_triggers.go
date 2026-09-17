@@ -558,6 +558,8 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			"trigger_id", t.ID.String(),
 			"err", postErr)
 		l.markRetryAll(ctx, claimed, postErr.Error(), store)
+		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(claimed))
+		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6: SKIP LOCKED may return fewer rows
 		// than len(batch). Nack only the records we actually
 		// claimed — the rest stay in poller.inFlight and re-poll
@@ -579,6 +581,8 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			ids = append(ids, c.ID.String())
 		}
 		l.deadLetterAll(ctx, t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
+		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(claimed))
+		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6 (paired with the post-error path
 		// above): same partial-claim guard — only Nack the
 		// item_identifiers that have a corresponding
@@ -643,6 +647,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			retryAttempts = append(retryAttempts, c.Attempts+1)
 		}
 	}
+	// Record terminal dispositions and end-to-end consumer latency before
+	// applying the durable state transitions below. This keeps queue retry
+	// and dead-letter pressure visible even when the subsequent broker ack
+	// call fails and the lease reaper must recover the row.
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeSucceeded, len(succeedIDs))
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryIDs))
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(dlqIDs))
+	l.observeESMRecordProcessingBatch(t.Kind, claimed)
 
 	if len(succeedIDs) > 0 {
 		for _, id := range succeedIDs {
@@ -929,6 +941,12 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 // tick.
 func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource, t sqlc.Trigger, batch []SourceRecord, store storeLike) {
 	items := batchItemIDs(batch)
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(batch))
+	for _, record := range batch {
+		if !record.ReceivedAt.IsZero() {
+			l.observeESMRecordProcessing(t.Kind, time.Since(record.ReceivedAt).Seconds())
+		}
+	}
 	l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
 	if terminal, ok := poller.(terminalNacker); ok {
 		// Queue rows have not yet produced trigger_records, so Ack would
@@ -1195,6 +1213,32 @@ func (l *Loop) observeESMLag(source, shard string, lagSeconds float64) {
 		return
 	}
 	l.ops.ObserveESMLag(source, shard, lagSeconds)
+}
+
+// observeESMRecordOutcome forwards the terminal disposition counters while
+// keeping the dispatch path nil-safe for lightweight schedd test loops.
+func (l *Loop) observeESMRecordOutcome(source, outcome string, n int) {
+	if l.ops == nil {
+		return
+	}
+	l.ops.ObserveESMRecordOutcome(source, outcome, n)
+}
+
+// observeESMRecordProcessing forwards the end-to-end consumer latency
+// observation. The wire helper owns the finite-value and closed-label guards.
+func (l *Loop) observeESMRecordProcessing(source string, seconds float64) {
+	if l.ops == nil {
+		return
+	}
+	l.ops.ObserveESMRecordProcessing(source, seconds)
+}
+
+func (l *Loop) observeESMRecordProcessingBatch(source string, records []sqlc.TriggerRecord) {
+	for _, record := range records {
+		if record.ReceivedAt.Valid {
+			l.observeESMRecordProcessing(source, time.Since(record.ReceivedAt.Time).Seconds())
+		}
+	}
 }
 
 // shardKeyFor derives the shard label for the lag metric from
