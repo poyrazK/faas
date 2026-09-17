@@ -12,7 +12,7 @@
        optional partial-refresh use case (the page is rendered
        server-side; a future PR can add hx-get for live refresh). -->
   <title>{{.Title}} — onebox faas</title>
-  <script src="https://unpkg.com/htmx.org@2.0.4" nonce="{{.Nonce}}" defer></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
   <style nonce="{{.Nonce}}">
     :root { color-scheme: light dark; }
     body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }

@@ -40,16 +40,11 @@ var BuildCSPForTest = buildCSP
 var MintNonceForTest = mintNonce
 
 // cspScriptHosts is the additional script-src host set beyond 'self'
-// and the per-request nonce. Issue #249 keeps the dashboard's
-// htmx.org@2.0.4 and htmx-ext-sse@2.2.2 scripts served from
-// unpkg.com — the alternative (self-hosting) is tracked as a future
-// ADR.
-//
-// TODO(security): pin SRI hashes on the <script src="…unpkg.com…">
-// tags so a compromised unpkg.com response cannot inject arbitrary
-// script. The hashes are content-addressed, so they stay valid
-// across the version pin (htmx.org@2.0.4 / htmx-ext-sse@2.2.2) and
-// the SRI check fails if the file is tampered with on the CDN.
+// and the per-request nonce. The dashboard keeps the small htmx
+// dependency on unpkg.com for now, but every external script tag is
+// pinned with a sha384 SRI digest and crossorigin="anonymous" in
+// pkg/dashboard/templates. The dashboard package test walks every
+// embedded template and rejects an unpinned external script.
 var cspScriptHosts = []string{"https://unpkg.com"}
 
 // cspStyleHosts permits the SRI-pinned Swagger UI stylesheet on /docs.
