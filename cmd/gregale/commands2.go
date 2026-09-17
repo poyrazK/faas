@@ -205,7 +205,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -215,6 +215,8 @@ func cmdApp(args []string) int {
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
+	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
+	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
 	// Pro/Scale only — the API rejects Hobby/Free with 403
@@ -408,6 +410,13 @@ func cmdApp(args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
+	if explicit["concurrency-overflow"] || explicit["max-queue-wait-ms"] {
+		policy, err := cliScalingPolicyPatch(ctx, client, slug, *concurrencyOverflow, *maxQueueWaitMS, explicit["concurrency-overflow"], explicit["max-queue-wait-ms"])
+		if err != nil {
+			return printErr("Invalid concurrency policy", err)
+		}
+		req.ScalingPolicy = policy
+	}
 	if explicit["idle"] {
 		v := *idle
 		req.IdleTimeoutS = &v
@@ -574,7 +583,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -592,6 +601,16 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "resource profile:", a.ResourceProfile)
 		}
 		fmt.Printf("%-30s %d\n", "max concurrency:", a.MaxConcurrency)
+		if a.ScalingPolicy == nil || a.ScalingPolicy.ConcurrencyOverflow == "" {
+			fmt.Printf("%-30s %s\n", "concurrency overflow:", api.ConcurrencyOverflowQueue)
+		} else {
+			fmt.Printf("%-30s %s\n", "concurrency overflow:", a.ScalingPolicy.ConcurrencyOverflow)
+		}
+		if a.ScalingPolicy != nil && a.ScalingPolicy.MaxQueueWaitMS > 0 {
+			fmt.Printf("%-30s %d ms\n", "max queue wait:", a.ScalingPolicy.MaxQueueWaitMS)
+		} else {
+			fmt.Printf("%-30s %s\n", "max queue wait:", "plan default")
+		}
 		// Issue #559: surface the platform-advertised per-VM
 		// concurrency bound for the app's plan. Distinct from
 		// `max concurrency` above (the per-app instance cap).
@@ -1051,12 +1070,52 @@ type manifestScalingClient interface {
 	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
 }
 
+// cliScalingPolicyPatch builds a complete replacement policy for the public
+// PATCH shape. The API intentionally treats scaling_policy as a replacement,
+// so the CLI must read and preserve existing fields before changing only the
+// concurrency admission knobs.
+func cliScalingPolicyPatch(ctx context.Context, client interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+}, slug, overflow string, maxQueueWaitMS int, setOverflow, setMaxQueueWait bool) (*api.ScalingPolicy, error) {
+	if setOverflow && overflow != api.ConcurrencyOverflowQueue && overflow != api.ConcurrencyOverflowDrop {
+		return nil, fmt.Errorf("--concurrency-overflow must be %q or %q; got %q", api.ConcurrencyOverflowQueue, api.ConcurrencyOverflowDrop, overflow)
+	}
+	if setMaxQueueWait && (maxQueueWaitMS < 0 || maxQueueWaitMS > api.MaxConcurrencyQueueWaitMS) {
+		return nil, fmt.Errorf("--max-queue-wait-ms must be between 0 and %d; got %d", api.MaxConcurrencyQueueWaitMS, maxQueueWaitMS)
+	}
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return nil, fmt.Errorf("read app before updating concurrency policy: %w", err)
+	}
+	policy := &api.ScalingPolicy{
+		MinInstances:      app.MinInstances,
+		ScaleOutCooldownS: 5,
+		ScaleInCooldownS:  60,
+	}
+	if app.ScalingPolicy != nil {
+		copyPolicy := *app.ScalingPolicy
+		if app.ScalingPolicy.Target != nil {
+			target := *app.ScalingPolicy.Target
+			copyPolicy.Target = &target
+		}
+		policy = &copyPolicy
+	}
+	if setOverflow {
+		policy.ConcurrencyOverflow = overflow
+	}
+	if setMaxQueueWait {
+		policy.MaxQueueWaitMS = maxQueueWaitMS
+	}
+	return policy, nil
+}
+
 func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
 	if a.MinInstances != b.MinInstances || a.MaxInstances != b.MaxInstances ||
-		a.ScaleOutCooldownS != b.ScaleOutCooldownS || a.ScaleInCooldownS != b.ScaleInCooldownS {
+		a.ScaleOutCooldownS != b.ScaleOutCooldownS || a.ScaleInCooldownS != b.ScaleInCooldownS ||
+		a.ConcurrencyOverflow != b.ConcurrencyOverflow || a.MaxQueueWaitMS != b.MaxQueueWaitMS {
 		return false
 	}
 	if a.Target == nil || b.Target == nil {

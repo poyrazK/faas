@@ -531,6 +531,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}":                                                        "GetManagedRealtimeEndpoint",
 	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":                                                      "UpdateManagedRealtimeEndpoint",
 	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}":                                                     "DeleteManagedRealtimeEndpoint",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/connections":                                            "ListManagedRealtimeConnections",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate":                                           "RotateManagedRealtimeAuth",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize":                                  "FinalizeManagedRealtimeAuth",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send":                      "SendManagedRealtimeConnection",

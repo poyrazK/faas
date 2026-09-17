@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -24,6 +25,15 @@ type realtimeOwner interface {
 	Unsubscribe(context.Context, string, string, string) error
 	Publish(context.Context, string, string, realtime.Message) (int, error)
 }
+
+type realtimeConnectionInventory interface {
+	ListConnectionInventory(context.Context) (realtime.ConnectionInventory, error)
+}
+
+const (
+	managedRealtimeConnectionsLimitDefault = 100
+	managedRealtimeConnectionsLimitMax     = 1000
+)
 
 // localRealtimeOwner adapts the Unix management client to realtimeOwner. The
 // local adapter verifies the connection's endpoint ID before issuing the
@@ -120,6 +130,80 @@ func (s *server) managedRealtimeEndpointAction(w http.ResponseWriter, r *http.Re
 		return state.ManagedRealtimeEndpoint{}, nil, false
 	}
 	return row, owner, true
+}
+
+func (s *server) listManagedRealtimeConnections(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
+	if !ok {
+		return
+	}
+	lister, ok := s.realtimeOwner.(realtimeConnectionInventory)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
+		return
+	}
+	prob, limit := api.ParseLimit(r.URL.Query().Get("limit"), managedRealtimeConnectionsLimitDefault, managedRealtimeConnectionsLimitMax, "connections")
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	channel := r.URL.Query().Get("channel")
+	if channel != "" {
+		if problem := validateManagedRealtimeChannel(channel); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
+	inventory, err := lister.ListConnectionInventory(r.Context())
+	if err != nil && inventory.NodesQueried == 0 {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
+		return
+	}
+	sort.Slice(inventory.Connections, func(i, j int) bool {
+		return inventory.Connections[i].ID < inventory.Connections[j].ID
+	})
+	connections := make([]api.ManagedRealtimeConnectionResponse, 0, min(limit, len(inventory.Connections)))
+	truncated := false
+	for _, connection := range inventory.Connections {
+		if connection.EndpointID != row.ID || connection.AppID != row.AppID || connection.AccountID != acct.ID {
+			continue
+		}
+		if channel != "" && !realtimeConnectionHasChannel(connection, channel) {
+			continue
+		}
+		if len(connections) == limit {
+			truncated = true
+			break
+		}
+		connections = append(connections, api.ManagedRealtimeConnectionResponse{
+			ID:          connection.ID,
+			EndpointID:  connection.EndpointID,
+			AppID:       connection.AppID,
+			AccountID:   connection.AccountID,
+			Principal:   connection.Principal,
+			ConnectedAt: api.FormatAlertTime(connection.Connected),
+			LastSeenAt:  api.FormatAlertTime(connection.LastSeen),
+			ExpiresAt:   api.FormatAlertTime(connection.Expires),
+			Channels:    append([]string(nil), connection.Channels...),
+		})
+	}
+	writeJSON(w, http.StatusOK, api.ManagedRealtimeConnectionListResponse{
+		Connections:      connections,
+		Limit:            limit,
+		Truncated:        truncated,
+		Partial:          inventory.NodesUnavailable > 0,
+		NodesQueried:     inventory.NodesQueried,
+		NodesUnavailable: inventory.NodesUnavailable,
+	})
+}
+
+func realtimeConnectionHasChannel(connection realtime.ConnectionInfo, channel string) bool {
+	for _, value := range connection.Channels {
+		if value == channel {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) sendManagedRealtimeConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {

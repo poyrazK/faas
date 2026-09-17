@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -14,12 +15,17 @@ import (
 
 type recordingRealtimeOwner struct {
 	sent            []realtime.Message
+	connections     []realtime.ConnectionInfo
 	closed          []string
 	subscriptions   []string
 	unsubscriptions []string
 	published       []string
 	queued          int
 	err             error
+}
+
+func (o *recordingRealtimeOwner) ListConnectionInventory(context.Context) (realtime.ConnectionInventory, error) {
+	return realtime.ConnectionInventory{Connections: append([]realtime.ConnectionInfo(nil), o.connections...), NodesQueried: 1}, nil
 }
 
 func (o *recordingRealtimeOwner) Send(_ context.Context, _, _ string, message realtime.Message) error {
@@ -93,6 +99,38 @@ func TestManagedRealtimeConnectionOperationsRouteToOwner(t *testing.T) {
 	}
 	if len(owner.closed) != 1 || len(owner.subscriptions) != 1 || len(owner.unsubscriptions) != 1 || len(owner.published) != 1 || owner.published[0] != "updates" {
 		t.Fatalf("owner calls: %+v", owner)
+	}
+}
+
+func TestManagedRealtimeConnectionInventoryFiltersAndReportsSnapshot(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	app, err := e.store.AppBySlug(context.Background(), "rt-actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	e.s.WithRealtimeOwner(&recordingRealtimeOwner{connections: []realtime.ConnectionInfo{
+		{ID: "conn-b", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-b", Connected: connected, LastSeen: connected.Add(time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-b"}},
+		{ID: "conn-a", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-a", Connected: connected, LastSeen: connected.Add(2 * time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-a"}},
+		{ID: "conn-c", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-c", Connected: connected, LastSeen: connected.Add(3 * time.Minute), Expires: connected.Add(time.Hour), Channels: []string{"room-a"}},
+		{ID: "other-endpoint", EndpointID: "other", AppID: app.ID, AccountID: e.acct.ID, Principal: "ignored", Connected: connected, LastSeen: connected, Expires: connected},
+		{ID: "other-account", EndpointID: endpointID, AppID: app.ID, AccountID: "other-account", Principal: "ignored", Connected: connected, LastSeen: connected, Expires: connected},
+	}})
+	rec := e.do(t, http.MethodGet, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections?channel=room-a&limit=1", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	var response api.ManagedRealtimeConnectionListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Limit != 1 || response.Partial || response.NodesQueried != 1 || response.NodesUnavailable != 0 || len(response.Connections) != 1 {
+		t.Fatalf("inventory metadata: %+v", response)
+	}
+	connection := response.Connections[0]
+	if connection.ID != "conn-a" || connection.Principal != "user-a" || len(connection.Channels) != 1 || connection.Channels[0] != "room-a" || !response.Truncated {
+		t.Fatalf("inventory connection: %+v", connection)
 	}
 }
 

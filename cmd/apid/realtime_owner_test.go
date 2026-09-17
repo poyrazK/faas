@@ -19,6 +19,7 @@ type fakeRealtimeNode struct {
 	registered  int
 	removed     int
 	connReads   int
+	connErr     error
 }
 
 func (f *fakeRealtimeNode) Send(context.Context, string, string, realtime.Message) error {
@@ -43,6 +44,9 @@ func (f *fakeRealtimeNode) Publish(context.Context, string, string, realtime.Mes
 }
 func (f *fakeRealtimeNode) Connections(context.Context) ([]realtime.ConnectionInfo, error) {
 	f.connReads++
+	if f.connErr != nil {
+		return nil, f.connErr
+	}
 	return append([]realtime.ConnectionInfo(nil), f.connections...), nil
 }
 func (f *fakeRealtimeNode) RegisterEndpoint(context.Context, realtime.Endpoint) error {
@@ -133,5 +137,43 @@ func TestLeasedRealtimeOwnerBroadcastsPublishAndEndpoint(t *testing.T) {
 		if fake.registered != 1 || fake.pubs != 1 {
 			t.Errorf("node %d registered=%d pubs=%d", i, fake.registered, fake.pubs)
 		}
+	}
+}
+
+func TestLeasedRealtimeOwnerListsPartialConnectionInventory(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	nodeA, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-a", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeB, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-b", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeA := &fakeRealtimeNode{connections: []realtime.ConnectionInfo{{ID: "conn-a", EndpointID: "endpoint-1"}}}
+	fakeB := &fakeRealtimeNode{connErr: errors.New("node unavailable")}
+	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
+	owner.clientFor = func(node state.ComputeNode) (realtimeNodeOperator, error) {
+		switch node.ID {
+		case nodeA.ID:
+			return fakeA, nil
+		case nodeB.ID:
+			return fakeB, nil
+		default:
+			return nil, errors.New("unknown node")
+		}
+	}
+	inventory, err := owner.ListConnectionInventory(ctx)
+	if err != nil {
+		t.Fatalf("list inventory: %v", err)
+	}
+	activeNodes, err := store.ActiveComputeNodes(ctx)
+	if err != nil {
+		t.Fatalf("list active nodes: %v", err)
+	}
+	wantUnavailable := len(activeNodes) - 1 // fakeA is the only healthy responder.
+	if inventory.NodesQueried != 1 || inventory.NodesUnavailable != wantUnavailable || len(inventory.Connections) != 1 || inventory.Connections[0].ID != "conn-a" {
+		t.Fatalf("inventory = %+v", inventory)
 	}
 }

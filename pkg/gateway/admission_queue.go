@@ -12,14 +12,12 @@ import (
 )
 
 // WakeAdmissionPolicy is the gateway-side policy for one app's cold-wake
-// admission. The waiter cap is per app. Priority is retained in the policy
-// shape for compatibility with the first admission-control slice, but is not
-// used to order customer work: equal users must get equal scheduler access.
+// admission. The waiter cap is per app. Priority orders app leaders waiting
+// for a gateway-wide slot; sequence preserves FIFO order within a tier.
 //
-// These are deliberately plan-derived capacity/wait defaults. They do not
-// grant one plan precedence over another. The policy is carried as a value so
-// a later app-level override can be hydrated without changing WakeGate or the
-// queue contract.
+// These are deliberately plan-derived capacity/wait defaults. The policy is
+// carried as a value so a later app-level override can be hydrated without
+// changing WakeGate or the queue contract.
 type WakeAdmissionPolicy struct {
 	MaxWaiters int
 	MaxWait    time.Duration
@@ -28,9 +26,6 @@ type WakeAdmissionPolicy struct {
 
 // WakeAdmissionPolicyForPlan returns the bounded cold-wake policy for plan.
 // Unknown plans fail closed with a single waiter and the shortest wait budget.
-// All known plans use the same priority for observability compatibility.
-// Queue ordering itself is always arrival sequence, so strict plan ordering
-// cannot starve a lower plan during a sustained burst.
 func WakeAdmissionPolicyForPlan(plan api.Plan) WakeAdmissionPolicy {
 	switch plan {
 	case api.PlanFree:
@@ -189,6 +184,7 @@ func wakeAdmissionOutcome(err error) string {
 type admissionTicket struct {
 	appID    string
 	plan     string
+	priority int
 	sequence uint64
 	started  bool
 	removed  bool
@@ -201,6 +197,9 @@ type admissionTicketHeap []*admissionTicket
 func (h admissionTicketHeap) Len() int { return len(h) }
 
 func (h admissionTicketHeap) Less(i, j int) bool {
+	if h[i].priority != h[j].priority {
+		return h[i].priority > h[j].priority
+	}
 	return h[i].sequence < h[j].sequence
 }
 
@@ -231,11 +230,19 @@ type admissionDepthUpdate struct {
 	depth int
 }
 
+type admissionPreemption struct {
+	fromApp  string
+	fromPlan string
+	toApp    string
+	toPlan   string
+}
+
+type admissionPreemptSink func(context.Context, admissionPreemption)
+
 // wakeAdmissionQueue bounds concurrent cold-wake admissions in one gateway
 // process. Each queued item is a WakeGate leader, so one bursting app cannot
-// consume one scheduler slot per incoming request. Sequence gives FIFO
-// ordering across apps as well as within an app. The priority field remains
-// only as a compatibility field and cannot alter customer ordering.
+// consume one scheduler slot per incoming request. Priority orders distinct
+// plans, while sequence gives FIFO ordering within a plan.
 type wakeAdmissionQueue struct {
 	mu            sync.Mutex
 	capacity      int
@@ -245,6 +252,7 @@ type wakeAdmissionQueue struct {
 	waiting       admissionTicketHeap
 	queuedByPlan  map[string]int
 	onDepthChange func(plan string, depth int)
+	onPreempt     admissionPreemptSink
 }
 
 func newWakeAdmissionQueue(capacity, queueCap int, onDepthChange func(plan string, depth int)) *wakeAdmissionQueue {
@@ -262,6 +270,22 @@ func newWakeAdmissionQueue(capacity, queueCap int, onDepthChange func(plan strin
 	}
 	heap.Init(&q.waiting)
 	return q
+}
+
+// setPreemptSink installs the optional observer for priority reordering. It is
+// called during handler wiring, before requests can enter the queue.
+func (q *wakeAdmissionQueue) setPreemptSink(fn admissionPreemptSink) {
+	if q != nil {
+		previous := q.onPreempt
+		q.onPreempt = func(ctx context.Context, event admissionPreemption) {
+			if previous != nil {
+				previous(ctx, event)
+			}
+			if fn != nil {
+				fn(ctx, event)
+			}
+		}
+	}
 }
 
 // Do executes fn under a bounded cross-app wake-admission slot. queued tells
@@ -293,15 +317,27 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 	ticket := &admissionTicket{
 		appID:    appID,
 		plan:     plan,
+		priority: policy.Priority,
 		sequence: q.nextSequence,
 		start:    make(chan struct{}),
 	}
 	q.nextSequence++
+	var preemptions []admissionPreemption
+	for _, waiting := range q.waiting {
+		if waiting.removed || waiting.priority >= ticket.priority {
+			continue
+		}
+		preemptions = append(preemptions, admissionPreemption{
+			fromApp: waiting.appID, fromPlan: waiting.plan,
+			toApp: ticket.appID, toPlan: ticket.plan,
+		})
+	}
 	heap.Push(&q.waiting, ticket)
 	q.queuedByPlan[plan]++
 	updates := []admissionDepthUpdate{{plan: plan, depth: q.queuedByPlan[plan]}}
 	q.mu.Unlock()
 	q.notifyDepth(updates)
+	q.notifyPreempt(ctx, preemptions)
 
 	start := time.Now()
 	timer := time.NewTimer(policy.MaxWait)
@@ -397,5 +433,14 @@ func (q *wakeAdmissionQueue) notifyDepth(updates []admissionDepthUpdate) {
 	}
 	for _, update := range updates {
 		q.onDepthChange(update.plan, update.depth)
+	}
+}
+
+func (q *wakeAdmissionQueue) notifyPreempt(ctx context.Context, events []admissionPreemption) {
+	if q == nil || q.onPreempt == nil {
+		return
+	}
+	for _, event := range events {
+		q.onPreempt(ctx, event)
 	}
 }

@@ -5,6 +5,7 @@
 import type { CreateManagedRealtimeEndpointRequest } from '../models/CreateManagedRealtimeEndpointRequest.js';
 import type { FinalizeManagedRealtimeAuthResponse } from '../models/FinalizeManagedRealtimeAuthResponse.js';
 import type { ManagedRealtimeCloseRequest } from '../models/ManagedRealtimeCloseRequest.js';
+import type { ManagedRealtimeConnectionListResponse } from '../models/ManagedRealtimeConnectionListResponse.js';
 import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeEndpointResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
@@ -195,6 +196,62 @@ export class RealtimeService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+      },
+    });
+  }
+  /**
+   * List live connections for a managed realtime endpoint.
+   * Returns a bounded point-in-time inventory. `partial` is true when one
+   * or more active realtime nodes could not be queried; healthy node
+   * results remain in the response.
+   *
+   * @returns ManagedRealtimeConnectionListResponse The live connection inventory.
+   * @throws ApiError
+   */
+  public static listManagedRealtimeConnections({
+    slug,
+    id,
+    limit = 100,
+    channel,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Maximum number of live connections to return.
+     */
+    limit?: number,
+    /**
+     * Return only connections subscribed to this channel.
+     */
+    channel?: string,
+  }): CancelablePromise<ManagedRealtimeConnectionListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'channel': channel,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });
   }

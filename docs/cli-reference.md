@@ -277,13 +277,15 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-wait-ms <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile |  |
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
+| `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
+| `--max-queue-wait-ms <N>` | set maximum queued concurrency wait |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
@@ -1602,6 +1604,15 @@ Update endpoint callback, auth, or connection policy
 ### realtime delete
 
 Delete a managed realtime endpoint
+
+### realtime connections
+
+List live connections for an endpoint
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--limit <N>` | maximum connections to return (1-1000) |  |
 
 ### realtime send
 

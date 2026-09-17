@@ -52,9 +52,10 @@ func parsePrivateNetworkAddress(value string) (netip.Addr, error) {
 	if err == nil {
 		return parsed, nil
 	}
-	// PostgreSQL renders inet values with a host prefix (for example,
-	// "10.60.0.2/32"). Accept that canonical form as well as the bare
-	// address returned by some drivers and test doubles.
+	// PostgreSQL's inet text representation includes the host prefix
+	// length (for example, "10.60.0.2/32"). Accept that canonical
+	// representation as well as the bare address used by MemStore and
+	// drivers that omit the prefix.
 	prefix, prefixErr := netip.ParsePrefix(value)
 	if prefixErr != nil {
 		return netip.Addr{}, err
@@ -200,7 +201,7 @@ func (s *PgStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, 
 			usedRows.Close()
 			return PrivateNetworkAddress{}, err
 		}
-		address, parseErr := netip.ParseAddr(value)
+		address, parseErr := parsePrivateNetworkAddress(value)
 		if parseErr != nil {
 			usedRows.Close()
 			return PrivateNetworkAddress{}, parseErr

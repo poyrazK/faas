@@ -10471,6 +10471,10 @@ func (m *MemStore) InsertTriggerDeadLetter(_ context.Context, recordID, triggerI
 	}
 	if detail == nil {
 		detail = []byte("{}")
+	} else if !json.Valid(detail) {
+		if encoded, err := json.Marshal(string(detail)); err == nil {
+			detail = encoded
+		}
 	}
 	m.triggerDeadLetters = append(m.triggerDeadLetters, sqlc.TriggerDeadLetter{
 		RecordID:  pgtype.UUID{Bytes: parseMemUUIDString(recordID), Valid: true},
