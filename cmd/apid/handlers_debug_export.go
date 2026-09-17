@@ -129,7 +129,10 @@ func (s *server) loadDebugTelemetryExportRows(r *http.Request, appID string, fro
 			CursorReceivedAt: cursorReceivedAt,
 			CursorID:         cursorID,
 			Route:            route,
-			Limit:            int32(batchLimit),
+			// The export has no cold-boot filter of its own. Use the
+			// query sentinel so both warm and cold requests are included.
+			ColdBootFilter: -1,
+			Limit:          int32(batchLimit),
 		})
 		if err != nil {
 			return nil, err

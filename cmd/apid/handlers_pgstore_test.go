@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -220,7 +221,9 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 		Method:       "GET",
 		Status:       200,
 		LatencyMs:    87,
-		ColdBoot:     false,
+		// Keep this row cold so the export regression test verifies that
+		// the default export path does not accidentally filter cold boots.
+		ColdBoot:     true,
 		TraceID:      pgtype.Text{},
 		ReceivedAt:   pgtype.Timestamptz{Time: now, Valid: true},
 		Count:        1,
@@ -243,6 +246,14 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 		t.Fatalf("debug request list = %+v, want one row", listed)
 	}
 	reqID := listed.Requests[0].ID
+
+	exportRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/export?since=24h&format=ndjson", nil, nil)
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("debug request export status = %d: %s", exportRec.Code, exportRec.Body.String())
+	}
+	if !strings.Contains(exportRec.Body.String(), deploymentID.String()) || !strings.Contains(exportRec.Body.String(), `"route":"GET /debug"`) {
+		t.Fatalf("debug request export = %q, want cold-boot telemetry row", exportRec.Body.String())
+	}
 
 	coverageRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/coverage?since=24h", nil, nil)
 	if coverageRec.Code != http.StatusOK {
