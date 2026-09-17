@@ -814,6 +814,36 @@ func TestMemStoreJobs_ListJobInstances(t *testing.T) {
 	}
 }
 
+// TestMemStoreJobs_ListOrphanedJobInstances covers the owned-instance filter
+// and the default limit. A terminal task leaves its instance behind as an
+// orphan, while a still-claimed sibling remains owned and is excluded.
+func TestMemStoreJobs_ListOrphanedJobInstances(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-OJI", "oji1")
+	now := time.Now().UTC()
+	if _, err := ms.CreateAndClaimJobInstance(ctx, "orphan-instance", job.ID, run.ID, 0,
+		"running", 128, "node-1", "wake-orphan", "lease-orphan", now.Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("CreateAndClaimJobInstance(orphan): %v", err)
+	}
+	if _, err := ms.CreateAndClaimJobInstance(ctx, "owned-instance", job.ID, run.ID, 1,
+		"running", 128, "node-1", "wake-owned", "lease-owned", now.Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("CreateAndClaimJobInstance(owned): %v", err)
+	}
+	if err := ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", now); err != nil {
+		t.Fatalf("JobTaskMarkTerminal: %v", err)
+	}
+
+	got, err := ms.ListOrphanedJobInstances(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListOrphanedJobInstances: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "orphan-instance" {
+		t.Fatalf("orphan instances = %+v, want only orphan-instance", got)
+	}
+}
+
 // TestMemStoreJobs_JobRunCreate_FanOut — covers the parallelism
 // override falling-back-to-job-default path when parallelism=nil.
 func TestMemStoreJobs_JobRunCreate_FanOut(t *testing.T) {
