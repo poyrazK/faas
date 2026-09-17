@@ -45,6 +45,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
 # shellcheck source=scripts/ci/native-e2e-phases.sh
 source "${repo_root}/scripts/ci/native-e2e-phases.sh"
+# shellcheck source=scripts/ci/native-e2e-reap.sh
+source "${repo_root}/scripts/ci/native-e2e-reap.sh"
 marker_sha="$(tr -d '\n' < "${repo_root}/.faas-e2e-source-sha")"
 [[ "${marker_sha}" == "${FAAS_E2E_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_E2E_SOURCE_SHA}"
@@ -232,7 +234,7 @@ reap_test_microvms() {
     umount -l "${m}" 2>/dev/null
   done < <(awk '/firecracker-v[0-9]/{print $2}' /proc/mounts | sort -r)
 
-  rm -rf /srv/fc/jail/firecracker-v*/build-* 2>/dev/null
+  reap_stale_jails "${FAAS_E2E_JAIL_ROOT:-/srv/fc/jail}"
 
   for c in /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/build-*; do
     [[ -d "${c}" ]] && rmdir "${c}" 2>/dev/null
@@ -315,6 +317,10 @@ firecracker_running() {
 if firecracker_running; then
   die "Firecracker workloads are active; drain the designated acceptance node before retrying"
 fi
+# Pre-flight: start from a clean slate, THEN assert it. A previous run's
+# leftovers were already charged to that run's verdict; they must not turn
+# this run into "no test executed" (smoke run 35206846279).
+reap_test_microvms
 bash "${repo_root}/deploy/scripts/leakcheck.sh"
 
 # ---------------------------------------------------------------------------

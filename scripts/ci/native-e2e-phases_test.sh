@@ -109,4 +109,22 @@ native_e2e_is_selector nonsense && fail "runner selector gate accepted a bogus n
 grep -q 'native_e2e_is_selector "${phase}"' "${repo_root}/scripts/ci/run-native-e2e.sh" ||
   fail "run-native-e2e.sh does not validate FAAS_E2E_PHASE with native_e2e_is_selector; a lane would be rejected as an unknown phase"
 
+# 10. The stale-jail reaper removes app-instance chroots as well as build ones,
+#     and nothing outside firecracker-v*/. Two app chroots that survived a node
+#     reboot blocked smoke run 35206846279 before a single test ran.
+jail_tmp="$(mktemp -d)"
+mkdir -p "${jail_tmp}/firecracker-v1.7.0-x86_64/645b161d-79ef-4a24-adcb-8c96a48e57b1/root" \
+         "${jail_tmp}/firecracker-v1.7.0-x86_64/build-01a0ac83/root" \
+         "${jail_tmp}/keep-me"
+# shellcheck source=scripts/ci/native-e2e-reap.sh
+source "${repo_root}/scripts/ci/native-e2e-reap.sh"
+reap_stale_jails "${jail_tmp}"
+[[ ! -e "${jail_tmp}/firecracker-v1.7.0-x86_64/645b161d-79ef-4a24-adcb-8c96a48e57b1" ]] ||
+  fail "reap_stale_jails left an app-instance chroot; the next run's pre-flight leakcheck would refuse to start"
+[[ ! -e "${jail_tmp}/firecracker-v1.7.0-x86_64/build-01a0ac83" ]] || fail "reap_stale_jails left a build chroot"
+[[ -d "${jail_tmp}/keep-me" ]] || fail "reap_stale_jails removed something outside firecracker-v*/"
+rm -rf "${jail_tmp}"
+grep -qE '^reap_test_microvms$' "${repo_root}/scripts/ci/run-native-e2e.sh" ||
+  fail "run-native-e2e.sh does not reap before the pre-flight leakcheck; a previous run's leftovers block this one"
+
 echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lane)"

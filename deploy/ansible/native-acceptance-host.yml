@@ -195,6 +195,31 @@
         group: faas
         mode: "0750"
 
+    # /srv/fc/jail must be tmpfs (CLAUDE.md "Gotchas": jailer chroots live in
+    # tmpfs). bootstrap.yml gets this from the `xfs` role, which this
+    # playbook deliberately skips (it does LVM/XFS work for a real storage
+    # disk). Without it, chroots left by a run survive a STOP/START of the
+    # node on the SSD, and the next run's pre-flight leakcheck refuses to
+    # start: smoke run 35206846279 executed zero tests over two chroots from
+    # the previous run. Same options as the xfs role.
+    - name: native acceptance — ensure /srv/fc/jail directory (1700 perms)
+      ansible.builtin.file:
+        path: /srv/fc/jail
+        state: directory
+        owner: root
+        group: root
+        mode: "1700"
+
+    - name: native acceptance — mount /srv/fc/jail as tmpfs
+      ansible.posix.mount:
+        path: /srv/fc/jail
+        src: tmpfs
+        fstype: tmpfs
+        opts: nodev,nosuid,size=12G,mode=1700
+        dump: "0"
+        passno: "0"
+        state: mounted
+
     # Asserted by roles/_shared/tasks/sealed_env_split_perm_asserts.yml, and
     # applied unconditionally so a hand-provisioned host converges too.
     - name: native acceptance — pin fleet identity permissions
