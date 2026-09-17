@@ -1843,6 +1843,7 @@ type OpsMetrics struct {
 	// the bounded source label, keeping queue latency observable without
 	// putting app or trigger IDs into Prometheus labels.
 	esmRecordProcessingSeconds *prometheus.HistogramVec
+	queue                      *queueMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -1901,6 +1902,7 @@ type OpsMetrics struct {
 // The returned registry is what serves the /metrics endpoint.
 func NewOpsMetrics(prefix string) *OpsMetrics {
 	reg := prometheus.NewRegistry()
+	queue := newQueueMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_ops_total",
 		Help: "Count of operations, labelled by op name and terminal status code.",
@@ -3467,6 +3469,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
+		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
@@ -4961,6 +4964,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		esmLagSeconds:                                         esmLagSeconds,
 		esmRecordsOutcomeTotal:                                esmRecordsOutcomeTotal,
 		esmRecordProcessingSeconds:                            esmRecordProcessingSeconds,
+		queue:                                                 queue,
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,

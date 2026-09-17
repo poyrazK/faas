@@ -3875,7 +3875,8 @@ type Store interface {
 	//
 	// QueueState returns the per-app live counters — depth
 	// (pending+dispatching), in_flight (dispatching with lease_expires_at
-	// either NULL or in the future), and the oldest pending created_at.
+	// either NULL or in the future), oldest pending created_at, and the
+	// terminal dead-letter count.
 	// Used by the queueStats handler. OldestPendingAt is the zero-time
 	// when the app has no pending rows; callers translate to nil.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)

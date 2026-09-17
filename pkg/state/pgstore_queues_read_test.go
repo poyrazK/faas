@@ -175,6 +175,20 @@ func TestPg_QueueState_RespectsInflight(t *testing.T) {
 	if stats.Depth != 3 {
 		t.Errorf("post-claim depth = %d, want 3 (dispatching still counts)", stats.Depth)
 	}
+	deadID := pgQueueRow(t, ctx, s, appID, acctID, `{"dead":true}`)
+	if _, err := s.ClaimInvocation(ctx, deadID, "inst-1", 30); err != nil {
+		t.Fatalf("ClaimInvocation dead-letter row: %v", err)
+	}
+	if err := s.FailInvocation(ctx, deadID, "terminal", time.Minute, 1); err != nil {
+		t.Fatalf("FailInvocation dead-letter row: %v", err)
+	}
+	stats, err = s.QueueState(ctx, appID)
+	if err != nil {
+		t.Fatalf("QueueState dead-letter: %v", err)
+	}
+	if stats.DeadLetter != 1 {
+		t.Errorf("dead_letter = %d, want 1", stats.DeadLetter)
+	}
 }
 
 // TestPg_QueueDeadLetter_ExhaustedToDeadLetter is the PG counterpart

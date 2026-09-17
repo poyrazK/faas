@@ -94,6 +94,10 @@ func TestMemStoreCoverageQueueIntrospection(t *testing.T) {
 	if got, err := m.QueueDeadLetter(ctx, app.ID, 0, ""); err != nil || len(got) != 2 {
 		t.Fatalf("dead letter rows = %d, %v", len(got), err)
 	}
+	stats, err = m.QueueState(ctx, app.ID)
+	if err != nil || stats.DeadLetter != 2 {
+		t.Fatalf("queue state dead letters = %+v, %v; want 2", stats, err)
+	}
 	// Newest-first.
 	dlRows, _ := m.QueueDeadLetter(ctx, app.ID, 10, "")
 	if dlRows[0].ID != dl.ID || dlRows[1].ID != dl2.ID {

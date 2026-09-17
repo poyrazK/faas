@@ -13939,10 +13939,11 @@ func (s *PgStore) ListCronRunsForCron(ctx context.Context, cronID string, limit 
 	return scanInvocations(rows)
 }
 
-// QueueState (issue #394) is the read-side counter aggregator. One
-// round-trip returns three numbers: depth (pending+dispatching),
-// in_flight (dispatching with a live lease), oldest_pending_at (min
-// created_at over the pending slice).
+// QueueState (issue #394) is the read-side counter aggregator. It returns
+// depth (pending+dispatching), in_flight (dispatching with a live lease),
+// oldest_pending_at (min created_at over the pending slice), and the
+// terminal dead_letter count. The active and terminal slices use their
+// respective partial indexes.
 //
 // Index-backed by invocations_app_pending_idx — the partial index is
 // declared on `(app_id, source, state) WHERE state IN
@@ -13979,6 +13980,15 @@ func (s *PgStore) QueueState(ctx context.Context, appID string) (QueueStats, err
 	}
 	if oldest != nil {
 		stats.OldestPendingAt = *oldest
+	}
+	if err := s.pool.QueryRow(ctx, `
+		select count(*)
+		  from invocations
+		 where app_id = $1
+		   and source = 'queue'
+		   and state = 'dead_letter'
+	`, appID).Scan(&stats.DeadLetter); err != nil {
+		return QueueStats{}, err
 	}
 	return stats, nil
 }

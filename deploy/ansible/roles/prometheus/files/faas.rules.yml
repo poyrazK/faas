@@ -3239,3 +3239,29 @@ groups:
           summary: "Snapshot integrity inventory is stale"
           description: "No complete snapshot drift inventory has succeeded for more than two hours. Check OCI enumeration latency and registry availability."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"
+
+  - name: faas_durable_queue
+    interval: 30s
+    rules:
+      - alert: FaasDurableQueueStalled
+        expr: schedd_queue_depth{app!=""} > 0 and schedd_queue_oldest_age_seconds{app!=""} > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: durable_queue
+        annotations:
+          summary: "Durable queue is stalled for app {{ $labels.app }}"
+          description: "The durable queue for app {{ $labels.app }} has pending or dispatching work and its oldest pending item is older than five minutes for ten minutes. Check worker capacity, queue-depth autoscaling, and lease recovery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"
+      - alert: FaasDurableQueueDeadLetters
+        expr: schedd_queue_dead_letter{app!=""} > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: durable_queue
+        annotations:
+          summary: "Durable queue has dead letters for app {{ $labels.app }}"
+          description: "App {{ $labels.app }} has {{ $value }} durable queue invocation(s) in the terminal dead-letter state. Inspect the queue dead-letter API and replay only after correcting the worker failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"

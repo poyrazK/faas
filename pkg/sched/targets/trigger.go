@@ -486,6 +486,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 				continue
 			}
+			if t.metrics != nil {
+				// Queue gauges are sampled alongside the queue-depth decision;
+				// OpsMetrics bounds app labels before they reach Prometheus.
+				t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+			}
 			maxInstances := app.MaxConcurrency
 			if policy.MaxInstances > 0 && policy.MaxInstances < maxInstances {
 				maxInstances = policy.MaxInstances
