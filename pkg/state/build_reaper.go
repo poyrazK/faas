@@ -25,6 +25,16 @@ type BuildClaimRecoveryStore interface {
 	RequeueBuildIfClaim(ctx context.Context, claim Build) error
 }
 
+// ActiveDeploymentRootfsStore is the optional CAS surface used by imaged when
+// it publishes a freshly-built application layer. The status predicate is
+// part of the write so a cancellation or supersede racing with the layer
+// builder cannot leave a terminal deployment pointing at a late artifact.
+// It is separate from Store to keep older narrow test doubles source-
+// compatible; production PgStore and MemStore implement it.
+type ActiveDeploymentRootfsStore interface {
+	SetDeploymentRootfsIfActive(ctx context.Context, id, path, key string, bytes int64) error
+}
+
 // BuildVMCleanupClaim is one durable builder-VM teardown obligation claimed
 // by a builderd worker. The token prevents a late result from an expired
 // claim from completing a newer worker's attempt.

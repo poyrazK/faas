@@ -1183,6 +1183,16 @@ func (h *Handler) storageFor() (storage.StorageBackend, error) {
 	return be, nil
 }
 
+// setDeploymentRootfs publishes an app layer while preserving compatibility
+// with older narrow Store test doubles. Production stores expose the active
+// CAS variant so cancellation/supersede cannot race a late layer completion.
+func (h *Handler) setDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {
+	if fenced, ok := h.store.(state.ActiveDeploymentRootfsStore); ok {
+		return fenced.SetDeploymentRootfsIfActive(ctx, id, path, key, bytes)
+	}
+	return h.store.SetDeploymentRootfs(ctx, id, path, key, bytes)
+}
+
 // appsRootPath returns the on-disk legacy path the legacy code path
 // stamped into deployments.rootfs_path. Used to keep the SetDeploymentRootfs
 // row contract identical to pre-#96 even when the new Storage path is
@@ -1884,7 +1894,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// is logged at WARN and the build still succeeds (the SBOM
 			// is observational metadata, schema §4.2).
 			h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-			if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+			if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 				return fmt.Errorf("imaged: stamp rootfs: %w", err)
 			}
@@ -1935,7 +1945,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
 		h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+		if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
@@ -2420,7 +2430,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	}
 	h.updateBuildProvenanceRunnerDigest(ctx, dep.ID, result.RunnerDigest)
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
@@ -4143,7 +4153,7 @@ func (h *Handler) buildFullRootfsLayer(
 		return fmt.Errorf("imaged: build full-rootfs: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
-	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
+	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp full-rootfs")
 		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)
 	}

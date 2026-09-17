@@ -9169,6 +9169,30 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 	return nil
 }
 
+// SetDeploymentRootfsIfActive is the status-fenced publication primitive for
+// imaged. Keeping the status predicate in the UPDATE makes cancellation,
+// supersede, and late layer publication serialize at the database row rather
+// than relying on a stale deployment read in the handler.
+func (s *PgStore) SetDeploymentRootfsIfActive(ctx context.Context, id, path, key string, bytes int64) error {
+	tag, err := s.pool.Exec(ctx,
+		`update deployments
+		    set rootfs_path = $2, rootfs_key = $3, rootfs_bytes = $4
+		  where id = $1
+		    and status in ('pending', 'building', 'imaging', 'snapshotting')`,
+		id, nullString(path), nullString(key), bytes)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	var status DeploymentStatus
+	if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`).Scan(&status); err != nil {
+		return mapErr(err)
+	}
+	return ErrInvalidStateTransition
+}
+
 // UpsertDeploymentScanResult records the per-deploy grype CVE
 // scan on the deployment row (issue #464 / ADR-055 / PR-3).
 // The whole row's scan columns are overwritten — scan_result +

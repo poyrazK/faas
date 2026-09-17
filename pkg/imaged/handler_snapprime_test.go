@@ -393,6 +393,74 @@ func TestHandleSnapshotBoot_RedeliverySafe(t *testing.T) {
 	}
 }
 
+// TestHandleSnapshotBoot_CancelDuringLayerBuildDoesNotStampFinalRootfs
+// exercises the production race between the imaged layer builder and the
+// user-cancel transaction. Cancellation is valid while a deployment is in
+// imaging; a late builder result must not attach the newly-published app
+// layer to that cancelled row or emit snapshot_prime.
+func TestHandleSnapshotBoot_CancelDuringLayerBuildDoesNotStampFinalRootfs(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "handoff-cancel@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "handoff-cancel", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "build-id", "build", "out", "image.tar")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("builder handoff"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, dep.ID, artifact, "builder/handoff", int64(len("builder handoff"))); err != nil {
+		t.Fatal(err)
+	}
+
+	notif := &fakeNotifier{}
+	bld := &fakeBuilder{bytesOut: 4096}
+	bld.buildHook = func() {
+		if _, _, cancelErr := store.CancelDeploymentTx(ctx, dep.ID, "operator:test", state.CancelReasonUser); cancelErr != nil {
+			t.Fatalf("cancel during layer build: %v", cancelErr)
+		}
+	}
+	h := New(store, notif, fakePuller{
+		digest: "sha256:abc",
+		cfg:    oci.ImageConfig{Cmd: []string{"/app/entrypoint"}},
+	}, bld, "./init", t.TempDir(), silentLogger())
+
+	err = h.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: app.ID, DeploymentID: dep.ID})
+	if err == nil {
+		t.Fatal("late layer completion after cancellation should return an error")
+	}
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeployCancelled {
+		t.Fatalf("status = %q, want cancelled", got.Status)
+	}
+	if got.RootfsPath != artifact || got.RootfsKey != "builder/handoff" {
+		t.Fatalf("late completion stamped final rootfs: path=%q key=%q", got.RootfsPath, got.RootfsKey)
+	}
+	for _, call := range notif.calls {
+		if call.channel == db.NotifySnapshotPrime {
+			t.Fatal("cancelled deployment emitted snapshot_prime")
+		}
+	}
+}
+
 func TestHandleSnapshotBoot_RetriesBusyBuildExportLease(t *testing.T) {
 	store := state.NewMemStore()
 	bld := &fakeBuilder{}

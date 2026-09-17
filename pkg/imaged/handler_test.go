@@ -108,6 +108,7 @@ type fakeBuilder struct {
 	fullRootfsCalls  []rootfs.BuildFullRootfsInput
 	bytesOut         int64
 	buildErr         error
+	buildHook        func()
 	runnerDigest     string
 	omitRunnerDigest bool
 }
@@ -133,6 +134,9 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4")); err != nil {
 			return rootfs.BuildResult{}, err
 		}
+		if b.buildHook != nil {
+			b.buildHook()
+		}
 		return rootfs.BuildResult{
 			ImageKey:     in.StorageKey,
 			ContentBytes: b.bytesOut,
@@ -142,6 +146,9 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 	if in.OutImage != "" {
 		if err := os.WriteFile(in.OutImage, []byte("fake ext4"), 0o644); err != nil {
 			return rootfs.BuildResult{}, err
+		}
+		if b.buildHook != nil {
+			b.buildHook()
 		}
 		return rootfs.BuildResult{
 			ImagePath:    in.OutImage,

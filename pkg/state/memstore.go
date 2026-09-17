@@ -7751,6 +7751,27 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	return nil
 }
 
+// SetDeploymentRootfsIfActive mirrors the Postgres status-fenced write used
+// by imaged. The lock makes the deployment status check and rootfs stamp one
+// operation in the in-memory store, so a concurrent cancellation cannot win
+// between the two steps.
+func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key string, bytes int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if d.Status.IsTerminal() || d.Status == DeployLive {
+		return ErrInvalidStateTransition
+	}
+	d.RootfsPath = path
+	d.RootfsKey = key
+	d.RootfsBytes = bytes
+	m.deployments[id] = d
+	return nil
+}
+
 // UpsertDeploymentScanResult mirrors PgStore.UpsertDeploymentScanResult
 // (issue #464 / ADR-055 / PR-3). Stamps the per-deploy grype scan on
 // the in-memory deployments row. The Deployment struct's scan fields
