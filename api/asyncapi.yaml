@@ -1,0 +1,330 @@
+asyncapi: 3.0.0
+id: urn:gregale:events
+info:
+  title: Gregale outbound app-webhook events
+  version: 1.0.0
+  description: |
+    Gregale delivers selected app lifecycle and billing events to an app's
+    configured webhook subscriptions. The wire envelope is CloudEvents 1.0
+    structured JSON over HTTP POST. The request is signed with the webhook
+    secret using the X-Faas-Webhook-Signature header; retry metadata is carried
+    in the remaining X-Faas-* headers.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+defaultContentType: application/cloudevents+json
+servers:
+  appWebhook:
+    host: '{webhook_host}'
+    protocol: https
+    description: Customer endpoint configured on an app webhook subscription.
+    variables:
+      webhook_host:
+        description: Hostname of the customer's webhook endpoint.
+        default: example.invalid
+channels:
+  appParked:
+    address: app.parked
+    description: Emitted after an app is parked and its instances have drained.
+    messages:
+      appParked:
+        $ref: '#/components/messages/AppParked'
+  appWoken:
+    address: app.woken
+    description: Emitted after a parked app is activated and a first instance is ready.
+    messages:
+      appWoken:
+        $ref: '#/components/messages/AppWoken'
+  usageStatementFinalized:
+    address: usage_statement.finalized
+    description: Emitted when an API consumer usage statement becomes payable.
+    messages:
+      usageStatementFinalized:
+        $ref: '#/components/messages/UsageStatementFinalized'
+operations:
+  deliverAppParked:
+    action: send
+    channel:
+      $ref: '#/channels/appParked'
+    summary: Deliver an app.parked event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/appParked/messages/appParked'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverAppWoken:
+    action: send
+    channel:
+      $ref: '#/channels/appWoken'
+    summary: Deliver an app.woken event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/appWoken/messages/appWoken'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverUsageStatementFinalized:
+    action: send
+    channel:
+      $ref: '#/channels/usageStatementFinalized'
+    summary: Deliver a usage_statement.finalized event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/usageStatementFinalized/messages/usageStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+components:
+  messages:
+    AppParked:
+      name: app.parked
+      title: App parked
+      summary: An app has transitioned to the parked state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/AppParkedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    AppWoken:
+      name: app.woken
+      title: App woken
+      summary: A parked app has been activated with a ready instance.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/AppWokenEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    UsageStatementFinalized:
+      name: usage_statement.finalized
+      title: Usage statement finalized
+      summary: An API consumer usage statement is finalized and payable.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/UsageStatementFinalizedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+  schemas:
+    WebhookHeaders:
+      type: object
+      description: Application headers emitted on every app-webhook delivery.
+      required:
+        - X-Faas-Webhook-Signature
+        - X-Faas-Delivery-Id
+        - X-Faas-Webhook-Timestamp
+        - X-Faas-Webhook-Attempt
+      properties:
+        X-Faas-Webhook-Signature:
+          type: string
+          description: HMAC-SHA256 over `<unix>.<delivery_id>.<body>`.
+          pattern: '^sha256=[0-9a-f]{64}$'
+        X-Faas-Delivery-Id:
+          type: string
+          description: Durable delivery ledger identifier.
+        X-Faas-Webhook-Timestamp:
+          type: string
+          description: Unix seconds used in the signature input.
+          pattern: '^[0-9]+$'
+        X-Faas-Webhook-Attempt:
+          type: string
+          description: One-based attempt number for this HTTP request.
+          pattern: '^[0-9]+$'
+      additionalProperties: false
+    CloudEventBase:
+      type: object
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - data
+        - account_id
+      properties:
+        specversion:
+          type: string
+          description: CloudEvents specification version.
+          enum: ['1.0']
+        id:
+          type: string
+          description: Durable app-webhook delivery identifier.
+        source:
+          type: string
+          description: App source URI, formatted as urn:gregale:app:<app_id>.
+          pattern: '^urn:gregale:app:.+$'
+        type:
+          type: string
+          description: Gregale event name.
+        subject:
+          type: string
+          description: App subject, formatted as apps/<app_id>.
+          pattern: '^apps/.+$'
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ['application/json']
+        account_id:
+          type: string
+          description: Account owning the app subscription.
+        data:
+          type: object
+      additionalProperties: false
+    AppParkedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['app.parked']
+            data:
+              $ref: '#/components/schemas/AppParkedData'
+    AppWokenEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['app.woken']
+            data:
+              $ref: '#/components/schemas/AppWokenData'
+    UsageStatementFinalizedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['usage_statement.finalized']
+            data:
+              $ref: '#/components/schemas/UsageStatementFinalizedData'
+    AppParkedData:
+      type: object
+      required:
+        - app_id
+        - slug
+        - status
+        - occurred_at
+      properties:
+        app_id:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+          enum: ['evicted_cold']
+        occurred_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    AppWokenData:
+      type: object
+      required:
+        - app_id
+        - slug
+        - status
+        - instance_id
+        - wake_id
+        - occurred_at
+      properties:
+        app_id:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+          enum: ['active']
+        instance_id:
+          type: string
+        wake_id:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    UsageStatementFinalizedData:
+      type: object
+      required:
+        - app_id
+        - consumer_id
+        - statement_id
+        - period_start
+        - period_end
+        - billable_units
+        - unpriced_units
+        - amount_millicents
+        - priced
+        - buckets
+        - as_of
+        - finalized_at
+      properties:
+        app_id:
+          type: string
+        consumer_id:
+          type: string
+        statement_id:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        currency:
+          type: string
+        billable_units:
+          type: integer
+          format: int64
+        unpriced_units:
+          type: integer
+          format: int64
+        amount_millicents:
+          type: integer
+          format: int64
+        priced:
+          type: boolean
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/UsageStatementBucket'
+        as_of:
+          type: string
+        finalized_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    UsageStatementBucket:
+      type: object
+      required:
+        - window_start
+        - billable_units
+        - amount_millicents
+      properties:
+        window_start:
+          type: string
+          format: date-time
+        billable_units:
+          type: integer
+          format: int64
+        rate_card_id:
+          type: string
+        currency:
+          type: string
+        price_millicents_per_unit:
+          type: integer
+          format: int64
+        amount_millicents:
+          type: integer
+          format: int64
+      additionalProperties: false
