@@ -9187,7 +9187,7 @@ func (s *PgStore) SetDeploymentRootfsIfActive(ctx context.Context, id, path, key
 		return nil
 	}
 	var status DeploymentStatus
-	if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`).Scan(&status); err != nil {
+	if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&status); err != nil {
 		return mapErr(err)
 	}
 	return ErrInvalidStateTransition
