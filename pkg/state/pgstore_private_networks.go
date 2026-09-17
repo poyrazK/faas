@@ -41,7 +41,14 @@ func scanPrivateNetworkAddress(row interface{ Scan(...any) error }) (PrivateNetw
 	}
 	parsed, err := netip.ParseAddr(addressText)
 	if err != nil {
-		return PrivateNetworkAddress{}, err
+		// PostgreSQL's inet text representation includes the host prefix
+		// length (for example, "10.80.0.2/32"). Accept that canonical
+		// representation as well as the bare address used by MemStore.
+		prefix, prefixErr := netip.ParsePrefix(addressText)
+		if prefixErr != nil {
+			return PrivateNetworkAddress{}, err
+		}
+		parsed = prefix.Addr()
 	}
 	address.AccountID, address.NetworkID, address.Address = accountID, networkID, parsed
 	return address, nil
