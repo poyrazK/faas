@@ -298,10 +298,12 @@ type Querier interface {
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
-	// Direct request drill-down for the customer debugger. The app_id
-	// predicate is the database-side tenant boundary; the handler has
-	// already resolved the slug through the caller's account.
-	GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIDParams) (GetRequestTelemetryByAppAndIDRow, error)
+	// Direct request drill-down for the customer debugger. Customers normally
+	// have the public x-faas-request-id stored as trace_id, while older clients
+	// may retain the internal telemetry-row UUID. Accept both without weakening
+	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
+	// value happens to equal another row's UUID text.
+	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)

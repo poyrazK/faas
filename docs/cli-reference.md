@@ -1175,7 +1175,7 @@ Per-route deployment-vs-deployment compare
 
 ### debug bundle
 
-Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
+Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;request-id-or-row-id&gt; [--output PATH])
 
 
 ## invitations

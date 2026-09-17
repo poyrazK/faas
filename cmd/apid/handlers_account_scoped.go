@@ -37,12 +37,13 @@ import (
 )
 
 // listInstancesForAccount serves GET /v1/instances. Cursor: ?before=
-// (instances.id UUIDv7). Default limit 25, max 100 (strict 400 on bad
+// (instances.id). Default limit 25, max 100 (strict 400 on bad
 // input via api.ParseLimit). Cross-account isolation is the SQL JOIN on
 // apps.account_id = $1 — the SQL is the only path.
 //
-// Returns 200 with an empty `instances` array for an account with
-// zero live instances — never 404. next_before is the last row's id
+// Returns only waking, cold_booting, running, and snapshotting instances.
+// An account with zero live instances gets a 200 with an empty array — never
+// 404. next_before is the last row's id
 // when len(out) == limit; omitted (empty) otherwise.
 //
 // Issue #557 / ADR-071: each row carries the parent app's

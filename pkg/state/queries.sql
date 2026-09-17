@@ -1712,19 +1712,22 @@ WHERE app_id = $1
   AND received_at >= $3
   AND received_at <  $4;
 
--- name: GetRequestTelemetryByAppAndID :one
--- Direct request drill-down for the customer debugger. The app_id
--- predicate is the database-side tenant boundary; the handler has
--- already resolved the slug through the caller's account.
+-- name: GetRequestTelemetryByAppAndIdentifier :one
+-- Direct request drill-down for the customer debugger. Customers normally
+-- have the public x-faas-request-id stored as trace_id, while older clients
+-- may retain the internal telemetry-row UUID. Accept both without weakening
+-- the app_id tenant boundary. Prefer an exact row-id match if a future trace
+-- value happens to equal another row's UUID text.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
        consumer_id
 FROM request_telemetry
-WHERE app_id = $1
-  AND id = $2
-  AND received_at >= $3
-  AND received_at <  $4
+WHERE app_id = sqlc.arg(app_id)
+  AND (id::text = sqlc.arg(identifier)::text OR trace_id = sqlc.arg(identifier)::text)
+  AND received_at >= sqlc.arg(received_from)
+  AND received_at <  sqlc.arg(received_until)
+ORDER BY (id::text = sqlc.arg(identifier)::text) DESC, received_at DESC
 LIMIT 1;
 
 -- name: RequestTelemetryByDeployment :many

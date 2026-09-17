@@ -11526,10 +11526,10 @@ func (m *MemStore) ListInstancesForAccount(_ context.Context, accountID string) 
 	return out, nil
 }
 
-// ListInstancesForAccountPaged is the cursor-paginated mirror of
-// PgStore.ListInstancesForAccountPaged (issue #393). Mirrors the
-// SQL semantics: cursor is instance.id, sort is started_at DESC then
-// id DESC, limit is server-side clamped to 1..100.
+// ListInstancesForAccountPaged is the live-only cursor-paginated mirror of
+// PgStore.ListInstancesForAccountPaged (issues #393 and #2714). The public
+// inventory includes waking, cold_booting, running, and snapshotting rows.
+// Cursor and sort both use instance.id DESC.
 func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID string, limit int, before string) ([]Instance, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
@@ -11547,6 +11547,11 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 		if _, ok := owned[ins.AppID]; !ok {
 			continue
 		}
+		switch State(ins.State) {
+		case StateWaking, StateColdBooting, StateRunning, StateSnapshotting:
+		default:
+			continue
+		}
 		if before != "" && ins.ID >= before {
 			// Mirror the SQL: `id < $before` — strictly less than, so
 			// the cursor itself is excluded from the next page.
@@ -11554,12 +11559,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 		}
 		out = append(out, ins)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].StartedAt.Equal(out[j].StartedAt) {
-			return out[i].ID > out[j].ID
-		}
-		return out[i].StartedAt.After(out[j].StartedAt)
-	})
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
 	if len(out) > limit {
 		out = out[:limit]
 	}

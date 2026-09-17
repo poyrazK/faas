@@ -244,6 +244,23 @@ func debugCoverageTimestamp(value interface{}) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
+const debugRequestIdentifierMaxBytes = 128
+
+// normalizeDebugRequestIdentifier accepts the public x-faas-request-id kept
+// in request_telemetry.trace_id and the internal telemetry-row UUID returned
+// by older list clients. Keeping the value opaque is intentional because the
+// generated public ID is a 32-character trace identifier rather than a UUID.
+func normalizeDebugRequestIdentifier(raw string) (string, error) {
+	identifier := strings.TrimSpace(raw)
+	if identifier == "" {
+		return "", fmt.Errorf("req_id must be a public request id or telemetry row id")
+	}
+	if len(identifier) > debugRequestIdentifierMaxBytes {
+		return "", fmt.Errorf("req_id must be at most %d bytes", debugRequestIdentifierMaxBytes)
+	}
+	return identifier, nil
+}
+
 // debugTelemetryGetHandler — GET /v1/apps/{slug}/debug/requests/{req_id}
 //
 // Direct lookup for a single request. Unlike the list endpoint, this
@@ -261,18 +278,18 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	reqID, err := uuid.Parse(r.PathValue("req_id"))
+	identifier, err := normalizeDebugRequestIdentifier(r.PathValue("req_id"))
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("req_id must be a UUID"))
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndID(r.Context(), sqlc.GetRequestTelemetryByAppAndIDParams{
-		AppID:        stringToPgUUID(app.ID),
-		ID:           pgtype.UUID{Bytes: reqID, Valid: true},
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         stringToPgUUID(app.ID),
+		Identifier:    identifier,
+		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
@@ -309,18 +326,18 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	reqID, err := uuid.Parse(r.PathValue("req_id"))
+	identifier, err := normalizeDebugRequestIdentifier(r.PathValue("req_id"))
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("req_id must be a UUID"))
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndID(r.Context(), sqlc.GetRequestTelemetryByAppAndIDParams{
-		AppID:        stringToPgUUID(app.ID),
-		ID:           pgtype.UUID{Bytes: reqID, Valid: true},
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         stringToPgUUID(app.ID),
+		Identifier:    identifier,
+		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
@@ -349,7 +366,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		regressionErr = err
 		if s.log != nil {
 			s.log.Warn("debug evidence regression enrichment unavailable",
-				"app_id", app.ID, "request_id", reqID, "err", err)
+				"app_id", app.ID, "request_id", identifier, "err", err)
 		}
 	}
 	if regressionErr == nil {
@@ -514,7 +531,7 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 	)
 }
 
-func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.DebugTelemetryRequestItem {
+func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIdentifierRow) api.DebugTelemetryRequestItem {
 	return debugTelemetryItemFromFields(
 		row.ID,
 		row.DeploymentID,
@@ -595,34 +612,12 @@ var debugCorrelationPhases = [...]string{"edge", "queue", "wake", "guest", "down
 // explainable even when no wake was involved. Event payloads are intentionally
 // reduced to a stable summary; arbitrary JSON never reaches the customer.
 func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, request api.DebugTelemetryRequestItem, regression *api.DebugRegressionItem) ([]api.DebugTimelineEvent, error) {
-	receivedAt, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
+	recordedCompletionAt, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
 	if err != nil {
 		return nil, err
 	}
-	timeline := make([]api.DebugTimelineEvent, 0, 16)
-	startAt := receivedAt.Add(-time.Duration(request.LatencyMS) * time.Millisecond)
-	timeline = append(timeline, api.DebugTimelineEvent{
-		At:      startAt.UTC().Format(time.RFC3339Nano),
-		Phase:   "request",
-		Kind:    "request.received",
-		Summary: "representative request entered the gateway",
-		// received_at is the minute bucket boundary for collapsed rows,
-		// so request markers are intentionally labeled approximate.
-		Approximate: true,
-	})
-	if request.Guest != nil {
-		guestAt := receivedAt.Add(-time.Duration(request.Guest.DurationMS) * time.Millisecond)
-		timeline = append(timeline, api.DebugTimelineEvent{
-			At:          guestAt.UTC().Format(time.RFC3339Nano),
-			Phase:       "guest",
-			Kind:        "guest.execution",
-			Summary:     fmt.Sprintf("%s guest execution observed (%s)", request.Guest.Runtime, request.Guest.Outcome),
-			DurationMS:  int64(request.Guest.DurationMS),
-			Status:      request.Status,
-			Approximate: true,
-		})
-	}
-
+	wakeTimeline := make([]api.DebugTimelineEvent, 0, 12)
+	var earliestWakeAt, latestWakeAt time.Time
 	if request.WakeID != "" {
 		events, listErr := s.store.ListEventsByWakeID(ctx, request.WakeID, time.Time{}, debugTimelineMaxEvents+1)
 		if listErr != nil {
@@ -635,18 +630,68 @@ func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, re
 			// Reserve room for the request completion/error and optional
 			// regression markers so a very chatty wake never hides the
 			// outcome that the customer is investigating.
-			if len(timeline) >= debugTimelineMaxEvents-4 {
+			if len(wakeTimeline) >= debugTimelineMaxEvents-4 {
 				break
 			}
-			timeline = append(timeline, api.DebugTimelineEvent{
+			wakeTimeline = append(wakeTimeline, api.DebugTimelineEvent{
 				At:      event.At.UTC().Format(time.RFC3339Nano),
 				Phase:   "wake",
 				Kind:    event.Kind,
 				Actor:   event.Actor,
 				Summary: debugWakeTimelineSummary(event),
 			})
+			if debugWakeEventAnchorsRequest(event.Kind) {
+				if earliestWakeAt.IsZero() || event.At.Before(earliestWakeAt) {
+					earliestWakeAt = event.At
+				}
+				if latestWakeAt.IsZero() || event.At.After(latestWakeAt) {
+					latestWakeAt = event.At
+				}
+			}
 		}
 	}
+
+	// request_telemetry.received_at is a collapsed minute-bucket timestamp,
+	// while wake events retain precise times. Keep the representative latency
+	// visible, but anchor impossible coarse markers around their linked wake so
+	// the customer timeline can never claim completion before queue, boot, or
+	// first-byte evidence.
+	completionAt := recordedCompletionAt
+	completionAnchored := false
+	if !latestWakeAt.IsZero() && !completionAt.After(latestWakeAt) {
+		completionAt = latestWakeAt.Add(time.Nanosecond)
+		completionAnchored = true
+	}
+	startAt := recordedCompletionAt.Add(-time.Duration(request.LatencyMS) * time.Millisecond)
+	if !earliestWakeAt.IsZero() && !startAt.Before(earliestWakeAt) {
+		startAt = earliestWakeAt.Add(-time.Nanosecond)
+	}
+	if !startAt.Before(completionAt) {
+		startAt = completionAt.Add(-time.Millisecond)
+	}
+	timeline := make([]api.DebugTimelineEvent, 0, len(wakeTimeline)+5)
+	timeline = append(timeline, api.DebugTimelineEvent{
+		At:      startAt.UTC().Format(time.RFC3339Nano),
+		Phase:   "request",
+		Kind:    "request.received",
+		Summary: "representative request entered the gateway (estimated from collapsed telemetry)",
+		// received_at is the minute bucket boundary for collapsed rows,
+		// so request markers are intentionally labeled approximate.
+		Approximate: true,
+	})
+	if request.Guest != nil {
+		guestAt := completionAt.Add(-time.Duration(request.Guest.DurationMS) * time.Millisecond)
+		timeline = append(timeline, api.DebugTimelineEvent{
+			At:          guestAt.UTC().Format(time.RFC3339Nano),
+			Phase:       "guest",
+			Kind:        "guest.execution",
+			Summary:     fmt.Sprintf("%s guest execution observed (%s); timestamp estimated", request.Guest.Runtime, request.Guest.Outcome),
+			DurationMS:  int64(request.Guest.DurationMS),
+			Status:      request.Status,
+			Approximate: true,
+		})
+	}
+	timeline = append(timeline, wakeTimeline...)
 
 	if regression != nil && regression.LastDetectedAt != "" {
 		timeline = append(timeline, api.DebugTimelineEvent{
@@ -657,18 +702,22 @@ func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, re
 		})
 	}
 
+	completionSummary := fmt.Sprintf("representative request completed in %dms (estimated from collapsed telemetry)", request.LatencyMS)
+	if completionAnchored {
+		completionSummary += "; completion anchored after linked wake evidence"
+	}
 	timeline = append(timeline, api.DebugTimelineEvent{
-		At:          receivedAt.UTC().Format(time.RFC3339Nano),
+		At:          completionAt.UTC().Format(time.RFC3339Nano),
 		Phase:       "request",
 		Kind:        "request.completed",
-		Summary:     fmt.Sprintf("representative request completed in %dms", request.LatencyMS),
+		Summary:     completionSummary,
 		DurationMS:  int64(request.LatencyMS),
 		Status:      request.Status,
 		Approximate: true,
 	})
 	if request.Status >= http.StatusBadRequest {
 		timeline = append(timeline, api.DebugTimelineEvent{
-			At:      receivedAt.UTC().Format(time.RFC3339Nano),
+			At:      completionAt.UTC().Format(time.RFC3339Nano),
 			Phase:   "error",
 			Kind:    "request.error",
 			Summary: fmt.Sprintf("HTTP %d response", request.Status),
@@ -686,6 +735,15 @@ func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, re
 		timeline = timeline[:debugTimelineMaxEvents]
 	}
 	return timeline, nil
+}
+
+func debugWakeEventAnchorsRequest(kind string) bool {
+	switch kind {
+	case "wake.queue_accepted", "wake.admitted", "wake.boot_started", "wake.readiness_200", "wake.boot_completed", "wake.proxy_first_byte", "wake.boot_failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func debugTimelinePhaseRank(phase string) int {
@@ -740,13 +798,13 @@ func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timelin
 	// useful but explicitly approximate rather than pretending to be a raw
 	// request trace.
 	edge := &stages[0]
-	edge.Status = "observed"
+	edge.Status = "partial"
 	edge.StartedAt = correlationEventAt(timeline, "request.received")
 	edge.CompletedAt = correlationEventAt(timeline, "request.completed")
 	edge.DurationMS = int64(request.LatencyMS)
 	edge.EvidenceCount = countCorrelationKinds(timeline, "request.received", "request.completed")
 	edge.Approximate = true
-	edge.Reason = "derived from collapsed request telemetry"
+	edge.Reason = "estimated from collapsed request telemetry; linked wake markers anchor impossible ordering"
 
 	if request.WakeID == "" {
 		stages[1] = api.DebugRequestCorrelationStage{
@@ -766,7 +824,7 @@ func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timelin
 
 	guest := &stages[3]
 	if request.Guest != nil {
-		guest.Status = "observed"
+		guest.Status = "partial"
 		guest.DurationMS = int64(request.Guest.DurationMS)
 		guest.EvidenceCount = 1 + countCorrelationKinds(timeline, "wake.proxy_first_byte")
 		guest.Approximate = true
@@ -1360,17 +1418,17 @@ type debugReplayEnqueueResult struct {
 // mirror-rule, and metadata checks in one function prevents the browser
 // surface from drifting into a less restrictive replay path.
 func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct state.Account, reqID, requestedMirrorDeploymentID string) (debugReplayEnqueueResult, *api.Problem) {
-	parsedID, err := uuid.Parse(reqID)
+	identifier, err := normalizeDebugRequestIdentifier(reqID)
 	if err != nil {
-		return debugReplayEnqueueResult{}, api.ErrValidation("req_id must be a UUID")
+		return debugReplayEnqueueResult{}, api.ErrValidation(err.Error())
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(api.MustLimitsFor(acct.Plan).DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndID(ctx, sqlc.GetRequestTelemetryByAppAndIDParams{
-		AppID:        stringToPgUUID(app.ID),
-		ID:           pgtype.UUID{Bytes: parsedID, Valid: true},
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         stringToPgUUID(app.ID),
+		Identifier:    identifier,
+		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
@@ -1400,8 +1458,12 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 			"Debug replay is unavailable",
 			message)
 	}
+	sourceRequestID := uuidFromPg(row.ID)
+	if row.TraceID.Valid && strings.TrimSpace(row.TraceID.String) != "" {
+		sourceRequestID = strings.TrimSpace(row.TraceID.String)
+	}
 	metadata := map[string]string{
-		api.DebugReplayRequestIDHeader:     reqID,
+		api.DebugReplayRequestIDHeader:     sourceRequestID,
 		api.DebugReplayDeploymentIDHeader:  depID,
 		api.DebugReplayMirrorRuleIDHeader:  rule.ID,
 		api.DebugReplaySourceStatusHeader:  strconv.Itoa(int(row.Status)),

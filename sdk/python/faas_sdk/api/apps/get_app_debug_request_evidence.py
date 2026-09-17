@@ -1,7 +1,6 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
 
@@ -14,7 +13,7 @@ from ...types import Response
 
 def _get_kwargs(
     slug: str,
-    req_id: UUID,
+    req_id: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
@@ -85,7 +84,7 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugRequestEvidenceResponse | Problem]:
@@ -101,7 +100,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,7 +124,7 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugRequestEvidenceResponse | Problem | None:
@@ -141,7 +140,7 @@ def sync(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,7 +159,7 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugRequestEvidenceResponse | Problem]:
@@ -176,7 +175,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -198,7 +197,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugRequestEvidenceResponse | Problem | None:
@@ -214,7 +213,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

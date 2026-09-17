@@ -442,6 +442,31 @@ func TestStatusHandler_ServesHTMLFile(t *testing.T) {
 	}
 }
 
+func TestProductionStatusPageUsesCanonicalPublicStatusContract(t *testing.T) {
+	page, err := os.ReadFile("../../deploy/statuspage/index.html")
+	if err != nil {
+		t.Fatalf("read production status page: %v", err)
+	}
+	body := string(page)
+	if strings.Contains(body, "fetch('/status/slo.json'") || strings.Contains(body, `fetch("/status/slo.json"`) {
+		t.Fatal("production status page still polls the legacy SLO projection")
+	}
+	for _, required := range []string{
+		"const STATUS_API = '/v1/status'",
+		"status.components",
+		"status.indicators",
+		"coverage_30d_pct",
+		"pre_release",
+		"status.active_events",
+		"status.upcoming_maintenance",
+		"status.resolved_incidents",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("production status page is missing canonical field %q", required)
+		}
+	}
+}
+
 // TestStatusHandler_MissingFileFallback: with no statusPagePath set
 // AND the production default /etc/faas/statuspage/index.html missing,
 // the handler must fall back to the embedded "source unavailable"

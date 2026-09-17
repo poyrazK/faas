@@ -11,6 +11,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestNormalizeDebugRequestIdentifier(t *testing.T) {
+	for _, raw := range []string{
+		"0123456789abcdef0123456789abcdef",
+		"00000000-0000-0000-0000-000000000001",
+		"  public-request-id  ",
+	} {
+		got, err := normalizeDebugRequestIdentifier(raw)
+		if err != nil || got != strings.TrimSpace(raw) {
+			t.Fatalf("normalize(%q) = %q, %v", raw, got, err)
+		}
+	}
+	if _, err := normalizeDebugRequestIdentifier("   "); err == nil {
+		t.Fatal("empty request identifier must be rejected")
+	}
+	if _, err := normalizeDebugRequestIdentifier(strings.Repeat("x", debugRequestIdentifierMaxBytes+1)); err == nil {
+		t.Fatal("oversized request identifier must be rejected")
+	}
+}
+
 func TestParseDebugEvidenceSpansSortsSanitizesAndCaps(t *testing.T) {
 	input := make([]debugEvidenceSpan, 0, debugEvidenceMaxSpans+1)
 	input = append(input,
@@ -117,6 +136,49 @@ func TestBuildDebugRequestTimelineJoinsWakeAndMarksError(t *testing.T) {
 	}
 }
 
+func TestBuildDebugRequestTimelineAnchorsCollapsedCompletionAfterLinkedWake(t *testing.T) {
+	store := state.NewMemStore()
+	appID := "app-collapsed-order"
+	wakeID := "wake-collapsed-order"
+	recordedBucket := time.Date(2026, 9, 16, 22, 52, 0, 0, time.UTC)
+	wakeTimes := []time.Time{
+		recordedBucket.Add(17*time.Second + 813*time.Millisecond),
+		recordedBucket.Add(17*time.Second + 819*time.Millisecond),
+		recordedBucket.Add(18*time.Second + 11*time.Millisecond),
+	}
+	for index, kind := range []string{"wake.queue_accepted", "wake.boot_started", "wake.proxy_first_byte"} {
+		payload := `{"wake_id":"` + wakeID + `","app_id":"` + appID + `"}`
+		if err := store.AppendEventAt(context.Background(), "schedd", kind, nil, []byte(payload), wakeTimes[index]); err != nil {
+			t.Fatalf("AppendEventAt(%s): %v", kind, err)
+		}
+	}
+	request := api.DebugTelemetryRequestItem{
+		ReceivedAt: recordedBucket.Format(time.RFC3339Nano),
+		LatencyMS:  250,
+		Status:     200,
+		WakeID:     wakeID,
+	}
+	timeline, err := (&server{store: store}).buildDebugRequestTimeline(context.Background(), appID, request, nil)
+	if err != nil {
+		t.Fatalf("buildDebugRequestTimeline: %v", err)
+	}
+	var completion time.Time
+	for _, event := range timeline {
+		if event.Kind == "request.completed" {
+			completion, err = time.Parse(time.RFC3339Nano, event.At)
+			if err != nil {
+				t.Fatalf("parse completion: %v", err)
+			}
+			if !event.Approximate || !strings.Contains(event.Summary, "anchored after linked wake evidence") {
+				t.Fatalf("completion marker = %+v", event)
+			}
+		}
+	}
+	if completion.IsZero() || !completion.After(wakeTimes[len(wakeTimes)-1]) {
+		t.Fatalf("completion %s must follow proxy-first-byte %s; timeline=%+v", completion, wakeTimes[len(wakeTimes)-1], timeline)
+	}
+}
+
 func TestBuildDebugRequestTimelineWithoutWake(t *testing.T) {
 	request := api.DebugTelemetryRequestItem{
 		ReceivedAt: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
@@ -162,7 +224,7 @@ func TestBuildDebugRequestCorrelationMakesMissingSignalsExplicit(t *testing.T) {
 	if len(got.Stages) != 6 {
 		t.Fatalf("stage count = %d, want 6", len(got.Stages))
 	}
-	if got.Stages[0].Status != "observed" || !got.Stages[0].Approximate || got.Stages[0].DurationMS != 12 {
+	if got.Stages[0].Status != "partial" || !got.Stages[0].Approximate || got.Stages[0].DurationMS != 12 {
 		t.Fatalf("edge stage = %+v", got.Stages[0])
 	}
 	if got.Stages[1].Status != "not_applicable" || got.Stages[2].Status != "not_applicable" {
@@ -205,7 +267,7 @@ func TestBuildDebugRequestCorrelationComputesQueueWakeAndDownstream(t *testing.T
 	}
 }
 
-func TestBuildDebugRequestCorrelationObservesGuestExecution(t *testing.T) {
+func TestBuildDebugRequestCorrelationMarksEstimatedGuestExecutionPartial(t *testing.T) {
 	request := api.DebugTelemetryRequestItem{
 		Guest: &api.DebugGuestExecutionEvidence{Runtime: "python313", DurationMS: 83, Outcome: "handler_error", ErrorClass: "handler_exec"},
 	}
@@ -215,7 +277,7 @@ func TestBuildDebugRequestCorrelationObservesGuestExecution(t *testing.T) {
 	}}
 	got := buildDebugRequestCorrelation(request, timeline, nil)
 	stage := got.Stages[3]
-	if stage.Status != "observed" || stage.DurationMS != 83 || stage.EvidenceCount != 1 || !stage.Approximate {
+	if stage.Status != "partial" || stage.DurationMS != 83 || stage.EvidenceCount != 1 || !stage.Approximate {
 		t.Fatalf("guest stage = %+v", stage)
 	}
 	if !strings.Contains(stage.Reason, "python313") || !strings.Contains(stage.Reason, "handler_exec") {

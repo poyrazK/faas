@@ -804,16 +804,16 @@ func (s *server) populateDashboardDebugCompare(ctx context.Context, log *slog.Lo
 }
 
 func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Logger, app state.App, acct state.Account, rawID string, since time.Duration, data *dashboard.DebugPageData) error {
-	parsedID, err := uuid.Parse(rawID)
+	identifier, err := normalizeDebugRequestIdentifier(rawID)
 	if err != nil {
-		return fmt.Errorf("request id must be a UUID")
+		return err
 	}
 	now := time.Now().UTC()
-	row, err := s.store.GetRequestTelemetryByAppAndID(ctx, sqlc.GetRequestTelemetryByAppAndIDParams{
-		AppID:        stringToPgUUID(app.ID),
-		ID:           pgtype.UUID{Bytes: parsedID, Valid: true},
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         stringToPgUUID(app.ID),
+		Identifier:    identifier,
+		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("request telemetry was not found or has aged out of retention")

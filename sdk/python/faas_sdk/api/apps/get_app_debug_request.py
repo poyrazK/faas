@@ -1,7 +1,6 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
 
@@ -14,7 +13,7 @@ from ...types import Response
 
 def _get_kwargs(
     slug: str,
-    req_id: UUID,
+    req_id: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
@@ -80,13 +79,14 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugTelemetryRequestItem | Problem]:
     """Get one request telemetry record (ADR-127).
 
-     Returns one request telemetry row by id for the app. The
+     Returns one request telemetry row by public request id or internal row
+    id for the app. The
     lookup is scoped to the app resolved from `slug`, so a request
     id belonging to another app is returned as not found. This
     direct lookup is not limited to the first page of recent
@@ -94,7 +94,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,13 +118,14 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugTelemetryRequestItem | Problem | None:
     """Get one request telemetry record (ADR-127).
 
-     Returns one request telemetry row by id for the app. The
+     Returns one request telemetry row by public request id or internal row
+    id for the app. The
     lookup is scoped to the app resolved from `slug`, so a request
     id belonging to another app is returned as not found. This
     direct lookup is not limited to the first page of recent
@@ -132,7 +133,7 @@ def sync(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,13 +152,14 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugTelemetryRequestItem | Problem]:
     """Get one request telemetry record (ADR-127).
 
-     Returns one request telemetry row by id for the app. The
+     Returns one request telemetry row by public request id or internal row
+    id for the app. The
     lookup is scoped to the app resolved from `slug`, so a request
     id belonging to another app is returned as not found. This
     direct lookup is not limited to the first page of recent
@@ -165,7 +167,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,13 +189,14 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugTelemetryRequestItem | Problem | None:
     """Get one request telemetry record (ADR-127).
 
-     Returns one request telemetry row by id for the app. The
+     Returns one request telemetry row by public request id or internal row
+    id for the app. The
     lookup is scoped to the app resolved from `slug`, so a request
     id belonging to another app is returned as not found. This
     direct lookup is not limited to the first page of recent
@@ -201,7 +204,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

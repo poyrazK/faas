@@ -45,10 +45,10 @@ func (m *MemStore) RequestTelemetryCoverage(_ context.Context, _ sqlc.RequestTel
 	return sqlc.RequestTelemetryCoverageRow{}, errMemStoreRequestTelemetry
 }
 
-// GetRequestTelemetryByAppAndID (ADR-127) — MemStore stub.
+// GetRequestTelemetryByAppAndIdentifier (ADR-127) — MemStore stub.
 // Postgres-only.
-func (m *MemStore) GetRequestTelemetryByAppAndID(_ context.Context, _ sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error) {
-	return sqlc.GetRequestTelemetryByAppAndIDRow{}, errMemStoreRequestTelemetry
+func (m *MemStore) GetRequestTelemetryByAppAndIdentifier(_ context.Context, _ sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
+	return sqlc.GetRequestTelemetryByAppAndIdentifierRow{}, errMemStoreRequestTelemetry
 }
 
 // RequestTelemetryByDeployment (ADR-127 §Decision 1) — MemStore

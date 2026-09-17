@@ -1345,7 +1345,8 @@ export class AppsService {
   }
   /**
    * Get one request telemetry record (ADR-127).
-   * Returns one request telemetry row by id for the app. The
+   * Returns one request telemetry row by public request id or internal row
+   * id for the app. The
    * lookup is scoped to the app resolved from `slug`, so a request
    * id belonging to another app is returned as not found. This
    * direct lookup is not limited to the first page of recent
@@ -1363,7 +1364,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Telemetry record UUID to retrieve.
+     * Public x-faas-request-id from the response, or the internal telemetry row UUID for compatibility.
      */
     reqId: string,
   }): CancelablePromise<DebugTelemetryRequestItem> {
@@ -1408,7 +1409,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Telemetry record UUID whose evidence should be retrieved.
+     * Public x-faas-request-id whose evidence should be retrieved; internal telemetry row UUIDs remain accepted for compatibility.
      */
     reqId: string,
   }): CancelablePromise<DebugRequestEvidenceResponse> {
@@ -1586,7 +1587,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Request id from the debug requests list.
+     * Public x-faas-request-id to replay; internal telemetry row UUIDs remain accepted for compatibility.
      */
     reqId: string,
     requestBody?: DebugReplayRequest,

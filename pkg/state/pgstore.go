@@ -14455,8 +14455,8 @@ func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string)
 	return scanInstances(rows)
 }
 
-// ListInstancesForAccountPaged is the cursor-paginated variant of
-// ListInstancesForAccount (issue #393). Cursor is the instances.id;
+// ListInstancesForAccountPaged is the cursor-paginated, live-only customer
+// inventory (issues #393 and #2714). Cursor is the instances.id;
 // the SQL filter `id < $before` partitions rows by id and the
 // handler emits `out[len-1].ID` as the next cursor, so the walk
 // visits every row exactly once regardless of how `id` is generated
@@ -14473,7 +14473,10 @@ func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string)
 // stalls (test CursorPagination). `id DESC` is the only order whose
 // cursor walk is well-defined for both UUIDv4 and UUIDv7.
 //
-// Cross-account safety is the JOIN on apps.account_id = $1 — there
+// The state predicate deliberately matches the public API contract instead
+// of the broader CountsForRAM predicate: migrating rows are internal
+// handoff state and stopped rows retain no live customer VM. Cross-account
+// safety is the JOIN on apps.account_id = $1 — there
 // is no per-account guard at the handler layer because the SQL is
 // the only path. The handler validates `limit` (1..100) before this
 // call so the SQL stays narrow.
@@ -14487,6 +14490,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
+		   and i.state in ('waking', 'cold_booting', 'running', 'snapshotting')
 		   and ($2 = '' or i.id::text < $2)
 		 order by i.id::text desc
 		 limit $3`, accountID, before, limit)
@@ -25753,11 +25757,11 @@ func (s *PgStore) RequestTelemetryCoverage(ctx context.Context, arg sqlc.Request
 	return s.appErrorsQueries().RequestTelemetryCoverage(ctx, s.pool, arg)
 }
 
-// GetRequestTelemetryByAppAndID backs the direct customer debugger
-// drill-down. The sqlc query filters by app_id before matching the
-// request id, preserving the app's tenant boundary in the database.
-func (s *PgStore) GetRequestTelemetryByAppAndID(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error) {
-	return s.appErrorsQueries().GetRequestTelemetryByAppAndID(ctx, s.pool, arg)
+// GetRequestTelemetryByAppAndIdentifier backs the direct customer debugger
+// drill-down. The sqlc query filters by app_id before matching either the
+// public trace id or the internal row id, preserving the tenant boundary.
+func (s *PgStore) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
+	return s.appErrorsQueries().GetRequestTelemetryByAppAndIdentifier(ctx, s.pool, arg)
 }
 
 // RequestTelemetryByDeployment backs the per-deployment drilldown

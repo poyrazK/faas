@@ -8,16 +8,16 @@
 //	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N]
 //	gregale debug requests export <slug> [--since <dur>] [--route <pattern>] [--format ndjson|csv] [--limit N] [--output PATH]
 //	gregale debug requests watch <slug> [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once]
-//	gregale debug requests get <slug> <req_id>
-//	gregale debug requests show <slug> <req_id>
-//	gregale debug requests evidence <slug> <req_id>
-//	gregale debug requests explain <slug> <req_id>
-//	gregale debug requests trace <slug> <req_id>
-//	gregale debug requests inspect <slug> [<req_id>] [--latest] [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N]
-//	gregale debug requests replay <slug> <req_id> [--deployment-id UUID]
+//	gregale debug requests get <slug> <request-id-or-row-id>
+//	gregale debug requests show <slug> <request-id-or-row-id>
+//	gregale debug requests evidence <slug> <request-id-or-row-id>
+//	gregale debug requests explain <slug> <request-id-or-row-id>
+//	gregale debug requests trace <slug> <request-id-or-row-id>
+//	gregale debug requests inspect <slug> [<request-id-or-row-id>] [--latest] [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N]
+//	gregale debug requests replay <slug> <request-id-or-row-id> [--deployment-id UUID]
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
-//	gregale debug bundle <slug> <req_id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
+//	gregale debug bundle <slug> <request-id-or-row-id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
 //	gregale debug regressions --all [--since <dur>]
@@ -156,7 +156,7 @@ func cmdDebugRequests(args []string) int {
 // the same bounded evidence endpoint used by `show` and `evidence`.
 func cmdDebugRequestsExplain(args []string) int {
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests explain <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests explain <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
 	client, err := authedClient()
@@ -179,7 +179,7 @@ func cmdDebugRequestsExplain(args []string) int {
 // --json remains the stable machine-readable representation.
 func cmdDebugRequestsEvidence(args []string) int {
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests evidence <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests evidence <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
 	slug, reqID := args[0], args[1]
@@ -354,7 +354,7 @@ func debugTelemetryOptionsFromFlags(since, route, deploymentID string, status in
 // cmdDebugRequestsGet renders a single request's metadata by id.
 func cmdDebugRequestsGet(args []string) int {
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests get <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests get <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
 	slug, reqID := args[0], args[1]
@@ -391,7 +391,7 @@ func cmdDebugRequestsReplay(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests replay [--deployment-id UUID] [--wait] [--timeout D] [--interval D] <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests replay [--deployment-id UUID] [--wait] [--timeout D] [--interval D] <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
 	if *timeout < time.Second || *timeout > time.Hour {
@@ -695,7 +695,7 @@ func cmdDebugCompare(args []string) int {
 
 func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
+	_, _ = fmt.Fprintln(tw, "ROW_ID\tPUBLIC_REQUEST_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
 	for _, r := range resp.Requests {
 		cold := ""
 		if r.ColdBoot {
@@ -705,8 +705,12 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 		if consumer == "" {
 			consumer = "anonymous"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
-			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
+		publicRequestID := "—"
+		if r.TraceID != nil && *r.TraceID != "" {
+			publicRequestID = *r.TraceID
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			r.ID, publicRequestID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
 	}
 	_ = tw.Flush()
 	if resp.RetentionClamped {
@@ -720,7 +724,10 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 }
 
 func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
-	_, _ = fmt.Fprintf(w, "Request:    %s\n", r.ID)
+	_, _ = fmt.Fprintf(w, "Row ID:     %s\n", r.ID)
+	if r.TraceID != nil && *r.TraceID != "" {
+		_, _ = fmt.Fprintf(w, "Public ID:  %s\n", *r.TraceID)
+	}
 	_, _ = fmt.Fprintf(w, "Route:      %s %s\n", r.Method, r.Route)
 	_, _ = fmt.Fprintf(w, "Status:     %d\n", r.Status)
 	_, _ = fmt.Fprintf(w, "Latency:    %d ms\n", r.LatencyMS)
@@ -731,9 +738,6 @@ func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
 	}
 	if r.WakeID != "" {
 		_, _ = fmt.Fprintf(w, "Wake:       %s\n", r.WakeID)
-	}
-	if r.TraceID != nil && *r.TraceID != "" {
-		_, _ = fmt.Fprintf(w, "Trace:      %s\n", *r.TraceID)
 	}
 	if r.ConsumerID != "" {
 		_, _ = fmt.Fprintf(w, "Consumer:   %s\n", r.ConsumerID)
@@ -779,7 +783,10 @@ func renderDebugCoverage(w io.Writer, resp api.DebugCoverageResponse) {
 func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceResponse) {
 	r := resp.Request
 	_, _ = fmt.Fprintf(w, "%s %s · HTTP %d · %d ms\n", r.Method, r.Route, r.Status, r.LatencyMS)
-	_, _ = fmt.Fprintf(w, "request %s", r.ID)
+	_, _ = fmt.Fprintf(w, "telemetry row %s", r.ID)
+	if r.TraceID != nil && *r.TraceID != "" {
+		_, _ = fmt.Fprintf(w, " · public request %s", *r.TraceID)
+	}
 	if r.DeploymentID != "" {
 		_, _ = fmt.Fprintf(w, " · deployment %s", r.DeploymentID)
 	}
@@ -788,9 +795,6 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 	}
 	if r.WakeID != "" {
 		_, _ = fmt.Fprintf(w, " · wake %s", r.WakeID)
-	}
-	if r.TraceID != nil && *r.TraceID != "" {
-		_, _ = fmt.Fprintf(w, " · trace %s", *r.TraceID)
 	}
 	_, _ = fmt.Fprintln(w)
 	if r.ReceivedAt != "" {

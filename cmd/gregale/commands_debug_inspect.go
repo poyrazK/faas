@@ -33,7 +33,7 @@ func cmdDebugRequestsInspect(args []string) int {
 		return 1
 	}
 	if len(positional) < 1 || len(positional) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests inspect [--latest] [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] <slug> [<req_id>]", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests inspect [--latest] [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] <slug> [<request-id-or-row-id>]", debugCmdDocsTopic)
 		return 1
 	}
 	if len(positional) == 2 && (*latest || debugInspectHasSelectionFilters(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS)) {

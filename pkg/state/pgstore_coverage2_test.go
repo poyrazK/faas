@@ -177,8 +177,15 @@ func TestPg_CoverageInstanceLists(t *testing.T) {
 	if got, err := s.ListAllInstances(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("all instances = %+v, %v", got, err)
 	}
+	for _, historicalState := range []state.State{state.StateParked, state.StateStopped, state.StateFailed} {
+		if _, err := s.CreateInstance(ctx, app.ID, deployment.ID, string(historicalState), 512, nodeID, uuid.NewString()); err != nil {
+			t.Fatalf("create historical %s instance: %v", historicalState, err)
+		}
+	}
 	if got, err := s.ListInstancesForAccountPaged(ctx, account.ID, 10, ""); err != nil || len(got) != 1 {
-		t.Fatalf("paged = %+v, %v", got, err)
+		t.Fatalf("live-only paged = %+v, %v", got, err)
+	} else if got[0].ID != ins.ID || got[0].State != string(state.StateRunning) {
+		t.Fatalf("live-only paged row = %+v, want running %s", got[0], ins.ID)
 	}
 	// UpsertComputeNode + ListComputeNodes + SetComputeNodeActive.
 	if _, err := s.UpsertComputeNode(ctx, state.ComputeNode{Name: "pg-upsert", TargetURL: "unix:///run/faas/vmmd.sock", Active: true, AdmissionCeilingMB: 4096, VPCPUs: 4, VCPUBudget: 160, MemMB: 8192, MaxConcurrency: 4}); err != nil {

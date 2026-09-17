@@ -1,7 +1,6 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
 
@@ -15,7 +14,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     body: DebugReplayRequest | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -95,7 +94,7 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
@@ -111,7 +110,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
             replay. Empty body preserves the default mirror rule selected for the retained request's
             serving deployment.
@@ -139,7 +138,7 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
@@ -155,7 +154,7 @@ def sync(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
             replay. Empty body preserves the default mirror rule selected for the retained request's
             serving deployment.
@@ -178,7 +177,7 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
@@ -194,7 +193,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
             replay. Empty body preserves the default mirror rule selected for the retained request's
             serving deployment.
@@ -220,7 +219,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
@@ -236,7 +235,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
             replay. Empty body preserves the default mirror rule selected for the retained request's
             serving deployment.

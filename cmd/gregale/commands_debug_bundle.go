@@ -52,7 +52,7 @@ func cmdDebugBundle(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug bundle [--since D] [--source ID --mirror ID] [--route P] [--output PATH] <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug bundle [--since D] [--source ID --mirror ID] [--route P] [--output PATH] <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
 	if (*source == "") != (*mirror == "") {

@@ -86,6 +86,7 @@ func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
 
 func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	var got http.Request
+	publicRequestID := "0123456789abcdef0123456789abcdef"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = *r.Clone(r.Context())
 		w.Header().Set("Content-Type", "application/json")
@@ -93,7 +94,7 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 			Since: "6h", WindowStart: "2026-09-12T00:00:00Z", WindowEnd: "2026-09-12T06:00:00Z", Complete: false, NextCursor: "next-page",
 			Requests: []api.DebugTelemetryRequestItem{{
 				ID: "request-1", Route: "GET /checkout", Method: "GET", Status: 200,
-				LatencyMS: 42, Count: 7, ReceivedAt: "2026-09-06T10:00:00Z",
+				LatencyMS: 42, Count: 7, TraceID: &publicRequestID, ReceivedAt: "2026-09-06T10:00:00Z",
 			}},
 		})
 	}))
@@ -132,6 +133,9 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "COUNT") || !strings.Contains(stdout.String(), "7") {
 		t.Errorf("human output does not show collapsed request count:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "ROW_ID") || !strings.Contains(stdout.String(), "PUBLIC_REQUEST_ID") || !strings.Contains(stdout.String(), publicRequestID) {
+		t.Errorf("human output does not distinguish the public request id from the telemetry row id:\n%s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "next_cursor=next-page") {
 		t.Errorf("human output does not expose next cursor:\n%s", stdout.String())

@@ -27,7 +27,7 @@ export class DebuggerService {
      */
     slug: string,
     /**
-     * Retained request telemetry id to replay.
+     * Public x-faas-request-id, or the internal telemetry row UUID for compatibility.
      */
     reqId: string,
     formData: {

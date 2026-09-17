@@ -3567,27 +3567,28 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 	return i, err
 }
 
-const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
+const getRequestTelemetryByAppAndIdentifier = `-- name: GetRequestTelemetryByAppAndIdentifier :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
        consumer_id
 FROM request_telemetry
 WHERE app_id = $1
-  AND id = $2
+  AND (id::text = $2::text OR trace_id = $2::text)
   AND received_at >= $3
   AND received_at <  $4
+ORDER BY (id::text = $2::text) DESC, received_at DESC
 LIMIT 1
 `
 
-type GetRequestTelemetryByAppAndIDParams struct {
-	AppID        pgtype.UUID
-	ID           pgtype.UUID
-	ReceivedAt   pgtype.Timestamptz
-	ReceivedAt_2 pgtype.Timestamptz
+type GetRequestTelemetryByAppAndIdentifierParams struct {
+	AppID         pgtype.UUID
+	Identifier    string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
 }
 
-type GetRequestTelemetryByAppAndIDRow struct {
+type GetRequestTelemetryByAppAndIdentifierRow struct {
 	ID              pgtype.UUID
 	DeploymentID    pgtype.UUID
 	Route           string
@@ -3608,17 +3609,19 @@ type GetRequestTelemetryByAppAndIDRow struct {
 	ConsumerID      pgtype.UUID
 }
 
-// Direct request drill-down for the customer debugger. The app_id
-// predicate is the database-side tenant boundary; the handler has
-// already resolved the slug through the caller's account.
-func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIDParams) (GetRequestTelemetryByAppAndIDRow, error) {
-	row := db.QueryRow(ctx, getRequestTelemetryByAppAndID,
+// Direct request drill-down for the customer debugger. Customers normally
+// have the public x-faas-request-id stored as trace_id, while older clients
+// may retain the internal telemetry-row UUID. Accept both without weakening
+// the app_id tenant boundary. Prefer an exact row-id match if a future trace
+// value happens to equal another row's UUID text.
+func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error) {
+	row := db.QueryRow(ctx, getRequestTelemetryByAppAndIdentifier,
 		arg.AppID,
-		arg.ID,
-		arg.ReceivedAt,
-		arg.ReceivedAt_2,
+		arg.Identifier,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
 	)
-	var i GetRequestTelemetryByAppAndIDRow
+	var i GetRequestTelemetryByAppAndIdentifierRow
 	err := row.Scan(
 		&i.ID,
 		&i.DeploymentID,

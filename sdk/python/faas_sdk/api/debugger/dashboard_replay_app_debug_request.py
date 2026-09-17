@@ -1,7 +1,6 @@
 from http import HTTPStatus
 from typing import Any, cast
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
 
@@ -14,7 +13,7 @@ from ...types import Response
 
 def _get_kwargs(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     body: DashboardReplayAppDebugRequestBody,
 ) -> dict[str, Any]:
@@ -82,7 +81,7 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 def sync_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DashboardReplayAppDebugRequestBody,
@@ -97,7 +96,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DashboardReplayAppDebugRequestBody):
 
     Raises:
@@ -123,7 +122,7 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DashboardReplayAppDebugRequestBody,
@@ -138,7 +137,7 @@ def sync(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DashboardReplayAppDebugRequestBody):
 
     Raises:
@@ -159,7 +158,7 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DashboardReplayAppDebugRequestBody,
@@ -174,7 +173,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DashboardReplayAppDebugRequestBody):
 
     Raises:
@@ -198,7 +197,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    req_id: UUID,
+    req_id: str,
     *,
     client: AuthenticatedClient | Client,
     body: DashboardReplayAppDebugRequestBody,
@@ -213,7 +212,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        req_id (UUID):
+        req_id (str):
         body (DashboardReplayAppDebugRequestBody):
 
     Raises:

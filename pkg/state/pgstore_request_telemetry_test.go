@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -171,6 +172,72 @@ func TestPgStoreRequestTelemetry_RoundTrip(t *testing.T) {
 	}
 	if rows[0].Status != 200 {
 		t.Errorf("List.Status = %d, want 200", rows[0].Status)
+	}
+}
+
+func TestPgStoreRequestTelemetry_LookupAcceptsPublicRequestIDAndRowID(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+
+	accountID := uuid.NewString()
+	appA := uuid.NewString()
+	appB := uuid.NewString()
+	deploymentID := uuid.NewString()
+	publicRequestID := "0123456789abcdef0123456789abcdef"
+	now := time.Now().UTC()
+	for index, appID := range []string{appA, appB} {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /lookup",
+			Method:       "GET",
+			Status:       200,
+			LatencyMs:    int32(10 + index),
+			TraceID:      pgtype.Text{String: publicRequestID, Valid: true},
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(index) * time.Second), Valid: true},
+			Count:        1,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("insert app %d: %v", index, err)
+		}
+	}
+
+	windowStart := pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}
+	windowEnd := pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}
+	byPublicID, err := store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         pgtype.UUID{Bytes: parseUUID(t, appA), Valid: true},
+		Identifier:    publicRequestID,
+		ReceivedFrom:  windowStart,
+		ReceivedUntil: windowEnd,
+	})
+	if err != nil {
+		t.Fatalf("lookup by public request id: %v", err)
+	}
+	if byPublicID.LatencyMs != 10 {
+		t.Fatalf("public request lookup crossed app boundary: %+v", byPublicID)
+	}
+
+	rowID := uuid.UUID(byPublicID.ID.Bytes).String()
+	byRowID, err := store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         pgtype.UUID{Bytes: parseUUID(t, appA), Valid: true},
+		Identifier:    rowID,
+		ReceivedFrom:  windowStart,
+		ReceivedUntil: windowEnd,
+	})
+	if err != nil || uuid.UUID(byRowID.ID.Bytes).String() != rowID {
+		t.Fatalf("lookup by telemetry row id = %+v, %v", byRowID, err)
+	}
+
+	_, err = store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID:         pgtype.UUID{Bytes: parseUUID(t, appB), Valid: true},
+		Identifier:    rowID,
+		ReceivedFrom:  windowStart,
+		ReceivedUntil: windowEnd,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-app row id lookup error = %v, want pgx.ErrNoRows", err)
 	}
 }
 

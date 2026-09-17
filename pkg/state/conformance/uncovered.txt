@@ -262,7 +262,7 @@ GetOIDCTrustPolicy
 GetOperatorIntent
 GetOrgAPIKey
 GetRegressionObservation
-GetRequestTelemetryByAppAndID
+GetRequestTelemetryByAppAndIdentifier
 GetRuntimeConfig
 GetRuntimeConfigOperation
 GetRuntimeConfigRevision

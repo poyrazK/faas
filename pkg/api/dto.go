@@ -7789,6 +7789,9 @@ type AppOpenAPIPolicyPreviewRule struct {
 // handler maps sqlc-generated rows to this wire DTO (cmd/apid uses the sqlc
 // row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
+	// ID is the internal telemetry-row UUID retained for compatibility with
+	// older debugger clients. TraceID is the public x-faas-request-id customers
+	// should use for support and lookup when it is available.
 	ID           string                       `json:"id"`
 	DeploymentID string                       `json:"deployment_id"`
 	Route        string                       `json:"route"`

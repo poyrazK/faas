@@ -976,7 +976,7 @@ var cliCommands = []cliCommand{
 			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])"},
 			{Name: "regressions", Short: "Regressions (live watch, lifecycle actions, per-app/--all, rollback)"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
-			{Name: "bundle", Short: "Export a redacted incident bundle with coverage (bundle <slug> <req_id> [--output PATH])"},
+			{Name: "bundle", Short: "Export a redacted incident bundle with coverage (bundle <slug> <request-id-or-row-id> [--output PATH])"},
 		},
 		Positionals: []string{"[flags]", "<slug>", "[<request-id>]"},
 	},

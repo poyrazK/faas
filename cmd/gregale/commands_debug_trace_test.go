@@ -46,7 +46,7 @@ func TestCmdDebugRequestsTrace_RendersParentChildTree(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"GET /checkout · HTTP 200 · 140 ms",
-		"trace " + traceID,
+		"public request " + traceID,
 		"SPAN TREE",
 		"├─ http.request [server] 140 ms",
 		"│  └─ db.query [client] 12.50 ms · db=SELECT users WHERE id = ?",

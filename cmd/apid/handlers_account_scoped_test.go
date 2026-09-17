@@ -128,6 +128,48 @@ func TestListInstancesForAccount_HappyPath_TwoApps_ThreeInstancesEach(t *testing
 	}
 }
 
+func TestListInstancesForAccount_ReturnsOnlyLiveStatesBeforePagination(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := createApp(t, e, "live-inventory")
+	for i := 0; i < 120; i++ {
+		mustSeedInstanceDirect(t, e.store, app.ID, "", string(state.StateParked), 256)
+	}
+	liveStates := []state.State{
+		state.StateWaking,
+		state.StateColdBooting,
+		state.StateRunning,
+		state.StateSnapshotting,
+	}
+	want := make(map[string]state.State, len(liveStates))
+	for _, instanceState := range liveStates {
+		id := mustSeedInstanceDirect(t, e.store, app.ID, "", string(instanceState), 256)
+		want[id] = instanceState
+	}
+	for _, historicalState := range []state.State{state.StateStopped, state.StateFailed} {
+		mustSeedInstanceDirect(t, e.store, app.ID, "", string(historicalState), 256)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/instances?limit=100", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.ListInstancesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Instances) != len(liveStates) {
+		t.Fatalf("instances = %d, want %d live rows: %+v", len(out.Instances), len(liveStates), out.Instances)
+	}
+	if out.NextBefore != "" {
+		t.Fatalf("next_before = %q, want empty cursor for complete live set", out.NextBefore)
+	}
+	for _, instance := range out.Instances {
+		if expected, ok := want[instance.ID]; !ok || instance.State != string(expected) {
+			t.Fatalf("unexpected account inventory row: %+v", instance)
+		}
+	}
+}
+
 // TestListInstancesForAccount_BadLimit covers the strict-mode 400
 // path on `?limit=` outside the 1..100 range. Same shape as
 // TestListInvoices_BadLimit.

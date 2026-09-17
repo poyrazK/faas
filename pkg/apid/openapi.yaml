@@ -4742,14 +4742,15 @@ paths:
       - name: req_id
         in: path
         required: true
-        schema: { type: string, format: uuid }
-        description: "Telemetry record UUID to retrieve."
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: "Public x-faas-request-id from the response, or the internal telemetry row UUID for compatibility."
     get:
       tags: [apps]
       operationId: getAppDebugRequest
       summary: Get one request telemetry record (ADR-127).
       description: |
-        Returns one request telemetry row by id for the app. The
+        Returns one request telemetry row by public request id or internal row
+        id for the app. The
         lookup is scoped to the app resolved from `slug`, so a request
         id belonging to another app is returned as not found. This
         direct lookup is not limited to the first page of recent
@@ -4773,8 +4774,8 @@ paths:
       - name: req_id
         in: path
         required: true
-        schema: { type: string, format: uuid }
-        description: "Telemetry record UUID whose evidence should be retrieved."
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: "Public x-faas-request-id whose evidence should be retrieved; internal telemetry row UUIDs remain accepted for compatibility."
     get:
       tags: [apps]
       operationId: getAppDebugRequestEvidence
@@ -4906,8 +4907,8 @@ paths:
       - name: req_id
         in: path
         required: true
-        schema: { type: string, format: uuid }
-        description: "Request id from the debug requests list."
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: "Public x-faas-request-id to replay; internal telemetry row UUIDs remain accepted for compatibility."
     post:
       tags: [apps]
       operationId: replayAppDebugRequest
@@ -11496,10 +11497,11 @@ paths:
       - name: req_id
         in: path
         required: true
-        description: Retained request telemetry id to replay.
+        description: Public x-faas-request-id, or the internal telemetry row UUID for compatibility.
         schema:
           type: string
-          format: uuid
+          minLength: 1
+          maxLength: 128
     post:
       tags: [debugger]
       operationId: dashboardReplayAppDebugRequest
@@ -29432,7 +29434,7 @@ components:
       description: "One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."
       required: [id, deployment_id, route, method, status, latency_ms, count, cold_boot, received_at]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, description: "Internal telemetry row UUID. Use trace_id as the customer-visible request identifier when present." }
         deployment_id: { type: string, format: uuid }
         route: { type: string, description: "Route template (NOT expanded URL)." }
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
@@ -29440,7 +29442,7 @@ components:
         latency_ms: { type: integer, minimum: 0, description: "Inclusive upper bound of the bounded latency bucket represented by this row." }
         count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
-        trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
+        trace_id: { type: [string, 'null'], description: "Customer-visible x-faas-request-id and W3C trace-id (32 hex chars), null for legacy rows." }
         received_at: { type: string, format: date-time }
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }

@@ -26,6 +26,7 @@ class DebugTelemetryRequestItem:
     """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
 
     id: UUID
+    """Internal telemetry row UUID. Use trace_id as the customer-visible request identifier when present."""
     deployment_id: UUID
     route: str
     """Route template (NOT expanded URL)."""
@@ -38,7 +39,7 @@ class DebugTelemetryRequestItem:
     cold_boot: bool
     received_at: datetime.datetime
     trace_id: None | str | Unset = UNSET
-    """W3C trace-id hex (32 chars), null when unset."""
+    """Customer-visible x-faas-request-id and W3C trace-id (32 hex chars), null for legacy rows."""
     wake_id: str | Unset = UNSET
     """Opaque wake identifier when this request admitted a wake; omitted for warm requests."""
     instance_id: str | Unset = UNSET

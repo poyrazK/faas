@@ -4030,13 +4030,11 @@ type Store interface {
 	// on a one-box that's bounded by max_concurrency(plan) × apps, fine to
 	// run on the minute boundary.
 	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
-	// ListInstancesForAccountPaged is the cursor-paginated variant of
-	// ListInstancesForAccount (issue #393). The cursor is the
-	// instances.id UUIDv7; the SQL filter `id < $before` pages
-	// backwards in started_at DESC order. Used by the account-scoped
-	// dashboard pages so one call replaces N per-app fan-outs. The
-	// limit is server-side clamped to 1..100 — the handler validates
-	// before this call so the SQL stays narrow.
+	// ListInstancesForAccountPaged is the live-only customer inventory used by
+	// GET /v1/instances. It returns waking, cold_booting, running, and
+	// snapshotting rows, ordered by id DESC so the id cursor partitions only
+	// the filtered live set. Historical rows remain available through the
+	// operator/metering methods. The limit is clamped to 1..100.
 	ListInstancesForAccountPaged(ctx context.Context, accountID string, limit int, before string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
 	// UpdateInstanceStateIf atomically changes an instance state only when
@@ -5916,11 +5914,12 @@ type Store interface {
 	// for requests lost before persistence.
 	RequestTelemetryCoverage(ctx context.Context, arg sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error)
 
-	// GetRequestTelemetryByAppAndID backs GET
-	// /v1/apps/{slug}/debug/requests/{req_id}. The app_id and bounded
-	// received_at predicates keep the direct lookup tenant-scoped and
-	// within the caller's plan retention window.
-	GetRequestTelemetryByAppAndID(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error)
+	// GetRequestTelemetryByAppAndIdentifier backs GET
+	// /v1/apps/{slug}/debug/requests/{req_id}. Identifier accepts the public
+	// x-faas-request-id/trace_id and the internal telemetry-row UUID. The
+	// app_id and bounded received_at predicates keep both lookup forms
+	// tenant-scoped and within the caller's plan retention window.
+	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
 
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses

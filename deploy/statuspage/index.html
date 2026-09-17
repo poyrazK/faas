@@ -87,23 +87,38 @@
   .pill.hidden { display: none; }
   .foot { color: var(--muted); font-size: 12px; margin-top: 24px; text-align: right; }
   a { color: var(--fg); }
+
+  .pill.operational { background: var(--green); }
+  .pill.degraded, .pill.maintenance, .pill.partial_outage { background: var(--yellow); color: #111; }
+  .pill.major_outage { background: var(--red); }
+  .pill.unknown { background: var(--muted); }
+  .section-title { margin: 24px 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .components { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .component { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .component-name { font-weight: 600; }
+  .component-status { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .component-status.operational { color: var(--green); }
+  .component-status.degraded, .component-status.maintenance, .component-status.partial_outage { color: var(--yellow); }
+  .component-status.major_outage { color: var(--red); }
+  .component-status.unknown { color: var(--muted); }
+  .component-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .history-select { color: var(--fg); background: var(--bar-bg); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; }
+  .pre-release-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>faas status</h1>
+  <h1>Gregale status</h1>
   <div class="sub" id="sub">Loading…</div>
-  <!-- Degraded pill: hidden by default; the JS polling block in
-       <script> toggles `.hidden` based on s.degraded from
-       /status/slo.json. The pill surfaces customer-impacting
-       page/warn alerts currently firing on the local Prometheus. -->
-  <div id="degraded-pill" class="pill hidden" role="status" aria-live="polite">
-    Service degraded
-  </div>
+  <div id="overall-pill" class="pill unknown" role="status" aria-live="polite">Status unknown</div>
 
+  <div class="section-title">Components</div>
+  <div id="components" class="components" aria-live="polite"></div>
+
+  <div class="section-title">Live indicators</div>
   <div class="row">
     <div class="label">
-      <span class="name">API availability</span>
+      <span class="name" id="api-label">API availability</span>
       <span class="value" id="api-v">—</span>
     </div>
     <div class="bar" id="api-bar"><span></span></div>
@@ -111,7 +126,7 @@
 
   <div class="row">
     <div class="label">
-      <span class="name">Cold-wake latency (p95)</span>
+      <span class="name" id="wake-label">Platform wake p95</span>
       <span class="value" id="wake-v">—</span>
     </div>
     <div class="bar" id="wake-bar"><span></span></div>
@@ -119,79 +134,55 @@
 
   <div class="row">
     <div class="label">
-      <span class="name">Deployment success rate</span>
+      <span class="name" id="build-label">Deployment success</span>
       <span class="value" id="build-v">—</span>
     </div>
     <div class="bar" id="build-bar"><span></span></div>
   </div>
 
+  <div class="section-title">Post-launch history</div>
   <div class="row">
     <div class="label">
-      <span class="name">30-day uptime</span>
+      <select id="history-component" class="history-select" aria-label="Status component history"></select>
       <span class="value" id="uptime-v">—</span>
     </div>
     <div class="sparkline-wrap">
-      <svg id="uptime-sparkline" class="sparkline" viewBox="0 0 600 100" role="img" aria-label="30-day uptime history"></svg>
+      <svg id="uptime-sparkline" class="sparkline" viewBox="0 0 600 100" role="img" aria-label="30-day component uptime history"></svg>
     </div>
     <div class="sparkline-labels"><span>30 days ago</span><span id="uptime-traffic">—</span><span>Today</span></div>
+    <div class="pre-release-note" id="history-note"></div>
   </div>
 
-  <details class="row" id="incidents-card">
+  <details class="row" id="incidents-card" open>
     <summary class="label">
-      <span class="name">Incident history</span>
+      <span class="name">Events and maintenance</span>
       <span class="value" id="incidents-v">—</span>
     </summary>
     <div id="incidents-list" class="incidents-list"></div>
   </details>
 
   <div class="foot">
-    Source: <a href="/status/slo.json">/status/slo.json</a>
+    Source: <a href="/v1/status">/v1/status</a>
     · auto-refreshes every 30s
   </div>
 </div>
 
 <script>
-// Polls /status/slo.json every 30s. No SPA, no build step, no
-// third-party deps. The numeric thresholds (warn at 99%, red at
-// 97%; wake warn at 350ms / red at 800ms) come straight from the
-// spec §12 SLOs.
-const WARN_API = 99;
-const RED_API = 97;
-const WARN_WAKE_MS = 350;
-const RED_WAKE_MS = 800;
-const WARN_BUILD = 95;
-const RED_BUILD = 80;
+// The public page consumes the canonical component status contract. This keeps
+// launch cutoffs, pre-release days, coverage, indicators, and event history
+// identical to the unauthenticated JSON API.
+const STATUS_API = '/v1/status';
 const SPARKLINE_WIDTH = 600;
 const SPARKLINE_HEIGHT = 100;
+let currentComponents = [];
 
-function setBar(barId, valueId, pct, formatted, lowerIsBetter, warnThreshold, redThreshold) {
-  const bar = document.getElementById(barId);
-  const fill = bar.querySelector('span');
-  const v = document.getElementById(valueId);
-  v.textContent = formatted;
-  if (lowerIsBetter) {
-    // For wake latency: pct is "how far under the bad threshold",
-    // mapped so 0% = empty bar (good) and the bar is mostly green
-    // when latency is far below RED_WAKE_MS. We just normalize
-    // against 2*RED so the bar feels right at typical values.
-    const fillPct = Math.max(0, Math.min(100, 100 - (pct / (RED_WAKE_MS * 2)) * 100));
-    fill.style.width = fillPct + '%';
-    bar.classList.remove('warn', 'bad');
-    if (pct >= redThreshold) bar.classList.add('bad');
-    else if (pct >= warnThreshold) bar.classList.add('warn');
-  } else {
-    fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
-    bar.classList.remove('warn', 'bad');
-    if (pct < redThreshold) bar.classList.add('bad');
-    else if (pct < warnThreshold) bar.classList.add('warn');
-  }
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
-function setUnavailableBar(barId, valueId, label) {
-  const bar = document.getElementById(barId);
-  bar.querySelector('span').style.width = '0%';
-  bar.classList.remove('warn', 'bad');
-  document.getElementById(valueId).textContent = label;
+function titleCase(value) {
+  return String(value || 'unknown').replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function formatTime(value) {
@@ -200,43 +191,124 @@ function formatTime(value) {
   return date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
 }
 
-function renderUptime(buckets) {
+function renderOverall(status) {
+  const pill = document.getElementById('overall-pill');
+  const normalized = ['operational', 'maintenance', 'degraded', 'partial_outage', 'major_outage'].includes(status) ? status : 'unknown';
+  pill.className = 'pill ' + normalized;
+  pill.textContent = normalized === 'operational' ? 'All systems operational' : titleCase(normalized);
+}
+
+function renderComponents(components) {
+  const root = document.getElementById('components');
+  root.replaceChildren();
+  if (!Array.isArray(components) || components.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'component';
+    empty.textContent = 'Component status unavailable';
+    root.appendChild(empty);
+    return;
+  }
+  components.forEach(component => {
+    const card = document.createElement('div');
+    card.className = 'component';
+    const label = document.createElement('div');
+    label.className = 'label';
+    const name = document.createElement('span');
+    name.className = 'component-name';
+    name.textContent = component.name || component.id;
+    const status = document.createElement('span');
+    status.className = 'component-status ' + (component.status || 'unknown');
+    status.textContent = titleCase(component.status);
+    label.append(name, status);
+    card.appendChild(label);
+    const meta = document.createElement('div');
+    meta.className = 'component-meta';
+    const uptime = finiteNumber(component.uptime_30d_pct);
+    const coverage = finiteNumber(component.coverage_30d_pct);
+    meta.textContent = (uptime == null ? 'Uptime: awaiting post-launch data' : `Uptime: ${uptime.toFixed(2)}%`) +
+      (coverage == null ? '' : ` · Coverage: ${coverage.toFixed(1)}%`);
+    card.appendChild(meta);
+    root.appendChild(card);
+  });
+}
+
+function indicatorTarget(indicator) {
+  const target = finiteNumber(indicator.target);
+  if (target == null) return '';
+  return `${indicator.comparison === 'lte' ? '≤' : '≥'} ${target}${indicator.unit || ''}`;
+}
+
+function renderIndicator(indicator, barID, valueID, labelID) {
+  const bar = document.getElementById(barID);
+  const fill = bar.querySelector('span');
+  const value = document.getElementById(valueID);
+  const label = document.getElementById(labelID);
+  bar.classList.remove('warn', 'bad');
+  label.textContent = indicator?.label || label.textContent;
+  label.title = indicator ? `Target ${indicatorTarget(indicator)}` : '';
+  if (!indicator || indicator.sample_status !== 'available' || finiteNumber(indicator.value) == null) {
+    fill.style.width = '0%';
+    value.textContent = indicator?.sample_status === 'no_sample' ? 'No sample' : 'Unavailable';
+    return;
+  }
+  const observed = finiteNumber(indicator.value);
+  const target = finiteNumber(indicator.target);
+  const lowerIsBetter = indicator.comparison === 'lte';
+  const breached = target != null && (lowerIsBetter ? observed > target : observed < target);
+  const fillPct = lowerIsBetter && target > 0
+    ? Math.max(0, Math.min(100, 100 - (observed / (target * 2)) * 100))
+    : Math.max(0, Math.min(100, observed));
+  fill.style.width = fillPct + '%';
+  if (breached) bar.classList.add('bad');
+  value.textContent = indicator.unit === 'ms' ? `${Math.round(observed)} ms` : `${observed.toFixed(2)}${indicator.unit || ''}`;
+}
+
+function pointColour(point) {
+  if (point.preRelease || !point.available) return '#707781';
+  if (point.status === 'major_outage') return 'var(--red)';
+  if (point.status === 'degraded' || point.status === 'partial_outage' || point.status === 'maintenance') return 'var(--yellow)';
+  return 'var(--green)';
+}
+
+function renderHistory(component) {
   const svg = document.getElementById('uptime-sparkline');
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
-  if (!Array.isArray(buckets) || buckets.length === 0) {
-    document.getElementById('uptime-traffic').textContent = 'No platform telemetry';
+  svg.replaceChildren();
+  const daily = Array.isArray(component?.daily) ? component.daily : [];
+  const uptime = finiteNumber(component?.uptime_30d_pct);
+  document.getElementById('uptime-v').textContent = uptime == null ? '—' : `${uptime.toFixed(2)}%`;
+  if (daily.length === 0) {
+    document.getElementById('uptime-traffic').textContent = 'No component history';
+    document.getElementById('history-note').textContent = '';
     return;
   }
 
-  const width = SPARKLINE_WIDTH;
-  const height = SPARKLINE_HEIGHT;
-  const points = buckets.map((bucket, index) => {
-	const total = Number(bucket.total) || 0;
-	const available = bucket.uptime_pct != null && total > 0 && Number.isFinite(Number(bucket.uptime_pct));
-	const pct = available ? Math.max(0, Math.min(100, Number(bucket.uptime_pct))) : null;
-    const x = buckets.length === 1 ? width / 2 : index * width / (buckets.length - 1);
-	const y = available ? height - (pct / 100) * (height - 8) - 4 : height / 2;
-	return {x, y, pct, available, total, date: bucket.date};
+  const points = daily.map((bucket, index) => {
+    const preRelease = bucket.status === 'pre_release';
+    const pct = finiteNumber(bucket.uptime_pct);
+    const available = !preRelease && pct != null;
+    const x = daily.length === 1 ? SPARKLINE_WIDTH / 2 : index * SPARKLINE_WIDTH / (daily.length - 1);
+    const bounded = available ? Math.max(0, Math.min(100, pct)) : null;
+    const y = available ? SPARKLINE_HEIGHT - (bounded / 100) * (SPARKLINE_HEIGHT - 8) - 4 : SPARKLINE_HEIGHT / 2;
+    return {x, y, pct: bounded, available, preRelease, status: bucket.status, date: bucket.date, coverage: finiteNumber(bucket.coverage_pct)};
   });
 
   const track = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   track.setAttribute('class', 'track');
   track.setAttribute('x', '0');
   track.setAttribute('y', '0');
-  track.setAttribute('width', String(width));
-  track.setAttribute('height', String(height));
+  track.setAttribute('width', String(SPARKLINE_WIDTH));
+  track.setAttribute('height', String(SPARKLINE_HEIGHT));
   track.setAttribute('rx', '5');
   svg.appendChild(track);
 
-  // Draw separate runs so missing days remain visible gaps instead of a
-  // synthetic plunge to 0% or a line connecting observations across them.
   let run = [];
   function appendRun() {
-    if (run.length < 2) { run = []; return; }
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('class', 'line');
-    line.setAttribute('points', run.map(p => `${p.x},${p.y}`).join(' '));
-    svg.appendChild(line);
+    if (run.length >= 2) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      line.setAttribute('class', 'line');
+      line.setAttribute('points', run.map(point => `${point.x},${point.y}`).join(' '));
+      svg.appendChild(line);
+    }
     run = [];
   }
   points.forEach(point => {
@@ -245,112 +317,122 @@ function renderUptime(buckets) {
   });
   appendRun();
 
-  let observed = 0;
   points.forEach(point => {
-    observed += point.total;
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     circle.setAttribute('class', 'point');
     circle.setAttribute('cx', String(point.x));
     circle.setAttribute('cy', String(point.y));
     circle.setAttribute('r', '4');
-    circle.setAttribute('fill', !point.available ? '#707781' : point.pct < RED_API ? 'var(--red)' : point.pct < WARN_API ? 'var(--yellow)' : 'var(--green)');
+    circle.setAttribute('fill', pointColour(point));
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    title.textContent = `${formatTime(point.date)}: ${!point.available ? 'no platform telemetry' : point.pct.toFixed(2) + '% uptime'}`;
+    const detail = point.preRelease ? 'pre-release' : point.available ? `${point.pct.toFixed(2)}% uptime · ${point.coverage?.toFixed(1) || '0.0'}% coverage` : `${titleCase(point.status)} · no valid sample`;
+    title.textContent = `${point.date}: ${detail}`;
     circle.appendChild(title);
     svg.appendChild(circle);
   });
-  document.getElementById('uptime-traffic').textContent = observed + ' platform intervals observed';
+
+  const eligible = points.filter(point => !point.preRelease);
+  const preReleaseDays = points.length - eligible.length;
+  const coverage = finiteNumber(component?.coverage_30d_pct);
+  document.getElementById('uptime-traffic').textContent = coverage == null ? 'Coverage unavailable' : `${coverage.toFixed(1)}% telemetry coverage`;
+  document.getElementById('history-note').textContent = preReleaseDays > 0
+    ? `${preReleaseDays} day${preReleaseDays === 1 ? '' : 's'} before public launch are excluded from uptime.`
+    : 'All displayed days are inside the public launch window.';
 }
 
-function renderIncidents(incidents) {
+function renderHistorySelector(components) {
+  const select = document.getElementById('history-component');
+  const previous = select.value;
+  select.replaceChildren();
+  components.forEach(component => {
+    const option = document.createElement('option');
+    option.value = component.id;
+    option.textContent = component.name || component.id;
+    select.appendChild(option);
+  });
+  if (components.some(component => component.id === previous)) select.value = previous;
+  const selected = components.find(component => component.id === select.value) || components[0];
+  if (selected) select.value = selected.id;
+  renderHistory(selected);
+}
+
+function renderEvents(status) {
+  const active = Array.isArray(status.active_events) ? status.active_events.map(event => ({event, group: 'Active'})) : [];
+  const upcoming = Array.isArray(status.upcoming_maintenance) ? status.upcoming_maintenance.map(event => ({event, group: 'Upcoming'})) : [];
+  const resolved = Array.isArray(status.resolved_incidents) ? status.resolved_incidents.map(event => ({event, group: 'Resolved'})) : [];
+  const events = [...active, ...upcoming, ...resolved];
   const list = document.getElementById('incidents-list');
   list.replaceChildren();
-  if (!Array.isArray(incidents) || incidents.length === 0) {
-    document.getElementById('incidents-v').textContent = 'None';
+  document.getElementById('incidents-v').textContent = events.length === 0 ? 'None' : `${active.length} active · ${upcoming.length} upcoming · ${resolved.length} resolved`;
+  if (events.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'incident-empty';
-    empty.textContent = 'No incidents reported in the last 30 days.';
+    empty.textContent = 'No active incidents, upcoming maintenance, or recent resolved incidents.';
     list.appendChild(empty);
     return;
   }
-  document.getElementById('incidents-v').textContent = incidents.length + (incidents.length === 1 ? ' incident' : ' incidents');
-  incidents.forEach(incident => {
+  events.forEach(({event, group}) => {
     const article = document.createElement('article');
     article.className = 'incident';
-    const title = document.createElement('div');
-    title.className = 'incident-title';
-    const severity = document.createElement('span');
-    severity.textContent = incident.severity || 'incident';
+    const heading = document.createElement('div');
+    heading.className = 'incident-title';
+    const title = document.createElement('span');
+    title.textContent = event.title || titleCase(event.kind);
     const state = document.createElement('span');
-    state.textContent = incident.resolved_at ? 'Resolved' : 'Ongoing';
-    title.append(severity, state);
-    article.appendChild(title);
-
+    state.textContent = `${group} · ${titleCase(event.impact || event.state)}`;
+    heading.append(title, state);
+    article.appendChild(heading);
     const meta = document.createElement('div');
     meta.className = 'incident-meta';
-    const component = incident.component ? incident.component + ' · ' : '';
-    meta.textContent = component + 'Started ' + formatTime(incident.started_at) +
-      (incident.resolved_at ? ' · resolved ' + formatTime(incident.resolved_at) : '');
+    const startsAt = event.starts_at || event.scheduled_start_at || event.updated_at;
+    meta.textContent = `${(event.components || []).map(titleCase).join(', ') || 'Platform'} · ${formatTime(startsAt)}` +
+      (event.resolved_at ? ` · resolved ${formatTime(event.resolved_at)}` : '');
     article.appendChild(meta);
-
-    const summary = document.createElement('p');
-    summary.className = 'incident-summary';
-    summary.textContent = incident.summary || 'No summary provided.';
-    article.appendChild(summary);
+    const latest = Array.isArray(event.updates) && event.updates.length > 0 ? event.updates[event.updates.length - 1] : null;
+    if (latest?.message) {
+      const summary = document.createElement('p');
+      summary.className = 'incident-summary';
+      summary.textContent = latest.message;
+      article.appendChild(summary);
+    }
     list.appendChild(article);
   });
 }
 
 async function refresh() {
   const sub = document.getElementById('sub');
-  const pill = document.getElementById('degraded-pill');
   try {
-    const r = await fetch('/status/slo.json', {cache: 'no-store'});
-    if (!r.ok) throw new Error('http ' + r.status);
-    const s = await r.json();
-    const updated = s.as_of ? new Date(s.as_of) : new Date();
+    const response = await fetch(STATUS_API, {cache: 'no-store'});
+    if (!response.ok) throw new Error('http ' + response.status);
+    const status = await response.json();
+    const updated = status.updated_at ? new Date(status.updated_at) : new Date();
     const age = Math.max(0, Math.round((Date.now() - updated.getTime()) / 1000));
-    const ageLabel = age < 60 ? `${age}s ago` : `${Math.round(age/60)}m ago`;
-    sub.textContent = `Updated ${ageLabel}. Source: ${s.source || 'unknown'}.`;
-
-    // Toggle the degraded pill off when no alerts are firing. The
-    // pill must hide as well as show — a transient firing that has
-    // since cleared should not leave the page red.
-    if (s.degraded) {
-      pill.classList.remove('hidden');
-    } else {
-      pill.classList.add('hidden');
-    }
-
-    setBar('api-bar', 'api-v', s.api_availability_pct || 0,
-      (s.api_availability_pct || 0).toFixed(2) + '%', false, WARN_API, RED_API);
-    if (s.wake_p95_ms == null || !Number.isFinite(Number(s.wake_p95_ms))) {
-	  setUnavailableBar('wake-bar', 'wake-v', '—');
-    } else {
-	  setBar('wake-bar', 'wake-v', Number(s.wake_p95_ms),
-		Math.round(Number(s.wake_p95_ms)) + ' ms', true, WARN_WAKE_MS, RED_WAKE_MS);
-    }
-    setBar('build-bar', 'build-v', s.build_success_pct || 0,
-      (s.build_success_pct || 0).toFixed(2) + '%', false, WARN_BUILD, RED_BUILD);
-    const uptimeHistory = Array.isArray(s.uptime_30d) ? s.uptime_30d : [];
-    if (uptimeHistory.length === 0 || s.uptime_30d_pct == null) {
-      document.getElementById('uptime-v').textContent = '—';
-    } else {
-      document.getElementById('uptime-v').textContent = Number(s.uptime_30d_pct).toFixed(2) + '%';
-    }
-    renderUptime(uptimeHistory);
-    renderIncidents(s.incidents);
-  } catch (e) {
-    sub.textContent = 'Status source unavailable: ' + e.message;
-    document.getElementById('uptime-v').textContent = '—';
-    renderUptime([]);
-    renderIncidents([]);
-    // If we can't reach the JSON endpoint at all, hide the pill —
-    // we can't claim degraded without evidence.
-    pill.classList.add('hidden');
+    const ageLabel = age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
+    sub.textContent = `Updated ${ageLabel} · ${titleCase(status.data_status)} data · ${titleCase(status.region_scope)}`;
+    renderOverall(status.overall_status);
+    currentComponents = Array.isArray(status.components) ? status.components : [];
+    renderComponents(currentComponents);
+    renderHistorySelector(currentComponents);
+    const indicators = new Map((status.indicators || []).map(indicator => [indicator.id, indicator]));
+    renderIndicator(indicators.get('api_availability'), 'api-bar', 'api-v', 'api-label');
+    renderIndicator(indicators.get('wake_p95'), 'wake-bar', 'wake-v', 'wake-label');
+    renderIndicator(indicators.get('build_success'), 'build-bar', 'build-v', 'build-label');
+    renderEvents(status);
+  } catch (error) {
+    sub.textContent = 'Status source unavailable: ' + error.message;
+    renderOverall('unknown');
+    renderComponents([]);
+    renderHistory(null);
+    renderIndicator(null, 'api-bar', 'api-v', 'api-label');
+    renderIndicator(null, 'wake-bar', 'wake-v', 'wake-label');
+    renderIndicator(null, 'build-bar', 'build-v', 'build-label');
+    renderEvents({});
   }
 }
 
+document.getElementById('history-component').addEventListener('change', event => {
+  renderHistory(currentComponents.find(component => component.id === event.target.value));
+});
 refresh();
 setInterval(refresh, 30000);
 </script>

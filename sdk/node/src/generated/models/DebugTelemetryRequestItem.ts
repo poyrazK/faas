@@ -7,6 +7,9 @@ import type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.
  * One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher.
  */
 export type DebugTelemetryRequestItem = {
+  /**
+   * Internal telemetry row UUID. Use trace_id as the customer-visible request identifier when present.
+   */
   id: string;
   deployment_id: string;
   /**
@@ -25,7 +28,7 @@ export type DebugTelemetryRequestItem = {
   count: number;
   cold_boot: boolean;
   /**
-   * W3C trace-id hex (32 chars), null when unset.
+   * Customer-visible x-faas-request-id and W3C trace-id (32 hex chars), null for legacy rows.
    */
   trace_id?: string | null;
   received_at: string;

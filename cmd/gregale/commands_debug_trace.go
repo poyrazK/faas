@@ -17,7 +17,7 @@ import (
 // ring endpoint.
 func cmdDebugRequestsTrace(args []string) int {
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests trace <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests trace <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
 
@@ -155,9 +155,9 @@ func buildDebugTraceRoots(spans []api.DebugTelemetrySpan) []*debugTraceNode {
 func renderDebugRequestTrace(w io.Writer, resp api.DebugRequestEvidenceResponse) {
 	request := resp.Request
 	_, _ = fmt.Fprintf(w, "%s %s · HTTP %d · %d ms\n", request.Method, request.Route, request.Status, request.LatencyMS)
-	_, _ = fmt.Fprintf(w, "request %s", request.ID)
+	_, _ = fmt.Fprintf(w, "telemetry row %s", request.ID)
 	if traceID := debugRequestTraceID(request); traceID != "" {
-		_, _ = fmt.Fprintf(w, " · trace %s", traceID)
+		_, _ = fmt.Fprintf(w, " · public request %s", traceID)
 	}
 	_, _ = fmt.Fprintln(w)
 
