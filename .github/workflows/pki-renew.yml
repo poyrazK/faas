@@ -57,11 +57,9 @@ jobs:
             root@127.0.0.1 test -r /etc/faas/tls/ca/ca.key
           mkdir -p "$inventory_root/inventory/group_vars"
           cat >> "$inventory_root/inventory/group_vars/all.yml" <<'EOF'
-          # The production deployment keys are provisioned for root on every
-          # fleet host.  Without this explicit user Ansible inherits the
-          # self-hosted service account name (faas-runner), which has no SSH
-          # principal on compute nodes.
-          ansible_user: root
+          # The compute deployment key is bound to the dedicated fleet
+          # automation principal on every compute node.
+          ansible_user: faas-runner
           ansible_ssh_private_key_file: __PKI_DEPLOY_KEY__
           ansible_ssh_common_args: >-
             -o BatchMode=yes -o StrictHostKeyChecking=yes
@@ -84,6 +82,7 @@ jobs:
           # The issuer is the self-hosted runner's machine, but the hardened
           # runner process cannot sudo.  Cross sshd with the control-plane key
           # while compute hosts retain the compute-only deployment key.
+          ansible_user: root
           ansible_ssh_private_key_file: __PKI_CONTROL_KEY__
           EOF
           sed -i \

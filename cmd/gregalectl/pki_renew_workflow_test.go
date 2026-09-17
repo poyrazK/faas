@@ -26,6 +26,7 @@ func TestPKIRenewWorkflowUsesRoleScopedSSHIdentities(t *testing.T) {
 		"ssh-keyscan -H 127.0.0.1",
 		"root@127.0.0.1 test -r /etc/faas/tls/ca/ca.key",
 		"control_vars=",
+		"ansible_user: faas-runner",
 		"ansible_user: root",
 		"ansible_ssh_private_key_file: __PKI_CONTROL_KEY__",
 		"ansible_ssh_private_key_file:",
