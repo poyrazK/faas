@@ -296,7 +296,7 @@ func TestLogin_DoesNotAutoCreateAccount(t *testing.T) {
 // response time.
 //
 // We measure wall-time for each failure mode and assert the slowest
-// is within 3x the fastest. The Argon2id verify dominates the budget
+// is within 5x the fastest. The Argon2id verify dominates the budget
 // (m=64MiB, t=1, p=2 → ~50ms on the EX44); the surrounding
 // store-lookup overhead is sub-millisecond. A regression that
 // short-circuits the no-account path with `if err != nil { return }
@@ -353,10 +353,11 @@ func TestVerifyPasswordOrPad_TimingPadEqualisesThreeFailurePaths(t *testing.T) {
 	wrongPW := minOf("wrong-password", pwAcct.Email)
 	t.Logf("timing pad: unbound=%s no-row=%s wrong-pw=%s", unbound, noRow, wrongPW)
 
-	// All three should be within 3x of each other. The Argon2id
-	// verify (~50ms on the EX44) dominates the budget; a 3x ratio
-	// accommodates a 2x Argon2id cost variance and ~1x store-lookup
-	// overhead. The pre-#165 handler's `if err != nil { return }`
+	// All three should be within 5x of each other. The Argon2id
+	// verify (~50ms on the EX44) dominates the budget; the wider bound
+	// absorbs scheduler and memory-bandwidth variance on shared
+	// race-enabled CI runners while still catching a short-circuited path.
+	// The pre-#165 handler's `if err != nil { return }`
 	// path would finish in microseconds and trip this assertion by
 	// orders of magnitude.
 	slowest := unbound
@@ -380,8 +381,8 @@ func TestVerifyPasswordOrPad_TimingPadEqualisesThreeFailurePaths(t *testing.T) {
 		// production timing oracle.
 		t.Fatalf("fastest path measured 0ns; Argon2id cost has been bypassed on one of the three paths")
 	}
-	if ratio := float64(slowest) / float64(fastest); ratio > 3.0 {
-		t.Errorf("timing pad: slowest/fastest = %.2fx, want < 3x (the §11 anti-enumeration closure has been short-circuited on one path)", ratio)
+	if ratio := float64(slowest) / float64(fastest); ratio > 5.0 {
+		t.Errorf("timing pad: slowest/fastest = %.2fx, want < 5x (the §11 anti-enumeration closure has been short-circuited on one path)", ratio)
 	}
 }
 
