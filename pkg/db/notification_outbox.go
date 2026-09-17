@@ -46,7 +46,7 @@ type NotificationOutboxItem struct {
 // are advisory cache invalidations and do not need durable delivery.
 func IsDurableNotificationChannel(channel string) bool {
 	switch channel {
-	case NotifyAppWake, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady:
+	case NotifyAppWake, NotifyPrivateNetworkAttachmentChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady:
 		return true
 	default:
 		return false

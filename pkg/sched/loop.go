@@ -105,28 +105,29 @@ type Loop struct {
 	primeInFlight        map[string]struct{}
 	now                  func() time.Time
 	flowCounts           FlowCounter
-	ops                  *wire.OpsMetrics       // issue #171 shared registry; nil safe
-	audit                *audit.Auditor         // cron-fired audit row writer; nil opts out (no row written)
-	watchdog             *Watchdog              // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
-	retention            *Retention             // §17 retention sweep; nil means "no retention" (tests can opt out)
-	invocationsRetention *InvocationsRetention  // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
-	triggersRetention    *TriggersRetention     // ADR-134 PR-E: trigger_records retention sweep; nil opts out
-	heartbeat            *Heartbeat             // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
-	diskDrift            *DiskDrift             // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
-	migratingWatchdog    *MigratingWatchdog     // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
-	deadNodeReconciler   *DeadNodeReconciler    // dead-node billing-leak self-healer; nil opts out (no ticker arm)
-	instStats            InstanceStatsPoller    // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
-	scaleup              *scaleup.Trigger       // issue #169 / #172 reactive scale-up trigger; nil opts out
-	scaleupMu            sync.Mutex             // serializes asynchronous scale-up ticks
-	scaleupRunning       bool                   // true while one scale-up tick is in flight
-	targets              *targets.Trigger       // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
-	floor                *floor.Trigger         // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
-	prewarm              *prewarm.Trigger       // scheduled/predicted demand-window capacity restore; nil opts out
-	recentLoad           *recentload.RecentLoad // issue #171 aggressive-reaper signal mirror; nil opts out
-	livenessWindow       *LivenessWindow        // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
-	appDelete            *AppDeleteSubscriber   // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
-	reaperAggressive     bool                   // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
-	reaperParkCap        int                    // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
+	ops                  *wire.OpsMetrics                    // issue #171 shared registry; nil safe
+	audit                *audit.Auditor                      // cron-fired audit row writer; nil opts out (no row written)
+	watchdog             *Watchdog                           // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	retention            *Retention                          // §17 retention sweep; nil means "no retention" (tests can opt out)
+	invocationsRetention *InvocationsRetention               // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
+	triggersRetention    *TriggersRetention                  // ADR-134 PR-E: trigger_records retention sweep; nil opts out
+	heartbeat            *Heartbeat                          // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
+	diskDrift            *DiskDrift                          // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
+	migratingWatchdog    *MigratingWatchdog                  // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
+	deadNodeReconciler   *DeadNodeReconciler                 // dead-node billing-leak self-healer; nil opts out (no ticker arm)
+	instStats            InstanceStatsPoller                 // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
+	scaleup              *scaleup.Trigger                    // issue #169 / #172 reactive scale-up trigger; nil opts out
+	scaleupMu            sync.Mutex                          // serializes asynchronous scale-up ticks
+	scaleupRunning       bool                                // true while one scale-up tick is in flight
+	targets              *targets.Trigger                    // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
+	floor                *floor.Trigger                      // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
+	prewarm              *prewarm.Trigger                    // scheduled/predicted demand-window capacity restore; nil opts out
+	recentLoad           *recentload.RecentLoad              // issue #171 aggressive-reaper signal mirror; nil opts out
+	livenessWindow       *LivenessWindow                     // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
+	appDelete            *AppDeleteSubscriber                // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
+	privateNetwork       *PrivateNetworkAttachmentSubscriber // durable private-route detach handler; nil = no-op dispatch
+	reaperAggressive     bool                                // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
+	reaperParkCap        int                                 // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
 	// lastFloorByApp (issue #557 closure / ADR-072): per-app
 	// effective floor from the previous reaper tick, used to emit
 	// `instances.parked_min_instances_released` when the floor
@@ -275,6 +276,14 @@ func (l *Loop) WithTriggersRetention(r *TriggersRetention) *Loop {
 // NotifyAppDelete when the field is nil.
 func (l *Loop) WithAppDeleteSubscriber(d *AppDeleteSubscriber) *Loop {
 	l.appDelete = d
+	return l
+}
+
+// WithPrivateNetworkAttachmentSubscriber attaches the durable private-route
+// detach handler to the loop's existing LISTEN connection. The same handler
+// is used by the outbox replay worker, so a failed cleanup remains retryable.
+func (l *Loop) WithPrivateNetworkAttachmentSubscriber(s *PrivateNetworkAttachmentSubscriber) *Loop {
+	l.privateNetwork = s
 	return l
 }
 
@@ -591,9 +600,10 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyAppWake,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
-		db.NotifyCronRunNow, // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
-		db.NotifyAppDelete,  // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
-		db.NotifyJobChanged, // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
+		db.NotifyCronRunNow,                      // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
+		db.NotifyAppDelete,                       // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
+		db.NotifyJobChanged,                      // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
+		db.NotifyPrivateNetworkAttachmentChanged, // durable detach cleanup; replayed if this LISTEN delivery is missed.
 		// PR #1099 P2 redesign: multiplexed onto the existing
 		// LISTEN. Same zero-cost pattern as NotifyCronRunNow +
 		// NotifyAppDelete; one LISTEN connection, one multiplexed
@@ -934,6 +944,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			if n.Channel == db.NotifyAppWake {
 				if err := l.handleAppWake(ctx, n); err != nil {
 					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
+					continue
+				}
+			} else if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
+				if err := l.HandleDurableNotification(ctx, n); err != nil {
+					l.log.Warn("sched: private network detach cleanup failed; leaving durable request pending", "err", err)
 					continue
 				}
 			} else {
@@ -1639,6 +1654,12 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) {
 func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification) error {
 	if n.Channel == db.NotifyAppWake {
 		return l.handleAppWake(ctx, n)
+	}
+	if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
+		if l.privateNetwork == nil {
+			return nil
+		}
+		return l.privateNetwork.Handle(ctx, n)
 	}
 	l.handleNotification(ctx, n)
 	return nil
