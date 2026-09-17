@@ -29,10 +29,13 @@ func TestMigrations_RepairUsageMinutesJobIdentity(t *testing.T) {
 			drop constraint if exists usage_minutes_meter_kind_check,
 			drop column if exists job_id,
 			drop column if exists meter_kind,
-			alter column app_id set not null;
+			alter column app_id set not null`); err != nil {
+		t.Fatalf("recreate production schema drift: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
 		delete from goose_db_version
 		 where version_id = $1`, repairUsageMinutesJobIdentityVersion); err != nil {
-		t.Fatalf("recreate production schema drift: %v", err)
+		t.Fatalf("remove repair migration ledger row: %v", err)
 	}
 	assertUsageMinutesJobIdentity(t, ctx, pool, false)
 
