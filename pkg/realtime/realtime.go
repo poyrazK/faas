@@ -812,9 +812,6 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 	if endpointRegistered {
 		maxMessageBytes = value.(*endpointState).MaxMessageBytes
 	}
-	if int64(len(msg.Data)) > maxMessageBytes {
-		return 0, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
-	}
 	m.mu.RLock()
 	connections := make([]string, 0, len(m.conns))
 	endpointHasConnection := false
@@ -822,10 +819,10 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 		if c.info.EndpointID != endpointID {
 			continue
 		}
-		endpointHasConnection = true
-		if !endpointRegistered {
+		if !endpointRegistered && !endpointHasConnection {
 			maxMessageBytes = c.endpoint.MaxMessageBytes
 		}
+		endpointHasConnection = true
 		c.mu.RLock()
 		_, subscribed := c.channels[channel]
 		c.mu.RUnlock()
@@ -839,6 +836,9 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 	// unknown endpoint with no live sockets is still reported as not found.
 	if !endpointRegistered && !endpointHasConnection {
 		return 0, ErrEndpointNotFound
+	}
+	if int64(len(msg.Data)) > maxMessageBytes {
+		return 0, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
 	}
 	queued := 0
 	for _, id := range connections {
