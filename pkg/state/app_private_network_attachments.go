@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,8 +37,20 @@ type AppPrivateNetworkAttachmentStore interface {
 	DeleteAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) error
 }
 
+// AppPrivateNetworkAttachmentReconcileStore is the optional extension used by
+// the runtime connector. Keeping it separate means API-only state adapters do
+// not need to implement a background-worker surface before they can serve the
+// attachment intent endpoints.
+type AppPrivateNetworkAttachmentReconcileStore interface {
+	AppPrivateNetworkAttachmentStore
+	ListAppPrivateNetworkAttachments(ctx context.Context, statuses []string, limit int) ([]AppPrivateNetworkAttachment, error)
+	UpdateAppPrivateNetworkAttachmentStatus(ctx context.Context, accountID, appID, status, detail string) (AppPrivateNetworkAttachment, error)
+}
+
 var _ AppPrivateNetworkAttachmentStore = (*MemStore)(nil)
 var _ AppPrivateNetworkAttachmentStore = (*PgStore)(nil)
+var _ AppPrivateNetworkAttachmentReconcileStore = (*MemStore)(nil)
+var _ AppPrivateNetworkAttachmentReconcileStore = (*PgStore)(nil)
 
 func (m *MemStore) GetAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) (AppPrivateNetworkAttachment, error) {
 	if err := ctx.Err(); err != nil {
@@ -103,6 +116,63 @@ func (m *MemStore) DeleteAppPrivateNetworkAttachment(ctx context.Context, accoun
 	return nil
 }
 
+func (m *MemStore) ListAppPrivateNetworkAttachments(ctx context.Context, statuses []string, limit int) ([]AppPrivateNetworkAttachment, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 1000 {
+		return nil, ErrInvalidArgument
+	}
+	allowed := make(map[string]struct{}, len(statuses))
+	for _, status := range statuses {
+		if status != "pending" && status != "ready" && status != "error" {
+			return nil, ErrInvalidArgument
+		}
+		allowed[status] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]AppPrivateNetworkAttachment, 0, len(m.privateNetworkAttachments))
+	for _, attachment := range m.privateNetworkAttachments {
+		if len(allowed) > 0 {
+			if _, ok := allowed[attachment.Status]; !ok {
+				continue
+			}
+		}
+		out = append(out, clonePrivateNetworkAttachment(attachment))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].UpdatedAt.Before(out[j].UpdatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemStore) UpdateAppPrivateNetworkAttachmentStatus(ctx context.Context, accountID, appID, status, detail string) (AppPrivateNetworkAttachment, error) {
+	if err := ctx.Err(); err != nil {
+		return AppPrivateNetworkAttachment{}, err
+	}
+	if status != "pending" && status != "ready" && status != "error" {
+		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	attachment, ok := m.privateNetworkAttachments[appID]
+	if !ok || attachment.AccountID != accountID {
+		return AppPrivateNetworkAttachment{}, ErrNotFound
+	}
+	attachment.Status = status
+	attachment.StatusDetail = detail
+	attachment.UpdatedAt = time.Now().UTC()
+	m.privateNetworkAttachments[appID] = attachment
+	return clonePrivateNetworkAttachment(attachment), nil
+}
+
 func (s *PgStore) GetAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) (AppPrivateNetworkAttachment, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, app_id, network_id, region,
@@ -165,6 +235,55 @@ func (s *PgStore) DeleteAppPrivateNetworkAttachment(ctx context.Context, account
 	return nil
 }
 
+func (s *PgStore) ListAppPrivateNetworkAttachments(ctx context.Context, statuses []string, limit int) ([]AppPrivateNetworkAttachment, error) {
+	if limit <= 0 || limit > 1000 {
+		return nil, ErrInvalidArgument
+	}
+	for _, status := range statuses {
+		if status != "pending" && status != "ready" && status != "error" {
+			return nil, ErrInvalidArgument
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+		select id, account_id, app_id, network_id, region,
+		       coalesce(cidrs::text, '{}'), status, status_detail,
+		       created_at, updated_at
+		  from app_private_network_attachments
+		 where ($1::text[] is null or status = any($1::text[]))
+		 order by updated_at asc
+		 limit $2`, nullableStrings(statuses), limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]AppPrivateNetworkAttachment, 0)
+	for rows.Next() {
+		attachment, scanErr := scanAppPrivateNetworkAttachment(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, attachment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
+
+func (s *PgStore) UpdateAppPrivateNetworkAttachmentStatus(ctx context.Context, accountID, appID, status, detail string) (AppPrivateNetworkAttachment, error) {
+	if status != "pending" && status != "ready" && status != "error" {
+		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
+	}
+	row := s.pool.QueryRow(ctx, `
+		update app_private_network_attachments
+		   set status = $3, status_detail = $4, updated_at = now()
+		 where account_id = $1 and app_id = $2
+		returning id, account_id, app_id, network_id, region,
+		          coalesce(cidrs::text, '{}'), status, status_detail,
+		          created_at, updated_at`, accountID, appID, status, detail)
+	return scanAppPrivateNetworkAttachment(row)
+}
+
 type privateNetworkAttachmentScanner interface {
 	Scan(dest ...any) error
 }
@@ -186,4 +305,11 @@ func scanAppPrivateNetworkAttachment(row privateNetworkAttachmentScanner) (AppPr
 func clonePrivateNetworkAttachment(in AppPrivateNetworkAttachment) AppPrivateNetworkAttachment {
 	in.CIDRs = append([]netip.Prefix(nil), in.CIDRs...)
 	return in
+}
+
+func nullableStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return values
 }

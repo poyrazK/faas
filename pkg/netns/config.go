@@ -125,6 +125,12 @@ type Config struct {
 	// is enforced by the DB trigger
 	// `apps_egress_allowlist_cidr` (migration 00033, ADR-032).
 	EgressAllowlist []netip.Prefix
+	// PrivateNetworkCIDRs are provider-verified VPC destination ranges for
+	// this app. They are rendered as explicit accept-before-deny rules and
+	// longest-prefix routes through the tenant bridge. Unlike EgressAllowlist,
+	// they do not change the default public-egress policy: attaching a VPC
+	// augments connectivity rather than silently removing internet access.
+	PrivateNetworkCIDRs []netip.Prefix
 	// OperatorExceptions (PR scale-out tier-1 residual Gap #4):
 	// per-netns accept-before-deny list. Each entry is emitted
 	// as `iifname "tap0" ip saddr <ex> accept` in the per-netns
@@ -188,7 +194,7 @@ func (c Config) SetupCommands() [][]string {
 		tap = append(tap, "user", strconv.Itoa(c.TapUID))
 	}
 
-	return [][]string{
+	cmds := [][]string{
 		// Namespace + loopback.
 		cmd("ip", "netns", "add", c.Netns),
 		inNetns("ip", "link", "set", "lo", "up"),
@@ -210,6 +216,14 @@ func (c Config) SetupCommands() [][]string {
 		inNetns(tap...),
 		inNetns("ip", "addr", "add", TapPrefix, "dev", c.Tap),
 		inNetns("ip", "link", "set", c.Tap, "up"),
+	}
+	// Provider-verified private destinations get an explicit route so they
+	// remain stable if the default route is later adjusted by the host
+	// connector. The bridge gateway is directly reachable on VethPeer.
+	// Routes are installed only for ready attachments; pending/error rows
+	// never cross this boundary.
+	cmds = append(cmds, privateNetworkRouteCommands(c)...)
+	cmds = append(cmds,
 		// Route guest traffic; enable forwarding inside the netns only.
 		inNetns("sysctl", "-w", "net.ipv4.ip_forward=1"),
 		// Netns default route via the bridge IP (HostBridgeCIDR). Without
@@ -228,7 +242,19 @@ func (c Config) SetupCommands() [][]string {
 		// is reserved by pkg/fcvm/alloc.go (allocator hands out
 		// 10.100.0.2+, never .1), so no slot-0 collision is possible.
 		inNetns("ip", "route", "add", "default", "via", c.HostBridgeIP.String(), "dev", c.VethPeer),
+	)
+	return cmds
+}
+
+func privateNetworkRouteCommands(c Config) [][]string {
+	if len(c.PrivateNetworkCIDRs) == 0 || !c.HostBridgeIP.IsValid() {
+		return nil
 	}
+	cmds := make([][]string, 0, len(c.PrivateNetworkCIDRs))
+	for _, prefix := range c.PrivateNetworkCIDRs {
+		cmds = append(cmds, []string{"ip", "netns", "exec", c.Netns, "ip", "route", "replace", prefix.String(), "via", c.HostBridgeIP.String(), "dev", c.VethPeer})
+	}
+	return cmds
 }
 
 // TeardownCommands returns the argv list to remove everything Setup created.
@@ -381,6 +407,13 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip", "faas", "forward",
 			"iifname", c.Tap, "ip", "saddr", ex.String(), "accept")
 	}
+	// Provider-verified private destinations must be admitted before the
+	// RFC1918 lateral-movement deny. The connector owns the readiness decision;
+	// vmmd only receives these CIDRs on a ready wake and still keeps all other
+	// RFC1918 destinations denied.
+	if rule := c.ForwardPrivateNetworkRule(nft); rule != nil {
+		cmds = append(cmds, rule)
+	}
 	// Spec §7 cap (only when ConntrackCap > 0): drop new forward flows whose
 	// origin conntrack table already holds > N entries, so one misbehaving
 	// tenant can't exhaust the host-wide conntrack table. Sits AFTER the
@@ -474,6 +507,9 @@ func (c Config) NftCommands() [][]string {
 	// counters are scoped per chain/table); PR-C will need to sum them when
 	// it reads cap-hit telemetry. See comments on forwardConnlimitRule.
 	if rule := c.forwardConnlimitRule6(nft); rule != nil {
+		cmds = append(cmds, rule)
+	}
+	if rule := c.ForwardPrivateNetworkRule6(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
 	// PR-E: per-CIDR v6 lateral-movement deny rules (mirror of the v4
@@ -655,6 +691,41 @@ func (c Config) ForwardAllowlistRule(nft func(...string) []string) []string {
 func (c Config) ForwardAllowlistRule6(nft func(...string) []string) []string {
 	var v6 []string
 	for _, p := range c.EgressAllowlist {
+		if !p.Addr().Is4() {
+			v6 = append(v6, p.String())
+		}
+	}
+	if len(v6) == 0 {
+		return nil
+	}
+	return nft("add", "rule", "ip6", "faas", "forward",
+		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "accept")
+}
+
+// ForwardPrivateNetworkRule emits the v4 accept rule for provider-verified
+// private destinations. It is intentionally separate from EgressAllowlist:
+// attaching a VPC must not flip public egress to an allowlist-only policy.
+func (c Config) ForwardPrivateNetworkRule(nft func(...string) []string) []string {
+	var v4 []string
+	for _, p := range c.PrivateNetworkCIDRs {
+		if p.Addr().Is4() {
+			v4 = append(v4, p.String())
+		}
+	}
+	if len(v4) == 0 {
+		return nil
+	}
+	return nft("add", "rule", "ip", "faas", "forward",
+		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "accept")
+}
+
+// ForwardPrivateNetworkRule6 is the IPv6 sibling of
+// ForwardPrivateNetworkRule. The public API currently accepts IPv4-only
+// attachment ranges, but keeping the family split makes the renderer safe for
+// a future dual-stack connector and mirrors the existing allowlist helpers.
+func (c Config) ForwardPrivateNetworkRule6(nft func(...string) []string) []string {
+	var v6 []string
+	for _, p := range c.PrivateNetworkCIDRs {
 		if !p.Addr().Is4() {
 			v6 = append(v6, p.String())
 		}

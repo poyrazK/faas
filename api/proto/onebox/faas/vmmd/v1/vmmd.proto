@@ -550,6 +550,12 @@ message AppSpec {
   // characterization class. Empty preserves legacy inference for rolling
   // upgrades and older callers.
   string execution_mode = 18;
+  // private_network_cidrs are provider-verified VPC destinations for this
+  // app. vmmd installs explicit routes and accept-before-deny rules only when
+  // this list is non-empty; pending/error attachments stay fail-closed at the
+  // scheduler boundary. The list is additive to egress_allowlist and does
+  // not change public internet access.
+  repeated string private_network_cidrs = 19;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

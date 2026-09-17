@@ -28,10 +28,12 @@ reports `ready`. `network doctor` surfaces pending and failed reconciliation;
 it never probes the private network itself. `network detach` is idempotent.
 
 The attachment resource is intentionally provider-neutral: `NETWORK_ID` and
-`REGION` are stable lowercase identifiers, while the connector-specific VPC
-lookup and route programming remain a later runtime slice. Use an egress
-allowlist and, where required, a static egress address for partner allowlisting
-until that connector is available.
+`REGION` are stable lowercase identifiers. A node's connector verifies that
+the provider attachment is usable; the runtime reconciler then installs the
+requested routes and nftables exceptions before changing the row to `ready`.
+Route activation is idempotent, and any connector or host-route failure leaves
+the row in `error` with traffic blocked. Until a connector is configured, the
+API remains an intent surface and every attachment stays `pending`.
 
 ## Internal-only ingress
 

@@ -2965,6 +2965,11 @@ type WakeRequest struct {
 	// never get here; Hobby ≤ 8; Pro ≤ 16; Scale ≤ 64. The
 	// caller (apid) is responsible for size + per-plan gating.
 	EgressAllowlist []string
+	// PrivateNetworkCIDRs contains provider-verified VPC destinations. Empty
+	// means the attachment is pending/error (or not configured); vmmd keeps the
+	// default RFC1918 deny in that case. Ready CIDRs are validated again here
+	// before they reach the netns route and nft renderers.
+	PrivateNetworkCIDRs []string
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -3116,6 +3121,9 @@ type ColdBootRequest struct {
 	APIEnvEntries []APIEnvEntry
 	// EgressAllowlist (ADR-031) — same shape as WakeRequest.
 	EgressAllowlist []string
+	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
+	// that invoke ColdBoot directly instead of using the scheduler wire.
+	PrivateNetworkCIDRs []string
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3174,10 +3182,11 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
-		APIEnvEntries:   req.APIEnvEntries,
-		EgressAllowlist: req.EgressAllowlist,
-		Plan:            req.Plan,
-		Port:            req.Port,
+		APIEnvEntries:       req.APIEnvEntries,
+		EgressAllowlist:     req.EgressAllowlist,
+		PrivateNetworkCIDRs: req.PrivateNetworkCIDRs,
+		Plan:                req.Plan,
+		Port:                req.Port,
 		// ADR-057 / PR-D: forward the per-deployment override
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
@@ -3524,6 +3533,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			}
 			nc.EgressAllowlist = append(nc.EgressAllowlist, prefix)
 		}
+	}
+	// Private-network CIDRs are a separate, additive policy from the public
+	// egress allowlist. The scheduler only forwards them for a connector-ready
+	// attachment, but vmmd validates the wire again so a stale or malicious
+	// caller cannot bypass the RFC1918 and Gregale-reserved-range checks.
+	if len(req.PrivateNetworkCIDRs) > 0 && !req.ExecutionOnly {
+		privateCIDRs, perr := api.ValidatePrivateNetworkCIDRs(req.PrivateNetworkCIDRs, api.PrivateNetworkAttachmentMaxCIDRs)
+		if perr != nil {
+			return nil, fmt.Errorf("wake %s: private network: %w", req.Instance, perr)
+		}
+		nc.PrivateNetworkCIDRs = privateCIDRs
 	}
 	// ADR-119 (redesign): per-app static egress IP. The
 	// per-netns SNAT was moved to the host renderer (see

@@ -421,6 +421,10 @@ type AppSpec struct {
 	SealedEnv       []fcvm.SealedEnvEntry
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
+	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
+	// additive to EgressAllowlist and only reach vmmd when the attachment is
+	// ready; vmmd validates them again before programming the netns.
+	PrivateNetworkCIDRs []string
 	// Sidecars carries the deployment's immutable sidecar layer handles and
 	// per-workload policy. Image defaults and command metadata are baked into
 	// each sidecar layer; sealed deployment env overrides travel separately in
@@ -1290,9 +1294,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// so the per-netns renderer emits a sibling
 		// SNAT rule in the postrouting chain AFTER
 		// the default MASQUERADE.
-		StaticEgressIp:   a.StaticEgressIP,
-		StartupDeadlineS: a.StartupDeadlineS,
-		ExecutionMode:    a.ExecutionMode,
+		StaticEgressIp:      a.StaticEgressIP,
+		StartupDeadlineS:    a.StartupDeadlineS,
+		ExecutionMode:       a.ExecutionMode,
+		PrivateNetworkCidrs: a.PrivateNetworkCIDRs,
 	}
 }
 

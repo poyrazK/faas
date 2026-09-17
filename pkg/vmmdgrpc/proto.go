@@ -277,7 +277,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// wake wire. apid parses + plan-gates + size-caps upstream;
 		// vmmd translates CIDRs into netns.Config.EgressAllowlist on
 		// Wake. Empty slice = no allowlist rule (current behaviour).
-		EgressAllowlist: app.GetEgressAllowlist(),
+		EgressAllowlist:     app.GetEgressAllowlist(),
+		PrivateNetworkCIDRs: app.GetPrivateNetworkCidrs(),
 		// tier-2 PR-B: schedd fans UpdateEgressAllowlist out by
 		// app_id, so the live Instance needs to remember which app
 		// it was woken for. The scheduler already knows the app
@@ -434,7 +435,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		APIEnvEntries: apiEnvFromProto(app.GetApiEnv()),
 		// ADR-031: see toWakeRequest for the rationale; cold-boot
 		// mirrors it so deploy primes the same egress policy.
-		EgressAllowlist: app.GetEgressAllowlist(),
+		EgressAllowlist:     app.GetEgressAllowlist(),
+		PrivateNetworkCIDRs: app.GetPrivateNetworkCidrs(),
 		// tier-2 PR-B: see toWakeRequest. The cold-boot path is
 		// the first boot of a deploy; setting AppID here means
 		// the very first UpdateEgressAllowlist fan-out finds the

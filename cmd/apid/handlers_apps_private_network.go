@@ -1,9 +1,10 @@
 // handlers_apps_private_network.go — provider-neutral private-network
 // attachment intent for customer apps.
 //
-// The first slice deliberately records intent and validation only. A future
-// connector advances pending rows to ready; until then traffic remains
-// fail-closed and the API exposes the status to operators and customers.
+// The API records provider-neutral intent. A runtime connector advances
+// pending rows to ready only after route activation succeeds; until then
+// traffic remains fail-closed and the API exposes the status to operators and
+// customers.
 package main
 
 import (

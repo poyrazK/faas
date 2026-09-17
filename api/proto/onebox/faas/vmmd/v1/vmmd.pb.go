@@ -231,8 +231,14 @@ type AppSpec struct {
 	// characterization class. Empty preserves legacy inference for rolling
 	// upgrades and older callers.
 	ExecutionMode string `protobuf:"bytes,18,opt,name=execution_mode,json=executionMode,proto3" json:"execution_mode,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// private_network_cidrs are provider-verified VPC destinations for this
+	// app. vmmd installs explicit routes and accept-before-deny rules only when
+	// this list is non-empty; pending/error attachments stay fail-closed at the
+	// scheduler boundary. The list is additive to egress_allowlist and does
+	// not change public internet access.
+	PrivateNetworkCidrs []string `protobuf:"bytes,19,rep,name=private_network_cidrs,json=privateNetworkCidrs,proto3" json:"private_network_cidrs,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -389,6 +395,13 @@ func (x *AppSpec) GetExecutionMode() string {
 		return x.ExecutionMode
 	}
 	return ""
+}
+
+func (x *AppSpec) GetPrivateNetworkCidrs() []string {
+	if x != nil {
+		return x.PrivateNetworkCidrs
+	}
+	return nil
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -5944,7 +5957,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xc2\x05\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xf6\x05\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -5968,7 +5981,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x12startup_deadline_s\x18\x0f \x01(\x05R\x10startupDeadlineS\x12%\n" +
 	"\x0ecpu_millicores\x18\x10 \x01(\x05R\rcpuMillicores\x12!\n" +
 	"\fapp_protocol\x18\x11 \x01(\tR\vappProtocol\x12%\n" +
-	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\"\xcc\x03\n" +
+	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\x122\n" +
+	"\x15private_network_cidrs\x18\x13 \x03(\tR\x13privateNetworkCidrs\"\xcc\x03\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

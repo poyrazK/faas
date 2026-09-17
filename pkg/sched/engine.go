@@ -244,6 +244,30 @@ func prefixesToCIDRStrings(prefixes []netip.Prefix) []string {
 	return out
 }
 
+// privateNetworkCIDRsFor is the scheduler's fail-closed projection of the
+// attachment intent. Pending and error rows intentionally return nil, so a
+// connector outage can never accidentally widen a guest's network policy.
+// The runtime attachment store is optional for legacy/local state adapters.
+func (e *Engine) privateNetworkCIDRsFor(ctx context.Context, app state.App) []string {
+	store, ok := e.store.(state.AppPrivateNetworkAttachmentStore)
+	if !ok {
+		return nil
+	}
+	attachment, err := store.GetAppPrivateNetworkAttachment(ctx, app.AccountID, app.ID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			if e.log != nil {
+				e.log.Warn("sched: private network attachment lookup failed; keeping traffic blocked", "app_id", app.ID, "err", err)
+			}
+		}
+		return nil
+	}
+	if attachment.Status != api.PrivateNetworkAttachmentStatusReady {
+		return nil
+	}
+	return prefixesToCIDRStrings(attachment.CIDRs)
+}
+
 // staticEgressIPString (ADR-119) lifts a *netip.Addr into the
 // dotted-quad string the vmmd AppSpec.static_egress_ip field
 // expects. nil = no static pin → empty string. The shape is
@@ -2858,7 +2882,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// lock, so a PATCH that lands between two wakes takes
 		// effect on the next wake. Live instances keep their
 		// old netns — same contract as RAMMB and MaxConcurrency.
-		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs: e.privateNetworkCIDRsFor(ctx, app),
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Empty = no static pin
 		// (default behaviour preserved). vmmd sets
@@ -4525,7 +4550,8 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		APIEnv: e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
-		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs: e.privateNetworkCIDRsFor(ctx, app),
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
@@ -5205,7 +5231,8 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// per-netns ruleset; a freshly-deployed app starts under
 		// its declared egress policy rather than awaiting a later
 		// wake.
-		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs: e.privateNetworkCIDRsFor(ctx, app),
 		// ADR-119: see the Wake builder above. Prime threads
 		// the customer-supplied static IPv4 (BYOIP, Scale-only)
 		// onto the vmmd AppSpec so the per-netns renderer
