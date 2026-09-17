@@ -4859,6 +4859,15 @@ func (c *Client) ListManagedRealtimeConnections(ctx context.Context, slug, endpo
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// DrainManagedRealtimeConnections closes a bounded set of live connections
+// selected by the request. Dry-run and partial-fleet safeguards are handled
+// by the control-plane endpoint and are preserved in the response.
+func (c *Client) DrainManagedRealtimeConnections(ctx context.Context, slug, endpointID string, req ManagedRealtimeDrainRequest) (ManagedRealtimeDrainResponse, error) {
+	var out ManagedRealtimeDrainResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/connections/drain"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
 // SendManagedRealtimeConnection queues a binary-safe message for one live
 // connection owned by the endpoint.
 func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeMessageRequest) error {

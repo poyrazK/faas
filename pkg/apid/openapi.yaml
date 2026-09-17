@@ -12723,6 +12723,40 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: drainManagedRealtimeConnections
+      summary: Close a bounded, filtered set of live managed realtime connections.
+      description: |
+        Selects connections from a point-in-time fleet inventory by channel,
+        principal, or explicit connection IDs. `dry_run` returns the selected
+        connections without closing them. A non-dry-run request fails with
+        `409 conflict` when the inventory is partial unless `allow_partial`
+        is true; this prevents an unavailable node from making a drain look
+        complete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeDrainRequest' }
+      responses:
+        '200':
+          description: The bounded drain result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeDrainResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29852,6 +29886,77 @@ components:
         limit: { type: integer, minimum: 1, maximum: 1000 }
         truncated: { type: boolean }
         partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
+        nodes_queried: { type: integer, minimum: 0 }
+        nodes_unavailable: { type: integer, minimum: 0 }
+
+    ManagedRealtimeDrainRequest:
+      type: object
+      description: Bounded and auditable selection for closing live connections.
+      required: [reason]
+      properties:
+        channel:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^/?#\\r\\n ]+$'
+          description: Only select connections subscribed to this channel.
+        principal:
+          type: string
+          maxLength: 256
+          description: Only select connections for this authenticated principal.
+        connection_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: Explicit connection IDs to select in addition to the filters.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+          description: Maximum number of connections to select.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Required reason recorded in the audit event and close request.
+        dry_run:
+          type: boolean
+          default: false
+          description: Return the selection without closing any connection.
+        allow_partial:
+          type: boolean
+          default: false
+          description: Permit closing the reachable subset when some nodes are unavailable.
+
+    ManagedRealtimeDrainResult:
+      type: object
+      description: Outcome for one connection in a drain request.
+      required: [id, status]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 256 }
+        status:
+          type: string
+          enum: [would_close, closed, gone, failed]
+
+    ManagedRealtimeDrainResponse:
+      type: object
+      description: Bounded, auditable result of a realtime connection drain.
+      required: [results, matched, closed, gone, failed, limit, truncated, dry_run, partial, nodes_queried, nodes_unavailable]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeDrainResult' }
+          maxItems: 1000
+        matched: { type: integer, minimum: 0, maximum: 1000, description: Number selected after applying the limit. }
+        closed: { type: integer, minimum: 0, maximum: 1000 }
+        gone: { type: integer, minimum: 0, maximum: 1000, description: Selected connections that disappeared before close. }
+        failed: { type: integer, minimum: 0, maximum: 1000 }
+        limit: { type: integer, minimum: 1, maximum: 1000 }
+        truncated: { type: boolean, description: True when more eligible connections existed than the limit. }
+        dry_run: { type: boolean }
+        partial: { type: boolean, description: Indicates that the inventory did not cover every active realtime node. }
         nodes_queried: { type: integer, minimum: 0 }
         nodes_unavailable: { type: integer, minimum: 0 }
 

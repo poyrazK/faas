@@ -14,18 +14,23 @@ import (
 )
 
 type recordingRealtimeOwner struct {
-	sent            []realtime.Message
-	connections     []realtime.ConnectionInfo
-	closed          []string
-	subscriptions   []string
-	unsubscriptions []string
-	published       []string
-	queued          int
-	err             error
+	sent             []realtime.Message
+	connections      []realtime.ConnectionInfo
+	closed           []string
+	subscriptions    []string
+	unsubscriptions  []string
+	published        []string
+	queued           int
+	err              error
+	inventoryPartial bool
 }
 
 func (o *recordingRealtimeOwner) ListConnectionInventory(context.Context) (realtime.ConnectionInventory, error) {
-	return realtime.ConnectionInventory{Connections: append([]realtime.ConnectionInfo(nil), o.connections...), NodesQueried: 1}, nil
+	inventory := realtime.ConnectionInventory{Connections: append([]realtime.ConnectionInfo(nil), o.connections...), NodesQueried: 1}
+	if o.inventoryPartial {
+		inventory.NodesUnavailable = 1
+	}
+	return inventory, nil
 }
 
 func (o *recordingRealtimeOwner) Send(_ context.Context, _, _ string, message realtime.Message) error {
@@ -131,6 +136,63 @@ func TestManagedRealtimeConnectionInventoryFiltersAndReportsSnapshot(t *testing.
 	connection := response.Connections[0]
 	if connection.ID != "conn-a" || connection.Principal != "user-a" || len(connection.Channels) != 1 || connection.Channels[0] != "room-a" || !response.Truncated {
 		t.Fatalf("inventory connection: %+v", connection)
+	}
+}
+
+func TestManagedRealtimeConnectionDrainFiltersAndSupportsDryRun(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	app, err := e.store.AppBySlug(context.Background(), "rt-actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	owner := &recordingRealtimeOwner{connections: []realtime.ConnectionInfo{
+		{ID: "conn-b", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-b", Connected: connected, Channels: []string{"room-a"}},
+		{ID: "conn-a", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-a", Connected: connected, Channels: []string{"room-a"}},
+		{ID: "conn-c", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-c", Connected: connected, Channels: []string{"room-b"}},
+	}}
+	e.s.WithRealtimeOwner(owner)
+	rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", api.ManagedRealtimeDrainRequest{
+		Channel: "room-a", Principal: "user-a", Limit: 10, Reason: "deploy", DryRun: true,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dry-run: %d %s", rec.Code, rec.Body)
+	}
+	var response api.ManagedRealtimeDrainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Matched != 1 || response.Closed != 0 || len(response.Results) != 1 || response.Results[0].ID != "conn-a" || response.Results[0].Status != "would_close" {
+		t.Fatalf("dry-run response: %+v", response)
+	}
+	if len(owner.closed) != 0 {
+		t.Fatalf("dry-run closed connections: %+v", owner.closed)
+	}
+}
+
+func TestManagedRealtimeConnectionDrainRequiresPartialAcknowledgement(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	app, err := e.store.AppBySlug(context.Background(), "rt-actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := &recordingRealtimeOwner{
+		inventoryPartial: true,
+		connections:      []realtime.ConnectionInfo{{ID: "conn-a", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID}},
+	}
+	e.s.WithRealtimeOwner(owner)
+	request := api.ManagedRealtimeDrainRequest{Reason: "node maintenance", Limit: 10}
+	if rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", request, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("partial drain without acknowledgement: %d %s", rec.Code, rec.Body)
+	}
+	request.AllowPartial = true
+	if rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", request, nil); rec.Code != http.StatusOK {
+		t.Fatalf("partial drain with acknowledgement: %d %s", rec.Code, rec.Body)
+	}
+	if len(owner.closed) != 1 || owner.closed[0] != "conn-a:node maintenance" {
+		t.Fatalf("closed connections: %+v", owner.closed)
 	}
 }
 

@@ -1612,6 +1612,22 @@ List live connections for an endpoint
 | `--channel <CHANNEL>` | only connections subscribed to this channel |  |
 | `--limit <N>` | maximum connections to return (1-1000) |  |
 
+### realtime drain
+
+Close a bounded, filtered set of live connections
+
+`gregale realtime drain <APP_SLUG> <ENDPOINT_ID> --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <TEXT>` | required audit reason | required |
+| `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--principal <PRINCIPAL>` | only connections for this principal |  |
+| `--connection-id <ID>` | select a specific connection; repeat up to 100 times |  |
+| `--limit <N>` | maximum connections to select (1-1000) |  |
+| `--dry-run` | preview without closing connections |  |
+| `--allow-partial` | allow the reachable subset when nodes are unavailable |  |
+
 ### realtime send
 
 Send a message to one live connection

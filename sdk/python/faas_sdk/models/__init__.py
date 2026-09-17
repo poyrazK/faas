@@ -707,6 +707,10 @@ from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsag
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
 from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
+from .managed_realtime_drain_request import ManagedRealtimeDrainRequest
+from .managed_realtime_drain_response import ManagedRealtimeDrainResponse
+from .managed_realtime_drain_result import ManagedRealtimeDrainResult
+from .managed_realtime_drain_result_status import ManagedRealtimeDrainResultStatus
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
 from .managed_realtime_endpoint_response_auth_algorithms_item import ManagedRealtimeEndpointResponseAuthAlgorithmsItem
 from .managed_realtime_endpoint_response_auth_mode import ManagedRealtimeEndpointResponseAuthMode
@@ -1041,6 +1045,7 @@ from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
 from .scaling_policy import ScalingPolicy
+from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
@@ -1928,6 +1933,10 @@ __all__ = (
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeConnectionListResponse",
     "ManagedRealtimeConnectionResponse",
+    "ManagedRealtimeDrainRequest",
+    "ManagedRealtimeDrainResponse",
+    "ManagedRealtimeDrainResult",
+    "ManagedRealtimeDrainResultStatus",
     "ManagedRealtimeEndpointResponse",
     "ManagedRealtimeEndpointResponseAuthAlgorithmsItem",
     "ManagedRealtimeEndpointResponseAuthMode",
@@ -2238,6 +2247,7 @@ __all__ = (
     "RotateOrgAPIKeyResponse",
     "RouteRow",
     "ScalingPolicy",
+    "ScalingPolicyConcurrencyOverflow",
     "ScalingTarget",
     "ScalingTargetMetric",
     "ScanResult",

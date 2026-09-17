@@ -357,6 +357,9 @@ export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsage
 export type { ManagedRealtimeCloseRequest } from './models/ManagedRealtimeCloseRequest.js';
 export type { ManagedRealtimeConnectionListResponse } from './models/ManagedRealtimeConnectionListResponse.js';
 export type { ManagedRealtimeConnectionResponse } from './models/ManagedRealtimeConnectionResponse.js';
+export type { ManagedRealtimeDrainRequest } from './models/ManagedRealtimeDrainRequest.js';
+export type { ManagedRealtimeDrainResponse } from './models/ManagedRealtimeDrainResponse.js';
+export type { ManagedRealtimeDrainResult } from './models/ManagedRealtimeDrainResult.js';
 export type { ManagedRealtimeEndpointResponse } from './models/ManagedRealtimeEndpointResponse.js';
 export type { ManagedRealtimeMessageRequest } from './models/ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './models/ManagedRealtimePublishResponse.js';
