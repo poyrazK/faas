@@ -533,6 +533,7 @@ func run(args []string) (status int) {
 
 func shouldResolveNestedHelp(command, subcommand string) bool {
 	unsafeLeaves := map[string]struct{}{
+		"dev setup":      {},
 		"queue tail":     {},
 		"jobs runs":      {},
 		"traffic status": {},
