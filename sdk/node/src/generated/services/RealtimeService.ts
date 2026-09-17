@@ -326,6 +326,9 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Durable identifier returned by the drain request.
+     */
     drainId: string,
   }): CancelablePromise<ManagedRealtimeDrainResponse> {
     return __request(OpenAPI, {
