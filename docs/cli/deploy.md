@@ -144,6 +144,8 @@ scaling:
     value: 2
   scale_out_cooldown_s: 5
   scale_in_cooldown_s: 60
+  concurrency_overflow: queue # queue or drop
+  max_queue_wait_ms: 2500 # 0 uses the plan default
 ```
 
 `min_instances` and `max_instances` use the platform's plan limits; `0`
@@ -155,6 +157,9 @@ block because scaling is app-scoped; configure each workload separately after
 project apply. Source-ref (`--repo`) deploys read and apply the block
 server-side from the immutable archive before enqueueing the deployment. A local
 single-app deploy reads the block from the uploaded source.
+
+`concurrency_overflow: drop` returns HTTP 429 immediately when the app's
+concurrency boundary is saturated; `queue` preserves bounded waiting.
 
 For a decomposed monorepo deploy (one CLI invocation, N apps), opt into
 project apply with `--project`. The project slug defaults to `--name`, the

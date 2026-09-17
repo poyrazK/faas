@@ -387,6 +387,8 @@ var cliCommands = []cliCommand{
 			{Name: "profile", Short: "set a named RAM/CPU profile", Value: "micro|small|medium|large|xlarge"},
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
+			{Name: "concurrency-overflow", Short: "set saturated concurrency behavior", ClosedSet: []string{"queue", "drop"}},
+			{Name: "max-queue-wait-ms", Short: "set maximum queued concurrency wait", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
 			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
 			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},

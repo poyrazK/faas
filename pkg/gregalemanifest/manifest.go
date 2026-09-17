@@ -415,6 +415,13 @@ type ScalingConfig struct {
 	Target            *ScalingTarget `yaml:"target,omitempty"`
 	ScaleOutCooldownS *int           `yaml:"scale_out_cooldown_s,omitempty"`
 	ScaleInCooldownS  *int           `yaml:"scale_in_cooldown_s,omitempty"`
+	// ConcurrencyOverflow controls admission when the app's request
+	// concurrency boundary is saturated. Empty uses the platform default
+	// (queue), while drop rejects immediately with 429.
+	ConcurrencyOverflow string `yaml:"concurrency_overflow,omitempty"`
+	// MaxQueueWaitMS overrides the plan-derived admission wait. Zero uses
+	// the plan default.
+	MaxQueueWaitMS int `yaml:"max_queue_wait_ms,omitempty"`
 }
 
 const (
@@ -444,14 +451,23 @@ func (s *ScalingConfig) Validate() error {
 	if s.ScaleInCooldownS != nil && (*s.ScaleInCooldownS < api.MinScaleInCooldownS || *s.ScaleInCooldownS > api.MaxScaleInCooldownS) {
 		return fmt.Errorf("scaling: scale_in_cooldown_s must be in [%d, %d]; got %d", api.MinScaleInCooldownS, api.MaxScaleInCooldownS, *s.ScaleInCooldownS)
 	}
+	if s.ConcurrencyOverflow != "" && s.ConcurrencyOverflow != api.ConcurrencyOverflowQueue && s.ConcurrencyOverflow != api.ConcurrencyOverflowDrop {
+		return fmt.Errorf("scaling: concurrency_overflow must be %q or %q; got %q", api.ConcurrencyOverflowQueue, api.ConcurrencyOverflowDrop, s.ConcurrencyOverflow)
+	}
+	if s.MaxQueueWaitMS < 0 || s.MaxQueueWaitMS > api.MaxConcurrencyQueueWaitMS {
+		return fmt.Errorf("scaling: max_queue_wait_ms must be between 0 and %d; got %d", api.MaxConcurrencyQueueWaitMS, s.MaxQueueWaitMS)
+	}
 	if s.Target != nil {
 		switch s.Target.Metric {
-		case "rps", "concurrent_requests", "p99_latency_ms":
+		case "rps", "concurrent_requests", "queue_depth", "p99_latency_ms":
 		default:
-			return fmt.Errorf("scaling: target.metric %q is invalid; use rps, concurrent_requests, or p99_latency_ms", s.Target.Metric)
+			return fmt.Errorf("scaling: target.metric %q is invalid; use rps, concurrent_requests, queue_depth, or p99_latency_ms", s.Target.Metric)
 		}
 		if s.Target.Value < 0 || math.IsNaN(s.Target.Value) || math.IsInf(s.Target.Value, 0) {
 			return fmt.Errorf("scaling: target.value must be >= 0; got %v", s.Target.Value)
+		}
+		if s.Target.Metric == "queue_depth" && s.Target.Value <= 0 {
+			return fmt.Errorf("scaling: target.value must be > 0 for queue_depth; got %v", s.Target.Value)
 		}
 	}
 	return nil
@@ -465,8 +481,10 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		return nil
 	}
 	out := &api.ScalingPolicy{
-		ScaleOutCooldownS: defaultScaleOutCooldownS,
-		ScaleInCooldownS:  defaultScaleInCooldownS,
+		ScaleOutCooldownS:   defaultScaleOutCooldownS,
+		ScaleInCooldownS:    defaultScaleInCooldownS,
+		ConcurrencyOverflow: s.ConcurrencyOverflow,
+		MaxQueueWaitMS:      s.MaxQueueWaitMS,
 	}
 	if s.MinInstances != nil {
 		out.MinInstances = *s.MinInstances

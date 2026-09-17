@@ -192,6 +192,62 @@ func TestCmdAppFlagSentinels(t *testing.T) {
 	}
 }
 
+func TestCmdAppConcurrencyPolicyPreservesExistingScalingFields(t *testing.T) {
+	var got api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSONTest(w, api.AppResponse{
+				Slug:         constSlug,
+				MinInstances: 2,
+				ScalingPolicy: &api.ScalingPolicy{
+					MinInstances: 2, MaxInstances: 4, ScaleOutCooldownS: 5, ScaleInCooldownS: 60,
+					Target: &api.ScalingTarget{Metric: "rps", Value: 10},
+				},
+			})
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("decode PATCH body: %v", err)
+		}
+		writeJSONTest(w, api.AppResponse{Slug: constSlug})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	if code := cmdApp([]string{constSlug, "--concurrency-overflow", "drop", "--max-queue-wait-ms", "1250"}); code != 0 {
+		t.Fatalf("cmdApp exit = %d, want 0", code)
+	}
+	if got.ScalingPolicy == nil {
+		t.Fatal("scaling_policy = nil, want replacement policy")
+	}
+	policy := got.ScalingPolicy
+	if policy.MinInstances != 2 || policy.MaxInstances != 4 || policy.ScaleOutCooldownS != 5 || policy.ScaleInCooldownS != 60 {
+		t.Fatalf("scaling_policy = %+v, existing fields were not preserved", policy)
+	}
+	if policy.Target == nil || policy.Target.Metric != "rps" || policy.Target.Value != 10 {
+		t.Fatalf("scaling_policy.target = %+v, existing target was not preserved", policy.Target)
+	}
+	if policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueWaitMS != 1250 {
+		t.Fatalf("scaling_policy concurrency fields = %+v, want drop/1250", policy)
+	}
+}
+
+func TestCLIScalingPolicyPatchLegacyAppUsesSafeCooldownDefaults(t *testing.T) {
+	fake := &fakeManifestScalingClient{app: api.AppResponse{Slug: constSlug, MinInstances: 1}}
+	policy, err := cliScalingPolicyPatch(context.Background(), fake, constSlug, api.ConcurrencyOverflowDrop, 0, true, false)
+	if err != nil {
+		t.Fatalf("cliScalingPolicyPatch: %v", err)
+	}
+	if policy.MinInstances != 1 || policy.ScaleOutCooldownS != 5 || policy.ScaleInCooldownS != 60 {
+		t.Fatalf("policy = %+v, want legacy min plus safe cooldown defaults", policy)
+	}
+	if policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop {
+		t.Fatalf("concurrency_overflow = %q, want drop", policy.ConcurrencyOverflow)
+	}
+}
+
 // TestCmdAppMinInstances_HobbyRejects is the wire-level CLI check for
 // the plan-tier gate (ux_spec §6.5). When apid returns 403
 // plan_min_instances_not_allowed, the CLI must surface a non-zero exit
