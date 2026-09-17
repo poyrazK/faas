@@ -1947,6 +1947,41 @@ func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 	}
 }
 
+func TestTemplates_NodeRuntimeFloor(t *testing.T) {
+	for _, name := range templates.Names {
+		t.Run(name, func(t *testing.T) {
+			dir, cleanup, err := templates.MaterializeForTest(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+
+			body, err := os.ReadFile(filepath.Join(dir, "package.json"))
+			if errors.Is(err, os.ErrNotExist) {
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var pkg struct {
+				Engines struct {
+					Node string `json:"node"`
+				} `json:"engines"`
+			}
+			if err := json.Unmarshal(body, &pkg); err != nil {
+				t.Fatalf("decode package.json: %v", err)
+			}
+			want := ">=22"
+			if name == "function-node24" {
+				want = ">=24"
+			}
+			if pkg.Engines.Node != want {
+				t.Fatalf("engines.node = %q, want %q", pkg.Engines.Node, want)
+			}
+		})
+	}
+}
+
 func TestTemplates_RejectsPathTraversal(t *testing.T) {
 	for _, bad := range []string{"", ".", "..", "../etc", "foo/bar"} {
 		t.Run(bad, func(t *testing.T) {
