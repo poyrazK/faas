@@ -960,7 +960,7 @@ List pull-request and developer previews (defaults to the linked app)
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | parent app slug (defaults to the linked app) |  |
+| `--app <slug>` | parent app slug |  |
 
 
 ### preview show
