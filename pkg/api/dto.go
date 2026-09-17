@@ -4100,6 +4100,21 @@ type InvokeRequest struct {
 	// positive integer sets invocations.result_retention_until =
 	// completed_at + RetentionSeconds.
 	RetentionSeconds *int `json:"retention_seconds,omitempty"`
+	// Destinations routes terminal async outcomes to existing app webhook
+	// subscriptions. Each value is an app_webhooks id owned by the target
+	// app; omitted destinations preserve the existing no-callback behavior.
+	Destinations *InvocationDestinations `json:"destinations,omitempty"`
+}
+
+// InvocationDestinations configures terminal callbacks for an invocation.
+// OnSuccess is used only after a completed dispatch; OnFailure is used for
+// permanent failures and retry-budget exhaustion. The referenced webhook
+// subscription is resolved and ownership-checked when the invocation is
+// enqueued, then the scheduler enqueues the durable delivery after the
+// source row reaches its terminal state.
+type InvocationDestinations struct {
+	OnSuccess string `json:"on_success,omitempty"`
+	OnFailure string `json:"on_failure,omitempty"`
 }
 
 // RetryPolicyDTO is the wire shape for dispatch.RetryPolicy. Lives
@@ -4171,7 +4186,9 @@ type Invocation struct {
 	// recently replayed from a dead_letter parent via
 	// POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL
 	// until the first replay.
-	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
+	LastReplayedAt         *time.Time `json:"last_replayed_at,omitempty"`
+	OnSuccessDestinationID string     `json:"on_success_destination_id,omitempty"`
+	OnFailureDestinationID string     `json:"on_failure_destination_id,omitempty"`
 }
 
 // ListInvocationsResponse is the wire shape for GET /v1/invocations.

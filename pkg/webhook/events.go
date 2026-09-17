@@ -69,6 +69,57 @@ func Emit(ctx context.Context, store state.Store, appID string, event state.AppW
 	return firstErr
 }
 
+// EmitTo enqueues one event for a caller-selected app webhook subscription.
+// It shares Emit's durable delivery ledger and payload shape, but deliberately
+// bypasses event-filter fan-out: an invocation destination is an explicit
+// target chosen at enqueue time. Ownership is checked again here because the
+// invocation may outlive a webhook update or a scheduler restart.
+func EmitTo(ctx context.Context, store state.Store, appID, webhookID string, event state.AppWebhookEvent, payload any) error {
+	if !state.ValidAppWebhookEvent(event) {
+		return fmt.Errorf("%w: %q", errInvalidAppWebhookEvent, event)
+	}
+	if store == nil {
+		return errors.New("webhook: nil store")
+	}
+	if appID == "" || webhookID == "" {
+		return errors.New("webhook: app and destination are required")
+	}
+	hook, err := store.AppWebhookByID(ctx, webhookID)
+	if err != nil {
+		return fmt.Errorf("webhook: load destination %s: %w", webhookID, err)
+	}
+	if hook.AppID != appID {
+		return fmt.Errorf("webhook: destination %s does not belong to app %s", webhookID, appID)
+	}
+	if !hook.Enabled {
+		return nil
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("webhook: marshal %s payload: %w", event, err)
+	}
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("webhook: load app %s: %w", appID, err)
+	}
+	if hook.AccountID != app.AccountID {
+		return fmt.Errorf("webhook: destination %s does not belong to app account", webhookID)
+	}
+	_, err = store.RecordAppWebhookDelivery(ctx, state.AppWebhookDelivery{
+		WebhookID: webhookID,
+		AppID:     app.ID,
+		AccountID: app.AccountID,
+		Event:     event,
+		Payload:   json.RawMessage(body),
+		Status:    state.AppWebhookDeliveryPending,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("webhook: enqueue %s for %s: %w", event, webhookID, err)
+	}
+	return nil
+}
+
 func matches(filter []string, event state.AppWebhookEvent) bool {
 	if len(filter) == 0 {
 		return true

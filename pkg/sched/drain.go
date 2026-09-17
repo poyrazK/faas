@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -62,6 +63,13 @@ func failOutcome(err error) state.FailOption {
 		return state.WithOutcome(state.OutcomeTimeout)
 	}
 	return state.WithOutcome(state.OutcomeFailed)
+}
+
+func invocationOutcomeForError(err error) state.InvocationOutcome {
+	if errors.Is(err, ErrDispatchTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		return state.OutcomeTimeout
+	}
+	return state.OutcomeFailed
 }
 
 // Drain is the Move 1 event-shaped scheduler. It walks due rows from
@@ -235,6 +243,49 @@ func (d *Drain) emitDeadLetter(ctx context.Context, inv state.Invocation, reason
 			"app_id": inv.AppID, "source_id": inv.ID, "source": "invocation",
 			"origin": string(inv.Source), "error_kind": reason,
 		})
+	}
+}
+
+// emitInvocationDestination hands a terminal invocation outcome to the
+// existing durable app-webhook dispatcher. It is intentionally best-effort:
+// the invocation state transition has already committed, and the webhook
+// ledger provides its own retry/dead-letter semantics for a downstream outage.
+func (d *Drain) emitInvocationDestination(ctx context.Context, inv state.Invocation, outcome state.InvocationOutcome, result json.RawMessage, lastError string) {
+	if d == nil || d.store == nil {
+		return
+	}
+	destination := inv.OnSuccessDestinationID
+	status := "succeeded"
+	if outcome != state.OutcomeSuccess {
+		destination = inv.OnFailureDestinationID
+		status = string(outcome)
+		if status == "" {
+			status = "failed"
+		}
+	}
+	if destination == "" {
+		return
+	}
+	finishedAt := d.now().UTC()
+	payload := map[string]any{
+		"job_id":      inv.ID,
+		"run_id":      inv.ID,
+		"app_id":      inv.AppID,
+		"account_id":  inv.AccountID,
+		"source":      string(inv.Source),
+		"status":      status,
+		"outcome":     string(outcome),
+		"finished_at": finishedAt,
+		"attempts":    inv.Attempts,
+	}
+	if len(result) > 0 {
+		payload["result"] = json.RawMessage(result)
+	}
+	if lastError != "" {
+		payload["error"] = lastError
+	}
+	if err := webhook.EmitTo(ctx, d.store, inv.AppID, destination, state.AppWebhookEventJobFinished, payload); err != nil {
+		d.log.Warn("drain: enqueue invocation destination", "inv", inv.ID, "destination", destination, "err", err)
 	}
 }
 
@@ -467,7 +518,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 	// 3. Claim.
 	cap := d.accountAsyncCap(ctx, inv)
-	if _, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", d.wakeLeaseSeconds, cap); err != nil {
+	claimed, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", d.wakeLeaseSeconds, cap)
+	if err != nil {
 		if errors.Is(err, state.ErrQuotaExceeded) {
 			// Per-account cap hit (ADR-134 PR-B). Leave the row
 			// in 'pending' so the next tick retries after a
@@ -481,6 +533,10 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// "skip locked" path caught us on the next LIST. Skip.
 		return
 	}
+	// Use the post-claim row for attempt-aware retry/dead-letter decisions.
+	// ClaimInvocation increments attempts atomically; keeping the pre-claim
+	// snapshot here would delay the terminal callback by one delivery cycle.
+	inv = claimed
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
 	// intentionally absent from request_telemetry), so let gatewayd-internal
@@ -490,7 +546,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if isDebugMirrorReplay(inv) {
 		if d.gateway == nil {
 			err := errors.New("sched: debug replay gateway is not configured")
-			_ = d.store.FailInvocation(ctx, inv.ID, err.Error(), time.Duration(d.retryAfterSeconds)*time.Second, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+			retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+			budget := d.queueAttemptBudget(ctx, inv)
+			failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err))
+			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+				d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
+			}
 			return
 		}
 		dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
@@ -502,9 +563,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			budget := d.queueAttemptBudget(ctx, inv)
 			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err))
 			if failErr == nil && retryAfter == 0 {
+				d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 				d.emitDone(ctx, inv, state.InvocationFailed)
 			}
 			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+				d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
 				d.emitDeadLetter(ctx, inv, "dead_letter")
 			}
 			d.log.Warn("drain: debug replay", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
@@ -519,6 +582,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			d.log.Warn("drain: complete debug replay", "inv", inv.ID, "err", err)
 			return
 		}
+		d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, dispatched.Result, "")
 		d.emitDone(ctx, inv)
 		return
 	}
@@ -546,7 +610,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		budget := d.queueAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
+		if failErr == nil && retryAfter == 0 {
+			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
+		}
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+			d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
@@ -570,7 +638,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if d.gateway == nil {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
-		_ = d.store.CompleteInvocation(ctx, inv.ID, nil)
+		if err := d.store.CompleteInvocation(ctx, inv.ID, nil); err == nil {
+			d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, nil, "")
+		}
 		d.emitDone(ctx, inv)
 		return
 	}
@@ -591,9 +661,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		budget := d.queueAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
 		if failErr == nil && retryAfter == 0 {
+			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+			d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
@@ -607,6 +679,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: complete", "inv", inv.ID, "err", err)
 		return
 	}
+	d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, dispatched.Result, "")
 	d.emitDone(ctx, inv)
 }
 

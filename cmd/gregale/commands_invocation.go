@@ -27,6 +27,8 @@ func cmdInvoke(args []string) int {
 	payload := fs.String("payload", "", "JSON payload (or @file for file body, - for stdin)")
 	method := fs.String("method", "", "HTTP method override (defaults to handler's)")
 	path := fs.String("path", "", "URL path override (defaults to handler's)")
+	onSuccess := fs.String("on-success-webhook", "", "app webhook id for completed invocation callbacks")
+	onFailure := fs.String("on-failure-webhook", "", "app webhook id for failed or dead-lettered callbacks")
 	// Go's flag parser stops at the first positional token. Reorder the
 	// documented `<slug> [flags]` form before parsing so flags-first and
 	// positional-first invocations share the same validation path.
@@ -35,7 +37,7 @@ func cmdInvoke(args []string) int {
 		return 1
 	}
 	if len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [<slug>]", "invoke")
+		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
 		return 1
 	}
 	slug := ""
@@ -46,7 +48,7 @@ func cmdInvoke(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -60,6 +62,12 @@ func cmdInvoke(args []string) int {
 		Payload: body,
 		Method:  *method,
 		Path:    *path,
+	}
+	if *onSuccess != "" || *onFailure != "" {
+		req.Destinations = &api.InvocationDestinations{
+			OnSuccess: *onSuccess,
+			OnFailure: *onFailure,
+		}
 	}
 	client, err := authedClient()
 	if err != nil {

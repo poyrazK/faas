@@ -51,6 +51,7 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
 	"app.parked", "app.woken",
+	"job.finished",
 	"usage_statement.finalized",
 }
 

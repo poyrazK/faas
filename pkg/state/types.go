@@ -3340,6 +3340,13 @@ type Invocation struct {
 	// until the first replay. Read by the dashboard's
 	// "DLQ replay history" view.
 	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
+	// OnSuccessDestinationID and OnFailureDestinationID reference
+	// app_webhooks subscriptions selected by the caller at enqueue time.
+	// They are immutable invocation intent: the scheduler reads them only
+	// after the row reaches a terminal outcome and enqueues one durable
+	// job.finished delivery to the selected subscription.
+	OnSuccessDestinationID string `json:"on_success_destination_id,omitempty"`
+	OnFailureDestinationID string `json:"on_failure_destination_id,omitempty"`
 }
 
 // DeadLetterEvent is the app-scoped projection shared by invocation queues

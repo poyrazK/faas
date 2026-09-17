@@ -968,6 +968,8 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "async", Short: "return immediately with status_url"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
+			{Name: "on-success-webhook", Short: "app webhook id for completed invocation callbacks", Value: "ID"},
+			{Name: "on-failure-webhook", Short: "app webhook id for failed or dead-lettered callbacks", Value: "ID"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},

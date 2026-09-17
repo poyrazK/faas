@@ -13461,7 +13461,8 @@ const invocationSelectCols = `id, app_id, account_id, source, state, method, pat
        result, lease_expires_at, received_at, completed_at, attempts,
        last_error, created_at, instance_id, outcome,
        deadline_at, retry_policy, result_retention_until,
-       last_replayed_at`
+       last_replayed_at, on_success_destination_id,
+       on_failure_destination_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	payload, err := jsonOrEmpty(inv.Payload)
@@ -13494,22 +13495,31 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if len(inv.RetryPolicyJSON) > 0 {
 		retryPolicy = inv.RetryPolicyJSON
 	}
+	var onSuccessDestination, onFailureDestination any
+	if inv.OnSuccessDestinationID != "" {
+		onSuccessDestination = inv.OnSuccessDestinationID
+	}
+	if inv.OnFailureDestinationID != "" {
+		onFailureDestination = inv.OnFailureDestinationID
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into invocations
 			(app_id, account_id, source, state, method, path,
 			 payload, headers, due_at, scheduled_at, cron_id,
 			 ack_url, lease_expires_at,
-			 deadline_at, retry_policy, result_retention_until)
+			 deadline_at, retry_policy, result_retention_until,
+			 on_success_destination_id, on_failure_destination_id)
 		values
 			($1, $2, $3, coalesce(nullif($4,''),'pending'), $5, $6,
 			 $7, $8, $9, $10, $11,
 			 nullif($12,''), $13,
-			 $14, $15, $16)
+			 $14, $15, $16, $17, $18)
 		returning `+invocationSelectCols,
 		inv.AppID, inv.AccountID, string(inv.Source), string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
 		scheduledAt, cronID, inv.AckURL, leaseExpires,
-		deadlineAt, retryPolicy, retentionUntil)
+		deadlineAt, retryPolicy, retentionUntil,
+		onSuccessDestination, onFailureDestination)
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -14320,7 +14330,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv := Invocation{}
 	var source, state string
 	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
-	var cronID, ackURL, lastErr, instanceID *string
+	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination *string
 	var payload, headers, result []byte
 	var outcome *string
 	var deadlineAt, retentionUntil, lastReplayedAt *time.Time
@@ -14331,7 +14341,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&result, &leaseExpires, &receivedAt, &completedAt, &inv.Attempts,
 		&lastErr, &inv.CreatedAt, &instanceID, &outcome,
 		&deadlineAt, &retryPolicy, &retentionUntil,
-		&lastReplayedAt,
+		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -14386,6 +14396,12 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	}
 	if lastReplayedAt != nil {
 		inv.LastReplayedAt = lastReplayedAt
+	}
+	if onSuccessDestination != nil {
+		inv.OnSuccessDestinationID = *onSuccessDestination
+	}
+	if onFailureDestination != nil {
+		inv.OnFailureDestinationID = *onFailureDestination
 	}
 	return inv, nil
 }

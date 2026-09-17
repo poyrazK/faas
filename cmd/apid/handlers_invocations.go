@@ -11,8 +11,10 @@ package main
 // as one logical group.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -111,15 +113,22 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 	if req.Path == "" {
 		req.Path = "/"
 	}
+	onSuccessDestination, onFailureDestination, destinationProblem := s.resolveInvocationDestinations(r.Context(), app.ID, acct.ID, req.Destinations)
+	if destinationProblem != nil {
+		api.WriteProblem(w, destinationProblem)
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
-		AppID:     app.ID,
-		AccountID: acct.ID,
-		Source:    state.InvocationAsyncInvoke,
-		Method:    req.Method,
-		Path:      req.Path,
-		Payload:   req.Payload,
-		Headers:   req.Headers,
-		DueAt:     time.Now().UTC(),
+		AppID:                  app.ID,
+		AccountID:              acct.ID,
+		Source:                 state.InvocationAsyncInvoke,
+		Method:                 req.Method,
+		Path:                   req.Path,
+		Payload:                req.Payload,
+		Headers:                req.Headers,
+		DueAt:                  time.Now().UTC(),
+		OnSuccessDestinationID: onSuccessDestination,
+		OnFailureDestinationID: onFailureDestination,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue async invoke"))
@@ -157,6 +166,11 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.Path == "" {
 		req.Path = "/"
 	}
+	onSuccessDestination, onFailureDestination, destinationProblem := s.resolveInvocationDestinations(r.Context(), app.ID, acct.ID, req.Destinations)
+	if destinationProblem != nil {
+		api.WriteProblem(w, destinationProblem)
+		return
+	}
 	timeout := 30 * time.Second
 	if acct.Plan == api.PlanFree {
 		timeout = 5 * time.Second
@@ -178,9 +192,11 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// MaxAsyncResultRetentionSeconds by sending an out-of-range
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
-		DeadlineAt:           deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:      marshalRetryPolicy(req.RetryPolicy),
-		ResultRetentionUntil: retentionForRequest(req.RetentionSeconds, acct),
+		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
+		RetryPolicyJSON:        marshalRetryPolicy(req.RetryPolicy),
+		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
+		OnSuccessDestinationID: onSuccessDestination,
+		OnFailureDestinationID: onFailureDestination,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue sync invoke"))
@@ -228,6 +244,35 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 // invokeRequest is the shared body for sync + async invoke (uses
 // api.InvokeRequest so the spec compliance test sees a DTO).
 type invokeRequest = api.InvokeRequest
+
+// resolveInvocationDestinations validates the webhook subscriptions named by
+// an invocation request before the durable row is created. The IDs are
+// intentionally app-scoped: accepting an arbitrary webhook here would make
+// a valid app invocation a cross-tenant delivery primitive.
+func (s *server) resolveInvocationDestinations(ctx context.Context, appID, accountID string, destinations *api.InvocationDestinations) (string, string, *api.Problem) {
+	if destinations == nil {
+		return "", "", nil
+	}
+	resolve := func(field, id string) (string, *api.Problem) {
+		if id == "" {
+			return "", nil
+		}
+		hook, err := s.store.AppWebhookByID(ctx, id)
+		if err != nil || hook.AppID != appID || hook.AccountID != accountID {
+			return "", api.ErrValidation(fmt.Sprintf("destinations.%s must reference a webhook owned by this app", field))
+		}
+		return hook.ID, nil
+	}
+	success, prob := resolve("on_success", destinations.OnSuccess)
+	if prob != nil {
+		return "", "", prob
+	}
+	failure, prob := resolve("on_failure", destinations.OnFailure)
+	if prob != nil {
+		return "", "", prob
+	}
+	return success, failure, nil
+}
 
 // --- queues -----------------------------------------------------------------
 
