@@ -286,6 +286,109 @@ func TestHandlerMakesOnlyOneAttempt(t *testing.T) {
 	}
 }
 
+func TestHandlerBoundsChunkedRequestBody(t *testing.T) {
+	var received []byte
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var err error
+		received, err = io.ReadAll(r.Body)
+		return nil, err
+	})
+	origin, _ := url.Parse("https://provider.example")
+	integration := Integration{ID: "integration-1", Origin: origin, TokenHash: hashToken("secret"), AppIDs: map[string]struct{}{"app-1": {}}, RatePerSecond: 100, Burst: 1, MaxInFlight: 1, RequestTimeout: time.Second, Enabled: true}
+	resolver, _ := NewStaticResolver([]Integration{integration})
+	handler, _ := NewHandler(resolver, NewMemoryBackend(), &http.Client{Transport: transport})
+	handler.MaxBodyBytes = 4
+
+	req := gatewayRequest(Prefix+integration.ID+"/write", "secret", "app-1", http.MethodPost, strings.NewReader("12345"))
+	req.ContentLength = -1 // exercise the chunked/unknown-length path
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(received) > 4 {
+		t.Fatalf("provider received %d bytes, want at most 4", len(received))
+	}
+}
+
+func TestHandlerRejectsOversizedProviderResponse(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			ContentLength: 5,
+			Body:          io.NopCloser(strings.NewReader("12345")),
+			Request:       r,
+		}, nil
+	})
+	origin, _ := url.Parse("https://provider.example")
+	integration := Integration{ID: "integration-1", Origin: origin, TokenHash: hashToken("secret"), AppIDs: map[string]struct{}{"app-1": {}}, RatePerSecond: 100, Burst: 1, MaxInFlight: 1, RequestTimeout: time.Second, Enabled: true}
+	resolver, _ := NewStaticResolver([]Integration{integration})
+	handler, _ := NewHandler(resolver, NewMemoryBackend(), &http.Client{Transport: transport})
+	handler.MaxResponseBytes = 4
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, gatewayRequest(Prefix+integration.ID+"/read", "secret", "app-1", http.MethodGet, nil))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "outbound_response_too_large") {
+		t.Fatalf("body missing response cap problem: %s", rr.Body.String())
+	}
+}
+
+func TestHandlerBoundsUnknownLengthProviderResponse(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			ContentLength: -1,
+			Body:          io.NopCloser(strings.NewReader("12345")),
+			Request:       r,
+		}, nil
+	})
+	origin, _ := url.Parse("https://provider.example")
+	integration := Integration{ID: "integration-1", Origin: origin, TokenHash: hashToken("secret"), AppIDs: map[string]struct{}{"app-1": {}}, RatePerSecond: 100, Burst: 1, MaxInFlight: 1, RequestTimeout: time.Second, Enabled: true}
+	resolver, _ := NewStaticResolver([]Integration{integration})
+	handler, _ := NewHandler(resolver, NewMemoryBackend(), &http.Client{Transport: transport})
+	handler.MaxResponseBytes = 4
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, gatewayRequest(Prefix+integration.ID+"/read", "secret", "app-1", http.MethodGet, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Body.String(); got != "1234" {
+		t.Fatalf("body = %q, want capped response", got)
+	}
+}
+
+func TestHandlerRejectsOversizedProviderHeaders(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"X-Provider": []string{"12345"}},
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Request:    r,
+		}, nil
+	})
+	origin, _ := url.Parse("https://provider.example")
+	integration := Integration{ID: "integration-1", Origin: origin, TokenHash: hashToken("secret"), AppIDs: map[string]struct{}{"app-1": {}}, RatePerSecond: 100, Burst: 1, MaxInFlight: 1, RequestTimeout: time.Second, Enabled: true}
+	resolver, _ := NewStaticResolver([]Integration{integration})
+	handler, _ := NewHandler(resolver, NewMemoryBackend(), &http.Client{Transport: transport})
+	handler.MaxResponseHeaderBytes = 4
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, gatewayRequest(Prefix+integration.ID+"/read", "secret", "app-1", http.MethodGet, nil))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "outbound_response_headers_too_large") {
+		t.Fatalf("body missing header cap problem: %s", rr.Body.String())
+	}
+}
+
 func TestClientBuildsOptInPathAndHeaders(t *testing.T) {
 	var got *http.Request
 	clientHTTP := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
