@@ -607,6 +607,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("apid: open db: %w", err)
 	}
+	// Everything from here on — the LISTEN subscribers started below and
+	// runWithDeps — runs under a context that closePool cancels BEFORE
+	// closing the pool. See closePoolAfterCancel for why the order matters.
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	// ADR-094: the pool's lifetime is no longer bound to run()'s
 	// defer. The pre-bind goroutines in bgBefore (rekey walker,
 	// sseFanIn, audit subscriber, grace sweep, etc.) each call
@@ -624,11 +629,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// so a future refactor that drops closePool() at an early-return
 	// site fails the test instead of silently reintroducing the
 	// race.
-	closePool := func() {
-		if pool != nil {
-			pool.Close()
-		}
-	}
+	closePool := func() { closePoolAfterCancel(cancelRun, pool) }
 	// Warm-up barrier: acquire (and release) 4 connections before
 	// bgBefore launches its goroutines. This is the belt-and-braces
 	// defence — proves the pool can serve N parallel connections
