@@ -1,6 +1,6 @@
 // pgratelimit_invalidator.go contains the retired LISTEN-side consumer for the
 // former per-process admission cache. Central mode now consumes the shared row
-// on every request and migration 20260917160000002 removes the per-consume
+// on every request and migration 20260917170000002 removes the per-consume
 // NOTIFY trigger. The type remains available for rolling-version compatibility
 // and focused tests, but production no longer starts it.
 //
