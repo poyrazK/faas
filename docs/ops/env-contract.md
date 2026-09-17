@@ -275,7 +275,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; exact compute service ports reachable from the control plane |
 | `FAAS_PRIVATE_NETWORKS` | schedd | `default` |  |  | `` | JSON array of operator-managed private networks consumed by the provider-neutral reconciler |
 | `FAAS_PRIVATE_NETWORK_ENABLED` | schedd, shared | `default` |  |  | `` | dark-launch switch for provider-neutral private-network attachment intent; disabled by default until a connector is deployed |
-| `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED` | apid, schedd, shared | `default` |  |  | `` | dark-launch switch for Gregale-owned private network CRUD and node-local bridge reconciliation; disabled by default |
+| `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED` | apid, schedd, shared | `default` |  |  | `` | dark-launch switch for Gregale-owned private network CRUD and attachment addresses; disabled by default until the fabric is deployed |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
