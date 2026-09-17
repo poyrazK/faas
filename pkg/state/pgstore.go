@@ -27065,7 +27065,7 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 	if err != nil {
 		return DeadLetterEvent{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	row := tx.QueryRow(ctx, `
 		select id::text, account_id::text, app_id::text, source, source_id::text,
