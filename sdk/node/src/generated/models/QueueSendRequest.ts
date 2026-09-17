@@ -8,5 +8,9 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
  */
 export type QueueSendRequest = {
   payload?: Record<string, any>;
+  /**
+   * Optional per-message retry curve override.
+   */
   retry_policy?: RetryPolicyDTO;
 };
+
