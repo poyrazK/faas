@@ -282,12 +282,39 @@ func firecrackerControlLine(line []byte) bool {
 		return false
 	}
 	header := trimmed[:headerEnd+1]
+	body := strings.ToLower(strings.TrimSpace(trimmed[headerEnd+1:]))
+	// Firecracker's structured logger uses these origin names for control
+	// plane output. The guest serial stream is also multiplexed onto stdout,
+	// so filtering at this boundary keeps snapshot/API details out of the
+	// customer log ring while the unfiltered copy still lands in consolePath.
 	for _, origin := range []string{":fc_api]", ":api_server]", ":vmm]", ":snapshot]"} {
 		if strings.Contains(header, origin) {
 			return true
 		}
 	}
-	return strings.Contains(header, ":main]") && strings.Contains(trimmed[headerEnd+1:], "Firecracker")
+	// The :main origin carries both Firecracker startup/restore diagnostics and
+	// guest serial output. Keep the latter unless the message contains a
+	// known Firecracker control marker; customer applications are free to use
+	// bracketed prefixes such as `[my-app:main]`.
+	if !strings.Contains(header, ":main]") {
+		return false
+	}
+	for _, marker := range []string{
+		"running firecracker",
+		"host cpu vendor",
+		"snapshot cpu vendor",
+		"device kick",
+		"api server",
+		"request was executed successfully",
+		"api request took",
+		"snapshot/load",
+		"snapshot load",
+	} {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // ringFor returns the per-instance ring registered for instance, or nil
