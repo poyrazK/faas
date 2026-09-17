@@ -19,3 +19,22 @@ Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
 
 Interactive users can enable MFA from the account settings page. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
+
+## OIDC token exchange
+
+CI runners can exchange an IdP-issued JWT for a short-lived deploy bearer using
+the RFC 8693 form profile:
+
+```bash
+curl -X POST https://api.example.com/v1/auth/oidc/exchange \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+  --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:jwt' \
+  --data-urlencode "subject_token=$OIDC_TOKEN" \
+  --data-urlencode 'audience=faas.example.com'
+```
+
+The response uses the OAuth token shape (`access_token`, `token_type`,
+`issued_token_type`, `expires_in`, and `scope`). Gregale's profile issues only
+`deploy:write` bearer tokens; the existing JSON body (`provider`, `token`, and
+`aud`) remains available for clients that use the original contract.

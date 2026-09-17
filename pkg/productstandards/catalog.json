@@ -452,6 +452,25 @@
       ]
     },
     {
+      "id": "rfc-8693-token-exchange",
+      "name": "OAuth 2.0 Token Exchange",
+      "version": "RFC 8693",
+      "category": "identity",
+      "surface": "OIDC CI deploy authentication",
+      "status": "partial",
+      "scope": "The OIDC exchange endpoint accepts the RFC 8693 form grant with a JWT subject token and returns an opaque deploy bearer using the OAuth token response shape.",
+      "limitations": "Gregale requires one audience, issues only deploy:write bearer tokens, and does not support resource targeting, actor-token delegation, refresh tokens, or client authentication on this anonymous CI endpoint; the legacy JSON exchange remains supported.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc8693",
+      "evidence": "pkg/oidc/rfc8693.go; pkg/oidc/handler.go; api/openapi.yaml /v1/auth/oidc/exchange; docs/auth.md",
+      "conformance": [
+        {
+          "fixture": "oauth-token-exchange-form",
+          "tier": "unit",
+          "target": "pkg/oidc/handler_test.go::TestServeHTTP_RFC8693FormExchange"
+        }
+      ]
+    },
+    {
       "id": "rfc-8725-jwt-bcp",
       "name": "JSON Web Token Best Current Practices",
       "version": "RFC 8725 (BCP 225)",

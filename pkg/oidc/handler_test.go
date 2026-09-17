@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -346,6 +347,178 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected %q audit event, got %+v", KindAuthTokenExchanged, audit.events)
+	}
+}
+
+func TestServeHTTP_RFC8693FormExchange(t *testing.T) {
+	t.Parallel()
+	h, policies, _, _, _ := newHarness(t, nil)
+	if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+		AccountID:  testAcctID,
+		IssuerURL:  testIssuer,
+		JWKSURL:    testIssuer + ".well-known/jwks",
+		Audience:   []string{"faas.example.com"},
+		Algorithms: []string{"RS256"},
+		AuditLogin: "octo@example.com",
+	}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	form := url.Values{
+		"grant_type":           {TokenExchangeGrantType},
+		"subject_token":        {makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute))},
+		"subject_token_type":   {TokenExchangeJWTTokenType},
+		"audience":             {"faas.example.com"},
+		"requested_token_type": {TokenExchangeAccessTokenType},
+		"scope":                {"deploy:write"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type: got %q, want application/json", got)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control: got %q, want no-store", got)
+	}
+	if got := rr.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma: got %q, want no-cache", got)
+	}
+	var resp TokenExchangeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.HasPrefix(resp.AccessToken, api.APIKeyOIDCKeyPrefix) {
+		t.Errorf("access_token prefix: got %q", resp.AccessToken)
+	}
+	if resp.IssuedTokenType != TokenExchangeAccessTokenType {
+		t.Errorf("issued_token_type: got %q", resp.IssuedTokenType)
+	}
+	if resp.TokenType != "Bearer" || resp.ExpiresIn != int(OIDCBearerTTL.Seconds()) {
+		t.Errorf("response metadata: token_type=%q expires_in=%d", resp.TokenType, resp.ExpiresIn)
+	}
+	if resp.Scope != "deploy:write" {
+		t.Errorf("scope: got %q", resp.Scope)
+	}
+}
+
+func TestServeHTTP_RFC8693FormRejectsUnsupportedParameters(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		mutate    func(url.Values)
+		wantError string
+	}{
+		{
+			name: "wrong grant type",
+			mutate: func(v url.Values) {
+				v.Set("grant_type", "client_credentials")
+			},
+			wantError: "invalid_request",
+		},
+		{
+			name: "malformed subject token",
+			mutate: func(v url.Values) {
+				v.Set("subject_token", "not-a-jwt")
+			},
+			wantError: "invalid_grant",
+		},
+		{
+			name: "wrong subject token type",
+			mutate: func(v url.Values) {
+				v.Set("subject_token_type", "urn:ietf:params:oauth:token-type:access_token")
+			},
+			wantError: "unsupported_subject_token_type",
+		},
+		{
+			name: "resource targeting",
+			mutate: func(v url.Values) {
+				v.Set("resource", "https://deploy.example.com")
+			},
+			wantError: "invalid_target",
+		},
+		{
+			name: "scope escalation",
+			mutate: func(v url.Values) {
+				v.Set("scope", "secrets:read")
+			},
+			wantError: "invalid_scope",
+		},
+		{
+			name: "unsupported requested token type",
+			mutate: func(v url.Values) {
+				v.Set("requested_token_type", TokenExchangeJWTTokenType)
+			},
+			wantError: "unsupported_token_type",
+		},
+		{
+			name: "client authentication",
+			mutate: func(v url.Values) {
+				v.Set("client_id", "ci-client")
+			},
+			wantError: "invalid_request",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, _, _, _, _ := newHarness(t, nil)
+			form := url.Values{
+				"grant_type":         {TokenExchangeGrantType},
+				"subject_token":      {makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute))},
+				"subject_token_type": {TokenExchangeJWTTokenType},
+				"audience":           {"faas.example.com"},
+			}
+			tc.mutate(form)
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+			}
+			if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control: got %q, want no-store", got)
+			}
+			if got := rr.Header().Get("Pragma"); got != "no-cache" {
+				t.Fatalf("Pragma: got %q, want no-cache", got)
+			}
+			var response TokenExchangeError
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Error != tc.wantError {
+				t.Fatalf("error: got %q, want %q", response.Error, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestTokenExchangeErrorMapping(t *testing.T) {
+	t.Parallel()
+	cases := map[int]string{
+		http.StatusBadRequest:          "invalid_request",
+		http.StatusUnauthorized:        "invalid_grant",
+		http.StatusTooManyRequests:     "temporarily_unavailable",
+		http.StatusInternalServerError: "temporarily_unavailable",
+	}
+	for status, want := range cases {
+		if got := tokenExchangeErrorFromStatus(status); got != want {
+			t.Errorf("status %d: got %q, want %q", status, got, want)
+		}
+		wantStatus := http.StatusBadRequest
+		if status >= 500 || status == http.StatusTooManyRequests {
+			wantStatus = status
+		}
+		if got := tokenExchangeErrorStatus(status); got != wantStatus {
+			t.Errorf("status mapping %d: got %d, want %d", status, got, wantStatus)
+		}
 	}
 }
 

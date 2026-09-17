@@ -5,6 +5,7 @@
 import type { AuthCapabilities } from '../models/AuthCapabilities.js';
 import type { CSRFTokenResponse } from '../models/CSRFTokenResponse.js';
 import type { MagicLinkSignupRequest } from '../models/MagicLinkSignupRequest.js';
+import type { OAuthTokenExchangeResponse } from '../models/OAuthTokenExchangeResponse.js';
 import type { OIDCExchangeRequest } from '../models/OIDCExchangeRequest.js';
 import type { OIDCExchangeResponse } from '../models/OIDCExchangeResponse.js';
 import type { PasswordLoginRequest } from '../models/PasswordLoginRequest.js';
@@ -843,21 +844,27 @@ export class AuthService {
    * 10/min/IP) — high-volume CI runners may hit the cap; long-lived
    * deploy tokens remain the escape hatch.
    *
-   * @returns OIDCExchangeResponse Exchanged. The bearer is in the response body.
+   * The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
+   * profile as `application/x-www-form-urlencoded`. That profile uses
+   * `subject_token` (a JWT), `subject_token_type` set to the registered
+   * JWT identifier, and one `audience`; it returns an opaque deploy bearer
+   * as an OAuth `access_token`. The legacy JSON shape remains supported.
+   *
+   * @returns any Exchanged. The bearer is in the response body.
    * @throws ApiError
    */
   public static oidcExchange({
     requestBody,
   }: {
     requestBody: OIDCExchangeRequest,
-  }): CancelablePromise<OIDCExchangeResponse> {
+  }): CancelablePromise<(OIDCExchangeResponse | OAuthTokenExchangeResponse)> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/auth/oidc/exchange',
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Malformed request body or empty fields.`,
+        400: `Malformed request body, empty fields, or an invalid RFC 8693 token-exchange request.`,
         401: `JWT signature / issuer / audience / subject failed verification, OR no account is bound to the (issuer, subject) pair.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).

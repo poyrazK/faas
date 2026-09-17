@@ -32,6 +32,7 @@
 package oidc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"time"
@@ -95,7 +97,70 @@ var defaultAlgorithms = []string{"RS256"}
 // Extracted helpers stay ≤ 50 lines per CLAUDE.md handler cap.
 // The five steps above are inlined here for grep-ability; future
 // growth extracts to handle_exchange_{decode,lookup,verify,mint,audit}.go.
+// ServeHTTP accepts the historical JSON exchange and the RFC 8693
+// application/x-www-form-urlencoded profile. The profile adapter delegates
+// validation and token minting to the same legacy path so both transports
+// share the account lookup, trust policy, and bearer TTL invariants.
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if rfc8693MediaType(r) {
+		h.serveRFC8693(w, r)
+		return
+	}
+	h.serveLegacy(w, r)
+}
+
+func (h Handler) serveRFC8693(w http.ResponseWriter, r *http.Request) {
+	req, err := parseRFC8693Request(w, r)
+	if err != nil {
+		var inputErr *rfc8693InputError
+		if errors.As(err, &inputErr) {
+			writeRFC8693Error(w, http.StatusBadRequest, inputErr.code, inputErr.description)
+			return
+		}
+		writeRFC8693Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if _, _, err := peekOIDCIdentity(req.Token); err != nil {
+		writeRFC8693Error(w, http.StatusBadRequest, "invalid_grant", "subject_token is not a valid JWT")
+		return
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		writeRFC8693Error(w, http.StatusInternalServerError, "temporarily_unavailable", "could not prepare token exchange")
+		return
+	}
+	internal := httptest.NewRequestWithContext(r.Context(), http.MethodPost, r.URL.String(), bytes.NewReader(body))
+	internal.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.serveLegacy(recorder, internal)
+	if recorder.Code != http.StatusOK {
+		writeRFC8693Error(w, tokenExchangeErrorStatus(recorder.Code), tokenExchangeErrorFromStatus(recorder.Code), tokenExchangeDescription(recorder.Body.Bytes()))
+		return
+	}
+	var legacy ExchangeResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &legacy); err != nil || legacy.Bearer == "" {
+		writeRFC8693Error(w, http.StatusInternalServerError, "temporarily_unavailable", "could not encode token exchange response")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, http.StatusOK, TokenExchangeResponse{
+		AccessToken:     legacy.Bearer,
+		IssuedTokenType: TokenExchangeAccessTokenType,
+		TokenType:       "Bearer",
+		ExpiresIn:       legacy.ExpiresIn,
+		Scope:           "deploy:write",
+	})
+}
+
+func tokenExchangeErrorStatus(status int) int {
+	if status >= 500 || status == http.StatusTooManyRequests {
+		return status
+	}
+	return http.StatusBadRequest
+}
+
+func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 	deps := h.deps
 	if deps.Verifier == nil || deps.Policies == nil || deps.Tokens == nil || deps.Lookups == nil {
 		api.WriteProblem(w, api.ErrCapacity("oidc handler not wired"))

@@ -374,6 +374,9 @@ export type { MirrorRuleListResponse } from './models/MirrorRuleListResponse.js'
 export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
 export type { OAuthProviderCapability } from './models/OAuthProviderCapability.js';
+export type { OAuthTokenExchangeError } from './models/OAuthTokenExchangeError.js';
+export type { OAuthTokenExchangeRequest } from './models/OAuthTokenExchangeRequest.js';
+export type { OAuthTokenExchangeResponse } from './models/OAuthTokenExchangeResponse.js';
 export type { ObjectBucket } from './models/ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';

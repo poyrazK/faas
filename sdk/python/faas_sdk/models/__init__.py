@@ -726,6 +726,17 @@ from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
 from .o_auth_provider_capability import OAuthProviderCapability
+from .o_auth_token_exchange_error import OAuthTokenExchangeError
+from .o_auth_token_exchange_error_error import OAuthTokenExchangeErrorError
+from .o_auth_token_exchange_request import OAuthTokenExchangeRequest
+from .o_auth_token_exchange_request_grant_type import OAuthTokenExchangeRequestGrantType
+from .o_auth_token_exchange_request_requested_token_type import OAuthTokenExchangeRequestRequestedTokenType
+from .o_auth_token_exchange_request_scope import OAuthTokenExchangeRequestScope
+from .o_auth_token_exchange_request_subject_token_type import OAuthTokenExchangeRequestSubjectTokenType
+from .o_auth_token_exchange_response import OAuthTokenExchangeResponse
+from .o_auth_token_exchange_response_issued_token_type import OAuthTokenExchangeResponseIssuedTokenType
+from .o_auth_token_exchange_response_scope import OAuthTokenExchangeResponseScope
+from .o_auth_token_exchange_response_token_type import OAuthTokenExchangeResponseTokenType
 from .object_bucket import ObjectBucket
 from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
@@ -1920,6 +1931,17 @@ __all__ = (
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
     "OAuthProviderCapability",
+    "OAuthTokenExchangeError",
+    "OAuthTokenExchangeErrorError",
+    "OAuthTokenExchangeRequest",
+    "OAuthTokenExchangeRequestGrantType",
+    "OAuthTokenExchangeRequestRequestedTokenType",
+    "OAuthTokenExchangeRequestScope",
+    "OAuthTokenExchangeRequestSubjectTokenType",
+    "OAuthTokenExchangeResponse",
+    "OAuthTokenExchangeResponseIssuedTokenType",
+    "OAuthTokenExchangeResponseScope",
+    "OAuthTokenExchangeResponseTokenType",
     "ObjectBucket",
     "ObjectBucketAccessGrant",
     "ObjectBucketAccessGrantKeyStatus",
