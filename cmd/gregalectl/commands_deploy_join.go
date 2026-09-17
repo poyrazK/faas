@@ -55,6 +55,7 @@ type deployJoinOptions struct {
 	VerifyKeySource         string
 	ComputeDBEnvSource      string
 	StorageEnvSource        string
+	ImagedStorageEnvSource  string
 	RuntimeBasesEnvSource   string
 	StorageDevice           string
 	FormatStorage           bool
@@ -151,6 +152,7 @@ func cmdDeployJoinNode(args []string) int {
 	verifyKey := fs.String("verify-key", "", "image-signing public key (required for apply)")
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute-db.env source (required for apply)")
 	storageEnv := fs.String("storage-env", "", "shared OCI storage.env source (required for multi-box apply)")
+	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only OCI lifecycle credential source (required for multi-box apply)")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
 	storageDevice := fs.String("storage-device", "", "optional fast-root block device (must be an absolute path; manifest host value is used when omitted)")
 	formatStorage := fs.Bool("format-storage", false, "format an explicitly supplied blank storage device as XFS with reflink support")
@@ -198,6 +200,7 @@ func cmdDeployJoinNode(args []string) int {
 		VerifyKeySource:         *verifyKey,
 		ComputeDBEnvSource:      *computeDBEnv,
 		StorageEnvSource:        *storageEnv,
+		ImagedStorageEnvSource:  *imagedStorageEnv,
 		RuntimeBasesEnvSource:   *runtimeBasesEnv,
 		StorageDevice:           *storageDevice,
 		FormatStorage:           *formatStorage,
@@ -494,6 +497,7 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 		"verify-key":          opts.VerifyKeySource,
 		"compute-db-env":      opts.ComputeDBEnvSource,
 		"storage-env":         opts.StorageEnvSource,
+		"imaged-storage-env":  opts.ImagedStorageEnvSource,
 		"runtime-bases-env":   opts.RuntimeBasesEnvSource,
 		"fleet-age-key":       opts.FleetAgeKeySource,
 		"fleet-age-recipient": opts.FleetAgeRecipientSource,
@@ -511,6 +515,9 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	}
 	if err := validateSharedStorageEnv(opts.StorageEnvSource); err != nil {
 		return report, fmt.Errorf("--storage-env: %w", err)
+	}
+	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource); err != nil {
+		return report, fmt.Errorf("--imaged-storage-env: %w", err)
 	}
 	for name, path := range map[string]string{
 		"box-age-key":            opts.BoxAgeKeySource,
@@ -654,7 +661,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err != nil {
 		return 1, err
 	}
-	peerContractSHA256, err := joinPeerContractHash(ansibleDir, m, opts.AnsibleVarsFile, opts.StorageEnvSource, opts.FleetAgeKeySource, opts.FleetAgeRecipientSource)
+	peerContractSHA256, err := joinPeerContractHash(ansibleDir, m, opts.AnsibleVarsFile, opts.StorageEnvSource, opts.ImagedStorageEnvSource, opts.FleetAgeKeySource, opts.FleetAgeRecipientSource)
 	if err != nil {
 		return 3, err
 	}
@@ -744,6 +751,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_verify_key_source":          opts.VerifyKeySource,
 		"faas_join_compute_db_env_source":      opts.ComputeDBEnvSource,
 		"faas_join_storage_env_source":         opts.StorageEnvSource,
+		"faas_join_imaged_storage_env_source":  opts.ImagedStorageEnvSource,
 		"faas_join_runtime_bases_env_source":   opts.RuntimeBasesEnvSource,
 		"faas_join_storage_device":             opts.StorageDevice,
 		"faas_join_format_storage":             opts.FormatStorage,
@@ -1297,6 +1305,7 @@ func resolveJoinArtifacts(opts *deployJoinOptions) {
 	resolve(&opts.VerifyKeySource, "sign-pub.pem")
 	resolve(&opts.ComputeDBEnvSource, "compute-db.env")
 	resolve(&opts.StorageEnvSource, "storage.env")
+	resolve(&opts.ImagedStorageEnvSource, "imaged-storage.env")
 	resolve(&opts.RuntimeBasesEnvSource, "runtime-bases.env")
 	resolveIfPresent(&opts.BoxAgeKeySource, "box-age-key")
 	resolve(&opts.FleetAgeKeySource, "fleet.age")
@@ -1623,6 +1632,41 @@ func validateSharedStorageEnv(path string) error {
 	}
 	if cacheDir := strings.TrimSpace(values["FAAS_STORAGE_CACHE_DIR"]); cacheDir != "" && cacheDir != storage.DefaultOCICacheDir {
 		return fmt.Errorf("FAAS_STORAGE_CACHE_DIR=%q is not supported by the managed systemd units; use %s", cacheDir, storage.DefaultOCICacheDir)
+	}
+	return nil
+}
+
+// validateImagedStorageEnv keeps package lifecycle authority in a narrow
+// override file. Loading this file after storage.env changes only the OCI
+// identity used by imaged; it cannot silently alter registry routing, cache,
+// or shared-artifact safety settings for the node.
+func validateImagedStorageEnv(path string) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	values := make(map[string]string, 2)
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		key, value, ok := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		if !ok || (key != "FAAS_OCI_USERNAME" && key != "FAAS_OCI_PASSWORD") {
+			return fmt.Errorf("only FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD assignments are allowed")
+		}
+		if _, duplicate := values[key]; duplicate {
+			return fmt.Errorf("duplicate %s assignment", key)
+		}
+		values[key] = strings.Trim(strings.TrimSpace(value), "\"'")
+	}
+	for _, key := range []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"} {
+		value := strings.TrimSpace(values[key])
+		if value == "" || strings.Contains(value, "__SET_") {
+			return fmt.Errorf("must set non-placeholder %s", key)
+		}
 	}
 	return nil
 }

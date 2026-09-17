@@ -341,6 +341,11 @@ kernel_path = %q
 		// subscription itself, not the process.
 		imagedStart := time.Now()
 		if err := h.waitImagedListens(3 * time.Minute); err != nil {
+			// Say why: an imaged that exited (metrics port taken, base
+			// staging failed) is otherwise reported only as "never
+			// subscribed", with its last words lost — smoke run
+			// 35217250297.
+			dumpProcs(t)
 			t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
 		}
 		t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
@@ -364,7 +369,7 @@ kernel_path = %q
 		if vmmdSock == "" {
 			vmmdSock = "/run/faas/vmmd.sock" // matches builderd default
 		}
-		cfg := builderdConfig(tmp, vmmdSock, envBuilderBase(t))
+		cfg := builderdConfig(tmp, vmmdSock, envBuilderBase(t), metricsAddrFor(t, "builderd"))
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write builderd.toml: %v", err)
 		}
@@ -742,14 +747,14 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 
 	if which&APID != 0 {
 		addr := freeTCPAddr(t)
-		// Empty FAAS_APID_METRICS_ADDR disables the metrics listener
-		// (cmd/apid/main.go:425). Without this override the daemon
-		// tries to bind 127.0.0.1:9101 and — when a prior apid run
-		// (or a sibling daemon from a different test) is still
-		// holding the port — exits with `bind: address already in use`
-		// before the main HTTP listener is reached. The e2e harness
-		// doesn't scrape /metrics; the scrape observer is still wired
-		// into the main mux so the dashboard panels stay accurate.
+		// Every daemon gets its own free metrics port — see
+		// metricsAddrFor. This used to stamp FAAS_APID_METRICS_ADDR=
+		// (empty) believing that disabled the listener; apid cannot
+		// tell "unset" from "empty" (resolveMetricsAddr reads through
+		// os.Getenv) and fell back to 127.0.0.1:9101. With 9101 held
+		// by anything else on the host, apid exited with
+		// `bind: address already in use` before its main listener
+		// was up — three of four smoke tests in run 35217250297.
 		// Per-test FAAS_SPOOL_ROOT + FAAS_SCAN_SPOOL_ROOT — see
 		// startAPID in Start for the rationale.
 		spoolRoot := spoolRootFor(h.TmpDir)
@@ -762,7 +767,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		env := append(testEnvCommon(dbURL),
 			"FAAS_APID_LISTEN="+addr,
 			"FAAS_APPS_DOMAIN="+testDomain,
-			"FAAS_APID_METRICS_ADDR=",
+			"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
@@ -842,6 +847,11 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	env := append(testEnvCommon(dbURL),
 		"FAAS_APID_LISTEN="+addr,
 		"FAAS_APPS_DOMAIN="+testDomain,
+		// Its own metrics port, like every daemon — see metricsAddrFor.
+		// This is the apid start path Start uses; #2881 stamped only
+		// the other one, and smoke run 35220096082 still lost three
+		// tests to `bind: address already in use` on 9101.
+		"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
@@ -2118,6 +2128,7 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 		"FAAS_GUEST_INIT="+guestInit,
 		"FAAS_APPS_ROOT="+appsRoot,
 		"FAAS_OCI_INSECURE=1",
+		"FAAS_IMAGED_METRICS_ADDR="+metricsAddrFor(t, "imaged"),
 		"DATABASE_URL="+dbURL,
 		"PATH="+os.Getenv("PATH"),
 		"HOME="+os.Getenv("HOME"),
@@ -2200,7 +2211,7 @@ func spoolRootFor(tmpDir string) string { return filepath.Join(tmpDir, "spool") 
 // That failed every build-path test on the native gate (2026-09-14) with
 // failure_class=infra, leaving deployments stuck at status=pending and wakes
 // returning 503. The guard was right; the harness was inconsistent.
-func builderdConfig(tmp, vmmdSock, builderBase string) string {
+func builderdConfig(tmp, vmmdSock, builderBase, metricsAddr string) string {
 	return fmt.Sprintf(
 		`vmmd_socket = %q
 cache_dir = %q
@@ -2208,6 +2219,7 @@ builder_base = %q
 build_drive_dir = %q
 build_export_dir = %q
 source_spool_dir = %q
+metrics_addr = %q
 `,
 		vmmdSock,
 		filepath.Join(tmp, "cache"),
@@ -2215,5 +2227,24 @@ source_spool_dir = %q
 		filepath.Join(tmp, "drive"),
 		filepath.Join(tmp, "out"),
 		spoolRootFor(tmp),
+		metricsAddr,
 	)
+}
+
+// metricsAddrFor returns a free loopback address for a daemon's /metrics
+// listener.
+//
+// apid, imaged and builderd each default their metrics listener to a fixed
+// loopback port (9101, 9102, 9105). Nothing in a test scrapes it, but the
+// bind is not optional: a daemon that cannot bind its metrics port exits
+// before serving anything. On a host where that port is held — a production
+// unit, a daemon from an earlier test still draining, a sibling test — the
+// daemon dies with `bind: address already in use` and the test reports only
+// that it never came up. Give every daemon its own port instead, the same
+// way its main listener already gets one.
+func metricsAddrFor(t *testing.T, daemon string) string {
+	t.Helper()
+	addr := freeTCPAddr(t)
+	t.Logf("e2etest: %s metrics on %s", daemon, addr)
+	return addr
 }

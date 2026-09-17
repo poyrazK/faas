@@ -436,6 +436,7 @@ var cliCommands = []cliCommand{
 					{Name: "verify-key", Short: "image-signing public key"},
 					{Name: "compute-db-env", Short: "root-only compute DB environment"},
 					{Name: "storage-env", Short: "shared OCI storage environment"},
+					{Name: "imaged-storage-env", Short: "imaged-only OCI lifecycle credential"},
 					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
 					{Name: "storage-device", Short: "optional dedicated fast-root block device"},
 					{Name: "fleet-age-key", Short: "shared fleet.age identity"},

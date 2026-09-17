@@ -102,5 +102,10 @@ func cmdInspect(args []string) int {
 	if *errorsFlag {
 		return cmdInspectErrors(slug)
 	}
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
 	return cmdInspectUpstreams(slug, *scope)
 }

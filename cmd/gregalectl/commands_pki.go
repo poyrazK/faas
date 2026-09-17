@@ -304,18 +304,24 @@ func cmdPKIExportBundle(args []string) int {
 	fs, f := newPKIFlags("pki export-bundle", false)
 	sourceRoot := fs.String("source-root", pki.DefaultRootDir, "active trust root to export")
 	outputDir := fs.String("output-dir", "", "fresh trust-only export destination")
+	forRenewal := fs.Bool("for-renewal", false, "allow repairable active-leaf drift for issuer-side renewal")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *outputDir == "" || f.boxRole == "" {
-		PrintUsage(os.Stderr, "usage: gregalectl pki export-bundle --source-root DIR --output-dir DIR --box-role ROLE [--cn NODE] [--transport-san SAN]", "pki")
+		PrintUsage(os.Stderr, "usage: gregalectl pki export-bundle --source-root DIR --output-dir DIR --box-role ROLE [--cn NODE] [--transport-san SAN] [--for-renewal]", "pki")
 		return 1
 	}
 	identity, err := pkiIdentity(f)
 	if err != nil {
 		return printErr("pki export-bundle: identity", err)
 	}
-	if err := pki.ExportTrustBundle(*sourceRoot, *outputDir, f.boxRole, identity.nodeCN, identity.transportSAN); err != nil {
+	if *forRenewal {
+		err = pki.ExportTrustBundleForRenewal(*sourceRoot, *outputDir, f.boxRole)
+	} else {
+		err = pki.ExportTrustBundle(*sourceRoot, *outputDir, f.boxRole, identity.nodeCN, identity.transportSAN)
+	}
+	if err != nil {
 		return printErr("pki export-bundle", err)
 	}
 	PrintOK(os.Stdout, "Exported trust-only %s bundle to %s", f.boxRole, *outputDir)

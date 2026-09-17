@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -64,6 +65,7 @@ func (a *PrivateNetworkRouteApplier) Apply(ctx context.Context, appID string, ci
 type PrivateNetworkAttachmentSubscriber struct {
 	applier *PrivateNetworkRouteApplier
 	log     *slog.Logger
+	pool    *pgxpool.Pool
 }
 
 func NewPrivateNetworkAttachmentSubscriber(applier *PrivateNetworkRouteApplier, log *slog.Logger) *PrivateNetworkAttachmentSubscriber {
@@ -71,6 +73,34 @@ func NewPrivateNetworkAttachmentSubscriber(applier *PrivateNetworkRouteApplier, 
 		log = slog.Default()
 	}
 	return &PrivateNetworkAttachmentSubscriber{applier: applier, log: log}
+}
+
+// WithNotificationPool enables acknowledgement of a durable LISTEN fast-path
+// delivery. Replay workers acknowledge rows themselves; this hook lets the
+// normal notification path close the same outbox row after cleanup succeeds.
+func (s *PrivateNetworkAttachmentSubscriber) WithNotificationPool(pool *pgxpool.Pool) *PrivateNetworkAttachmentSubscriber {
+	s.pool = pool
+	return s
+}
+
+// Handle applies one detach event. It is shared by the live LISTEN path and
+// the durable replay worker so a route-cleanup failure is retryable instead of
+// being logged and acknowledged as if cleanup succeeded.
+func (s *PrivateNetworkAttachmentSubscriber) Handle(ctx context.Context, n db.Notification) error {
+	if n.Channel != db.NotifyPrivateNetworkAttachmentChanged {
+		return nil
+	}
+	payload, err := db.ParseAppChangedPayload(n.Payload)
+	if err != nil {
+		return err
+	}
+	if payload.Kind != "private_network_attachment" || payload.Status != "detached" {
+		return nil
+	}
+	if err := s.applier.Apply(ctx, payload.AppID, nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *PrivateNetworkAttachmentSubscriber) Run(ctx context.Context, ch <-chan db.Notification) error {
@@ -82,15 +112,12 @@ func (s *PrivateNetworkAttachmentSubscriber) Run(ctx context.Context, ch <-chan 
 			if !ok {
 				return nil
 			}
-			if n.Channel != db.NotifyAppChanged {
+			if err := s.Handle(ctx, n); err != nil {
+				s.log.Warn("schedd: private network detach cleanup failed", "payload", n.Payload, "err", err)
 				continue
 			}
-			payload, err := db.ParseAppChangedPayload(n.Payload)
-			if err != nil || payload.Kind != "private_network_attachment" || payload.Status != "detached" || payload.AppID == "" {
-				continue
-			}
-			if err := s.applier.Apply(ctx, payload.AppID, nil); err != nil {
-				s.log.Warn("schedd: private network detach cleanup failed", "app", payload.AppID, "err", err)
+			if err := db.AcknowledgeNotification(ctx, s.pool, n); err != nil && ctx.Err() == nil {
+				s.log.Warn("schedd: acknowledge private network detach", "id", n.OutboxID, "err", err)
 			}
 		}
 	}

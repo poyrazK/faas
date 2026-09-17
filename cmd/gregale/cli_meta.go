@@ -268,7 +268,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "postgres", Short: "Provision or attach PostgreSQL and inject DATABASE_URL", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
-				{Name: "env", Short: "environment scope", Req: true, Value: "SCOPE"},
+				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "database", Short: "existing database ID or name", Value: "REF"},
 				{Name: "region", Short: "provider-neutral region when creating", Value: "REGION"},
@@ -282,7 +282,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
-				{Name: "env", Short: "environment scope", Req: true, Value: "SCOPE"},
+				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "region", Short: "object-storage region", Value: "REGION"},
 				{Name: "public", Short: "serve objects publicly from the app host"},
@@ -698,7 +698,7 @@ var cliCommands = []cliCommand{
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
 			{Name: "only", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
 			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
-			{Name: "environment", Short: "deploy to a registered project environment", Value: "SLUG"},
+			{Name: "environment", Short: "deploy to a registered project environment (defaults to linked context)", Value: "SLUG"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -875,7 +875,7 @@ var cliCommands = []cliCommand{
 			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin"},
 			{Name: "dry-run", Short: "Preview uncovered routes without importing the document (slug defaults to linked context)"},
 			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff (slug defaults to linked context)", Flags: []cliFlag{
-				{Name: "scope", Short: "deployment scope to compare", Value: "scope"},
+				{Name: "scope", Short: "deployment scope to compare (defaults to linked environment, otherwise prod)", Value: "scope"},
 				{Name: "fail-on-unavailable", Short: "fail when the contract-diff backend is unavailable"},
 			}},
 			{Name: "apply", Short: "Plan or apply generated validation edge rules", Flags: []cliFlag{
@@ -892,8 +892,11 @@ var cliCommands = []cliCommand{
 		Short:   "Pull/push .env <-> sealed secrets (--app <slug> or linked context)",
 		Flags:   []cliFlag{{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"}},
 		Subcommands: []cliSub{
-			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)"},
+			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
+				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
+			}},
 			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
+				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next wake)"},
 			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
@@ -926,7 +929,7 @@ var cliCommands = []cliCommand{
 		// Flags block to surface the right verb shape.
 		Flags: []cliFlag{
 			{Name: "upstreams", Short: "List data upstreams captured for this app (ADR-098 §9.A)"},
-			{Name: "scope", Short: "filter by scope (forwarded as ?scope=, used with --upstreams)", Value: "scope"},
+			{Name: "scope", Short: "filter by scope (defaults to linked project environment; used with --upstreams)", Value: "scope"},
 			{Name: "errors", Short: "show the latest failed deployment's persisted error explanation"},
 		},
 	},
@@ -1188,7 +1191,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "bindings", Short: "Manage app database bindings"},
 			{Name: "attach", Short: "Attach a database to an app", Flags: []cliFlag{
-				{Name: "scope", Short: "environment scope", Value: "SCOPE"},
+				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
 				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only"}},
 			}},
@@ -1237,10 +1240,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "realtime",
 		DocSlug: "realtime",
-		Short:   "Manage realtime endpoints, connections, channels, and auth",
+		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints"},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status"},
+			{Name: "create", Short: "Create a managed realtime endpoint"},
+			{Name: "update", Short: "Update endpoint callback, auth, or connection policy"},
+			{Name: "delete", Short: "Delete a managed realtime endpoint"},
 			{Name: "send", Short: "Send a message to one live connection"},
 			{Name: "close", Short: "Close one live connection"},
 			{Name: "subscribe", Short: "Subscribe one live connection to a channel"},
@@ -1333,11 +1339,11 @@ var cliCommands = []cliCommand{
 		DocSlug: "secrets",
 		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List sealed secrets"},
-			{Name: "set", Short: "Set a sealed secret"},
-			{Name: "unset", Short: "Remove a sealed secret"},
+			{Name: "list", Short: "List sealed secrets", Flags: []cliFlag{{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"}}},
+			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}}},
+			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Re-seal one secret under the current host key"},
+			{Name: subRotate, Short: "Re-seal one secret under the current host key", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}}},
 		},
 	},
 	{

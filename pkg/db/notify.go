@@ -403,9 +403,14 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                             would try to mount .tar as virtio-blk and
 //	                             400). Only imaged subscribes.
 const (
-	NotifyAppChanged        = "app_changed"
-	NotifyAppWake           = "app_wake"
-	NotifyDeploymentChanged = "deployment_changed"
+	NotifyAppChanged = "app_changed"
+	NotifyAppWake    = "app_wake"
+	// NotifyPrivateNetworkAttachmentChanged carries the durable cleanup
+	// event emitted when an app attachment is detached. Unlike the broad
+	// app_changed stream, this channel is replayed so a schedd restart or
+	// LISTEN gap cannot leave stale private routes on a live VM.
+	NotifyPrivateNetworkAttachmentChanged = "private_network_attachment_changed"
+	NotifyDeploymentChanged               = "deployment_changed"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
 	// from imaged to every public gateway. It is deliberately separate from
 	// deployment_changed: account SSE subscribers must never receive the token.

@@ -99,6 +99,11 @@ func cmdScan(args []string) int {
 			projectSlugExplicit = true
 		}
 	})
+	resolvedEnvironment, resolveErr := resolveEnvironmentFlagOrContext(*environment)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*environment = resolvedEnvironment
 
 	// Exactly one of --tarball / --path / --repo. Default --path $PWD
 	// when stdin is a TTY and no flag is set (issue #313 zero-config).

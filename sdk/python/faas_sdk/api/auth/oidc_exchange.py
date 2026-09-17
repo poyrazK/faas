@@ -5,15 +5,17 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.o_auth_token_exchange_request import OAuthTokenExchangeRequest
+from ...models.o_auth_token_exchange_response import OAuthTokenExchangeResponse
 from ...models.oidc_exchange_request import OIDCExchangeRequest
 from ...models.oidc_exchange_response import OIDCExchangeResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    body: OIDCExchangeRequest,
+    body: OIDCExchangeRequest | OAuthTokenExchangeRequest | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -22,9 +24,13 @@ def _get_kwargs(
         "url": "/v1/auth/oidc/exchange",
     }
 
-    _kwargs["json"] = body.to_dict()
+    if isinstance(body, OIDCExchangeRequest):
+        _kwargs["json"] = body.to_dict()
 
-    headers["Content-Type"] = "application/json"
+        headers["Content-Type"] = "application/json"
+    if isinstance(body, OAuthTokenExchangeRequest):
+        _kwargs["data"] = body.to_dict()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -32,9 +38,25 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> OIDCExchangeResponse | Problem | None:
+) -> OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem | None:
     if response.status_code == 200:
-        response_200 = OIDCExchangeResponse.from_dict(response.json())
+
+        def _parse_response_200(data: object) -> OAuthTokenExchangeResponse | OIDCExchangeResponse:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_200_type_0 = OIDCExchangeResponse.from_dict(data)
+
+                return response_200_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            response_200_type_1 = OAuthTokenExchangeResponse.from_dict(data)
+
+            return response_200_type_1
+
+        response_200 = _parse_response_200(response.json())
 
         return response_200
 
@@ -61,7 +83,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[OIDCExchangeResponse | Problem]:
+) -> Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,8 +95,8 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: OIDCExchangeRequest,
-) -> Response[OIDCExchangeResponse | Problem]:
+    body: OIDCExchangeRequest | OAuthTokenExchangeRequest | Unset = UNSET,
+) -> Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
@@ -94,15 +116,26 @@ def sync_detailed(
     10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
+    The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
+    profile as `application/x-www-form-urlencoded`. That profile uses
+    `subject_token` (a JWT), `subject_token_type` set to the registered
+    JWT identifier, and one `audience`; it returns an opaque deploy bearer
+    as an OAuth `access_token`. The legacy JSON shape remains supported.
+
     Args:
         body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
+            exchange endpoint.
+            Gregale requires one `audience` because it selects the account trust
+            policy, accepts JWT subject tokens only, and issues only deploy:write
+            access tokens. `resource` and actor-token delegation are unsupported.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[OIDCExchangeResponse | Problem]
+        Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -119,8 +152,8 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: OIDCExchangeRequest,
-) -> OIDCExchangeResponse | Problem | None:
+    body: OIDCExchangeRequest | OAuthTokenExchangeRequest | Unset = UNSET,
+) -> OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem | None:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
@@ -140,15 +173,26 @@ def sync(
     10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
+    The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
+    profile as `application/x-www-form-urlencoded`. That profile uses
+    `subject_token` (a JWT), `subject_token_type` set to the registered
+    JWT identifier, and one `audience`; it returns an opaque deploy bearer
+    as an OAuth `access_token`. The legacy JSON shape remains supported.
+
     Args:
         body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
+            exchange endpoint.
+            Gregale requires one `audience` because it selects the account trust
+            policy, accepts JWT subject tokens only, and issues only deploy:write
+            access tokens. `resource` and actor-token delegation are unsupported.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        OIDCExchangeResponse | Problem
+        OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem
     """
 
     return sync_detailed(
@@ -160,8 +204,8 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: OIDCExchangeRequest,
-) -> Response[OIDCExchangeResponse | Problem]:
+    body: OIDCExchangeRequest | OAuthTokenExchangeRequest | Unset = UNSET,
+) -> Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
@@ -181,15 +225,26 @@ async def asyncio_detailed(
     10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
+    The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
+    profile as `application/x-www-form-urlencoded`. That profile uses
+    `subject_token` (a JWT), `subject_token_type` set to the registered
+    JWT identifier, and one `audience`; it returns an opaque deploy bearer
+    as an OAuth `access_token`. The legacy JSON shape remains supported.
+
     Args:
         body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
+            exchange endpoint.
+            Gregale requires one `audience` because it selects the account trust
+            policy, accepts JWT subject tokens only, and issues only deploy:write
+            access tokens. `resource` and actor-token delegation are unsupported.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[OIDCExchangeResponse | Problem]
+        Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -204,8 +259,8 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: OIDCExchangeRequest,
-) -> OIDCExchangeResponse | Problem | None:
+    body: OIDCExchangeRequest | OAuthTokenExchangeRequest | Unset = UNSET,
+) -> OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem | None:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
@@ -225,15 +280,26 @@ async def asyncio(
     10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
+    The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
+    profile as `application/x-www-form-urlencoded`. That profile uses
+    `subject_token` (a JWT), `subject_token_type` set to the registered
+    JWT identifier, and one `audience`; it returns an opaque deploy bearer
+    as an OAuth `access_token`. The legacy JSON shape remains supported.
+
     Args:
         body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
+            exchange endpoint.
+            Gregale requires one `audience` because it selects the account trust
+            policy, accepts JWT subject tokens only, and issues only deploy:write
+            access tokens. `resource` and actor-token delegation are unsupported.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        OIDCExchangeResponse | Problem
+        OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem
     """
 
     return (

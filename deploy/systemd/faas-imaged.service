@@ -19,6 +19,7 @@ MemoryMax=4G
 CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
+EnvironmentFile=-/etc/faas/imaged-storage.env
 EnvironmentFile=-/etc/faas/runtime-bases.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base

@@ -30,3 +30,33 @@ type OIDCExchangeResponse struct {
 	ExpiresIn int    `json:"expires_in"`
 	TokenID   string `json:"token_id"`
 }
+
+// OAuthTokenExchangeRequest is the RFC 8693 form-encoded profile accepted by
+// the OIDC exchange endpoint. Gregale exchanges JWT subject tokens for the
+// deploy access-token type and requires one audience to select the trust
+// policy.
+type OAuthTokenExchangeRequest struct {
+	GrantType          string `json:"grant_type"`
+	SubjectToken       string `json:"subject_token"`
+	SubjectTokenType   string `json:"subject_token_type"`
+	Audience           string `json:"audience"`
+	RequestedTokenType string `json:"requested_token_type,omitempty"`
+	Scope              string `json:"scope,omitempty"`
+}
+
+// OAuthTokenExchangeResponse is the RFC 8693 success shape for an opaque
+// deploy bearer issued by the OIDC exchange endpoint.
+type OAuthTokenExchangeResponse struct {
+	AccessToken     string `json:"access_token"`
+	IssuedTokenType string `json:"issued_token_type"`
+	TokenType       string `json:"token_type"`
+	ExpiresIn       int    `json:"expires_in"`
+	Scope           string `json:"scope"`
+}
+
+// OAuthTokenExchangeError is the OAuth token-endpoint error shape returned by
+// the RFC 8693 form profile. The legacy JSON profile keeps Problem details.
+type OAuthTokenExchangeError struct {
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description,omitempty"`
+}

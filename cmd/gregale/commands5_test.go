@@ -468,6 +468,33 @@ func TestCmdEnvPull_WritesKeyOnlyTemplate(t *testing.T) {
 	}
 }
 
+func TestCmdEnvPull_UsesLinkedEnvironment(t *testing.T) {
+	root := t.TempDir()
+	if _, err := saveProjectContext(root, localProjectContext{
+		Version: projectContextVersion, Project: "shop", App: "hello", Environment: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	out := filepath.Join(root, ".env")
+	sink := &multiSink{onSecrets: func(method, path string) (int, any) {
+		return http.StatusOK, api.AppSecretListResponse{Count: 1, Quota: 25,
+			Secrets: []api.AppSecretResponse{{Key: "DB_URL"}}}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := envPull([]string{"--app", "hello", "-o", out}); code != 0 {
+		t.Fatalf("envPull exit = %d, output=%s", code, stdout.String())
+	}
+	if !strings.Contains(sink.lastQuery, "scope=staging") {
+		t.Fatalf("secrets request query = %q, want linked scope", sink.lastQuery)
+	}
+}
+
 // spec: env pull adds missing key skeletons without truncating local values.
 func TestCmdEnvPull_PreservesExistingValuesAndLocalKeys(t *testing.T) {
 	dir := t.TempDir()

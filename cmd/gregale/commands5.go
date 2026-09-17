@@ -244,6 +244,7 @@ func cmdEnv(args []string) int {
 func envPull(args []string) int {
 	fs := newFlagSet("env pull", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	out := fs.String("o", ".env", "output file (default .env)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -258,14 +259,19 @@ func envPull(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [-o .env] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--scope <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
+	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
+	if scopeErr != nil {
+		return printErr("Could not read local project context", scopeErr)
+	}
+	*scope = resolvedScope
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListSecrets(context.Background(), *app)
+	resp, err := client.ListSecretsWithScope(context.Background(), *app, *scope)
 	if err != nil {
 		return printErr("List failed", err)
 	}
@@ -326,6 +332,7 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 func envPush(args []string) int {
 	fs := newFlagSet("env push", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next wake)")
@@ -354,9 +361,14 @@ func envPush(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [-f .env | --from-stdin] [--restart] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
+	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
+	if scopeErr != nil {
+		return printErr("Could not read local project context", scopeErr)
+	}
+	*scope = resolvedScope
 	if *fromStdin && *in != ".env" {
 		// fs.Changed isn't available pre-Go-1.21 in some toolchains;
 		// the default for -f is ".env", so anything else means the
@@ -495,7 +507,7 @@ func envPush(args []string) int {
 	}
 	// Same rotation-hint flow as secretsSet (commands3.go).
 	existing := map[string]bool{}
-	if list, err := client.ListSecrets(context.Background(), *app); err == nil {
+	if list, err := client.ListSecretsWithScope(context.Background(), *app, *scope); err == nil {
 		for _, s := range list.Secrets {
 			existing[s.Key] = true
 		}
@@ -508,16 +520,16 @@ func envPush(args []string) int {
 	}
 	if rotated > 0 {
 		_, _ = fmt.Fprintf(osStdout,
-			"note: %d secret(s) already existed and are being rotated.\n"+
+			"note: %d secret(s) already existed in scope=%q and are being rotated.\n"+
 				"  Any parked snapshots still hold the previous plaintext until the next wake.\n"+
 				"  Deploy, or call `gregale wake %s`, to force an overstamp.\n",
-			rotated, *app)
+			rotated, scopeOrDefault(*scope), *app)
 	}
 	for _, p := range pairs {
-		if err := client.SetSecret(context.Background(), *app, p.k, p.v); err != nil {
+		if err := client.SetSecretWithScope(context.Background(), *app, p.k, p.v, *scope); err != nil {
 			return printErr("Set "+p.k+" failed", err)
 		}
-		PrintOK(osStdout, "%s set", p.k)
+		PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
 	}
 	if *restart {
 		// The env PUT invalidates parked snapshots, but running instances

@@ -365,11 +365,17 @@ identity_phase() {
   ensure_bucket_role "serviceAccount:$restore_sa" roles/storage.objectViewer
   ensure_service_account_role "$backup_sa" "serviceAccount:$control_sa" roles/iam.serviceAccountTokenCreator
 
-  local name zone desired original_status
+  local name zone desired current original_status
   while read -r name zone; do
     [[ -n "$name" && -n "$zone" ]] || continue
     desired="$compute_sa"
     [[ "$name" != "$control" ]] || desired="$control_sa"
+	current="$(gcloud compute instances describe "$name" --project="$project" --zone="$zone" \
+	  --format='value(serviceAccounts[0].email)')"
+	if [[ "$current" == "$desired" ]]; then
+	  printf '# %s already uses %s; skipping identity restart\n' "$name" "$desired"
+	  continue
+	fi
     original_status="$(gcloud compute instances describe "$name" --project="$project" --zone="$zone" --format='value(status)')"
     if [[ "$original_status" == RUNNING ]]; then
       run gcloud compute instances stop "$name" --project="$project" --zone="$zone" --quiet

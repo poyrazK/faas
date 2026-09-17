@@ -1679,6 +1679,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// db.NotifyEdgeRuleChanged is wired via PGBackend.WithEdgeRules
 	// below.
 	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics)
+	// The backend is constructed before the production matcher so the
+	// dependency graph can be assembled in one pass. Re-attach the concrete
+	// matcher here (rather than leaving a typed-nil interface in PGBackend),
+	// then start the durable repair loop alongside LISTEN/NOTIFY.
+	backend.WithEdgeRules(deps.edgeRulesMatcher)
+	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log)
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the

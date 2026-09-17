@@ -55,6 +55,7 @@ func cmdDeployJoinFleet(args []string) int {
 	verifyKey := fs.String("verify-key", "", "image-signing public key")
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute DB environment")
 	storageEnv := fs.String("storage-env", "", "shared OCI storage.env source")
+	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only OCI lifecycle credential source")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs")
 	fleetAgeKey := fs.String("fleet-age-key", "", "shared fleet.age identity")
 	fleetAgeRecipient := fs.String("fleet-age-recipient", "", "matching fleet.age.pub recipient")
@@ -120,7 +121,7 @@ func cmdDeployJoinFleet(args []string) int {
 			ReleaseTarball: *releaseTarball, BootstrapBinary: *bootstrapBinary,
 			CosignBinary: *cosignBinary, PKISource: *pkiSource,
 			SignKeySource: *signKey, VerifyKeySource: *verifyKey,
-			ComputeDBEnvSource: *computeDBEnv, StorageEnvSource: *storageEnv, RuntimeBasesEnvSource: *runtimeBasesEnv, ArtifactDir: *artifactDir,
+			ComputeDBEnvSource: *computeDBEnv, StorageEnvSource: *storageEnv, ImagedStorageEnvSource: *imagedStorageEnv, RuntimeBasesEnvSource: *runtimeBasesEnv, ArtifactDir: *artifactDir,
 			FleetAgeKeySource: *fleetAgeKey, FleetAgeRecipientSource: *fleetAgeRecipient,
 			AnsibleVarsFile: *ansibleVars, RepoRoot: *repoRoot,
 			PostgresOverlapNodes: workers,

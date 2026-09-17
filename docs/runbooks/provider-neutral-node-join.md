@@ -162,7 +162,8 @@ them only in its short-lived runner workspace and never prints their values:
 |---|---|
 | `COMPUTE_SSH_KEY` | private key that reaches the adopted host; the runner's SSH configuration must reach existing fleet peers |
 | `COMPUTE_DATABASE_URL` | PostgreSQL DSN used to write both database entries in the node's root-only `compute-db.env` |
-| `COMPUTE_STORAGE_ENV` | OCI storage contract (`FAAS_STORAGE_BACKEND=oci` and registry) |
+| `COMPUTE_STORAGE_ENV` | OCI storage contract plus the read-only pull credential used by runtime daemons |
+| `COMPUTE_IMAGED_STORAGE_ENV` | only `FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`, using the lifecycle credential with package read/write/delete authority |
 | `COMPUTE_PKI_TARBALL_B64` | base64 of a tar.gz containing `pki/ca/ca.crt` and compute leaves |
 | `COMPUTE_SIGN_KEY` / `COMPUTE_VERIFY_KEY` | image-signing key pair |
 
@@ -272,6 +273,7 @@ The secret directory is never uploaded as a repository file. It contains:
 compute-ssh-key
 compute-db.env
 storage.env
+imaged-storage.env
 sign.key
 sign-pub.pem
 pki/ca/ca.crt

@@ -463,7 +463,8 @@ func ensureLeafWithIdentity(rootDir string, role Role, commonName string, caCert
 		if commonName != "" {
 			expectedCN = commonName
 		}
-		if existing != nil && time.Until(existing.NotAfter) >= ReissueThreshold && existing.Subject.CommonName == expectedCN && certificateHasSANs(existing, extraSANs) {
+		requiredSANs := mergeAltNames(role.AltNames, extraSANs)
+		if existing != nil && time.Until(existing.NotAfter) >= ReissueThreshold && existing.Subject.CommonName == expectedCN && certificateHasSANs(existing, requiredSANs) {
 			return ErrLeafNotExpiringSoon
 		}
 	}

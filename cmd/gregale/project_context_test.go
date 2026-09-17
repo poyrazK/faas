@@ -108,3 +108,37 @@ func TestCmdContextAndUnlinkUseNearestCheckoutContext(t *testing.T) {
 		t.Fatalf("context file after unlink: err=%v", err)
 	}
 }
+
+func TestResolveEnvironmentFlagOrContext(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "packages", "api")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveProjectContext(root, localProjectContext{
+		Version: projectContextVersion, Project: "shop", App: "api", Environment: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+
+	got, err := resolveEnvironmentFlagOrContext("")
+	if err != nil || got != "staging" {
+		t.Fatalf("context environment = %q, err=%v; want staging", got, err)
+	}
+	got, err = resolveEnvironmentFlagOrContext("production")
+	if err != nil || got != "production" {
+		t.Fatalf("explicit environment = %q, err=%v; want production", got, err)
+	}
+}
+
+func TestResolveEnvironmentFlagOrContextWithoutContext(t *testing.T) {
+	t.Chdir(t.TempDir())
+	got, err := resolveEnvironmentFlagOrContext("")
+	if err != nil {
+		t.Fatalf("resolve without context: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("environment without context = %q, want empty", got)
+	}
+}

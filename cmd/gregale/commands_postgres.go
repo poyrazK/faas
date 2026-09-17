@@ -52,13 +52,21 @@ func cmdPostgres(args []string) int {
 func cmdPostgresAttach(args []string) int {
 	args = normalizePostgresAttachArgs(args)
 	fs := newFlagSet("postgres attach", flag.ContinueOnError)
-	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
+	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
 	access := fs.String("access", "read_write", "credential access: read_write|read_only")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	if resolvedScope == "" {
+		resolvedScope = api.DefaultEnvScope
+	}
+	*scope = resolvedScope
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
 		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only]", "postgres")

@@ -139,10 +139,6 @@ type runDeps struct {
 	// existing app_changed consumer stays as the logging-only
 	// fallback. Tests inject a fake channel.
 	subscribeEgressDrift func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
-	// subscribePrivateNetwork is the app_changed feed used to clear live
-	// private routes immediately after a detach. Readiness transitions are
-	// handled by the poll-based provider reconciler.
-	subscribePrivateNetwork func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeAppDelete (ADR-098) is the producer-side seam for
 	// the app_delete consumer that evicts any in-flight wake for
 	// a deleted app via Engine.wakeCoord.Forget. nil = the
@@ -237,9 +233,6 @@ func defaultDeps() runDeps {
 		// filters to kind="updated" internally — wider-list
 		// callers are safe.
 		subscribeEgressDrift: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
-		},
-		subscribePrivateNetwork: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
 		},
 		// Phase 2 / Gate A: subscribe to NotifyAppChanged and let
@@ -1036,9 +1029,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Private-network runtime integration (provider-neutral first slice). The
-	// durable attachment reconciler remains disabled unless explicitly enabled.
-	// Gregale-owned networks use the durable network store directly; the legacy
-	// operator registry remains available for external/provider attachments.
+	// durable attachment reconciler remains disabled unless explicitly enabled;
+	// Gregale-owned networks use the durable network store directly, while the
+	// legacy operator registry remains available for external/provider attachments.
+	var privateNetworkSubscriber *sched.PrivateNetworkAttachmentSubscriber
 	if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
@@ -1087,10 +1081,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						log.Warn("schedd: private network reconciler stopped", "err", err)
 					}
 				}()
-				if deps.subscribePrivateNetwork != nil {
-					detachSub := sched.NewPrivateNetworkAttachmentSubscriber(applier, log)
-					go subscribeWithReconnect(ctx, "private network", log, deps.subscribePrivateNetwork, pool, detachSub.Run)
-				}
+				// Use the loop's existing LISTEN connection for the live detach
+				// fast path and the durable outbox worker below for replay. This
+				// keeps both the operator-managed registry and Gregale's own
+				// network fabric on the same provider-neutral path.
+				privateNetworkSubscriber = sched.NewPrivateNetworkAttachmentSubscriber(applier, log).WithNotificationPool(pool)
 				log.Info("schedd: private network reconciler enabled", "configured_networks", configuredCount, "gregale_fabric", api.PrivateNetworkFabricEnabled())
 			}
 		}
@@ -1474,6 +1469,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	appDeleteSub := sched.NewAppDeleteSubscriber(engine, log)
 	loop := sched.NewLoop(pool, engine, log).
 		WithAppDeleteSubscriber(appDeleteSub).
+		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
 		WithTriggerSecretIdentities(hostAgeIdentities).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
@@ -1908,6 +1904,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
+	if privateNetworkSubscriber != nil {
+		// Detach cleanup has its own durable channel because the attachment
+		// row is deleted and cannot be rediscovered by the normal sweep.
+		go func() {
+			err := db.RunNotificationOutbox(ctx, pool, "schedd-private-network",
+				[]string{db.NotifyPrivateNetworkAttachmentChanged}, privateNetworkSubscriber.Handle, log)
+			if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
+				log.Warn("schedd: private network detach replay exited", "err", err)
+			}
+		}()
+	}
 	if executionCoordinator != nil {
 		go func() {
 			if err := executionCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

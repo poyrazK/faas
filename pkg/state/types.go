@@ -3318,6 +3318,29 @@ type Invocation struct {
 	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 }
 
+// DeadLetterEvent is the app-scoped projection shared by invocation queues
+// and broker trigger records. The source row remains authoritative for
+// lifecycle state; this durable projection keeps the original payload,
+// failure classification, and replay timestamp in one read surface.
+type DeadLetterEvent struct {
+	ID            string
+	AccountID     string
+	AppID         string
+	Source        string
+	SourceID      string
+	Origin        string
+	TriggerID     string
+	Payload       json.RawMessage
+	Headers       json.RawMessage
+	ErrorKind     string
+	ErrorDetail   json.RawMessage
+	RetryCount    int
+	FirstFailedAt time.Time
+	LastFailedAt  time.Time
+	ReplayedAt    *time.Time
+	CreatedAt     time.Time
+}
+
 // RetryPolicy unmarshals RetryPolicyJSON into a pkg/dispatch.RetryPolicy.
 // Falls back to a zero-valued RetryPolicy when JSON is missing or
 // malformed — pkg/sched treats a zero RetryPolicy as "use the

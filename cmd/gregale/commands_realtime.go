@@ -18,7 +18,7 @@ import (
 
 func cmdRealtime(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale realtime <list|get|auth>", "realtime")
+		PrintUsage(os.Stderr, "usage: gregale realtime <list|get|create|update|delete|send|close|subscribe|unsubscribe|publish|auth>", "realtime")
 		return 1
 	}
 	switch args[0] {
@@ -26,6 +26,12 @@ func cmdRealtime(args []string) int {
 		return cmdRealtimeList(args[1:])
 	case "get":
 		return cmdRealtimeGet(args[1:])
+	case "create":
+		return cmdRealtimeCreate(args[1:])
+	case "update":
+		return cmdRealtimeUpdate(args[1:])
+	case "delete", "rm":
+		return cmdRealtimeDelete(args[1:])
 	case "send":
 		return cmdRealtimeSend(args[1:])
 	case "close":
@@ -236,6 +242,10 @@ func normalizeRealtimeRotateArgs(args []string) []string {
 func renderRealtimeEndpoint(w io.Writer, endpoint api.ManagedRealtimeEndpointResponse) {
 	_, _ = fmt.Fprintf(w, "realtime endpoint %s\n", endpoint.ID)
 	_, _ = fmt.Fprintf(w, "  app_id:                       %s\n", endpoint.AppID)
+	_, _ = fmt.Fprintf(w, "  callback_url:                 %s\n", endpoint.CallbackURL)
+	_, _ = fmt.Fprintf(w, "  connect_path:                 %s\n", endpoint.ConnectPath)
+	_, _ = fmt.Fprintf(w, "  message_path:                 %s\n", endpoint.MessagePath)
+	_, _ = fmt.Fprintf(w, "  disconnect_path:              %s\n", endpoint.DisconnectPath)
 	_, _ = fmt.Fprintf(w, "  auth_mode:                    %s\n", endpoint.AuthMode)
 	if endpoint.AuthTokenMasked == "" {
 		_, _ = fmt.Fprintln(w, "  auth_token:                   not configured")
@@ -248,7 +258,18 @@ func renderRealtimeEndpoint(w io.Writer, endpoint api.ManagedRealtimeEndpointRes
 		_, _ = fmt.Fprintf(w, "  auth_rotation:                %s\n", realtimeRotationLabel(endpoint.AuthTokenPreviousExpiresAt))
 		_, _ = fmt.Fprintf(w, "  previous_token_expires_at:    %s\n", *endpoint.AuthTokenPreviousExpiresAt)
 	}
+	_, _ = fmt.Fprintf(w, "  allowed_origins:              %s\n", realtimeOriginsValue(endpoint.AllowedOrigins))
+	_, _ = fmt.Fprintf(w, "  max_connections:              %d\n", endpoint.MaxConnections)
+	_, _ = fmt.Fprintf(w, "  max_message_bytes:            %d\n", endpoint.MaxMessageBytes)
+	_, _ = fmt.Fprintf(w, "  max_connection_age_seconds:   %d\n", endpoint.MaxConnectionAgeSeconds)
 	_, _ = fmt.Fprintf(w, "  enabled:                      %t\n", endpoint.Enabled)
+}
+
+func realtimeOriginsValue(origins []string) string {
+	if len(origins) == 0 {
+		return "none"
+	}
+	return strings.Join(origins, ",")
 }
 
 func realtimeRotationLabel(expiry *string) string {

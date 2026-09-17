@@ -80,6 +80,44 @@
       and stale-cache fallback disabled before admitting this node.
   when: not (faas_image_seed | default(false) | bool)
 
+- name: compute_admission — inspect imaged lifecycle environment
+  ansible.builtin.stat:
+    path: /etc/faas/imaged-storage.env
+  register: faas_admission_imaged_storage_stat
+  when: not (faas_image_seed | default(false) | bool)
+
+- name: compute_admission — require protected imaged lifecycle environment
+  ansible.builtin.assert:
+    that:
+      - faas_admission_imaged_storage_stat.stat.exists
+      - faas_admission_imaged_storage_stat.stat.isreg
+      - faas_admission_imaged_storage_stat.stat.pw_name == 'root'
+      - faas_admission_imaged_storage_stat.stat.gr_name == 'faas'
+      - faas_admission_imaged_storage_stat.stat.mode == '0440'
+    fail_msg: >-
+      /etc/faas/imaged-storage.env must exist as a regular root:faas 0440
+      file before a production compute node is admitted.
+  when: not (faas_image_seed | default(false) | bool)
+
+- name: compute_admission — load imaged lifecycle environment without logging secrets
+  ansible.builtin.slurp:
+    src: /etc/faas/imaged-storage.env
+  register: faas_admission_imaged_storage_blob
+  no_log: true
+  when: not (faas_image_seed | default(false) | bool)
+
+- name: compute_admission — require narrow imaged lifecycle assignments
+  ansible.builtin.assert:
+    that:
+      - "((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_USERNAME=[^\\r\\n]+$') | length) == 1"
+      - "((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_PASSWORD=[^\\r\\n]+$') | length) == 1"
+      - "((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_(?!OCI_(USERNAME|PASSWORD)=)') | length) == 0"
+    fail_msg: >-
+      The imaged lifecycle environment must contain exactly one non-empty
+      username and password assignment and no storage topology overrides.
+  no_log: true
+  when: not (faas_image_seed | default(false) | bool)
+
 - name: compute_admission — inspect KVM device
   ansible.builtin.stat:
     path: /dev/kvm

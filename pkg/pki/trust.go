@@ -94,8 +94,12 @@ func RenewTrustBundle(issuerRoot, activeRoot, outputRoot, hostRole, nodeCN strin
 	if err := ValidateIssuanceMaterial(issuerRoot, hostRole); err != nil {
 		return nil, err
 	}
-	if err := ValidateTrustBundleForNode(activeRoot, hostRole, extraSANs, nodeCN); err != nil {
-		return nil, fmt.Errorf("pki: validate active trust bundle: %w", err)
+	// The renewal path must accept identity, SAN, expiry, usage, and issuer
+	// drift: those are precisely the conditions it repairs. Keep the source
+	// gate structural so malformed or mismatched cert/key pairs never cross
+	// the fleet boundary, then validate the complete contract after repair.
+	if err := validateRenewalSource(activeRoot, hostRole); err != nil {
+		return nil, fmt.Errorf("pki: validate active renewal source: %w", err)
 	}
 	if err := createSafeStagingRoot(outputRoot, issuerRoot, activeRoot); err != nil {
 		return nil, err
@@ -126,17 +130,20 @@ func RenewTrustBundle(issuerRoot, activeRoot, outputRoot, hostRole, nodeCN strin
 		if hostRole == "compute-only" && RoleUsesNodeIdentity(role) {
 			commonName = nodeCN
 		}
-		err := ensureLeafWithIdentity(outputRoot, role, commonName, caCert, caKey, false, extraSANs)
-		switch {
-		case err == nil:
-			changed = append(changed, role)
-		case errors.Is(err, ErrLeafNotExpiringSoon):
-		default:
+		repair, err := trustLeafNeedsRenewal(outputRoot, role, commonName, caCert, extraSANs)
+		if err != nil {
+			return nil, fmt.Errorf("pki: inspect trust bundle leaf %s/%s: %w", role.Directory, role.Filename, err)
+		}
+		if !repair {
+			continue
+		}
+		if err := ensureLeafWithIdentity(outputRoot, role, commonName, caCert, caKey, true, extraSANs); err != nil {
 			return nil, fmt.Errorf("pki: renew trust bundle leaf %s/%s: %w", role.Directory, role.Filename, err)
 		}
+		changed = append(changed, role)
 	}
 	if len(changed) == 0 {
-		return nil, errors.New("pki: renewal requested but no leaf is inside the renewal threshold")
+		return nil, errors.New("pki: renewal requested but no leaf requires renewal")
 	}
 	if err := ValidateTrustBundleForNode(outputRoot, hostRole, extraSANs, nodeCN); err != nil {
 		return nil, fmt.Errorf("pki: validate renewed trust bundle: %w", err)
@@ -155,6 +162,84 @@ func ExportTrustBundle(sourceRoot, outputRoot, hostRole, nodeCN string, extraSAN
 		return err
 	}
 	return copyTrustBundle(sourceRoot, outputRoot, hostRole)
+}
+
+// ExportTrustBundleForRenewal exports structurally sound active material even
+// when a leaf has repairable contract drift. The issuer-side renewal step
+// replaces invalid or expiring leaves and strictly validates the resulting
+// bundle before it can be installed. As with every trust-only export, ca.key
+// is neither read nor copied.
+func ExportTrustBundleForRenewal(sourceRoot, outputRoot, hostRole string) error {
+	if err := validateRenewalSource(sourceRoot, hostRole); err != nil {
+		return err
+	}
+	if err := createSafeStagingRoot(outputRoot, sourceRoot); err != nil {
+		return err
+	}
+	return copyTrustBundle(sourceRoot, outputRoot, hostRole)
+}
+
+func validateRenewalSource(rootDir, hostRole string) error {
+	roles := RolesForBox(hostRole)
+	if len(roles) == 0 {
+		return fmt.Errorf("pki: no roles for host role %q", hostRole)
+	}
+	caCertPath, _ := CARoot(rootDir)
+	caCert, err := loadPublicCertificate(caCertPath, "CA")
+	if err != nil {
+		return err
+	}
+	if !caCert.IsCA {
+		return fmt.Errorf("pki: CA certificate %q is not marked as a CA", caCertPath)
+	}
+	if now := time.Now(); now.Before(caCert.NotBefore) || !now.Before(caCert.NotAfter) {
+		return fmt.Errorf("pki: CA certificate %q is outside its validity window", caCertPath)
+	}
+	if err := caCert.CheckSignatureFrom(caCert); err != nil {
+		return fmt.Errorf("pki: CA certificate %q is not self-signed: %w", caCertPath, err)
+	}
+	for _, role := range roles {
+		certPath, keyPath := LeafPaths(rootDir, role)
+		cert, err := loadExistingLeaf(certPath, keyPath)
+		if err != nil {
+			return fmt.Errorf("pki: validate renewal source %s/%s: %w", role.Directory, role.Filename, err)
+		}
+		if cert == nil {
+			return fmt.Errorf("pki: renewal source missing %s", certPath)
+		}
+	}
+	return nil
+}
+
+func trustLeafNeedsRenewal(rootDir string, role Role, expectedCN string, caCert *x509.Certificate, extraSANs AltNames) (bool, error) {
+	certPath, keyPath := LeafPaths(rootDir, role)
+	cert, err := loadExistingLeaf(certPath, keyPath)
+	if err != nil {
+		return false, err
+	}
+	if cert == nil {
+		return true, nil
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) || time.Until(cert.NotAfter) < ReissueThreshold {
+		return true, nil
+	}
+	if cert.Subject.CommonName != expectedCN || !certificateHasSANs(cert, mergeAltNames(role.AltNames, extraSANs)) {
+		return true, nil
+	}
+	usage := x509.ExtKeyUsageClientAuth
+	if role.Kind == KindServer {
+		usage = x509.ExtKeyUsageServerAuth
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	// Any verification failure is repairable drift on the renewal path. The
+	// strict export validates the repaired bundle before it can be installed.
+	verifiedChains, _ := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}})
+	if len(verifiedChains) == 0 {
+		return true, nil
+	}
+	return false, nil
 }
 
 func copyTrustBundle(sourceRoot, outputRoot, hostRole string) error {

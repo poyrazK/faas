@@ -1754,6 +1754,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// implementation while making `gregale deploy --dry-run` safe by
 	// construction.
 	*diff = preview
+	// A linked environment is meaningful for real deployments and project
+	// previews. The single-app diff engine has no environment input, so keep
+	// its existing read-only behavior when the scope was not explicit.
+	if !explicit["environment"] && (!preview || projectRequested) {
+		resolvedEnvironment, resolveErr := resolveEnvironmentFlagOrContext(*environment)
+		if resolveErr != nil {
+			return printErr("Could not read local project context", resolveErr)
+		}
+		*environment = resolvedEnvironment
+	}
 	if *environment != "" && *diff && !projectRequested {
 		return printErr("Invalid flags", fmt.Errorf("--environment cannot be combined with --dry-run or --diff"))
 	}
@@ -2843,7 +2853,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// this keeps existing host-key rekey and secret redaction paths in
 		// force while making one-command monorepo deploys usable.
 		if len(deploySecrets) > 0 {
-			configured, secretErr := setProjectDeploySecrets(ctx, client, plan.Workloads, deploySecrets)
+			configured, secretErr := setProjectDeploySecretsWithScope(ctx, client, plan.Workloads, deploySecrets, *environment)
 			if secretErr != nil {
 				return printErr("Could not configure --secrets-file", secretErr)
 			}
@@ -2915,7 +2925,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Manifest database bindings failed", err)
 	}
 	if len(deploySecrets) > 0 {
-		if err := setDeploySecrets(ctx, client, slug, deploySecrets); err != nil {
+		if err := setDeploySecretsWithScope(ctx, client, slug, deploySecrets, *environment); err != nil {
 			return printErr("Could not configure --secrets-file", err)
 		}
 		if !jsonOutput {

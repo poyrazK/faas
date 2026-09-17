@@ -300,6 +300,14 @@ Strict mode also requires an HTTPS registry and rejects stale-cache fallback;
 the cache may still accelerate successful remote reads, but it cannot serve a
 last-known-good blob after the registry reports an error.
 
+`/etc/faas/imaged-storage.env` is a separate `root:faas 0440` override that
+contains only `FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`. It is loaded after
+`storage.env` by `faas-imaged` alone, so snapshot publication and garbage
+collection can use a package lifecycle credential without granting delete
+authority to request-serving daemons. `cd-compute` proves the credential by
+writing, reading, and deleting a disposable registry artifact before it
+accepts the rollout.
+
 For production compute joins, the signed release tarball also carries the
 release-pinned `vmlinux`. `node_join.yml` extracts it before importing the
 bootstrap playbook; the `firecracker` role copies those exact bytes into
@@ -321,8 +329,9 @@ fallback.
 
 The database DSNs remain in the separate root-only
 `/etc/faas/compute-db.env`; the shared storage contract and registry
-credentials live in `roles/_shared/files/storage.env.example` and remain
-operator-supplied. Never commit populated secrets to inventory.
+read credentials live in `roles/_shared/files/storage.env.example`; the
+imaged lifecycle credential is supplied separately. Never commit populated
+secrets to inventory.
 
 For a split-box manifest, the generated control-plane variables also
 declare the database listener address and the compute `/32` allow-list.

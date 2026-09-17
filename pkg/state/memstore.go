@@ -221,7 +221,8 @@ type MemStore struct {
 	// triggerDeadLetters mirrors trigger_dead_letter rows. The production
 	// table is append-only; MemStore keeps insertion order for deterministic
 	// dashboard and handler tests.
-	triggerDeadLetters []sqlc.TriggerDeadLetter
+	triggerDeadLetters  []sqlc.TriggerDeadLetter
+	deadLetterSnapshots map[string]DeadLetterEvent
 	// jobs / jobRuns / jobTasks mirror the ADR-099 / issue #1184
 	// Workstream A tables (migrations/00255-00257, 00571-00578) for
 	// handler / dispatch-tick tests. Keyed by id / run_id. The task
@@ -885,13 +886,14 @@ func NewMemStore() *MemStore {
 		// (ADR-124 follow-up #3). Both sides are non-overlapping
 		// additive fields; column alignment kept (visual width per
 		// the table below) so the diff against `gofmt -s` stays clean.
-		mirrorRules:        map[string]MirrorRule{},
-		mirrorResults:      map[string]MirrorInvocationResult{},
-		domains:            map[string]CustomDomain{},
-		doctorObs:          map[string]DomainDoctorObservation{},
-		crons:              map[string]Cron{},
-		prewarmIntents:     map[string]PrewarmIntent{},
-		triggerDeadLetters: []sqlc.TriggerDeadLetter{},
+		mirrorRules:         map[string]MirrorRule{},
+		mirrorResults:       map[string]MirrorInvocationResult{},
+		domains:             map[string]CustomDomain{},
+		doctorObs:           map[string]DomainDoctorObservation{},
+		crons:               map[string]Cron{},
+		prewarmIntents:      map[string]PrewarmIntent{},
+		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
+		deadLetterSnapshots: map[string]DeadLetterEvent{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
@@ -21803,6 +21805,194 @@ func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocation
 	inv.CompletedAt = nil
 	m.invocations[invocationID] = inv
 	return inv, nil
+}
+
+func unifiedDeadLetterEventID(source, sourceID string) string {
+	return uuid.NewSHA1(uuid.Nil, []byte(source+":"+sourceID)).String()
+}
+
+func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
+	out := make([]DeadLetterEvent, 0)
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.State != InvocationDeadLetter {
+			continue
+		}
+		eventID := unifiedDeadLetterEventID("invocation", inv.ID)
+		failedAt := inv.CreatedAt
+		if inv.CompletedAt != nil {
+			failedAt = *inv.CompletedAt
+		}
+		errorKind := string(OutcomeDeadLetter)
+		if inv.Outcome != nil && *inv.Outcome != "" {
+			errorKind = string(*inv.Outcome)
+		}
+		detail, _ := json.Marshal(map[string]string{"last_error": inv.LastError})
+		ev := DeadLetterEvent{
+			ID:            eventID,
+			AccountID:     inv.AccountID,
+			AppID:         inv.AppID,
+			Source:        "invocation",
+			SourceID:      inv.ID,
+			Origin:        string(inv.Source),
+			Payload:       append(json.RawMessage(nil), inv.Payload...),
+			Headers:       append(json.RawMessage(nil), inv.Headers...),
+			ErrorKind:     errorKind,
+			ErrorDetail:   detail,
+			RetryCount:    inv.Attempts,
+			FirstFailedAt: failedAt,
+			LastFailedAt:  failedAt,
+			CreatedAt:     inv.CreatedAt,
+		}
+		out = append(out, ev)
+	}
+	for _, dl := range m.triggerDeadLetters {
+		recordID := dl.RecordID.String()
+		record, ok := m.records[recordID]
+		if !ok || record.State != "dead_letter" {
+			continue
+		}
+		trigger, ok := m.triggers[dl.TriggerID.String()]
+		if !ok || trigger.AppID.String() != appID {
+			continue
+		}
+		createdAt := time.Time{}
+		if dl.CreatedAt.Valid {
+			createdAt = dl.CreatedAt.Time
+		}
+		eventID := unifiedDeadLetterEventID("trigger_record", recordID)
+		ev := DeadLetterEvent{
+			ID:            eventID,
+			AccountID:     trigger.AccountID.String(),
+			AppID:         trigger.AppID.String(),
+			Source:        "trigger_record",
+			SourceID:      recordID,
+			Origin:        trigger.Kind,
+			TriggerID:     dl.TriggerID.String(),
+			Payload:       append(json.RawMessage(nil), record.Payload...),
+			Headers:       append(json.RawMessage(nil), record.Headers...),
+			ErrorKind:     dl.Reason,
+			ErrorDetail:   append(json.RawMessage(nil), dl.Detail...),
+			RetryCount:    int(record.Attempts),
+			FirstFailedAt: createdAt,
+			LastFailedAt:  createdAt,
+			CreatedAt:     createdAt,
+		}
+		out = append(out, ev)
+	}
+	seen := make(map[string]struct{}, len(out))
+	for _, ev := range out {
+		seen[ev.ID] = struct{}{}
+	}
+	for id, ev := range m.deadLetterSnapshots {
+		if _, ok := seen[id]; !ok && ev.AppID == appID {
+			out = append(out, ev)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastFailedAt.Equal(out[j].LastFailedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].LastFailedAt.After(out[j].LastFailedAt)
+	})
+	return out
+}
+
+func (m *MemStore) ListDeadLetterEvents(_ context.Context, appID string, limit int, before string) ([]DeadLetterEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	events := m.deadLetterEventsLocked(appID)
+	if before != "" {
+		anchor := -1
+		for i := range events {
+			if events[i].ID == before {
+				anchor = i
+				break
+			}
+		}
+		if anchor >= 0 {
+			events = events[anchor+1:]
+		}
+	}
+	if len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
+}
+
+func (m *MemStore) DeadLetterEventByID(_ context.Context, appID, eventID string) (DeadLetterEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ev := range m.deadLetterEventsLocked(appID) {
+		if ev.ID == eventID {
+			return ev, nil
+		}
+	}
+	return DeadLetterEvent{}, ErrNotFound
+}
+
+func (m *MemStore) ReplayDeadLetterEvent(_ context.Context, accountID, appID, eventID string) (DeadLetterEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var event *DeadLetterEvent
+	for _, ev := range m.deadLetterEventsLocked(appID) {
+		if ev.ID == eventID {
+			copy := ev
+			event = &copy
+			break
+		}
+	}
+	if event == nil || event.AccountID != accountID || event.ReplayedAt != nil {
+		return DeadLetterEvent{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	switch event.Source {
+	case "invocation":
+		inv, ok := m.invocations[event.SourceID]
+		if !ok || inv.AccountID != accountID || inv.AppID != appID || inv.State != InvocationDeadLetter {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		inv.State = InvocationPending
+		inv.Attempts = 0
+		inv.LastError = ""
+		inv.Outcome = nil
+		inv.DueAt = now
+		inv.LeaseExpiresAt = nil
+		inv.InstanceID = ""
+		inv.LastReplayedAt = &now
+		inv.CompletedAt = nil
+		m.invocations[event.SourceID] = inv
+	case "trigger_record":
+		record, ok := m.records[event.SourceID]
+		if !ok || record.State != "dead_letter" {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		record.State = "pending"
+		record.Attempts = 0
+		record.LastError = pgtype.Text{}
+		record.NextFireAt = pgtypeFromTime(now)
+		m.records[event.SourceID] = record
+		filtered := m.triggerDeadLetters[:0]
+		for _, dl := range m.triggerDeadLetters {
+			if dl.RecordID.String() != event.SourceID {
+				filtered = append(filtered, dl)
+			}
+		}
+		m.triggerDeadLetters = filtered
+	default:
+		return DeadLetterEvent{}, ErrNotFound
+	}
+	event.ReplayedAt = &now
+	if m.deadLetterSnapshots == nil {
+		m.deadLetterSnapshots = make(map[string]DeadLetterEvent)
+	}
+	m.deadLetterSnapshots[eventID] = *event
+	return *event, nil
 }
 
 // ListExpiredTriggerRecordsForReaper is intentionally unsupported by

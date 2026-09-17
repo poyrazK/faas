@@ -215,6 +215,28 @@ func resolveAppFlagOrContext(explicit string) (string, error) {
 	return resolveLinkedApp("", cwd)
 }
 
+// resolveEnvironmentFlagOrContext gives environment-aware commands the same
+// zero-config behavior as app-scoped commands. An explicitly supplied flag
+// always wins; an absent linked context simply preserves the command's
+// existing default.
+func resolveEnvironmentFlagOrContext(explicit string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	context, _, err := linkedProjectContext(cwd)
+	if errors.Is(err, errProjectContextNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return context.Environment, nil
+}
+
 // resolveRequiredAppSlug gives app-scoped read commands a consistent
 // context fallback. Callers own their usage text so each PrintUsage call
 // keeps a statically discoverable docs topic. Explicit slugs still win

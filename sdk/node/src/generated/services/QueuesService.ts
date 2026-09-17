@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
+import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsResponse.js';
 import type { QueueDeadLetterResponse } from '../models/QueueDeadLetterResponse.js';
 import type { QueuePeekResponse } from '../models/QueuePeekResponse.js';
 import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
@@ -308,6 +310,135 @@ export class QueuesService {
       path: {
         'slug': slug,
         'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List dead-letter events for an app.
+   * Returns queue invocation and broker trigger failures in one durable,
+   * newest-first ledger. The source row is not leased or mutated.
+   *
+   * @returns DeadLetterEventsResponse A page of unified dead-letter events.
+   * @throws ApiError
+   */
+  public static listDeadLetterEvents({
+    slug,
+    limit = 20,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Cursor — the last id from the previous page (omit for the first page).
+     */
+    before?: string,
+  }): CancelablePromise<DeadLetterEventsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/dlq',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get one dead-letter event for an app.
+   * @returns DeadLetterEvent The dead-letter event.
+   * @throws ApiError
+   */
+  public static getDeadLetterEvent({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<DeadLetterEvent> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/dlq/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Replay one dead-letter event atomically.
+   * Resets the source invocation or trigger record to pending, clears its
+   * retry error, and records replayed_at on the unified ledger.
+   *
+   * @returns DeadLetterEvent Replay accepted.
+   * @throws ApiError
+   */
+  public static replayDeadLetterEvent({
+    slug,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeadLetterEvent> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/dlq/{id}/replay',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
       },
       errors: {
         401: `code: unauthorized`,

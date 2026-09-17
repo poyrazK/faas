@@ -29,6 +29,31 @@ PUT|DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/s
 POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish
 ```
 
+The CLI can create and update endpoint policy without exposing credentials in
+the process list. The API generates the endpoint ID:
+
+```sh
+printf 'callback-secret\n' | \
+  gregale realtime create my-app \
+    --callback-url https://app.example.com/realtime/events \
+    --callback-auth-token-stdin \
+    --auth-mode oidc_jwt \
+    --auth-issuer https://issuer.example.com \
+    --auth-jwks-url https://issuer.example.com/.well-known/jwks.json \
+    --auth-audience realtime \
+    --auth-algorithm RS256 \
+    --allowed-origin https://app.example.com
+
+gregale realtime update my-app ENDPOINT_ID --max-connections 500 --enable
+gregale realtime delete my-app ENDPOINT_ID --yes
+```
+
+Use `--auth-token-stdin` when configuring `static_bearer`. For an update,
+`--auth-mode none` removes the existing client credential and OIDC policy;
+`--clear-allowed-origins` removes the browser-origin restriction. Repeated
+`--auth-audience`, `--auth-algorithm`, `--auth-claim KEY=VALUE`, and
+`--allowed-origin` flags replace their respective lists.
+
 The API persists endpoint configuration in the control plane, applies the
 per-plan inventory cap, returns masked credentials, and mirrors enabled rows to
 active realtime nodes. In a single-box install this is the local

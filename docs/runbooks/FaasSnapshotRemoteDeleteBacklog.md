@@ -29,8 +29,18 @@ where delete_pending = true
 order by created_at;
 ```
 
-For GHCR, verify that the configured token still has package read and delete
-scope and that the configured username owns the package namespace. A 401 or 403
+For GHCR, run the same non-destructive preflight used by `cd-compute`:
+
+```sh
+sudo -u faas-imaged gregalectl artifact lifecycle-check \
+  --env-file /etc/faas/storage.env \
+  --lifecycle-env-file /etc/faas/imaged-storage.env --json
+```
+
+The command writes, reads, and deletes a tiny disposable artifact without
+printing credentials. Verify that the lifecycle token has package read,
+write, and delete scope and that the configured username owns the package
+namespace. A 401 or 403
 indicates credentials or package ownership; a distribution API 405 followed by
 a GitHub Packages API failure indicates the fallback could not complete.
 

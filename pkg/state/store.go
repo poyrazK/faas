@@ -3786,6 +3786,12 @@ type Store interface {
 	// row is missing, not dead_letter, or owned by another
 	// account.
 	RetryQueueDeadLetter(ctx context.Context, accountID, invocationID string) (Invocation, error)
+	// Unified dead-letter ledger (issue #1278 / Workstream A). These methods
+	// are app-scoped so the handler can enforce tenant ownership before
+	// returning payloads or replaying a source row.
+	ListDeadLetterEvents(ctx context.Context, appID string, limit int, before string) ([]DeadLetterEvent, error)
+	DeadLetterEventByID(ctx context.Context, appID, eventID string) (DeadLetterEvent, error)
+	ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error)
 	// ListExpiredTriggerRecordsForReaper (ADR-134 PR-E) returns
 	// trigger_records IDs whose result_retention_until is in
 	// the past.

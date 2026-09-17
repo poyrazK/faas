@@ -222,7 +222,6 @@ EditPublicStatusUpdateMessage
 ExpireOrgInvitations
 ExpireUploadSession
 FailBuild
-FailInvocation
 FailRunningInstanceOnDeadNode
 FailSourceDeployment
 FinalizeServiceRollout

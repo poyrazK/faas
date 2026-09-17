@@ -23,7 +23,7 @@ import (
 // failure_class=infra, deployments stuck at status=pending, wakes 503.
 func TestBuilderdConfigSpoolRootMatchesAPID(t *testing.T) {
 	const tmp = "/tmp/harness-probe"
-	cfg := builderdConfig(tmp, "/run/faas/vmmd.sock", "/srv/fc/base/builder-base.ext4")
+	cfg := builderdConfig(tmp, "/run/faas/vmmd.sock", "/srv/fc/base/builder-base.ext4", "127.0.0.1:9105")
 
 	want := `source_spool_dir = "` + spoolRootFor(tmp) + `"`
 	if !strings.Contains(cfg, want) {

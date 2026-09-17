@@ -71,6 +71,7 @@ func Run(t *testing.T, open Open) {
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"lease_requeue_releases_each_slot", testLeaseRequeueReleasesEachSlot},
 		{"deadline_force_only_releases_transitions", testDeadlineForceOnlyReleasesTransitions},
+		{"unified_dead_letter_ledger_replays_invocation", testUnifiedDeadLetterLedger},
 		{"mirror_rule_rejects_oversized_redaction_list", testMirrorRuleRejectsOversizedRedactionList},
 		{"mirror_rule_update_rejects_oversized_redaction_list", testMirrorRuleUpdateRejectsOversizedRedactionList},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
@@ -88,6 +89,54 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testUnifiedDeadLetterLedger(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC()
+	inv, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue,
+		State: state.InvocationPending, Method: "POST", Path: "/",
+		Payload: []byte(`{"order_id":"dlq-1"}`), Headers: []byte(`{"x-test":"1"}`),
+		DueAt: now, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocation(fx.Ctx, inv.ID, "dlq-test-instance", 30); err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
+	if err := fx.Store.FailInvocation(fx.Ctx, inv.ID, "runner unavailable", time.Second, 1); err != nil {
+		t.Fatalf("FailInvocation: %v", err)
+	}
+
+	events, err := fx.Store.ListDeadLetterEvents(fx.Ctx, fx.App.ID, 10, "")
+	if err != nil {
+		t.Fatalf("ListDeadLetterEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Source != "invocation" || events[0].SourceID != inv.ID {
+		t.Fatalf("dead-letter events = %+v, want one invocation event", events)
+	}
+	event, err := fx.Store.DeadLetterEventByID(fx.Ctx, fx.App.ID, events[0].ID)
+	if err != nil {
+		t.Fatalf("DeadLetterEventByID: %v", err)
+	}
+	if string(event.Payload) != string(inv.Payload) || string(event.Headers) != string(inv.Headers) {
+		t.Fatalf("event payload/headers = %s/%s, want %s/%s", event.Payload, event.Headers, inv.Payload, inv.Headers)
+	}
+	replayed, err := fx.Store.ReplayDeadLetterEvent(fx.Ctx, fx.Account.ID, fx.App.ID, event.ID)
+	if err != nil {
+		t.Fatalf("ReplayDeadLetterEvent: %v", err)
+	}
+	if replayed.ReplayedAt == nil {
+		t.Fatal("replayed event has nil replayed_at")
+	}
+	got, err := fx.Store.InvocationByID(fx.Ctx, inv.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID after replay: %v", err)
+	}
+	if got.State != state.InvocationPending || got.Attempts != 0 {
+		t.Fatalf("invocation after replay = %+v, want pending with zero attempts", got)
 	}
 }
 

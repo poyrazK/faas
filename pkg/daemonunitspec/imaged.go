@@ -88,10 +88,12 @@ func UnitImaged() daemonunit.Unit {
 		},
 
 		// Issue #585 / ADR-127: sealed.env dropped; compute-db.env carries
-		// DATABASE_URL and storage.env carries the shared OCI snapshot/layer
-		// backend. The optional '-' prefix keeps image-seeded nodes bootable
-		// before secret and storage provisioning has populated the files.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env",
+		// DATABASE_URL and storage.env carry the shared OCI snapshot/layer
+		// backend. imaged-storage.env is loaded afterwards so only imaged gets
+		// the write/delete lifecycle credential; request-serving daemons keep
+		// the read-only pull credential from storage.env. The optional '-'
+		// prefix keeps image-seeded nodes bootable before provisioning.
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			// ProtectSystem=strict makes the host /tmp read-only. Keep OCI
 			// layer verification and upload scratch on the writable base disk.
