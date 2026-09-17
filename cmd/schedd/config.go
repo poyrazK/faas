@@ -126,15 +126,15 @@ type Config struct {
 	// least 2 × Interval.
 	HeartbeatStaleness time.Duration `toml:"heartbeat_staleness"`
 
-	// GatewayMetricsURL is the absolute URL of gatewayd-internal's /metrics
-	// endpoint (issue #169 / #172). The schedd scale-up trigger
+	// GatewayMetricsURL is the absolute URL of gatewayd-internal's bounded
+	// request-counter metrics endpoint (issue #169 / #172). The scale-up trigger
 	// scrapes this URL every cfg.ScaleUpInterval for
 	// `gateway_requests_total{app=...}` so it can compute per-app
 	// RPS. Empty disables only this optional scrape; the trigger
 	// can still use the provider-independent VMMD activity-counter
 	// signal from the instancestats reader. Defaults to
-	// http://127.0.0.1:9090/metrics, matching gatewayd-internal's
-	// ControlAddr default (cmd/gatewayd-internal/config.go).
+	// http://127.0.0.1:9090/metrics/gateway-requests, matching
+	// gatewayd-internal's ControlAddr default.
 	GatewayMetricsURL string `toml:"gateway_metrics_url"`
 
 	// ScaleUpInterval is the per-app reactive scale-up trigger
@@ -404,7 +404,7 @@ func LoadConfig(path string) (*Config, error) {
 		// Issue #169 / #172: default to gatewayd-internal's loopback
 		// control listener. Empty disables the trigger (the
 		// loop with WithScaleUp(nil) skips the ticker arm).
-		GatewayMetricsURL: "http://127.0.0.1:9090/metrics",
+		GatewayMetricsURL: "http://127.0.0.1:9090/metrics/gateway-requests",
 		// issue #171: aggressive reaper defaults to ON. Operators
 		// can flip FAAS_REAPER_AGGRESSIVE=false to disable in-place
 		// without redeploying.
