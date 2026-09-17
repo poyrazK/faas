@@ -54,5 +54,13 @@ export type Invocation = {
    * ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay.
    */
   last_replayed_at?: string | null;
+  /**
+   * EPIC #1278. App webhook subscription selected for a completed invocation.
+   */
+  on_success_destination_id?: string | null;
+  /**
+   * EPIC #1278. App webhook subscription selected for a terminal failure or dead-lettered invocation.
+   */
+  on_failure_destination_id?: string | null;
 };
 

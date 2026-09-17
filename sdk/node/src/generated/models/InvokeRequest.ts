@@ -22,5 +22,9 @@ export type InvokeRequest = {
    * ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
    */
   retention_seconds?: number | null;
+  /**
+   * EPIC #1278. Optional terminal callbacks. Values are app webhook subscription IDs owned by this app.
+   */
+  destinations?: any | null;
 };
 
