@@ -29462,7 +29462,7 @@ components:
       properties:
         endpoint_id: { type: string, format: uuid }
         auth_mode: { type: string, enum: [static_bearer] }
-        previous_token_expires_at: { type: string, format: date-time, nullable: true }
+        previous_token_expires_at: { type: [string, 'null'], format: date-time }
 
     ManagedRealtimeMessageRequest:
       type: object
