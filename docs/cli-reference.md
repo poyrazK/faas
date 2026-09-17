@@ -62,7 +62,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
-| [`realtime`](#realtime) | Manage managed realtime endpoints and rotate static bearer credentials |
+| [`realtime`](#realtime) | Manage realtime endpoints, connections, channels, and auth |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
@@ -1558,7 +1558,7 @@ Remove a registry credential
 
 ## realtime
 
-Manage managed realtime endpoints and rotate static bearer credentials
+Manage realtime endpoints, connections, channels, and auth
 
 `gregale realtime [<subcommand>]`
 
@@ -1569,6 +1569,26 @@ List managed realtime endpoints
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
+
+### realtime send
+
+Send a message to one live connection
+
+### realtime close
+
+Close one live connection
+
+### realtime subscribe
+
+Subscribe one live connection to a channel
+
+### realtime unsubscribe
+
+Remove one live connection from a channel
+
+### realtime publish
+
+Publish a message to a channel
 
 ### realtime auth
 

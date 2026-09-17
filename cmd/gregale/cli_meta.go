@@ -1237,10 +1237,15 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "realtime",
 		DocSlug: "realtime",
-		Short:   "Manage managed realtime endpoints and rotate static bearer credentials",
+		Short:   "Manage realtime endpoints, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints"},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status"},
+			{Name: "send", Short: "Send a message to one live connection"},
+			{Name: "close", Short: "Close one live connection"},
+			{Name: "subscribe", Short: "Subscribe one live connection to a channel"},
+			{Name: "unsubscribe", Short: "Remove one live connection from a channel"},
+			{Name: "publish", Short: "Publish a message to a channel"},
 			{Name: "auth", Short: "Rotate, finalize, or inspect static bearer auth (auth rotate|finalize|status)"},
 		},
 	},

@@ -26,6 +26,16 @@ func cmdRealtime(args []string) int {
 		return cmdRealtimeList(args[1:])
 	case "get":
 		return cmdRealtimeGet(args[1:])
+	case "send":
+		return cmdRealtimeSend(args[1:])
+	case "close":
+		return cmdRealtimeClose(args[1:])
+	case "subscribe":
+		return cmdRealtimeSubscribe(args[1:])
+	case "unsubscribe":
+		return cmdRealtimeUnsubscribe(args[1:])
+	case "publish":
+		return cmdRealtimePublish(args[1:])
 	case "auth":
 		return cmdRealtimeAuth(args[1:])
 	default:

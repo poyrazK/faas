@@ -120,6 +120,24 @@ curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/stats
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/connections
 ```
 
+The customer CLI exposes the authenticated connection operations as well:
+
+```sh
+# Send raw bytes from a protected pipe; add --binary for binary frames.
+printf 'hello' | gregale realtime send my-app ENDPOINT_ID CONNECTION_ID --data-stdin
+
+gregale realtime subscribe my-app ENDPOINT_ID CONNECTION_ID room-a
+gregale realtime unsubscribe my-app ENDPOINT_ID CONNECTION_ID room-a
+gregale realtime close my-app ENDPOINT_ID CONNECTION_ID --reason 'client migrated'
+
+printf '{"event":"refresh"}' | \
+  gregale realtime publish my-app ENDPOINT_ID room-a --data-stdin
+```
+
+`--data-stdin` is binary-safe and bounded to the same 1 MiB decoded payload
+limit enforced by the API. `--data TEXT` is available for small UTF-8
+messages; message contents are never included in successful CLI output.
+
 Prometheus scrapes the node-local health listener on `127.0.0.1:9107` in a
 single-box deployment. A compute-only deployment binds the same port on the
 private node address (restricted to control-plane CIDRs by nftables), or the
