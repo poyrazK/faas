@@ -3,10 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateManagedRealtimeEndpointRequest } from '../models/CreateManagedRealtimeEndpointRequest.js';
+import type { FinalizeManagedRealtimeAuthResponse } from '../models/FinalizeManagedRealtimeAuthResponse.js';
 import type { ManagedRealtimeCloseRequest } from '../models/ManagedRealtimeCloseRequest.js';
 import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeEndpointResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
+import type { RotateManagedRealtimeAuthRequest } from '../models/RotateManagedRealtimeAuthRequest.js';
+import type { RotateManagedRealtimeAuthResponse } from '../models/RotateManagedRealtimeAuthResponse.js';
 import type { UpdateManagedRealtimeEndpointRequest } from '../models/UpdateManagedRealtimeEndpointRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -185,6 +188,88 @@ export class RealtimeService {
         'id': id,
       },
       errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Rotate a static bearer credential with a bounded overlap window.
+   * Promotes the supplied credential to current and accepts the previous
+   * credential until previous_token_expires_at. Credentials are sealed at
+   * rest and never returned in plaintext.
+   *
+   * @returns RotateManagedRealtimeAuthResponse Static bearer credential rotation started.
+   * @throws ApiError
+   */
+  public static rotateManagedRealtimeAuth({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: RotateManagedRealtimeAuthRequest,
+  }): CancelablePromise<RotateManagedRealtimeAuthResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke the predecessor static bearer credential immediately.
+   * @returns FinalizeManagedRealtimeAuthResponse Static bearer credential rotation finalized.
+   * @throws ApiError
+   */
+  public static finalizeManagedRealtimeAuth({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<FinalizeManagedRealtimeAuthResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,

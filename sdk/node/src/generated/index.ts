@@ -279,6 +279,7 @@ export type { FieldError } from './models/FieldError.js';
 export type { FilterCriteria } from './models/FilterCriteria.js';
 export type { FilterCriteriaClause } from './models/FilterCriteriaClause.js';
 export type { FilterCriteriaOp } from './models/FilterCriteriaOp.js';
+export type { FinalizeManagedRealtimeAuthResponse } from './models/FinalizeManagedRealtimeAuthResponse.js';
 export type { FireCronRequestResponse } from './models/FireCronRequestResponse.js';
 export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.js';
@@ -520,6 +521,8 @@ export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSe
 export type { RotateDeployTokenRequest } from './models/RotateDeployTokenRequest.js';
 export type { RotateDeployTokenResponse } from './models/RotateDeployTokenResponse.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
+export type { RotateManagedRealtimeAuthRequest } from './models/RotateManagedRealtimeAuthRequest.js';
+export type { RotateManagedRealtimeAuthResponse } from './models/RotateManagedRealtimeAuthResponse.js';
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
