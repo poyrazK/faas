@@ -53,6 +53,10 @@ inputs:
     description: "Maximum seconds to wait for the deployment to settle (only used when wait=true)"
     required: false
     default: "600"
+  rollout:
+    description: "Production rollout mode: standard or safe (balanced health-gated rollout; Pro/Scale only)"
+    required: false
+    default: "standard"
   # Issue #977 / ADR-116: deployment annotations surface. The CLI
   # forwards --reason / --tag / --deployed-by / --pr-number to
   # gregale deploy. Defaults mirror the GitHub Actions context
@@ -86,6 +90,9 @@ outputs:
   status:
     description: "Observed deployment status: live | queued | failed | cancelled | superseded | timeout"
     value: ${{ steps.deploy.outputs.status }}
+  rollout:
+    description: "Selected rollout mode: standard or safe"
+    value: ${{ steps.deploy.outputs.rollout }}
   url:
     description: "URL of the new deployment record on the control-plane API (https://{api-base}/v1/apps/{slug}/deployments/{id})"
     value: ${{ steps.deploy.outputs.url }}
@@ -115,6 +122,7 @@ runs:
         FAAS_TOKEN: ${{ inputs.api-key }}
         INPUT_APP: ${{ inputs.app }}
         INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_ROLLOUT: ${{ inputs.rollout }}
       run: bash "$ACTION_PATH/src/run.sh" validate
     - name: Deploy
       id: deploy
@@ -129,6 +137,7 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        INPUT_ROLLOUT: ${{ inputs.rollout }}
         INPUT_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
         # Check Run publication is best-effort. Callers that want the
         # GitHub-native status record must grant `checks: write`; the deploy

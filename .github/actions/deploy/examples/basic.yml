@@ -20,3 +20,5 @@ jobs:
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           # Queue the deployment and continue; set wait: "true" to block until live.
           wait: "false"
+          # Optional: balanced health-gated production rollout (Pro/Scale only).
+          # rollout: "safe"

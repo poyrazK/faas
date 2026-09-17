@@ -23,6 +23,9 @@ jobs:
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           # Queue the deployment and continue; set wait: "true" to block until live.
           wait: "false"
+          # For a Pro/Scale production app, use the balanced health-gated rollout:
+          # wait: "true"
+          # rollout: "safe"
 ```
 
 ## Generate a starter workflow
@@ -48,6 +51,7 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 | `format` | Source format passed to the source-ref endpoint. | no | `tarball` |
 | `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `false` |
 | `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `600` |
+| `rollout` | Production rollout mode: `standard` or `safe` (balanced health-gated rollout; Pro/Scale only). | no | `standard` |
 
 ## Outputs
 
@@ -56,6 +60,7 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 | `deployment-id` | The new deployment id (32-char hex). |
 | `app-slug` | Echo of the input `app` slug. |
 | `status` | Observed status: `live` when waiting succeeds, `queued` when waiting is disabled, or the terminal failure/timeout status. |
+| `rollout` | Selected rollout mode: `standard` or `safe`. |
 | `url` | URL of the deployment record on the control-plane API (`{api-base}/v1/apps/{slug}/deployments/{id}`). |
 | `check-run-id` | GitHub Check Run id containing the deployment link; empty if the workflow cannot write Checks. |
 | `cli-version` | Bundled `gregale` CLI version (verifies the vendored binary). |
@@ -66,6 +71,12 @@ Run is completed with a neutral result for the asynchronous default (the
 deployment itself may still be building), and is updated to the terminal result
 when `wait: "true"` is used. It is best-effort, so missing permission never
 blocks the deployment.
+
+Set `rollout: "safe"` for a balanced health-gated canary. The action submits
+the canary, waits for readiness, and then waits for rollout completion when
+`wait: "true"`; long waits renew a short-lived GitHub OIDC identity between
+polling windows. Safe rollout is available on Pro/Scale plans and is reported
+in the step summary and Check Run title.
 
 ## Pin reproducibility
 

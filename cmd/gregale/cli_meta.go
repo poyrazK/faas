@@ -478,6 +478,7 @@ var cliCommands = []cliCommand{
 				{Name: "preview-ttl-hours", Short: "preview lease in hours (1-720)", Value: "HOURS"},
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
+				{Name: "rollout", Short: "production rollout mode: standard|safe (safe requires Pro/Scale)", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
 				{Name: "dry-run", Short: "show the workflow without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},

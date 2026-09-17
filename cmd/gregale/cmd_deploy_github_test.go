@@ -83,7 +83,7 @@ func TestGithubDeployActionCompositeOutputsAreMapped(t *testing.T) {
 	for name := range wantRuns {
 		t.Errorf("composite Action step %q is missing", name)
 	}
-	for _, name := range []string{"deployment-id", "app-slug", "status", "url", "check-run-id", "cli-version"} {
+	for _, name := range []string{"deployment-id", "app-slug", "status", "rollout", "url", "check-run-id", "cli-version"} {
 		output, ok := metadata.Outputs[name]
 		if !ok {
 			t.Errorf("composite Action output %q is not declared", name)
@@ -122,6 +122,38 @@ func TestGithubDeployActionInputMetadataHasNoExpressions(t *testing.T) {
 			if strings.Contains(value, "${{") {
 				t.Errorf("input %q %s contains an expression unsupported by the Action manifest loader: %q", name, field, value)
 			}
+		}
+	}
+	rollout, ok := metadata.Inputs["rollout"]
+	if !ok {
+		t.Fatal("deploy Action is missing rollout input")
+	}
+	if rollout.Default != "standard" {
+		t.Fatalf("rollout input default = %q, want standard", rollout.Default)
+	}
+	if !strings.Contains(rollout.Description, "safe") {
+		t.Fatalf("rollout input description does not explain safe mode: %q", rollout.Description)
+	}
+}
+
+func TestGithubDeployActionSafeRolloutWiring(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "src", "run.sh"))
+	if err != nil {
+		t.Fatalf("read deploy Action runner: %v", err)
+	}
+	script := string(raw)
+	for _, want := range []string{
+		"INPUT_ROLLOUT",
+		"--canary-preset balanced",
+		"rollout_wait_args+=(--rollout)",
+		"echo \"rollout=$rollout\"",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("safe rollout runner wiring is missing %q", want)
 		}
 	}
 }

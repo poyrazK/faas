@@ -38,7 +38,7 @@ die() {
 # either case the Gregale deployment must keep working and the deployment URL
 # remains available through the action output.
 write_step_summary() {
-	local status="$1" dep_id="$2" url="$3"
+	local status="$1" dep_id="$2" url="$3" rollout="${4:-standard}"
 	if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
 		return
 	fi
@@ -46,9 +46,14 @@ write_step_summary() {
 		echo "### Gregale deployment"
 		echo
 		echo "- **Status:** \`$status\`"
+		echo "- **Rollout:** \`$rollout\`"
 		echo "- **Deployment:** [$dep_id]($url)"
 		if [ "$status" = "queued" ]; then
-			echo "- The workflow returned without waiting; follow the deployment link for live progress."
+			if [ "$rollout" = "safe" ]; then
+				echo "- The balanced health-gated rollout will continue on Gregale; follow the deployment link for live progress."
+			else
+				echo "- The workflow returned without waiting; follow the deployment link for live progress."
+			fi
 		fi
 	} >> "$GITHUB_STEP_SUMMARY"
 }
@@ -159,6 +164,9 @@ cmd_validate() {
 	if [[ ! "${INPUT_WAIT_TIMEOUT:-600}" =~ ^[0-9]+$ ]] || [ "${INPUT_WAIT_TIMEOUT:-600}" -le 0 ]; then
 		die "wait-timeout must be a positive integer"
 	fi
+	if [ "${INPUT_ROLLOUT:-standard}" != "standard" ] && [ "${INPUT_ROLLOUT:-standard}" != "safe" ]; then
+		die "rollout must be standard or safe"
+	fi
     if [ ! -x "$BIN" ]; then
         die "vendored binary not found at $BIN (action must be released as a tagged version)"
     fi
@@ -218,6 +226,7 @@ cmd_deploy() {
 
     local cli_version
     cli_version="$(cat "$VERSION_FILE")"
+	local rollout="${INPUT_ROLLOUT:-standard}"
 
     # 1. Surface the cli-version output so downstream steps can lint
     #    for drift. echo "key=value" >> "$GITHUB_OUTPUT" is the
@@ -225,13 +234,17 @@ cmd_deploy() {
     {
         echo "cli-version=$cli_version"
         echo "app-slug=${INPUT_APP}"
+		echo "rollout=$rollout"
     } >> "$GITHUB_OUTPUT"
 
     # 2. Invoke the vendored CLI. The wire shape is the same as
     #    `gregale deploy --repo --ref` — POST /v1/apps/{slug}/deployments/source-ref.
-    #    --json --no-wait stdout is the canonical queued receipt. The Action
-    #    owns optional waiting below so it can renew short-lived OIDC identity
-    #    between bounded polling windows.
+	#    --json --no-wait stdout is the canonical queued receipt. The Action
+	#    owns optional waiting below so it can renew short-lived OIDC identity
+	#    between bounded polling windows.
+	#    Safe mode submits the balanced canary policy while retaining this
+	#    queued shape; the wait below adds --rollout so the Action does not
+	#    report success at readiness before the canary reaches 100% traffic.
     #    stderr in failure mode is the RFC 7807 Problem JSON line
     #    (cmd/gregale/json_flag.go:116-122 writeJSONProblem).
     #
@@ -257,12 +270,17 @@ cmd_deploy() {
     if [ -n "${INPUT_PR_NUMBER:-}" ]; then
         annotation_args+=(--pr-number "$INPUT_PR_NUMBER")
     fi
+	local rollout_args=()
+	if [ "$rollout" = "safe" ]; then
+		rollout_args+=(--canary-preset balanced)
+	fi
     local dep_json
     if ! dep_json="$(
         "$BIN" deploy --json --no-wait \
             --name "$INPUT_APP" \
             --repo "$INPUT_REPO" \
             --ref "$INPUT_REF" \
+			"${rollout_args[@]}" \
             "${annotation_args[@]}" \
             2>&1
     )"; then
@@ -292,6 +310,7 @@ cmd_deploy() {
     api_base="${api_base%/}"
     echo "url=${api_base}/v1/apps/${INPUT_APP}/deployments/${dep_id}" >> "$GITHUB_OUTPUT"
 	local deployment_url="${api_base}/v1/apps/${INPUT_APP}/deployments/${dep_id}"
+	local rollout_title="${rollout}"
 	local check_status="queued"
 	if [ "${INPUT_WAIT:-true}" = "true" ]; then
 		check_status="in_progress"
@@ -301,17 +320,21 @@ cmd_deploy() {
 		# A non-blocking action cannot update the Check Run after the workflow
 		# exits. Mark the request neutral and link to the live Gregale record
 		# instead of leaving an indefinitely pending check.
-		check_run_request "completed" "neutral" "$dep_id" "$deployment_url" "Gregale deployment queued" "queued"
+		check_run_request "completed" "neutral" "$dep_id" "$deployment_url" "Gregale ${rollout_title} deployment queued" "${rollout_title} rollout queued"
 	else
-		check_run_request "in_progress" "" "$dep_id" "$deployment_url" "Gregale deployment in progress" "in_progress"
+		check_run_request "in_progress" "" "$dep_id" "$deployment_url" "Gregale ${rollout_title} deployment in progress" "${rollout_title} rollout in progress"
 	fi
-	write_step_summary "$check_status" "$dep_id" "$deployment_url"
+	write_step_summary "$check_status" "$dep_id" "$deployment_url" "$rollout"
 
     # 4. Optionally wait. The vendored CLI tails the SSE build log
     #    when --wait is set; we use a separate mode here so the
     #    failure path stays distinct (cancelled / timeout vs failed).
     if [ "${INPUT_WAIT:-true}" = "true" ]; then
         local timeout="${INPUT_WAIT_TIMEOUT:-600}"
+		local rollout_wait_args=()
+		if [ "$rollout" = "safe" ]; then
+			rollout_wait_args+=(--rollout)
+		fi
         local wait_output="" started now remaining attempt_timeout wait_succeeded=false
 		started="$(date +%s)"
 		while true; do
@@ -328,7 +351,7 @@ cmd_deploy() {
 			if [ "${USING_OIDC:-false}" = "true" ] && [ "$attempt_timeout" -gt 240 ]; then
 				attempt_timeout=240
 			fi
-			if wait_output="$("$BIN" --json deployment wait "$dep_id" --timeout "$attempt_timeout" 2>&1)"; then
+			if wait_output="$("$BIN" --json deployment wait "$dep_id" "${rollout_wait_args[@]}" --timeout "$attempt_timeout" 2>&1)"; then
 				wait_succeeded=true
 				break
 			fi
@@ -356,14 +379,14 @@ cmd_deploy() {
 				timeout) conclusion="timed_out" ;;
 				superseded) conclusion="stale" ;;
 			esac
-			check_run_update "completed" "$conclusion" "$dep_id" "$deployment_url" "Gregale deployment ${status}"
-			write_step_summary "$status" "$dep_id" "$deployment_url"
+			check_run_update "completed" "$conclusion" "$dep_id" "$deployment_url" "Gregale ${rollout_title} rollout ${status}"
+			write_step_summary "$status" "$dep_id" "$deployment_url" "$rollout"
 			echo "$wait_output" > "${RUNNER_TEMP:-/tmp}/gregale-deploy-action.stderr"
 			die "deployment $dep_id finished with status $status"
         fi
 		echo "status=live" >> "$GITHUB_OUTPUT"
-		check_run_update "completed" "success" "$dep_id" "$deployment_url" "Gregale deployment live"
-		write_step_summary "live" "$dep_id" "$deployment_url"
+		check_run_update "completed" "success" "$dep_id" "$deployment_url" "Gregale ${rollout_title} rollout live"
+		write_step_summary "live" "$dep_id" "$deployment_url" "$rollout"
 	else
 		echo "status=queued" >> "$GITHUB_OUTPUT"
     fi

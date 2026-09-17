@@ -174,11 +174,13 @@ From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
 application, writes `.github/workflows/gregale.yml`, and leaves the existing
 preview defaults in place. Add `--preview`, `--no-preview`,
 `--preview-ttl-hours`, `--root-dir`, or `--ignore` to configure the project
-policy in the same command. Use `--dry-run` to inspect the workflow without
-network or file changes; an existing different workflow is never overwritten
-unless `--force` is supplied. Production pushes and manual dispatches use the
-workflow, while pull-request previews continue to be managed by the connected
-GitHub integration.
+policy in the same command. Use `--rollout safe` to generate a production
+workflow with the balanced health-gated rollout (Pro/Scale only); the default
+`standard` mode preserves the existing full-traffic behavior. Use `--dry-run`
+to inspect the workflow without network or file changes; an existing different
+workflow is never overwritten unless `--force` is supplied. Production pushes
+and manual dispatches use the workflow, while pull-request previews continue to
+be managed by the connected GitHub integration.
 
 ## Related
 
