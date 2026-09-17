@@ -1,3 +1,4 @@
+// spec: §6.3
 package gateway
 
 import (
