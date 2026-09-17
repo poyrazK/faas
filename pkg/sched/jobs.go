@@ -534,14 +534,7 @@ func jobTaskHasRetryRemaining(attempt, retryMax int) bool {
 }
 
 func jobRetryDelay(attempt int) time.Duration {
-	delay := time.Duration(api.JobBackoffBaseSeconds) * time.Second
-	for i := 1; i < attempt; i++ {
-		delay *= 2
-		if delay > time.Duration(api.JobBackoffMaxSeconds)*time.Second {
-			return time.Duration(api.JobBackoffMaxSeconds) * time.Second
-		}
-	}
-	return delay
+	return api.JobRetryDelay(attempt)
 }
 
 const (

@@ -8684,6 +8684,16 @@ type JobTaskLogResponse struct {
 	MaxBytes   int    `json:"max_bytes"`
 }
 
+// JobTaskRetryResponse is returned by POST
+// /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry. The task is queued for a
+// fresh attempt and the run aggregate is reopened when necessary.
+type JobTaskRetryResponse struct {
+	Task          JobTaskResponse `json:"task"`
+	Run           JobRunResponse  `json:"run"`
+	RetriedAt     string          `json:"retried_at"`
+	NextAttemptAt string          `json:"next_attempt_at"`
+}
+
 // ListJobsResponse is the body of GET /v1/jobs. Page-based
 // pagination — limit / offset are query parameters (handler
 // clamps limit to [1, 200]). NextOffset is -1 when there are

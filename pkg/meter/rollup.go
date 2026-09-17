@@ -1,6 +1,6 @@
 // Package meter — usage_daily rollup (ADR-048 §5).
 //
-// usage_minutes is the canonical per-(account, app, instance, minute)
+// usage_minutes is the canonical per-(account, meter identity, instance, minute)
 // ledger; rows stay forever and feed UsageByMonth, the Stripe push,
 // and the reconciliation checks. But the dashboard's
 // "yesterday's traffic per app" query scans minutes — every minute,
@@ -57,7 +57,9 @@ type execer interface {
 // rollupSQL is the half-open [start, end) INSERT ... ON CONFLICT
 // statement that rolls one window of usage_minutes rows into
 // usage_daily. Mirrors the column set declared in
-// migrations/00067_extend_metering_telemetry.sql. The on-conflict
+// migrations/00067_extend_metering_telemetry.sql plus the job identity
+// widening in migrations/20260918100000001_usage_daily_job_meter_kind.sql.
+// The on-conflict
 // clause uses OVERWRITE (col = EXCLUDED.col) — re-running for the
 // same window converges to the same day total, which is the right
 // contract for a repeating 5-minute cron. Additive merge would
@@ -65,13 +67,16 @@ type execer interface {
 // package doc comment for the full rationale.
 const rollupSQL = `
 INSERT INTO public.usage_daily (
-    account_id, app_id, day,
+    account_id, app_id, meter_kind, job_id, day,
     mb_seconds, requests, cpu_usec, tx_bytes,
     net_tx_bytes, net_rx_bytes, cold_boot_count, builder_seconds,
     tail_seconds, rolled_up_at
 )
 SELECT
-    account_id, app_id,
+    account_id,
+    COALESCE(app_id, job_id) AS app_id,
+    meter_kind,
+    CASE WHEN meter_kind = 'job' THEN job_id ELSE NULL END AS job_id,
     date_trunc('day', minute AT TIME ZONE 'UTC')::date AS day,
     SUM(mb_seconds), SUM(requests), SUM(cpu_usec), SUM(tx_bytes),
     SUM(net_tx_bytes), SUM(net_rx_bytes), SUM(cold_boot_count),
@@ -80,8 +85,10 @@ SELECT
     now()
 FROM public.usage_minutes
 WHERE minute >= $1 AND minute < $2
-GROUP BY 1, 2, 3
+GROUP BY 1, 2, 3, 4
 ON CONFLICT (account_id, app_id, day) DO UPDATE SET
+    meter_kind      = EXCLUDED.meter_kind,
+    job_id          = EXCLUDED.job_id,
     mb_seconds      = EXCLUDED.mb_seconds,
     requests        = EXCLUDED.requests,
     cpu_usec        = EXCLUDED.cpu_usec,

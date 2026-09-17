@@ -8,6 +8,7 @@ import type { JobResponse } from '../models/JobResponse.js';
 import type { JobRunCancelledResponse } from '../models/JobRunCancelledResponse.js';
 import type { JobRunResponse } from '../models/JobRunResponse.js';
 import type { JobTaskLogResponse } from '../models/JobTaskLogResponse.js';
+import type { JobTaskRetryResponse } from '../models/JobTaskRetryResponse.js';
 import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
 import type { ListJobTasksResponse } from '../models/ListJobTasksResponse.js';
@@ -468,6 +469,63 @@ export class JobsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Retry one failed job task.
+   * Re-queues a failed, timeout, OOM, or cancelled task while its
+   * configured retry budget remains. The server applies the same capped
+   * exponential backoff as automatic retries and reopens a dead-letter run.
+   *
+   * @returns JobTaskRetryResponse The task has been queued for another attempt.
+   * @throws ApiError
+   */
+  public static retryJobTask({
+    name,
+    id,
+    idx,
+    idempotencyKey,
+  }: {
+    /**
+     * Unique job name. DNS-label safe. Anchors path `/v1/jobs/{name}/runs/{id}/tasks/{idx}/retry`.
+     */
+    name: string,
+    /**
+     * The job-run id (UUIDv4).
+     */
+    id: string,
+    /**
+     * The zero-based task index within the run.
+     */
+    idx: number,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<JobTaskRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/retry',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `The task is not retriable or its retry budget is exhausted.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

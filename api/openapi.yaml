@@ -9594,7 +9594,7 @@ paths:
         '503': { $ref: '#/components/responses/ServerError' }
 
   # ─── Jobs (issue #1184 Workstream A / ADR-099) ─────────────
-  # Run-to-completion jobs. 11 endpoints mirroring the cron
+  # Run-to-completion jobs. 12 endpoints mirroring the cron
   # family shape (CRUD + nested run list + task list + logs +
   # cancel). Plan-tier gate (Free → 402) lives in the handler;
   # the OpenAPI surfaces the 402 response on every write.
@@ -9924,6 +9924,49 @@ paths:
               schema: { $ref: '#/components/schemas/JobTaskLogResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Unique job name. DNS-label safe. Anchors path `/v1/jobs/{name}/runs/{id}/tasks/{idx}/retry`."
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The job-run id (UUIDv4).
+      - name: idx
+        in: path
+        required: true
+        schema: { type: integer, minimum: 0 }
+        description: The zero-based task index within the run.
+    post:
+      tags: [jobs]
+      operationId: retryJobTask
+      summary: Retry one failed job task.
+      description: |
+        Re-queues a failed, timeout, OOM, or cancelled task while its
+        configured retry budget remains. The server applies the same capped
+        exponential backoff as automatic retries and reopens a dead-letter run.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The task has been queued for another attempt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobTaskRetryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The task is not retriable or its retry budget is exhausted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/cron-fire-now-requests/{request_id}:
@@ -22119,6 +22162,16 @@ components:
         log_content: { type: string }
         truncated: { type: boolean }
         max_bytes: { type: integer }
+
+    JobTaskRetryResponse:
+      description: "POST .../tasks/{idx}/retry response. The task is re-queued with capped backoff."
+      type: object
+      required: [task, run, retried_at, next_attempt_at]
+      properties:
+        task: { $ref: '#/components/schemas/JobTaskResponse' }
+        run: { $ref: '#/components/schemas/JobRunResponse' }
+        retried_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
 
     ListJobsResponse:
       description: Page of jobs on the account (issue #1184 Workstream A).

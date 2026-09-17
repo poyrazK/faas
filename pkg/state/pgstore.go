@@ -18161,7 +18161,7 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 	// so the API surface stays byte-stable for callers that format
 	// the value. (memory: pkg-state-usage-monthly-tz-compare)
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id,
+		`select account_id, coalesce(app_id, job_id) as app_id,
 		        $2::timestamptz as month,
 		        sum(mb_seconds)::bigint     as mb_seconds,
 		        sum(cpu_usec)::bigint       as cpu_usec,
@@ -18174,8 +18174,8 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 		  where account_id = $1
 		    and minute >= $2
 		    and minute <  $3
-		  group by account_id, app_id
-		  order by app_id`,
+		  group by account_id, coalesce(app_id, job_id)
+		  order by coalesce(app_id, job_id)`,
 		accountID, monthStart, monthEnd)
 	if err != nil {
 		return nil, err
@@ -19194,7 +19194,7 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 // per-hour egress dashboards feed off this without a re-roll.
 func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error) {
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id,
+		`select account_id, coalesce(app_id, job_id) as app_id,
 		        date_trunc('hour', minute AT TIME ZONE 'UTC') as hour,
 		        sum(mb_seconds)::bigint      as mb_seconds,
 		        sum(cpu_usec)::bigint        as cpu_usec,
@@ -19205,8 +19205,8 @@ func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end 
 		        sum(cold_boot_count)::bigint as cold_boot_count
 		 from usage_minutes
 		 where account_id = $1 and minute >= $2 and minute < $3
-		 group by account_id, app_id, hour
-		 order by app_id`,
+		 group by account_id, coalesce(app_id, job_id), hour
+		 order by coalesce(app_id, job_id)`,
 		accountID, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
@@ -23412,20 +23412,20 @@ func (s *PgStore) UsageByAccount(ctx context.Context, accountID string, since ti
 	var err error
 	if since.IsZero() {
 		rows, err = s.pool.Query(ctx,
-			`select account_id, app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
+			`select account_id, coalesce(app_id, job_id) as app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
 			        sum(mb_seconds)::bigint, sum(requests)::bigint
 			 from usage_minutes
 			 where account_id = $1
-			 group by account_id, app_id, month
-			 order by app_id, month`, accountID)
+			 group by account_id, coalesce(app_id, job_id), month
+			 order by coalesce(app_id, job_id), month`, accountID)
 	} else {
 		rows, err = s.pool.Query(ctx,
-			`select account_id, app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
+			`select account_id, coalesce(app_id, job_id) as app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
 			        sum(mb_seconds)::bigint, sum(requests)::bigint
 			 from usage_minutes
 			 where account_id = $1 and minute >= $2
-			 group by account_id, app_id, month
-			 order by app_id, month`, accountID, since.UTC())
+			 group by account_id, coalesce(app_id, job_id), month
+			 order by coalesce(app_id, job_id), month`, accountID, since.UTC())
 	}
 	if err != nil {
 		return nil, err

@@ -385,6 +385,62 @@ func TestCancelJobRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRetryJobTask_RequeuesFailedTask(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "retry-task-job", "ghcr.io/example/worker:v1")
+	runID := seedJobRun(t, e, "retry-task-job", 1)
+	if err := e.store.JobTaskMarkTerminal(context.Background(), runID, 0, "failed", 17, "exit_nonzero", "command failed", time.Now()); err != nil {
+		t.Fatalf("JobTaskMarkTerminal: %v", err)
+	}
+	rec := e.do(t, "POST", "/v1/jobs/retry-task-job/runs/"+runID+"/tasks/0/retry", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST task retry = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.JobTaskRetryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if resp.Task.Status != "queued" || resp.Task.Attempt != 2 {
+		t.Fatalf("retried task = %+v, want queued attempt=2", resp.Task)
+	}
+	if resp.NextAttemptAt == "" || resp.RetriedAt == "" {
+		t.Fatalf("retry timestamps missing: %+v", resp)
+	}
+}
+
+func TestRetryJobTask_RejectsQueuedAndExhausted(t *testing.T) {
+	t.Run("queued", func(t *testing.T) {
+		e := setup(t, api.PlanHobby)
+		seedJob(t, e, "retry-queued-job", "ghcr.io/example/worker:v1")
+		runID := seedJobRun(t, e, "retry-queued-job", 1)
+		rec := e.do(t, "POST", "/v1/jobs/retry-queued-job/runs/"+runID+"/tasks/0/retry", nil, nil)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("queued retry = %d, want 409; body=%s", rec.Code, rec.Body.String())
+		}
+		assertProblem(t, rec, http.StatusConflict, api.CodeJobTaskNotRetriable)
+	})
+
+	t.Run("exhausted", func(t *testing.T) {
+		e := setup(t, api.PlanHobby)
+		job, err := e.store.JobCreate(context.Background(), e.acct.ID, "retry-exhausted-job", "batch", "ghcr.io/example/worker:v1", []string{"/bin/false"}, 512, 300, 10, 0, nil)
+		if err != nil {
+			t.Fatalf("JobCreate: %v", err)
+		}
+		run, _, err := e.store.JobRunCreate(context.Background(), job.ID, e.acct.ID, "manual", nil, nil, nil, nil, 1)
+		if err != nil {
+			t.Fatalf("JobRunCreate: %v", err)
+		}
+		if err := e.store.JobTaskMarkTerminal(context.Background(), run.ID, 0, "failed", 1, "exit_nonzero", "command failed", time.Now()); err != nil {
+			t.Fatalf("JobTaskMarkTerminal: %v", err)
+		}
+		rec := e.do(t, "POST", "/v1/jobs/retry-exhausted-job/runs/"+run.ID+"/tasks/0/retry", nil, nil)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("exhausted retry = %d, want 409; body=%s", rec.Code, rec.Body.String())
+		}
+		assertProblem(t, rec, http.StatusConflict, api.CodeJobTaskMaxRetriesReached)
+	})
+}
+
 // TestCreateJob_InvalidSlug pins the 400 path. The validSlug
 // regex rejects slugs with uppercase letters / underscores /
 // spaces — a customer typo must fail fast at the apid layer

@@ -559,6 +559,7 @@ var cliCommands = []cliCommand{
 			{Name: "runs", Short: "List runs for one job"},
 			{Name: "cancel", Short: "Cancel a run"},
 			{Name: "tasks", Short: "List tasks for one run"},
+			{Name: "retry", Short: "Retry one failed task"},
 			{Name: "logs", Short: "Tail logs for one task"},
 		},
 	},

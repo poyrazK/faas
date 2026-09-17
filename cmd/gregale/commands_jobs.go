@@ -19,6 +19,7 @@
 //   gregale jobs runs  <name>                                                  ListJobRuns
 //   gregale jobs cancel <name> <run-id>                                  CancelJobRun
 //   gregale jobs tasks <name> <run-id>                                  ListJobRunTasks
+//   gregale jobs retry  <name> <run-id> <task-index>                    RetryJobTask
 //   gregale jobs logs  <name> <run-id> <task-index>                    GetJobTaskLogs
 //
 // Authentication is via authedClient() (the same Bearer-token
@@ -61,7 +62,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|logs> [args]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|retry|logs> [args]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -83,6 +84,8 @@ func cmdJobs(args []string) int {
 		return cmdJobsCancel(args[1:])
 	case "tasks":
 		return cmdJobsTasks(args[1:])
+	case "retry":
+		return cmdJobsRetry(args[1:])
 	case "logs":
 		return cmdJobsLogs(args[1:])
 	}
@@ -487,6 +490,38 @@ func cmdJobsTasks(args []string) int {
 		return jsonOut(writeNDJSON(out.Tasks))
 	}
 	renderJobTasksTable(osStdout, out.Tasks)
+	return 0
+}
+
+// cmdJobsRetry implements `gregale jobs retry <name> <run-id> <task-index>`.
+// The server enforces the task state and retry budget; this command only
+// validates the stable positional shape before making the request.
+func cmdJobsRetry(args []string) int {
+	if len(args) != 3 {
+		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>", "jobs")
+		return 1
+	}
+	if !jobRunIDPattern.MatchString(args[1]) {
+		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>   (run-id is uuid v4)", "jobs")
+		return 1
+	}
+	taskIdx, err := strconv.Atoi(args[2])
+	if err != nil || taskIdx < 0 {
+		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.RetryJobTask(context.Background(), args[0], args[1], taskIdx)
+	if err != nil {
+		return printErr("Retry failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSONSingle(resp))
+	}
+	PrintOK(osStdout, "Retried task %s/%d (attempt=%d, next_attempt_at=%s)", args[1], taskIdx, resp.Task.Attempt, resp.NextAttemptAt)
 	return 0
 }
 

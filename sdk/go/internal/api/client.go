@@ -776,6 +776,13 @@ func (c *Client) GetJobTaskLogs(ctx context.Context, name, runID string, taskInd
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks/"+strconv.Itoa(taskIndex)+"/logs", nil, &out)
 }
 
+// RetryJobTask re-queues one failed, timeout, OOM, or cancelled task while
+// its configured retry budget remains.
+func (c *Client) RetryJobTask(ctx context.Context, name, runID string, taskIndex int) (JobTaskRetryResponse, error) {
+	var out JobTaskRetryResponse
+	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs/"+runID+"/tasks/"+strconv.Itoa(taskIndex)+"/retry", nil, &out)
+}
+
 // --- Event-driven surface (Move 2) -----------------------------------------
 //
 // The 10 routes exposed under /v1/apps/{slug}/invoke[/async],

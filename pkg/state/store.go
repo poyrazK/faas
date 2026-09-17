@@ -4911,6 +4911,11 @@ type Store interface {
 	// pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds
 	// pins this invariant; a follow-up ADR would have to remove it.
 	//
+	// Job-task rows are not app rows: callers must use the optional
+	// JobUsageAppender interface so migration 00257's app_id/job_id/
+	// meter_kind pair-check remains valid. Passing a job ID as appID here
+	// is not a supported compatibility path.
+	//
 	// builder_seconds / builder_kind are NOT accepted here — they
 	// are written via AppendBuilderUsage (keyed by build_id) because
 	// the per-build billing grain differs from the per-instance

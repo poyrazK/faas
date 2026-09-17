@@ -86,6 +86,14 @@ func runViaOSExec(m JobManifest, env []string, log *slog.Logger) error {
 }
 
 func superviseJobCommand(m JobManifest, env []string, grace time.Duration, log *slog.Logger) JobExitPayload {
+	return superviseJobCommandWithOutput(m, env, grace, log, os.Stdout, os.Stderr)
+}
+
+// superviseJobCommandWithOutput is the testable implementation of the job
+// supervisor. Production passes guest-init's inherited console descriptors;
+// tests can provide bounded in-memory writers without redirecting process-wide
+// stdout/stderr.
+func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer) JobExitPayload {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -98,13 +106,20 @@ func superviseJobCommand(m JobManifest, env []string, grace time.Duration, log *
 	cmd := exec.Command(m.Command[0], m.Command[1:]...)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Stdout / Stderr → null so the customer's command's output
-	// doesn't get mixed into guest-init's log ring. Logs are
-	// captured via the vsock log channel (future M-extra work — M8
-	// ships with stdout discarded; logs land in pkg/fcvm/logbuf
-	// once we add a log forwarder).
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	// The guest's stdout and stderr are inherited by guest-init from the
+	// serial console. vmmd already routes that console into the per-instance
+	// customer log ring, so inheriting both streams makes job output available
+	// through the normal logs API. Keep the streams separate here only until
+	// they cross the guest console boundary; the host deliberately merges them
+	// in arrival order, matching the app-runtime log contract.
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		log.Error("runJob: os/exec start", "err", err, "command", m.Command[0])
 		exitCode := int32(126)

@@ -314,6 +314,7 @@ export type { JobRunCancelledResponse } from './JobRunCancelledResponse.js';
 export type { JobRunResponse } from './JobRunResponse.js';
 export type { JobTaskLogResponse } from './JobTaskLogResponse.js';
 export type { JobTaskResponse } from './JobTaskResponse.js';
+export type { JobTaskRetryResponse } from './JobTaskRetryResponse.js';
 export type { KafkaSASLConfig } from './KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './KafkaTLSConfig.js';

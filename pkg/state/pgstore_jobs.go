@@ -901,7 +901,7 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 	return nil
 }
 
-// JobTaskRetry reverses a failed/timeout/oom transition back to
+// JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
 // queued and stamps next_attempt_at with the per-attempt backoff.
 // The task's attempt counter is incremented and the prior instance_id
 // + lease columns are cleared so the next dispatch mints a fresh
@@ -920,10 +920,13 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 		   error_class       = null,
 		   error_message     = null,
 		   exit_code         = null,
+		   log_content      = '',
+		   log_truncated    = false,
 		   lease_token       = null,
 		   lease_expires_at  = null,
 		   last_lease_node   = null
-		 where run_id = $1::uuid and task_index = $2`,
+		 where run_id = $1::uuid and task_index = $2
+		   and status in ('failed', 'timeout', 'oom', 'cancelled')`,
 		runID, taskIndex, nextAttemptAt.UTC())
 	if err != nil {
 		return fmt.Errorf("state: retry task (%s, %d): %w", runID, taskIndex, err)

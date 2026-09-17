@@ -2,14 +2,10 @@
 // migration tracker (Workstream B / issue #1184 / Task #63 /
 // ADR-137).
 //
-// Today this is an in-memory adapter around the existing
-// migrationTracker. The Task #63 goal is to give cmd/vmmd a
-// single lease primitive it can swap: today the in-memory
-// tracker works but loses state across vmmd restart; the PG-
-// backed variant (staged for a follow-up migration) survives
-// restarts. Wrapping the existing tracker as Leaser[T] keeps
-// cmd/vmmd wiring uniform with cmd/schedd's job leaser; the
-// swap to PG is a constructor change only.
+// This is the hot-cache adapter around the existing migrationTracker. The
+// source-side lease record is persisted by state.MigrationLeaseStore; keeping
+// the cache here avoids a database round-trip for the paused-VM handle while
+// the durable row supplies restart recovery.
 //
 // Why the adapter lives here rather than in pkg/sched: vmmdgrpc
 // already owns the tracker (migration_handlers.go). Importing
@@ -18,13 +14,10 @@
 // surface here is a thin projection that satisfies the same
 // Acquire / Renew / Release / Lookup contract.
 //
-// Why in-memory today: the per-vmmd restart loss is bounded by
-// the vmmd lifetime (vmmd runs as a long-lived daemon under
-// systemd). A vmmd that loses state will see a new owner send
-// Phase-3 with a lease_token the local tracker never issued;
-// Phase-3 returns errNoLease, the new owner retries with the
-// Phase-1 ack timeout, and the migration lands cleanly. The
-// PG-backed variant eliminates even that small window.
+// The cache is intentionally process-local; restart recovery is handled by
+// the durable migration_leases row in the Server phase handlers and expiry
+// loop. This adapter remains useful to callers that need the common lease
+// shape without a database-backed VM handle.
 package vmmdgrpc
 
 import (
@@ -46,11 +39,9 @@ type migrationLeaser struct {
 	mu      sync.Mutex // serialises Acquire; tracker has its own mutex per-method
 }
 
-// NewMigrationLeaser returns a sched.Leaser[any] backed by the
-// per-vmmd in-memory migration tracker. cmd/vmmd wires this as
-// the migration lease source today; a follow-up constructor
-// (NewPGMigrationLeaser) lands in the same slot when migration
-// 00586+ stages the PG-backed variant.
+// NewMigrationLeaser returns the hot-cache lease adapter. Production vmmd
+// pairs it with state.MigrationLeaseStore through Server.WithMigrationStore;
+// unit-test callers can continue to use the cache by itself.
 func NewMigrationLeaser(tracker *migrationTracker) sched.Leaser[any] {
 	return &migrationLeaser{tracker: tracker}
 }
@@ -80,10 +71,9 @@ func (l *migrationLeaser) Acquire(ctx context.Context, key string, policy sched.
 	return sched.LeaseToken(m.leaseToken), m, nil
 }
 
-// Renew is the in-memory no-op. The TTL is fixed at Acquire
-// time (tracker.put stamps leaseExpiresAt from the policy);
-// Renew just verifies the entry still exists so callers get a
-// clear error if vmmd restart already lost the lease.
+// Renew verifies the in-memory entry. Migration leases use a fixed TTL from
+// Phase 1 rather than extending a paused-VM lease; durable expiry cleanup is
+// the recovery path after a restart.
 func (l *migrationLeaser) Renew(ctx context.Context, token sched.LeaseToken, ownerID string, ttl time.Duration) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -2378,6 +2378,15 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
 }
 
+// RetryJobTask re-queues one failed, timeout, OOM, or cancelled task while
+// its configured retry budget remains. The server applies the same capped
+// exponential backoff as automatic retries and reopens a dead-letter run.
+func (c *Client) RetryJobTask(ctx context.Context, name, runID string, taskIndex int) (JobTaskRetryResponse, error) {
+	var out JobTaskRetryResponse
+	path := "/v1/jobs/" + name + "/runs/" + runID + "/tasks/" + strconv.Itoa(taskIndex) + "/retry"
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
 // GetJobTaskLogs returns the task's durable combined stdout/stderr tail
 // (issue #1184 Workstream A). Wire shape:
 // JobTaskLogResponse (task_status + log_content + truncated +

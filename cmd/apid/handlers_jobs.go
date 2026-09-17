@@ -619,14 +619,8 @@ func encodeEnvOverrides(env map[string]string) (json.RawMessage, *api.Problem) {
 
 // createJob handles POST /v1/jobs. Plan-tier gate (JobsAllowed)
 // precedes slug check + per-account quota. The per-account quota
-// gate uses JobCountByAccount + JobCreate in sequence (memstore
-// holds m.mu during the pair; pgstore's pair runs without a
-// transaction but the JobCountByAccount+JobCreate pair is
-// serialized via the per-account row lock in JobRunRecompute's
-// style — see ADR-099 supplement §"Quota gate". A future
-// follow-up PR promotes this to a single atomic method
-// JobCreateIfUnderQuota, mirroring the CreateCronIfUnderQuota
-// evolution in PR-A → PR-B).
+// gate uses the optional JobCreateIfUnderQuota atomic store seam. Older
+// adapters fall back to the count-then-insert pair for compatibility.
 func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateJobRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -638,28 +632,39 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	// Per-account quota gate (JobMaxPerAccount). Counts every
-	// non-deleted job the account owns; the JobCreate INSERT
-	// follows immediately so a race that beats the count is
-	// re-checked on the next POST (the eventual cap
-	// enforcement). The pgstore path will gain an atomic
-	// JobCreateIfUnderQuota in a follow-up PR — see function
-	// doc.
-	count, err := s.store.JobCountByAccount(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("create job: count failed", "account", acct.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not create job"))
-		return
+	limit := api.JobMaxPerAccount[acct.Plan.PlanIndex()]
+	var created state.Job
+	var err error
+	if creator, ok := s.store.(state.JobQuotaCreator); ok {
+		created, err = creator.JobCreateIfUnderQuota(r.Context(), acct.ID, job.Name, job.Kind,
+			job.ImageRef, job.Command, job.RAMMB, job.TaskTimeoutS,
+			job.MaxParallelism, job.RetryMax, job.EnvOverrides, limit)
+	} else {
+		// Compatibility path for lightweight Store adapters that have not
+		// adopted the account-locking quota seam yet.
+		count, countErr := s.store.JobCountByAccount(r.Context(), acct.ID)
+		if countErr != nil {
+			s.log.Error("create job: count failed", "account", acct.ID, "err", countErr)
+			api.WriteProblem(w, api.ErrCapacity("could not create job"))
+			return
+		}
+		if count >= limit {
+			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "per_account", limit, count))
+			return
+		}
+		created, err = s.store.JobCreate(r.Context(), acct.ID, job.Name, job.Kind,
+			job.ImageRef, job.Command, job.RAMMB, job.TaskTimeoutS,
+			job.MaxParallelism, job.RetryMax, job.EnvOverrides)
 	}
-	if limit := api.JobMaxPerAccount[acct.Plan.PlanIndex()]; count >= limit {
-		api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "per_account", limit, count))
-		return
-	}
-	created, err := s.store.JobCreate(r.Context(), acct.ID, job.Name, job.Kind,
-		job.ImageRef, job.Command, job.RAMMB, job.TaskTimeoutS,
-		job.MaxParallelism, job.RetryMax, job.EnvOverrides)
 	if err != nil {
 		switch {
+		case errors.Is(err, state.ErrJobQuotaExceeded):
+			var qe *state.JobQuotaError
+			if errors.As(err, &qe) {
+				api.WriteProblem(w, api.ErrJobQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed))
+			} else {
+				api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "per_account", limit, limit))
+			}
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Name taken", fmt.Sprintf("job name %q is already in use", job.Name)))
@@ -954,5 +959,99 @@ func (s *server) cancelJobRun(w http.ResponseWriter, r *http.Request, acct state
 	writeJSON(w, http.StatusOK, api.JobRunCancelledResponse{
 		Run:         jobRunResponse(cancelled, j),
 		CancelledAt: cancelledAt,
+	})
+}
+
+// retryJobTask handles POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry.
+// Explicit retry is allowed for failed, timeout, OOM, and cancelled tasks
+// while the task's configured retry budget remains. The task is re-queued
+// with the same capped backoff used by schedd's automatic retry path.
+func (s *server) retryJobTask(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	runID := r.PathValue("id")
+	taskIdx, err := strconv.Atoi(r.PathValue("idx"))
+	if err != nil || taskIdx < 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid task_index", "task_index must be a non-negative integer"))
+		return
+	}
+	if !acct.Plan.JobsAllowed() {
+		api.WriteProblem(w, api.ErrPlanJobsNotAllowed(acct.Plan))
+		return
+	}
+	job, run, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	if err != nil {
+		s.log.Error("retry job task: resolve failed", "id", runID, "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not retry task"))
+		return
+	}
+	if !ok {
+		s.notFound(w, "no such run")
+		return
+	}
+	task, err := s.store.JobTaskGet(r.Context(), runID, taskIdx)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrJobTaskNotFound(runID, strconv.Itoa(taskIdx)))
+			return
+		}
+		s.log.Error("retry job task: lookup failed", "run", runID, "task", taskIdx, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not retry task"))
+		return
+	}
+	if task.Status != "failed" && task.Status != "timeout" && task.Status != "oom" && task.Status != "cancelled" {
+		api.WriteProblem(w, api.ErrJobTaskNotRetriable(runID, strconv.Itoa(taskIdx), task.Status))
+		return
+	}
+	retryMax := job.RetryMax
+	if run.RetryMax != nil {
+		retryMax = *run.RetryMax
+	}
+	if task.Attempt > retryMax {
+		api.WriteProblem(w, api.ErrJobTaskMaxRetriesReached(runID, strconv.Itoa(taskIdx), task.Attempt, retryMax))
+		return
+	}
+	now := time.Now().UTC()
+	nextAttemptAt := now.Add(api.JobRetryDelay(task.Attempt))
+	if err := s.store.JobTaskRetry(r.Context(), runID, taskIdx, nextAttemptAt); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.ErrJobTaskNotRetriable(runID, strconv.Itoa(taskIdx), task.Status))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrJobTaskNotFound(runID, strconv.Itoa(taskIdx)))
+			return
+		}
+		s.log.Error("retry job task: store update failed", "run", runID, "task", taskIdx, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not retry task"))
+		return
+	}
+	if run.DeadLetterCount > 0 {
+		if err := s.store.JobRunReopenDeadLetter(r.Context(), runID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			s.log.Error("retry job task: reopen run failed", "run", runID, "task", taskIdx, "err", err)
+		}
+	}
+	refreshedRun, err := s.store.JobRunRecompute(r.Context(), runID)
+	if err != nil {
+		s.log.Error("retry job task: recompute run failed", "run", runID, "task", taskIdx, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not retry task"))
+		return
+	}
+	refreshedTask, err := s.store.JobTaskGet(r.Context(), runID, taskIdx)
+	if err != nil {
+		s.log.Error("retry job task: refreshed task lookup failed", "run", runID, "task", taskIdx, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not retry task"))
+		return
+	}
+	s.audit.Emit(r.Context(), "job.task.retried", &acct.ID, map[string]any{
+		"job_id": job.ID, "run_id": runID, "task_index": taskIdx,
+		"attempt": refreshedTask.Attempt, "next_attempt_at": nextAttemptAt,
+	})
+	_ = s.notif.Notify(r.Context(), db.NotifyJobChanged,
+		fmt.Sprintf(`{"kind":"task_retried","job_id":"%s","run_id":"%s","task_index":%d,"account_id":"%s"}`, job.ID, runID, taskIdx, acct.ID))
+	writeJSON(w, http.StatusOK, api.JobTaskRetryResponse{
+		Task:          jobTaskResponse(refreshedTask),
+		Run:           jobRunResponse(refreshedRun, job),
+		RetriedAt:     now.Format(time.RFC3339),
+		NextAttemptAt: nextAttemptAt.Format(time.RFC3339),
 	})
 }
