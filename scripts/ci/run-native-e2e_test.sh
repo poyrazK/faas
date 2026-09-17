@@ -356,11 +356,18 @@ grep -Fq 'native_e2e_phase_tally' "${runner}" ||
 grep -Fq 'reap_test_microvms' "${runner}" ||
   fail "the wrapper does not reap microVMs it left running; the next run will be refused"
 # Order matters: leakcheck is the assertion that the node is clean. Reaping
-# after it would make it permanently unable to fail.
-reap_line="$(grep -n 'reap_test_microvms$' "${runner}" | tail -1 | cut -d: -f1)"
-leak_line="$(grep -n 'leakcheck.sh' "${runner}" | head -1 | cut -d: -f1)"
-[[ -n "${reap_line}" && -n "${leak_line}" && "${reap_line}" -lt "${leak_line}" ]] ||
-  fail "reaping must run BEFORE leakcheck, or leakcheck can never fail"
+# after it would make it permanently unable to fail. There are two pairs —
+# cleanup's (the run's own verdict) and the pre-flight's (a clean slate
+# before a run starts; a previous run's leftovers are not this run's fault,
+# smoke run 35206846279) — and each reap must precede its own check.
+reap_lines=(); while IFS= read -r l; do [[ -n "${l}" ]] && reap_lines+=("${l}"); done < <(grep -n 'reap_test_microvms$' "${runner}" | cut -d: -f1)
+leak_lines=(); while IFS= read -r l; do [[ -n "${l}" ]] && leak_lines+=("${l}"); done < <(grep -n 'leakcheck.sh' "${runner}" | cut -d: -f1)
+[[ "${#reap_lines[@]}" -eq 2 && "${#leak_lines[@]}" -eq 2 ]] ||
+  fail "expected exactly two reap/leakcheck pairs (cleanup + pre-flight), found ${#reap_lines[@]} reaps and ${#leak_lines[@]} leakchecks"
+[[ "${reap_lines[0]}" -lt "${leak_lines[0]}" ]] ||
+  fail "cleanup must reap BEFORE its leakcheck, or the final leak check can never fail"
+[[ "${reap_lines[1]}" -lt "${leak_lines[1]}" ]] ||
+  fail "the pre-flight must reap BEFORE its leakcheck, or a previous run's leftovers block this run"
 
 # Shared staging must survive a phase. The transfer root holds the source tree
 # and the pinned Go toolchain; the stage root holds guest-init and the daemons
