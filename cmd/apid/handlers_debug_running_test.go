@@ -23,6 +23,9 @@ func TestDebugRunning_ReturnsCurrentAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
+	if _, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug"); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
 	now := time.Now().UTC()
 	appendRunningEvent(t, e, app.ID, now.Add(-2*time.Minute), api.DebugRunningReasonRequestActivity)
 	appendRunningEvent(t, e, app.ID, now.Add(-time.Minute), api.DebugRunningReasonOpenConnection)
@@ -46,6 +49,57 @@ func TestDebugRunning_ReturnsCurrentAndHistory(t *testing.T) {
 	}
 	if got.Config.IdleTimeoutSeconds <= 0 {
 		t.Fatalf("config = %+v, want plan idle timeout", got.Config)
+	}
+}
+
+func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state state.State
+	}{
+		{name: "parked", state: state.StateParked},
+		{name: "stopped", state: state.StateStopped},
+		{name: "failed", state: state.StateFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			app, err := e.store.CreateApp(t.Context(), state.App{
+				AccountID: e.acct.ID,
+				Slug:      "running-debug-" + tc.name,
+				Status:    state.AppActive,
+			})
+			if err != nil {
+				t.Fatalf("CreateApp: %v", err)
+			}
+			instance, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug")
+			if err != nil {
+				t.Fatalf("CreateInstance: %v", err)
+			}
+			if tc.state == state.StateParked {
+				err = e.store.UpdateInstanceState(t.Context(), instance.ID, string(tc.state))
+			} else {
+				err = e.store.UpdateInstanceStateToTerminal(t.Context(), instance.ID, string(tc.state), time.Now().UTC())
+			}
+			if err != nil {
+				t.Fatalf("transition to %s: %v", tc.state, err)
+			}
+			appendRunningEvent(t, e, app.ID, time.Now().UTC().Add(-time.Minute), api.DebugRunningReasonRequestActivity)
+
+			rec := e.do(t, http.MethodGet, "/v1/apps/running-debug-"+tc.name+"/debug/running?since=3h", nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+			}
+			var got api.DebugRunningResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if len(got.History) != 1 {
+				t.Fatalf("history = %+v, want retained explanation", got.History)
+			}
+			if len(got.Current) != 0 || got.CurrentObservedAt != "" {
+				t.Fatalf("current = %+v observed_at=%q, want empty after %s", got.Current, got.CurrentObservedAt, tc.state)
+			}
+		})
 	}
 }
 
