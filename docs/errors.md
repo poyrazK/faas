@@ -1,9 +1,11 @@
 # Errors
 
-Gregale errors use RFC 7807 JSON. The `code` is stable for automation;
+Gregale errors use RFC 9457 JSON. The `code` is stable for automation;
 `detail` names the observed value or failing stage; `docs_url` points to the
 relevant recovery guide. CLI output preserves those fields and the next
-command when one is known.
+command when one is known. `type` defaults to `about:blank` when no specific
+problem URI is supplied. `instance` identifies the specific occurrence and is
+derived from `X-Faas-Request-Id` when the caller does not supply one.
 
 | Code family | Meaning | Next step |
 |---|---|---|

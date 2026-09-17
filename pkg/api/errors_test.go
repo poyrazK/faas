@@ -1,5 +1,5 @@
 // Tests for pkg/api/errors.go: Problem construction, error chains, and the
-// RFC 7807 write path. These functions are the platform's single error
+// RFC 9457 write path. These functions are the platform's single error
 // contract (spec §Conventions); every error shape we ship must come from here.
 
 package api
@@ -104,6 +104,39 @@ func TestWriteProblem(t *testing.T) {
 	}
 	if got.Limit == nil || *got.Limit != 10 {
 		t.Errorf("decoded Limit = %v", got.Limit)
+	}
+}
+
+func TestWriteProblemAddsRFC9457InstanceFromRequestID(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set(RequestIDHeader, "request/123")
+	WriteProblem(rr, NewProblem(http.StatusBadRequest, "validation_failed", "Validation failed", "bad input"))
+
+	var got Problem
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got.Type != "about:blank" {
+		t.Fatalf("type = %q, want RFC 9457 default about:blank", got.Type)
+	}
+	if got.Instance != "urn:gregale:request:request%2F123" {
+		t.Fatalf("instance = %q, want escaped request URI", got.Instance)
+	}
+}
+
+func TestWriteProblemPreservesExplicitInstance(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set(RequestIDHeader, "request-ignored")
+	p := NewProblem(http.StatusBadRequest, "validation_failed", "Validation failed", "bad input").
+		WithInstance("https://gregale.dev/problem-instances/abc")
+	WriteProblem(rr, p)
+
+	var got Problem
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got.Instance != "https://gregale.dev/problem-instances/abc" {
+		t.Fatalf("instance = %q, want explicit URI", got.Instance)
 	}
 }
 

@@ -6,7 +6,7 @@ import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { SecretFinding } from './SecretFinding.js';
 /**
- * RFC 7807 problem+json envelope. The `code` field is the stable
+ * RFC 9457 problem+json envelope. The `code` field is the stable
  * machine-readable identifier; clients branch on it. `limit` and
  * `observed` are populated on quota errors. `docs_url` points the
  * user at the next action. `billing_portal_url` is populated on
@@ -29,6 +29,10 @@ export type Problem = {
   type?: string;
   title: string;
   status: number;
+  /**
+   * URI reference identifying this problem occurrence; derived from X-Faas-Request-Id when available.
+   */
+  instance?: string;
   /**
    * Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.
    */

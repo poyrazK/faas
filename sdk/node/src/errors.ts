@@ -1,4 +1,4 @@
-// src/errors.ts — RFC 7807 error surface for the Node SDK.
+// src/errors.ts — RFC 9457 error surface for the Node SDK.
 //
 // The four sentinels below mirror the Go SDK's `faas.Err*` family
 // (sdk/go/errors.go:1-50). They are the contract: `err instanceof
@@ -13,7 +13,7 @@
 // Adding a new sentinel requires a new code enum value + an ADR.
 
 /**
- * Problem wire shape — RFC 7807 with platform extensions
+ * Problem wire shape — RFC 9457 with platform extensions
  * (`limit`, `observed`, `docs_url`, `checkout_url`,
  * `billing_portal_url`, `paddle_checkout_url`, `tx_id`). Mirrors
  * `sdk/go/internal/api/errors.go::Problem` and
@@ -24,6 +24,8 @@
  */
 export interface Problem {
   type?: string;
+  /** URI reference identifying the specific problem occurrence. */
+  instance?: string;
   title?: string;
   status?: number;
   /** Canonical machine code (e.g. `not_found`). Mirrors the

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
@@ -64,17 +66,20 @@ func AsProblem(err error) *Problem {
 	return nil
 }
 
-// Problem is an RFC 7807 problem+json body. It is the platform's single error
+// Problem is an RFC 9457 problem+json body. It is the platform's single error
 // contract: apid emits it, the CLI and dashboard render it verbatim (spec
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	// Type is a docs URL identifying the problem class (RFC 7807 "type").
+	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
 	Title string `json:"title"`
-	// Status is the HTTP status code, duplicated in the body per RFC 7807.
+	// Status is the HTTP status code, duplicated in the body per RFC 9457.
 	Status int `json:"status"`
+	// Instance identifies this occurrence. WriteProblem derives an opaque
+	// request URI from X-Faas-Request-Id when callers have not set it.
+	Instance string `json:"instance,omitempty"`
 	// Code is a stable machine-readable string (e.g. "plan_limit_apps") that
 	// clients branch on. It must never change once shipped.
 	Code string `json:"code"`
@@ -170,7 +175,7 @@ type Problem struct {
 	// problem+json site keeps its existing flat shape unchanged.
 	RelevantLogs []LogExcerpt `json:"relevant_logs,omitempty"`
 	// extraHeaders are non-JSON response headers attached via WithHeader.
-	// Kept unexported so the wire body (RFC 7807 problem+json) is
+	// Kept unexported so the wire body (RFC 9457 problem+json) is
 	// exactly the spec; WriteProblem flushes these onto the wire
 	// before WriteHeader. nil = no extras.
 	extraHeaders map[string][]string `json:"-"`
@@ -235,7 +240,7 @@ func (p *Problem) Error() string {
 	return p.Code
 }
 
-// WriteProblem renders p as an RFC 7807 problem+json response with its status
+// WriteProblem renders p as an RFC 9457 problem+json response with its status
 // code. Gateway requests that explicitly accept text/html receive the safe
 // browser error page instead; API handlers continue to receive JSON. Every
 // HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
@@ -244,6 +249,15 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 		writeProblemHTML(w, p)
 		return
 	}
+	wire := *p
+	if strings.TrimSpace(wire.Type) == "" {
+		wire.Type = "about:blank"
+	}
+	if wire.Instance == "" {
+		if requestID := strings.TrimSpace(w.Header().Get(RequestIDHeader)); requestID != "" {
+			wire.Instance = "urn:gregale:request:" + url.PathEscape(requestID)
+		}
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	for k, vs := range p.extraHeaders {
 		for _, v := range vs {
@@ -251,7 +265,7 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 		}
 	}
 	w.WriteHeader(p.Status)
-	_ = json.NewEncoder(w).Encode(p)
+	_ = json.NewEncoder(w).Encode(&wire)
 }
 
 // WriteProblemWithErrors is the kind=validate-shaped variant: the
@@ -272,6 +286,14 @@ func WriteProblemWithErrors(w http.ResponseWriter, p *Problem, errs []FieldError
 // NewProblem builds a Problem with the common fields set.
 func NewProblem(status int, code, title, detail string) *Problem {
 	return &Problem{Status: status, Code: code, Title: title, Detail: detail}
+}
+
+// WithInstance annotates a Problem with a URI identifying the specific
+// occurrence and returns the same pointer for chaining. When omitted,
+// WriteProblem derives an opaque request URI from the response request id.
+func (p *Problem) WithInstance(instance string) *Problem {
+	p.Instance = instance
+	return p
 }
 
 // WithLimit annotates a Problem with the limit and observed value that tripped
@@ -300,7 +322,7 @@ func (p *Problem) WithDocs(url string) *Problem {
 // WithSecretScan attaches the per-line findings + customer-facing
 // hint that the cmd/apid server-side secret-scan rejection (and the
 // CLI's --secret-scan=strict mode) emit. The fields are flat on the
-// RFC 7807 problem body so a programmatic consumer can render the
+// RFC 9457 problem body so a programmatic consumer can render the
 // same one-line-per-finding UI for both rejection paths. Returns the
 // same pointer for chaining.
 func (p *Problem) WithSecretScan(findings []SecretFinding, hint string) *Problem {
