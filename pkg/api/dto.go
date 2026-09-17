@@ -5420,6 +5420,38 @@ type SetAppStaticEgressIPRequest struct {
 	Set bool   `json:"set"`
 }
 
+// AppPrivateNetworkAttachment describes the provider-neutral private network
+// attachment intent for an app. Status is pending until a connector marks the
+// attachment ready; pending and error must remain fail-closed for traffic.
+type AppPrivateNetworkAttachment struct {
+	ID           string     `json:"id"`
+	NetworkID    string     `json:"network_id"`
+	Region       string     `json:"region"`
+	CIDRs        []string   `json:"cidrs"`
+	Status       string     `json:"status"`
+	StatusDetail string     `json:"status_detail,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+}
+
+// AppPrivateNetworkAttachmentResponse is returned by the private-network
+// attachment endpoint. FeatureEnabled and PlanAllowed let clients render a
+// stable capability/upgrade state without another plan lookup.
+type AppPrivateNetworkAttachmentResponse struct {
+	FeatureEnabled bool                         `json:"feature_enabled"`
+	PlanAllowed    bool                         `json:"plan_allowed"`
+	MaxCIDRs       int                          `json:"max_cidrs"`
+	Attachment     *AppPrivateNetworkAttachment `json:"attachment"`
+}
+
+// AppPrivateNetworkAttachmentRequest is the body of PUT
+// /v1/apps/{slug}/network/private. A PUT replaces the app's attachment intent.
+type AppPrivateNetworkAttachmentRequest struct {
+	NetworkID string   `json:"network_id"`
+	Region    string   `json:"region"`
+	CIDRs     []string `json:"cidrs"`
+}
+
 // AdminSetGithubWebhookSecretRequest is the body shape for
 // POST /v1/admin/github-webhook-secrets (PR-D / ADR-012 §7
 // amendment). Per-tenant override of the platform-wide

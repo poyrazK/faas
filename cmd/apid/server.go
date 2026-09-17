@@ -1293,6 +1293,8 @@ func (s *server) handler() http.Handler {
 	// routes only own the developer-session lease.
 	mux.HandleFunc("PUT /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertDevSession))))
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
+	mux.HandleFunc("POST /v1/dev/sessions/{project}/syncs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordDevSync)))))
+	mux.HandleFunc("GET /v1/dev/sessions/{project}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevSyncHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
 	// ADR-120: end-customer identity and credential management. Reads use
 	// the normal app-read scope; mutations require deploy-write + MFA and
@@ -1436,6 +1438,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppStaticEgressIP))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppStaticEgressIP))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearAppStaticEgressIP))))
+
+	// Provider-neutral private-network attachment intent. The feature flag is
+	// checked inside each handler so the routes can be dark-launched before a
+	// provider connector is deployed. Mutations are MFA-protected and scoped
+	// like the static-egress customer surface.
+	mux.HandleFunc("GET /v1/apps/{slug}/network/private", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppPrivateNetworkAttachment))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/network/private", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppPrivateNetworkAttachment))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/network/private", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearAppPrivateNetworkAttachment))))
 
 	// Issue #879 / ADR-100 PR-C — tenant surfaces (customer-facing
 	// hostname routing primitive). Feature-flagged via

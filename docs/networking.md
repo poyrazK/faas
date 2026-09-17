@@ -5,6 +5,8 @@ Inspect the effective network contract for an app:
 ```bash
 gregale app APP_ID network show
 gregale app APP_ID network doctor
+gregale app APP_ID network attach NETWORK_ID --region REGION --cidrs CIDR[,CIDR...]
+gregale app APP_ID network detach
 ```
 
 `network show` combines the app's outbound CIDR allowlist, static egress
@@ -18,7 +20,15 @@ means Gregale has observed a successful RTT within the last 15 minutes; it is
 not a new connectivity test.
 
 Same-account apps can call one another as
-`http://APP_ID.svc.gregale:10080`. Gregale currently has no customer-facing
-private-network attachment for external VPC resources. Use an egress allowlist
-and, where required, a static egress address for partner allowlisting until
-that connector is available.
+`http://APP_ID.svc.gregale:10080`. For external VPC resources, Pro and Scale
+customers can record a provider-neutral attachment intent with `network attach`.
+The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
+Scale), returns `pending`, and keeps traffic blocked until a provider connector
+reports `ready`. `network doctor` surfaces pending and failed reconciliation;
+it never probes the private network itself. `network detach` is idempotent.
+
+The attachment resource is intentionally provider-neutral: `NETWORK_ID` and
+`REGION` are stable lowercase identifiers, while the connector-specific VPC
+lookup and route programming remain a later runtime slice. Use an egress
+allowlist and, where required, a static egress address for partner allowlisting
+until that connector is available.

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DevSessionResponse } from '../models/DevSessionResponse.js';
+import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
+import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
+import type { RecordDevSyncRequest } from '../models/RecordDevSyncRequest.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -70,6 +73,85 @@ export class DevService {
       },
       query: {
         'workspace_id': workspaceId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Record a redacted edit-to-live receipt.
+   * Stores bounded phase timings for one developer deployment. Repeating the same app and deployment ID is idempotent.
+   * @returns DevSyncHistoryItem Receipt stored or already present.
+   * @throws ApiError
+   */
+  public static recordDevSync({
+    project,
+    requestBody,
+  }: {
+    /**
+     * Local project label used to locate the developer environment sync endpoint.
+     */
+    project: string,
+    requestBody: RecordDevSyncRequest,
+  }): CancelablePromise<DevSyncHistoryItem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/sessions/{project}/syncs',
+      path: {
+        'project': project,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List bounded edit-to-live history.
+   * @returns DevSyncHistoryResponse Newest-first developer sync history and trend summary.
+   * @throws ApiError
+   */
+  public static listDevSyncHistory({
+    project,
+    workspaceId,
+    limit = 20,
+  }: {
+    /**
+     * Local project label used to locate the developer environment history.
+     */
+    project: string,
+    /**
+     * Opaque local workspace identity. Omit only for a legacy session.
+     */
+    workspaceId?: string,
+    /**
+     * Number of recent receipts to return.
+     */
+    limit?: number,
+  }): CancelablePromise<DevSyncHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/sessions/{project}/history',
+      path: {
+        'project': project,
+      },
+      query: {
+        'workspace_id': workspaceId,
+        'limit': limit,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

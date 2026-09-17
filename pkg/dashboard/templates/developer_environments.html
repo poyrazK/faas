@@ -59,6 +59,16 @@
                     <a href="{{.DetailsURL}}/deployments/{{.LatestDeployment.ID}}"><span class="badge {{.LatestDeployment.Status}}">{{.LatestDeployment.Status}}</span></a><br>
                     <time datetime="{{.LatestDeployment.CreatedAt}}">{{.LatestDeployment.CreatedAt}}</time>
                   {{else}}<span class="muted">No sync yet</span>{{end}}
+                  {{if .SyncSummary.Count}}
+                    <br><span class="muted">{{.SyncSummary.WithinSLOCount}}/{{.SyncSummary.Count}} within {{.SyncSummary.SLOTarget}} · p50 {{.SyncSummary.P50}} · p95 {{.SyncSummary.P95}}</span>
+                    {{if .SyncSummary.Guidance}}<br><span class="muted">{{.SyncSummary.Guidance}}</span>{{end}}
+                    <details>
+                      <summary class="muted">recent syncs</summary>
+                      <ul>
+                        {{range .SyncHistory}}<li>{{if .WithinSLO}}✓{{else}}!{{end}} {{.EditToLive}} · {{.CreatedAt}}</li>{{end}}
+                      </ul>
+                    </details>
+                  {{end}}
                 </td>
                 <td>{{if .ExpiresAt}}<time datetime="{{.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ExpiresAt.Format "2006-01-02 15:04 MST"}}</time>{{else}}<span class="muted">—</span>{{end}}</td>
                 <td class="actions"><a href="{{.DetailsURL}}">Details</a><a href="{{.LogsURL}}">Logs</a><a href="{{.AnalyticsURL}}">Requests</a><a href="{{.EnvironmentURL}}">Config</a></td>

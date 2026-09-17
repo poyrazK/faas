@@ -125,6 +125,10 @@ from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRou
 from .app_open_api_policy_preview_route_status import AppOpenAPIPolicyPreviewRouteStatus
 from .app_open_api_policy_preview_rule import AppOpenAPIPolicyPreviewRule
 from .app_open_api_policy_preview_rule_action import AppOpenAPIPolicyPreviewRuleAction
+from .app_private_network_attachment import AppPrivateNetworkAttachment
+from .app_private_network_attachment_request import AppPrivateNetworkAttachmentRequest
+from .app_private_network_attachment_response import AppPrivateNetworkAttachmentResponse
+from .app_private_network_attachment_status import AppPrivateNetworkAttachmentStatus
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
@@ -430,6 +434,13 @@ from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
 from .dev_postgres_response_state import DevPostgresResponseState
 from .dev_session_response import DevSessionResponse
+from .dev_sync_history_item import DevSyncHistoryItem
+from .dev_sync_history_item_status import DevSyncHistoryItemStatus
+from .dev_sync_history_response import DevSyncHistoryResponse
+from .dev_sync_history_summary import DevSyncHistorySummary
+from .dev_sync_phase import DevSyncPhase
+from .dev_sync_phase_phase import DevSyncPhasePhase
+from .dev_sync_phase_status import DevSyncPhaseStatus
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
@@ -937,6 +948,8 @@ from .queue_state_response import QueueStateResponse
 from .queue_state_response_plan import QueueStateResponsePlan
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
+from .record_dev_sync_request import RecordDevSyncRequest
+from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .refund_account_invoice_body import RefundAccountInvoiceBody
@@ -1293,6 +1306,10 @@ __all__ = (
     "AppOpenAPIPolicyPreviewRouteStatus",
     "AppOpenAPIPolicyPreviewRule",
     "AppOpenAPIPolicyPreviewRuleAction",
+    "AppPrivateNetworkAttachment",
+    "AppPrivateNetworkAttachmentRequest",
+    "AppPrivateNetworkAttachmentResponse",
+    "AppPrivateNetworkAttachmentStatus",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppResponse",
@@ -1590,6 +1607,13 @@ __all__ = (
     "DevPostgresResponseBindingState",
     "DevPostgresResponseState",
     "DevSessionResponse",
+    "DevSyncHistoryItem",
+    "DevSyncHistoryItemStatus",
+    "DevSyncHistoryResponse",
+    "DevSyncHistorySummary",
+    "DevSyncPhase",
+    "DevSyncPhasePhase",
+    "DevSyncPhaseStatus",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
@@ -2075,6 +2099,8 @@ __all__ = (
     "QueueStateResponsePlan",
     "QuotaBlock",
     "RaiseOverageCapRequest",
+    "RecordDevSyncRequest",
+    "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
     "RefundAccountInvoiceBody",

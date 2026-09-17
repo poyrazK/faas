@@ -1833,6 +1833,16 @@ type OpsMetrics struct {
 	// the Prometheus series count flat. Closed set pre-instantiated
 	// at boot so the panel surfaces zero from process start.
 	esmLagSeconds *prometheus.HistogramVec
+	// esmRecordsOutcomeTotal records the terminal disposition of each
+	// broker record after the gateway response. The source and outcome
+	// vocabularies are closed and pre-instantiated so queue retries and
+	// dead letters remain visible even when traffic is idle.
+	esmRecordsOutcomeTotal *prometheus.CounterVec
+	// esmRecordProcessingSeconds measures the end-to-end time from the
+	// broker receive timestamp to the dispatch outcome. It carries only
+	// the bounded source label, keeping queue latency observable without
+	// putting app or trigger IDs into Prometheus labels.
+	esmRecordProcessingSeconds *prometheus.HistogramVec
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -4106,17 +4116,34 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			1.0, 2.5, 5.0, 10.0, 30.0,
 		},
 	}, []string{"source", "shard"})
+	esmRecordsOutcomeTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_esm_records_outcome_total",
+		Help: "Count of broker records by terminal dispatch outcome, labelled by source and outcome ∈ {succeeded, retry, dead_letter}. The queue source makes retry and dead-letter pressure directly alertable without app or trigger labels.",
+	}, []string{"source", "outcome"})
+	esmRecordProcessingSeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: prefix + "_esm_record_processing_seconds",
+		Help: "Seconds from broker receive to terminal dispatch outcome, labelled by source. This is the end-to-end consumer service latency signal for queue and external event sources.",
+		Buckets: []float64{
+			0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
+			1, 2.5, 5, 10, 30, 60, 120,
+		},
+	}, []string{"source"})
+	esmRecordOutcomeClosedSet := []string{"succeeded", "retry", "dead_letter"}
 	for _, source := range esmSourceClosedSet {
 		for _, outcome := range esmOutcomeClosedSet {
 			esmPollsTotal.WithLabelValues(source, outcome)
 		}
 		esmRecordsConsumedTotal.WithLabelValues(source)
+		for _, outcome := range esmRecordOutcomeClosedSet {
+			esmRecordsOutcomeTotal.WithLabelValues(source, outcome)
+		}
+		esmRecordProcessingSeconds.WithLabelValues(source)
 		// Pre-instantiate the `_agg` bucket so the histogram
 		// surfaces in /metrics from boot. The 32-bucket cap
 		// lives in dispatch_triggers.go (commit 9 wiring).
 		esmLagSeconds.WithLabelValues(source, "_agg")
 	}
-	commonCollectors = append(commonCollectors, esmPollsTotal, esmRecordsConsumedTotal, esmLagSeconds)
+	commonCollectors = append(commonCollectors, esmPollsTotal, esmRecordsConsumedTotal, esmLagSeconds, esmRecordsOutcomeTotal, esmRecordProcessingSeconds)
 
 	// PR-#TBD / C5 — operator-action observability layer
 	// (PR #1106 P2d follow-on). Four new series feed the
@@ -4932,6 +4959,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		esmPollsTotal:                                         esmPollsTotal,
 		esmRecordsConsumedTotal:                               esmRecordsConsumedTotal,
 		esmLagSeconds:                                         esmLagSeconds,
+		esmRecordsOutcomeTotal:                                esmRecordsOutcomeTotal,
+		esmRecordProcessingSeconds:                            esmRecordProcessingSeconds,
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
@@ -9464,10 +9493,22 @@ func (s *cpuThrottleLastSeen) add(key string, currMicroseconds float64) float64 
 // ESMPollOutcome is the closed set of outcomes ObserveESMPoll accepts.
 // Matches the closed-set pre-instantiation in NewOpsMetrics.
 const (
-	ESMPollOutcomeSuccess = "success"
-	ESMPollOutcomeEmpty   = "empty"
-	ESMPollOutcomeError   = "error"
+	ESMPollOutcomeSuccess      = "success"
+	ESMPollOutcomeEmpty        = "empty"
+	ESMPollOutcomeError        = "error"
+	ESMRecordOutcomeSucceeded  = "succeeded"
+	ESMRecordOutcomeRetry      = "retry"
+	ESMRecordOutcomeDeadLetter = "dead_letter"
 )
+
+func isESMSource(source string) bool {
+	switch source {
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron":
+		return true
+	default:
+		return false
+	}
+}
 
 // ObserveESMPoll increments schedd_esm_polls_total{source, outcome}.
 // Called from pkg/sched/dispatch_triggers.go::dispatchOneTrigger at the
@@ -9565,6 +9606,32 @@ func (m *OpsMetrics) ObserveESMLag(source, shard string, lagSeconds float64) {
 		shard = "_agg"
 	}
 	m.esmLagSeconds.WithLabelValues(source, shard).Observe(lagSeconds)
+}
+
+// ObserveESMRecordOutcome increments the terminal disposition counter for
+// records that made it through the gateway response. Unknown outcomes are
+// ignored to keep the label set closed.
+func (m *OpsMetrics) ObserveESMRecordOutcome(source, outcome string, n int) {
+	if m == nil || m.esmRecordsOutcomeTotal == nil || n <= 0 || !isESMSource(source) {
+		return
+	}
+	switch outcome {
+	case ESMRecordOutcomeSucceeded, ESMRecordOutcomeRetry, ESMRecordOutcomeDeadLetter:
+		// closed vocabulary
+	default:
+		return
+	}
+	m.esmRecordsOutcomeTotal.WithLabelValues(source, outcome).Add(float64(n))
+}
+
+// ObserveESMRecordProcessing records end-to-end consumer latency from the
+// broker receive timestamp to the dispatch outcome. Negative, NaN, and
+// infinite values are clock/error artifacts and are dropped.
+func (m *OpsMetrics) ObserveESMRecordProcessing(source string, seconds float64) {
+	if m == nil || m.esmRecordProcessingSeconds == nil || !isESMSource(source) || seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return
+	}
+	m.esmRecordProcessingSeconds.WithLabelValues(source).Observe(seconds)
 }
 
 // ESMPollCounterForTest returns the pre-instantiated Prometheus

@@ -6,8 +6,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -34,6 +36,7 @@ func (s *server) renderDeveloperEnvironments(w http.ResponseWriter, r *http.Requ
 	}
 
 	items := make([]dashboard.DeveloperEnvironmentItem, 0, len(rows))
+	historyStore, hasHistory := s.store.(state.DevSyncHistoryStore)
 	for _, app := range rows {
 		if !state.IsDeveloperApp(app) {
 			continue
@@ -62,6 +65,20 @@ func (s *server) renderDeveloperEnvironments(w http.ResponseWriter, r *http.Requ
 		} else if !errors.Is(deployErr, state.ErrNotFound) {
 			log.Warn("dashboard renderDeveloperEnvironments: latest deployment", "account_id", acct.ID, "app_id", app.ID, "err", deployErr)
 		}
+		if hasHistory && historyStore != nil {
+			if history, historyErr := historyStore.ListDevSyncHistory(ctx, app.ID, 20); historyErr == nil {
+				item.SyncSummary = developerSyncDashboardSummary(history)
+				item.SyncHistory = make([]dashboard.DeveloperSyncHistoryItem, 0, len(history))
+				for _, sync := range history {
+					item.SyncHistory = append(item.SyncHistory, dashboard.DeveloperSyncHistoryItem{
+						Status: sync.Status, EditToLive: formatDashboardDevDuration(sync.EditToLiveMS),
+						CreatedAt: sync.CreatedAt.Local().Format("2006-01-02 15:04"), WithinSLO: sync.WithinSLO,
+					})
+				}
+			} else if !errors.Is(historyErr, state.ErrNotFound) {
+				log.Warn("dashboard renderDeveloperEnvironments: sync history", "account_id", acct.ID, "app_id", app.ID, "err", historyErr)
+			}
+		}
 		items = append(items, item)
 	}
 
@@ -84,5 +101,22 @@ func (s *server) renderDeveloperEnvironments(w http.ResponseWriter, r *http.Requ
 	}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(ctx), page); err != nil {
 		renderProblem(w, log, err)
+	}
+}
+
+func formatDashboardDevDuration(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return (time.Duration(ms) * time.Millisecond).Round(100 * time.Millisecond).String()
+}
+
+func developerSyncDashboardSummary(rows []state.DevSyncHistory) dashboard.DeveloperSyncSummary {
+	summary := summarizeDevSyncHistory(rows)
+	return dashboard.DeveloperSyncSummary{
+		Count: summary.Count, WithinSLOCount: summary.WithinSLOCount,
+		P50:       formatDashboardDevDuration(summary.P50EditToLiveMS),
+		P95:       formatDashboardDevDuration(summary.P95EditToLiveMS),
+		SLOTarget: formatDashboardDevDuration(summary.SLOTargetMS), Guidance: summary.Guidance,
 	}
 }

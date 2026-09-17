@@ -8,10 +8,10 @@
       "category": "api-contract",
       "surface": "event, queue, and workflow contracts",
       "status": "partial",
-      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for the currently emitted app.parked, app.woken, and usage_statement.finalized events.",
-      "limitations": "Queue/workflow contracts, inbound event channels, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
+      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for the currently emitted app.parked, app.woken, and usage_statement.finalized events, plus the authenticated workflow external-event injection channel at POST /v1/workflows/runs/{id}/events.",
+      "limitations": "Queue contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
       "docs_url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
-      "evidence": "api/asyncapi.yaml; pkg/productstandards/asyncapi_test.go",
+      "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go",
       "conformance": [
         {
           "fixture": "asyncapi-webhook-contract",
@@ -349,7 +349,7 @@
       "surface": "public REST API and CLI errors",
       "status": "supported",
       "scope": "API failures use application/problem+json with stable machine-readable codes and recovery documentation.",
-      "limitations": "The wire contract is still documented as RFC 7807; RFC 9457 alignment is a planned compatibility update.",
+      "limitations": "Legacy RFC 7807 clients remain wire-compatible; RFC 9457 is the canonical successor. Gregale-specific code and extension members remain outside the base standard.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc7807",
       "evidence": "docs/errors.md; api/openapi.yaml components.schemas.Problem",
       "conformance": [
@@ -385,11 +385,18 @@
       "version": "RFC 9457",
       "category": "api-contract",
       "surface": "public REST API errors",
-      "status": "planned",
-      "scope": "The current RFC 7807-compatible envelope has not yet been relabeled and documented against its successor RFC.",
-      "limitations": "The planned update must preserve application/problem+json and stable Gregale code fields for existing clients.",
+      "status": "partial",
+      "scope": "Public JSON errors use the RFC 9457 problem-details envelope with application/problem+json, stable Gregale error codes and extensions, and support the standard occurrence URI when supplied.",
+      "limitations": "The contract is JSON-only and retains Gregale-specific code and extension members; XML serialization and registered common problem types are not claimed.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9457",
-      "evidence": "Planned follow-up: RFC 9457 compatibility update"
+      "evidence": "pkg/api/errors.go; api/openapi.yaml Problem; docs/errors.md",
+      "conformance": [
+        {
+          "fixture": "rfc9457-problem-wire",
+          "tier": "unit",
+          "target": "pkg/api/errors_test.go::TestWriteProblemUsesRFC9457Defaults"
+        }
+      ]
     },
     {
       "id": "s3-api",

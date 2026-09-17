@@ -202,10 +202,33 @@ type DeveloperEnvironmentItem struct {
 	ExpiresAt        *time.Time
 	HasDeployment    bool
 	LatestDeployment DeploymentItem
+	SyncSummary      DeveloperSyncSummary
+	SyncHistory      []DeveloperSyncHistoryItem
 	DetailsURL       string
 	LogsURL          string
 	AnalyticsURL     string
 	EnvironmentURL   string
+}
+
+// DeveloperSyncHistoryItem is the presentation form of one redacted
+// edit-to-live receipt. Durations are preformatted so the template remains a
+// pure renderer.
+type DeveloperSyncHistoryItem struct {
+	Status     string
+	EditToLive string
+	CreatedAt  string
+	WithinSLO  bool
+}
+
+// DeveloperSyncSummary is the dashboard's compact trend and regression
+// surface for a developer environment.
+type DeveloperSyncSummary struct {
+	Count          int
+	WithinSLOCount int
+	P50            string
+	P95            string
+	SLOTarget      string
+	Guidance       string
 }
 
 // ManifestView is the runner-scaffold snapshot shown on the app detail

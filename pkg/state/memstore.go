@@ -117,26 +117,27 @@ type memComputeNodeKey struct {
 }
 
 type MemStore struct {
-	objectBuckets           map[string]ObjectBucket
-	objectUsage             map[string]ObjectBucketUsage
-	objectGrants            map[string]map[string]int64
-	objectReports           []api.ObjectStorageUsageReport
-	objectAuthorizations    map[string]int64
-	objectProviderRequests  map[string]int64
-	objectAccessGrants      map[string]ObjectBucketAccessGrant
-	objectS3Credentials     map[string]ObjectS3Credential
-	objectMultipartUploads  map[string]ObjectMultipartUpload
-	objectUploadRoutes      map[string]ObjectUploadRoute
-	objectUploadCompletions map[string]ObjectUploadCompletion
-	mu                      sync.Mutex
-	accounts                map[string]Account
-	accountDeployRates      map[string]accountDeployRateRow
-	keys                    map[string]APIKey
-	keyByHash               map[string]APIKey
-	deployTokens            map[string]DeployToken
-	deployTokenByHash       map[string]DeployToken
-	apps                    map[string]App
-	appDeletionClaims       map[string]struct{}
+	objectBuckets             map[string]ObjectBucket
+	objectUsage               map[string]ObjectBucketUsage
+	objectGrants              map[string]map[string]int64
+	objectReports             []api.ObjectStorageUsageReport
+	objectAuthorizations      map[string]int64
+	objectProviderRequests    map[string]int64
+	objectAccessGrants        map[string]ObjectBucketAccessGrant
+	objectS3Credentials       map[string]ObjectS3Credential
+	objectMultipartUploads    map[string]ObjectMultipartUpload
+	objectUploadRoutes        map[string]ObjectUploadRoute
+	objectUploadCompletions   map[string]ObjectUploadCompletion
+	mu                        sync.Mutex
+	accounts                  map[string]Account
+	accountDeployRates        map[string]accountDeployRateRow
+	keys                      map[string]APIKey
+	keyByHash                 map[string]APIKey
+	deployTokens              map[string]DeployToken
+	deployTokenByHash         map[string]DeployToken
+	apps                      map[string]App
+	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
+	appDeletionClaims         map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -179,6 +180,7 @@ type MemStore struct {
 	// the in-memory implementation of the I1 cooldown gate.
 	deployFailedEmailAt map[string]time.Time
 	deployments         map[string]Deployment
+	devSyncHistory      map[string]DevSyncHistory
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
 	// Append-only + resolved_at-stamped; the partial-index read
@@ -830,23 +832,24 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		objectAccessGrants:      map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:     map[string]ObjectS3Credential{},
-		objectMultipartUploads:  map[string]ObjectMultipartUpload{},
-		objectUploadRoutes:      map[string]ObjectUploadRoute{},
-		objectUploadCompletions: map[string]ObjectUploadCompletion{},
-		accounts:                map[string]Account{},
-		accountDeployRates:      map[string]accountDeployRateRow{},
-		keys:                    map[string]APIKey{},
-		keyByHash:               map[string]APIKey{},
-		deployTokens:            map[string]DeployToken{},
-		deployTokenByHash:       map[string]DeployToken{},
-		apps:                    map[string]App{},
-		appDeletionClaims:       map[string]struct{}{},
-		githubDeployBranches:    map[string]map[string]string{},
-		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
-		githubBindings:          map[string]GitHubBinding{},
-		githubInstalls:          map[string]GitHubInstall{},
+		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:       map[string]ObjectS3Credential{},
+		objectMultipartUploads:    map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:        map[string]ObjectUploadRoute{},
+		objectUploadCompletions:   map[string]ObjectUploadCompletion{},
+		accounts:                  map[string]Account{},
+		accountDeployRates:        map[string]accountDeployRateRow{},
+		keys:                      map[string]APIKey{},
+		keyByHash:                 map[string]APIKey{},
+		deployTokens:              map[string]DeployToken{},
+		deployTokenByHash:         map[string]DeployToken{},
+		apps:                      map[string]App{},
+		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
+		appDeletionClaims:         map[string]struct{}{},
+		githubDeployBranches:      map[string]map[string]string{},
+		githubDeployPolicies:      map[string]GitHubDeployPolicy{},
+		githubBindings:            map[string]GitHubBinding{},
+		githubInstalls:            map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -855,6 +858,7 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		devSyncHistory:      map[string]DevSyncHistory{},
 		statusCreateKeys:    map[string]string{},
 		statusUpdateKeys:    map[string]string{},
 		statusBuckets:       map[string]StatusBucket{},
@@ -3625,6 +3629,65 @@ func (m *MemStore) ListPreviewsForAccount(_ context.Context, accountID string) (
 	return out, nil
 }
 
+// RecordDevSyncHistory is the in-memory mirror of the durable edit-to-live
+// receipt table. Replaying the same deployment is a no-op and returns the
+// original receipt.
+func (m *MemStore) RecordDevSyncHistory(_ context.Context, row DevSyncHistory) (DevSyncHistory, error) {
+	if len(row.Phases) == 0 {
+		row.Phases = json.RawMessage(`[]`)
+	}
+	if err := validateDevSyncHistory(row); err != nil {
+		return DevSyncHistory{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, ok := m.apps[row.AppID]
+	if !ok || app.Status == AppDeleted {
+		return DevSyncHistory{}, ErrNotFound
+	}
+	deployment, ok := m.deployments[row.DeploymentID]
+	if !ok || deployment.AppID != row.AppID {
+		return DevSyncHistory{}, ErrNotFound
+	}
+	for _, existing := range m.devSyncHistory {
+		if existing.AppID == row.AppID && existing.DeploymentID == row.DeploymentID {
+			return cloneDevSyncHistory(existing), nil
+		}
+	}
+	if row.ID == "" {
+		row.ID = newID()
+	}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = time.Now().UTC()
+	}
+	m.devSyncHistory[row.ID] = cloneDevSyncHistory(row)
+	return cloneDevSyncHistory(row), nil
+}
+
+// ListDevSyncHistory returns bounded newest-first edit-to-live receipts for
+// one app. A non-positive limit means the store default of 20.
+func (m *MemStore) ListDevSyncHistory(_ context.Context, appID string, limit int) ([]DevSyncHistory, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if app, ok := m.apps[appID]; !ok || app.Status == AppDeleted {
+		return nil, ErrNotFound
+	}
+	out := make([]DevSyncHistory, 0, len(m.devSyncHistory))
+	for _, row := range m.devSyncHistory {
+		if row.AppID == appID {
+			out = append(out, cloneDevSyncHistory(row))
+		}
+	}
+	devSyncHistorySort(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -5290,6 +5353,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.envs, key)
 		}
 	}
+	delete(m.privateNetworkAttachments, id)
 	for key, v := range m.secrets {
 		if v.AppID == id {
 			delete(m.secrets, key)

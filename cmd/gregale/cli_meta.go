@@ -376,7 +376,7 @@ var cliCommands = []cliCommand{
 			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
-			{Name: "network", Short: "Show effective networking and inspect observed connectivity"},
+			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 		},
 		Positionals: []string{"<slug>"},
@@ -790,6 +790,11 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "history", Short: "show edit-to-live timings and SLO guidance", Flags: []cliFlag{
+				{Name: "path", Short: "source directory", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+				{Name: "limit", Short: "number of recent syncs to show", Value: "N"},
+			}},
 		},
 	},
 	{

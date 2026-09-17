@@ -283,6 +283,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/cache":                                  "PurgeAppCache",
 	"POST /v1/apps/{slug}/rollback":                                 "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":                         "RecoverRollout",
+	"POST /v1/dev/sessions/{project}/syncs":                         "RecordDevSync",
+	"GET /v1/dev/sessions/{project}/history":                        "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                              "Deploy",
 	"GET /v1/apps/{slug}/deployments":                               "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                        "GetLatestAppDeployment",
@@ -943,6 +945,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/static-egress-ip":    "GetAppStaticEgressIP",
 	"PUT /v1/apps/{slug}/static-egress-ip":    "SetAppStaticEgressIP",
 	"DELETE /v1/apps/{slug}/static-egress-ip": "ClearAppStaticEgressIP",
+	// Provider-neutral private-network attachment intent. Keep the explicit
+	// operation names aligned with the Go client helpers; auto-derivation would
+	// retain the `network/private` path separators and produce awkward names.
+	"GET /v1/apps/{slug}/network/private":    "GetAppPrivateNetworkAttachment",
+	"PUT /v1/apps/{slug}/network/private":    "SetAppPrivateNetworkAttachment",
+	"DELETE /v1/apps/{slug}/network/private": "ClearAppPrivateNetworkAttachment",
 
 	// Issue #961 / Mega-A PR-A — zero-config deploy + domains surface.
 	// The auto-derivation produces names with literal hyphens for the

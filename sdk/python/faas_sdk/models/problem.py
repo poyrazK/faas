@@ -19,7 +19,7 @@ T = TypeVar("T", bound="Problem")
 
 @_attrs_define
 class Problem:
-    """RFC 7807 problem+json envelope. The `code` field is the stable
+    """RFC 9457 problem+json envelope. The `code` field is the stable
     machine-readable identifier; clients branch on it. `limit` and
     `observed` are populated on quota errors. `docs_url` points the
     user at the next action. `billing_portal_url` is populated on
@@ -49,6 +49,8 @@ class Problem:
     code: str
     """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
     type_: str | Unset = UNSET
+    instance: str | Unset = UNSET
+    """URI reference identifying this problem occurrence when supplied by the caller."""
     detail: str | Unset = UNSET
     limit: int | None | Unset = UNSET
     observed: int | None | Unset = UNSET
@@ -146,6 +148,8 @@ class Problem:
 
         type_ = self.type_
 
+        instance = self.instance
+
         detail = self.detail
 
         limit: int | None | Unset
@@ -224,6 +228,8 @@ class Problem:
         )
         if type_ is not UNSET:
             field_dict["type"] = type_
+        if instance is not UNSET:
+            field_dict["instance"] = instance
         if detail is not UNSET:
             field_dict["detail"] = detail
         if limit is not UNSET:
@@ -277,6 +283,8 @@ class Problem:
         code = d.pop("code")
 
         type_ = d.pop("type", UNSET)
+
+        instance = d.pop("instance", UNSET)
 
         detail = d.pop("detail", UNSET)
 
@@ -368,6 +376,7 @@ class Problem:
             status=status,
             code=code,
             type_=type_,
+            instance=instance,
             detail=detail,
             limit=limit,
             observed=observed,

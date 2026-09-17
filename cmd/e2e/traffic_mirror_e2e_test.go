@@ -1,21 +1,18 @@
 // traffic_mirror_e2e_test.go — issue #72 / ADR-124 / ADR-125 PR-A3
 // commit 5
 //
-// Whitebox e2e for the runtime half of traffic mirroring: the
-// gateway dispatch goroutine + the rollup + the per-rule slot cap.
-// Pins three load-bearing contracts end-to-end via Postgres (no
-// metal, no schedd boot — the dispatch goroutine is exercised
-// against an in-process gateway handler + a stub MirrorRoundTripper
-// that returns a canned response, and the rollup is exercised
-// against the real Postgres ledger):
+// E2E coverage for the runtime half of traffic mirroring: the
+// gateway dispatch goroutine + schedd admission + the rollup +
+// the per-rule slot cap. Pins three load-bearing contracts via
+// Postgres and the KVM-free general path:
 //
 //  1. TestE2E_MirrorDispatch_HappyPath
-//     - seed an enabled mirror rule + a live target via the
-//       gateway's MirrorRule cache (in-process pgtest.Pool)
-//     - fire one customer request
-//     - assert the dispatch goroutine fires: ScheduleMirror
-//       called once with the mirror deployment, mirror request
-//       omits Authorization + Cookie
+//     - boot the real apid + schedd + gatewayd stack
+//     - create live source/mirror deployments and a rule through
+//       the public API (including pg_notify cache refresh)
+//     - fire one customer request through gatewayd
+//     - assert schedd admits a new mirror instance with
+//       mode='mirror', without changing the source response
 //
 //  2. TestE2E_MirrorRollup_AggregatesByRuleHour
 //     - write 5 mirror_invocation_results rows in the last hour
@@ -38,8 +35,9 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,9 +45,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 )
 
 // seedMirrorFixture inserts the parent rows the mirror_invocation_results
@@ -144,39 +145,112 @@ INSERT INTO mirror_invocation_results (
 	return id
 }
 
-// TestE2E_MirrorDispatch_HappyPath pins the load-bearing fan-out
-// + redact contract end-to-end. Exercises the gateway handler
-// with a real (in-process) pgtest-backed store so the
-// LookupMirrorRules cache actually has a rule, then asserts the
-// dispatch goroutine fires ScheduleMirror with the mirror
-// deployment and that the outgoing mirror request strips the
-// always-stripped auth headers.
+// TestE2E_MirrorDispatch_HappyPath pins the load-bearing general
+// path from public rule creation through customer traffic and
+// schedd mirror admission. It deliberately keeps the source
+// deployment at 100% traffic and the mirror deployment at 0%:
+// the mirror is a shadow target, never a customer route.
 //
-// The MirrorRoundTripper is stubbed via the production seam
-// (WithMirrorRoundTripper) so the test doesn't need a live
-// mirror VM — the goroutine classifies the canned response
-// (200, "ok") and increments the metric.
+// The fake VMMD removes KVM/Firecracker from this test while the
+// real apid, schedd, gatewayd, Postgres, pg_notify, and gRPC
+// boundaries remain in the path. The mirror HTTP forwarding
+// contract is covered separately by gateway unit tests; this test
+// owns the previously missing cross-daemon admission contract.
 func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
-	if pool == nil {
+	artifactRoot := t.TempDir()
+	f := newNormalPathFixtureWithPlanAndEnv(t, "normal-mirror-dispatch", api.PlanPro,
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT="+artifactRoot,
+		"FAAS_APPS_ROOT="+artifactRoot,
+		"FAAS_STORAGE_CACHE_DIR=",
+	)
+	if f == nil {
 		return
 	}
-	if err := db.MigrateUp(context.Background(), pool); err != nil {
-		t.Fatalf("migrate: %v", err)
+	artifacts, err := artifactstorage.NewLocalStorageBackend(artifactRoot)
+	if err != nil {
+		t.Fatalf("create mirror artifact backend: %v", err)
 	}
-	// We don't need apid here — the rule cache is populated
-	// directly through the gateway PGBackend test seam
-	// (RefreshMirrorRules reads from the public schema). For
-	// this test we exercise the dispatch goroutine wiring
-	// rather than the pg_notify chain; the e2e flow for the
-	// notify arm is pinned by the gateway-internal test
-	// suite (cmd/gatewayd-internal/backend_test.go).
-	_ = pool
-	_ = api.MirrorMaxLifetimeSeconds
-	t.Skip("TestE2E_MirrorDispatch_HappyPath: full end-to-end requires a live apid + schedd; " +
-		"covered by gateway-internal backend_test.go and the unit tests in pkg/gateway/mirror*_test.go. " +
-		"The PR-A3 commit 5 harness intentionally focuses on the rollup + sweep below — " +
-		"the dispatch path is too coupled to schedd grpc to pin in a !no_pg e2e without a metal gate.")
+	signer, err := cosign.NewLocalSigner(f.h.SignKeyPath, artifacts, nil)
+	if err != nil {
+		t.Fatalf("create mirror artifact signer: %v", err)
+	}
+	sourceDeployment, sourceInstance := createNormalPathExplicitTrafficDeployment(
+		t, f, "mirror-source", 100)
+	mirrorDeployment, _ := createNormalPathExplicitTrafficDeployment(
+		t, f, "mirror-target", 0)
+	mirrorLayerKey := "apps/" + f.app.Slug + "/" + mirrorDeployment.ID + ".ext4"
+	mirrorLayer := []byte("gregale mirror dispatch fixture artifact\n")
+	if err := artifacts.Put(f.ctx, mirrorLayerKey, strings.NewReader(string(mirrorLayer))); err != nil {
+		t.Fatalf("publish mirror layer: %v", err)
+	}
+	if err := signer.Sign(f.ctx, mirrorLayerKey, cosign.SigKeyFor(mirrorLayerKey)); err != nil {
+		t.Fatalf("sign mirror layer: %v", err)
+	}
+	if err := f.store.SetDeploymentRootfs(f.ctx, mirrorDeployment.ID,
+		"/e2e/"+mirrorLayerKey, mirrorLayerKey, int64(len(mirrorLayer))); err != nil {
+		t.Fatalf("publish mirror rootfs metadata: %v", err)
+	}
+	f.vmmd.SetVersion(sourceInstance.ID, "mirror-source")
+
+	// Publish the live deployment/instance state to the real gateway
+	// picker. The API-created rule below supplies the separate
+	// kind="mirror" notification that refreshes the mirror-rule cache.
+	notifyNormalPathDeploymentChanged(t, f, sourceDeployment.ID)
+	notifyNormalPathDeploymentChanged(t, f, mirrorDeployment.ID)
+	notifyNormalPathInstanceChanged(t, f, sourceInstance.ID, string(state.StateRunning))
+
+	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
+		"/v1/apps/"+f.app.Slug+"/mirrors", api.CreateMirrorRuleRequest{
+			SourceDeploymentID: sourceDeployment.ID,
+			MirrorDeploymentID: mirrorDeployment.ID,
+			Percent:            100,
+		})
+	if statusCode != http.StatusCreated {
+		t.Fatalf("create mirror rule: status=%d body=%s", statusCode, body)
+	}
+	var rule api.MirrorRuleResponse
+	if err := json.Unmarshal(body, &rule); err != nil {
+		t.Fatalf("decode mirror rule: %v body=%s", err, body)
+	}
+	if rule.SourceDeploymentID != sourceDeployment.ID || rule.MirrorDeploymentID != mirrorDeployment.ID {
+		t.Fatalf("mirror rule deployments=(%s,%s), want=(%s,%s)",
+			rule.SourceDeploymentID, rule.MirrorDeploymentID,
+			sourceDeployment.ID, mirrorDeployment.ID)
+	}
+
+	if got := waitForNormalPathTrafficResponse(t, f, "normal-path:mirror-source\n", 10*time.Second); string(got) != "normal-path:mirror-source\n" {
+		t.Fatalf("source response=%q, want source deployment response", got)
+	}
+
+	mirrorInstance := waitForMirrorInstance(t, f.store, f.app.ID, mirrorDeployment.ID, 10*time.Second)
+	if mirrorInstance.Mode != string(state.InstanceModeMirror) {
+		t.Fatalf("mirror instance mode=%q, want %q", mirrorInstance.Mode, state.InstanceModeMirror)
+	}
+	if mirrorInstance.State != string(state.StateRunning) {
+		t.Fatalf("mirror instance state=%q, want %q", mirrorInstance.State, state.StateRunning)
+	}
+}
+
+func waitForMirrorInstance(t *testing.T, store *state.PgStore, appID, deploymentID string, timeout time.Duration) state.Instance {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last []state.Instance
+	for time.Now().Before(deadline) {
+		instances, err := store.ListInstancesForApp(context.Background(), appID)
+		if err != nil {
+			t.Fatalf("list mirror instances: %v", err)
+		}
+		last = instances
+		for _, instance := range instances {
+			if instance.DeploymentID == deploymentID && instance.Mode == string(state.InstanceModeMirror) {
+				return instance
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("mirror instance for deployment %s not admitted within %s; instances=%+v", deploymentID, timeout, last)
+	return state.Instance{}
 }
 
 // TestE2E_MirrorRollup_AggregatesByRuleHour pins the rollup
@@ -289,15 +363,6 @@ WHERE mirror_rule_id = $1
 		t.Errorf("remaining ledger rows = %d, want 2 (sweep deleted %d stale)", remaining, 5-remaining)
 	}
 }
-
-// touchUpstreamNoop keeps the import set stable across the
-// e2e file even though the dispatch goroutine harness is
-// skipped. The package would otherwise complain about
-// unused imports when the dispatch test skips — referencing
-// httptest.NewRequest + http.MethodGet here means the e2e
-// file compiles cleanly whether the skip branch fires or not.
-var _ = httptest.NewRequest
-var _ = http.MethodGet
 
 // mirrorPoolAdapter (PR-A3 commit 5) adapts *pgxpool.Pool to the
 // mirror.execer contract (Exec returning (int64, error)). Mirrors

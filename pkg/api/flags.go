@@ -49,6 +49,20 @@ func StaticEgressIPEnabled() bool {
 	return false
 }
 
+// PrivateNetworkEnabled reports whether the provider-neutral private-network
+// attachment API is live. It is intentionally default-off: this PR stores and
+// exposes attachment intent, while a later connector slice is responsible for
+// provisioning routes. Operators can dark-launch the API with
+// FAAS_PRIVATE_NETWORK_ENABLED without changing the schema.
+func PrivateNetworkEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_PRIVATE_NETWORK_ENABLED")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // DomainDoctorEnabled reports whether the per-domain doctor probe
 // engine is live. Reads FAAS_DOMAIN_DOCTOR_ENABLED at every call
 // (mirrors TenantSurfacesEnabled — operator can flip the env var

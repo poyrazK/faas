@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
@@ -64,17 +65,20 @@ func AsProblem(err error) *Problem {
 	return nil
 }
 
-// Problem is an RFC 7807 problem+json body. It is the platform's single error
+// Problem is an RFC 9457 problem+json body. It is the platform's single error
 // contract: apid emits it, the CLI and dashboard render it verbatim (spec
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	// Type is a docs URL identifying the problem class (RFC 7807 "type").
+	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
 	Title string `json:"title"`
-	// Status is the HTTP status code, duplicated in the body per RFC 7807.
+	// Status is the HTTP status code, duplicated in the body per RFC 9457.
 	Status int `json:"status"`
+	// Instance identifies this occurrence when the caller has a URI reference
+	// available. It is optional per RFC 9457.
+	Instance string `json:"instance,omitempty"`
 	// Code is a stable machine-readable string (e.g. "plan_limit_apps") that
 	// clients branch on. It must never change once shipped.
 	Code string `json:"code"`
@@ -170,7 +174,7 @@ type Problem struct {
 	// problem+json site keeps its existing flat shape unchanged.
 	RelevantLogs []LogExcerpt `json:"relevant_logs,omitempty"`
 	// extraHeaders are non-JSON response headers attached via WithHeader.
-	// Kept unexported so the wire body (RFC 7807 problem+json) is
+	// Kept unexported so the wire body (RFC 9457 problem+json) is
 	// exactly the spec; WriteProblem flushes these onto the wire
 	// before WriteHeader. nil = no extras.
 	extraHeaders map[string][]string `json:"-"`
@@ -235,7 +239,7 @@ func (p *Problem) Error() string {
 	return p.Code
 }
 
-// WriteProblem renders p as an RFC 7807 problem+json response with its status
+// WriteProblem renders p as an RFC 9457 problem+json response with its status
 // code. Gateway requests that explicitly accept text/html receive the safe
 // browser error page instead; API handlers continue to receive JSON. Every
 // HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
@@ -244,6 +248,10 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 		writeProblemHTML(w, p)
 		return
 	}
+	wire := *p
+	if strings.TrimSpace(wire.Type) == "" {
+		wire.Type = "about:blank"
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	for k, vs := range p.extraHeaders {
 		for _, v := range vs {
@@ -251,7 +259,7 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 		}
 	}
 	w.WriteHeader(p.Status)
-	_ = json.NewEncoder(w).Encode(p)
+	_ = json.NewEncoder(w).Encode(&wire)
 }
 
 // WriteProblemWithErrors is the kind=validate-shaped variant: the
@@ -272,6 +280,13 @@ func WriteProblemWithErrors(w http.ResponseWriter, p *Problem, errs []FieldError
 // NewProblem builds a Problem with the common fields set.
 func NewProblem(status int, code, title, detail string) *Problem {
 	return &Problem{Status: status, Code: code, Title: title, Detail: detail}
+}
+
+// WithInstance annotates a Problem with a URI identifying the specific
+// occurrence and returns the same pointer for chaining.
+func (p *Problem) WithInstance(instance string) *Problem {
+	p.Instance = instance
+	return p
 }
 
 // WithLimit annotates a Problem with the limit and observed value that tripped
@@ -300,7 +315,7 @@ func (p *Problem) WithDocs(url string) *Problem {
 // WithSecretScan attaches the per-line findings + customer-facing
 // hint that the cmd/apid server-side secret-scan rejection (and the
 // CLI's --secret-scan=strict mode) emit. The fields are flat on the
-// RFC 7807 problem body so a programmatic consumer can render the
+// RFC 9457 problem body so a programmatic consumer can render the
 // same one-line-per-finding UI for both rejection paths. Returns the
 // same pointer for chaining.
 func (p *Problem) WithSecretScan(findings []SecretFinding, hint string) *Problem {
@@ -1158,6 +1173,13 @@ const (
 	// as CodeTenantSurfacesNotAllowed.
 	CodeStaticEgressIPNotEnabled = "static_egress_ip_not_enabled"
 
+	// Provider-neutral private-network attachment intent. The API is dark
+	// launched independently of the connector runtime; a plan denial is
+	// distinct from an operator-disabled surface and from request shape.
+	CodePrivateNetworkNotEnabled     = "private_network_not_enabled"
+	CodePlanPrivateNetworkNotAllowed = "plan_private_network_not_allowed"
+	CodePrivateNetworkInvalid        = "private_network_invalid"
+
 	// Issue #470 / ADR-055: per-app two-tier-snapshot flag (warm.snap
 	// on top of init.snap). Pro/Scale opt in by default; Free/Hobby
 	// reject PATCH-true with 403 plan_warm_snapshot_not_allowed so
@@ -1715,6 +1737,7 @@ func StatusForCode(code string) int {
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
+		CodePrivateNetworkInvalid,
 		CodeOpenAPIPolicyConfirmationRequired, CodeRequestBodyReadFailed:
 		return http.StatusBadRequest
 	case CodeRequestUploadTimeout:
@@ -1725,7 +1748,8 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
+		CodePrivateNetworkNotEnabled:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -1910,6 +1934,8 @@ func StatusForCode(code string) int {
 	// pattern so the CLI's "your plan does not unlock X" / "fix
 	// the IP shape" templates render uniformly.
 	case CodePlanStaticEgressIPNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanPrivateNetworkNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanStaticEgressIPQuota:
 		return http.StatusForbidden
@@ -3934,6 +3960,15 @@ func ErrStaticEgressIPNotEnabled() *Problem {
 		WithDocs(docsBase + "/static-egress-ip")
 }
 
+// ErrPrivateNetworkNotEnabled is returned while the provider-neutral private
+// network surface is dark-launched or its connector is not available.
+func ErrPrivateNetworkNotEnabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePrivateNetworkNotEnabled,
+		"Private network attachments are not enabled on this cluster",
+		"the FAAS_PRIVATE_NETWORK_ENABLED env var is not enabled; ask the cluster operator to enable the private-network attachment surface.").
+		WithDocs(docsBase + "/networking")
+}
+
 // ErrTenantSurfaceQuota is returned when
 // CreateTenantSurfaceIfUnderQuota surfaces a *state.TenantSurfaceQuotaError.
 // 403 (not 402) because the plan DOES unlock surfaces — the right copy
@@ -5054,6 +5089,26 @@ func ErrPlanStaticEgressIPNotAllowed(p Plan) *Problem {
 		fmt.Sprintf("plan %q does not unlock static egress IP; upgrade to Scale.", p)).
 		WithLimit(int64(0), int64(0)).
 		WithDocs(docsBase + "/apps#static-egress-ip")
+}
+
+// ErrPlanPrivateNetworkNotAllowed is returned when an account's plan does not
+// include provider-neutral private-network attachments.
+func ErrPlanPrivateNetworkNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanPrivateNetworkNotAllowed,
+		"Plan does not unlock private network attachments",
+		fmt.Sprintf("plan %q does not unlock private network attachments; upgrade to Pro or Scale.", p)).
+		WithLimit(int64(0), int64(0)).
+		WithDocs(docsBase + "/networking")
+}
+
+// ErrPrivateNetworkInvalid is a 400 for invalid network identifiers or CIDR
+// contracts. The field/value are included so CLI and SDK callers can render a
+// useful correction without parsing prose.
+func ErrPrivateNetworkInvalid(field, value, reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodePrivateNetworkInvalid,
+		"Invalid private network attachment",
+		fmt.Sprintf("%s=%q is not accepted: %s.", field, value, reason)).
+		WithDocs(docsBase + "/networking")
 }
 
 // ErrPlanStaticEgressIPQuota (ADR-119) is the 403 returned by

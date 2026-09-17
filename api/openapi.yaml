@@ -11,7 +11,7 @@ info:
     Successful POSTs accept an `Idempotency-Key` header (24h TTL) and replay
     with `Idempotent-Replayed: true`.
 
-    Errors use RFC 7807 `application/problem+json` with a stable `code`
+    Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. The single documented exception is the
     429 response from the authlimiter middleware: plain text only
     (`pkg/middleware/authlimit.go`).
@@ -46,6 +46,8 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: networking
+    description: Effective app networking and provider-neutral private-network attachment intent.
   - name: consumers
     description: Stable end-customer identities and credentials for monetized APIs (ADR-120).
   - name: debugger
@@ -3793,6 +3795,67 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/dev/sessions/{project}/syncs:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Local project label used to locate the developer environment sync endpoint.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    post:
+      tags: [dev]
+      operationId: recordDevSync
+      summary: Record a redacted edit-to-live receipt.
+      description: Stores bounded phase timings for one developer deployment. Repeating the same app and deployment ID is idempotent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordDevSyncRequest' }
+      responses:
+        '201':
+          description: Receipt stored or already present.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSyncHistoryItem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/dev/sessions/{project}/history:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Local project label used to locate the developer environment history.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    get:
+      tags: [dev]
+      operationId: listDevSyncHistory
+      summary: List bounded edit-to-live history.
+      parameters:
+        - name: workspace_id
+          in: query
+          required: false
+          description: Opaque local workspace identity. Omit only for a legacy session.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: limit
+          in: query
+          required: false
+          description: Number of recent receipts to return.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Newest-first developer sync history and trend summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSyncHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -7303,6 +7366,83 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  # Provider-neutral private-network attachment intent. The request is
+  # persisted as pending and remains fail-closed until a connector reports
+  # ready. CIDRs are IPv4 RFC1918 ranges and cannot overlap Gregale's own
+  # tenant/guest ranges.
+  /v1/apps/{slug}/network/private:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [networking]
+      operationId: getAppPrivateNetworkAttachment
+      summary: Read the app private-network attachment intent.
+      description: |
+        Returns feature and plan capability metadata plus the current
+        attachment, or `attachment=null` when none is configured. A pending
+        or error attachment never admits private traffic.
+      responses:
+        '200':
+          description: Current private-network attachment state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppPrivateNetworkAttachmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503':
+          description: The cluster operator has not enabled private-network attachments for this request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [networking]
+      operationId: setAppPrivateNetworkAttachment
+      summary: Request a private-network attachment.
+      description: |
+        Replaces the app's provider-neutral attachment intent. Pro and Scale
+        plans may request up to their plan CIDR cap (16 and 64 respectively).
+        Network ID and region use the lowercase provider-neutral identifier
+        grammar. CIDRs must be non-default IPv4 RFC1918 ranges, must not
+        overlap each other, and must not overlap Gregale's reserved ranges.
+        The response is `202 Accepted` with `status=pending`; traffic remains
+        blocked until a connector advances the row to `ready`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppPrivateNetworkAttachmentRequest' }
+      responses:
+        '202':
+          description: Attachment intent accepted for asynchronous reconciliation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppPrivateNetworkAttachmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The account plan does not include private-network attachments.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503':
+          description: Private-network attachment routes are disabled on this cluster.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [networking]
+      operationId: clearAppPrivateNetworkAttachment
+      summary: Remove the app private-network attachment intent.
+      responses:
+        '204': { description: Attachment intent removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503':
+          description: The cluster has not enabled private-network attachments.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/trusted_signers:
     parameters:
@@ -18831,6 +18971,74 @@ components:
         expires_at: { type: string, format: date-time }
         postgres: { $ref: '#/components/schemas/DevPostgresResponse' }
 
+    DevSyncPhase:
+      description: Safe phase-level timing from a developer sync.
+      type: object
+      required: [phase, status]
+      properties:
+        phase: { type: string, enum: [sync, cache, build, boot, ready, route] }
+        status: { type: string, enum: [completed, failed, in_progress] }
+        duration_ms: { type: integer, minimum: 0, maximum: 3600000 }
+        reason: { type: string, maxLength: 512 }
+
+    RecordDevSyncRequest:
+      description: Redacted edit-to-live receipt written by the developer CLI.
+      type: object
+      required: [workspace_id, deployment_id, status, edit_to_live_ms, slo_target_ms, within_slo, phases]
+      properties:
+        workspace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_id: { type: string, minLength: 1, maxLength: 64 }
+        status: { type: string, enum: [live, failed] }
+        edit_to_live_ms: { type: integer, minimum: 0, maximum: 3600000 }
+        slo_target_ms: { type: integer, minimum: 1, maximum: 3600000 }
+        within_slo: { type: boolean }
+        phases:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/DevSyncPhase' }
+
+    DevSyncHistoryItem:
+      description: One redacted developer sync receipt.
+      type: object
+      required: [deployment_id, status, edit_to_live_ms, slo_target_ms, within_slo, phases, created_at]
+      properties:
+        deployment_id: { type: string }
+        status: { type: string, enum: [live, failed] }
+        edit_to_live_ms: { type: integer, minimum: 0, maximum: 3600000 }
+        slo_target_ms: { type: integer, minimum: 1, maximum: 3600000 }
+        within_slo: { type: boolean }
+        phases:
+          type: array
+          items: { $ref: '#/components/schemas/DevSyncPhase' }
+        created_at: { type: string, format: date-time }
+
+    DevSyncHistorySummary:
+      description: Aggregate trend and regression guidance for recent developer syncs.
+      type: object
+      required: [count, within_slo_count, p50_edit_to_live_ms, p95_edit_to_live_ms, slo_target_ms]
+      properties:
+        count: { type: integer, minimum: 0 }
+        within_slo_count: { type: integer, minimum: 0 }
+        p50_edit_to_live_ms: { type: integer, minimum: 0 }
+        p95_edit_to_live_ms: { type: integer, minimum: 0 }
+        slo_target_ms: { type: integer, minimum: 0 }
+        slowest_phase: { type: string }
+        slowest_phase_ms: { type: integer, minimum: 0 }
+        guidance: { type: string }
+
+    DevSyncHistoryResponse:
+      description: Bounded newest-first developer sync history.
+      type: object
+      required: [project, items]
+      properties:
+        project: { type: string }
+        workspace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/DevSyncHistoryItem' }
+        summary: { $ref: '#/components/schemas/DevSyncHistorySummary' }
+
     UpdateAppRequest:
       description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
@@ -28014,7 +28222,7 @@ components:
       type: object
       required: [title, status, code]
       description: |
-        RFC 7807 problem+json envelope. The `code` field is the stable
+        RFC 9457 problem+json envelope. The `code` field is the stable
         machine-readable identifier; clients branch on it. `limit` and
         `observed` are populated on quota errors. `docs_url` points the
         user at the next action. `billing_portal_url` is populated on
@@ -28041,9 +28249,13 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
-        type: { type: string, format: uri , example: "https://gregale.dev/docs/errors/validation_failed"}
+        type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference identifying this problem occurrence when supplied by the caller.
         code: { type: string, description: 'Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.' }
         detail: { type: string }
         limit: { type: [integer, "null"] }
@@ -28524,6 +28736,74 @@ components:
           description: |
             `true` to pin the IP; `false` to clear the pin.
           example: true
+
+    AppPrivateNetworkAttachment:
+      description: |
+        Provider-neutral private-network attachment intent for one app.
+        `pending` and `error` are fail-closed; only `ready` admits private
+        network traffic after a connector has reconciled the request.
+      type: object
+      required: [id, network_id, region, cidrs, status]
+      properties:
+        id: { type: string, format: uuid }
+        network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+          example: prod-vpc
+        region:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+          example: fra1
+        cidrs:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+            format: ipv4-cidr
+          example: [10.20.0.0/16, 10.30.0.0/16]
+        status:
+          type: string
+          enum: [pending, ready, error]
+        status_detail:
+          type: string
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AppPrivateNetworkAttachmentResponse:
+      description: Capability metadata and the current private-network intent.
+      type: object
+      required: [feature_enabled, plan_allowed, max_cidrs, attachment]
+      properties:
+        feature_enabled: { type: boolean }
+        plan_allowed: { type: boolean }
+        max_cidrs:
+          type: integer
+          minimum: 0
+          maximum: 64
+        attachment:
+          oneOf:
+            - $ref: '#/components/schemas/AppPrivateNetworkAttachment'
+            - type: 'null'
+
+    AppPrivateNetworkAttachmentRequest:
+      description: PUT body for /v1/apps/{slug}/network/private.
+      type: object
+      required: [network_id, region, cidrs]
+      properties:
+        network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        region:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        cidrs:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+            format: ipv4-cidr
 
 
     # ─── Organizations (issue #190 / IAM-6 / ADR-061, PR 5) ───────────────

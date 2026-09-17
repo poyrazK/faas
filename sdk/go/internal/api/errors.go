@@ -40,17 +40,19 @@ func AsProblem(err error) *Problem {
 	return nil
 }
 
-// Problem is an RFC 7807 problem+json body. It is the platform's single error
+// Problem is an RFC 9457 problem+json body. It is the platform's single error
 // contract: apid emits it, the CLI and dashboard render it verbatim (spec
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	// Type is a docs URL identifying the problem class (RFC 7807 "type").
+	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
 	Title string `json:"title"`
-	// Status is the HTTP status code, duplicated in the body per RFC 7807.
+	// Status is the HTTP status code, duplicated in the body per RFC 9457.
 	Status int `json:"status"`
+	// Instance identifies this occurrence (RFC 9457 "instance").
+	Instance string `json:"instance,omitempty"`
 	// Code is a stable machine-readable string (e.g. "plan_limit_apps") that
 	// clients branch on. It must never change once shipped.
 	Code string `json:"code"`
@@ -138,7 +140,7 @@ func (p *Problem) Error() string {
 	return p.Code
 }
 
-// WriteProblem renders p as an RFC 7807 problem+json response with its status
+// WriteProblem renders p as an RFC 9457 problem+json response with its status
 // code. Every HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
 func WriteProblem(w http.ResponseWriter, p *Problem) {
 	w.Header().Set("Content-Type", "application/problem+json")
@@ -149,6 +151,13 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 // NewProblem builds a Problem with the common fields set.
 func NewProblem(status int, code, title, detail string) *Problem {
 	return &Problem{Status: status, Code: code, Title: title, Detail: detail}
+}
+
+// WithInstance annotates a Problem with a URI identifying the specific
+// occurrence and returns the same pointer for chaining.
+func (p *Problem) WithInstance(instance string) *Problem {
+	p.Instance = instance
+	return p
 }
 
 // WithLimit annotates a Problem with the limit and observed value that tripped
@@ -230,7 +239,7 @@ const (
 	CodeSecretValueTooLarge = "secret_value_too_large"
 	CodeSecretNotFound      = "secret_not_found"
 
-	// Sidecar containers (issue #463 / ADR-068). Eight RFC 7807
+	// Sidecar containers (issue #463 / ADR-068). Eight RFC 9457
 	// codes for the sidecar surface. The cap and type-uniqueness
 	// codes are the load-bearing 400-class shapes; the stateful
 	// and not-on-plan codes are defence-in-depth for future
@@ -341,7 +350,7 @@ const (
 	// sentinels in pkg/oci/errors.go. imaged's buildImageLayer failure
 	// path runs SentinelToCode(err) to pick one of these, persists it on
 	// deployments.error_code, and the wake path lifts it into the
-	// RFC 7807 Problem at the corresponding HTTP status below.
+	// RFC 9457 Problem at the corresponding HTTP status below.
 	//
 	// Why three codes, not one: each signals a different remediation
 	// path. image_not_found → check the digest / tag. image_egress_denied

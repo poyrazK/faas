@@ -352,6 +352,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PREWARM_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in (`1`) for scheduled prewarm; disabled by default; ADR-160"},
 	{Name: "FAAS_PRIVATE_INGRESS_CIDRS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; private control-plane source CIDRs from the generated host inventory"},
 	{Name: "FAAS_PRIVATE_INGRESS_TCP_PORTS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; exact compute service ports reachable from the control plane"},
+	{Name: "FAAS_PRIVATE_NETWORK_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "dark-launch switch for provider-neutral private-network attachment intent; disabled by default until a connector is deployed"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; \"shared\" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement)"},
