@@ -74,6 +74,33 @@ func TestClientWake_ReturnsNodeID(t *testing.T) {
 	}
 }
 
+// TestClientWake_PropagatesRequestID covers the split gatewayd-internal →
+// schedd hop for the legacy Wake RPC. The HTTP edge stores the public request
+// ID on the wire context; the client must lift it into gRPC metadata so the
+// schedd engine can stamp the same value on wake lifecycle events.
+func TestClientWake_PropagatesRequestID(t *testing.T) {
+	var got wire.CorrelationFields
+	c := newClient(t, &fakeEngine{
+		wakeFn: func(ctx context.Context, appID, _, _ string) (sched.WakeResult, error) {
+			if appID != "app-correlation" {
+				t.Errorf("appID = %q", appID)
+			}
+			got, _ = wire.FromContext(ctx)
+			return sched.WakeResult{InstanceID: "i-correlation", NodeID: "node-correlation"}, nil
+		},
+	})
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		RequestID: "req-correlation",
+		AppID:     "app-correlation",
+	})
+	if _, _, _, _, _, err := c.Wake(ctx, "app-correlation", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if got.RequestID != "req-correlation" {
+		t.Fatalf("request ID at schedd = %q, want req-correlation", got.RequestID)
+	}
+}
+
 func TestClientWake_CapacityLiftsToProblem(t *testing.T) {
 	c := newClient(t, &fakeEngine{
 		wakeFn: func(context.Context, string, string, string) (sched.WakeResult, error) {
