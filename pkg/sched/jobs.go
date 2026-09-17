@@ -817,10 +817,10 @@ type jobVmmClient interface {
 // JobVmmSpec is the vmmd-side job boot payload. Mirrors the shape
 // pkg/fcvm.BootMode=ModeJobColdBoot will accept (M7).
 type JobVmmSpec struct {
-	AccountID      string
-	RunID          string
-	TaskIndex      int
-	InstanceID     string
+	AccountID  string
+	RunID      string
+	TaskIndex  int
+	InstanceID string
 	// ImageRef is the resolved StorageBackend key (jobs/<job-id>.ext4).
 	// The source OCI reference remains in state.Job.ImageRef.
 	ImageRef       string

@@ -22461,13 +22461,18 @@ components:
     JobResponse:
       description: "Wire projection of state.Job."
       type: object
-      required: [id, account_id, name, kind, image_ref, command, ram_mb, task_timeout_sec, max_parallelism, retry_max, status, created_at, updated_at]
+      required: [id, account_id, name, kind, image_ref, image_materialization_status, command, ram_mb, task_timeout_sec, max_parallelism, retry_max, status, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         name: { type: string, example: "nightly-export" }
         kind: { type: string, enum: [batch, recurring] }
         image_ref: { type: string }
+        image_resolved_digest: { type: string, description: "Immutable OCI manifest digest selected from image_ref." }
+        image_storage_key: { type: string, description: "Canonical ext4 artifact key consumed by vmmd." }
+        image_materialization_status: { type: string, enum: [pending, ready, failed] }
+        image_materialization_error: { type: string, description: "Actionable pull/build failure when materialization_status is failed." }
+        image_materialized_at: { type: string, format: date-time }
         command:
           type: array
           items: { type: string }
