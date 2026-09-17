@@ -8,6 +8,8 @@
 //
 // Whitebox `package sched` (matches existing pkg/sched tests).
 
+// spec: §6.2
+
 package sched
 
 import (
