@@ -2579,7 +2579,8 @@ type Store interface {
 	// from the wrapping error (empty when the failure did not map to a
 	// sentinel); message is the free-text debug string. Returns the
 	// refreshed row. Idempotent — a redeploy after a fix overwrites
-	// both columns.
+	// both columns. The active customer-visible stage is finalized in the
+	// same transaction, so a failed row never retains stage_state.current.
 	SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error)
 	// SetDeploymentFailedEx is the error-explanations cluster (spec
 	// §6.4 amendment 1) extension of SetDeploymentFailed. Writes the
@@ -2588,7 +2589,8 @@ type Store interface {
 	// `gregale inspect <slug> --errors` surfaces the same prose the
 	// deploy-time Problem emitted. Empty inputs map to NULL columns.
 	// Idempotent on (status='failed') rows — a redeploy after a fix
-	// overwrites all four columns. Returns the refreshed row.
+	// overwrites all four columns. The active customer-visible stage is
+	// finalized in the same transaction. Returns the refreshed row.
 	SetDeploymentFailedEx(
 		ctx context.Context, id, code, message, hint, why, fix string,
 		logs []api.LogExcerpt,

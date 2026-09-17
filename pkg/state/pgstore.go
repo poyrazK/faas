@@ -7440,14 +7440,19 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 			return err
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
+		stageState, err := failedDeploymentStageStateTx(ctx, tx, id, errMsg)
+		if err != nil {
+			return err
+		}
 		var appID string
 		tag, err := tx.Exec(ctx, `
 			update deployments
 			   set status = 'failed', error = $2, traffic_percent = 0,
 			       rollout_state = 'aborted', rollout_completed_at = null,
 			       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
-			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg))
+			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed'),
+			       stage_state = $3
+			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg), stageState)
 		if err != nil {
 			return err
 		}
@@ -10050,23 +10055,29 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 // existing error column. Returns the refreshed row.
 //
 // Idempotent on (status='failed') rows: a redeploy after a fix will
-// overwrite both columns.
+// overwrite both columns. When a stage is in flight, it is moved into
+// history with status="failed" in the same transaction.
 func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
+	if err != nil {
+		return Deployment{}, err
+	}
 	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
 		        traffic_percent = 0, rollout_state = 'aborted',
 		        rollout_completed_at = null,
 		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed'),
+		        stage_state = $4
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
-		id, nullString(message), nullString(code))
+		id, nullString(message), nullString(code), stageState)
 	failed, err := scanDeploymentWithRootfs(row)
 	if err != nil {
 		return Deployment{}, err
@@ -10078,6 +10089,42 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	return failed, nil
+}
+
+// failedDeploymentStageStateTx locks and finalizes the active customer stage
+// for a terminal failure. The caller owns the transaction, so the returned
+// JSON is written together with the status/error columns by the same UPDATE.
+func failedDeploymentStageStateTx(ctx context.Context, tx pgx.Tx, id, reason string) ([]byte, error) {
+	var raw []byte
+	var createdAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT stage_state, created_at
+		  FROM deployments
+		 WHERE id = $1
+		 FOR UPDATE`, id).Scan(&raw, &createdAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failedDeploymentStageStateTx: lock deployment: %w", err)
+	}
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	var stages StageState
+	if err := json.Unmarshal(raw, &stages); err != nil {
+		return nil, fmt.Errorf("failedDeploymentStageStateTx: decode stage state: %w", err)
+	}
+	if reason == "" {
+		reason = "deployment failed"
+	}
+	if !finalizeActiveDeploymentStage(&stages, createdAt, time.Now().UTC(), stageHistoryStatusFailed, reason) {
+		return raw, nil
+	}
+	encoded, err := json.Marshal(stages)
+	if err != nil {
+		return nil, fmt.Errorf("failedDeploymentStageStateTx: encode stage state: %w", err)
+	}
+	return encoded, nil
 }
 
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4
@@ -10098,10 +10145,8 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 // []api.LogExcerpt slice directly, with NULL → nil.
 //
 // Idempotent on (status='failed') rows: a redeploy after a fix
-// overwrites all four columns. The legacy SetDeploymentFailed
-// (above) stays in place for callers that have only the code +
-// message available (the imaged pre-build hook is the canonical
-// pre-cluster caller).
+// overwrites all four columns. As with SetDeploymentFailed, an active
+// customer-visible stage is finalized in the same transaction.
 func (s *PgStore) SetDeploymentFailedEx(
 	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
@@ -10111,6 +10156,10 @@ func (s *PgStore) SetDeploymentFailedEx(
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
+	if err != nil {
+		return Deployment{}, err
+	}
 	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
@@ -10119,12 +10168,13 @@ func (s *PgStore) SetDeploymentFailedEx(
 		        traffic_percent = 0, rollout_state = 'aborted',
 		        rollout_completed_at = null,
 		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed'),
+		        stage_state = $8
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
-		logsJSON)
+		logsJSON, stageState)
 	failed, err := scanDeploymentWithRootfs(row)
 	if err != nil {
 		return Deployment{}, err

@@ -6886,19 +6886,31 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 }
 
 func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	now := time.Now().UTC()
 	d.Status = DeployFailed
 	d.Error = message
 	d.TrafficPercent = 0
 	d.RolloutState = "aborted"
 	d.RolloutCompletedAt = nil
 	if d.RolloutAbortedAt == nil {
-		now := time.Now().UTC()
 		d.RolloutAbortedAt = &now
 	}
 	if message == "" {
 		message = "deployment failed"
 	}
 	d.RolloutAbortedReason = message
+	// Keep the in-memory backend aligned with the database failure fence:
+	// status and the customer-facing stage projection are one critical-section
+	// mutation, so a failed deployment never retains a live current stage.
+	if len(d.StageState) > 0 {
+		var stages StageState
+		if err := json.Unmarshal(d.StageState, &stages); err == nil &&
+			finalizeActiveDeploymentStage(&stages, d.CreatedAt, now, stageHistoryStatusFailed, message) {
+			if encoded, err := json.Marshal(stages); err == nil {
+				d.StageState = encoded
+			}
+		}
+	}
 	m.deployments[d.ID] = d
 
 	var fallbackID string
