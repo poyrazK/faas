@@ -3,11 +3,15 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
+	"sort"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,26 +40,51 @@ func NewPrivateNetworkRouteApplier(store state.Store, router PrivateNetworkRoute
 }
 
 func (a *PrivateNetworkRouteApplier) Apply(ctx context.Context, appID string, cidrs []netip.Prefix) error {
+	_, err := a.ApplyWithReport(ctx, appID, cidrs)
+	return err
+}
+
+// ApplyWithReport updates each live node once and returns the per-node
+// convergence result. A partial report is returned together with a joined
+// error when one or more nodes fail, allowing operators to see which node is
+// unhealthy while the attachment remains fail-closed.
+func (a *PrivateNetworkRouteApplier) ApplyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix) (privatenetwork.RouteApplyReport, error) {
 	rows, err := a.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
-		return err
+		return privatenetwork.RouteApplyReport{}, err
 	}
 	seen := make(map[string]struct{}, len(rows))
-	var errs []error
 	for _, ins := range rows {
 		if !state.IsLive(ins.State) || ins.NodeID == "" {
 			continue
 		}
-		if _, ok := seen[ins.NodeID]; ok {
+		seen[ins.NodeID] = struct{}{}
+	}
+	nodes := make([]string, 0, len(seen))
+	for nodeID := range seen {
+		nodes = append(nodes, nodeID)
+	}
+	sort.Strings(nodes)
+	report := privatenetwork.RouteApplyReport{Nodes: make([]privatenetwork.RouteNodeObservation, 0, len(nodes))}
+	var errs []error
+	for _, nodeID := range nodes {
+		if err := a.router.UpdatePrivateNetwork(ctx, nodeID, appID, cidrs); err != nil {
+			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
+			a.log.Warn("schedd: private network vmmd update failed", "app", appID, "node", nodeID, "err", err)
+			report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{
+				NodeID: nodeID,
+				Status: api.PrivateNetworkAttachmentStatusError,
+				Detail: err.Error(),
+			})
 			continue
 		}
-		seen[ins.NodeID] = struct{}{}
-		if err := a.router.UpdatePrivateNetwork(ctx, ins.NodeID, appID, cidrs); err != nil {
-			errs = append(errs, err)
-			a.log.Warn("schedd: private network vmmd update failed", "app", appID, "node", ins.NodeID, "err", err)
-		}
+		report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{
+			NodeID: nodeID,
+			Status: api.PrivateNetworkAttachmentStatusReady,
+			Detail: "routes applied",
+		})
 	}
-	return errors.Join(errs...)
+	return report, errors.Join(errs...)
 }
 
 // PrivateNetworkAttachmentSubscriber handles the one event the poll-based

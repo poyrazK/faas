@@ -83,6 +83,8 @@ func Run(t *testing.T, open Open) {
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
+		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
+		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
@@ -345,6 +347,148 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
+	}
+}
+
+func testPreviewLifecycle(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	expiresAt := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	create := func(slug string, prNumber int) state.App {
+		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+			AccountID:        fx.Account.ID,
+			Slug:             slug,
+			Type:             state.AppTypeApp,
+			Runtime:          "node22",
+			RAMMB:            limits.RAMMB,
+			MaxConcurrency:   limits.MaxConcurrency,
+			PreviewOfSlug:    fx.App.Slug,
+			PreviewPrNumber:  prNumber,
+			PreviewPrState:   state.PreviewPrStateOpen,
+			PreviewExpiresAt: &expiresAt,
+		}, limits)
+		if err != nil {
+			t.Fatalf("CreateAppIfUnderQuota(%s): %v", slug, err)
+		}
+		return app
+	}
+	developer := create("preview-dev-"+uuid.NewString()[:8], 0)
+	pr := create("preview-pr-"+uuid.NewString()[:8], 42)
+
+	byParent, err := fx.Store.PreviewAppsByParent(fx.Ctx, fx.Account.ID, fx.App.Slug)
+	if err != nil {
+		t.Fatalf("PreviewAppsByParent: %v", err)
+	}
+	if !containsAppIDs(byParent, developer.ID) || !containsAppIDs(byParent, pr.ID) {
+		t.Fatalf("PreviewAppsByParent = %+v, want both preview apps", byParent)
+	}
+	byAccount, err := fx.Store.ListPreviewsForAccount(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListPreviewsForAccount: %v", err)
+	}
+	if len(byAccount) != 2 || !containsAppIDs(byAccount, developer.ID) || !containsAppIDs(byAccount, pr.ID) {
+		t.Fatalf("ListPreviewsForAccount = %+v, want exactly both preview apps", byAccount)
+	}
+
+	if _, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, "invalid"); !errors.Is(err, state.ErrInvalidPreviewPrState) {
+		t.Fatalf("SetPreviewPrState(invalid) = %v, want ErrInvalidPreviewPrState", err)
+	}
+	updated, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, state.PreviewPrStateClosed)
+	if err != nil {
+		t.Fatalf("SetPreviewPrState(closed): %v", err)
+	}
+	if updated.PreviewPrState != state.PreviewPrStateClosed {
+		t.Fatalf("preview state = %q, want %q", updated.PreviewPrState, state.PreviewPrStateClosed)
+	}
+
+	commentedAt := time.Date(2026, 9, 17, 11, 0, 0, 0, time.UTC)
+	commented, err := fx.Store.StampPreviewDestroyCommentedAt(fx.Ctx, pr.ID, commentedAt)
+	if err != nil {
+		t.Fatalf("StampPreviewDestroyCommentedAt: %v", err)
+	}
+	if commented.PreviewDestroyCommentedAt == nil || !commented.PreviewDestroyCommentedAt.Equal(commentedAt) {
+		t.Fatalf("PreviewDestroyCommentedAt = %v, want %v", commented.PreviewDestroyCommentedAt, commentedAt)
+	}
+
+	teardown, err := fx.Store.ListPreviewsForTeardown(fx.Ctx, time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC), 1)
+	if err != nil {
+		t.Fatalf("ListPreviewsForTeardown: %v", err)
+	}
+	if len(teardown) != 1 {
+		t.Fatalf("ListPreviewsForTeardown = %d rows, want bounded result of 1", len(teardown))
+	}
+}
+
+func containsAppIDs(apps []state.App, want string) bool {
+	for _, app := range apps {
+		if app.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func testPRPreviewLease(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	oldExpiry := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	developer, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID:        fx.Account.ID,
+		Slug:             "dev-preview-" + uuid.NewString()[:8],
+		Type:             state.AppTypeApp,
+		Runtime:          "node22",
+		RAMMB:            limits.RAMMB,
+		MaxConcurrency:   limits.MaxConcurrency,
+		PreviewOfSlug:    fx.App.Slug,
+		PreviewPrState:   state.PreviewPrStateClosed,
+		PreviewExpiresAt: &oldExpiry,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(developer preview): %v", err)
+	}
+
+	newExpiry := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	refreshedDeveloper, err := fx.Store.RefreshDevSession(fx.Ctx, developer.ID, newExpiry)
+	if err != nil {
+		t.Fatalf("RefreshDevSession: %v", err)
+	}
+	if refreshedDeveloper.PreviewPrState != state.PreviewPrStateOpen {
+		t.Fatalf("developer PreviewPrState after refresh = %q, want %q", refreshedDeveloper.PreviewPrState, state.PreviewPrStateOpen)
+	}
+	if refreshedDeveloper.PreviewExpiresAt == nil || !refreshedDeveloper.PreviewExpiresAt.Equal(newExpiry) {
+		t.Fatalf("developer PreviewExpiresAt after refresh = %v, want %v", refreshedDeveloper.PreviewExpiresAt, newExpiry)
+	}
+	if _, err := fx.Store.RefreshDevSession(fx.Ctx, fx.App.ID, newExpiry); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RefreshDevSession(production app) = %v, want ErrNotFound", err)
+	}
+
+	preview, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID:        fx.Account.ID,
+		Slug:             "pr-42-" + uuid.NewString()[:8],
+		Type:             state.AppTypeApp,
+		Runtime:          "node22",
+		RAMMB:            limits.RAMMB,
+		MaxConcurrency:   limits.MaxConcurrency,
+		PreviewOfSlug:    fx.App.Slug,
+		PreviewPrNumber:  42,
+		PreviewPrState:   state.PreviewPrStateClosed,
+		PreviewExpiresAt: &oldExpiry,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(preview): %v", err)
+	}
+
+	refreshed, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, newExpiry)
+	if err != nil {
+		t.Fatalf("RefreshPRPreview: %v", err)
+	}
+	if refreshed.PreviewPrState != state.PreviewPrStateOpen {
+		t.Fatalf("PreviewPrState after refresh = %q, want %q", refreshed.PreviewPrState, state.PreviewPrStateOpen)
+	}
+	if refreshed.PreviewExpiresAt == nil || !refreshed.PreviewExpiresAt.Equal(newExpiry) {
+		t.Fatalf("PreviewExpiresAt after refresh = %v, want %v", refreshed.PreviewExpiresAt, newExpiry)
+	}
+
+	if _, err := fx.Store.RefreshPRPreview(fx.Ctx, fx.App.ID, newExpiry); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RefreshPRPreview(production app) = %v, want ErrNotFound", err)
 	}
 }
 

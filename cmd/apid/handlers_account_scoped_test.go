@@ -541,7 +541,7 @@ func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
 			}
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID)
 		case strings.Contains(query, "gateway_request_duration_seconds_bucket"):
-			return `{"data":{"resultType":"vector","result":[]}}`
+			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","le":"0.005"},"value":[1,"0"]},{"metric":{"app":"%s","le":"0.01"},"value":[1,"0"]},{"metric":{"app":"%s","le":"+Inf"},"value":[1,"0"]},{"metric":{"app":"%s","le":"0.005"},"value":[1,"0"]},{"metric":{"app":"%s","le":"0.01"},"value":[1,"0"]},{"metric":{"app":"%s","le":"+Inf"},"value":[1,"0"]}]}}`, active.ID, active.ID, active.ID, idle.ID, idle.ID, idle.ID)
 		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
 			if !strings.Contains(query, "gateway_wake_latency_seconds_count") || !strings.Contains(query, "or vector(0)") {
 				return `{"data":{"resultType":"vector","result":[{"value":[1,"NaN"]}]}}`
@@ -566,6 +566,15 @@ func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
 	}
 	if out.Apps[idle.Slug].ErrorRatePct != 0 || out.Apps[idle.Slug].ColdStartPct != 0 {
 		t.Fatalf("idle metrics: got %+v, want zero-valued ratios", out.Apps[idle.Slug])
+	}
+	for name, got := range map[string]float64{
+		"p50": out.Apps[idle.Slug].LatencyP50MS,
+		"p95": out.Apps[idle.Slug].LatencyP95MS,
+		"p99": out.Apps[idle.Slug].LatencyP99MS,
+	} {
+		if got != 0 {
+			t.Errorf("idle latency %s = %v, want 0 for an all-zero bucket family", name, got)
+		}
 	}
 }
 
@@ -696,6 +705,12 @@ func TestHistogramQuantile(t *testing.T) {
 			name:    "only +Inf bucket returns 0 (PromQL skips +Inf)",
 			q:       0.95,
 			buckets: map[string]float64{"+Inf": 42},
+			want:    0,
+		},
+		{
+			name:    "all-zero buckets return 0",
+			q:       0.95,
+			buckets: map[string]float64{"0.005": 0, "0.01": 0, "+Inf": 0},
 			want:    0,
 		},
 		{

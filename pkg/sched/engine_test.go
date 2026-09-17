@@ -479,6 +479,41 @@ func (n *fakeNotifier) reset() {
 	n.events = nil
 }
 
+func TestEmitInstanceChanged_MarksJobLifecycle(t *testing.T) {
+	n := &fakeNotifier{}
+	e := &Engine{notif: n, log: testLog()}
+	ctx := context.Background()
+
+	e.emitInstanceChanged(ctx, "job-instance-1", "", state.StateRunning, "wake-1")
+	e.emitInstanceChanged(ctx, "job-instance-1", "", state.StateStopped, "wake-1")
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.events) != 2 {
+		t.Fatalf("notifications = %d, want 2", len(n.events))
+	}
+	for _, event := range n.events {
+		if event.channel != db.NotifyInstanceChanged {
+			t.Fatalf("channel = %q, want %q", event.channel, db.NotifyInstanceChanged)
+		}
+		var payload struct {
+			Kind       string `json:"kind"`
+			AppID      string `json:"app_id"`
+			InstanceID string `json:"instance_id"`
+			State      string `json:"state"`
+		}
+		if err := json.Unmarshal([]byte(event.payload), &payload); err != nil {
+			t.Fatalf("decode payload %q: %v", event.payload, err)
+		}
+		if payload.Kind != "job" || payload.AppID != "" || payload.InstanceID != "job-instance-1" {
+			t.Errorf("payload = %+v, want typed job instance", payload)
+		}
+		if payload.State != string(state.StateRunning) && payload.State != string(state.StateStopped) {
+			t.Errorf("state = %q, want running or stopped", payload.State)
+		}
+	}
+}
+
 func testLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // seedApp builds an account + app + live deployment in a MemStore and returns

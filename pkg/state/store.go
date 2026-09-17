@@ -1687,6 +1687,9 @@ type Store interface {
 	// preview rows with preview_pr_number=0; the implementation must refuse
 	// ordinary PR previews and production apps.
 	RefreshDevSession(ctx context.Context, appID string, expiresAt time.Time) (App, error)
+	// RefreshPRPreview renews a pull-request preview lease and restores its
+	// serving state to open. It refuses developer previews and production apps.
+	RefreshPRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961
 	// leaf 3) records that the one-click PR comment destroy hint
 	// was posted to GitHub for this preview row. githubd's
@@ -2579,7 +2582,8 @@ type Store interface {
 	// from the wrapping error (empty when the failure did not map to a
 	// sentinel); message is the free-text debug string. Returns the
 	// refreshed row. Idempotent — a redeploy after a fix overwrites
-	// both columns.
+	// both columns. The active customer-visible stage is finalized in the
+	// same transaction, so a failed row never retains stage_state.current.
 	SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error)
 	// SetDeploymentFailedEx is the error-explanations cluster (spec
 	// §6.4 amendment 1) extension of SetDeploymentFailed. Writes the
@@ -2588,7 +2592,8 @@ type Store interface {
 	// `gregale inspect <slug> --errors` surfaces the same prose the
 	// deploy-time Problem emitted. Empty inputs map to NULL columns.
 	// Idempotent on (status='failed') rows — a redeploy after a fix
-	// overwrites all four columns. Returns the refreshed row.
+	// overwrites all four columns. The active customer-visible stage is
+	// finalized in the same transaction. Returns the refreshed row.
 	SetDeploymentFailedEx(
 		ctx context.Context, id, code, message, hint, why, fix string,
 		logs []api.LogExcerpt,
@@ -3792,6 +3797,9 @@ type Store interface {
 	ListDeadLetterEvents(ctx context.Context, appID string, limit int, before string) ([]DeadLetterEvent, error)
 	DeadLetterEventByID(ctx context.Context, appID, eventID string) (DeadLetterEvent, error)
 	ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error)
+	ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
+	DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error
+	DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
 	// ListExpiredTriggerRecordsForReaper (ADR-134 PR-E) returns
 	// trigger_records IDs whose result_retention_until is in
 	// the past.
@@ -4009,17 +4017,17 @@ type Store interface {
 	// — see pkg/api/limits.go::PerAppMetricsAllowed). Returns 0 on
 	// an empty app, a degraded store call, or when the events
 	// table predates the post-ADR-123 schema (pre-ADR-123
-	// boot_started rows carry no app_id field, so the cast
-	// returns NULL which COUNT(*) coerces to 0).
+	// boot_started rows carry no app_id field, so the text predicate
+	// simply does not match).
 	//
-	// Performance: the (data->>'app_id')::uuid predicate is NOT
+	// Performance: the data->>'app_id' predicate is NOT
 	// covered by the existing events_wake_id_idx jsonb expression
 	// index (migration 00114 indexes data->>'wake_id', not app_id).
 	// On a Scale-tier app with a large wake fleet the planner will
-	// seq-scan the trailing-24h wake.boot_started rows and
-	// re-evaluate the jsonb cast per row. A follow-up migration
+	// seq-scan the trailing-24h wake.boot_started rows. A follow-up migration
 	// adding a covering index on (data->>'app_id', at) is tracked
-	// separately.
+	// separately. Blank or malformed app IDs are rejected before SQL
+	// execution so callers never issue an empty UUID cast.
 	CountWakeBootStarted24h(ctx context.Context, appID string) (int64, error)
 	// ListAllInstances returns every instance on the box, ordered newest
 	// first. schedd's G7 reaper warm-passes this slice to the conntrack

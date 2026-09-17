@@ -19,7 +19,14 @@ const (
 	TokenHeader = "X-Gregale-Outbound-Token"
 	AppHeader   = "X-Gregale-App-ID"
 	Prefix      = "/i/"
+
+	defaultMaxBodyBytes           int64 = 25 << 20
+	defaultMaxResponseBytes       int64 = 25 << 20
+	defaultMaxResponseHeaderBytes int64 = 64 << 10
+	defaultMaxResponseHeaders           = 128
 )
+
+var errResponseBodyTooLarge = errors.New("outbound response body exceeds gateway limit")
 
 var hopByHopHeaders = map[string]struct{}{
 	"Connection": {}, "Keep-Alive": {}, "Proxy-Authenticate": {},
@@ -30,11 +37,14 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
-	Resolver     Resolver
-	Backend      Backend
-	Client       *http.Client
-	Metrics      *Metrics
-	MaxBodyBytes int64
+	Resolver               Resolver
+	Backend                Backend
+	Client                 *http.Client
+	Metrics                *Metrics
+	MaxBodyBytes           int64
+	MaxResponseBytes       int64
+	MaxResponseHeaderBytes int64
+	MaxResponseHeaders     int
 }
 
 func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handler, error) {
@@ -57,7 +67,15 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 	if client.Transport == nil {
 		client.Transport = http.DefaultTransport
 	}
-	return &Handler{Resolver: resolver, Backend: backend, Client: client, MaxBodyBytes: 25 << 20}, nil
+	return &Handler{
+		Resolver:               resolver,
+		Backend:                backend,
+		Client:                 client,
+		MaxBodyBytes:           defaultMaxBodyBytes,
+		MaxResponseBytes:       defaultMaxResponseBytes,
+		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
+		MaxResponseHeaders:     defaultMaxResponseHeaders,
+	}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +126,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
 		return
 	}
+	if h.MaxBodyBytes > 0 {
+		// ContentLength is -1 for chunked requests. Always wrap the body so
+		// the same cap applies when the caller omits a length or lies about it.
+		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
+	}
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
@@ -157,11 +180,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.Client.Do(upstreamReq)
 	if err != nil {
 		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
+			return
+		}
 		writeProblem(w, http.StatusBadGateway, "outbound_upstream_unavailable", "Outbound provider could not be reached", "1")
 		return
 	}
 	h.Metrics.ObserveUpstream(integration.ID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()
+	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
+		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		writeProblem(w, http.StatusBadGateway, "outbound_response_headers_too_large", "Outbound provider response headers exceed the gateway limit", "")
+		return
+	}
+	if h.MaxResponseBytes > 0 && resp.ContentLength > h.MaxResponseBytes {
+		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
+		return
+	}
 	for k, values := range resp.Header {
 		if isHopByHop(resp.Header, k) {
 			continue
@@ -171,7 +209,56 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	if h.MaxResponseBytes <= 0 {
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
+	capWriter := &responseBodyCapWriter{ResponseWriter: w, limit: h.MaxResponseBytes}
+	if _, err := io.Copy(capWriter, resp.Body); errors.Is(err, errResponseBodyTooLarge) {
+		// Headers and the upstream status are already committed, so this
+		// path terminates the body at the cap instead of attempting to write
+		// a second response envelope.
+		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+	}
+}
+
+func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int) bool {
+	var totalBytes int64
+	var count int
+	for name, values := range headers {
+		for _, value := range values {
+			count++
+			totalBytes += int64(len(name) + len(value))
+			if (maxCount > 0 && count > maxCount) || (maxBytes > 0 && totalBytes > maxBytes) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type responseBodyCapWriter struct {
+	http.ResponseWriter
+	limit   int64
+	written int64
+}
+
+func (w *responseBodyCapWriter) Write(p []byte) (int, error) {
+	remaining := w.limit - w.written
+	if remaining <= 0 {
+		return 0, errResponseBodyTooLarge
+	}
+	if int64(len(p)) > remaining {
+		n, err := w.ResponseWriter.Write(p[:remaining])
+		w.written += int64(n)
+		if err != nil {
+			return n, err
+		}
+		return n, errResponseBodyTooLarge
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.written += int64(n)
+	return n, err
 }
 
 func parsePath(path string) (string, string, bool) {

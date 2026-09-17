@@ -106,6 +106,23 @@ func TestNewClientWithDeployTimeout(t *testing.T) {
 	})
 }
 
+func TestGetJobTaskLogsWithMaxBytes_PassesQuery(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"task_status":"succeeded","log_content":"tail","truncated":true,"max_bytes":9}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.GetJobTaskLogsWithMaxBytes(context.Background(), "job-name", "run", 0, 9); err != nil {
+		t.Fatalf("GetJobTaskLogsWithMaxBytes: %v", err)
+	}
+	if gotPath != "/v1/jobs/job-name/runs/run/tasks/0/logs?max_bytes=9" {
+		t.Fatalf("RequestURI = %q, want max_bytes query", gotPath)
+	}
+}
+
 // --- Problem / APIError -------------------------------------------------------
 
 // TestAPIError_Error_SingleLine locks the SDK contract: APIError is

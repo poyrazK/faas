@@ -155,6 +155,15 @@
             state: absent
           when: faas_pki_action_required and not faas_pki_resume_activation
 
+        - name: pki renewal — recreate target export staging parent
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_export }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
         - name: pki renewal — export active trust material without ca.key
           ansible.builtin.command:
             argv: >-

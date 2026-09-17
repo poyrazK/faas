@@ -253,6 +253,61 @@ func TestCmdJobsLogs_AllowsZeroBasedIndex(t *testing.T) {
 	}
 }
 
+func TestCmdJobsLogs_ForwardsMaxBytesAfterPositionals(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"task_status":"succeeded","log_content":"tail","truncated":true,"max_bytes":9}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+
+	if code := cmdJobsLogs([]string{"valid-slug", "00000000-0000-0000-0000-000000000000", "0", "--max-bytes", "9"}); code != 0 {
+		t.Fatalf("cmdJobsLogs = %d, want 0", code)
+	}
+	if gotQuery != "max_bytes=9" {
+		t.Fatalf("query = %q, want max_bytes=9", gotQuery)
+	}
+}
+
+func TestCmdJobsLogs_ForwardsMaxBytesBeforePositionals(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"task_status":"succeeded","log_content":"tail","truncated":true,"max_bytes":10}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+
+	if code := cmdJobsLogs([]string{"--max-bytes=10", "valid-slug", "00000000-0000-0000-0000-000000000000", "0"}); code != 0 {
+		t.Fatalf("cmdJobsLogs = %d, want 0", code)
+	}
+	if gotQuery != "max_bytes=10" {
+		t.Fatalf("query = %q, want max_bytes=10", gotQuery)
+	}
+}
+
+func TestCmdJobsLogs_RejectsMaxBytesOutOfRange(t *testing.T) {
+	for _, value := range []string{"0", "1048577", "not-a-number"} {
+		code, captured := runWithStderr(t, func() int {
+			return cmdJobsLogs([]string{"valid-slug", "00000000-0000-0000-0000-000000000000", "0", "--max-bytes", value})
+		})
+		if code != 1 || !strings.Contains(captured, "max-bytes") {
+			t.Errorf("max-bytes=%q: code=%d stderr=%q", value, code, captured)
+		}
+	}
+}
+
 // TestJobSlugPattern_Exhaustive verifies the regex accepts the
 // canonical valid slugs and rejects the canonical invalid
 // ones. Pinning this table-driven sweep means a future

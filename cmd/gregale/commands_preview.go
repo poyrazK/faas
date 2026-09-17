@@ -155,21 +155,11 @@ func cmdPreviewShow(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	app, err := client.GetApp(ctx, args[0])
+	preview, err := client.GetPreviewStatus(ctx, args[0])
 	if err != nil {
 		return printErr("Could not load preview", err)
 	}
-	if app.PreviewOfSlug == "" {
-		return printErr("Not a preview", fmt.Errorf("%q is a production app; preview show expects a preview slug", args[0]))
-	}
-	var deployment *api.DeploymentResponse
-	latest, err := client.GetLatestAppDeployment(ctx, args[0])
-	if err == nil {
-		deployment = &latest
-	} else if !isNotFound(err) {
-		return printErr("Could not load latest preview deployment", err)
-	}
-	item := previewSummaryFromApp(app, deployment)
+	item := previewSummaryFromApp(preview.App, preview.LatestDeployment)
 	if jsonOutput {
 		return jsonOut(writeJSON(item))
 	}

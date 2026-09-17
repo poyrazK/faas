@@ -121,6 +121,35 @@ func TestPrivateNetworkRouteApplierAttemptsEveryLiveNodeAfterFailure(t *testing.
 	}
 }
 
+func TestPrivateNetworkRouteApplierReportsPerNodeHealth(t *testing.T) {
+	const appID = "app-private-report"
+	store := newPrivateNetworkInstanceStore(t, appID,
+		struct{ state, node string }{string(state.StateRunning), "node-b"},
+		struct{ state, node string }{string(state.StateRunning), "node-a"},
+		struct{ state, node string }{string(state.StateRunning), "node-a"},
+	)
+	wantErr := errors.New("vmmd unavailable")
+	router := &privateNetworkRouterFake{errByNode: map[string]error{"node-b": wantErr}}
+	applier := NewPrivateNetworkRouteApplier(store, router, nil)
+
+	report, err := applier.ApplyWithReport(context.Background(), appID, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ApplyWithReport error = %v, want %v", err, wantErr)
+	}
+	if len(report.Nodes) != 2 {
+		t.Fatalf("report nodes = %+v, want one entry per live node", report.Nodes)
+	}
+	if report.Nodes[0].NodeID != "node-a" || report.Nodes[0].Status != api.PrivateNetworkAttachmentStatusReady {
+		t.Fatalf("node-a report = %+v, want ready", report.Nodes[0])
+	}
+	if report.Nodes[1].NodeID != "node-b" || report.Nodes[1].Status != api.PrivateNetworkAttachmentStatusError {
+		t.Fatalf("node-b report = %+v, want error", report.Nodes[1])
+	}
+	if report.Nodes[1].Detail != wantErr.Error() {
+		t.Fatalf("node-b detail = %q, want %q", report.Nodes[1].Detail, wantErr)
+	}
+}
+
 func TestPrivateNetworkAttachmentSubscriberClearsDetachedRoutes(t *testing.T) {
 	const appID = "app-private-detach"
 	store := newPrivateNetworkInstanceStore(t, appID,

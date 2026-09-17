@@ -111,6 +111,10 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 	if err != nil {
 		return api.DebugRunningResponse{}, err
 	}
+	active, err := s.currentDebugRunningInstances(ctx, app.ID)
+	if err != nil {
+		return api.DebugRunningResponse{}, err
+	}
 
 	history := make([]api.DebugRunningObservation, 0, limit)
 	for _, row := range events {
@@ -153,7 +157,7 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 	}
 	var current []api.DebugRunningCause
 	var currentObservedAt string
-	if len(history) > 0 {
+	if active && len(history) > 0 {
 		config.ConfiguredMinInstances = history[0].ConfiguredMinInstances
 		config.EffectiveMinInstances = history[0].EffectiveMinInstances
 		config.PrewarmMinInstances = history[0].PrewarmMinInstances
@@ -174,6 +178,33 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 		History:           history,
 		HistoryTruncated:  len(history) == limit,
 	}, nil
+}
+
+// currentDebugRunningInstances checks the live-instance set independently of
+// the durable explanation stream. A scheduler observation is historical by
+// definition; it is only eligible for the response's `current` field while
+// at least one resident instance still exists. PgStore and MemStore expose a
+// bounded query for this purpose; the fallback keeps focused test doubles
+// compatible with the broader Store interface.
+func (s *server) currentDebugRunningInstances(ctx context.Context, appID string) (bool, error) {
+	var (
+		instances []state.Instance
+		err       error
+	)
+	if lister, ok := s.store.(activeInstancesLister); ok {
+		instances, err = lister.ListActiveInstancesForApp(ctx, appID, 1)
+	} else {
+		instances, err = s.store.ListInstancesForApp(ctx, appID)
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, instance := range instances {
+		if state.IsLive(instance.State) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // enrichRunningRequestAttribution adds request/route evidence to request

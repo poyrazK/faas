@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestCmdDeploysStatus_HappyPath — A1: a successful status fetch
@@ -276,10 +279,11 @@ func TestCmdDeploysStatus_InvalidIDFailsFast(t *testing.T) {
 	}
 }
 
-// TestCmdDeploysStatus_JSON — A1: --json emits the typed
-// StageState envelope (current + history). Mirrors
-// cmdDeploysShow_JSON so the two subcommands share the same
-// wire-shape contract.
+// TestCmdDeploysStatus_JSON — issue #2689: --json emits a status
+// envelope with the typed StageState, terminal status, and the
+// derived terminal timestamp. The deployment fields are embedded
+// at the top level so existing DeploymentResponse consumers can
+// read status/error fields without a second nested decode.
 func TestCmdDeploysStatus_JSON(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	srv := showServerDual(t,
@@ -299,16 +303,89 @@ func TestCmdDeploysStatus_JSON(t *testing.T) {
 		t.Fatalf("cmdDeploysStatus --json = %d, want 0", code)
 	}
 	var got struct {
-		Current string           `json:"current"`
-		History []map[string]any `json:"history"`
+		Status     string `json:"status"`
+		StageState struct {
+			Current string           `json:"current"`
+			History []map[string]any `json:"history"`
+		} `json:"stage_state"`
+		TerminalAt string `json:"terminal_at"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal --json output: %v\nraw: %s", err, stdout.String())
 	}
-	if got.Current != "readiness" {
-		t.Errorf("current: got %q, want %q", got.Current, "readiness")
+	if got.Status != "live" {
+		t.Errorf("status: got %q, want %q", got.Status, "live")
 	}
-	if len(got.History) != 6 {
-		t.Errorf("history len: got %d, want 6 (closed set)", len(got.History))
+	if got.StageState.Current != "readiness" {
+		t.Errorf("stage_state.current: got %q, want %q", got.StageState.Current, "readiness")
+	}
+	if len(got.StageState.History) != 6 {
+		t.Errorf("stage_state.history len: got %d, want 6 (closed set)", len(got.StageState.History))
+	}
+	wantTerminalAt := now.Add(-30 * time.Second).Format(time.RFC3339)
+	if got.TerminalAt != wantTerminalAt {
+		t.Errorf("terminal_at: got %q, want %q", got.TerminalAt, wantTerminalAt)
+	}
+}
+
+// TestCmdDeploysStatus_JSONFailed pins the failure payload that
+// automation needs to remediate a failed deployment. The status
+// envelope must retain the persisted error code, explanation, fix,
+// and bounded relevant logs that human mode renders below the stage
+// table.
+func TestCmdDeploysStatus_JSONFailed(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	bytes := stageStateAllCompleted(now)
+	var ss map[string]any
+	if err := json.Unmarshal(bytes, &ss); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	hist := ss["history"].([]any)
+	imageBuildRow := hist[2].(map[string]any)
+	imageBuildRow["status"] = "failed"
+	imageBuildRow["reason"] = "out of memory"
+	imageBuildRow["ended_at"] = now.Add(-10 * time.Second).Format(time.RFC3339Nano)
+	failedSS, _ := json.Marshal(ss)
+
+	srv := showServerDual(t, failedSS, deploymentResponseFailed(showTestID, now), showServerHooks{})
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stdout, restoreStdout := swapStdout(t)
+	defer restoreStdout()
+	jsonOutput = true
+	defer func() { jsonOutput = false }()
+
+	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+		t.Fatalf("cmdDeploysStatus failed --json = %d, want 0", code)
+	}
+	var got struct {
+		Status            string           `json:"status"`
+		Error             string           `json:"error"`
+		ErrorCode         string           `json:"error_code"`
+		ErrorHint         string           `json:"error_hint"`
+		ErrorWhy          string           `json:"error_why"`
+		ErrorFix          string           `json:"error_fix"`
+		ErrorRelevantLogs []api.LogExcerpt `json:"error_relevant_logs"`
+		StageState        state.StageState `json:"stage_state"`
+		TerminalAt        string           `json:"terminal_at"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal failed --json output: %v\nraw: %s", err, stdout.String())
+	}
+	if got.Status != "failed" {
+		t.Errorf("status: got %q, want failed", got.Status)
+	}
+	if got.ErrorCode != "image_not_found" || got.Error == "" || got.ErrorHint == "" || got.ErrorWhy == "" || got.ErrorFix == "" {
+		t.Errorf("missing persisted failure guidance: %+v", got)
+	}
+	if len(got.ErrorRelevantLogs) != 1 || got.ErrorRelevantLogs[0].Message != "manifest unknown" {
+		t.Errorf("error_relevant_logs: got %+v, want bounded manifest excerpt", got.ErrorRelevantLogs)
+	}
+	if got.StageState.Current != "readiness" || len(got.StageState.History) != 6 {
+		t.Errorf("stage_state not preserved: current=%q history=%d", got.StageState.Current, len(got.StageState.History))
+	}
+	wantTerminalAt := now.Add(-10 * time.Second).Format(time.RFC3339)
+	if got.TerminalAt != wantTerminalAt {
+		t.Errorf("terminal_at: got %q, want %q", got.TerminalAt, wantTerminalAt)
 	}
 }

@@ -22,18 +22,22 @@ import (
 // cmdPreview dispatches the `gregale preview` sub-commands.
 func cmdPreview(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale preview <list|show|destroy> [args]", "preview")
+		PrintUsage(os.Stderr, "usage: gregale preview <create|list|show|wait|destroy> [args]", "preview")
 		return 1
 	}
 	switch args[0] {
+	case "create":
+		return cmdPreviewCreate(args[1:])
 	case "list":
 		return cmdPreviewList(args[1:])
 	case "show":
 		return cmdPreviewShow(args[1:])
+	case "wait":
+		return cmdPreviewWait(args[1:])
 	case "destroy":
 		return cmdPreviewDestroy(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: list, show, destroy)\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: create, list, show, wait, destroy)\n", args[0])
 		return 1
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // showTestID is the 32-hex deployment id used across all show-summary
@@ -468,6 +469,39 @@ func TestCmdDeploysShow_WithStatusFlag(t *testing.T) {
 	// footer's deriveTerminalAt returns *that* row's StartedAt.
 	if !strings.Contains(got, "live since") {
 		t.Errorf("expected 'live since' footer with --status\nfull: %s", got)
+	}
+}
+
+// TestCmdDeploysShow_WithStatusJSON matches the status subcommand's
+// machine-readable contract when --status is selected. Without the
+// flag, deploys show remains the stage-only JSON surface for backwards
+// compatibility.
+func TestCmdDeploysShow_WithStatusJSON(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	srv := showServerDual(t,
+		stageStateAllCompleted(now),
+		deploymentResponseLive(showTestID, now),
+		showServerHooks{},
+	)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stdout, restoreStdout := swapStdout(t)
+	defer restoreStdout()
+	jsonOutput = true
+	defer func() { jsonOutput = false }()
+
+	if code := cmdDeploysShow([]string{"--status", showTestID}); code != 0 {
+		t.Fatalf("cmdDeploysShow --status --json = %d, want 0", code)
+	}
+	var got deployStatusJSON
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal --status --json output: %v\nraw: %s", err, stdout.String())
+	}
+	if got.Status != "live" || got.StageState.Current != state.StageReadiness {
+		t.Errorf("status envelope: status=%q current=%q", got.Status, got.StageState.Current)
+	}
+	if got.TerminalAt == nil || !got.TerminalAt.Equal(now.Add(-30*time.Second)) {
+		t.Errorf("terminal_at: got %v, want %s", got.TerminalAt, now.Add(-30*time.Second).Format(time.RFC3339))
 	}
 }
 

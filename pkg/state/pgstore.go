@@ -2629,6 +2629,24 @@ func (s *PgStore) RefreshDevSession(ctx context.Context, appID string, expiresAt
 	return a, nil
 }
 
+// RefreshPRPreview renews a pull-request preview lease and reopens it. The
+// positive PR-number guard keeps this path separate from developer sessions.
+func (s *PgStore) RefreshPRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2, preview_expires_at = $3
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) > 0
+		  and status <> 'deleted'
+		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
 // StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961 leaf 3)
 // records that the one-click PR comment destroy hint was posted
 // to GitHub for this preview row. githubd's previewCommentOnce
@@ -7440,14 +7458,19 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 			return err
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
+		stageState, err := failedDeploymentStageStateTx(ctx, tx, id, errMsg)
+		if err != nil {
+			return err
+		}
 		var appID string
 		tag, err := tx.Exec(ctx, `
 			update deployments
 			   set status = 'failed', error = $2, traffic_percent = 0,
 			       rollout_state = 'aborted', rollout_completed_at = null,
 			       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
-			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg))
+			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed'),
+			       stage_state = $3
+			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg), stageState)
 		if err != nil {
 			return err
 		}
@@ -10050,23 +10073,29 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 // existing error column. Returns the refreshed row.
 //
 // Idempotent on (status='failed') rows: a redeploy after a fix will
-// overwrite both columns.
+// overwrite both columns. When a stage is in flight, it is moved into
+// history with status="failed" in the same transaction.
 func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
+	if err != nil {
+		return Deployment{}, err
+	}
 	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
 		        traffic_percent = 0, rollout_state = 'aborted',
 		        rollout_completed_at = null,
 		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed'),
+		        stage_state = $4
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
-		id, nullString(message), nullString(code))
+		id, nullString(message), nullString(code), stageState)
 	failed, err := scanDeploymentWithRootfs(row)
 	if err != nil {
 		return Deployment{}, err
@@ -10078,6 +10107,42 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	return failed, nil
+}
+
+// failedDeploymentStageStateTx locks and finalizes the active customer stage
+// for a terminal failure. The caller owns the transaction, so the returned
+// JSON is written together with the status/error columns by the same UPDATE.
+func failedDeploymentStageStateTx(ctx context.Context, tx pgx.Tx, id, reason string) ([]byte, error) {
+	var raw []byte
+	var createdAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT stage_state, created_at
+		  FROM deployments
+		 WHERE id = $1
+		 FOR UPDATE`, id).Scan(&raw, &createdAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failedDeploymentStageStateTx: lock deployment: %w", err)
+	}
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	var stages StageState
+	if err := json.Unmarshal(raw, &stages); err != nil {
+		return nil, fmt.Errorf("failedDeploymentStageStateTx: decode stage state: %w", err)
+	}
+	if reason == "" {
+		reason = "deployment failed"
+	}
+	if !finalizeActiveDeploymentStage(&stages, createdAt, time.Now().UTC(), stageHistoryStatusFailed, reason) {
+		return raw, nil
+	}
+	encoded, err := json.Marshal(stages)
+	if err != nil {
+		return nil, fmt.Errorf("failedDeploymentStageStateTx: encode stage state: %w", err)
+	}
+	return encoded, nil
 }
 
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4
@@ -10098,10 +10163,8 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 // []api.LogExcerpt slice directly, with NULL → nil.
 //
 // Idempotent on (status='failed') rows: a redeploy after a fix
-// overwrites all four columns. The legacy SetDeploymentFailed
-// (above) stays in place for callers that have only the code +
-// message available (the imaged pre-build hook is the canonical
-// pre-cluster caller).
+// overwrites all four columns. As with SetDeploymentFailed, an active
+// customer-visible stage is finalized in the same transaction.
 func (s *PgStore) SetDeploymentFailedEx(
 	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
@@ -10111,6 +10174,10 @@ func (s *PgStore) SetDeploymentFailedEx(
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
+	if err != nil {
+		return Deployment{}, err
+	}
 	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
@@ -10119,12 +10186,13 @@ func (s *PgStore) SetDeploymentFailedEx(
 		        traffic_percent = 0, rollout_state = 'aborted',
 		        rollout_completed_at = null,
 		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed'),
+		        stage_state = $8
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
-		logsJSON)
+		logsJSON, stageState)
 	failed, err := scanDeploymentWithRootfs(row)
 	if err != nil {
 		return Deployment{}, err
@@ -17710,29 +17778,37 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 // literal, which would always return 0). See the rationale
 // comment at pkg/state/queries.sql for the full story.
 //
-// Performance note: the (data->>'app_id')::uuid predicate is NOT
+// Performance note: the data->>'app_id' predicate is NOT
 // covered by the existing events_wake_id_idx jsonb expression
 // index (migration 00114 indexes data->>'wake_id', not app_id).
 // On a Scale-tier app with a large wake fleet the planner will
-// seq-scan the trailing-24h wake.boot_started rows and
-// re-evaluate the jsonb cast per row. The PR description's
+// seq-scan the trailing-24h wake.boot_started rows. The PR description's
 // "sub-second via the existing index" claim was therefore wrong;
 // a follow-up migration adding a covering index on
-// (data->>'app_id', at) is tracked separately. Returns 0 on an
+// (data->>'app_id', at) is tracked separately. Blank app IDs return
+// zero before SQL execution. Returns 0 on an
 // empty app, a degraded store call, or when the events table
 // predates the post-ADR-123 schema (pre-ADR-123 boot_started
-// rows carry no app_id field, so the cast returns NULL which
-// COUNT(DISTINCT wake_id) coerces to 0 — same posture as the wake-timeline
+// rows carry no app_id field, so the text predicate simply does not
+// match — same posture as the wake-timeline
 // view's `WakeCountWithMeta` denominator at
 // cmd/apid/handlers_dashboard.go:2659).
 func (s *PgStore) CountWakeBootStarted24h(ctx context.Context, appID string) (int64, error) {
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return 0, nil
+	}
+	parsed, err := uuid.Parse(appID)
+	if err != nil {
+		return 0, fmt.Errorf("CountWakeBootStarted24h: invalid app id %q", appID)
+	}
 	const q = `SELECT COUNT(DISTINCT data->>'wake_id') FROM events
 WHERE kind = 'wake.boot_started'
-  AND (data->>'app_id')::uuid = $1::uuid
+  AND data->>'app_id' = $1
   AND data->>'wake_id' IS NOT NULL
   AND at >= now() - interval '24 hours'`
 	var n int64
-	if err := s.pool.QueryRow(ctx, q, appID).Scan(&n); err != nil {
+	if err := s.pool.QueryRow(ctx, q, parsed.String()).Scan(&n); err != nil {
 		return 0, fmt.Errorf("CountWakeBootStarted24h: %w", err)
 	}
 	return n, nil
@@ -27122,7 +27198,132 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 		return DeadLetterEvent{}, err
 	}
 
+	now, err := replayDeadLetterEventTx(ctx, tx, accountID, appID, ev)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
+	ev.ReplayedAt = &now
+	if err = tx.Commit(ctx); err != nil {
+		return DeadLetterEvent{}, err
+	}
+	return ev, nil
+}
+
+// ReplayDeadLetterEvents replays up to limit pending events in one transaction.
+// Row locks use SKIP LOCKED so concurrent operators do not contend on the
+// same ledger page; each source reset and audit stamp commits atomically.
+func (s *PgStore) ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	rows, err := tx.Query(ctx, `
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1 and app_id = $2 and replayed_at is null
+		 order by last_failed_at desc, id desc
+		 limit $3
+		 for update skip locked`, accountID, appID, limit)
+	if err != nil {
+		return 0, err
+	}
+	events, err := scanDeadLetterEvents(rows)
+	if err != nil {
+		return 0, err
+	}
+	replayed := 0
+	for _, ev := range events {
+		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, appID, ev); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return 0, err
+		}
+		replayed++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return replayed, nil
+}
+
+// DeleteDeadLetterEvent purges the ledger row while leaving its source row in
+// dead_letter. This is an explicit operator acknowledgement, not a replay or
+// destructive source deletion.
+func (s *PgStore) DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error {
+	tag, err := s.pool.Exec(ctx, `delete from dead_letter_events where id = $1 and app_id = $2 and account_id = $3`, eventID, appID, accountID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteDeadLetterEvents purges up to limit ledger rows in one transaction.
+// Source invocation and trigger rows remain dead-lettered for audit safety.
+func (s *PgStore) DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	rows, err := tx.Query(ctx, `
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1 and app_id = $2
+		 order by last_failed_at desc, id desc
+		 limit $3
+		 for update skip locked`, accountID, appID, limit)
+	if err != nil {
+		return 0, err
+	}
+	events, err := scanDeadLetterEvents(rows)
+	if err != nil {
+		return 0, err
+	}
+	purged := 0
+	for _, ev := range events {
+		tag, err := tx.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2 and app_id = $3`, ev.ID, accountID, appID)
+		if err != nil {
+			return 0, err
+		}
+		purged += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return purged, nil
+}
+
+const (
+	deadLetterEventsDefaultLimit = 20
+	deadLetterEventsMaxLimit     = 200
+)
+
+func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID string, ev DeadLetterEvent) (time.Time, error) {
 	var tag pgconn.CommandTag
+	var err error
 	switch ev.Source {
 	case "invocation":
 		tag, err = tx.Exec(ctx, `
@@ -27146,24 +27347,19 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 			_, err = tx.Exec(ctx, `delete from trigger_dead_letter where record_id = $1`, ev.SourceID)
 		}
 	default:
-		return DeadLetterEvent{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
+		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}
 	if err != nil {
-		return DeadLetterEvent{}, err
+		return time.Time{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		return DeadLetterEvent{}, ErrNotFound
+		return time.Time{}, ErrNotFound
 	}
-
 	now := time.Now().UTC()
-	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, eventID); err != nil {
-		return DeadLetterEvent{}, err
+	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, ev.ID); err != nil {
+		return time.Time{}, err
 	}
-	ev.ReplayedAt = &now
-	if err = tx.Commit(ctx); err != nil {
-		return DeadLetterEvent{}, err
-	}
-	return ev, nil
+	return now, nil
 }
 
 func scanDeadLetterEvents(rows pgx.Rows) ([]DeadLetterEvent, error) {

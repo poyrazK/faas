@@ -8004,7 +8004,20 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 	// string keeps the JSON key present so the SSE subscriber can use
 	// a fixed parse path; dashboard queries can read wake_id back off
 	// the instances row when needed.
-	payload, _ := json.Marshal(map[string]any{"instance_id": instanceID, "app_id": appID, "state": string(st), "wake_id": wakeID})
+	payloadFields := map[string]any{
+		"instance_id": instanceID,
+		"app_id":      appID,
+		"state":       string(st),
+		"wake_id":     wakeID,
+	}
+	// Job-task instances intentionally have no app row. Mark that
+	// shape explicitly so gateway subscribers can ignore the event
+	// instead of treating every successful job lifecycle as malformed
+	// customer-app input (issue #2763).
+	if appID == "" {
+		payloadFields["kind"] = "job"
+	}
+	payload, _ := json.Marshal(payloadFields)
 	if err := e.notif.Notify(ctx, db.NotifyInstanceChanged, string(payload)); err != nil {
 		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", wakeID, "err", err)
 	}

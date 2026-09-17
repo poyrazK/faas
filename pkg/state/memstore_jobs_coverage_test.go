@@ -65,6 +65,104 @@ func newJobAndRun(t *testing.T, ms *MemStore, accountID, name string) (Job, JobR
 	return created, run, fanned
 }
 
+// TestMemStoreJobs_CreateJobInstance pins the app-less instance shape used by
+// the scheduler's job dispatch path (issue #1184). Besides the happy path,
+// exercise the missing-job and duplicate-id guards so this coverage pin keeps
+// the lifecycle insert contract above the shard gate.
+func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-JI", "job-instance")
+
+	created, err := ms.CreateJobInstance(ctx, "instance-1", job.ID, run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-1")
+	if err != nil {
+		t.Fatalf("CreateJobInstance: %v", err)
+	}
+	if created.ID != "instance-1" || created.Mode != string(InstanceModeJob) {
+		t.Fatalf("CreateJobInstance = %+v, want job instance", created)
+	}
+	if created.Kind != "job_task" || created.JobID != job.ID || created.JobRunID != run.ID || created.JobTaskIndex != 0 {
+		t.Fatalf("CreateJobInstance identity = %+v, want job-task coordinates", created)
+	}
+	if created.WakeID != "wake-1" {
+		t.Fatalf("CreateJobInstance.WakeID = %q, want wake-1", created.WakeID)
+	}
+
+	got, err := ms.InstanceByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("InstanceByID(job): %v", err)
+	}
+	if got.ID != created.ID || got.Kind != "job_task" {
+		t.Fatalf("InstanceByID(job) = %+v, want persisted job instance", got)
+	}
+
+	if _, err := ms.CreateJobInstance(ctx, "instance-1", job.ID, run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-1"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CreateJobInstance duplicate: err = %v, want ErrConflict", err)
+	}
+	if _, err := ms.CreateJobInstance(ctx, "instance-2", "missing-job", run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateJobInstance missing job: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreJobs_ListJobInstancesAndOrphans(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-JL", "job-list")
+
+	// Task 1 deliberately has no claimed task owner, so its instance is
+	// orphaned from the dispatch surface. Task 0 is claimed below and should
+	// be excluded from the orphan report while remaining meter-visible.
+	orphan, err := ms.CreateJobInstance(ctx, "instance-orphan", job.ID, run.ID, 1,
+		"running", 256, "node-1", "wake-orphan")
+	if err != nil {
+		t.Fatalf("CreateJobInstance(orphan): %v", err)
+	}
+	owned, err := ms.CreateJobInstance(ctx, "instance-owned", job.ID, run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-owned")
+	if err != nil {
+		t.Fatalf("CreateJobInstance(owned): %v", err)
+	}
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, owned.ID, "lease-1", time.Now().Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("JobTaskMarkClaimed: %v", err)
+	}
+
+	active, err := ms.ListJobInstances(ctx)
+	if err != nil {
+		t.Fatalf("ListJobInstances: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("ListJobInstances len = %d, want 2", len(active))
+	}
+
+	orphans, err := ms.ListOrphanedJobInstances(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListOrphanedJobInstances: %v", err)
+	}
+	if len(orphans) != 1 || orphans[0].ID != orphan.ID {
+		t.Fatalf("ListOrphanedJobInstances = %+v, want [%s]", orphans, orphan.ID)
+	}
+	limited, err := ms.ListOrphanedJobInstances(ctx, 1)
+	if err != nil || len(limited) != 1 {
+		t.Fatalf("ListOrphanedJobInstances(limit=1) = (%v, %d), want one row", err, len(limited))
+	}
+
+	if err := ms.UpdateInstanceState(ctx, orphan.ID, "parked"); err != nil {
+		t.Fatalf("UpdateInstanceState(orphan): %v", err)
+	}
+	active, err = ms.ListJobInstances(ctx)
+	if err != nil {
+		t.Fatalf("ListJobInstances(after parked): %v", err)
+	}
+	if len(active) != 1 || active[0].ID != owned.ID {
+		t.Fatalf("ListJobInstances(after parked) = %+v, want owned row only", active)
+	}
+}
+
 // TestMemStoreJobs_JobGetByID covers the happy + ErrNotFound paths
 // and the soft-delete invisibility rule.
 func TestMemStoreJobs_JobGetByID(t *testing.T) {

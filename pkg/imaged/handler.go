@@ -2765,9 +2765,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if markErr != nil {
 			h.log.Warn("api contract gate: mark deployment failed", "deployment_id", dep.ID, "err", markErr)
 		}
-		if _, stageErr := h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), detail); stageErr != nil {
-			h.log.Warn("api contract gate: mark stage failed", "deployment_id", dep.ID, "err", stageErr)
-		}
 		if h.audit != nil {
 			h.audit.Emit(ctx, "deployment.api_contract_blocked", &app.AccountID, map[string]any{
 				"app_id": app.ID, "deployment_id": dep.ID, "scope": dep.Scope,
@@ -2839,7 +2836,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
 				restorePrevious("post-readiness smoke failed")
 				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
 				h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
 			}
@@ -2851,7 +2847,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
 			restorePrevious("post-readiness smoke verifier not configured")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, smoke.Error)
-			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), smoke.Error)
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return fmt.Errorf("imaged: post-readiness smoke: %s", smoke.Error)
 		}
@@ -2861,7 +2856,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			}
 			restorePrevious("hosting receipt persistence failed")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
-			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "hosting receipt persistence failed")
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return fmt.Errorf("imaged: hosting receipt: %w", err)
 		}
@@ -3206,10 +3200,8 @@ func (h *Handler) transition(ctx context.Context, depID string, status state.Dep
 //	                      see PR-A review fix, F1
 //	DeploySnapshotting  → StageSnapshotPrepare
 //	DeployLive          → StageReadiness
-//	DeployFailed        → no stage advance; the caller drives
-//	                      MarkDeploymentStageFailed directly so the
-//	                      in-flight stage (not the previously-closed
-//	                      one) is stamped with reason.
+//	DeployFailed        → no stage advance; SetDeploymentFailed atomically
+//	                      stamps the in-flight stage as failed.
 //	DeploySuperseded    → no-op (not a customer-visible stage event)
 //
 // The from→to pair is computed by the caller — this helper is the
@@ -3259,9 +3251,9 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 	// agrees with the customer-facing stage timeline to the
 	// millisecond. Status label tracks the deployment's terminal
 	// state at write time — a "live" close observes status=completed;
-	// the failure path is observed separately by the caller via
-	// MarkDeploymentStageFailed (see markDeployFailed). Safe on a
-	// nil h.ops (unit tests that don't wire the registry).
+	// the failure path is observed from the same returned row in
+	// markDeployFailed. Safe on a nil h.ops (unit tests that don't wire
+	// the registry).
 	if h.ops != nil && len(row.StageState) > 0 {
 		var ss state.StageState
 		if json.Unmarshal(row.StageState, &ss) == nil && len(ss.History) > 0 {
@@ -3300,30 +3292,25 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	if prefix != "" {
 		detail = prefix + ": " + detail
 	}
-	if _, err := h.store.SetDeploymentFailed(ctx, depID, code, detail); err != nil {
+	row, err := h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	if err != nil {
 		return fmt.Errorf("imaged: mark failed: %w", err)
 	}
-	// ADR-117 §3 + PR-A review fix: stamp the active stage as
-	// failed. MarkDeploymentStageFailed moves the active row into
-	// history with status="failed" + reason rather than overwriting
-	// history[len-1] (the previously-closed stage, not the one in
-	// flight). Best-effort — the state-machine flip on `status`
-	// is the source of truth; the stage projection is the
-	// customer-UX surface.
-	if row, serr := h.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), detail); serr != nil {
-		h.log.Warn("markDeployFailed: stamp failed stage", "deployment_id", depID, "err", serr)
-	} else if h.ops != nil && len(row.StageState) > 0 {
+	// SetDeploymentFailed closes the active customer stage in the same
+	// transaction as the terminal status flip. The returned row is used for
+	// the failure-duration metric, so no second best-effort write can leave
+	// status and stage_state divergent.
+	if h.ops != nil && len(row.StageState) > 0 {
 		// SLO histogram (ADR-117 §Production-ready follow-on).
-		// Observe the failed stage's wall-clock duration under
-		// status=failed so the per-stage p99 panel surfaces
-		// failure-stall tails distinctly from success tails.
-		// Same row-derived duration contract as transitionWithStage.
+		// Observe the failed stage's wall-clock duration under status=failed so
+		// the per-stage p99 panel surfaces failure-stall tails distinctly from
+		// success tails. Same row-derived duration contract as
+		// transitionWithStage.
 		var ss state.StageState
 		if json.Unmarshal(row.StageState, &ss) == nil && len(ss.History) > 0 {
 			last := ss.History[len(ss.History)-1]
 			if last.StartedAt != nil && last.EndedAt != nil {
-				// Code-review finding #2: MarkDeploymentStageFailed
-				// clears state.Current on the way out (the in-flight
+				// Failure finalization clears state.Current on the way out (the in-flight
 				// stage rolls into history with status=failed), so
 				// reading `ss.Current` here produces stage="". That
 				// falls outside the pre-instantiated closed-6 label

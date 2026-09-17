@@ -163,6 +163,11 @@ func (c *Client) Close() error {
 // maps them straight to the right RFC 7807 status. Satisfies
 // gateway.Scheduler.
 func (c *Client) Wake(ctx context.Context, appID, deploymentID, scope string) (instanceID, nodeID, deploymentIDOut, wakeID string, port int, err error) {
+	// Preserve the gateway's request correlation across the legacy Wake RPC as
+	// well as the newer EnsureWake/AdmitInstance paths. Without this outgoing
+	// envelope, warm/synthetic callers that still use Wake reach schedd with an
+	// empty request_id even though the gateway already stamped it on ctx.
+	ctx = withWakeCorrelation(ctx, "")
 	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope})
 	if err != nil {
 		return "", "", "", "", 0, liftErr(err)

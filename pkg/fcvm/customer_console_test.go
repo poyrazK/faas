@@ -18,6 +18,9 @@ func TestCustomerConsoleWriterExcludesFirecrackerControlLogs(t *testing.T) {
 		"api] The API server received a Put request on \"/snapshot/load\" with body \"backend_path=snap-in-mem\"\n",
 		"customer payload mentions Firecracker and /snapshot/load safely\n",
 		"[instance:vmm] restored snapshot\nrequest handled\n",
+		"[instance:main] Host CPU vendor ID: GenuineIntel\n",
+		"[instance:main] Snapshot CPU vendor ID: GenuineIntel\n",
+		"[instance:main] Device kick on virtio-net\n",
 	}
 	for _, chunk := range chunks {
 		if _, err := w.Write([]byte(chunk)); err != nil {
@@ -37,6 +40,20 @@ func TestCustomerConsoleWriterExcludesFirecrackerControlLogs(t *testing.T) {
 	for _, customer := range []string{"app ready", "customer payload mentions Firecracker", "request handled"} {
 		if !strings.Contains(joined, customer) {
 			t.Fatalf("customer line %q was lost: %q", customer, joined)
+		}
+	}
+}
+
+func TestFirecrackerControlLineRecognizesRestoreDiagnostics(t *testing.T) {
+	for _, line := range []string{
+		"[2026-09-16T03:20:00Z:main] Host CPU vendor ID: GenuineIntel\n",
+		"[2026-09-16T03:20:00Z:main] Snapshot CPU vendor ID: GenuineIntel\n",
+		"[2026-09-16T03:20:00Z:main] Device kick on virtio-net\n",
+		"[2026-09-16T03:20:00Z:main] The API server received a Put request\n",
+		"[2026-09-16T03:20:00Z:fc_api] 'load snapshot' API request took 11325 us.\n",
+	} {
+		if !firecrackerControlLine([]byte(line)) {
+			t.Errorf("restore diagnostic was not filtered: %q", line)
 		}
 	}
 }

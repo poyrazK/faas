@@ -24,6 +24,7 @@ GET|PATCH|DELETE /v1/apps/{slug}/realtime/endpoints/{id}
 POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate
 POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize
 GET /v1/apps/{slug}/realtime/endpoints/{id}/connections
+POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain
 POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send
 POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close
 PUT|DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}
@@ -161,11 +162,22 @@ printf '{"event":"refresh"}' | \
 
 # Inspect active connections before targeting one for management.
 gregale realtime connections my-app ENDPOINT_ID --channel room-a --limit 100
+
+# Preview or perform a bounded, auditable drain. A reason is required.
+gregale realtime drain my-app ENDPOINT_ID --channel room-a --reason 'deploy migration' --dry-run
+gregale realtime drain my-app ENDPOINT_ID --principal user-123 --reason 'account removal'
+# If the inventory is partial, explicitly acknowledge that only reachable
+# nodes will be acted on.
+gregale realtime drain my-app ENDPOINT_ID --reason 'node maintenance' --allow-partial
 ```
 
 `--data-stdin` is binary-safe and bounded to the same 1 MiB decoded payload
 limit enforced by the API. `--data TEXT` is available for small UTF-8
-messages; message contents are never included in successful CLI output.
+messages; message contents are never included in successful CLI output. Drain
+selects by channel, principal, or repeated `--connection-id` flags, defaults
+to 100 connections, and caps one request at 1000. A non-dry-run refuses a
+partial fleet inventory unless `--allow-partial` is supplied; results report
+closed, already-gone, and failed connections separately.
 
 Prometheus scrapes the node-local health listener on `127.0.0.1:9107` in a
 single-box deployment. A compute-only deployment binds the same port on the

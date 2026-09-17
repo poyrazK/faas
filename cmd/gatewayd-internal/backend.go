@@ -564,9 +564,9 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // herd under sustained load. Only evict on terminal-ish states where
 // the instance has actually left the routable set.
 //
-// A malformed payload that omits either app_id or instance_id is
-// logged-and-dropped — better to over-evict (next request re-admits)
-// than to crash the edge loop.
+// Job-task instances intentionally omit app_id. They carry kind="job"
+// and are ignored by the app-route invalidator; customer-app events still
+// require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
 	case db.NotifyInstanceChanged:
@@ -575,9 +575,18 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			InstanceID string `json:"instance_id"`
 			State      string `json:"state"`
 			WakeID     string `json:"wake_id"`
+			Kind       string `json:"kind"`
 		}
-		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.InstanceID == "" {
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil ||
+			p.InstanceID == "" ||
+			(p.Kind == "job" && p.AppID != "") ||
+			(p.Kind != "job" && p.AppID == "") {
 			log.Warn("gatewayd: bad instance_changed payload", "payload", n.Payload)
+			return
+		}
+		if p.Kind == "job" {
+			// Job instances are not addressable through the app gateway;
+			// their lifecycle belongs to the jobs control-plane surface.
 			return
 		}
 		// Lifecycle states (waking/cold_booting/running) leave the cache

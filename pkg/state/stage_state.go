@@ -58,6 +58,43 @@ func ensureDeploymentStageStarted(state *StageState, createdAt, at time.Time) {
 	state.CurrentStartedAt = &startedAt
 }
 
+// finalizeActiveDeploymentStage moves the in-flight customer-visible stage
+// into history and clears Current. Callers use it while holding their store's
+// transaction/mutex so the terminal deployment status and stage projection
+// are committed together. It returns false when no stage is active.
+func finalizeActiveDeploymentStage(st *StageState, createdAt, at time.Time, status, reason string) bool {
+	if st == nil || st.Current == "" {
+		return false
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	at = stageTimestamp(at)
+	ensureDeploymentStageStarted(st, createdAt, at)
+	durationMs := int64(0)
+	if st.CurrentStartedAt != nil {
+		durationMs = at.Sub(*st.CurrentStartedAt).Milliseconds()
+		if durationMs < 0 {
+			durationMs = 0
+		}
+	}
+	endedAt := at
+	st.History = append(st.History, StageStateItem{
+		Name:       st.Current,
+		StartedAt:  ptrTime(derefTime(st.CurrentStartedAt)),
+		EndedAt:    &endedAt,
+		DurationMs: durationMs,
+		Status:     status,
+		Reason:     reason,
+	})
+	if len(st.History) > MaxStageHistory {
+		st.History = st.History[len(st.History)-MaxStageHistory:]
+	}
+	st.Current = ""
+	st.CurrentStartedAt = nil
+	return true
+}
+
 func stageTimestamp(at time.Time) time.Time {
 	return at.UTC()
 }

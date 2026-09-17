@@ -53,8 +53,9 @@ func parsePrivateNetworkAddress(value string) (netip.Addr, error) {
 		return parsed, nil
 	}
 	// PostgreSQL's inet text representation includes the host prefix
-	// length (for example, "10.80.0.2/32"). Accept that canonical
-	// representation as well as the bare address used by MemStore.
+	// length (for example, "10.60.0.2/32"). Accept that canonical
+	// representation as well as the bare address used by MemStore and
+	// drivers that omit the prefix.
 	prefix, prefixErr := netip.ParsePrefix(value)
 	if prefixErr != nil {
 		return netip.Addr{}, err

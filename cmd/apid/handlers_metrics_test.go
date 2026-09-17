@@ -387,6 +387,24 @@ func (w wakeBootStartedStore) CountWakeBootStarted24h(_ context.Context, _ strin
 	return w.count, w.err
 }
 
+type emptyIDMetricsStore struct {
+	*state.MemStore
+	countCalled bool
+}
+
+func (s *emptyIDMetricsStore) AppBySlug(ctx context.Context, slug string) (state.App, error) {
+	app, err := s.MemStore.AppBySlug(ctx, slug)
+	if err == nil {
+		app.ID = ""
+	}
+	return app, err
+}
+
+func (s *emptyIDMetricsStore) CountWakeBootStarted24h(_ context.Context, _ string) (int64, error) {
+	s.countCalled = true
+	return 99, nil
+}
+
 // TestAppMetrics_Wakes24hEnrichment pins the wakes_24h wire field
 // end-to-end: when the underlying store returns a positive count,
 // the handler stamps it on the response. The PromQL fixture below
@@ -424,6 +442,60 @@ func TestAppMetrics_Wakes24hEnrichment(t *testing.T) {
 	}
 	if out.ErrorBudgetPct != nil {
 		t.Errorf("error_budget_pct = %v, want nil (no requests)", *out.ErrorBudgetPct)
+	}
+}
+
+func TestAppMetrics_Wakes24hEmptyWindow(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "my-api")
+	wrapper := wakeBootStartedStore{MemStore: e.store, count: 0}
+	srv := newServer(wrapper, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
+	installPromFixture(t, &e, func(q string) string {
+		return `{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps/my-api/metrics?range=5m", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	srv.handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.AppMetricsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Wakes24h != 0 {
+		t.Fatalf("wakes_24h = %d, want 0 for an empty trailing window", out.Wakes24h)
+	}
+}
+
+func TestAppMetrics_MissingAppIDSkipsWakeCount(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "my-api")
+	wrapper := &emptyIDMetricsStore{MemStore: e.store}
+	srv := newServer(wrapper, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps/my-api/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	srv.handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.AppMetricsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Wakes24h != 0 {
+		t.Fatalf("wakes_24h = %d, want 0 when app ID is missing", out.Wakes24h)
+	}
+	if wrapper.countCalled {
+		t.Fatal("CountWakeBootStarted24h called with missing app ID")
 	}
 }
 

@@ -2881,18 +2881,17 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSLOBurnRateHigh.md"
 
       # ── Account-level correlation (all 5 signals) ─────────────────
-      # gateway_queue_depth now carries an account_id label (admitted
-      # via accountLabelSet; rows past the 10k cap collapse to
-      # `__other__`), so all 5 alert-preset signals contribute to this
-      # account-level rollup. Pre-PR-D this rule covered only 4 of 5.
+      # Correlate the actual per-preset alert series rather than repeating
+      # their raw recording-rule predicates. This keeps each source alert's
+      # own `for:` hold semantics authoritative: a pending signal must not
+      # make the account rollup fire early. max() collapses multiple apps
+      # for one preset before the outer count reports distinct preset types.
       - alert: FaasAlertPresetAnyFiringAccount
         expr: |
           count by (account_id) (
-              faas_api_down_over_5m:by_account_app < 1
-            or faas_spend_eur_20_over_24h:by_account > 20
-            or faas_deploy_failed_over_1h:by_account_app > 0
-            or faas_cert_expiring_14d_over_24h:by_account_app < 1209600
-            or faas_queue_backlog_growing_over_15m:by_app_account > 50
+            max by (account_id, preset) (
+              ALERTS{alertstate="firing", family="alert_preset_signals", account_id!=""}
+            )
           ) >= 1
         for: 5m
         labels:
@@ -2901,7 +2900,7 @@ groups:
           family: alert_preset_correlation
         annotations:
           summary: "Account {{ $labels.account_id }} has >=1 alert_preset firing"
-          description: "One or more alert_preset signal(s) for account {{ $labels.account_id }} are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
+          description: "One or more alert_preset signal(s) for account {{ $labels.account_id }} are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. The correlation includes only per-preset alerts whose own hold period has elapsed; multiple apps firing the same preset count once. Cross-reference the per-preset alerts above for the active signal."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
 
   # ────────────────────────────────────────────────────────────────────

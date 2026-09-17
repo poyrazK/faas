@@ -159,6 +159,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './CreateObjectSto
 export type { CreateObjectUploadRouteRequest } from './CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
+export type { CreatePreviewRequest } from './CreatePreviewRequest.js';
 export type { CreatePrivateNetworkRequest } from './CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
@@ -179,6 +180,8 @@ export type { DataUpstreamListResponse } from './DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './DataUpstreamResponse.js';
 export type { DeadLetterEvent } from './DeadLetterEvent.js';
 export type { DeadLetterEventsResponse } from './DeadLetterEventsResponse.js';
+export type { DeadLetterPurgeResponse } from './DeadLetterPurgeResponse.js';
+export type { DeadLetterReplayAllResponse } from './DeadLetterReplayAllResponse.js';
 export type { DebugCompareRequest } from './DebugCompareRequest.js';
 export type { DebugCompareResponse } from './DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './DebugCompareRouteStats.js';
@@ -365,6 +368,9 @@ export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageRespons
 export type { ManagedRealtimeCloseRequest } from './ManagedRealtimeCloseRequest.js';
 export type { ManagedRealtimeConnectionListResponse } from './ManagedRealtimeConnectionListResponse.js';
 export type { ManagedRealtimeConnectionResponse } from './ManagedRealtimeConnectionResponse.js';
+export type { ManagedRealtimeDrainRequest } from './ManagedRealtimeDrainRequest.js';
+export type { ManagedRealtimeDrainResponse } from './ManagedRealtimeDrainResponse.js';
+export type { ManagedRealtimeDrainResult } from './ManagedRealtimeDrainResult.js';
 export type { ManagedRealtimeEndpointResponse } from './ManagedRealtimeEndpointResponse.js';
 export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './ManagedRealtimePublishResponse.js';

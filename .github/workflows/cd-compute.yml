@@ -933,16 +933,19 @@ jobs:
           fi
 
           # Prometheus discovers every owner schedd on its private :9103
-          # listener. Prove the listener and canonical instance-stat families
-          # before activation so a node cannot join with telemetry visible
-          # only over loopback.
+          # listener. Prove the listener and the always-present instance-stats
+          # collector heartbeat before activation so a node cannot join with
+          # telemetry visible only over loopback. The labelled CPU gauge is
+          # intentionally absent until the node has a live instance with a
+          # valid CPU sample, so it cannot be used as an empty-node readiness
+          # assertion.
           schedd_metrics="$RUNNER_TEMP/compute-schedd-metrics.prom"
           curl --fail --silent --show-error \
             --retry 10 --retry-delay 1 --retry-all-errors \
             --connect-timeout 2 --max-time 3 \
             "http://${gateway_host}:9103/metrics" >"$schedd_metrics"
-          grep -q '^# HELP schedd_instance_cpu_pct ' "$schedd_metrics" || {
-            echo "::error::compute schedd metrics endpoint returned no instance CPU family" >&2
+          grep -q '^# HELP schedd_instance_stats_collect_seconds ' "$schedd_metrics" || {
+            echo "::error::compute schedd metrics endpoint returned no instance-stats collector family" >&2
             exit 1
           }
 

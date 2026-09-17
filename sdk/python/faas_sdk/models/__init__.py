@@ -361,6 +361,8 @@ from .dead_letter_event_headers import DeadLetterEventHeaders
 from .dead_letter_event_payload import DeadLetterEventPayload
 from .dead_letter_event_source import DeadLetterEventSource
 from .dead_letter_events_response import DeadLetterEventsResponse
+from .dead_letter_purge_response import DeadLetterPurgeResponse
+from .dead_letter_replay_all_response import DeadLetterReplayAllResponse
 from .debug_compare_request import DebugCompareRequest
 from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
@@ -707,6 +709,10 @@ from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsag
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
 from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
+from .managed_realtime_drain_request import ManagedRealtimeDrainRequest
+from .managed_realtime_drain_response import ManagedRealtimeDrainResponse
+from .managed_realtime_drain_result import ManagedRealtimeDrainResult
+from .managed_realtime_drain_result_status import ManagedRealtimeDrainResultStatus
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
 from .managed_realtime_endpoint_response_auth_algorithms_item import ManagedRealtimeEndpointResponseAuthAlgorithmsItem
 from .managed_realtime_endpoint_response_auth_mode import ManagedRealtimeEndpointResponseAuthMode
@@ -1583,6 +1589,8 @@ __all__ = (
     "DeadLetterEventPayload",
     "DeadLetterEventSource",
     "DeadLetterEventsResponse",
+    "DeadLetterPurgeResponse",
+    "DeadLetterReplayAllResponse",
     "DebugCompareRequest",
     "DebugCompareResponse",
     "DebugCompareRouteStats",
@@ -1929,6 +1937,10 @@ __all__ = (
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeConnectionListResponse",
     "ManagedRealtimeConnectionResponse",
+    "ManagedRealtimeDrainRequest",
+    "ManagedRealtimeDrainResponse",
+    "ManagedRealtimeDrainResult",
+    "ManagedRealtimeDrainResultStatus",
     "ManagedRealtimeEndpointResponse",
     "ManagedRealtimeEndpointResponseAuthAlgorithmsItem",
     "ManagedRealtimeEndpointResponseAuthMode",

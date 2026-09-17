@@ -33,6 +33,7 @@ type realtimeConnectionInventory interface {
 const (
 	managedRealtimeConnectionsLimitDefault = 100
 	managedRealtimeConnectionsLimitMax     = 1000
+	managedRealtimeDrainConnectionIDsMax   = 100
 )
 
 // localRealtimeOwner adapts the Unix management client to realtimeOwner. The
@@ -204,6 +205,195 @@ func realtimeConnectionHasChannel(connection realtime.ConnectionInfo, channel st
 		}
 	}
 	return false
+}
+
+const (
+	managedRealtimeDrainStatusWouldClose = "would_close"
+	managedRealtimeDrainStatusClosed     = "closed"
+	managedRealtimeDrainStatusGone       = "gone"
+	managedRealtimeDrainStatusFailed     = "failed"
+)
+
+func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, owner, ok := s.managedRealtimeEndpointAction(w, r, acct)
+	if !ok {
+		return
+	}
+	lister, ok := owner.(realtimeConnectionInventory)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
+		return
+	}
+	var request api.ManagedRealtimeDrainRequest
+	if err := decodeJSONSized(r, &request, 64<<10); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.Reason == "" {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("reason is required"))
+		return
+	}
+	if len(request.Reason) > 256 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("reason exceeds 256 bytes"))
+		return
+	}
+	request.Principal = strings.TrimSpace(request.Principal)
+	if len(request.Principal) > 256 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("principal exceeds 256 bytes"))
+		return
+	}
+	if request.Channel != "" {
+		if problem := validateManagedRealtimeChannel(request.Channel); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
+	if request.Limit == 0 {
+		request.Limit = managedRealtimeConnectionsLimitDefault
+	}
+	if request.Limit < 1 || request.Limit > managedRealtimeConnectionsLimitMax {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("limit must be between 1 and %d", managedRealtimeConnectionsLimitMax)))
+		return
+	}
+	connectionIDs, problem := managedRealtimeDrainConnectionIDs(request.ConnectionIDs)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	inventory, err := lister.ListConnectionInventory(r.Context())
+	if err != nil && inventory.NodesQueried == 0 {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
+		return
+	}
+	partial := inventory.NodesUnavailable > 0
+	if partial && !request.DryRun && !request.AllowPartial {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Realtime inventory is partial", "retry after all realtime nodes are reachable or set allow_partial=true to drain the reachable subset"))
+		return
+	}
+	selected, truncated := managedRealtimeDrainCandidates(inventory.Connections, row, acct, request, connectionIDs)
+	response := api.ManagedRealtimeDrainResponse{
+		Results:          make([]api.ManagedRealtimeDrainResult, 0, len(selected)),
+		Matched:          len(selected),
+		Limit:            request.Limit,
+		Truncated:        truncated,
+		DryRun:           request.DryRun,
+		Partial:          partial,
+		NodesQueried:     inventory.NodesQueried,
+		NodesUnavailable: inventory.NodesUnavailable,
+	}
+	for _, connection := range selected {
+		if request.DryRun {
+			response.Results = append(response.Results, api.ManagedRealtimeDrainResult{ID: connection.ID, Status: managedRealtimeDrainStatusWouldClose})
+			continue
+		}
+		err := owner.CloseConnection(r.Context(), row.ID, connection.ID, request.Reason)
+		status := managedRealtimeDrainStatusClosed
+		switch {
+		case err == nil:
+			response.Closed++
+		case managedRealtimeConnectionGone(err):
+			status = managedRealtimeDrainStatusGone
+			response.Gone++
+		default:
+			status = managedRealtimeDrainStatusFailed
+			response.Failed++
+			s.log.WarnContext(r.Context(), "drain managed realtime connection", "endpoint_id", row.ID, "connection_id", connection.ID, "err", err)
+		}
+		response.Results = append(response.Results, api.ManagedRealtimeDrainResult{ID: connection.ID, Status: status})
+	}
+	auditKind := "realtime.connections_drained"
+	if request.DryRun {
+		auditKind = "realtime.connections_drain_previewed"
+	}
+	auditData := map[string]any{
+		"endpoint_id": row.ID,
+		"matched":     response.Matched,
+		"closed":      response.Closed,
+		"gone":        response.Gone,
+		"failed":      response.Failed,
+		"dry_run":     request.DryRun,
+		"partial":     response.Partial,
+		"truncated":   response.Truncated,
+		"reason":      request.Reason,
+	}
+	if request.Channel != "" {
+		auditData["channel"] = request.Channel
+	}
+	if request.Principal != "" {
+		auditData["principal"] = request.Principal
+	}
+	if len(connectionIDs) > 0 {
+		auditData["connection_ids"] = len(connectionIDs)
+	}
+	s.audit.Emit(r.Context(), auditKind, &acct.ID, auditData)
+	writeJSON(w, http.StatusOK, response)
+}
+
+func managedRealtimeDrainConnectionIDs(values []string) (map[string]struct{}, *api.Problem) {
+	if len(values) > managedRealtimeDrainConnectionIDsMax {
+		return nil, api.ErrRealtimeInvalid(fmt.Sprintf("connection_ids cannot contain more than %d values", managedRealtimeDrainConnectionIDsMax))
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	ids := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		id := strings.TrimSpace(value)
+		if id == "" {
+			return nil, api.ErrRealtimeInvalid("connection_ids cannot contain an empty value")
+		}
+		if len(id) > 256 {
+			return nil, api.ErrRealtimeInvalid("connection id exceeds 256 bytes")
+		}
+		if _, exists := ids[id]; exists {
+			return nil, api.ErrRealtimeInvalid("connection_ids cannot contain duplicates")
+		}
+		ids[id] = struct{}{}
+	}
+	return ids, nil
+}
+
+func managedRealtimeDrainCandidates(connections []realtime.ConnectionInfo, row state.ManagedRealtimeEndpoint, acct state.Account, request api.ManagedRealtimeDrainRequest, connectionIDs map[string]struct{}) ([]realtime.ConnectionInfo, bool) {
+	connections = append([]realtime.ConnectionInfo(nil), connections...)
+	sort.Slice(connections, func(i, j int) bool { return connections[i].ID < connections[j].ID })
+	selected := make([]realtime.ConnectionInfo, 0, min(managedRealtimeConnectionsLimitMax, len(connections)))
+	seen := make(map[string]struct{}, len(connections))
+	truncated := false
+	for _, connection := range connections {
+		if _, exists := seen[connection.ID]; exists {
+			continue
+		}
+		seen[connection.ID] = struct{}{}
+		if connection.EndpointID != row.ID || connection.AppID != row.AppID || connection.AccountID != acct.ID {
+			continue
+		}
+		if len(connectionIDs) > 0 {
+			if _, exists := connectionIDs[connection.ID]; !exists {
+				continue
+			}
+		}
+		if request.Channel != "" && !realtimeConnectionHasChannel(connection, request.Channel) {
+			continue
+		}
+		if request.Principal != "" && connection.Principal != request.Principal {
+			continue
+		}
+		if len(selected) == request.Limit {
+			truncated = true
+			continue
+		}
+		selected = append(selected, connection)
+	}
+	return selected, truncated
+}
+
+func managedRealtimeConnectionGone(err error) bool {
+	if errors.Is(err, realtime.ErrConnectionNotFound) || errors.Is(err, realtime.ErrConnectionClosed) {
+		return true
+	}
+	var managementErr *realtime.ManagementError
+	return errors.As(err, &managementErr) && (managementErr.StatusCode == http.StatusNotFound || managementErr.StatusCode == http.StatusGone)
 }
 
 func (s *server) sendManagedRealtimeConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {

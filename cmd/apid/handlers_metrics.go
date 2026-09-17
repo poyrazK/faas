@@ -106,13 +106,19 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	// 24 hours, sourced from the events table. The (data->>'app_id')
 	// predicate is NOT covered by events_wake_id_idx (migration 00114
 	// indexes data->>'wake_id'); on a Scale-tier app with a large
-	// fleet this can seq-scan + jsonb-cast per row. A follow-up
+	// fleet this can seq-scan per row. A follow-up
 	// migration adds a covering index — see the Store interface
 	// comment for CountWakeBootStarted24h. 0 on a degraded store
 	// call, an empty app, or pre-ADR-123 fleet (pre-PR-A
-	// boot_started rows carry no app_id field, so the cast
-	// returns NULL which COUNT(*) coerces to 0).
-	if n, err := s.store.CountWakeBootStarted24h(r.Context(), app.ID); err == nil {
+	// boot_started rows carry no app_id field, so the text predicate
+	// simply does not match). A partially populated legacy app row
+	// must not turn into a SQL `''::uuid` cast error; skip enrichment
+	// and keep the successful zero-valued response in that case.
+	if strings.TrimSpace(app.ID) == "" {
+		if s.log != nil {
+			s.log.Warn("wakes_24h fetch skipped: app id missing", "slug", app.Slug)
+		}
+	} else if n, err := s.store.CountWakeBootStarted24h(r.Context(), app.ID); err == nil {
 		resp.Wakes24h = n
 	} else if s.log != nil {
 		s.log.Warn("wakes_24h fetch failed",

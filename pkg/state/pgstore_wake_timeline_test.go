@@ -104,3 +104,27 @@ func TestPgStore_CountWakeBootStarted24h_DistinctWakeIDs(t *testing.T) {
 		t.Fatalf("count = %d, want 2 distinct wakes in trailing 24h", got)
 	}
 }
+
+func TestPgStore_CountWakeBootStarted24h_EmptyAppIDIsZero(t *testing.T) {
+	// The empty-input path must return before touching the pool. This
+	// protects the production metrics handler from the `''::uuid`
+	// failure reported in issue #2306 and keeps the degraded response
+	// contract intact even when a legacy app row is partially populated.
+	s := NewPgStore(nil)
+	for _, appID := range []string{"", "   "} {
+		got, err := s.CountWakeBootStarted24h(context.Background(), appID)
+		if err != nil {
+			t.Fatalf("appID %q: CountWakeBootStarted24h: %v", appID, err)
+		}
+		if got != 0 {
+			t.Fatalf("appID %q: count = %d, want 0", appID, got)
+		}
+	}
+}
+
+func TestPgStore_CountWakeBootStarted24h_RejectsMalformedAppID(t *testing.T) {
+	s := NewPgStore(nil)
+	if _, err := s.CountWakeBootStarted24h(context.Background(), "not-a-uuid"); err == nil {
+		t.Fatal("CountWakeBootStarted24h malformed app ID returned nil error")
+	}
+}

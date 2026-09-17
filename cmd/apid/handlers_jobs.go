@@ -485,11 +485,15 @@ func (s *server) getJobTaskLogs(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	// MaxBytes is bounded at 1 MiB and defaults to a compact 64 KiB tail.
-	maxBytes := 64 * 1024
+	maxBytes := api.DefaultJobTaskLogMaxBytes
 	if v := r.URL.Query().Get("max_bytes"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1024*1024 {
-			maxBytes = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > api.MaxJobTaskLogMaxBytes {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid max_bytes", fmt.Sprintf("max_bytes must be between 1 and %d", api.MaxJobTaskLogMaxBytes)))
+			return
 		}
+		maxBytes = n
 	}
 	logContent := task.LogContent
 	truncated := task.LogTruncated

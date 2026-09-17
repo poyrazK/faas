@@ -6,6 +6,8 @@ import type { CreateManagedRealtimeEndpointRequest } from '../models/CreateManag
 import type { FinalizeManagedRealtimeAuthResponse } from '../models/FinalizeManagedRealtimeAuthResponse.js';
 import type { ManagedRealtimeCloseRequest } from '../models/ManagedRealtimeCloseRequest.js';
 import type { ManagedRealtimeConnectionListResponse } from '../models/ManagedRealtimeConnectionListResponse.js';
+import type { ManagedRealtimeDrainRequest } from '../models/ManagedRealtimeDrainRequest.js';
+import type { ManagedRealtimeDrainResponse } from '../models/ManagedRealtimeDrainResponse.js';
 import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeEndpointResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
@@ -247,6 +249,56 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Close a bounded, filtered set of live managed realtime connections.
+   * Selects connections from a point-in-time fleet inventory by channel,
+   * principal, or explicit connection IDs. `dry_run` returns the selected
+   * connections without closing them. A non-dry-run request fails with
+   * `409 conflict` when the inventory is partial unless `allow_partial`
+   * is true; this prevents an unavailable node from making a drain look
+   * complete.
+   *
+   * @returns ManagedRealtimeDrainResponse The bounded drain result.
+   * @throws ApiError
+   */
+  public static drainManagedRealtimeConnections({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: ManagedRealtimeDrainRequest,
+  }): CancelablePromise<ManagedRealtimeDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/drain',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

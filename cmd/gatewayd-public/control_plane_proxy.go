@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
 // controlPlaneProxy keeps the API surface on the control-plane host. App
@@ -51,6 +52,10 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
 			req.Out.Host = req.In.Host
+			// Keep the edge's correlation id as a singleton across the
+			// public→apid hop. The outer boundary normally stamps it;
+			// this explicit Set also keeps direct proxy use deterministic.
+			req.Out.Header.Set(api.RequestIDHeader, req.In.Header.Get(api.RequestIDHeader))
 			req.Out.Header.Del("X-Forwarded-For")
 			req.Out.Header.Del("X-Forwarded-Host")
 			req.Out.Header.Del("X-Forwarded-Proto")
@@ -63,6 +68,10 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 		ModifyResponse: func(resp *http.Response) error {
 			// The outer gatewayd-public middleware owns these headers.
 			httpsec.StripStaticHeaders(resp.Header)
+			// httputil.ReverseProxy copies response headers with Add.
+			// Drop apid's copy so the edge's already-stamped value is
+			// the only customer-visible X-Faas-Request-ID.
+			resp.Header.Del(api.RequestIDHeader)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -82,6 +91,7 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(githubTarget)
 			req.Out.Host = req.In.Host
+			req.Out.Header.Set(api.RequestIDHeader, req.In.Header.Get(api.RequestIDHeader))
 			req.Out.Header.Del("X-Forwarded-For")
 			req.Out.Header.Del("X-Forwarded-Host")
 			req.Out.Header.Del("X-Forwarded-Proto")
@@ -93,6 +103,7 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			httpsec.StripStaticHeaders(resp.Header)
+			resp.Header.Del(api.RequestIDHeader)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -104,6 +115,16 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 }
 
 func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Stamp the public boundary even when this handler is exercised without
+	// gatewayd-public's outer middleware (unit tests and embedded callers).
+	// The same value is forwarded to apid, whose middleware reuses it.
+	requestID := r.Header.Get(api.RequestIDHeader)
+	if requestID == "" {
+		requestID = middleware.NewRequestID()
+	}
+	r.Header.Set(api.RequestIDHeader, requestID)
+	w.Header().Set(api.RequestIDHeader, requestID)
+
 	// githubd is loopback-only on the control-plane host. Route the exact
 	// public webhook endpoint here before the generic compute data plane; app
 	// and custom-domain workloads may still own the same path on their hosts.

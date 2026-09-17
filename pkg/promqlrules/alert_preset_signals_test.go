@@ -9,9 +9,9 @@
 //      with `for:` clauses matched to each preset's catalog
 //      `window_spec` and `default_cooldown_minutes`.
 //   2. FaasAlertPresetAnyFiringAccount — account-level correlation
-//      using `count by (account_id) (...) >= 1`. The
-//      gateway_queue_depth signal is excluded (it carries an `app`
-//      label, not `account_id`).
+//      over the actual `ALERTS{alertstate="firing"}` series, so each
+//      source alert's own hold period is respected and app fan-out is
+//      collapsed to distinct preset types.
 //   3. Negative case — all signals within bounds → no alert fires.
 //
 // Why this fixture exists: TestFaasRulesSyntax validates the rule

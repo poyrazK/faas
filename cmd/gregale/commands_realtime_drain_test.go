@@ -1,0 +1,38 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+func TestCmdRealtimeDrainSendsBoundedSelection(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"results":[{"id":"conn-a","status":"closed"}],"matched":1,"closed":1,"gone":0,"failed":0,"limit":25,"truncated":false,"dry_run":false,"partial":false,"nodes_queried":1,"nodes_unavailable":0}`, http.StatusOK)
+	oldOut, oldErr := osStdout, osStderr
+	var out, stderr bytes.Buffer
+	osStdout, osStderr = &out, &stderr
+	t.Cleanup(func() {
+		osStdout, osStderr = oldOut, oldErr
+	})
+
+	if code := cmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "deploy", "--channel", "room-a", "--principal", "user-a", "--connection-id", "conn-a", "--connection-id", "conn-b", "--limit", "25"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/demo/realtime/endpoints/endpoint-1/connections/drain" {
+		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+	var request api.ManagedRealtimeDrainRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Reason != "deploy" || request.Channel != "room-a" || request.Principal != "user-a" || request.Limit != 25 || len(request.ConnectionIDs) != 2 || request.ConnectionIDs[1] != "conn-b" {
+		t.Fatalf("request = %+v", request)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Closed 1 realtime connection(s)")) || stderr.Len() != 0 {
+		t.Fatalf("output = %q stderr = %q", out.String(), stderr.String())
+	}
+}

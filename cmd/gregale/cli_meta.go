@@ -128,7 +128,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
+	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline":
 		return "Delivery"
 	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions":
 		return "Observe"
@@ -564,7 +564,9 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel a run"},
 			{Name: "tasks", Short: "List tasks for one run"},
 			{Name: "retry", Short: "Retry one failed task"},
-			{Name: "logs", Short: "Tail logs for one task"},
+			{Name: "logs", Short: "Tail logs for one task", Flags: []cliFlag{
+				{Name: "max-bytes", Short: "maximum log payload size (1..1048576)", Value: "N"},
+			}},
 		},
 	},
 	{
@@ -821,10 +823,27 @@ var cliCommands = []cliCommand{
 		DocSlug: "preview",
 		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
 		Subcommands: []cliSub{
+			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Flags: []cliFlag{
+				{Name: "app", Short: "parent app slug (defaults to the linked app)", Value: "slug"},
+				{Name: "repo", Short: "GitHub repository OWNER/NAME", Req: true, Value: "OWNER/NAME"},
+				{Name: "ref", Short: "branch, tag, or commit SHA", Req: true, Value: "REF"},
+				{Name: "pr-number", Short: "pull-request number", Req: true, Value: "N"},
+				{Name: "ttl-hours", Short: "preview lease in hours (default 168)", Value: "HOURS"},
+				{Name: "wait", Short: "wait for the deployment to become live (default)"},
+				{Name: "no-wait", Short: "return after the deployment is queued"},
+				{Name: "timeout", Short: "deployment wait timeout in seconds", Value: "SECONDS"},
+				{Name: "idempotency-key", Short: "stable retry key", Value: "KEY"},
+				{Name: "open", Short: "open the preview URL after a successful create"},
+			}},
 			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
 			{Name: "show", Short: "Inspect a preview and its latest deployment"},
+			{Name: "wait", Short: "Wait for a preview deployment to become ready", Flags: []cliFlag{
+				{Name: "progress", Short: "print deployment transitions while waiting"},
+				{Name: "open", Short: "open the preview URL after it becomes ready"},
+				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
+			}},
 			{Name: "destroy", Short: "Tear down a preview app (POST /v1/preview/{slug}/destroy)"},
 		},
 	},
@@ -1231,6 +1250,27 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "dlq",
+		DocSlug: "dlq",
+		Short:   "Inspect, replay, or purge unified dead-letter events",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List app dead-letter events", Flags: []cliFlag{
+				{Name: "limit", Short: "max events (1..200)", Value: "N"},
+				{Name: "before", Short: "pagination cursor", Value: "ID"},
+			}},
+			{Name: "inspect", Short: "Inspect one dead-letter event"},
+			{Name: "replay", Short: "Replay one event or --all", Flags: []cliFlag{
+				{Name: "all", Short: "replay pending events"},
+				{Name: "limit", Short: "maximum events (1..200)", Value: "N"},
+			}},
+			{Name: "purge", Short: "Purge one event or --all", Flags: []cliFlag{
+				{Name: "all", Short: "purge all events"},
+				{Name: "limit", Short: "page size (1..200)", Value: "N"},
+			}},
+		},
+		Positionals: []string{"<app>", "[<event-id>]"},
+	},
+	{
 		Name:    "registry",
 		DocSlug: "registry",
 		Short:   "Per-app private container registry credentials (registry list|set|rm --app <slug>)",
@@ -1259,6 +1299,15 @@ var cliCommands = []cliCommand{
 			{Name: "connections", Short: "List live connections for an endpoint", Flags: []cliFlag{
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
 				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
+			}},
+			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Flags: []cliFlag{
+				{Name: "reason", Short: "required audit reason", Req: true, Value: "TEXT"},
+				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
+				{Name: "principal", Short: "only connections for this principal", Value: "PRINCIPAL"},
+				{Name: "connection-id", Short: "select a specific connection; repeat up to 100 times", Value: "ID"},
+				{Name: "limit", Short: "maximum connections to select (1-1000)", Value: "N"},
+				{Name: "dry-run", Short: "preview without closing connections"},
+				{Name: "allow-partial", Short: "allow the reachable subset when nodes are unavailable"},
 			}},
 			{Name: "send", Short: "Send a message to one live connection"},
 			{Name: "close", Short: "Close one live connection"},

@@ -185,6 +185,14 @@ type CreateAppRequest struct {
 	OverflowNode *string `json:"overflow_node,omitempty"`
 }
 
+// CreatePreviewRequest provisions a pull-request preview for an existing app.
+// The preview gets the stable slug pr-{pr_number}-{parent_slug}; source bytes
+// are supplied separately through the source-ref deployment endpoint.
+type CreatePreviewRequest struct {
+	PRNumber int `json:"pr_number"`
+	TTLHours int `json:"ttl_hours,omitempty"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
@@ -4389,6 +4397,19 @@ type DeadLetterEventsResponse struct {
 	NextBefore string            `json:"next_before,omitempty"`
 }
 
+// DeadLetterReplayAllResponse reports how many pending unified dead-letter
+// events were atomically reset for an app.
+type DeadLetterReplayAllResponse struct {
+	AppSlug  string `json:"app_slug"`
+	Replayed int    `json:"replayed"`
+}
+
+// DeadLetterPurgeResponse reports how many unified ledger rows were removed.
+type DeadLetterPurgeResponse struct {
+	AppSlug string `json:"app_slug"`
+	Purged  int    `json:"purged"`
+}
+
 // --- IAM-4 (ADR-035) — auth audit event surface -----------------------------
 //
 // AuditEventResponse is one row of the customer's own security event
@@ -4622,7 +4643,7 @@ type AppMetricsResponse struct {
 	// predicate is NOT covered by the existing events_wake_id_idx
 	// jsonb expression index (migration 00114 indexes
 	// data->>'wake_id'); on a Scale-tier app with a large fleet
-	// the underlying query can seq-scan + jsonb-cast per row.
+	// the underlying query can seq-scan the trailing event rows.
 	// Best-effort: 0 when Prometheus is degraded, the events
 	// row hasn't been written, or the store query fails. The
 	// customer-facing dashboard surfaces this as the "wakes

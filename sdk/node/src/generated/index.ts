@@ -164,6 +164,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './models/CreateOb
 export type { CreateObjectUploadRouteRequest } from './models/CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
+export type { CreatePreviewRequest } from './models/CreatePreviewRequest.js';
 export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
@@ -185,6 +186,8 @@ export type { DataUpstreamListResponse } from './models/DataUpstreamListResponse
 export type { DataUpstreamResponse } from './models/DataUpstreamResponse.js';
 export type { DeadLetterEvent } from './models/DeadLetterEvent.js';
 export type { DeadLetterEventsResponse } from './models/DeadLetterEventsResponse.js';
+export type { DeadLetterPurgeResponse } from './models/DeadLetterPurgeResponse.js';
+export type { DeadLetterReplayAllResponse } from './models/DeadLetterReplayAllResponse.js';
 export type { DebugCompareRequest } from './models/DebugCompareRequest.js';
 export type { DebugCompareResponse } from './models/DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './models/DebugCompareRouteStats.js';
@@ -357,6 +360,9 @@ export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsage
 export type { ManagedRealtimeCloseRequest } from './models/ManagedRealtimeCloseRequest.js';
 export type { ManagedRealtimeConnectionListResponse } from './models/ManagedRealtimeConnectionListResponse.js';
 export type { ManagedRealtimeConnectionResponse } from './models/ManagedRealtimeConnectionResponse.js';
+export type { ManagedRealtimeDrainRequest } from './models/ManagedRealtimeDrainRequest.js';
+export type { ManagedRealtimeDrainResponse } from './models/ManagedRealtimeDrainResponse.js';
+export type { ManagedRealtimeDrainResult } from './models/ManagedRealtimeDrainResult.js';
 export type { ManagedRealtimeEndpointResponse } from './models/ManagedRealtimeEndpointResponse.js';
 export type { ManagedRealtimeMessageRequest } from './models/ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './models/ManagedRealtimePublishResponse.js';

@@ -318,6 +318,10 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	NotifyDomainVerify      {"domain":"..."}
 //	NotifyInstanceChanged   {"instance_id":uuid, "app_id":uuid,
 //	                         "state":"parked|running|cold_booting|..."}
+//	                         App instances require app_id. Job-task
+//	                         instances intentionally omit it and carry
+//	                         kind:"job" so gateway subscribers ignore
+//	                         the event without warning (issue #2763).
 //	NotifySnapshotPrime     {"app_id":uuid, "deployment_id":uuid}
 //	                         imaged → schedd: layer is built; schedd applies
 //	                         the app execution mode (snapshot prime for

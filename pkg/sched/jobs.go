@@ -540,6 +540,13 @@ func jobRetryDelay(attempt int) time.Duration {
 const (
 	jobTaskLogRetentionBytes = 1024 * 1024
 	jobTaskLogCaptureTimeout = 2 * time.Second
+	// Firecracker delivers the guest serial stream asynchronously. A job can
+	// therefore ship its exit envelope before the final stdout/stderr bytes
+	// have reached vmmd's ring. Keep replaying the one-shot snapshot briefly
+	// after the first page goes quiet so terminal persistence does not race
+	// serial delivery.
+	jobTaskLogSettleWindow = 250 * time.Millisecond
+	jobTaskLogPollInterval = 25 * time.Millisecond
 )
 
 // captureJobTaskLogs copies vmmd's bounded per-instance ring before the job
@@ -552,37 +559,80 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 	}
 	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobTaskLogCaptureTimeout)
 	defer cancel()
-	stream, err := e.vmm.Logs(logCtx, nodeID, instanceID, 0, time.Time{}, false)
-	if err != nil {
-		return "", false, err
-	}
 	buf := make([]byte, 0, 4096)
 	truncated := false
+	var lastSeq int64
+	var sawLine bool
+	sequenced := true
+	settleUntil := time.Time{}
 	for {
-		line, recvErr := stream.Recv()
-		if errors.Is(recvErr, io.EOF) {
-			break
+		// Logs snapshots are inclusive, so advance one past the last line
+		// already persisted to avoid duplicating it on a replay.
+		sinceSeq := lastSeq + 1
+		if sinceSeq <= 0 {
+			sinceSeq = 1
 		}
-		if recvErr != nil {
-			return string(buf), true, recvErr
+		stream, err := e.vmm.Logs(logCtx, nodeID, instanceID, sinceSeq, time.Time{}, false)
+		if err != nil {
+			return string(buf), true, err
 		}
-		if line.IsGap {
-			truncated = true
-			continue
-		}
-		buf = append(buf, line.Line...)
-		if !strings.HasSuffix(line.Line, "\n") {
-			buf = append(buf, '\n')
-		}
-		if len(buf) > jobTaskLogRetentionBytes {
-			truncated = true
-			buf = append([]byte(nil), buf[len(buf)-jobTaskLogRetentionBytes:]...)
-			for len(buf) > 0 && !utf8.Valid(buf) {
-				buf = buf[1:]
+		gotLine := false
+		for {
+			line, recvErr := stream.Recv()
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			if recvErr != nil {
+				return string(buf), true, recvErr
+			}
+			if line.IsGap {
+				truncated = true
+				continue
+			}
+			// A few injected/legacy streams omit sequence numbers. Real vmmd
+			// lines are always sequenced; only deduplicate when the number is
+			// present so those compatibility streams retain their output.
+			if line.Seq > 0 {
+				if line.Seq <= lastSeq {
+					continue
+				}
+				lastSeq = line.Seq
+			} else {
+				sequenced = false
+			}
+			gotLine = true
+			sawLine = true
+			buf = append(buf, line.Line...)
+			if !strings.HasSuffix(line.Line, "\n") {
+				buf = append(buf, '\n')
+			}
+			if len(buf) > jobTaskLogRetentionBytes {
+				truncated = true
+				buf = append([]byte(nil), buf[len(buf)-jobTaskLogRetentionBytes:]...)
+				for len(buf) > 0 && !utf8.Valid(buf) {
+					buf = buf[1:]
+				}
 			}
 		}
+
+		if gotLine && !sequenced {
+			// Compatibility fakes/older clients without sequence numbers
+			// cannot be replayed without duplicating their entire snapshot.
+			return string(buf), truncated, nil
+		}
+		if gotLine {
+			settleUntil = time.Now().Add(jobTaskLogSettleWindow)
+		} else if !sawLine || time.Now().After(settleUntil) {
+			return string(buf), truncated, nil
+		}
+
+		timer := time.NewTimer(jobTaskLogPollInterval)
+		select {
+		case <-logCtx.Done():
+			return string(buf), true, logCtx.Err()
+		case <-timer.C:
+		}
 	}
-	return string(buf), truncated, nil
 }
 
 // ReconcileCancelledJobRun tears down VMs for claimed tasks after the state

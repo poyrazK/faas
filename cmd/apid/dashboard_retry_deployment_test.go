@@ -141,10 +141,10 @@ func seedFailedDeployment(t *testing.T, store *state.MemStore) (state.Account, s
 	}
 	// Drive the canonical stage pipeline so the jsonb populates
 	// the shape the renderer's failedStageFromJSON helper scans.
-	// SetDeploymentFailedEx alone does NOT write StageState — the
-	// canonical failure-stamp path is the three forward transitions
-	// + MarkDeploymentStageFailed (mirrors imaged's stage frame
-	// emit order). After the helper, the row's history[-1] is
+	// SetDeploymentFailedEx now finalizes any active stage atomically;
+	// this fixture still drives the canonical stage pipeline first so
+	// the renderer's failedStageFromJSON helper sees the exact shape.
+	// After the helper, the row's history[-1] is
 	// image_build with status=failed and current is cleared
 	// (the in-flight stage rolls into history on failure).
 	now := time.Now().UTC()

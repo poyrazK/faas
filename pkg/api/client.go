@@ -675,6 +675,13 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppRespon
 	return out, c.do(ctx, "POST", "/v1/apps", req, &out)
 }
 
+// CreatePreview provisions or reopens the stable pull-request preview for a
+// parent app. The returned app is ready to receive a deployment.
+func (c *Client) CreatePreview(ctx context.Context, parentSlug string, req CreatePreviewRequest) (AppResponse, error) {
+	var out AppResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+parentSlug+"/previews", req, &out)
+}
+
 // ListAPIConsumers returns the end-customer identities registered for an app.
 func (c *Client) ListAPIConsumers(ctx context.Context, slug string) (APIConsumerListResponse, error) {
 	var out APIConsumerListResponse
@@ -2395,8 +2402,24 @@ func (c *Client) RetryJobTask(ctx context.Context, name, runID string, taskIndex
 // more. Empty LogContent with Truncated=false means the task
 // never produced output (common for OOM-killed tasks).
 func (c *Client) GetJobTaskLogs(ctx context.Context, name, runID string, taskIndex int) (JobTaskLogResponse, error) {
+	return c.GetJobTaskLogsWithMaxBytes(ctx, name, runID, taskIndex, 0)
+}
+
+// GetJobTaskLogsWithMaxBytes is GetJobTaskLogs with an optional tail size.
+// A value of zero preserves the server default; positive values are sent as
+// max_bytes and must be within the public 1..1 MiB range.
+func (c *Client) GetJobTaskLogsWithMaxBytes(ctx context.Context, name, runID string, taskIndex, maxBytes int) (JobTaskLogResponse, error) {
+	if maxBytes < 0 || maxBytes > MaxJobTaskLogMaxBytes {
+		return JobTaskLogResponse{}, fmt.Errorf("max_bytes must be between 1 and %d (or 0 for the default)", MaxJobTaskLogMaxBytes)
+	}
+	path := "/v1/jobs/" + name + "/runs/" + runID + "/tasks/" + strconv.Itoa(taskIndex) + "/logs"
+	if maxBytes > 0 {
+		q := url.Values{}
+		q.Set("max_bytes", strconv.Itoa(maxBytes))
+		path += "?" + q.Encode()
+	}
 	var out JobTaskLogResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks/"+strconv.Itoa(taskIndex)+"/logs", nil, &out)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // --- Triggers (issue #757 / ADR-100) ----------------------------------------
@@ -2951,6 +2974,42 @@ func (c *Client) ReplayDeadLetterEvent(ctx context.Context, slug, eventID string
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/dlq/"+eventID+"/replay", nil, &out)
 }
 
+// ReplayAllDeadLetterEvents atomically replays up to limit pending unified
+// dead-letter events for an app.
+func (c *Client) ReplayAllDeadLetterEvents(ctx context.Context, slug string, limit int) (DeadLetterReplayAllResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/dlq:replay_all"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out DeadLetterReplayAllResponse
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
+// DeleteDeadLetterEvent purges one app-scoped ledger row without touching its
+// dead-lettered source record.
+func (c *Client) DeleteDeadLetterEvent(ctx context.Context, slug, eventID string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/dlq/"+eventID, nil, nil)
+}
+
+// PurgeDeadLetterEvents removes up to limit unified ledger rows while leaving
+// their dead-lettered source records untouched.
+func (c *Client) PurgeDeadLetterEvents(ctx context.Context, slug string, limit int) (DeadLetterPurgeResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/dlq"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out DeadLetterPurgeResponse
+	return out, c.do(ctx, "DELETE", path, nil, &out)
+}
+
 // Generated-name compatibility helpers kept alongside the ergonomic methods
 // above so sdk-check can prove every OpenAPI path has a Go entry point.
 func (c *Client) GetAppsSlugDlq(ctx context.Context, slug string, limit int, before string) (DeadLetterEventsResponse, error) {
@@ -2963,6 +3022,18 @@ func (c *Client) GetAppsSlugDlqId(ctx context.Context, slug, eventID string) (De
 
 func (c *Client) PostAppsSlugDlqIdReplay(ctx context.Context, slug, eventID string) (DeadLetterEvent, error) {
 	return c.ReplayDeadLetterEvent(ctx, slug, eventID)
+}
+
+func (c *Client) PostAppsSlugDlqReplayAll(ctx context.Context, slug string, limit int) (DeadLetterReplayAllResponse, error) {
+	return c.ReplayAllDeadLetterEvents(ctx, slug, limit)
+}
+
+func (c *Client) DeleteAppsSlugDlqId(ctx context.Context, slug, eventID string) error {
+	return c.DeleteDeadLetterEvent(ctx, slug, eventID)
+}
+
+func (c *Client) DeleteAppsSlugDlq(ctx context.Context, slug string, limit int) (DeadLetterPurgeResponse, error) {
+	return c.PurgeDeadLetterEvents(ctx, slug, limit)
 }
 
 // CreateDelayedTask schedules a delayed-task row to fire at the
@@ -4857,6 +4928,15 @@ func (c *Client) ListManagedRealtimeConnections(ctx context.Context, slug, endpo
 		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// DrainManagedRealtimeConnections closes a bounded set of live connections
+// selected by the request. Dry-run and partial-fleet safeguards are handled
+// by the control-plane endpoint and are preserved in the response.
+func (c *Client) DrainManagedRealtimeConnections(ctx context.Context, slug, endpointID string, req ManagedRealtimeDrainRequest) (ManagedRealtimeDrainResponse, error) {
+	var out ManagedRealtimeDrainResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/connections/drain"
+	return out, c.do(ctx, "POST", path, req, &out)
 }
 
 // SendManagedRealtimeConnection queues a binary-safe message for one live

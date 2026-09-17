@@ -46,6 +46,12 @@ Route activation is idempotent, and any connector or host-route failure leaves
 the row in `error` with traffic blocked. Until a connector is configured, the
 API remains an intent surface and every attachment stays `pending`.
 
+Schedd applies a ready attachment once per live compute node and records a
+per-node convergence observation in its reconciliation logs. A partial node
+failure keeps the attachment in `error` and is retried by the next sweep;
+successful nodes are still reported so operators can identify the unhealthy
+box without guessing from aggregate status.
+
 Legacy external-network attachments still use the operator-managed connector
 and are enabled in schedd with
 `FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,

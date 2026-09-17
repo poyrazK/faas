@@ -103,9 +103,6 @@ type DiskDrift struct {
 	// stays in place for local backends; remote backends (OCI)
 	// degrade the comparison to a presence check. ADR-054 §3.
 	storage storage.LocalArtifactLister
-	// snapshotIndexer upgrades OCI repositories created before the durable
-	// registry-side index existed. It is nil for ordinary local storage.
-	snapshotIndexer storage.SnapshotRepositoryIndexer
 }
 
 // WithSnapDir sets the on-disk snapshot root used by this sweep. It is
@@ -220,9 +217,6 @@ func (d *DiskDrift) WithStorage(b storage.StorageBackend) *DiskDrift {
 		if d.timeout == DefaultDiskDriftTickTimeout {
 			d.timeout = DefaultRemoteDiskDriftTickTimeout
 		}
-	}
-	if indexer, ok := b.(storage.SnapshotRepositoryIndexer); ok {
-		d.snapshotIndexer = indexer
 	}
 	return d
 }
@@ -479,24 +473,6 @@ func parseSnapshotDirectory(directory string) (objectID string, terminal, valid 
 // valuable — a missing snapshot mem or vmstate is drift regardless
 // of where it lives.
 func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
-	if d.snapshotIndexer != nil {
-		deploymentSet := make(map[string]struct{}, len(rows))
-		for _, row := range rows {
-			if row.AppStatus == state.AppDeleted || row.DeploymentStatus == state.DeployFailed || row.DeploymentStatus == state.DeployCancelled {
-				continue
-			}
-			deploymentSet[row.DeploymentID] = struct{}{}
-		}
-		deploymentIDs := make([]string, 0, len(deploymentSet))
-		for deploymentID := range deploymentSet {
-			deploymentIDs = append(deploymentIDs, deploymentID)
-		}
-		if err := d.snapshotIndexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs); err != nil {
-			d.log.Warn("disk-drift: snapshot repository index reconciliation failed",
-				"err", err, "snap_dir", d.snapshotRoot())
-			return 0, fmt.Errorf("disk-drift: reconcile snapshot repository index: %w", err)
-		}
-	}
 	keys, err := d.storage.List(ctx, "snap/")
 	if errors.Is(err, storage.ErrIncompleteEnumeration) {
 		// Repositories written before the durable OCI snapshot index can be

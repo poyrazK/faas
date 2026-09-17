@@ -315,8 +315,9 @@ func writeMetricsDegraded(w http.ResponseWriter, s *server, resp api.AppsMetrics
 
 // histogramQuantile computes PromQL histogram_quantile() for a single
 // q against an (app, le) → float64 bucket map produced by
-// promql.Client.QueryBuckets. Empty / nil maps return 0 (matches the
-// per-app handler's appmetrics.SafeFloat coercion of NaN from PromQL).
+// promql.Client.QueryBuckets. Empty / nil maps and all-zero bucket
+// families return 0 (matches the per-app handler's appmetrics.SafeFloat
+// coercion of NaN from PromQL).
 //
 // Why a local helper instead of importing pkg/gateway/testhist:
 // testhist is a t.Fatalf-bound package; the server-side rollup can't
@@ -357,6 +358,9 @@ func histogramQuantile(q float64, buckets map[string]float64) float64 {
 		if p.cum > total {
 			total = p.cum
 		}
+	}
+	if total <= 0 {
+		return 0
 	}
 	target := q * total
 	// Skip +Inf — cap at the last finite bucket (matches PromQL).

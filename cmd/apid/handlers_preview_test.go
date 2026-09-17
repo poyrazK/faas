@@ -42,6 +42,69 @@ func seedPreviewAppForTest(t *testing.T, e testEnv, slug, parentSlug string, prN
 	return created
 }
 
+func TestCreatePreview_ProvisionsStablePRAppAndReusesIt(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	parent, err := e.store.CreateAppIfUnderQuota(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "acme", Type: "stateless", Runtime: "node22",
+		RAMMB: 512, CPUMillicores: 500, MaxConcurrency: 8, IdleTimeoutS: 45,
+		Status: state.AppActive, WorkloadClass: state.WorkloadClassHTTP,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+
+	rec := e.do(t, "POST", "/v1/apps/acme/previews", api.CreatePreviewRequest{PRNumber: 42, TTLHours: 12}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	var got api.AppResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Slug != "pr-42-acme" || got.PreviewOfSlug != parent.Slug || got.PreviewPRNumber != 42 || got.PreviewPRState != state.PreviewPrStateOpen {
+		t.Fatalf("preview response = %+v", got)
+	}
+	if got.Status != api.AppStatusUndeployed {
+		t.Fatalf("preview status = %q, want %q", got.Status, api.AppStatusUndeployed)
+	}
+	created, err := e.store.AppBySlug(context.Background(), "pr-42-acme")
+	if err != nil {
+		t.Fatalf("lookup preview: %v", err)
+	}
+	if created.RAMMB != parent.RAMMB || created.CPUMillicores != parent.CPUMillicores || created.MaxConcurrency != parent.MaxConcurrency {
+		t.Fatalf("preview config = %+v, parent = %+v", created, parent)
+	}
+
+	repeat := e.do(t, "POST", "/v1/apps/acme/previews", api.CreatePreviewRequest{PRNumber: 42, TTLHours: 24}, nil)
+	if repeat.Code != http.StatusOK {
+		t.Fatalf("repeat status %d, want 200: %s", repeat.Code, repeat.Body.String())
+	}
+	var reused api.AppResponse
+	if err := json.NewDecoder(repeat.Body).Decode(&reused); err != nil {
+		t.Fatalf("decode repeat response: %v", err)
+	}
+	if reused.ID != got.ID || reused.Slug != got.Slug {
+		t.Fatalf("repeat preview = %+v, first = %+v", reused, got)
+	}
+}
+
+func TestCreatePreview_RejectsInvalidTTLAndPreviewParent(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	parent, err := e.store.CreateAppIfUnderQuota(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "acme", Type: "stateless", Status: state.AppActive,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	preview := seedPreviewAppForTest(t, e, "pr-7-acme", parent.Slug, 7)
+
+	badTTL := e.do(t, "POST", "/v1/apps/acme/previews", api.CreatePreviewRequest{PRNumber: 42, TTLHours: 721}, nil)
+	assertProblem(t, badTTL, http.StatusBadRequest, api.CodeValidation)
+
+	nested := e.do(t, "POST", "/v1/apps/"+preview.Slug+"/previews", api.CreatePreviewRequest{PRNumber: 43}, nil)
+	assertProblem(t, nested, http.StatusBadRequest, api.CodeValidation)
+}
+
 // TestDestroyPreview_HappyPath confirms the destroy endpoint
 // soft-deletes the preview row + returns 204. Pins:
 //

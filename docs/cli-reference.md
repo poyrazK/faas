@@ -61,6 +61,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
+| [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`realtime`](#realtime) | Manage realtime endpoints, policies, connections, channels, and auth |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
@@ -650,6 +651,10 @@ Retry one failed task
 
 Tail logs for one task
 
+| Flag | Meaning | |
+|---|---|---|
+| `--max-bytes <N>` | maximum log payload size (1..1048576) |  |
+
 
 ## workflows
 
@@ -962,6 +967,23 @@ Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
 
 `gregale preview [<subcommand>]`
 
+### preview create
+
+Create and deploy a pull-request preview from a GitHub ref
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | parent app slug (defaults to the linked app) |  |
+| `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME | required |
+| `--ref <REF>` | branch, tag, or commit SHA | required |
+| `--pr-number <N>` | pull-request number | required |
+| `--ttl-hours <HOURS>` | preview lease in hours (default 168) |  |
+| `--wait` | wait for the deployment to become live (default) |  |
+| `--no-wait` | return after the deployment is queued |  |
+| `--timeout <SECONDS>` | deployment wait timeout in seconds |  |
+| `--idempotency-key <KEY>` | stable retry key |  |
+| `--open` | open the preview URL after a successful create |  |
+
 ### preview list
 
 List pull-request and developer previews (defaults to the linked app)
@@ -973,6 +995,16 @@ List pull-request and developer previews (defaults to the linked app)
 ### preview show
 
 Inspect a preview and its latest deployment
+
+### preview wait
+
+Wait for a preview deployment to become ready
+
+| Flag | Meaning | |
+|---|---|---|
+| `--progress` | print deployment transitions while waiting |  |
+| `--open` | open the preview URL after it becomes ready |  |
+| `--timeout <SECONDS>` | maximum seconds to wait |  |
 
 ### preview destroy
 
@@ -1551,6 +1583,44 @@ Inspect the dead-letter queue
 Ack a wake
 
 
+## dlq
+
+Inspect, replay, or purge unified dead-letter events
+
+`gregale dlq [<subcommand>] <app> [<event-id>]`
+
+### dlq list
+
+List app dead-letter events
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | max events (1..200) |  |
+| `--before <ID>` | pagination cursor |  |
+
+### dlq inspect
+
+Inspect one dead-letter event
+
+### dlq replay
+
+Replay one event or --all
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | replay pending events |  |
+| `--limit <N>` | maximum events (1..200) |  |
+
+### dlq purge
+
+Purge one event or --all
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | purge all events |  |
+| `--limit <N>` | page size (1..200) |  |
+
+
 ## registry
 
 Per-app private container registry credentials (registry list|set|rm --app &lt;slug&gt;)
@@ -1615,6 +1685,20 @@ List live connections for an endpoint
 |---|---|---|
 | `--channel <CHANNEL>` | only connections subscribed to this channel |  |
 | `--limit <N>` | maximum connections to return (1-1000) |  |
+
+### realtime drain
+
+Close a bounded, filtered set of live connections
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <TEXT>` | required audit reason | required |
+| `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--principal <PRINCIPAL>` | only connections for this principal |  |
+| `--connection-id <ID>` | select a specific connection; repeat up to 100 times |  |
+| `--limit <N>` | maximum connections to select (1-1000) |  |
+| `--dry-run` | preview without closing connections |  |
+| `--allow-partial` | allow the reachable subset when nodes are unavailable |  |
 
 ### realtime send
 

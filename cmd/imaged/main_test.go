@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -17,6 +18,73 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
+
+type snapshotIndexStoreStub struct {
+	ids []string
+	err error
+}
+
+func (s snapshotIndexStoreStub) ListSnapshotDeploymentIDs(context.Context) ([]string, error) {
+	return s.ids, s.err
+}
+
+type snapshotIndexBackendStub struct {
+	ids []string
+	err error
+}
+
+func (*snapshotIndexBackendStub) Put(context.Context, string, io.Reader) error { return nil }
+func (*snapshotIndexBackendStub) Get(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (*snapshotIndexBackendStub) Delete(context.Context, string) error { return nil }
+func (b *snapshotIndexBackendStub) ReconcileSnapshotRepositoryIndex(_ context.Context, ids []string) error {
+	b.ids = append([]string(nil), ids...)
+	return b.err
+}
+
+type storageBackendStub struct{}
+
+func (storageBackendStub) Put(context.Context, string, io.Reader) error { return nil }
+func (storageBackendStub) Get(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (storageBackendStub) Delete(context.Context, string) error { return nil }
+
+// Spec §4.6: imaged is the sole snapshot lifecycle writer, so legacy OCI
+// repository index upgrades must use its lifecycle credential.
+func TestReconcileSnapshotRepositoryIndexUsesImagedLifecycleBackend(t *testing.T) {
+	backend := &snapshotIndexBackendStub{}
+	ids := []string{"dep-a", "dep-b"}
+	count, err := reconcileSnapshotRepositoryIndex(context.Background(), snapshotIndexStoreStub{ids: ids}, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != len(ids) {
+		t.Fatalf("count = %d, want %d", count, len(ids))
+	}
+	if strings.Join(backend.ids, ",") != strings.Join(ids, ",") {
+		t.Fatalf("reconciled IDs = %v, want %v", backend.ids, ids)
+	}
+}
+
+func TestReconcileSnapshotRepositoryIndexSkipsBackendsWithoutIndexer(t *testing.T) {
+	count, err := reconcileSnapshotRepositoryIndex(context.Background(), snapshotIndexStoreStub{err: errors.New("must not read")}, storageBackendStub{})
+	if err != nil || count != 0 {
+		t.Fatalf("count=%d err=%v, want 0, nil", count, err)
+	}
+}
+
+func TestReconcileSnapshotRepositoryIndexFailsClosed(t *testing.T) {
+	backend := &snapshotIndexBackendStub{err: errors.New("registry denied")}
+	if _, err := reconcileSnapshotRepositoryIndex(context.Background(), snapshotIndexStoreStub{ids: []string{"dep-a"}}, backend); err == nil || !strings.Contains(err.Error(), "registry denied") {
+		t.Fatalf("reconcile error = %v, want registry denial", err)
+	}
+	backend.err = nil
+	if _, err := reconcileSnapshotRepositoryIndex(context.Background(), snapshotIndexStoreStub{err: errors.New("database unavailable")}, backend); err == nil || !strings.Contains(err.Error(), "database unavailable") {
+		t.Fatalf("list error = %v, want database failure", err)
+	}
+}
 
 func TestImagedConfigPath_UsesStandardConfigFlag(t *testing.T) {
 	flags := flag.NewFlagSet(t.Name(), flag.ContinueOnError)

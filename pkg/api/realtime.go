@@ -165,6 +165,43 @@ type ManagedRealtimeConnectionListResponse struct {
 	NodesUnavailable int                                 `json:"nodes_unavailable"`
 }
 
+// ManagedRealtimeDrainRequest selects a bounded set of live connections to
+// close. A non-dry-run request must acknowledge a partial fleet snapshot with
+// AllowPartial before the control plane will mutate the known subset.
+type ManagedRealtimeDrainRequest struct {
+	Channel       string   `json:"channel,omitempty"`
+	Principal     string   `json:"principal,omitempty"`
+	ConnectionIDs []string `json:"connection_ids,omitempty"`
+	Limit         int      `json:"limit,omitempty"`
+	Reason        string   `json:"reason"`
+	DryRun        bool     `json:"dry_run,omitempty"`
+	AllowPartial  bool     `json:"allow_partial,omitempty"`
+}
+
+// ManagedRealtimeDrainResult reports the action taken for one selected
+// connection. `would_close` is used by dry-run requests.
+type ManagedRealtimeDrainResult struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// ManagedRealtimeDrainResponse reports a bounded, auditable connection drain.
+// Matched is the number selected after the limit was applied; Truncated means
+// more eligible connections existed in the point-in-time inventory.
+type ManagedRealtimeDrainResponse struct {
+	Results          []ManagedRealtimeDrainResult `json:"results"`
+	Matched          int                          `json:"matched"`
+	Closed           int                          `json:"closed"`
+	Gone             int                          `json:"gone"`
+	Failed           int                          `json:"failed"`
+	Limit            int                          `json:"limit"`
+	Truncated        bool                         `json:"truncated"`
+	DryRun           bool                         `json:"dry_run"`
+	Partial          bool                         `json:"partial"`
+	NodesQueried     int                          `json:"nodes_queried"`
+	NodesUnavailable int                          `json:"nodes_unavailable"`
+}
+
 type ManagedRealtimeEndpointResponse struct {
 	ID                         string            `json:"id"`
 	AppID                      string            `json:"app_id"`
