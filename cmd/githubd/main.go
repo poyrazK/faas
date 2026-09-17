@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -72,7 +71,7 @@ func defaultDeps() runDeps {
 		},
 		readAppID:  func() string { return os.Getenv("FAAS_GITHUB_APP_ID") },
 		readKeyPEM: readKeyPEMDefault,
-		httpClient: func() githubd.HTTPClient { return http.DefaultClient },
+		httpClient: func() githubd.HTTPClient { return githubd.NewHTTPClient() },
 		now:        time.Now,
 	}
 }

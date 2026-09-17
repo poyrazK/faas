@@ -81,7 +81,7 @@ func NewAppAuth(appID string, keyPEM []byte, hc HTTPClient, clientID, clientSecr
 		return nil, fmt.Errorf("githubd: app private key required")
 	}
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = NewHTTPClient()
 	}
 	key, err := parseRSAPrivateKey(keyPEM)
 	if err != nil {
@@ -153,7 +153,7 @@ func (a *AppAuth) ExchangeInstallationToken(ctx context.Context, installationID 
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &payload); err != nil {
 		return "", time.Time{}, fmt.Errorf("githubd: decode install token: %w", err)
 	}
 	if payload.Token == "" {
@@ -273,7 +273,7 @@ func (a *AppAuth) ListInstallationsForUser(ctx context.Context, userToken string
 	var payload struct {
 		Installations []UserInstallation `json:"installations"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &payload); err != nil {
 		return nil, fmt.Errorf("githubd: decode user installations: %w", err)
 	}
 	return payload.Installations, nil
@@ -365,7 +365,7 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context, installationID int64, 
 		return Installation{}, false, fmt.Errorf("githubd: verify install: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload Installation
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &payload); err != nil {
 		return Installation{}, false, fmt.Errorf("githubd: decode install: %w", err)
 	}
 	payload.AccountLogin = payload.Account.Login

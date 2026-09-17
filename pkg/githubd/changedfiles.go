@@ -117,7 +117,7 @@ type ChangedFilesClient interface {
 // (tests inject a URL-rewriting stub).
 func NewHTTPChangedFiles(tokens *TokenCache, httpClient HTTPClient) ChangedFilesClient {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = NewHTTPClient()
 	}
 	return &httpChangedFiles{
 		tokens:      tokens,

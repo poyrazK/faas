@@ -133,7 +133,7 @@ func (c *ChecksAPI) WithGitHubDeploymentStore(store GitHubDeploymentStore) *Chec
 // fails fast at startup rather than at first check-run write.
 func NewChecksAPI(tokens *TokenCache, hc HTTPClient, bindings BindingsLookup) (*ChecksAPI, error) {
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = NewHTTPClient()
 	}
 	if tokens == nil && bindings != nil {
 		return nil, fmt.Errorf("githubd: ChecksAPI: tokens=nil with bindings!=nil is not a valid configuration")
@@ -253,10 +253,10 @@ func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullN
 		return fmt.Errorf("githubd: write check-run: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var out checkRunResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &out); err != nil {
 		// Older test doubles returned an empty 201 body. GitHub returns the
 		// created object, which is required only when durable identity is wired.
-		if c.CheckRuns != nil {
+		if c.CheckRuns != nil || errors.Is(err, ErrGitHubResponseTooLarge) {
 			return fmt.Errorf("githubd: decode check-run response: %w", err)
 		}
 		return nil
@@ -379,7 +379,7 @@ func (c *ChecksAPI) findGitHubDeployment(ctx context.Context, token string, upda
 		return 0, fmt.Errorf("githubd: list github deployments: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var deployments []githubDeploymentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&deployments); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &deployments); err != nil {
 		return 0, fmt.Errorf("githubd: decode github deployments: %w", err)
 	}
 	marker := githubDeploymentMarker(update.LocalDeploymentID)
@@ -442,7 +442,7 @@ func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, up
 		return 0, fmt.Errorf("githubd: create github deployment: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var deployment githubDeploymentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&deployment); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &deployment); err != nil {
 		return 0, fmt.Errorf("githubd: decode github deployment: %w", err)
 	}
 	if deployment.ID <= 0 {
@@ -966,7 +966,7 @@ func (c *ChecksAPI) listPreviewComments(ctx context.Context, token, repoFullName
 		return nil, fmt.Errorf("githubd: list preview comments: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var comments []previewIssueComment
-	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+	if err := decodeGitHubJSON(resp.Body, &comments); err != nil {
 		return nil, fmt.Errorf("githubd: decode preview comments: %w", err)
 	}
 	return comments, nil
