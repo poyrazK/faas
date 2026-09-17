@@ -304,6 +304,9 @@ type MemStore struct {
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
 	edgeRules map[string]EdgeRule
+	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
+	// values never decrease during the MemStore lifetime.
+	edgeRuleGeneration int64
 	// mirrorRules mirrors mirror_rules for handler tests (issue #72
 	// / ADR-125). Keyed by MirrorRule.ID; the (app_id, enabled) and
 	// (source_deployment_id, enabled) lookup hot paths walk the map
@@ -18201,6 +18204,14 @@ func (m *MemStore) ListEnabledAlertRules(_ context.Context) ([]AlertRule, error)
 // only), so the quota branch is single-axis (per-app) — no per-
 // account count.
 // ----------------------------------------------------------------------------
+
+// NextEdgeRuleGeneration mirrors PostgreSQL's non-transactional sequence.
+func (m *MemStore) NextEdgeRuleGeneration(_ context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.edgeRuleGeneration++
+	return m.edgeRuleGeneration, nil
+}
 
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()

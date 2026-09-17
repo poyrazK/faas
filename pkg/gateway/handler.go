@@ -5111,6 +5111,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A two-phase edge-rule mutation fences this hostname before apid commits
+	// the new policy. Fail closed for the bounded convergence window so a
+	// request cannot slip through a gateway that still has the old generation.
+	if h.edgeRules != nil && h.edgeRules.Converging(host) {
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeCapacity, "Edge policy update in progress",
+			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
+		h.observe(r, rec.status, "", "", false, Target{})
+		return
+	}
+
 	// Issue #561 / ADR-089 PR 3 — consult the per-host
 	// edge-rule matcher BEFORE Backend.Lookup. On a
 	// `kind=route` hit the matcher overwrites `app` with

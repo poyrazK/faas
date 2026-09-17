@@ -11770,6 +11770,17 @@ func (s *PgStore) ListEnabledAlertRules(ctx context.Context) ([]AlertRule, error
 // widens the cache-hit window, never causes a wrong rule to fire.
 // ----------------------------------------------------------------------------
 
+// NextEdgeRuleGeneration allocates the durable generation used by the
+// gateway convergence barrier. PostgreSQL sequences intentionally do not roll
+// back, so even an aborted mutation cannot reuse an observed generation.
+func (s *PgStore) NextEdgeRuleGeneration(ctx context.Context) (int64, error) {
+	var generation int64
+	if err := s.pool.QueryRow(ctx, `select nextval('edge_rule_generation_seq')`).Scan(&generation); err != nil {
+		return 0, fmt.Errorf("state: allocate edge-rule generation: %w", err)
+	}
+	return generation, nil
+}
+
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
        cors_preset_id, validate_mode, created_at, updated_at`

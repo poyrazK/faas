@@ -933,6 +933,9 @@ func (c *EdgeRuleCache) removeElement(el *list.Element) {
 // Reset drops every cached entry. Called by the gatewayd notify
 // loop on `db.NotifyEdgeRuleChanged`.
 type EdgeRuleMatcher interface {
+	// Converging reports whether the hostname is inside the short fail-closed
+	// window of a two-phase fleet policy mutation.
+	Converging(host string) bool
 	MatchRoute(ctx context.Context, host, path, method string) *EdgeRuleResolved
 	MatchRewrite(ctx context.Context, host, path, method string) *EdgeRuleRewriteResolved
 	MatchRedirect(ctx context.Context, host, path, method string) *EdgeRuleRedirectResolved
@@ -1123,6 +1126,8 @@ var (
 // forward-compatible interface shape so a future kind's impl can
 // embed it and only override the kinds it ships.
 type noOpEdgeRuleMatcher struct{}
+
+func (noOpEdgeRuleMatcher) Converging(string) bool { return false }
 
 func (noOpEdgeRuleMatcher) MatchRoute(context.Context, string, string, string) *EdgeRuleResolved {
 	return nil

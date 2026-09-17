@@ -460,7 +460,7 @@ type invalidator interface {
 // with stale caches forever. The reconnect wrapper keeps the subscribe alive
 // across pg restarts. The single log-and-return on initial-acquire failure
 // remains — boot-time DB outage is a different signal.
-func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator, log *slog.Logger) {
+func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator, log *slog.Logger, nodeName ...string) {
 	// Issue #477 / ADR-079: append NotifyKeyChanged so a key
 	// rotation triggers InvalidatePublicAuth on the
 	// basic-auth unsealed-credential cache. The cache maps
@@ -500,7 +500,33 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				return
 			}
 			handleInvalidation(ctx, inv, n, log)
+			if n.Channel == db.NotifyEdgeRuleChanged && len(nodeName) > 0 && strings.TrimSpace(nodeName[0]) != "" {
+				ackEdgeRuleInvalidation(ctx, pool, n.Payload, strings.TrimSpace(nodeName[0]), log)
+			}
 		}
+	}
+}
+
+func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node string, log *slog.Logger) {
+	payload, err := db.ParseEdgeRuleChangedPayload(raw)
+	if err != nil || payload.Generation <= 0 {
+		return // legacy notification: reset-only, no barrier to acknowledge
+	}
+	switch payload.Phase {
+	case "prepare", "apply", "abort":
+	default:
+		return
+	}
+	body, err := json.Marshal(db.EdgeRuleAckPayload{
+		Generation: payload.Generation,
+		Phase:      payload.Phase,
+		Node:       node,
+	})
+	if err != nil {
+		return
+	}
+	if err := db.Notify(ctx, pool, db.NotifyEdgeRuleAck, string(body)); err != nil {
+		log.Warn("gatewayd: acknowledge edge-rule generation", "generation", payload.Generation, "phase", payload.Phase, "err", err)
 	}
 }
 
@@ -735,6 +761,19 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// keyed, and we'd need the rule's match_host to
 		// surgical-evict. Wholesale flush is cheaper and
 		// correct.
+		payload, parseErr := db.ParseEdgeRuleChangedPayload(n.Payload)
+		if parseErr == nil && payload.Generation > 0 && payload.Phase == "prepare" {
+			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence([]string, int64) }); ok {
+				converger.BeginEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			}
+			return
+		}
+		if parseErr == nil && payload.Generation > 0 && payload.Phase == "abort" {
+			if converger, ok := inv.(interface{ EndEdgeRuleConvergence([]string, int64) }); ok {
+				converger.EndEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			}
+			return
+		}
 		inv.ResetEdgeRules()
 		// ADR-122 §Decision: drop the kind=cache store on
 		// the same notification. A new rule might apply to
@@ -744,6 +783,15 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// might have changed max_age / stale_if_error. All
 		// three are covered by InvalidateAll.
 		inv.InvalidateResponseCacheAll()
+		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
+			if converger, ok := inv.(interface {
+				EndEdgeRuleConvergence([]string, int64)
+				SetEdgeRuleLoadedGeneration(int64)
+			}); ok {
+				converger.SetEdgeRuleLoadedGeneration(payload.Generation)
+				converger.EndEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			}
+		}
 	case db.NotifyTenantSurfaceChanged:
 		// ADR-100 / issue #879: any mutation on
 		// tenant_surfaces or tenant_hostnames (insert /

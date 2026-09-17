@@ -1782,6 +1782,26 @@ func (b *PGBackend) ResetEdgeRules() {
 	b.edgeRules.Reset()
 }
 
+// BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
+// the distributed policy barrier. Legacy matchers retain reset-only behavior.
+func (b *PGBackend) BeginEdgeRuleConvergence(hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ BeginConvergence([]string, int64) }); ok {
+		matcher.BeginConvergence(hosts, generation)
+	}
+}
+
+func (b *PGBackend) EndEdgeRuleConvergence(hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ EndConvergence([]string, int64) }); ok {
+		matcher.EndConvergence(hosts, generation)
+	}
+}
+
+func (b *PGBackend) SetEdgeRuleLoadedGeneration(generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ SetLoadedGeneration(int64) }); ok {
+		matcher.SetLoadedGeneration(generation)
+	}
+}
+
 // ResetCorsPresets (issue #975 #4 PR-B / ADR-129 D4) drops
 // the edge-rule matcher's per-host LRU so the next request
 // recompiles and re-fetches the up-to-date preset via

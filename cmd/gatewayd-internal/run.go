@@ -1276,7 +1276,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// stream (spec §4.1): an instance state change evicts the app's cached
 	// target so the next request re-resolves via an idempotent wake; an app or
 	// domain change flushes the host→app routes.
-	go watchInvalidations(ctx, pool, backend, log)
+	go watchInvalidations(ctx, pool, backend, log, osGetenv("FAAS_NODE_NAME"))
 
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees

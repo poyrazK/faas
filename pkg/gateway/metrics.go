@@ -191,6 +191,15 @@ type Metrics struct {
 	// at boot below. PR 4-7 extend kind; the outcome set is
 	// stable across all kinds.
 	edgeRuleMatch *prometheus.CounterVec
+	// edgeRuleLoadedGeneration is the latest durable policy generation this
+	// gateway acknowledged. Prometheus's scrape target identifies the node.
+	edgeRuleLoadedGeneration prometheus.Gauge
+	// edgeRuleConvergingHosts is the number of hostnames temporarily fenced
+	// while a two-phase policy mutation crosses the serving fleet.
+	edgeRuleConvergingHosts prometheus.Gauge
+	// edgeRuleGenerationLag is the distance from the newest prepared policy
+	// generation to the last applied generation on this gateway.
+	edgeRuleGenerationLag prometheus.Gauge
 	// edgeRuleApply (ADR-091 hardening PR-A): counter of apply-path
 	// outcomes, distinct from edgeRuleMatch (which counts the
 	// matcher's pick). A rule can MATCH the matcher but FAIL at apply
@@ -803,6 +812,18 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_rule_match_total",
 			Help: "Edge-rule matcher outcomes, labelled by kind and outcome (match|miss|blocked). ADR-089 PR 3.",
 		}, []string{"kind", "outcome"}),
+		edgeRuleLoadedGeneration: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_edge_rule_loaded_generation",
+			Help: "Latest durable edge-rule policy generation acknowledged by this gateway.",
+		}),
+		edgeRuleConvergingHosts: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_edge_rule_converging_hosts",
+			Help: "Hostnames temporarily fail-closed while an edge-rule generation converges.",
+		}),
+		edgeRuleGenerationLag: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_edge_rule_generation_lag",
+			Help: "Difference between the newest prepared edge-rule generation and the last applied generation on this gateway.",
+		}),
 		// ADR-091 hardening PR-A — apply-path counter (distinct from
 		// match). A rule can match the matcher but fail at apply time
 		// (e.g. JWKS lookup returns ErrJWKSNotRegistered, or an IP
@@ -1585,7 +1606,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -2293,6 +2314,36 @@ func (m *Metrics) ObserveEdgeRuleMatch(kind, outcome string) {
 		return
 	}
 	m.edgeRuleMatch.WithLabelValues(kind, outcome).Inc()
+}
+
+// SetEdgeRuleLoadedGeneration exposes the fleet policy generation applied by
+// this process. The metric is node-scoped by the scrape target, so no dynamic
+// label is needed.
+func (m *Metrics) SetEdgeRuleLoadedGeneration(generation int64) {
+	if m == nil || m.edgeRuleLoadedGeneration == nil {
+		return
+	}
+	m.edgeRuleLoadedGeneration.Set(float64(generation))
+}
+
+// SetEdgeRuleConvergingHosts exposes the size of the local fail-closed fence.
+func (m *Metrics) SetEdgeRuleConvergingHosts(count int) {
+	if m == nil || m.edgeRuleConvergingHosts == nil {
+		return
+	}
+	m.edgeRuleConvergingHosts.Set(float64(count))
+}
+
+// SetEdgeRuleGenerationLag exposes whether this gateway has acknowledged the
+// newest prepared generation. It reaches zero only after apply or abort.
+func (m *Metrics) SetEdgeRuleGenerationLag(lag int64) {
+	if m == nil || m.edgeRuleGenerationLag == nil {
+		return
+	}
+	if lag < 0 {
+		lag = 0
+	}
+	m.edgeRuleGenerationLag.Set(float64(lag))
 }
 
 // ObserveEdgeRuleApply (ADR-091 hardening PR-A) increments the

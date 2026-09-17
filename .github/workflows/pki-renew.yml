@@ -36,6 +36,12 @@ jobs:
             --manifest-file "$manifest" \
             --output-dir "$inventory_root"
 
+          # This job runs on the production control-plane host.  The issuer
+          # is therefore local to the runner; trying to SSH back through the
+          # compute deploy key makes renewal depend on an unrelated account
+          # and was the reason the first production run never started.
+          sudo -n test -r /etc/faas/tls/ca/ca.key
+
           install -m 0600 /dev/null "$RUNNER_TEMP/pki-deploy-key"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$RUNNER_TEMP/pki-deploy-key"
           test -s "$RUNNER_TEMP/pki-deploy-key"
@@ -53,6 +59,11 @@ jobs:
             -e "s|__PKI_DEPLOY_KEY__|$RUNNER_TEMP/pki-deploy-key|" \
             -e "s|__PKI_KNOWN_HOSTS__|$RUNNER_TEMP/pki-known-hosts|" \
             "$inventory_root/inventory/group_vars/all.yml"
+          cat > "$inventory_root/inventory/group_vars/control_plane.yml" <<'EOF'
+          # The sole CA issuer is the self-hosted runner itself.  Keep remote
+          # compute nodes on their manifest-defined SSH users and key.
+          ansible_connection: local
+          EOF
           echo "PKI_INVENTORY=$inventory_root/inventory/hosts.ini" >> "$GITHUB_ENV"
 
       - name: Run serialized fleet renewal

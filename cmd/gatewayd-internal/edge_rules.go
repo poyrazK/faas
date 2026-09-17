@@ -29,6 +29,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -72,14 +74,24 @@ type edgeRuleStore interface {
 // parse time (gateway_edge_rule_compile_error_total{kind}). nil
 // is safe — the compile helpers guard before incrementing.
 type gatewaydEdgeRules struct {
-	loadMu   sync.Mutex
-	loads    map[edgeLoadKey]chan struct{}
-	store    edgeRuleStore
-	cache    *gateway.EdgeRuleCache
-	log      *slog.Logger
-	validate validateCompiler
-	metrics  *gateway.Metrics
+	loadMu           sync.Mutex
+	loads            map[edgeLoadKey]chan struct{}
+	fenceMu          sync.Mutex
+	fences           map[string]edgeRuleFence
+	store            edgeRuleStore
+	cache            *gateway.EdgeRuleCache
+	log              *slog.Logger
+	validate         validateCompiler
+	metrics          *gateway.Metrics
+	loadedGeneration atomic.Int64
 }
+
+type edgeRuleFence struct {
+	generation int64
+	expiresAt  time.Time
+}
+
+const edgeRuleFenceTTL = 30 * time.Second
 
 // validateCompiler is the surface compileValidateRules needs from
 // the cmd-side adapter (cmd/gatewayd-internal/edge_validate.go).
@@ -111,6 +123,108 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 		log:      log,
 		validate: validate,
 		metrics:  metrics,
+		fences:   make(map[string]edgeRuleFence),
+	}
+}
+
+// BeginConvergence fences the supplied hosts before the policy write. A TTL
+// prevents a crashed apid from leaving a hostname unavailable indefinitely.
+func (g *gatewaydEdgeRules) BeginConvergence(hosts []string, generation int64) {
+	if g == nil || generation <= 0 {
+		return
+	}
+	now := time.Now()
+	g.fenceMu.Lock()
+	for _, host := range hosts {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "" {
+			continue
+		}
+		current, ok := g.fences[host]
+		if !ok || generation >= current.generation {
+			g.fences[host] = edgeRuleFence{generation: generation, expiresAt: now.Add(edgeRuleFenceTTL)}
+		}
+	}
+	count, newest := edgeRuleFenceStats(g.fences)
+	g.fenceMu.Unlock()
+	g.publishConvergenceMetrics(count, newest)
+}
+
+// EndConvergence releases only fences at or below this generation. A delayed
+// apply from an older mutation cannot remove a newer mutation's fence.
+func (g *gatewaydEdgeRules) EndConvergence(hosts []string, generation int64) {
+	if g == nil || generation <= 0 {
+		return
+	}
+	g.fenceMu.Lock()
+	for _, host := range hosts {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if current, ok := g.fences[host]; ok && current.generation <= generation {
+			delete(g.fences, host)
+		}
+	}
+	count, newest := edgeRuleFenceStats(g.fences)
+	g.fenceMu.Unlock()
+	g.publishConvergenceMetrics(count, newest)
+}
+
+// Converging is the request-path fail-closed check.
+func (g *gatewaydEdgeRules) Converging(host string) bool {
+	if g == nil {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	now := time.Now()
+	g.fenceMu.Lock()
+	ok := false
+	for pattern, fence := range g.fences {
+		if !now.Before(fence.expiresAt) {
+			delete(g.fences, pattern)
+			continue
+		}
+		matched, err := path.Match(pattern, host)
+		if err == nil && matched {
+			ok = true
+		}
+	}
+	count, newest := edgeRuleFenceStats(g.fences)
+	g.fenceMu.Unlock()
+	g.publishConvergenceMetrics(count, newest)
+	return ok
+}
+
+func edgeRuleFenceStats(fences map[string]edgeRuleFence) (int, int64) {
+	var newest int64
+	for _, fence := range fences {
+		if fence.generation > newest {
+			newest = fence.generation
+		}
+	}
+	return len(fences), newest
+}
+
+func (g *gatewaydEdgeRules) publishConvergenceMetrics(count int, newest int64) {
+	g.metrics.SetEdgeRuleConvergingHosts(count)
+	lag := newest - g.loadedGeneration.Load()
+	if count == 0 {
+		lag = 0
+	}
+	g.metrics.SetEdgeRuleGenerationLag(lag)
+}
+
+func (g *gatewaydEdgeRules) SetLoadedGeneration(generation int64) {
+	if g == nil || generation <= 0 {
+		return
+	}
+	for {
+		current := g.loadedGeneration.Load()
+		if generation <= current {
+			return
+		}
+		if g.loadedGeneration.CompareAndSwap(current, generation) {
+			g.metrics.SetEdgeRuleLoadedGeneration(generation)
+			return
+		}
 	}
 }
 

@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -328,6 +327,11 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("plan limits not loaded"))
 		return
 	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "created", req.MatchHost)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; no rule was created"))
+		return
+	}
 	row, err := s.store.CreateEdgeRuleIfUnderQuota(r.Context(), state.CreateEdgeRuleParams{
 		AccountID:    acct.ID,
 		AppID:        app.ID,
@@ -348,6 +352,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		ValidateMode: resolveValidateMode(req.Kind, req.ValidateMode, req.Action),
 	}, limits)
 	if err != nil {
+		convergence.abort(r.Context())
 		var qe *state.EdgeRuleQuotaError
 		switch {
 		case errors.As(err, &qe):
@@ -365,11 +370,6 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		}
 		return
 	}
-	// pg_notify lands the LRU flush in PR 8; the channel constant is
-	// reserved here so the wire format stabilises before the
-	// gatewayd consumer lands.
-	_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
-		fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"created"}`, app.ID, row.ID))
 	s.log.Info("edge rule created",
 		"rule", logsanitize.Field(row.ID),
 		"app", app.Slug,
@@ -387,6 +387,13 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		auditKeyEnabled:      row.Enabled,
 		auditKeyKind:         row.Kind,
 	})
+	if err := convergence.apply(r.Context(), row.ID); err != nil {
+		convergence.setResponseState(w, "converging")
+		s.log.Error("edge rule persisted but fleet convergence is incomplete", "rule", row.ID, "generation", convergence.generation, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation"))
+		return
+	}
+	convergence.setResponseState(w, "active")
 	writeJSON(w, http.StatusCreated, edgeRuleResponse(row))
 }
 
@@ -712,8 +719,18 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		lowered := strings.ToLower(*req.MatchHost)
 		req.MatchHost = &lowered
 	}
+	hosts := []string{row.MatchHost}
+	if req.MatchHost != nil {
+		hosts = append(hosts, *req.MatchHost)
+	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "updated", hosts...)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated"))
+		return
+	}
 	updated, err := s.store.UpdateEdgeRule(r.Context(), id, edgeRuleUpdateParamsFrom(req, row.Kind))
 	if err != nil {
+		convergence.abort(r.Context())
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such edge rule")
 			return
@@ -721,8 +738,6 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not update edge rule"))
 		return
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
-		fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"updated"}`, updated.AppID, updated.ID))
 	s.log.Info("edge rule updated",
 		"rule", logsanitize.Field(updated.ID),
 		"app", updated.AppID,
@@ -736,6 +751,13 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		auditKeyPriority: updated.Priority,
 		auditKeyEnabled:  updated.Enabled,
 	})
+	if err := convergence.apply(r.Context(), updated.ID); err != nil {
+		convergence.setResponseState(w, "converging")
+		s.log.Error("edge rule persisted but fleet convergence is incomplete", "rule", updated.ID, "generation", convergence.generation, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation"))
+		return
+	}
+	convergence.setResponseState(w, "active")
 	writeJSON(w, http.StatusOK, edgeRuleResponse(updated))
 }
 
@@ -826,12 +848,16 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		s.notFound(w, "no such edge rule")
 		return
 	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "deleted", row.MatchHost)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not deleted"))
+		return
+	}
 	if err := s.store.DeleteEdgeRule(r.Context(), id); err != nil {
+		convergence.abort(r.Context())
 		api.WriteProblem(w, api.ErrCapacity("could not delete edge rule"))
 		return
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
-		fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"deleted"}`, row.AppID, row.ID))
 	s.log.Info("edge rule deleted",
 		"rule", logsanitize.Field(id),
 		"app", row.AppID,
@@ -843,5 +869,12 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		auditKeyAppID:  row.AppID,
 		auditKeyKind:   row.Kind,
 	})
+	if err := convergence.apply(r.Context(), row.ID); err != nil {
+		convergence.setResponseState(w, "converging")
+		s.log.Error("edge rule deleted but fleet convergence is incomplete", "rule", row.ID, "generation", convergence.generation, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("edge rule was deleted but the serving fleet has not acknowledged it; verify the rule is absent before retrying this mutation"))
+		return
+	}
+	convergence.setResponseState(w, "active")
 	w.WriteHeader(http.StatusNoContent)
 }

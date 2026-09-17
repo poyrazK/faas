@@ -274,17 +274,48 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrCapacity("plan limits not loaded"))
 		return
 	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "openapi_applied", matchHost)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the policy was not applied"))
+		return
+	}
+	applyStarted := false
+	defer func(ctx context.Context) {
+		if !applyStarted {
+			convergence.abort(ctx)
+		}
+	}(r.Context())
 	created := make([]state.EdgeRule, 0, len(suggestions))
-	rollback := func(ctx context.Context) {
+	rollback := func(ctx context.Context) error {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		var rollbackErr error
 		for i := len(created) - 1; i >= 0; i-- {
 			row := created[i]
-			if deleteErr := s.store.DeleteEdgeRule(ctx, row.ID); deleteErr == nil || errors.Is(deleteErr, state.ErrNotFound) {
-				if s.notif != nil {
-					_ = s.notif.Notify(ctx, db.NotifyEdgeRuleChanged,
-						fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"deleted"}`, app.ID, row.ID))
-				}
+			if deleteErr := s.store.DeleteEdgeRule(rollbackCtx, row.ID); deleteErr != nil && !errors.Is(deleteErr, state.ErrNotFound) {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("delete edge rule %s: %w", row.ID, deleteErr))
 			}
 		}
+		return rollbackErr
+	}
+	rollbackOrConverge := func(ctx context.Context) bool {
+		rollbackErr := rollback(ctx)
+		if rollbackErr == nil {
+			return true
+		}
+		// Some rows remain durable. Invalidate every gateway to that actual
+		// partial state before releasing the fence; abort would expose stale
+		// caches that disagree with PostgreSQL.
+		applyStarted = true
+		applyErr := convergence.apply(ctx, "")
+		s.log.Error("OpenAPI edge policy rollback incomplete", "app", app.ID, "generation", convergence.generation, "rollback_err", rollbackErr, "convergence_err", applyErr)
+		if applyErr == nil {
+			convergence.setResponseState(w, "active")
+		} else {
+			convergence.setResponseState(w, "converging")
+		}
+		api.WriteProblem(w, api.ErrCapacity("OpenAPI policy apply failed and rollback was incomplete; read the current policy before retrying"))
+		return false
 	}
 	for _, suggestion := range suggestions {
 		// Dry-run suggestions expose the kind-tagged action union so the
@@ -298,7 +329,9 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 		}
 		actionRaw, marshalErr := json.Marshal(actionPayload)
 		if marshalErr != nil {
-			rollback(r.Context())
+			if !rollbackOrConverge(r.Context()) {
+				return
+			}
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
 				"failed to encode OpenAPI policy action", marshalErr.Error()))
 			return
@@ -309,7 +342,9 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			ValidateMode: api.ValidateModeObserve, Action: actionRaw,
 		}
 		if prob := validateEdgeRuleBody(&createReq, acct.Plan); prob != nil {
-			rollback(r.Context())
+			if !rollbackOrConverge(r.Context()) {
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -320,7 +355,9 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			Action: actionFromBody(suggestion.Kind, actionRaw), ValidateMode: api.ValidateModeObserve,
 		}, limits)
 		if createErr != nil {
-			rollback(r.Context())
+			if !rollbackOrConverge(r.Context()) {
+				return
+			}
 			var qe *state.EdgeRuleQuotaError
 			switch {
 			case errors.As(createErr, &qe):
@@ -339,10 +376,6 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		created = append(created, row)
-		if s.notif != nil {
-			_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
-				fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"created"}`, app.ID, row.ID))
-		}
 		s.audit.Emit(r.Context(), "edge_rule.created", &acct.ID, map[string]any{
 			auditKeyRuleID: row.ID, auditKeyAppID: row.AppID,
 			auditKeyMatchHost: row.MatchHost, auditKeyMatchPath: row.MatchPath,
@@ -361,6 +394,14 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 		"app_id": app.ID, "match_host": matchHost, "preview_sha256": previewSHA256,
 		"applied_count": len(created),
 	})
+	applyStarted = true
+	if err := convergence.apply(r.Context(), ""); err != nil {
+		convergence.setResponseState(w, "converging")
+		s.log.Error("OpenAPI edge policy persisted but fleet convergence is incomplete", "app", app.ID, "generation", convergence.generation, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("OpenAPI edge policy was saved but the serving fleet has not acknowledged it; read the current policy before retrying this mutation"))
+		return
+	}
+	convergence.setResponseState(w, "active")
 	writeJSON(w, http.StatusOK, resp)
 }
 

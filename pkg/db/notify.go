@@ -60,6 +60,50 @@ type AppChangedPayload struct {
 	Legacy           bool   `json:"-"`
 }
 
+// EdgeRuleChangedPayload is the fleet convergence wire contract for edge-rule
+// mutations. Prepare fences every affected hostname before the database write;
+// apply invalidates caches and releases the fence after the write; abort
+// releases a prepared fence when persistence fails. Generation is allocated
+// from PostgreSQL and never decreases across apid restarts.
+type EdgeRuleChangedPayload struct {
+	AppID      string   `json:"app_id"`
+	RuleID     string   `json:"rule_id,omitempty"`
+	Operation  string   `json:"op"`
+	Phase      string   `json:"phase,omitempty"`
+	Generation int64    `json:"generation,omitempty"`
+	MatchHosts []string `json:"match_hosts,omitempty"`
+}
+
+// EdgeRuleAckPayload is emitted by each serving gateway only after it has
+// applied the requested prepare/apply/abort phase locally.
+type EdgeRuleAckPayload struct {
+	Generation int64  `json:"generation"`
+	Phase      string `json:"phase"`
+	Node       string `json:"node"`
+}
+
+func ParseEdgeRuleChangedPayload(raw string) (EdgeRuleChangedPayload, error) {
+	var payload EdgeRuleChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return EdgeRuleChangedPayload{}, fmt.Errorf("db: decode edge_rule_changed payload: %w", err)
+	}
+	if strings.TrimSpace(payload.AppID) == "" {
+		return EdgeRuleChangedPayload{}, errors.New("db: edge_rule_changed payload missing app_id")
+	}
+	return payload, nil
+}
+
+func ParseEdgeRuleAckPayload(raw string) (EdgeRuleAckPayload, error) {
+	var payload EdgeRuleAckPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return EdgeRuleAckPayload{}, fmt.Errorf("db: decode edge_rule_ack payload: %w", err)
+	}
+	if payload.Generation <= 0 || strings.TrimSpace(payload.Phase) == "" || strings.TrimSpace(payload.Node) == "" {
+		return EdgeRuleAckPayload{}, errors.New("db: incomplete edge_rule_ack payload")
+	}
+	return payload, nil
+}
+
 // ParseAppChangedPayload decodes the canonical JSON envelope and the legacy
 // raw UUID. It rejects anonymous JSON and arbitrary non-JSON strings so every
 // consumer makes the same routing and privacy decision.
@@ -579,6 +623,12 @@ const (
 	//   against notify loss. Consumed by cmd/gatewayd-internal/
 	//   backend.go (PR 8).
 	NotifyEdgeRuleChanged = "edge_rule_changed"
+	// NotifyEdgeRuleAck {"generation":int,"phase":"prepare|apply|abort",
+	//                    "node":string}
+	//   gatewayd-internal -> apid: the named serving gateway applied one
+	//   phase of an edge-rule convergence barrier. This channel is consumed
+	//   only by the mutation request that allocated the generation.
+	NotifyEdgeRuleAck = "edge_rule_ack"
 	// NotifyCachePurge is emitted by the explicit per-app cache purge API.
 	// Payload: {"app_id":uuid,"path_glob":string}; an empty glob purges
 	// the app's complete response cache.
