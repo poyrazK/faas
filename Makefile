@@ -212,19 +212,20 @@ test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated p
 	@$(MAKE) check-state-coverage COVERFILE=$(COVERAGE_DIR)/state.out
 
 .PHONY: check-state-coverage
-check-state-coverage: ## Assert pkg/state coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
+check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
 	@COVERFILE="$${COVERFILE:-$(COVERAGE_DIR)/cover.out}" ; \
 	test -f "$$COVERFILE" || (echo "Coverage file $$COVERFILE not found — run tests with -coverprofile first" ; exit 1) ; \
 	total=$$(awk '/^github\.com\/.*\/pkg\/state\// { \
-		if ($$0 ~ /pkg\/state\/sqlc\//) next; \
 		split($$0, a, " "); n=split(a[1], b, ":"); file=b[1]; \
+		prefix="/pkg/state/"; path=substr(file, index(file, prefix)+length(prefix)); \
+		if (path ~ /\// || path == "") next; \
 		count=a[length(a)]+0; stmts=a[length(a)-1]+0; \
 		tot_stmts += stmts; \
 		if (count > 0) tot_hit += stmts; \
 	} END { if (tot_stmts > 0) printf "%.1f", tot_hit*100/tot_stmts; else print "0.0" }' "$$COVERFILE") ; \
 	awk -v t="$$total" 'BEGIN { exit (t+0 >= 70 ? 0 : 1) }' \
-		&& echo "pkg/state coverage: $$total% ✓ (target ≥ 70%, excluding generated pkg/state/sqlc/**)" \
-		|| (echo "pkg/state coverage: $$total% ✗ (target ≥ 70%, excluding generated pkg/state/sqlc/**)"; exit 1)
+		&& echo "pkg/state coverage: $$total% ✓ (target ≥ 70%, exact package only)" \
+		|| (echo "pkg/state coverage: $$total% ✗ (target ≥ 70%, exact package only)"; exit 1)
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
