@@ -45,7 +45,7 @@ func secretsRotate(args []string) int {
 	fs := newFlagSet("secrets rotate", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE from stdin (one pair)")
-	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (omit for default)")
+	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (defaults to linked project environment)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -54,6 +54,11 @@ func secretsRotate(args []string) int {
 			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>]", "secrets")
 		return 1
 	}
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
 
 	var pair secretsPair
 	if *fromStdin {

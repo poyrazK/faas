@@ -130,7 +130,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | Flag | Meaning | |
 |---|---|---|
 | `--app <APP>` | app slug | required |
-| `--env <SCOPE>` | environment scope | required |
+| `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--database <REF>` | existing database ID or name |  |
 | `--region <REGION>` | provider-neutral region when creating |  |
@@ -149,7 +149,7 @@ Provision or attach object storage and inject sealed S3 settings
 | Flag | Meaning | |
 |---|---|---|
 | `--app <APP>` | app slug | required |
-| `--env <SCOPE>` | environment scope | required |
+| `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--region <REGION>` | object-storage region |  |
 | `--public` | serve objects publicly from the app host |  |
@@ -833,7 +833,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--yes` | skip the apply confirmation prompt |  |
 | `--only <SLUGS>` | workloads to apply; retain unselected project workloads (comma-separated) |  |
 | `--project` | deploy all detected workloads as one project (slug defaults from --name or source) |  |
-| `--environment <SLUG>` | deploy to a registered project environment |  |
+| `--environment <SLUG>` | deploy to a registered project environment (defaults to linked context) |  |
 | `--reason <text>` | free-text deploy reason (≤280 chars) |  |
 | `--tag <TAG>` | annotation tag (incident_recovery\|hotfix\|scheduled_maintenance\|compliance_hold\|partner_request) | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
@@ -1028,7 +1028,7 @@ Preview routes, edge policies, and the read-only OpenAPI contract diff (slug def
 
 | Flag | Meaning | |
 |---|---|---|
-| `--scope <scope>` | deployment scope to compare |  |
+| `--scope <scope>` | deployment scope to compare (defaults to linked environment, otherwise prod) |  |
 | `--fail-on-unavailable` | fail when the contract-diff backend is unavailable |  |
 
 ### openapi apply
@@ -1060,12 +1060,17 @@ Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context)
 
 Pull sealed-secret keys to a .env skeleton (values blank)
 
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+
 ### env push
 
 Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
 | Flag | Meaning | |
 |---|---|---|
+| `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
 | `--restart` | restart app after applying changes (otherwise changes apply on next wake) |  |
 
 ### env diff
@@ -1098,7 +1103,7 @@ Explain an app from its runtime, deployment, API, data, scaling, and release sig
 | Flag | Meaning | |
 |---|---|---|
 | `--upstreams` | List data upstreams captured for this app (ADR-098 §9.A) |  |
-| `--scope <scope>` | filter by scope (forwarded as ?scope=, used with --upstreams) |  |
+| `--scope <scope>` | filter by scope (defaults to linked project environment; used with --upstreams) |  |
 | `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
 
 
@@ -1656,13 +1661,25 @@ Manage env secrets (secrets list|set|unset|list-all|rotate)
 
 List sealed secrets
 
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
+
 ### secrets set
 
 Set a sealed secret
 
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
+
 ### secrets unset
 
 Remove a sealed secret
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
 
 ### secrets list-all
 
@@ -1671,6 +1688,10 @@ List every secret across apps
 ### secrets rotate
 
 Re-seal one secret under the current host key
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 
 
 ## slo

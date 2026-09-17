@@ -71,6 +71,25 @@ func TestSetProjectDeploySecrets(t *testing.T) {
 	}
 }
 
+func TestSetDeploySecretsWithScope(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "fp_test")
+	err := setDeploySecretsWithScope(context.Background(), client, "api",
+		[]secretsPair{{Key: "DATABASE_URL", Value: "postgres://example"}}, "staging")
+	if err != nil {
+		t.Fatalf("setDeploySecretsWithScope() error = %v", err)
+	}
+	if query != "scope=staging" {
+		t.Fatalf("secret write query = %q, want scope=staging", query)
+	}
+}
+
 // secretsSink is a tiny programmable fake-apid that records every secrets
 // request and lets the test inspect body / respond with a chosen status.
 type secretsSink struct {

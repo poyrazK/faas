@@ -79,7 +79,7 @@ func cmdAddBucket(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("add bucket", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required)")
-	scope := fs.String("env", "", "environment scope (required)")
+	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
 	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
 	region := fs.String("region", "", "object-storage region (uses the account default when omitted)")
 	public := fs.Bool("public", false, "serve objects publicly from the app host")
@@ -91,7 +91,12 @@ func cmdAddBucket(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale add bucket NAME --app APP --env SCOPE [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--wait-timeout DURATION]"
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
+	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--wait-timeout DURATION]"
 	if fs.NArg() != 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
 		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
 		!addBucketNameRE.MatchString(strings.TrimSpace(fs.Arg(0))) || !objectStoragePermissionOK(*permission) ||
@@ -282,7 +287,7 @@ func cmdAddPostgres(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("add postgres", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required)")
-	scope := fs.String("env", "", "environment scope (required)")
+	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
 	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
 	environmentKey := fs.String("environment-key", "DATABASE_URL", "connection environment variable name")
 	databaseRef := fs.String("database", "", "existing database ID or name")
@@ -298,7 +303,12 @@ func cmdAddPostgres(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale add postgres [NAME] --app APP --env SCOPE [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only] [--wait-timeout DURATION]"
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
+	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1

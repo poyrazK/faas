@@ -14,7 +14,8 @@
 // for pipelines that need to avoid putting the plaintext in shell
 // history. Most usage is the inline form.
 //
-// `--scope` (ADR-092 PR-B) selects which env-scope the call targets;
+// `--scope` (ADR-092 PR-B) selects which env-scope the call targets; when it
+// is omitted, a linked project environment is used when available;
 // the reserved sentinel `__all__` is rejected server-side as
 // env_scope_reserved on PUT/DELETE/POST (single-row writes) but is
 // accepted on GET (where it returns the nested `secrets_by_scope`
@@ -85,7 +86,7 @@ func cmdSecrets(args []string) int {
 func secretsList(args []string) int {
 	fs := newFlagSet("secrets list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
-	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (omit for default; '__all__' returns nested secrets_by_scope)")
+	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (defaults to linked project environment; '__all__' returns nested secrets_by_scope)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -96,6 +97,11 @@ func secretsList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__]", "secrets")
 		return 1
 	}
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -166,7 +172,7 @@ func secretsSet(args []string) int {
 	fs := newFlagSet("secrets set", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
-	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (omit for default)")
+	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (defaults to linked project environment)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret set:", err)
@@ -179,6 +185,11 @@ func secretsSet(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale secrets set --app <slug> KEY=VALUE [...] [--from-stdin] [--scope <name>]", "secrets")
 		return 1
 	}
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
 
 	pairs := []secretsPair{}
 	if *fromStdin {
@@ -429,8 +440,12 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 // must not perform the extra list/quota reads or print one line per key, and
 // JSON deploys must keep stdout as a single receipt.
 func setDeploySecrets(ctx context.Context, client *Client, app string, pairs []secretsPair) error {
+	return setDeploySecretsWithScope(ctx, client, app, pairs, "")
+}
+
+func setDeploySecretsWithScope(ctx context.Context, client *Client, app string, pairs []secretsPair, scope string) error {
 	for _, pair := range pairs {
-		if err := client.SetSecret(ctx, app, pair.Key, pair.Value); err != nil {
+		if err := client.SetSecretWithScope(ctx, app, pair.Key, pair.Value, scope); err != nil {
 			return fmt.Errorf("set %s: %w", pair.Key, err)
 		}
 	}
@@ -443,6 +458,10 @@ func setDeploySecrets(ctx context.Context, client *Client, app string, pairs []s
 // avoid issuing duplicate writes. Values remain in memory and are passed only
 // to the existing sealed app-secret endpoint; they are never logged.
 func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []api.PlanWorkload, pairs []secretsPair) (int, error) {
+	return setProjectDeploySecretsWithScope(ctx, client, workloads, pairs, "")
+}
+
+func setProjectDeploySecretsWithScope(ctx context.Context, client *Client, workloads []api.PlanWorkload, pairs []secretsPair, scope string) (int, error) {
 	seen := make(map[string]struct{}, len(workloads))
 	configured := 0
 	for _, workload := range workloads {
@@ -455,7 +474,7 @@ func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []ap
 			continue
 		}
 		seen[key] = struct{}{}
-		if err := setDeploySecrets(ctx, client, app, pairs); err != nil {
+		if err := setDeploySecretsWithScope(ctx, client, app, pairs, scope); err != nil {
 			return configured, fmt.Errorf("workload %s: %w", app, err)
 		}
 		configured++
@@ -468,7 +487,7 @@ func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []ap
 func secretsUnset(args []string) int {
 	fs := newFlagSet("secrets unset", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
-	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (omit for default)")
+	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (defaults to linked project environment)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -476,6 +495,11 @@ func secretsUnset(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> KEY [--scope <name>]", "secrets")
 		return 1
 	}
+	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
+	if resolveErr != nil {
+		return printErr("Could not read local project context", resolveErr)
+	}
+	*scope = resolvedScope
 	key := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {

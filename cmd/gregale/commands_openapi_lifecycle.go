@@ -28,7 +28,7 @@ type openapiPreviewOutput struct {
 func cmdOpenapiPreview(args []string) int {
 	flags, pos := splitArgsForFlags(args, "fail-on-unavailable")
 	fs := newOpenapiFlagSet("openapi preview")
-	scope := fs.String("scope", "prod", "deployment scope to compare")
+	scope := fs.String("scope", "", "deployment scope to compare (defaults to linked project environment, otherwise prod)")
 	failOnUnavailable := fs.Bool("fail-on-unavailable", false, "fail when the contract-diff backend is unavailable")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -37,6 +37,14 @@ func cmdOpenapiPreview(args []string) int {
 		PrintUsage(osStderr, "usage: gregale openapi preview [<slug>] [--scope <scope>] [--fail-on-unavailable]", "openapi")
 		return 1
 	}
+	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
+	if scopeErr != nil {
+		return printErr("Could not read local project context", scopeErr)
+	}
+	if resolvedScope == "" {
+		resolvedScope = "prod"
+	}
+	*scope = resolvedScope
 	slug := ""
 	if len(pos) == 1 {
 		slug = pos[0]
