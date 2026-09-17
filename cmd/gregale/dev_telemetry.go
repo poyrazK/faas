@@ -107,8 +107,8 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 	}
 }
 
-func reportDevSyncReceipt(client *api.Client, project, workspaceID string, receipt devSyncReceipt) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func reportDevSyncReceipt(parent context.Context, client *api.Client, project, workspaceID string, receipt devSyncReceipt) error {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	phases := make([]api.DevSyncPhase, 0, len(receipt.Phases))
 	for _, phase := range receipt.Phases {

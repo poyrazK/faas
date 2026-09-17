@@ -482,7 +482,7 @@ func cmdDev(args []string) int {
 			}
 			if code == 0 {
 				receipt := devTelemetry.receipt("live")
-				if err := reportDevSyncReceipt(client, project, workspaceID, receipt); err != nil && !syncHistoryWarned.Swap(true) {
+				if err := reportDevSyncReceipt(deployCtx, client, project, workspaceID, receipt); err != nil && !syncHistoryWarned.Swap(true) {
 					PrintWarn(osStderr, "could not save developer sync history; the live sync succeeded (%v)", err)
 				}
 				if jsonOutput {
