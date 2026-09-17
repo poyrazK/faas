@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -667,6 +668,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 // be interpreted as customer application routes.
 func installPublicStaticRoutes(mux *http.ServeMux) {
 	mux.Handle("/.well-known/security.txt", securitytxt.Handler())
+	mux.Handle(oauthmetadata.Path, oauthmetadata.Handler())
 }
 
 // setupReadiness builds the probe with checks for Postgres and the

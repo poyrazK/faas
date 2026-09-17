@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 )
 
 // TestEnvOr_EmptyFallback pins the envOr semantics (empty env
@@ -137,6 +138,24 @@ func TestInstallPublicStaticRoutes_SecurityTxt(t *testing.T) {
 	}
 	if got := rec.Body.String(); !strings.Contains(got, "Contact: mailto:security@gregale.dev") {
 		t.Fatalf("security.txt missing security contact: %q", got)
+	}
+}
+
+func TestInstallPublicStaticRoutes_OAuthMetadata(t *testing.T) {
+	mux := http.NewServeMux()
+	installPublicStaticRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, oauthmetadata.Path, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"grant_types_supported":["urn:ietf:params:oauth:grant-type:token-exchange"]`) {
+		t.Fatalf("metadata missing RFC 8693 grant: %q", rec.Body.String())
 	}
 }
 

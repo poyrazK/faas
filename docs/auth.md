@@ -22,6 +22,18 @@ Interactive users can enable MFA from the account settings page. A `401` means t
 
 ## OIDC token exchange
 
+Gregale publishes its supported OAuth token-service capabilities at the RFC
+8414 well-known endpoint:
+
+```bash
+curl https://api.gregale.dev/.well-known/oauth-authorization-server
+```
+
+The metadata advertises the RFC 8693 token-exchange grant, the `deploy:write`
+scope, and JWT subject tokens. It intentionally does not claim a general
+customer authorization server, authorization-code flow, refresh tokens, or
+dynamic client registration.
+
 CI runners can exchange an IdP-issued JWT for a short-lived deploy bearer using
 the RFC 8693 form profile:
 

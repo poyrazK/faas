@@ -433,6 +433,25 @@
       ]
     },
     {
+      "id": "rfc-8414-oauth-metadata",
+      "name": "OAuth 2.0 Authorization Server Metadata",
+      "version": "RFC 8414",
+      "category": "identity",
+      "surface": "OIDC CI deploy authentication discovery",
+      "status": "partial",
+      "scope": "The public edge publishes a machine-readable RFC 8414 metadata document for Gregale's RFC 8693 token-exchange endpoint.",
+      "limitations": "Gregale advertises only the token-exchange grant, deploy:write scope, JWT subject tokens, and an unauthenticated token endpoint; authorization-code, refresh-token, resource/actor delegation, and dynamic client registration metadata are not claimed.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc8414",
+      "evidence": "pkg/oauthmetadata/metadata.go; cmd/gatewayd-public/main.go; docs/auth.md",
+      "conformance": [
+        {
+          "fixture": "oauth-authorization-server-metadata",
+          "tier": "unit",
+          "target": "pkg/oauthmetadata/metadata_test.go::TestHandlerServesRFC8414Metadata"
+        }
+      ]
+    },
+    {
       "id": "rfc-8594-sunset",
       "name": "Sunset HTTP Header",
       "version": "RFC 8594",
