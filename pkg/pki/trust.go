@@ -233,7 +233,8 @@ func trustLeafNeedsRenewal(rootDir string, role Role, expectedCN string, caCert 
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
-	if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}}); err != nil {
+	_, verifyErr := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}})
+	if verifyErr != nil {
 		return true, nil
 	}
 	return false, nil
