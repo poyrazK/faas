@@ -5,11 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+)
+
+const (
+	managementResponseMaxBytes = 1 << 20
+	managementHTTPTimeout      = 10 * time.Second
 )
 
 // Client is a small management-plane client for realtimed. It is intended
@@ -48,7 +54,7 @@ func NewUnixClient(socket string) *Client {
 	}
 	return &Client{
 		BaseURL:    "http://realtimed",
-		HTTPClient: &http.Client{Transport: transport},
+		HTTPClient: &http.Client{Transport: transport, Timeout: managementHTTPTimeout},
 	}
 }
 
@@ -64,6 +70,12 @@ func (c *Client) RegisterEndpoint(ctx context.Context, endpoint Endpoint) error 
 		DisconnectPath:          endpoint.DisconnectPath,
 		CallbackAuthToken:       endpoint.CallbackAuthToken,
 		AuthToken:               endpoint.AuthToken,
+		AuthMode:                endpoint.ClientAuth.Mode,
+		AuthIssuer:              endpoint.ClientAuth.Issuer,
+		AuthJWKSURL:             endpoint.ClientAuth.JWKSURL,
+		AuthAudience:            append([]string(nil), endpoint.ClientAuth.Audience...),
+		AuthAlgorithms:          append([]string(nil), endpoint.ClientAuth.Algorithms...),
+		AuthRequiredClaims:      cloneStringMap(endpoint.ClientAuth.RequiredClaims),
 		AllowedOrigins:          append([]string(nil), endpoint.AllowedOrigins...),
 		MaxConnections:          endpoint.MaxConnections,
 		MaxMessageBytes:         endpoint.MaxMessageBytes,
@@ -160,7 +172,7 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, resul
 	}
 	client := c.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: managementHTTPTimeout}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -171,7 +183,14 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, resul
 		return &ManagementError{StatusCode: resp.StatusCode}
 	}
 	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		body, err := io.ReadAll(io.LimitReader(resp.Body, managementResponseMaxBytes+1))
+		if err != nil {
+			return fmt.Errorf("realtime: read management response: %w", err)
+		}
+		if int64(len(body)) > managementResponseMaxBytes {
+			return fmt.Errorf("realtime: management response exceeds %d bytes", managementResponseMaxBytes)
+		}
+		if err := json.Unmarshal(body, result); err != nil {
 			return fmt.Errorf("realtime: decode management response: %w", err)
 		}
 	}

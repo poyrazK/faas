@@ -1,0 +1,40 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "fresh schedd gets a complete inventory grace period"
+    input_series:
+      - series: 'schedd_snapshot_disk_drift_last_success_timestamp_seconds{job="schedd-compute",instance="fresh"}'
+        values: '0x40'
+      - series: 'process_start_time_seconds{job="schedd-compute",instance="fresh"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSnapshotDriftAuditStale
+        exp_alerts: []
+
+  - interval: 30s
+    name: "never-completed inventory becomes stale after one full budget"
+    input_series:
+      - series: 'schedd_snapshot_disk_drift_last_success_timestamp_seconds{job="schedd-compute",instance="overdue"}'
+        values: '0x40'
+      - series: 'process_start_time_seconds{job="schedd-compute",instance="overdue"}'
+        values: '-8000x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSnapshotDriftAuditStale
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: schedd
+              family: snapshot_integrity
+              public_status: degraded
+              job: schedd-compute
+              instance: overdue
+            exp_annotations:
+              summary: "Snapshot integrity inventory is stale"
+              description: "No complete snapshot drift inventory has succeeded for more than two hours. Check OCI enumeration latency and registry availability."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"

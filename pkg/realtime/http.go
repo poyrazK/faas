@@ -310,19 +310,25 @@ func (m *Manager) HTTPHandler() http.Handler {
 }
 
 type endpointRequest struct {
-	ID                      string   `json:"id"`
-	AppID                   string   `json:"app_id"`
-	AccountID               string   `json:"account_id"`
-	CallbackURL             string   `json:"callback_url"`
-	ConnectPath             string   `json:"connect_path"`
-	MessagePath             string   `json:"message_path"`
-	DisconnectPath          string   `json:"disconnect_path"`
-	CallbackAuthToken       string   `json:"callback_auth_token,omitempty"`
-	AuthToken               string   `json:"auth_token,omitempty"`
-	AllowedOrigins          []string `json:"allowed_origins,omitempty"`
-	MaxConnections          int      `json:"max_connections,omitempty"`
-	MaxMessageBytes         int64    `json:"max_message_bytes,omitempty"`
-	MaxConnectionAgeSeconds int64    `json:"max_connection_age_seconds,omitempty"`
+	ID                      string            `json:"id"`
+	AppID                   string            `json:"app_id"`
+	AccountID               string            `json:"account_id"`
+	CallbackURL             string            `json:"callback_url"`
+	ConnectPath             string            `json:"connect_path"`
+	MessagePath             string            `json:"message_path"`
+	DisconnectPath          string            `json:"disconnect_path"`
+	CallbackAuthToken       string            `json:"callback_auth_token,omitempty"`
+	AuthToken               string            `json:"auth_token,omitempty"`
+	AuthMode                AuthMode          `json:"auth_mode,omitempty"`
+	AuthIssuer              string            `json:"auth_issuer,omitempty"`
+	AuthJWKSURL             string            `json:"auth_jwks_url,omitempty"`
+	AuthAudience            []string          `json:"auth_audience,omitempty"`
+	AuthAlgorithms          []string          `json:"auth_algorithms,omitempty"`
+	AuthRequiredClaims      map[string]string `json:"auth_required_claims,omitempty"`
+	AllowedOrigins          []string          `json:"allowed_origins,omitempty"`
+	MaxConnections          int               `json:"max_connections,omitempty"`
+	MaxMessageBytes         int64             `json:"max_message_bytes,omitempty"`
+	MaxConnectionAgeSeconds int64             `json:"max_connection_age_seconds,omitempty"`
 }
 
 func (r endpointRequest) endpoint() Endpoint {
@@ -336,10 +342,16 @@ func (r endpointRequest) endpoint() Endpoint {
 		DisconnectPath:    r.DisconnectPath,
 		CallbackAuthToken: r.CallbackAuthToken,
 		AuthToken:         r.AuthToken,
-		AllowedOrigins:    append([]string(nil), r.AllowedOrigins...),
-		MaxConnections:    r.MaxConnections,
-		MaxMessageBytes:   r.MaxMessageBytes,
-		MaxConnectionAge:  time.Duration(r.MaxConnectionAgeSeconds) * time.Second,
+		ClientAuth: AuthPolicy{
+			Mode: r.AuthMode, Issuer: r.AuthIssuer, JWKSURL: r.AuthJWKSURL,
+			Audience:       append([]string(nil), r.AuthAudience...),
+			Algorithms:     append([]string(nil), r.AuthAlgorithms...),
+			RequiredClaims: cloneStringMap(r.AuthRequiredClaims),
+		},
+		AllowedOrigins:   append([]string(nil), r.AllowedOrigins...),
+		MaxConnections:   r.MaxConnections,
+		MaxMessageBytes:  r.MaxMessageBytes,
+		MaxConnectionAge: time.Duration(r.MaxConnectionAgeSeconds) * time.Second,
 	}
 }
 

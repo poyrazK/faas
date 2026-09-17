@@ -152,7 +152,10 @@ func TestFetchRange_HappyPath(t *testing.T) {
 				Metric map[string]string
 				Values []promql.QueryRangeSample
 			}{{Values: makeSeries([]float64{300, 310, 320})}}, nil
-		case strings.Contains(query, "[45]xx"):
+		case strings.Contains(query, `class="5xx"`):
+			if !strings.Contains(query, `class=~"2xx|5xx"`) {
+				t.Fatalf("error-rate denominator includes customer 4xx responses: %s", query)
+			}
 			return []struct {
 				Metric map[string]string
 				Values []promql.QueryRangeSample

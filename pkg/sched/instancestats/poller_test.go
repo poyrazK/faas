@@ -377,6 +377,89 @@ func TestPoller_PersistentTelemetryAvoidsPerNodeDials(t *testing.T) {
 	}
 }
 
+func TestPoller_PersistentTelemetryScopesDurableRowsToOwner(t *testing.T) {
+	store := state.NewMemStore()
+	remote, owner := seedTwoNodes(t, store)
+	remoteInstance := seedInstance(t, store, "remote-app", remote.ID)
+	ownerInstance := seedInstance(t, store, "owner-app", owner.ID)
+	resident := int64(64 * 1024 * 1024)
+	now := time.Unix(700, 0)
+	cache := sched.NewNodeTelemetryCache()
+	cache.Replace(owner.ID, now, now, []sched.NodeTelemetry{{
+		InstanceID: ownerInstance.ID, ResidentBytes: &resident,
+	}})
+	metrics := wire.NewOpsMetrics("schedd")
+	p := NewPoller(store, &statsFakeDialer{}, nil, NewReader(), metrics, nilLogger()).
+		WithTelemetry(cache).
+		WithOwnerNodeID(owner.ID)
+	p.Now = func() time.Time { return now }
+
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	rows := p.Reader.SnapshotAll()
+	if len(rows) != 1 || rows[0].InstanceID != ownerInstance.ID {
+		t.Fatalf("owner rows=%+v, want only %s", rows, ownerInstance.ID)
+	}
+	body := scrapeMetrics(t, metrics)
+	if strings.Contains(body, `schedd_instance_stats_partial_errors_total{node="`+remote.ID+`"}`) {
+		t.Fatalf("remote instance %s produced a false owner error:\n%s", remoteInstance.ID, body)
+	}
+}
+
+func TestPoller_TwoOwnerTelemetryViewsFormFleetWithoutFalseErrors(t *testing.T) {
+	store := state.NewMemStore()
+	nodeA, nodeB := seedTwoNodes(t, store)
+	instanceA := seedInstance(t, store, "app-a", nodeA.ID)
+	instanceB := seedInstance(t, store, "app-b", nodeB.ID)
+	now := time.Unix(800, 0)
+	residentA := int64(32 * 1024 * 1024)
+	residentB := int64(96 * 1024 * 1024)
+
+	type ownerFixture struct {
+		node       state.ComputeNode
+		instance   state.Instance
+		resident   *int64
+		otherNode  state.ComputeNode
+		otherInst  state.Instance
+		wantRSSMiB float64
+	}
+	fixtures := []ownerFixture{
+		{node: nodeA, instance: instanceA, resident: &residentA, otherNode: nodeB, otherInst: instanceB, wantRSSMiB: 32},
+		{node: nodeB, instance: instanceB, resident: &residentB, otherNode: nodeA, otherInst: instanceA, wantRSSMiB: 96},
+	}
+
+	fleetRows := map[string]InstanceStat{}
+	for _, fixture := range fixtures {
+		cache := sched.NewNodeTelemetryCache()
+		cache.Replace(fixture.node.ID, now, now, []sched.NodeTelemetry{{
+			InstanceID: fixture.instance.ID, ResidentBytes: fixture.resident,
+		}})
+		metrics := wire.NewOpsMetrics("schedd")
+		reader := NewReader()
+		poller := NewPoller(store, &statsFakeDialer{}, nil, reader, metrics, nilLogger()).
+			WithTelemetry(cache).
+			WithOwnerNodeID(fixture.node.ID)
+		poller.Now = func() time.Time { return now }
+		if err := poller.Tick(context.Background()); err != nil {
+			t.Fatalf("owner %s Tick: %v", fixture.node.ID, err)
+		}
+		rows := reader.SnapshotAll()
+		if len(rows) != 1 || rows[0].InstanceID != fixture.instance.ID || rows[0].RSSMB != fixture.wantRSSMiB {
+			t.Fatalf("owner %s rows=%+v", fixture.node.ID, rows)
+		}
+		fleetRows[rows[0].InstanceID] = rows[0]
+		body := scrapeMetrics(t, metrics)
+		if strings.Contains(body, `schedd_instance_stats_partial_errors_total{node="`+fixture.otherNode.ID+`"}`) {
+			t.Fatalf("owner %s reported healthy remote instance %s as missing:\n%s",
+				fixture.node.ID, fixture.otherInst.ID, body)
+		}
+	}
+	if len(fleetRows) != 2 {
+		t.Fatalf("fleet rows=%+v, want one authoritative row from each owner", fleetRows)
+	}
+}
+
 // TestPoller_DiskPressureHandlerRunsOncePerFullTransition pins the enforcement
 // edge: a full sample invokes the lifecycle handler once, repeated full
 // samples do not duplicate destroys, and recovery to normal arms the next

@@ -795,6 +795,17 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "limit", Short: "number of recent syncs to show", Value: "N"},
 			}},
+			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
+				{Name: "path", Short: "source directory", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
+				{Name: "start", Short: "start after preflight"},
+				{Name: "once", Short: "sync once and exit"},
+				{Name: "no-logs", Short: "do not attach runtime logs"},
+				{Name: "open", Short: "open the verified URL"},
+				{Name: "postgres", Short: "provision an isolated PostgreSQL database"},
+				{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
+			}},
 		},
 	},
 	{

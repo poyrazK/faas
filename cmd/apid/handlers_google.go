@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -179,14 +178,26 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		redirectURI = fmt.Sprintf("%s://%s%s", scheme, host, googleCallbackPath)
 	}
 
-	// Exchange Code for Access Token
-	tokenResp, err := http.PostForm("https://oauth2.googleapis.com/token", url.Values{
-		"code":          {code},
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
-		"redirect_uri":  {redirectURI},
-		"grant_type":    {"authorization_code"},
-	})
+	// Exchange Code for Access Token. Use the request context so the provider
+	// cannot outlive the browser callback, and the bounded client so a stalled
+	// or oversized provider response cannot pin apid resources.
+	tokenReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		"https://oauth2.googleapis.com/token", strings.NewReader(url.Values{
+			"code":          {code},
+			"client_id":     {clientID},
+			"client_secret": {clientSecret},
+			"redirect_uri":  {redirectURI},
+			"grant_type":    {"authorization_code"},
+		}.Encode()))
+	if err == nil {
+		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if err != nil {
+		s.log.Error("google oauth token exchange failed", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "token exchange failed"))
+		return
+	}
+	tokenResp, err := oauthHTTPClient().Do(tokenReq)
 	if err != nil {
 		s.log.Error("google oauth token exchange failed", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "token exchange failed"))
@@ -195,8 +206,8 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	defer func() { _ = tokenResp.Body.Close() }()
 
 	if tokenResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(tokenResp.Body)
-		s.log.Error("google oauth token exchange non-200", "status", tokenResp.StatusCode, "body", string(body))
+		_, readErr := readOAuthBody(tokenResp.Body)
+		s.log.Error("google oauth token exchange non-200", "status", tokenResp.StatusCode, "read_err", readErr)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "oauth_exchange_failed", "OAuth Failed", "failed to obtain access token from Google"))
 		return
 	}
@@ -205,7 +216,12 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		AccessToken string `json:"access_token"`
 		IDToken     string `json:"id_token"`
 	}
-	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
+	tokenBody, err := readOAuthBody(tokenResp.Body)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to read Google token response"))
+		return
+	}
+	if err := json.Unmarshal(tokenBody, &tokenData); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "json_error", "Internal Error", "failed to parse Google token response"))
 		return
 	}
@@ -235,7 +251,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	}
 	userInfoReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
 
-	userInfoResp, err := http.DefaultClient.Do(userInfoReq)
+	userInfoResp, err := oauthHTTPClient().Do(userInfoReq)
 	if err != nil {
 		s.log.Error("google userinfo fetch failed", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to fetch user info from Google"))
@@ -249,8 +265,13 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = userInfoResp.Body.Close() }()
 
+	userInfoBody, err := readOAuthBody(userInfoResp.Body)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to read Google user info"))
+		return
+	}
 	var googleUser GoogleUserInfo
-	if err := json.NewDecoder(userInfoResp.Body).Decode(&googleUser); err != nil {
+	if err := json.Unmarshal(userInfoBody, &googleUser); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "json_error", "Internal Error", "failed to decode Google user info"))
 		return
 	}

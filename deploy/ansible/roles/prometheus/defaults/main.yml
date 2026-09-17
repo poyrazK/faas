@@ -38,6 +38,7 @@ prom_compute_imaged_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/im
 prom_compute_builderd_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/builderd-targets"
 prom_compute_node_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/node-targets"
 prom_compute_realtimed_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/realtimed-targets"
+prom_compute_schedd_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/schedd-targets"
 prom_compute_metrics_discovery_refresh_interval: "15s"
 # The supported fleet shape is one control plane with up to 1,000 compute
 # nodes. Keep the bound in the rendered scrape job as a second line of

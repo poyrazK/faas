@@ -110,7 +110,7 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 		want   []string
 	}{
 		{"request_count", []string{"increase(gateway_request_duration_seconds_count", "or vector(0)"}},
-		{"error_rate_pct", []string{`class=~"[45]xx"`, "or vector(0)"}},
+		{"error_rate_pct", []string{`class="5xx"`, `class=~"2xx|5xx"`, "or vector(0)"}},
 		{"latency_p50_ms", []string{"histogram_quantile(0.5", "or vector(0)"}},
 		{"latency_p95_ms", []string{"histogram_quantile(0.95", "or vector(0)"}},
 		{"latency_p99_ms", []string{"histogram_quantile(0.99", "or vector(0)"}},
@@ -150,7 +150,7 @@ func TestAppMetrics_FetchCustomerCompleteness(t *testing.T) {
 		switch {
 		case strings.Contains(query, "increase("):
 			return 100, nil
-		case strings.Contains(query, "class=~\"[45]xx\""):
+		case strings.Contains(query, "class=\"5xx\""):
 			return 0.25, nil
 		case strings.Contains(query, "gateway_response_cache_app_total"):
 			return 50, nil
@@ -219,8 +219,11 @@ func TestAppMetrics_FetchUsesClosedClassPopulation(t *testing.T) {
 	if strings.Contains(joined, "gateway_requests_total") {
 		t.Fatalf("customer population uses cold full-code series:\n%s", joined)
 	}
-	if !strings.Contains(joined, `gateway_request_duration_seconds_count{app="app-1",class=~"[45]xx"}`) {
+	if !strings.Contains(joined, `gateway_request_duration_seconds_count{app="app-1",class="5xx"}`) {
 		t.Fatalf("error numerator does not use pre-instantiated status classes:\n%s", joined)
+	}
+	if !strings.Contains(joined, `gateway_request_duration_seconds_count{app="app-1",class=~"2xx|5xx"}`) {
+		t.Fatalf("error denominator does not exclude customer 4xx responses:\n%s", joined)
 	}
 }
 
@@ -252,8 +255,8 @@ func TestAppMetrics_Fetch_DegradedFallback(t *testing.T) {
 	log, _ := captureLog(t)
 	stub := &stubPromQL{fn: func(q string) (float64, error) {
 		// Match the error-rate query by its unique label-set
-		// (class=~"[45]xx"). No other query contains this regex.
-		if strings.Contains(q, "[45]xx") {
+		// (class="5xx"). No other query contains this regex.
+		if strings.Contains(q, `class="5xx"`) {
 			return 0, errors.New("prometheus 503: down for maintenance")
 		}
 		return 7, nil
@@ -336,7 +339,7 @@ func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
 func TestAppMetrics_Fetch_NaNGuard_Percent(t *testing.T) {
 	log, _ := captureLog(t)
 	stub := &stubPromQL{fn: func(q string) (float64, error) {
-		if strings.Contains(q, "[45]xx") {
+		if strings.Contains(q, `class="5xx"`) {
 			return math.NaN(), nil
 		}
 		return 0, nil
@@ -458,7 +461,7 @@ func TestAppMetrics_Fetch_QueryFailure(t *testing.T) {
 		failingQuery string
 	}{
 		{"request_count", "gateway_request_duration_seconds_count"},
-		{"error_rate", "[45]xx"},
+		{"error_rate", `class="5xx"`},
 		{"cold_start", "gateway_cold_boot_total"},
 		{"wake_p95", "gateway_wake_latency_seconds"},
 		{"p50", "rate(gateway_request_duration_seconds_bucket"},

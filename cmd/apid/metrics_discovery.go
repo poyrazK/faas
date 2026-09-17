@@ -14,6 +14,7 @@ const (
 	nodeMetricsDiscoveryPath      = "/v1/internal/metrics/node-targets"
 	realtimedMetricsDiscoveryPath = "/v1/internal/metrics/realtimed-targets"
 	promtailMetricsDiscoveryPath  = "/v1/internal/metrics/promtail-targets"
+	scheddMetricsDiscoveryPath    = "/v1/internal/metrics/schedd-targets"
 	maxMetricsDiscoveryTargets    = 1000
 )
 
@@ -29,6 +30,7 @@ func (s *server) metricsDiscoveryHandler() http.Handler {
 	mux.HandleFunc("GET "+nodeMetricsDiscoveryPath, s.nodeMetricsDiscovery)
 	mux.HandleFunc("GET "+realtimedMetricsDiscoveryPath, s.realtimedMetricsDiscovery)
 	mux.HandleFunc("GET "+promtailMetricsDiscoveryPath, s.promtailMetricsDiscovery)
+	mux.HandleFunc("GET "+scheddMetricsDiscoveryPath, s.scheddMetricsDiscovery)
 	return mux
 }
 
@@ -82,6 +84,10 @@ func (s *server) realtimedMetricsDiscovery(w http.ResponseWriter, r *http.Reques
 // scrape.
 func (s *server) promtailMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
 	s.metricsDiscovery(w, r, "promtail-compute", promtailMetricsTarget)
+}
+
+func (s *server) scheddMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "schedd-compute", daemonMetricsTarget("9103"))
 }
 
 func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job string, targetFn func(string) (string, bool)) {

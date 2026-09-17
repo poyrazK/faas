@@ -28,6 +28,9 @@ func TestFetchAccountSLO_UsesHistogramPopulation(t *testing.T) {
 		if strings.Contains(query, "gateway_requests_total") {
 			t.Fatalf("account SLO used a different request population: %q", query)
 		}
+		if strings.Contains(query, `class="5xx"`) && !strings.Contains(query, `class=~"2xx|5xx"`) {
+			t.Fatalf("account SLO error denominator includes customer 4xx responses: %q", query)
+		}
 		if !strings.Contains(query, appID) {
 			t.Errorf("query lacks owned app ID: %q", query)
 		}

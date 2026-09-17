@@ -654,6 +654,8 @@ func TestObserveESM_NilOpsIsNoop(t *testing.T) {
 	l.observeESMPoll("kafka", wire.ESMPollOutcomeSuccess)
 	l.observeESMRecords("kafka", 5)
 	l.observeESMLag("kafka", "0", 0.1)
+	l.observeESMRecordOutcome("queue", wire.ESMRecordOutcomeRetry, 1)
+	l.observeESMRecordProcessing("queue", 0.1)
 	// No panic, no observable side-effect. Test passes by
 	// virtue of reaching this line.
 }

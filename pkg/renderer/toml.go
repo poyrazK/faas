@@ -352,7 +352,7 @@ func defaultMetricsAddrForDaemon(daemon string) string {
 
 func metricsAddrForHost(daemon, hostRole, hostAddress string) (string, error) {
 	listener := defaultMetricsAddrForDaemon(daemon)
-	if hostRole != "compute-only" || (daemon != "vmmd" && daemon != "imaged" && daemon != "builderd") {
+	if hostRole != "compute-only" || (daemon != "vmmd" && daemon != "imaged" && daemon != "builderd" && daemon != "schedd") {
 		return listener, nil
 	}
 	if hostAddress == "" {

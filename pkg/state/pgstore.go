@@ -2043,8 +2043,8 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -2074,6 +2074,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if appProtocol == "" {
 		appProtocol = api.AppProtocolHTTP1
 	}
+	visibility := api.NormalizeAppVisibility(app.Visibility)
 	row := s.pool.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
@@ -2114,7 +2115,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// before reaching this path, so the floor is a
 		// last-line defence for internal callers that build an
 		// App by hand.
-		appProtocol, cpuMillicores)
+		appProtocol, cpuMillicores, string(visibility))
 	return scanApp(row)
 }
 
@@ -2292,8 +2293,8 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2318,6 +2319,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	if appProtocol == "" {
 		appProtocol = api.AppProtocolHTTP1
 	}
+	visibility := api.NormalizeAppVisibility(app.Visibility)
 	row := tx.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
@@ -2350,7 +2352,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		// coerced to 'http1' so the schema DEFAULT and the
 		// explicit-write path converge on the same universal
 		// default. Mirrors the binding in CreateApp above.
-		appProtocol, cpuMillicores)
+		appProtocol, cpuMillicores, string(visibility))
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -3638,8 +3640,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   cpu_millicores = coalesce($63, cpu_millicores),
 				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end,
 				   only_declared_routes = case when $66 then $67 else only_declared_routes end,
-				   declared_routes = case when $68 then $69::jsonb else declared_routes end,
-				   workload_class = case when $70 then $71::text else workload_class end
+			   declared_routes = case when $68 then $69::jsonb else declared_routes end,
+			   workload_class = case when $70 then $71::text else workload_class end,
+			   visibility = case when $72 then $73::text else visibility end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3764,7 +3767,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode),
 		p.SetOnlyAllowDeclaredRoutes, boolOrFalse(p.OnlyAllowDeclaredRoutes),
 		p.SetDeclaredRoutes, declaredRoutesBytes,
-		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass))
+		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass),
+		p.SetVisibility, string(api.NormalizeAppVisibility(derefAppVisibility(p.Visibility))))
 	return scanApp(row)
 }
 
@@ -3817,6 +3821,13 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func derefAppVisibility(v *api.AppVisibility) api.AppVisibility {
+	if v == nil {
+		return api.AppVisibilityPublic
+	}
+	return *v
 }
 
 // workloadClassString lifts the optional reconcile update field into the
@@ -13401,9 +13412,17 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		select `+invocationSelectCols+`
-		  from invocations
-		 where state = 'pending' and due_at <= $1
-		 order by due_at
+		  from invocations i
+		 where i.state = 'pending' and i.due_at <= $1
+		   and not exists (
+		       select 1
+		         from triggers t
+		        where t.app_id = i.app_id
+		          and t.kind = 'queue'
+		          and t.enabled
+		          and t.source = i.source
+		   )
+		 order by i.due_at
 		 for update skip locked
 		 limit $2`, now.UTC(), limit)
 	if err != nil {
@@ -13470,15 +13489,17 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 	// PR-B fixup (code-review #1185 finding #4): the dispatching→pending
 	// transition and the per-account counter decrements share one
 	// transaction. Without the tx, a crash between the two leaked
-	// slots until the next cap hit. The UPDATE returns one account ID
-	// per transitioned row so multiple abandoned dispatches from one
-	// account release the same number of slots they claimed.
+	// the slot until the next cap hit. Keep the reclaimed rows in a
+	// data-modifying CTE so each account's counter is decremented once
+	// per row reclaimed, rather than once per account (or once again
+	// for an older row with the same due_at/last_error markers).
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
+	var requeued int
+	err = tx.QueryRow(ctx, `
 		with expired as (
 			select id
 			  from invocations
@@ -13488,42 +13509,35 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			 order by lease_expires_at, id
 			 for update skip locked
 			 limit $2
+		), requeued as (
+			update invocations as i
+			   set state = 'pending',
+			       due_at = $1,
+			       lease_expires_at = null,
+			       instance_id = null,
+			       last_error = 'dispatch lease expired; requeued'
+			  from expired
+			 where i.id = expired.id
+			 returning i.account_id
+		), per_account as (
+			select account_id, count(*) as reclaimed
+			  from requeued
+			 group by account_id
+		), decremented as (
+			update account_async_quota as q
+			   set current_inflight = greatest(q.current_inflight - p.reclaimed, 0),
+			       updated_at = now()
+			  from per_account as p
+			 where q.account_id = p.account_id
 		)
-		update invocations as i
-		   set state = 'pending',
-		       due_at = $1,
-		       lease_expires_at = null,
-		       instance_id = null,
-		       last_error = 'dispatch lease expired; requeued'
-		  from expired
-		 where i.id = expired.id
-		returning i.account_id`, now.UTC(), limit)
+		select count(*) from requeued`, now.UTC(), limit).Scan(&requeued)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
-	}
-	var accounts []string
-	for rows.Next() {
-		var accountID string
-		if err := rows.Scan(&accountID); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("state: invocations reclaim scan account: %w", err)
-		}
-		accounts = append(accounts, accountID)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("state: invocations reclaim iterate: %w", err)
-	}
-	rows.Close()
-	for _, accountID := range accounts {
-		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
-			return 0, fmt.Errorf("state: invocations reclaim decrement: %w", err)
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
 	}
-	return len(accounts), nil
+	return requeued, nil
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
@@ -21171,6 +21185,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	var corsDefaultEnabled bool
 	var onlyAllowDeclaredRoutes bool
 	var declaredRoutesBytes []byte
+	var visibility string
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
 		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText,
 		&publicAuthIPAllowlistText,
@@ -21279,7 +21294,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// write side.
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
-		&onlyAllowDeclaredRoutes, &declaredRoutesBytes); err != nil {
+		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -21296,6 +21311,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	// three-state lives on the write path only).
 	a.CORSDefaultEnabled = &corsDefaultEnabled
 	a.OnlyAllowDeclaredRoutes = onlyAllowDeclaredRoutes
+	a.Visibility = api.NormalizeAppVisibility(api.AppVisibility(visibility))
 	if len(declaredRoutesBytes) > 0 {
 		_ = json.Unmarshal(declaredRoutesBytes, &a.DeclaredRoutes)
 		// Keep the empty contract canonical across the PG and memory
@@ -21457,7 +21473,9 @@ const appsSelectColumns = `
 	deleted_at, delete_grace_until,
 	-- Only-allow-declared-routes policy. Appended so older positional
 	-- columns remain stable for every existing scan site.
-	only_declared_routes, coalesce(declared_routes, '[]'::jsonb)`
+	only_declared_routes, coalesce(declared_routes, '[]'::jsonb),
+	-- Internal ingress is appended to preserve all existing positional scans.
+	coalesce(visibility, 'public')`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
@@ -26323,8 +26341,9 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		}
 	}
 
-	// 4. Insert under the same lock. cron_id + source are NULL for
-	//    the five non-cron kinds; the SQL CHECK + table-level
+	// 4. Insert under the same lock. cron_id is NULL for
+	//    the five non-cron kinds; queue triggers persist source so
+	//    schedd can bind them to queue or delayed_task rows. The SQL CHECK + table-level
 	//    constraint enforces that the cron kind has cron_id set and
 	//    non-cron kinds have it NULL. We default both to NULL here;
 	//    the apid handler routes cron-kind creations through
@@ -26381,8 +26400,8 @@ func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, err
 
 // UpdateTrigger patches the mutable fields (enabled, config,
 // batch_size_max, batch_window_ms, max_attempts,
-// broker_poison_strategy, filter_criteria). The kind + slug +
-// cron_id + source fields are immutable after creation; the apid
+// broker_poison_strategy, filter_criteria, and queue source). The kind + slug +
+// cron_id fields are immutable after creation; the apid
 // handler rejects PATCHes that touch them with
 // trigger_immutable_field. The cron_id linkage is set at creation
 // only (kind='cron' is created via the legacy CreateCron path).
@@ -26406,8 +26425,8 @@ func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, err
 // non-nil []byte = "replace the JSONB column" (json.RawMessage
 // shape mirrors the FilterCriteria wire DTO; nil-element means
 // "clear filter to no-op").
-func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte) (sqlc.Trigger, error) {
-	var enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg any
+func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte, source *string) (sqlc.Trigger, error) {
+	var enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg any
 	if enabled != nil {
 		enabledArg = *enabled
 	}
@@ -26430,7 +26449,10 @@ func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, c
 		brokerPoisonArg = *brokerPoisonStrategy
 	}
 	if filterCriteria != nil {
-		filterCriteriaArg = filterCriteria
+		filterCriteriaArg = *filterCriteria
+	}
+	if source != nil {
+		sourceArg = *source
 	}
 	row := s.pool.QueryRow(ctx,
 		`update triggers set
@@ -26441,14 +26463,15 @@ func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, c
 		   max_attempts = coalesce($6, max_attempts),
 		   payload_max_bytes = coalesce($7, payload_max_bytes),
 		   broker_poison_strategy = coalesce($8, broker_poison_strategy),
-		   filter_criteria = coalesce($9::jsonb, filter_criteria)
+		   filter_criteria = coalesce($9::jsonb, filter_criteria),
+		   source = coalesce($10, source)
 		 where id = $1
 		 returning id, account_id, app_id, kind, slug, enabled, config,
 		           batch_size_max, batch_window_ms, max_attempts,
 		           cron_id, source, payload_max_bytes, broker_poison_strategy,
 		           filter_criteria,
 		           created_at, updated_at`,
-		id, enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg)
+		id, enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg)
 	t := sqlc.Trigger{}
 	if err := row.Scan(
 		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,

@@ -435,8 +435,8 @@ func TestDiskDrift_StoreErrorIsNoOp(t *testing.T) {
 		WithMetrics(f.ops)
 
 	drift, err := dd.Tick(context.Background())
-	if err != nil {
-		t.Fatalf("Tick returned error: %v", err)
+	if err == nil {
+		t.Fatal("Tick returned nil error for unavailable snapshot store")
 	}
 	if drift != 0 {
 		t.Errorf("drift = %d, want 0", drift)
@@ -668,6 +668,32 @@ type fakeStorageLister struct {
 	err  error
 }
 
+type blockingStorageLister struct{ fakeStorageLister }
+
+func (b *blockingStorageLister) List(ctx context.Context, _ string) ([]string, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type timeoutThenStorageLister struct {
+	keys  []string
+	calls int
+}
+
+func (b *timeoutThenStorageLister) Put(context.Context, string, io.Reader) error { return nil }
+func (b *timeoutThenStorageLister) Get(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (b *timeoutThenStorageLister) Delete(context.Context, string) error { return nil }
+func (b *timeoutThenStorageLister) List(ctx context.Context, _ string) ([]string, error) {
+	b.calls++
+	if b.calls == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return b.keys, nil
+}
+
 type indexedStorageLister struct {
 	fakeStorageLister
 	reconciledDeploymentIDs []string
@@ -800,25 +826,79 @@ func TestDiskDrift_StorageBackend_OrphanDepIncrements(t *testing.T) {
 	}
 }
 
-// TestDiskDrift_StorageBackend_ListErrorFallsBackToDisk pins the
-// degradation path: a backend.List error falls back to the on-disk
-// os.ReadDir path so a transient registry outage doesn't silence
-// the drift detector entirely. The fixture also leaves /srv/fc/snap
-// empty (the injected snapshot root is absent), so the fallback returns 0
-// drift (no orphan + no expected).
-func TestDiskDrift_StorageBackend_ListErrorFallsBackToDisk(t *testing.T) {
+// TestDiskDrift_StorageBackend_ListErrorIsUnavailable pins that a partial
+// remote inventory is surfaced as a failure rather than a clean zero.
+func TestDiskDrift_StorageBackend_ListErrorIsUnavailable(t *testing.T) {
 	store := state.NewMemStore()
 	dd := NewDiskDrift(store, nil).
 		WithStorage(&fakeStorageLister{err: errors.New("registry down")})
-	// Don't seed any DB rows — the fallback runs with empty
-	// expected set + empty snap dir → 0 drift, but proves the
-	// fallback path doesn't propagate the List error.
 	drift, err := dd.Tick(context.Background())
-	if err != nil {
-		t.Fatalf("Tick: %v (fallback should swallow List error)", err)
+	if err == nil {
+		t.Fatal("Tick returned nil error for incomplete remote inventory")
 	}
 	if drift != 0 {
-		t.Errorf("drift = %d, want 0 (fallback clean run)", drift)
+		t.Errorf("drift = %d, want 0 before inventory", drift)
+	}
+}
+
+func TestDiskDrift_RemoteTimeoutIsFailureAndObservable(t *testing.T) {
+	store := state.NewMemStore()
+	ops := wire.NewOpsMetrics("schedd")
+	dd := NewDiskDrift(store, nil).WithMetrics(ops).WithStorage(&blockingStorageLister{})
+	if dd.timeout != DefaultRemoteDiskDriftTickTimeout {
+		t.Fatalf("remote timeout=%s, want %s", dd.timeout, DefaultRemoteDiskDriftTickTimeout)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if drift, err := dd.Tick(ctx); err == nil || drift != 0 {
+		t.Fatalf("Tick()=(%d,%v), want timeout failure", drift, err)
+	}
+	body := string(wireRenderMetrics(t, ops))
+	for _, metric := range []string{
+		"schedd_snapshot_disk_drift_failures_total 1",
+		"schedd_snapshot_disk_drift_consecutive_failures 1",
+		"schedd_snapshot_disk_drift_objects_processed 0",
+	} {
+		if !strings.Contains(body, metric) {
+			t.Errorf("metrics missing %q:\n%s", metric, body)
+		}
+	}
+}
+
+func TestDiskDrift_ProductionSizedInventoryRecoversAfterTimeout(t *testing.T) {
+	store := state.NewMemStore()
+	keys := make([]string, 0, 200)
+	for i := 0; i < 100; i++ {
+		deploymentID := fmt.Sprintf("inventory-%03d", i)
+		seedDriftRow(context.Background(), t, store, deploymentID)
+		keys = append(keys, "snap/"+deploymentID+"/mem", "snap/"+deploymentID+"/vmstate")
+	}
+	lister := &timeoutThenStorageLister{keys: keys}
+	ops := wire.NewOpsMetrics("schedd")
+	drift := NewDiskDrift(store, nil).WithMetrics(ops).WithStorage(lister)
+
+	firstCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if count, err := drift.Tick(firstCtx); err == nil || count != 0 {
+		t.Fatalf("timed-out Tick()=(%d,%v), want unavailable inventory", count, err)
+	}
+	if count, err := drift.Tick(context.Background()); err != nil || count != 0 {
+		t.Fatalf("recovery Tick()=(%d,%v), want complete clean inventory", count, err)
+	}
+
+	body := string(wireRenderMetrics(t, ops))
+	for _, metric := range []string{
+		"schedd_snapshot_disk_drift_failures_total 1",
+		"schedd_snapshot_disk_drift_consecutive_failures 0",
+		"schedd_snapshot_disk_drift_objects_processed 200",
+		"schedd_snapshot_disk_drift_duration_seconds_count 2",
+	} {
+		if !strings.Contains(body, metric) {
+			t.Errorf("metrics missing %q:\n%s", metric, body)
+		}
+	}
+	if strings.Contains(body, "schedd_snapshot_disk_drift_last_success_timestamp_seconds 0") {
+		t.Fatalf("last success timestamp remained zero after recovery:\n%s", body)
 	}
 }
 

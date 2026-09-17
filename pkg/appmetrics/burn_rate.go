@@ -19,6 +19,10 @@ const (
 	SLOBurnRateLongWindow  = "6h"
 	SLOBurnRateShortLimit  = 14.4
 	SLOBurnRateLongLimit   = 6.0
+	// SLOBurnRateMinRequests prevents one isolated server error on an idle
+	// application from becoming a multi-window incident. Raw 5xx counts and
+	// error-rate telemetry remain visible below this floor.
+	SLOBurnRateMinRequests = 20
 )
 
 // FetchSLOBurnRate evaluates the customer-facing API availability burn-rate
@@ -46,16 +50,18 @@ func FetchSLOBurnRate(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 
 	errorBudget := 1 - APIAvailabilitySLO
 	shortQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g`,
-		appID, SLOBurnRateShortWindow, appID, SLOBurnRateShortWindow, errorBudget)
+		`(sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g and sum(increase(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) >= %d) or vector(0)`,
+		appID, SLOBurnRateShortWindow, appID, SLOBurnRateShortWindow, errorBudget,
+		appID, SLOBurnRateShortWindow, SLOBurnRateMinRequests)
 	short, err := fetcher.QueryScalar(ctx, shortQ)
 	if err != nil {
 		return degradedBurnRateFromErr(0, err, log, SLOBurnRateShortWindow)
 	}
 
 	longQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g`,
-		appID, SLOBurnRateLongWindow, appID, SLOBurnRateLongWindow, errorBudget)
+		`(sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g and sum(increase(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) >= %d) or vector(0)`,
+		appID, SLOBurnRateLongWindow, appID, SLOBurnRateLongWindow, errorBudget,
+		appID, SLOBurnRateLongWindow, SLOBurnRateMinRequests)
 	long, err := fetcher.QueryScalar(ctx, longQ)
 	if err != nil {
 		return degradedBurnRateFromErr(0, err, log, SLOBurnRateLongWindow)

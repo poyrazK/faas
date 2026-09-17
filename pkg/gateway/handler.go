@@ -83,6 +83,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// Visibility controls public edge routing. Internal apps are deliberately
+	// omitted by the public hostname resolver; service-proxy resolution uses
+	// the app store directly and remains available to authenticated callers.
+	Visibility api.AppVisibility
 	// AccountStatus is the joined account lifecycle. Empty preserves legacy
 	// test fixtures as active; production always populates it. Suspended and
 	// deleted_pending accounts fail at the gateway before auth, wake, or proxy.
@@ -1199,7 +1203,7 @@ func (h *Handler) WithLimiter(l *Limiter) *Handler {
 //
 // Single-threaded wire-time invariant: this MUST be called
 // before ServeHTTP starts accepting requests. Mutating the
-// backend mid-flight would race with the boundary-case consult
+// backend mid-flight would race with the central consume
 // (Limiter.central is read without holding the limiter mutex).
 func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	if central == nil {
@@ -1220,11 +1224,10 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	return h
 }
 
-// InvalidateRateLimit (ADR-104 amendment 5, issue #881 Phase 4
-// C4) drops the in-process bucket for (scope, subjectID, plan)
-// on every Limiter the Handler owns. Called by the
-// LISTEN-side invalidator (pkg/wire/pgratelimit_invalidator.go)
-// on every 'rate_limit_changed' pg_notify tick. nil subjectID
+// InvalidateRateLimit drops the in-process fallback/header mirror for
+// (scope, subjectID, plan) on every Limiter the Handler owns. It remains as a
+// compatibility hook for explicit operator invalidation; central admission no
+// longer wires the former per-consume PG NOTIFY listener. nil subjectID
 // is rejected (defence-in-depth — a malformed payload from an
 // adversarial daemon cannot wipe every bucket for the scope).
 //
@@ -3906,13 +3909,13 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	// Per-rule throttle consult (ADR-104 amendment 5, issue #881
 	// Phase 4 C3). When the daemon is running under
 	// [ratelimit] mode = "central" (the cross-replica drift fix
-	// documented in amendment 5), the local-would-reject branch
-	// transparently consults pg_ratelimit_counters — wired via
+	// documented in amendment 5), every request atomically consumes from
+	// pg_ratelimit_counters — wired via
 	// AllowWithCentralParams + the centralKey "rule:<ruleID>:<plan>"
 	// triple. Empty centralKey (mode = "local", the default) reproduces
 	// today's AllowWithParams byte-for-byte. The fix to the Phase 4
 	// C3 wiring gap: the per-rule call site MUST use the central-aware
-	// sibling even though the boundary-case consult is invisible
+	// sibling even though the central consume is bypassed
 	// under mode=local — otherwise enabling central mode in TOML
 	// would not affect per-rule buckets and the multi-replica drift
 	// documented in the 00126 schema would remain.

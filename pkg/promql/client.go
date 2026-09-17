@@ -22,6 +22,15 @@ import (
 	"time"
 )
 
+const (
+	// Prometheus is an internal dependency, but its responses still cross a
+	// process boundary. Keep a bad query or unhealthy server from turning a
+	// successful response into an unbounded allocation in apid.
+	promqlResponseMaxBytes = 8 << 20
+	promqlMaxSeries        = 4096
+	promqlMaxSamples       = 65536
+)
+
 // HTTPDoer is the minimal interface Client needs from net/http. Matches
 // http.Client.Do so the production wiring is `http.DefaultClient`. Tests
 // pass httptest.Server.Client() which also satisfies it.
@@ -102,7 +111,10 @@ func (c *Client) QueryScalar(ctx context.Context, query string) (float64, error)
 			} `json:"result"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+	if err := decodePromQLResponse(resp.Body, &pr); err != nil {
+		return 0, err
+	}
+	if err := validatePromQLSeries(len(pr.Data.Result)); err != nil {
 		return 0, err
 	}
 	if pr.Data.ResultType != "vector" && pr.Data.ResultType != "scalar" {
@@ -160,7 +172,10 @@ func (c *Client) QueryVector(ctx context.Context, query string) ([]VectorSample,
 		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload queryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := decodePromQLResponse(resp.Body, &payload); err != nil {
+		return nil, err
+	}
+	if err := validatePromQLSeries(len(payload.Data.Result)); err != nil {
 		return nil, err
 	}
 	if payload.Data.ResultType != "vector" {
@@ -254,8 +269,18 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 			} `json:"result"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+	if err := decodePromQLResponse(resp.Body, &pr); err != nil {
 		return nil, err
+	}
+	if err := validatePromQLSeries(len(pr.Data.Result)); err != nil {
+		return nil, err
+	}
+	totalSamples := 0
+	for _, row := range pr.Data.Result {
+		totalSamples += len(row.Values)
+		if totalSamples > promqlMaxSamples {
+			return nil, fmt.Errorf("promql: response has more than %d samples", promqlMaxSamples)
+		}
 	}
 	if pr.Data.ResultType != "matrix" {
 		return nil, fmt.Errorf("expected matrix, got %q for query %q", pr.Data.ResultType, query)
@@ -452,7 +477,10 @@ func (c *Client) doVector(ctx context.Context, query string) ([]struct {
 		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var pr queryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+	if err := decodePromQLResponse(resp.Body, &pr); err != nil {
+		return nil, err
+	}
+	if err := validatePromQLSeries(len(pr.Data.Result)); err != nil {
 		return nil, err
 	}
 	if pr.Data.ResultType != "vector" {
@@ -477,4 +505,29 @@ func parseSampleValue(v [2]any, query string) (float64, error) {
 		return 0, fmt.Errorf("non-finite value %q for query %q", raw, query)
 	}
 	return f, nil
+}
+
+// decodePromQLResponse consumes the complete bounded response before JSON
+// decoding. Decoding directly from resp.Body would allow a valid prefix to
+// hide an arbitrarily large trailing payload and would leave allocation
+// limits dependent on the remote server's behavior.
+func decodePromQLResponse(r io.Reader, dst any) error {
+	body, err := io.ReadAll(io.LimitReader(r, promqlResponseMaxBytes+1))
+	if err != nil {
+		return fmt.Errorf("promql: read response body: %w", err)
+	}
+	if len(body) > promqlResponseMaxBytes {
+		return fmt.Errorf("promql: response body exceeds %d bytes", promqlResponseMaxBytes)
+	}
+	if err := json.Unmarshal(body, dst); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePromQLSeries(n int) error {
+	if n > promqlMaxSeries {
+		return fmt.Errorf("promql: response has more than %d series", promqlMaxSeries)
+	}
+	return nil
 }

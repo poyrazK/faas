@@ -78,6 +78,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		WriteWait:        envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
 		MaxConnectionAge: envDuration("FAAS_REALTIME_MAX_AGE", 24*time.Hour),
 		CallbackTimeout:  callbackTimeout,
+		JWTAuthorizer:    newRealtimeJWTAuthorizer(log),
 	}, hooks)
 	defer func() { _ = manager.Close() }()
 	ops.Registry().MustRegister(realtime.NewStatsCollector(manager))

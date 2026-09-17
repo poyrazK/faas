@@ -2121,6 +2121,43 @@ func TestOpsMetrics_ObserveESMLag(t *testing.T) {
 	nilM.ObserveESMLag("kafka", "0", 1.0) // must not panic
 }
 
+// TestOpsMetrics_ObserveESMRecordOutcome pins the queue-consumer outcome
+// counters and processing histogram. The closed outcome guard prevents a
+// malformed gateway status from creating an unbounded Prometheus series.
+func TestOpsMetrics_ObserveESMRecordOutcome(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.ObserveESMRecordOutcome("queue", wire.ESMRecordOutcomeSucceeded, 2)
+	m.ObserveESMRecordOutcome("queue", wire.ESMRecordOutcomeRetry, 3)
+	m.ObserveESMRecordOutcome("queue", wire.ESMRecordOutcomeDeadLetter, 1)
+	m.ObserveESMRecordOutcome("queue", "unknown", 10)
+	m.ObserveESMRecordOutcome("unbounded", wire.ESMRecordOutcomeRetry, 10)
+	m.ObserveESMRecordProcessing("queue", 0.12)
+	m.ObserveESMRecordProcessing("queue", -1)
+	m.ObserveESMRecordProcessing("unbounded", 1)
+
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_esm_records_outcome_total{outcome="succeeded",source="queue"} 2`,
+		`schedd_esm_records_outcome_total{outcome="retry",source="queue"} 3`,
+		`schedd_esm_records_outcome_total{outcome="dead_letter",source="queue"} 1`,
+		`schedd_esm_record_processing_seconds_count{source="queue"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `outcome="unknown"`) {
+		t.Errorf("unknown ESM outcome must not create a metric series:\n%s", body)
+	}
+	if strings.Contains(body, `source="unbounded"`) {
+		t.Errorf("unknown ESM source must not create a metric series:\n%s", body)
+	}
+
+	var nilM *wire.OpsMetrics
+	nilM.ObserveESMRecordOutcome("queue", wire.ESMRecordOutcomeRetry, 1)
+	nilM.ObserveESMRecordProcessing("queue", 1)
+}
+
 // TestOpsMetrics_ObserveDeployStageDuration — ADR-117
 // §Production-ready follow-on. Pins:
 //

@@ -33,7 +33,7 @@ export type RouteRow = {
    */
   p99_ms: number;
   /**
-   * Share of [45]xx requests with this route in the window.
+   * Share of 5xx requests with this route in the window. Client-caused 4xx responses do not consume availability budget.
    */
   error_pct: number;
 };

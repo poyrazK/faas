@@ -11,6 +11,10 @@ import type { ServiceReplicas } from './ServiceReplicas.js';
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
+  /**
+   * Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale.
+   */
+  visibility?: 'public' | 'internal';
   ram_mb?: number | null;
   /**
    * Sustained CPU allowance per instance. Omit for no change.

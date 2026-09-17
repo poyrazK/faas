@@ -1179,6 +1179,10 @@ const (
 	CodePrivateNetworkNotEnabled     = "private_network_not_enabled"
 	CodePlanPrivateNetworkNotAllowed = "plan_private_network_not_allowed"
 	CodePrivateNetworkInvalid        = "private_network_invalid"
+	// Internal-only ingress is a Pro/Scale networking feature. The value is
+	// validated separately so malformed visibility requests remain 400s.
+	CodePlanInternalIngressNotAllowed = "plan_internal_ingress_not_allowed"
+	CodeAppVisibilityInvalid          = "app_visibility_invalid"
 
 	// Issue #470 / ADR-055: per-app two-tier-snapshot flag (warm.snap
 	// on top of init.snap). Pro/Scale opt in by default; Free/Hobby
@@ -1937,6 +1941,10 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanPrivateNetworkNotAllowed:
 		return http.StatusPaymentRequired
+	case CodePlanInternalIngressNotAllowed:
+		return http.StatusPaymentRequired
+	case CodeAppVisibilityInvalid:
+		return http.StatusBadRequest
 	case CodePlanStaticEgressIPQuota:
 		return http.StatusForbidden
 	case CodeAppStaticEgressIPInvalid:
@@ -5098,6 +5106,22 @@ func ErrPlanPrivateNetworkNotAllowed(p Plan) *Problem {
 		"Plan does not unlock private network attachments",
 		fmt.Sprintf("plan %q does not unlock private network attachments; upgrade to Pro or Scale.", p)).
 		WithLimit(int64(0), int64(0)).
+		WithDocs(docsBase + "/networking")
+}
+
+// ErrPlanInternalIngressNotAllowed is returned when a Free/Hobby account
+// requests an internal-only app edge. Private ingress is a Pro/Scale feature.
+func ErrPlanInternalIngressNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanInternalIngressNotAllowed,
+		"Plan does not unlock internal-only ingress",
+		fmt.Sprintf("plan %q does not unlock internal-only ingress; upgrade to Pro or Scale.", p)).
+		WithLimit(0, 0).
+		WithDocs(docsBase + "/networking")
+}
+
+func ErrAppVisibilityInvalid(value string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeAppVisibilityInvalid,
+		"Invalid app visibility", fmt.Sprintf("visibility %q must be public or internal", value)).
 		WithDocs(docsBase + "/networking")
 }
 

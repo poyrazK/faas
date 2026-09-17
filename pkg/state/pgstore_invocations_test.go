@@ -110,6 +110,93 @@ func TestPg_InvocationRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPg_ExpiredQueueLeaseRedelivery pins crash recovery at the SQL layer:
+// an expired dispatch lease is returned to pending, the cap slot is released
+// once per reclaimed invocation, a late ack from the old worker is rejected,
+// and a fresh worker can claim and complete the row exactly once.
+func TestPg_ExpiredQueueLeaseRedelivery(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acctID, appID, _ := seedLiveDeploy(t, s, ctx, "lease-recovery", "lease-recovery")
+	var ids []string
+	for i := 0; i < 2; i++ {
+		inv, err := s.EnqueueInvocation(ctx, state.Invocation{
+			AppID: appID, AccountID: acctID, Source: state.InvocationQueue,
+			Method: "POST", Path: "/recover", Payload: json.RawMessage(`{"n":1}`),
+			DueAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("EnqueueInvocation %d: %v", i, err)
+		}
+		ids = append(ids, inv.ID)
+		if _, err := s.ClaimInvocationWithCap(ctx, inv.ID, "worker-old", 30, 10); err != nil {
+			t.Fatalf("ClaimInvocationWithCap %d: %v", i, err)
+		}
+	}
+	if _, inflight, err := s.GetAccountAsyncQuota(ctx, acctID); err != nil || inflight != 2 {
+		t.Fatalf("quota before reclaim = inflight %d, err %v; want 2", inflight, err)
+	}
+
+	expired := time.Now().UTC().Add(-time.Second)
+	for _, id := range ids {
+		if _, err := pool.Exec(ctx, `update invocations set lease_expires_at = $2 where id = $1`, id, expired); err != nil {
+			t.Fatalf("expire lease %s: %v", id, err)
+		}
+	}
+	// PostgreSQL stores timestamptz at microsecond precision; normalize the
+	// test clock so the due_at round-trip can be compared exactly.
+	reclaimAt := time.Now().UTC().Truncate(time.Microsecond)
+	n, err := s.RequeueExpiredInvocations(ctx, reclaimAt, 10)
+	if err != nil {
+		t.Fatalf("RequeueExpiredInvocations: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("reclaimed = %d, want 2", n)
+	}
+	if _, inflight, err := s.GetAccountAsyncQuota(ctx, acctID); err != nil || inflight != 0 {
+		t.Fatalf("quota after reclaim = inflight %d, err %v; want 0", inflight, err)
+	}
+
+	for _, id := range ids {
+		got, err := s.InvocationByID(ctx, id)
+		if err != nil {
+			t.Fatalf("InvocationByID %s: %v", id, err)
+		}
+		if got.State != state.InvocationPending || got.LeaseExpiresAt != nil || got.InstanceID != "" || got.Attempts != 1 || !got.DueAt.Equal(reclaimAt) {
+			t.Fatalf("reclaimed %s = state %q lease %v instance %q attempts %d due %s", id, got.State, got.LeaseExpiresAt, got.InstanceID, got.Attempts, got.DueAt)
+		}
+	}
+	if err := s.CompleteInvocation(ctx, ids[0], json.RawMessage(`{"worker":"old"}`)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late completion error = %v, want ErrNotFound", err)
+	}
+
+	redelivered, err := s.ClaimInvocationWithCap(ctx, ids[0], "worker-new", 30, 10)
+	if err != nil {
+		t.Fatalf("redelivery claim: %v", err)
+	}
+	if redelivered.Attempts != 2 || redelivered.InstanceID != "worker-new" {
+		t.Fatalf("redelivery = attempts %d instance %q, want 2/worker-new", redelivered.Attempts, redelivered.InstanceID)
+	}
+	// A sweep with the same timestamp but no expired dispatches must not
+	// match the pending sibling's diagnostic markers and release another
+	// live slot. This guards against decrementing by stale due_at/last_error
+	// values from a previous sweep.
+	if n, err := s.RequeueExpiredInvocations(ctx, reclaimAt, 10); err != nil || n != 0 {
+		t.Fatalf("repeat reclaim = %d, %v; want 0", n, err)
+	}
+	if _, inflight, err := s.GetAccountAsyncQuota(ctx, acctID); err != nil || inflight != 1 {
+		t.Fatalf("quota after empty reclaim = inflight %d, err %v; want 1", inflight, err)
+	}
+	if err := s.CompleteInvocation(ctx, ids[0], json.RawMessage(`{"worker":"new"}`)); err != nil {
+		t.Fatalf("fresh completion: %v", err)
+	}
+	if err := s.CompleteInvocation(ctx, ids[0], json.RawMessage(`{"worker":"duplicate"}`)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("duplicate completion error = %v, want ErrNotFound", err)
+	}
+	if _, inflight, err := s.GetAccountAsyncQuota(ctx, acctID); err != nil || inflight != 0 {
+		t.Fatalf("quota after completion = inflight %d, err %v; want 0", inflight, err)
+	}
+}
+
 // TestPg_ClaimInvocationAtomicity pins the SKIP LOCKED contract at
 // the SQL level: two concurrent claims for the same row produce
 // exactly one winner. The second caller must see ErrNotFound (no row

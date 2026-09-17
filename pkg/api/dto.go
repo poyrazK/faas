@@ -51,7 +51,10 @@ type PrewarmIntentResponse struct {
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug            string `json:"slug"`
+	Slug string `json:"slug"`
+	// Visibility controls public versus authenticated private ingress. Empty
+	// defaults to public; internal is available on Pro and Scale.
+	Visibility      string `json:"visibility,omitempty"`
 	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
 	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
 	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
@@ -223,6 +226,9 @@ type DevSessionResponse struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
+	// values are public or internal. Internal is available on Pro and Scale.
+	Visibility      *string `json:"visibility,omitempty"`
 	RAMMB           *int    `json:"ram_mb,omitempty"`
 	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
 	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
@@ -878,6 +884,9 @@ type AppResponse struct {
 	ID   string `json:"id"`
 	Slug string `json:"slug"`
 	Type string `json:"type"`
+	// Visibility is public unless the app is explicitly configured for
+	// authenticated service-to-service ingress only.
+	Visibility string `json:"visibility"`
 	// WorkloadClass is the runtime-observed application shape. Repository
 	// scanning seeds the value and the first characterization boot may replace
 	// it with http, graphql, grpc, job, or worker. It is distinct from Type,
@@ -4493,7 +4502,8 @@ type AppMetricsResponse struct {
 	LatencyP50MS float64 `json:"latency_p50_ms"`
 	LatencyP95MS float64 `json:"latency_p95_ms"`
 	LatencyP99MS float64 `json:"latency_p99_ms"`
-	// ErrorRatePct is the share of [45]xx requests in the window.
+	// ErrorRatePct is the share of 5xx requests in the window. Client-caused
+	// 4xx responses remain diagnostic and do not consume availability budget.
 	ErrorRatePct float64 `json:"error_rate_pct"`
 	// ColdStartPct is the share of requests that triggered a cold
 	// boot (the WakeGate leader — see ADR-042 §cold semantics).

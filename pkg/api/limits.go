@@ -5394,6 +5394,13 @@ func (p Plan) RequireAuthnAllowed() bool {
 	return l.RequireAuthn
 }
 
+// InternalIngressAllowed reports whether the plan may hide an app from the
+// public edge while keeping it reachable through authenticated service routing.
+// This is intentionally Pro/Scale-only in the first networking slice.
+func (p Plan) InternalIngressAllowed() bool {
+	return p == PlanPro || p == PlanScale
+}
+
 // AppProtocolAllowed (ADR-124 §Plan gating) reports whether the
 // plan admits the given protocol value. http1 and http2 are
 // universally allowed (a customer on any plan may opt-in to H2

@@ -32,3 +32,20 @@ The attachment resource is intentionally provider-neutral: `NETWORK_ID` and
 lookup and route programming remain a later runtime slice. Use an egress
 allowlist and, where required, a static egress address for partner allowlisting
 until that connector is available.
+
+## Internal-only ingress
+
+Pro and Scale apps can be hidden from the public edge while remaining reachable
+from authenticated same-account service calls. Set the visibility at create
+time (`visibility: "internal"`) or update an existing app:
+
+```bash
+gregale app APP_ID --visibility internal
+gregale app APP_ID --visibility public
+```
+
+Internal apps do not receive a public platform-subdomain or verified custom
+domain route. Service discovery continues to resolve them through
+`APP_ID.svc.gregale:10080`, where the service proxy enforces caller identity
+and same-account authorization. Visibility changes are audited and invalidate
+the gateway route cache.

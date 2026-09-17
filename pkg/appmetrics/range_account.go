@@ -99,8 +99,8 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 
 	// Error rate (account apps).
 	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"[45]xx"}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class="5xx"}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"2xx|5xx"}[%s]))`, appMatcher, window))
 	if rows, err := fetcher.QueryRange(ctx, errQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ErrorRate = seriesToPoints(rows[0].Values)
 	} else {

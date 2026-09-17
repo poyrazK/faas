@@ -18199,6 +18199,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
+        visibility: { type: string, enum: [public, internal], default: public, description: "Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Internal visibility is Pro/Scale." }
         workload_class:
           type: string
           enum: [http, graphql, grpc, job, worker]
@@ -18760,6 +18761,7 @@ components:
       properties:
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
+        visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale." }
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default." }
@@ -19043,6 +19045,10 @@ components:
       description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
       properties:
+        visibility:
+          type: [string, "null"]
+          enum: [public, internal, null]
+          description: "Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."
         ram_mb: { type: [integer, "null"] , example: 256}
         cpu_millicores:
           type: [integer, "null"]
@@ -25964,7 +25970,7 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: "Share of [45]xx requests in the window."
+          description: "Share of 5xx requests in the window. Client-caused 4xx responses do not consume availability budget."
           x-since: "2026-07"
           x-issue: "273"
         cold_start_pct:
@@ -26120,7 +26126,7 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: "Share of [45]xx requests with this route in the window."
+          description: "Share of 5xx requests with this route in the window. Client-caused 4xx responses do not consume availability budget."
           x-since: "2026-08"
           x-issue: "273"
 
@@ -27398,7 +27404,7 @@ components:
           description: '"prometheus" on success; "degraded: <reason>" otherwise. Per-app shape: when Postgres fails only instance_hours/gb_hours are zeroed.'
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC stamp at which the SLO panel was assembled." }
         request_duration: { $ref: '#/components/schemas/SLODuration' }
-        error_rate_pct: { type: number, description: "Share of [45]xx requests in the window for this app." }
+        error_rate_pct: { type: number, description: "Share of 5xx requests in the window for this app. Client-caused 4xx responses do not consume availability budget." }
         cold_boot_rate_pct: { type: number, description: "Share of requests that triggered a cold boot." }
         instance_hours: { type: number, description: "Sum of instance × minute / 60 over the window (from `usage_minutes`)." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }
@@ -29277,7 +29283,7 @@ components:
       description: |
         Durable managed realtime endpoint configuration. Credentials are
         write-only and represented by a constant mask on every response.
-      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
+      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, auth_mode, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -29288,6 +29294,21 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token_masked: { type: string, enum: ["***"] }
         auth_token_masked: { type: string, enum: ["***"] }
+        auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
+        auth_issuer: { type: string, format: uri, maxLength: 2048 }
+        auth_jwks_url: { type: string, format: uri, maxLength: 2048 }
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 256 }
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: { type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512] }
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
         allowed_origins:
           type: array
           maxItems: 16
@@ -29310,6 +29331,21 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/disconnect" }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
+        auth_issuer: { type: string, format: uri, maxLength: 2048 }
+        auth_jwks_url: { type: string, format: uri, maxLength: 2048 }
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 256 }
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: { type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512] }
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
         allowed_origins:
           type: array
           maxItems: 16
@@ -29329,6 +29365,21 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
+        auth_issuer: { type: string, format: uri, maxLength: 2048 }
+        auth_jwks_url: { type: string, format: uri, maxLength: 2048 }
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 256 }
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: { type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512] }
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
         allowed_origins:
           type: array
           maxItems: 16

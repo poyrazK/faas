@@ -34,7 +34,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -103,15 +102,19 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx,
 		`with claimed as (
-			select id
-			  from invocations
-			 where app_id = $1
-			   and source = $2
-			   and state = 'pending'
-			   and due_at <= now()
-			 order by created_at asc
-			 limit $3
-			 for update skip locked
+			select i.id
+			  from invocations i
+			  left join trigger_records tr
+			    on tr.trigger_id = $1
+			   and tr.item_identifier = i.id::text
+			 where i.app_id = $2
+			   and i.source = $3
+			   and i.state = 'pending'
+			   and i.due_at <= now()
+			   and (tr.id is null or (tr.state in ('pending','retry') and tr.next_fire_at <= now()))
+			 order by i.created_at asc
+			 limit $4
+			 for update of i skip locked
 		), updated as (
 			update invocations i
 			   set state = 'dispatching',
@@ -126,7 +129,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		select id, payload, headers, metadata, created_at
 		  from updated
 		 order by created_at asc, id asc`,
-		t.AppID, q.source, pollLimit,
+		t.ID, t.AppID, q.source, pollLimit,
 	)
 	if err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: query invocations: %w", err)}
@@ -172,8 +175,8 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 // success. This is the durable push-consumer acknowledgement: the
 // trigger_records row records the trigger-level audit state while the
 // invocations row leaves the generic drain queue.
-func (q *queuePoller) Ack(ctx context.Context, _ sqlc.Trigger, ids []string) error {
-	if err := q.finishInvocations(ctx, ids); err != nil {
+func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) error {
+	if err := q.finishInvocations(ctx, t, ids, "completed", "succeeded", "success", "", `{"trigger_dispatch":"succeeded"}`); err != nil {
 		return err
 	}
 	q.mu.Lock()
@@ -190,7 +193,11 @@ func (q *queuePoller) Ack(ctx context.Context, _ sqlc.Trigger, ids []string) err
 // the invocation due_at is a short wake guard to avoid a hot poll loop.
 func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
 	terminal := reason == triggerReasonPoisonRecord || reason == triggerReasonPayloadTooLarge || reason == triggerReasonRateLimited
-	if err := q.retryInvocations(ctx, t, ids, terminal, reason); err != nil {
+	if terminal {
+		if err := q.finishInvocations(ctx, t, ids, "dead_letter", "dead_letter", "dead_letter", reason, `{"trigger_dispatch":"dead_letter"}`); err != nil {
+			return err
+		}
+	} else if err := q.retryInvocations(ctx, t, ids, reason); err != nil {
 		return err
 	}
 	q.mu.Lock()
@@ -209,55 +216,64 @@ func (q *queuePoller) NackTerminal(ctx context.Context, t sqlc.Trigger, ids []st
 	return q.Nack(ctx, t, ids, reason)
 }
 
-func (q *queuePoller) finishInvocations(ctx context.Context, ids []string) error {
+func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids []string, invocationState, recordState, outcome, lastError, result string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	tx, err := q.pool.Begin(ctx)
+	_, err := q.pool.Exec(ctx, `
+		with finalized_records as (
+			update trigger_records
+			   set state = $1,
+			       attempts = attempts + case when $1 = 'dead_letter' and state <> 'dead_letter' then 1 else 0 end,
+			       last_error = case when $1 = 'dead_letter' then nullif($9, '') else last_error end,
+			       last_dispatched_at = now()
+			 where trigger_id = $2
+			   and item_identifier = any($3::text[])
+			   and state <> $1
+			 returning id
+		)
+		update invocations
+		   set state = $4,
+		       outcome = $5,
+		       result = $6::jsonb,
+		       completed_at = now(),
+		       lease_expires_at = null,
+		       last_error = $9
+		 where id::text = any($3::text[])
+		   and app_id = $7
+		   and source = $8
+		   and state = 'dispatching'`, recordState, t.ID, ids, invocationState, outcome, result, t.AppID, q.source, lastError)
 	if err != nil {
-		return fmt.Errorf("poller_queue: begin ack: %w", err)
+		return fmt.Errorf("poller_queue: finish invocations: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	for _, id := range ids {
-		if _, err := tx.Exec(ctx, `
-			update invocations
-			   set state = 'completed', outcome = 'success',
-			       completed_at = now(), lease_expires_at = null,
-			       last_error = ''
-			 where id = $1 and state = 'dispatching'`, id); err != nil {
-			return fmt.Errorf("poller_queue: ack %s: %w", id, err)
-		}
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
-func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, terminal bool, reason string) error {
+func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	tx, err := q.pool.Begin(ctx)
+	_, err := q.pool.Exec(ctx, `
+		update invocations i
+		   set state = 'pending',
+		       outcome = null,
+		       completed_at = null,
+		       due_at = coalesce((
+		           select tr.next_fire_at
+		             from trigger_records tr
+		            where tr.trigger_id = $1
+		              and tr.item_identifier = i.id::text
+		       ), now() + interval '1 second'),
+		       lease_expires_at = null,
+		       last_error = $4
+		 where i.id::text = any($2::text[])
+		   and i.app_id = $3
+		   and i.source = $5
+		   and i.state = 'dispatching'`, t.ID, ids, t.AppID, reason, q.source)
 	if err != nil {
-		return fmt.Errorf("poller_queue: begin nack: %w", err)
+		return fmt.Errorf("poller_queue: retry invocations: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	for _, id := range ids {
-		if _, err := tx.Exec(ctx, `
-			update invocations
-			   set state = case when $3::boolean or ($4::int > 0 and attempts >= $4)
-			                    then 'dead_letter' else 'pending' end,
-			       outcome = case when $3::boolean or ($4::int > 0 and attempts >= $4)
-			                    then 'dead_letter' else null end,
-			       completed_at = case when $3::boolean or ($4::int > 0 and attempts >= $4)
-			                    then now() else null end,
-			       due_at = case when $3::boolean or ($4::int > 0 and attempts >= $4)
-			                    then due_at else now() + interval '1 second' end,
-			       lease_expires_at = null,
-			       last_error = $2
-			 where id = $1 and state = 'dispatching'`, id, reason, terminal, t.MaxAttempts); err != nil {
-			return fmt.Errorf("poller_queue: nack %s: %w", id, err)
-		}
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 // Close releases nothing — the pgxpool is owned by the sched, not
@@ -294,28 +310,6 @@ func parseJSONMetadata(s string) map[string]any {
 	return out
 }
 
-// currentLoopPool is set once at schedd startup by Loop.New so the
-// init-time factory closure can reach the pool without each Loop
-// having to thread it through the registry.
-var currentLoopPool atomic.Pointer[pgxpool.Pool]
-
-// setCurrentLoopPool is invoked from Loop.New at schedd startup.
-// Race-free at startup (called once before any Poll happens).
-//
-//nolint:unused // reserved for cmd/schedd boot wiring (PR-B).
-func setCurrentLoopPool(p *pgxpool.Pool) { currentLoopPool.Store(p) }
-
-// getCurrentLoopPool returns the pool a Loop registered at
-// startup, or nil if no Loop has booted. The dispatcher treats
-// nil as "this sched has no pool yet" and skips until set.
-func getCurrentLoopPool() *pgxpool.Pool { return currentLoopPool.Load() }
-
-func init() {
-	registerPoller("queue", func(t sqlc.Trigger) (triggerSource, error) {
-		pool := getCurrentLoopPool()
-		if pool == nil {
-			return nil, fmt.Errorf("poller_queue: no pool registered for schedd loop")
-		}
-		return newQueuePoller(pool, t)
-	})
-}
+// Queue pollers receive their pool through Loop.newPollerForTrigger. Keeping
+// this dependency on the Loop avoids cross-loop state when multiple schedulers
+// share a process in tests or during staged handoff.

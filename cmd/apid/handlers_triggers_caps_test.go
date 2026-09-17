@@ -467,3 +467,37 @@ func TestUpdateTriggerRejectsExplicitOverCaps(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateQueueTriggerPersistsChangedSource(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "source-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	created := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs", Config: json.RawMessage(`{"mode":"queue"}`),
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+	}
+	var trigger api.Trigger
+	if err := json.Unmarshal(created.Body.Bytes(), &trigger); err != nil {
+		t.Fatalf("decode trigger: %v", err)
+	}
+	if trigger.Source == nil || *trigger.Source != "queue" {
+		t.Fatalf("created source = %v, want queue", trigger.Source)
+	}
+
+	updated := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{
+		Config: json.RawMessage(`{"mode":"delayed_task"}`),
+	}, nil)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", updated.Code, updated.Body.String())
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &trigger); err != nil {
+		t.Fatalf("decode updated trigger: %v", err)
+	}
+	if trigger.Source == nil || *trigger.Source != "delayed_task" {
+		t.Fatalf("updated source = %v, want delayed_task", trigger.Source)
+	}
+}

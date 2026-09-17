@@ -55,6 +55,21 @@ func TestPgRouter_ResolveSlugHost(t *testing.T) {
 	}
 }
 
+func TestPgRouter_InternalAppIsNotPubliclyRouted(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "private", api.PlanPro)
+	internal := api.AppVisibilityInternal
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+		Visibility: &internal, SetVisibility: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
+	if _, ok, err := r.ResolveHost(context.Background(), "private.apps.gregale.dev"); err != nil || ok {
+		t.Fatalf("internal public route ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
 func TestPgRouter_UnknownSlugIsNotFound(t *testing.T) {
 	r := pgRouter{store: state.NewMemStore(), appsSuffix: ".apps.gregale.dev"}
 	if _, ok, err := r.ResolveHost(context.Background(), "ghost.apps.gregale.dev"); ok || err != nil {

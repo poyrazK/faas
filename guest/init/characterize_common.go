@@ -41,6 +41,10 @@ func containsNat(data []byte) bool {
 // Lives here (no build tag) so the parser is unit-tested on every
 // platform with a temp-file fixture — the linux-only thing is the
 // path passed in.
+// procNetInodeColumn is the inode's position in a /proc/net/tcp{,6} row:
+// sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
+const procNetInodeColumn = 9
+
 func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, bool) {
 	//nolint:forbidigo // /proc/net/tcp{,6} is a vetted kernel path inside the
 	// guest; the customer-path guard (openCustomerFile) is for host daemons
@@ -74,9 +78,14 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 		}
 		// inode is the LAST field (kernel writes it after all the
 		// rx/tx queues + uid/tgid columns). Trim trailing text
-		// from `fields[len(fields)-1]` defensively.
+		// The inode is column 9 (sl local rem st tx:rx tr:tm retrnsmt uid
+		// timeout INODE ...). It is NOT the last field: a real row carries ref,
+		// pointer and timer columns after it, so reading the last field matched a
+		// counter — never a socket — and every app on every real kernel
+		// characterized as bind_timeout. Only the canned fixtures, whose rows
+		// ended at the inode, agreed with the old code.
 		var inode uint64
-		if _, sErr := fmt.Sscanf(fields[len(fields)-1], "%d", &inode); sErr != nil {
+		if _, sErr := fmt.Sscanf(fields[procNetInodeColumn], "%d", &inode); sErr != nil {
 			continue
 		}
 		if _, isOwned := owned[inode]; !isOwned {
@@ -122,7 +131,7 @@ func scanEstablishedFile(path string, owned map[uint64]struct{}) int {
 			continue
 		}
 		var inode uint64
-		if _, sErr := fmt.Sscanf(fields[len(fields)-1], "%d", &inode); sErr != nil {
+		if _, sErr := fmt.Sscanf(fields[procNetInodeColumn], "%d", &inode); sErr != nil {
 			continue
 		}
 		if _, isOwned := owned[inode]; !isOwned {

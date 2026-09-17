@@ -166,6 +166,58 @@ func TestInvocationExpiredLeaseIsRequeued(t *testing.T) {
 	}
 }
 
+// A queue delivery abandoned by a crashed worker must be redelivered to a
+// fresh worker, while the old worker's late acknowledgement remains a no-op.
+// The second completion assertion pins the idempotent terminal-ack contract.
+func TestQueueInvocationExpiredLeaseRedeliversOnce(t *testing.T) {
+	m, appID, acctID := seedInvocationApp(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	inv, err := m.EnqueueInvocation(ctx, Invocation{
+		AppID: appID, AccountID: acctID, Source: InvocationQueue, DueAt: now,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+	claimed, err := m.ClaimInvocation(ctx, inv.ID, "worker-old", 30)
+	if err != nil {
+		t.Fatalf("initial ClaimInvocation: %v", err)
+	}
+	expired := now.Add(-time.Second)
+	claimed.LeaseExpiresAt = &expired
+	if err := m.stampInvocationRowForTest(claimed); err != nil {
+		t.Fatalf("stage expired row: %v", err)
+	}
+
+	if n, err := m.RequeueExpiredInvocations(ctx, now, 10); err != nil || n != 1 {
+		t.Fatalf("RequeueExpiredInvocations = %d, %v", n, err)
+	}
+	if err := m.CompleteInvocation(ctx, inv.ID, json.RawMessage(`{"worker":"old"}`)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late completion error = %v, want ErrNotFound", err)
+	}
+
+	redelivered, err := m.ClaimInvocation(ctx, inv.ID, "worker-new", 30)
+	if err != nil {
+		t.Fatalf("redelivery ClaimInvocation: %v", err)
+	}
+	if redelivered.Attempts != 2 || redelivered.InstanceID != "worker-new" {
+		t.Fatalf("redelivery = attempts %d instance %q, want 2/worker-new", redelivered.Attempts, redelivered.InstanceID)
+	}
+	if err := m.CompleteInvocation(ctx, inv.ID, json.RawMessage(`{"worker":"new"}`)); err != nil {
+		t.Fatalf("fresh completion: %v", err)
+	}
+	if err := m.CompleteInvocation(ctx, inv.ID, json.RawMessage(`{"worker":"duplicate"}`)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("duplicate completion error = %v, want ErrNotFound", err)
+	}
+	final, err := m.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if final.State != InvocationCompleted || final.LastError != "" {
+		t.Fatalf("final row = state %q last_error %q, want completed/empty", final.State, final.LastError)
+	}
+}
+
 // FailInvocation with retryAfter>0 must put the row back into pending
 // + bump attempts (transient); retryAfter==0 must terminal it.
 func TestInvocationFailTransientAndPermanent(t *testing.T) {

@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.update_managed_realtime_endpoint_request_auth_algorithms_item import (
+    UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+    check_update_managed_realtime_endpoint_request_auth_algorithms_item,
+)
+from ..models.update_managed_realtime_endpoint_request_auth_mode import (
+    UpdateManagedRealtimeEndpointRequestAuthMode,
+    check_update_managed_realtime_endpoint_request_auth_mode,
+)
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.update_managed_realtime_endpoint_request_auth_required_claims import (
+        UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
+    )
+
 
 T = TypeVar("T", bound="UpdateManagedRealtimeEndpointRequest")
 
@@ -21,6 +35,12 @@ class UpdateManagedRealtimeEndpointRequest:
     disconnect_path: str | Unset = UNSET
     callback_auth_token: str | Unset = UNSET
     auth_token: str | Unset = UNSET
+    auth_mode: UpdateManagedRealtimeEndpointRequestAuthMode | Unset = UNSET
+    auth_issuer: str | Unset = UNSET
+    auth_jwks_url: str | Unset = UNSET
+    auth_audience: list[str] | Unset = UNSET
+    auth_algorithms: list[UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem] | Unset = UNSET
+    auth_required_claims: UpdateManagedRealtimeEndpointRequestAuthRequiredClaims | Unset = UNSET
     allowed_origins: list[str] | Unset = UNSET
     max_connections: int | Unset = UNSET
     max_message_bytes: int | Unset = UNSET
@@ -40,6 +60,29 @@ class UpdateManagedRealtimeEndpointRequest:
         callback_auth_token = self.callback_auth_token
 
         auth_token = self.auth_token
+
+        auth_mode: str | Unset = UNSET
+        if not isinstance(self.auth_mode, Unset):
+            auth_mode = self.auth_mode
+
+        auth_issuer = self.auth_issuer
+
+        auth_jwks_url = self.auth_jwks_url
+
+        auth_audience: list[str] | Unset = UNSET
+        if not isinstance(self.auth_audience, Unset):
+            auth_audience = self.auth_audience
+
+        auth_algorithms: list[str] | Unset = UNSET
+        if not isinstance(self.auth_algorithms, Unset):
+            auth_algorithms = []
+            for auth_algorithms_item_data in self.auth_algorithms:
+                auth_algorithms_item: str = auth_algorithms_item_data
+                auth_algorithms.append(auth_algorithms_item)
+
+        auth_required_claims: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.auth_required_claims, Unset):
+            auth_required_claims = self.auth_required_claims.to_dict()
 
         allowed_origins: list[str] | Unset = UNSET
         if not isinstance(self.allowed_origins, Unset):
@@ -68,6 +111,18 @@ class UpdateManagedRealtimeEndpointRequest:
             field_dict["callback_auth_token"] = callback_auth_token
         if auth_token is not UNSET:
             field_dict["auth_token"] = auth_token
+        if auth_mode is not UNSET:
+            field_dict["auth_mode"] = auth_mode
+        if auth_issuer is not UNSET:
+            field_dict["auth_issuer"] = auth_issuer
+        if auth_jwks_url is not UNSET:
+            field_dict["auth_jwks_url"] = auth_jwks_url
+        if auth_audience is not UNSET:
+            field_dict["auth_audience"] = auth_audience
+        if auth_algorithms is not UNSET:
+            field_dict["auth_algorithms"] = auth_algorithms
+        if auth_required_claims is not UNSET:
+            field_dict["auth_required_claims"] = auth_required_claims
         if allowed_origins is not UNSET:
             field_dict["allowed_origins"] = allowed_origins
         if max_connections is not UNSET:
@@ -83,6 +138,10 @@ class UpdateManagedRealtimeEndpointRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.update_managed_realtime_endpoint_request_auth_required_claims import (
+            UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
+        )
+
         d = dict(src_dict)
         callback_url = d.pop("callback_url", UNSET)
 
@@ -95,6 +154,39 @@ class UpdateManagedRealtimeEndpointRequest:
         callback_auth_token = d.pop("callback_auth_token", UNSET)
 
         auth_token = d.pop("auth_token", UNSET)
+
+        _auth_mode = d.pop("auth_mode", UNSET)
+        auth_mode: UpdateManagedRealtimeEndpointRequestAuthMode | Unset
+        if isinstance(_auth_mode, Unset):
+            auth_mode = UNSET
+        else:
+            auth_mode = check_update_managed_realtime_endpoint_request_auth_mode(_auth_mode)
+
+        auth_issuer = d.pop("auth_issuer", UNSET)
+
+        auth_jwks_url = d.pop("auth_jwks_url", UNSET)
+
+        auth_audience = cast(list[str], d.pop("auth_audience", UNSET))
+
+        _auth_algorithms = d.pop("auth_algorithms", UNSET)
+        auth_algorithms: list[UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem] | Unset = UNSET
+        if _auth_algorithms is not UNSET:
+            auth_algorithms = []
+            for auth_algorithms_item_data in _auth_algorithms:
+                auth_algorithms_item = check_update_managed_realtime_endpoint_request_auth_algorithms_item(
+                    auth_algorithms_item_data
+                )
+
+                auth_algorithms.append(auth_algorithms_item)
+
+        _auth_required_claims = d.pop("auth_required_claims", UNSET)
+        auth_required_claims: UpdateManagedRealtimeEndpointRequestAuthRequiredClaims | Unset
+        if isinstance(_auth_required_claims, Unset):
+            auth_required_claims = UNSET
+        else:
+            auth_required_claims = UpdateManagedRealtimeEndpointRequestAuthRequiredClaims.from_dict(
+                _auth_required_claims
+            )
 
         allowed_origins = cast(list[str], d.pop("allowed_origins", UNSET))
 
@@ -113,6 +205,12 @@ class UpdateManagedRealtimeEndpointRequest:
             disconnect_path=disconnect_path,
             callback_auth_token=callback_auth_token,
             auth_token=auth_token,
+            auth_mode=auth_mode,
+            auth_issuer=auth_issuer,
+            auth_jwks_url=auth_jwks_url,
+            auth_audience=auth_audience,
+            auth_algorithms=auth_algorithms,
+            auth_required_claims=auth_required_claims,
             allowed_origins=allowed_origins,
             max_connections=max_connections,
             max_message_bytes=max_message_bytes,

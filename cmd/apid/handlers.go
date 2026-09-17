@@ -170,6 +170,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"resource_profile": api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
 		"max_concurrency":  created.MaxConcurrency,
 		"runtime":          created.Runtime,
+		"visibility":       string(created.Visibility),
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponse(created, acct.Plan)
@@ -195,6 +196,16 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
+	}
+	visibility := api.AppVisibility(req.Visibility)
+	if visibility == "" {
+		visibility = api.AppVisibilityPublic
+	}
+	if !visibility.Valid() {
+		return state.App{}, api.ErrAppVisibilityInvalid(req.Visibility)
+	}
+	if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
+		return state.App{}, api.ErrPlanInternalIngressNotAllowed(acct.Plan)
 	}
 	ram := req.RAMMB
 	cpuMillicores := req.CPUMillicores
@@ -406,7 +417,8 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
-		RAMMB: ram, CPUMillicores: cpuMillicores, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
+		Visibility: visibility,
+		RAMMB:      ram, CPUMillicores: cpuMillicores, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
 		StreamingEnabled: streaming,
 		WebSocketEnabled: ws,
 		// ADR-093: per-route observability opt-in (plan-level
@@ -658,7 +670,8 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
-		RAMMB: a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
+		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		// Issue #559: platform-advertised per-VM concurrency cap

@@ -25,27 +25,21 @@
 //	INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
 //	VALUES ($1, $2, $3, $4, now())
 //	ON CONFLICT (scope, subject_id, plan) DO UPDATE
-//	  SET tokens = GREATEST(0,
-//	    pg_ratelimit_counters.tokens
-//	    + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill))
-//	             * $5)::bigint
-//	    - 1
-//	  ),
-//	  last_refill = now()
-//	WHERE pg_advisory_xact_lock(hashtext(($1 || ':' || $2 || ':' || $3)::text)) IS NOT NULL
+//	  SET tokens = LEAST(burst, tokens + FLOOR(elapsed * rps)) - 1,
+//	      last_refill = last_refill + consumed_refill_time
+//	  WHERE LEAST(burst, tokens + FLOOR(elapsed * rps)) >= 1
 //	RETURNING tokens;
 //
-// The advisory lock scopes to the implicit txn so two replicas
-// contending on the same row serialise WITHOUT holding a row lock
-// that blocks vacuum. Single statement; one round-trip; no
-// separate transaction overhead. The 00126 comments cite ADR-070
-// explicitly.
+// ON CONFLICT's row lock serialises replicas in one statement and one round
+// trip. Advancing last_refill only by whole-token refill time preserves the
+// fractional elapsed remainder; setting it to now on every request would
+// prevent a drained bucket from refilling under steady traffic.
 //
 // # Degraded posture
 //
 // If Postgres is unreachable, ConsumeToken / PeekToken return
-// (0, false, err) / (0, err). The Limiter's fast-path-cache logic
-// falls back to the in-process bucket under that error path
+// (0, false, err) / (0, err). The Limiter falls back to the in-process bucket
+// under that error path
 // (see pkg/gateway/ratelimit.go:300-609 the Allow/Poke seam)
 // and emits a `ratelimit_degraded` audit row.
 //
@@ -59,9 +53,11 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -83,23 +79,13 @@ type RateLimitRow struct {
 // of the daemon (no second pool).
 type PGRateLimitBackend struct {
 	pool *pgxpool.Pool
-	// rps is the per-second refill rate for the consume path. The
-	// math is `floor(elapsed_seconds * rps)` added to tokens
-	// before the -1 decrement. Plan-aware — the Limiter passes
-	// the plan rps; the backend ignores the per-bucket math and
-	// just runs the SQL. The interface carries only the scope
-	// triple today; a future per-request-cost variation would
-	// extend the signature without changing this struct.
-	rps func(plan string) (float64, bool)
 }
 
-// NewPGRateLimitBackend wires the production backend. rps resolves
-// the per-plan refill rate (Free 5 / Hobby 50 / Pro 250 / Scale
-// 1500 — see pkg/api/limits.go RateLimitRPS). The closure pattern
-// avoids a circular import on pkg/api (state → api is fine, but
-// staying closure-based keeps this file's import set minimal).
-func NewPGRateLimitBackend(pool *pgxpool.Pool, rps func(plan string) (float64, bool)) *PGRateLimitBackend {
-	return &PGRateLimitBackend{pool: pool, rps: rps}
+// NewPGRateLimitBackend wires the production backend. The caller supplies the
+// resolved refill policy on each consume so app, account, and route limits can
+// share the same storage implementation.
+func NewPGRateLimitBackend(pool *pgxpool.Pool) *PGRateLimitBackend {
+	return &PGRateLimitBackend{pool: pool}
 }
 
 // ConsumeToken attempts to consume one token from the central
@@ -116,36 +102,41 @@ func NewPGRateLimitBackend(pool *pgxpool.Pool, rps func(plan string) (float64, b
 //	err error       — non-nil iff Postgres was unreachable or
 //	                  the advisory lock deadlocked; the caller
 //	                  MUST fall back to the in-process bucket.
-func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID, plan string) (int, bool, error) {
-	rps, ok := b.rps(plan)
-	if !ok || rps <= 0 {
-		// Unknown plan or zero rps — degrade soft: behave like
-		// the noop backend (always admit). Production never hits
-		// this branch; it's a defensive fallback for stale plan
-		// strings during a cluster upgrade (memory
-		// pr-894-pg-shard-2-cache-bleed.md).
-		return 0, true, nil
+func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+	if rps <= 0 || burst < 1 {
+		return 0, false, nil
 	}
 	const q = `
 		INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
-		VALUES ($1, $2, $3, $4, now())
+		VALUES ($1, $2, $3, GREATEST(0, FLOOR($4)::bigint - 1), now())
 		ON CONFLICT (scope, subject_id, plan) DO UPDATE
-		  SET tokens = GREATEST(0,
+		  SET tokens = LEAST(FLOOR($4)::bigint,
 		    pg_ratelimit_counters.tokens
 		    + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill))
-		            * $5)::bigint
-		    - 1
-		  ),
-		  last_refill = now()
-		WHERE pg_advisory_xact_lock(hashtext(($1 || ':' || $2 || ':' || $3)::text)) IS NOT NULL
+		            * $5)::bigint) - 1,
+		  last_refill = CASE
+		    WHEN pg_ratelimit_counters.tokens
+		         + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)) * $5)::bigint
+		         >= FLOOR($4)::bigint
+		      THEN now()
+		    ELSE pg_ratelimit_counters.last_refill
+		         + (FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)) * $5) / $5)
+		           * interval '1 second'
+		  END
+		WHERE LEAST(FLOOR($4)::bigint,
+		            pg_ratelimit_counters.tokens
+		            + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)) * $5)::bigint) >= 1
 		RETURNING tokens`
 	var remaining int64
 	if err := b.pool.QueryRow(ctx, q,
-		scope, subjectID, plan, int64(rps), rps,
+		scope, subjectID, plan, burst, rps,
 	).Scan(&remaining); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, nil
+		}
 		return 0, false, fmt.Errorf("ratelimit central ConsumeToken: %w", err)
 	}
-	return int(remaining), remaining > 0, nil
+	return int(remaining), true, nil
 }
 
 // PeekToken returns the central counter's current tokens WITHOUT
@@ -169,16 +160,11 @@ func (b *PGRateLimitBackend) PeekToken(ctx context.Context, scope, subjectID, pl
 	return int(remaining), nil
 }
 
-// Invalidate drops any in-process cache entry for (scope,
-// subjectID, plan). Implements gateway.CentralBackend. Called by
-// the LISTEN-side 'rate_limit_changed' pg_notify consumer
-// (pkg/wire/pgratelimit_invalidator.go — C4 of this mega-PR
-// cluster) when a peer replica writes to the counter.
+// Invalidate drops any in-process cache entry for (scope, subjectID, plan).
+// Implements gateway.CentralBackend and is retained for compatibility with
+// explicit operator resets.
 //
 // The PGRateLimitBackend itself has no in-process cache to
 // invalidate — Postgres IS the shared state — so this is a
-// no-op. The signature is here to satisfy the interface; the
-// Limiter's local LRU cache invalidation is handled by the
-// Limiter itself (see pkg/gateway/ratelimit.go:489-501 the
-// forgetLocked path).
+// no-op. The signature is here to satisfy the interface.
 func (b *PGRateLimitBackend) Invalidate(scope, subjectID, plan string) {}

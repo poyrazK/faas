@@ -465,6 +465,9 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 		case strings.Contains(query, "sum by (app)(increase(gateway_request_duration_seconds_count"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"42"]},{"metric":{"app":"%s"},"value":[1,"17"]}]}}`, appFoo.ID, appBar.ID)
 		case strings.Contains(query, "sum by (app)(rate(gateway_request_duration_seconds_count{class"):
+			if !strings.Contains(query, `class=~"2xx|5xx"`) {
+				t.Fatalf("account error-rate denominator includes customer 4xx responses: %s", query)
+			}
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"1.4"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, appFoo.ID, appBar.ID)
 		case strings.Contains(query, "sum by (app)(rate(gateway_cold_boot_total"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"5"]},{"metric":{"app":"%s"},"value":[1,"3"]}]}}`, appFoo.ID, appBar.ID)

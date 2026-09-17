@@ -573,7 +573,8 @@
           {{else}}
             <p>
               Latency is end-to-end, 2xx class only. Error rate is the share of
-              [45]xx responses. Cold-boot rate is the share of requests that
+              5xx responses. Client 4xx responses remain diagnostic and do not
+              consume availability budget. Cold-boot rate is the share of requests that
               triggered a cold-boot wake. Quota usage is informational.
             </p>
             <table>

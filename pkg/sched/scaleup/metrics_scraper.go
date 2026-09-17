@@ -30,10 +30,16 @@ type HTTPPromScraper struct {
 	Client HTTPFetcher
 }
 
-// Scrape implements PromScraper. Reads the entire body into memory
-// (gatewayd-internal's /metrics is small — every request counter line is one
-// row per app per code, so the body is bounded by `apps × 5 codes`).
-// Returns a non-nil empty map on any HTTP / parse error so the
+// metricsResponseMaxBytes is deliberately well above the expected metrics
+// payload while still bounding memory if the endpoint is misconfigured or
+// compromised. A metrics scrape is a control-plane input, not a streaming
+// payload, so an oversized response fails closed.
+const metricsResponseMaxBytes = 1 << 20
+
+// Scrape implements PromScraper. Reads the metrics body into memory up to
+// metricsResponseMaxBytes (gatewayd-internal's /metrics is small — every
+// request counter line is one row per app per code, so the body is bounded by
+// `apps × 5 codes`). Returns a non-nil empty map on any HTTP / parse error so the
 // trigger's Touch path treats the tick as a no-op without a spammy
 // error log.
 func (s *HTTPPromScraper) Scrape(ctx context.Context) (map[string]int64, error) {
@@ -48,9 +54,12 @@ func (s *HTTPPromScraper) Scrape(ctx context.Context) (map[string]int64, error) 
 	if resp.StatusCode != http.StatusOK {
 		return map[string]int64{}, fmt.Errorf("scaleup: scrape status %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, metricsResponseMaxBytes+1))
 	if err != nil {
 		return map[string]int64{}, fmt.Errorf("scaleup: scrape read: %w", err)
+	}
+	if int64(len(body)) > metricsResponseMaxBytes {
+		return map[string]int64{}, fmt.Errorf("scaleup: scrape response exceeds %d bytes", metricsResponseMaxBytes)
 	}
 	return parseGatewayRequestsTotal(string(body)), nil
 }

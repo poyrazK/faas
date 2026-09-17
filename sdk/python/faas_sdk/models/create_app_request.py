@@ -29,6 +29,7 @@ from ..models.create_app_request_restart_policy import (
 )
 from ..models.create_app_request_runtime import CreateAppRequestRuntime, check_create_app_request_runtime
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
+from ..models.create_app_request_visibility import CreateAppRequestVisibility, check_create_app_request_visibility
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..types import UNSET, Unset
 
@@ -49,6 +50,9 @@ class CreateAppRequest:
 
     slug: str
     type_: CreateAppRequestType | Unset = UNSET
+    visibility: CreateAppRequestVisibility | Unset = "public"
+    """Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro
+    and Scale."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
@@ -133,6 +137,10 @@ class CreateAppRequest:
         type_: str | Unset = UNSET
         if not isinstance(self.type_, Unset):
             type_ = self.type_
+
+        visibility: str | Unset = UNSET
+        if not isinstance(self.visibility, Unset):
+            visibility = self.visibility
 
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
@@ -234,6 +242,8 @@ class CreateAppRequest:
         )
         if type_ is not UNSET:
             field_dict["type"] = type_
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
@@ -311,6 +321,13 @@ class CreateAppRequest:
             type_ = UNSET
         else:
             type_ = check_create_app_request_type(_type_)
+
+        _visibility = d.pop("visibility", UNSET)
+        visibility: CreateAppRequestVisibility | Unset
+        if isinstance(_visibility, Unset):
+            visibility = UNSET
+        else:
+            visibility = check_create_app_request_visibility(_visibility)
 
         _runtime = d.pop("runtime", UNSET)
         runtime: CreateAppRequestRuntime | Unset
@@ -441,6 +458,7 @@ class CreateAppRequest:
         create_app_request = cls(
             slug=slug,
             type_=type_,
+            visibility=visibility,
             runtime=runtime,
             ram_mb=ram_mb,
             vcpu=vcpu,

@@ -55,6 +55,9 @@ func TestFetchSLOBurnRate_UsesBothWindows(t *testing.T) {
 				if !strings.Contains(query, `code=~"5.."`) || !strings.Contains(query, `code=~"2..|5.."`) {
 					t.Fatalf("query = %q; want 5xx numerator over eligible 2xx/5xx outcomes", query)
 				}
+				if !strings.Contains(query, "increase(") || !strings.Contains(query, ">= 20") {
+					t.Fatalf("query = %q; want low-traffic request floor", query)
+				}
 			}
 		})
 	}

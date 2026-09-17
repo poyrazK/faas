@@ -21,14 +21,9 @@ import (
 // rather than O(n) when every bucket is mid-drain.
 const LimiterEvictScan = 32
 
-// centralConsultTimeout bounds how long allowToken waits for the
-// central-mode PeekToken consult before falling back to the
-// local-reject decision. The boundary-case consult is off the
-// hot path (only fires when local would reject), so a small
-// budget is acceptable; 250ms matches the ADR-070 bench
-// follow-up's P99 of 3.2ms × 50× safety margin for cluster-wide
-// hiccups. Operators tune this via the [ratelimit] central_timeout
-// TOML knob in C3.5 (deferred to follow-up).
+// centralConsultTimeout bounds the authoritative central-mode token consume
+// before falling back to the local bucket during a Postgres outage. Central
+// mode performs this operation for every request so replicas share one burst.
 const centralConsultTimeout = 250 * time.Millisecond
 
 // Limiter is a per-app token-bucket rate limiter (spec §4.1). Each app refills at
@@ -90,10 +85,9 @@ type Limiter struct {
 	// amendment 5, issue #881 Phase 4). Defaults to
 	// noopCentralBackend{} — every existing constructor sets it,
 	// so behaviour is unchanged for callers that don't thread the
-	// new NewLimiterWithCentral constructor. The hot path
-	// consults central only on the local-would-reject boundary
-	// case (see pkg/gateway/ratelimit_central.go for the
-	// fast-path-cache pattern).
+	// new NewLimiterWithCentral constructor. Central mode consumes from the
+	// shared counter on every request; local state is a degraded fallback and
+	// supplies response-header state.
 	central CentralBackend
 }
 
@@ -180,13 +174,8 @@ func (l *Limiter) AllowWithConsumerKey(ruleKey, consumerID string, rps, burst fl
 
 // AllowWithCentralParams is the central-aware sibling of
 // AllowWithParams (ADR-104 amendment 5, issue #881 Phase 4).
-// When centralKey is non-empty (the per-rule scope, wired by
-// cmd/gatewayd-internal/run.go iff [ratelimit] mode = "central"),
-// the local-would-reject branch consults the central counter
-// before rejecting. Empty centralKey reproduces AllowWithParams'
-// behaviour byte-for-byte — the Phase 4 wire-up only opts in
-// per-rule call sites; per-app + per-account stay back-compat
-// until C3.5.
+// When centralKey is non-empty, the shared counter is authoritative for every
+// request. Empty centralKey reproduces AllowWithParams' local behavior.
 //
 // centralKey is the colon-separated triple
 // "<scope>:<subject_id>:<plan>"; splitCentralKey parses it.
@@ -340,17 +329,14 @@ func NewLimiterWithClock(now func() time.Time) *Limiter {
 }
 
 // NewLimiterWithCentral returns a Limiter that consults a CentralBackend
-// on the local-would-reject boundary case (ADR-104 amendment 5, issue
-// #881 Phase 4). Pass nil to reproduce the noopCentralBackend default —
+// on every request (ADR-104 amendment 5, issue #881 Phase 4). Pass nil to
+// reproduce the noopCentralBackend default —
 // callers that don't yet thread the [ratelimit] mode TOML knob
 // (cmd/gatewayd-internal/config.go) keep today's byte-for-byte
 // behaviour. Production wiring lives in cmd/gatewayd-internal/run.go.
 //
-// The central field is consulted AFTER the in-process allowToken returns
-// false; the caller must implement the fast-path-cache pattern (see
-// pkg/gateway/ratelimit_central.go for the contract). Setting central
-// alone does NOT change Allow's reject/admit behaviour today — that
-// lands in C3 of the Phase 4 mega-PR cluster.
+// The in-process decision remains available only as a bounded degraded-mode
+// fallback if the central store cannot be reached.
 func NewLimiterWithCentral(central CentralBackend) *Limiter {
 	l := NewLimiter()
 	if central != nil {
@@ -427,10 +413,8 @@ func NewLimiterWithCentralLRU(cap int, central CentralBackend, now func() time.T
 // Allow reports whether a request for appID on plan may proceed, consuming a
 // token if so. Plan rps/burst come from the limits table (never inlined).
 //
-// ctx is propagated so the central-mode consult (Phase 4 C3, ADR-104
-// amendment 5) can time-bound the boundary-case PeekToken round-trip
-// against the caller's deadline; the local-only mode (default for
-// single-box) ignores ctx because the consult never happens.
+// ctx is propagated so the central-mode consume can be bounded by both the
+// caller deadline and centralConsultTimeout. Local mode ignores ctx.
 func (l *Limiter) Allow(ctx context.Context, appID string, plan api.Plan) bool {
 	if l.noop {
 		return true
@@ -439,7 +423,8 @@ func (l *Limiter) Allow(ctx context.Context, appID string, plan api.Plan) bool {
 	if !ok {
 		return false
 	}
-	return l.allowToken(ctx, appID, float64(limits.RateLimitRPS), float64(limits.RateLimitBurst))
+	return l.allowTokenWithCentralKey(ctx, appID, float64(limits.RateLimitRPS), float64(limits.RateLimitBurst),
+		"app:"+appID+":"+string(plan))
 }
 
 // AllowAccount consumes one token from the bucket keyed by accountID (ADR-040 /
@@ -480,9 +465,8 @@ func (l *Limiter) AllowWithParams(ctx context.Context, id string, rps, burst flo
 	return l.allowToken(ctx, id, rps, burst)
 }
 
-// AllowAccount is the per-account sibling of Allow. Same ctx rationale
-// as Allow — propagated to the central-mode consult so the
-// boundary-case PeekToken can be time-bounded.
+// AllowAccount is the per-account sibling of Allow. Its context bounds the
+// central-mode consume.
 func (l *Limiter) AllowAccount(ctx context.Context, accountID string, plan api.Plan) bool {
 	if l.noop {
 		return true
@@ -491,7 +475,8 @@ func (l *Limiter) AllowAccount(ctx context.Context, accountID string, plan api.P
 	if rpm <= 0 {
 		return false // fail closed on unknown plan (mirrors CronLimitPerAccount)
 	}
-	return l.allowToken(ctx, accountID, float64(rpm)/60.0, float64(rpm))
+	return l.allowTokenWithCentralKey(ctx, accountID, float64(rpm)/60.0, float64(rpm),
+		"account:"+accountID+":"+string(plan))
 }
 
 // allowToken is the shared token-bucket math used by both Allow (per-app) and
@@ -504,36 +489,26 @@ func (l *Limiter) AllowAccount(ctx context.Context, accountID string, plan api.P
 // bucket most-recently-used and, on inserting into a full map, tries to evict.
 // The refill math itself is identical in both modes.
 //
-// # Central-mode consult (ADR-104 amendment 5, issue #881 Phase 4)
+// # Central mode (ADR-104 amendment 5, issue #881 Phase 4)
 //
 // When the limiter was built with NewLimiterWithCentral, the
 // noop default is replaced with the production CentralBackend.
-// On a local-would-reject return (tokens < 1 after refill +
-// decrement), allowToken calls central.PeekToken; if the central
-// counter has tokens available, the request is admitted anyway.
-// This bounds PG round-trips to the local-would-reject boundary
-// case only — typically < 1% of admits under normal load.
+// Every request calls central.ConsumeToken so the shared counter, rather than
+// one bucket per process, is authoritative across gateway replicas.
 //
 // scope / subjectID / plan are caller-supplied via
 // allowTokenWithCentralKey when the call site knows them
 // (cmd/gatewayd-internal/run.go wires the per-scope mapping).
-// The noop backend never blocks an admit (returns (0, true, nil)
-// on ConsumeToken, (0, nil) on PeekToken), so the production
-// behaviour with the default noop backend is identical to the
-// pre-Phase-4 in-process map. The fast-path-cache contract lives
-// in pkg/gateway/ratelimit_central.go.
+// The noop backend bypasses the central call, so the default behavior remains
+// identical to the pre-Phase-4 in-process map.
 func (l *Limiter) allowToken(ctx context.Context, id string, rps, burst float64) bool {
 	return l.allowTokenWithCentralKey(ctx, id, rps, burst, "")
 }
 
 // allowTokenWithCentralKey is the central-aware variant of
-// allowToken. When centralKey is empty (the per-app and
-// per-account call sites that pre-date Phase 4), the local
-// bucket is the only source of truth — matching today's behaviour
-// byte-for-byte. When centralKey is set (the per-rule scope, wired
-// in cmd/gatewayd-internal/run.go's compileThrottleRules path),
-// the local-would-reject branch consults the central counter
-// before rejecting.
+// allowToken. When centralKey is empty, the local bucket is the only source
+// of truth. When it is set, the central counter is authoritative and the local
+// result is used only if the central backend returns an error.
 func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, burst float64, centralKey string) bool {
 	l.mu.Lock()
 	now := l.now()
@@ -566,21 +541,18 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 		}
 	}
 
+	localAllowed := false
 	if b.tokens >= 1 {
 		b.tokens--
-		l.mu.Unlock()
-		return true
+		localAllowed = true
 	}
 	l.mu.Unlock()
 
-	// Local bucket rejected. Consult the central counter on the
-	// boundary case (ADR-104 amendment 5 fast-path-cache pattern).
-	// The noop backend's PeekToken returns (0, nil) — the
-	// isNoopBackend shortcut below avoids the goroutine-y cost of
-	// the interface call in the common case where the central
-	// mode is off (default production posture for single-box).
+	// Central mode makes the shared counter authoritative for every request.
+	// The local decision is retained only as a bounded fallback if Postgres is
+	// temporarily unavailable. This prevents one full burst per gateway replica.
 	if centralKey == "" || l.isNoopBackend() {
-		return false
+		return localAllowed
 	}
 	scope, subjectID, plan, ok := splitCentralKey(centralKey)
 	if !ok {
@@ -588,16 +560,19 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
 	defer cancel()
-	remaining, err := l.central.PeekToken(ctx, scope, subjectID, plan)
-	if err != nil || remaining <= 0 {
-		// Degraded posture: PG unreachable OR central still
-		// rejects. Fall back to the local reject decision. A
-		// separate ratelimit_degraded audit row is the
-		// operator-side signal; the latency cost is bounded
-		// by the 250ms timeout.
-		return false
+	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, subjectID, plan, rps, burst)
+	if err != nil {
+		return localAllowed
 	}
-	return true
+	// Keep response headers and degraded fallback aligned with the latest
+	// authoritative balance. Remaining==0 is a valid final-token admit.
+	l.mu.Lock()
+	if current := l.buckets[id]; current != nil {
+		current.tokens = float64(remaining)
+		current.last = l.now()
+	}
+	l.mu.Unlock()
+	return admitted
 }
 
 // isNoopBackend reports whether the central field is the default
@@ -996,8 +971,8 @@ func (l *Limiter) bucketKeys() []string {
 // silently bypass the 00126 CHECK at the SQL layer (the SQL
 // layer rejects it with 23514, but catching it earlier lets the
 // load-bearing 429 path return a 500 instead of leaking the
-// rejection past the gateway — the fast-path-cache pattern
-// depends on the central consult being semantically valid).
+// rejection past the gateway — the shared-counter key must be semantically
+// valid before the central consume).
 func splitCentralKey(centralKey string) (scope, subjectID, plan string, ok bool) {
 	parts := strings.SplitN(centralKey, ":", 3)
 	if len(parts) != 3 {

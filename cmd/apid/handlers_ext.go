@@ -93,6 +93,15 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 // Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
 // buildApp, the established helper signature in this package.
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	if req.Visibility != nil {
+		visibility := api.AppVisibility(*req.Visibility)
+		if !visibility.Valid() {
+			return api.ErrAppVisibilityInvalid(*req.Visibility)
+		}
+		if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
+			return api.ErrPlanInternalIngressNotAllowed(acct.Plan)
+		}
+	}
 	if manifest, changed := mergedLifecycleManifest(app, req); changed {
 		maxConcurrency := app.MaxConcurrency
 		if req.MaxConcurrency != nil {
@@ -780,6 +789,14 @@ func hasDeclaredRouteSource(req *api.UpdateAppRequest, app state.App) bool {
 	return hasRoutes
 }
 
+func visibilityPtr(v *string) *api.AppVisibility {
+	if v == nil {
+		return nil
+	}
+	parsed := api.AppVisibility(*v)
+	return &parsed
+}
+
 // updateApp is the PATCH /v1/apps/{slug} handler. User-tunable:
 // RAM, idle_timeout_s, max_concurrency, min_instances, and lifecycle
 // configuration (Pro/Scale only — validateUpdateApp gates the relevant
@@ -974,6 +991,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	lifecycleManifest, lifecycleChanged := stateManifestForUpdate(app, &req)
 	params := state.UpdateAppParams{
+		Visibility:         visibilityPtr(req.Visibility),
+		SetVisibility:      req.Visibility != nil,
 		RAMMB:              req.RAMMB,
 		CPUMillicores:      req.CPUMillicores,
 		IdleTimeoutS:       req.IdleTimeoutS,
@@ -1303,6 +1322,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		oldApp["public_auth"] = app.PublicAuthMode
 		newApp["public_auth"] = updated.PublicAuthMode
 	}
+	if req.Visibility != nil {
+		oldApp["visibility"] = string(api.NormalizeAppVisibility(app.Visibility))
+		newApp["visibility"] = string(api.NormalizeAppVisibility(updated.Visibility))
+	}
 	if req.EgressAllowlist != nil {
 		oldApp["egress_allowlist"] = egressStringList(app.EgressAllowlist)
 		newApp["egress_allowlist"] = egressStringList(updated.EgressAllowlist)
@@ -1416,6 +1439,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"has_basic_creds": req.PublicAuth.Mode == api.AppPublicAuthModeBasic,
 			"public_auth_ip_allowlist_entry_count": countIPAllowlistAudit(
 				req.PublicAuth.Mode, req.PublicAuth.IPAllowlist),
+		})
+	}
+	if req.Visibility != nil && api.NormalizeAppVisibility(app.Visibility) != api.NormalizeAppVisibility(updated.Visibility) {
+		s.audit.Emit(r.Context(), "app.visibility_changed", &acct.ID, map[string]any{
+			"app_id": updated.ID,
+			"slug":   updated.Slug,
+			"old":    string(api.NormalizeAppVisibility(app.Visibility)),
+			"new":    string(api.NormalizeAppVisibility(updated.Visibility)),
 		})
 	}
 	resp := s.appResponse(updated, acct.Plan)

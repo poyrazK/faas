@@ -927,6 +927,22 @@ show edit-to-live timings and SLO guidance
 | `--name <PROJECT>` | developer-session project name |  |
 | `--limit <N>` | number of recent syncs to show |  |
 
+### dev setup
+
+preflight a project and prepare the first developer environment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory |  |
+| `--name <PROJECT>` | developer-session project name |  |
+| `--env-file <PATH>` | validate and sync developer secrets |  |
+| `--start` | start after preflight |  |
+| `--once` | sync once and exit |  |
+| `--no-logs` | do not attach runtime logs |  |
+| `--open` | open the verified URL |  |
+| `--postgres` | provision an isolated PostgreSQL database |  |
+| `--postgres-region <REGION>` | choose managed database placement |  |
+
 
 ## preview
 

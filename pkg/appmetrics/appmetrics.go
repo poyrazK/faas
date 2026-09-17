@@ -121,8 +121,8 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "error_rate_pct":
 		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
 		normalize = SafePercent
 	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
 		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
@@ -242,8 +242,8 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 
 	// 5. Error rate %.
 	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng))
 	if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = SafePercent(v)
 	} else {
@@ -449,7 +449,7 @@ func SafePercent(v float64) float64 {
 	return x
 }
 
-// ErrorBudgetRemainingPct converts an observed [45]xx percentage into the
+// ErrorBudgetRemainingPct converts an observed 5xx percentage into the
 // remaining share of the API-availability error budget. The public SLO is
 // 99.5%, so an observed 0.0% error rate reports 100% remaining and an
 // observed 0.5% error rate reports 0%. Values beyond the budget are clamped

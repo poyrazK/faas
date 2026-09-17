@@ -225,12 +225,12 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 
-	// 2. error_rate per app (share of [45]xx in the window). The
+	// 2. error_rate per app (share of 5xx among eligible 2xx and 5xx). The
 	// positive-denominator filter drops idle series before QueryMap sees
 	// Prometheus' 0/0 = NaN result; the response map's missing-key value
 	// correctly represents an idle app as 0%.
 	errRateByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_request_duration_seconds_count{class=~"[45]xx"}[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count[%s])) > 0)`, rng, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_request_duration_seconds_count{class="5xx"}[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "error_rate")
 		return

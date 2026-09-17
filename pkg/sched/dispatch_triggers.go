@@ -88,6 +88,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+const gatewayDispatchResponseMaxBytes = 1 << 20
+
 // trigger DLQ reason constants (match the CHECK on
 // trigger_dead_letter.reason in migrations/00297_triggers.sql).
 // CI lint rule goconst would otherwise flag the per-reason
@@ -287,7 +289,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			return fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
 		}
 		pollerTrigger.Config = openedConfig
-		src, registered, err := newPollerForTrigger(pollerTrigger)
+		src, registered, err := l.newPollerForTrigger(pollerTrigger)
 		if !registered {
 			l.log.Debug("sched trigger tick: no poller for kind",
 				"trigger_id", t.ID.String(),
@@ -438,7 +440,25 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.observeESMLag(t.Kind, shardKeyFor(rec, t.Kind), time.Since(rec.ReceivedAt).Seconds())
 	}
 
-	// 4. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
+	// 4. Persist polled records before applying terminal policy. This ordering
+	// gives rate-limit and poison paths a durable record to transition and link
+	// to the DLQ. ON CONFLICT makes a re-poll reuse the same record.
+	for _, rec := range batch {
+		payload := rec.Payload
+		if payload == nil {
+			payload = []byte("{}")
+		}
+		headers := marshalJSON(rec.Headers)
+		metadata := marshalJSON(rec.Metadata)
+		if _, err := store.InsertTriggerRecord(ctx, t.ID.String(), rec.ItemIdentifier, payload, headers, metadata); err != nil {
+			l.log.Warn("sched trigger tick: insert record",
+				"trigger_id", t.ID.String(),
+				"item_identifier", rec.ItemIdentifier,
+				"err", err)
+		}
+	}
+
+	// 5. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
 	// review finding #4: the plan argument was hardcoded to api.PlanFree,
 	// which collapsed Hobby/Pro/Scale customers to the Free bucket's
 	// 1-wake-per-minute ceiling. Resolve the actual account plan via
@@ -466,41 +486,6 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				l.handleRateLimitedBatch(ctx, poller, t, batch, store)
 				return nil
 			}
-		}
-	}
-
-	// 5. Persist polled records into trigger_records (review finding
-	// #1, PR #910: without this insert, ClaimTriggerRecords returns 0
-	// rows and the entire dispatch tick is structurally dead — every
-	// record never reaches the gateway and the function never fires).
-	//
-	// Each Poll() returned SourceRecord becomes one trigger_records
-	// row BEFORE we attempt to claim + dispatch. ON CONFLICT
-	// (trigger_id, item_identifier) DO NOTHING (set in
-	// queries.sql:1283-1310) means a re-poll after a partial commit
-	// + Ack timeout reuses the existing row id rather than doubling
-	// the queue depth.
-	//
-	// Rollback semantics: if the insert fails for a record, the
-	// dispatch tick continues without claiming it (the row didn't
-	// land, so SKIP LOCKED can't see it) and the broker message
-	// stays in poller.inFlight. On the next poll cycle the broker
-	// library re-delivers; the next tick tries the insert again.
-	// This is the "Ack only after the row exists" guarantee the
-	// audit pins: dispatch_triggers.go never calls poller.Ack on a
-	// record whose trigger_records row is missing.
-	for _, rec := range batch {
-		payload := rec.Payload
-		if payload == nil {
-			payload = []byte("{}")
-		}
-		headers := marshalJSON(rec.Headers)
-		metadata := marshalJSON(rec.Metadata)
-		if _, err := store.InsertTriggerRecord(ctx, t.ID.String(), rec.ItemIdentifier, payload, headers, metadata); err != nil {
-			l.log.Warn("sched trigger tick: insert record",
-				"trigger_id", t.ID.String(),
-				"item_identifier", rec.ItemIdentifier,
-				"err", err)
 		}
 	}
 
@@ -558,6 +543,8 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			"trigger_id", t.ID.String(),
 			"err", postErr)
 		l.markRetryAll(ctx, claimed, postErr.Error(), store)
+		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(claimed))
+		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6: SKIP LOCKED may return fewer rows
 		// than len(batch). Nack only the records we actually
 		// claimed — the rest stay in poller.inFlight and re-poll
@@ -578,13 +565,24 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		for _, c := range claimed {
 			ids = append(ids, c.ID.String())
 		}
-		l.deadLetterAll(ctx, t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
+		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(claimed))
+		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6 (paired with the post-error path
 		// above): same partial-claim guard — only Nack the
 		// item_identifiers that have a corresponding
 		// trigger_records row. The other batch entries stay
 		// in poller.inFlight until the next poll cycle.
-		_ = poller.Nack(ctx, t, claimedItemIDs(claimed), triggerReasonPoisonRecord)
+		items := claimedItemIDs(claimed)
+		if _, isQueue := poller.(*queuePoller); isQueue {
+			if err := poller.Nack(ctx, t, items, triggerReasonPoisonRecord); err != nil {
+				l.log.Warn("sched trigger tick: finalize malformed queue response", "trigger_id", t.ID.String(), "err", err)
+				return nil
+			}
+			l.deadLetterAllWithMark(ctx, t.ID.String(), items, triggerReasonPoisonRecord, "gateway response malformed", store, false)
+		} else {
+			l.deadLetterAll(ctx, t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
+			_ = poller.Nack(ctx, t, items, triggerReasonPoisonRecord)
+		}
 		return nil
 	}
 
@@ -603,6 +601,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	succeedItems := []string{}
 	retryItems := []string{}
 	dlqItems := []string{}
+	_, isQueuePoller := poller.(*queuePoller)
 
 	for _, c := range claimed {
 		itemID := c.ItemIdentifier
@@ -643,12 +642,29 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			retryAttempts = append(retryAttempts, c.Attempts+1)
 		}
 	}
+	// Record terminal dispositions and end-to-end consumer latency before
+	// applying the durable state transitions below. This keeps queue retry
+	// and dead-letter pressure visible even when the subsequent broker ack
+	// call fails and the lease reaper must recover the row.
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeSucceeded, len(succeedIDs))
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryIDs))
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(dlqIDs))
+	l.observeESMRecordProcessingBatch(t.Kind, claimed)
 
 	if len(succeedIDs) > 0 {
+		if isQueuePoller {
+			if err := poller.Ack(ctx, t, succeedItems); err != nil {
+				l.log.Warn("sched trigger tick: finalize successful queue invocations",
+					"trigger_id", t.ID.String(), "err", err)
+				return nil
+			}
+		}
 		for _, id := range succeedIDs {
-			if err := store.MarkTriggerRecordSucceeded(ctx, id); err != nil {
-				l.log.Warn("sched trigger tick: mark succeeded",
-					"id", id, "err", err)
+			if !isQueuePoller {
+				if err := store.MarkTriggerRecordSucceeded(ctx, id); err != nil {
+					l.log.Warn("sched trigger tick: mark succeeded",
+						"id", id, "err", err)
+				}
 			}
 			// Audit: trigger.fired per succeeded record,
 			// dual-emitted as esm.source.created for
@@ -673,9 +689,11 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if err := poller.Ack(ctx, t, succeedItems); err != nil {
-			l.log.Warn("sched trigger tick: poller ack",
-				"trigger_id", t.ID.String(), "err", err)
+		if !isQueuePoller {
+			if err := poller.Ack(ctx, t, succeedItems); err != nil {
+				l.log.Warn("sched trigger tick: poller ack",
+					"trigger_id", t.ID.String(), "err", err)
+			}
 		}
 	}
 	if len(retryIDs) > 0 {
@@ -716,13 +734,25 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		}
 	}
 	if len(dlqIDs) > 0 {
+		if isQueuePoller {
+			if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
+				l.log.Warn("sched trigger tick: finalize queue dead letters",
+					"trigger_id", t.ID.String(), "err", err)
+				return nil
+			}
+		}
 		for i, id := range dlqIDs {
 			reason := dlqReasons[i]
 			lastErr := dlqErrors[i]
 			attempts := dlqAttempts[i]
-			if err := store.MarkTriggerRecordDeadLetter(ctx, id, lastErr); err != nil {
-				l.log.Warn("sched trigger tick: mark dlq",
-					"id", id, "err", err)
+			if err := store.InsertTriggerDeadLetter(ctx, id, t.ID.String(), reason, "drop", []byte(lastErr)); err != nil {
+				l.log.Warn("sched trigger tick: insert dlq", "id", id, "err", err)
+			}
+			if !isQueuePoller {
+				if err := store.MarkTriggerRecordDeadLetter(ctx, id, lastErr); err != nil {
+					l.log.Warn("sched trigger tick: mark dlq",
+						"id", id, "err", err)
+				}
 			}
 			// Audit: trigger.dlq, dual-emitted as
 			// esm.drain.dlq for the operator alias.
@@ -746,9 +776,11 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
-			l.log.Warn("sched trigger tick: poller nack (dlq)",
-				"trigger_id", t.ID.String(), "err", err)
+		if !isQueuePoller {
+			if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
+				l.log.Warn("sched trigger tick: poller nack (dlq)",
+					"trigger_id", t.ID.String(), "err", err)
+			}
 		}
 	}
 	// Audit: trigger.fired.batch — aggregated counts. No ESM
@@ -875,10 +907,24 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, readErr := readGatewayDispatchResponse(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("status %d: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, raw)
 	}
-	return io.ReadAll(resp.Body)
+	return readGatewayDispatchResponse(resp.Body)
+}
+
+func readGatewayDispatchResponse(body io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, gatewayDispatchResponseMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > gatewayDispatchResponseMaxBytes {
+		return nil, fmt.Errorf("gateway response exceeds %d bytes", gatewayDispatchResponseMaxBytes)
+	}
+	return raw, nil
 }
 
 // deadLetterAll marks every record as dead_letter + inserts a
@@ -929,6 +975,22 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 // tick.
 func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource, t sqlc.Trigger, batch []SourceRecord, store storeLike) {
 	items := batchItemIDs(batch)
+	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(batch))
+	for _, record := range batch {
+		if !record.ReceivedAt.IsZero() {
+			l.observeESMRecordProcessing(t.Kind, time.Since(record.ReceivedAt).Seconds())
+		}
+	}
+	if queue, ok := poller.(*queuePoller); ok {
+		if err := queue.finishInvocations(ctx, t, items, "dead_letter", "dead_letter", "rate_limited", triggerReasonRateLimited, `{"trigger_dispatch":"rate_limited"}`); err != nil {
+			l.log.Warn("sched trigger tick: finalize rate-limited queue invocations",
+				"trigger_id", t.ID.String(),
+				"err", err)
+			return
+		}
+		l.deadLetterAllWithMark(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store, false)
+		return
+	}
 	l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
 	if terminal, ok := poller.(terminalNacker); ok {
 		// Queue rows have not yet produced trigger_records, so Ack would
@@ -942,6 +1004,13 @@ func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource,
 }
 
 func (l *Loop) deadLetterAll(ctx context.Context, triggerID string, ids []string, reason, detail string, store storeLike) {
+	l.deadLetterAllWithMark(ctx, triggerID, ids, reason, detail, store, true)
+}
+
+// deadLetterAllWithMark writes the durable DLQ rows and optionally performs
+// the trigger-record transition. Queue pollers set mark=false because they
+// transition trigger_records and invocations together in one SQL statement.
+func (l *Loop) deadLetterAllWithMark(ctx context.Context, triggerID string, ids []string, reason, detail string, store storeLike, mark bool) {
 	if store == nil || len(ids) == 0 {
 		return
 	}
@@ -968,8 +1037,10 @@ func (l *Loop) deadLetterAll(ctx context.Context, triggerID string, ids []string
 			l.log.Warn("sched trigger tick: insert dlq", "id", uuid, "err", err)
 			continue
 		}
-		if err := store.MarkTriggerRecordDeadLetter(ctx, uuid, reason); err != nil {
-			l.log.Warn("sched trigger tick: mark dlq", "id", uuid, "err", err)
+		if mark {
+			if err := store.MarkTriggerRecordDeadLetter(ctx, uuid, reason); err != nil {
+				l.log.Warn("sched trigger tick: mark dlq", "id", uuid, "err", err)
+			}
 		}
 	}
 }
@@ -1195,6 +1266,32 @@ func (l *Loop) observeESMLag(source, shard string, lagSeconds float64) {
 		return
 	}
 	l.ops.ObserveESMLag(source, shard, lagSeconds)
+}
+
+// observeESMRecordOutcome forwards the terminal disposition counters while
+// keeping the dispatch path nil-safe for lightweight schedd test loops.
+func (l *Loop) observeESMRecordOutcome(source, outcome string, n int) {
+	if l.ops == nil {
+		return
+	}
+	l.ops.ObserveESMRecordOutcome(source, outcome, n)
+}
+
+// observeESMRecordProcessing forwards the end-to-end consumer latency
+// observation. The wire helper owns the finite-value and closed-label guards.
+func (l *Loop) observeESMRecordProcessing(source string, seconds float64) {
+	if l.ops == nil {
+		return
+	}
+	l.ops.ObserveESMRecordProcessing(source, seconds)
+}
+
+func (l *Loop) observeESMRecordProcessingBatch(source string, records []sqlc.TriggerRecord) {
+	for _, record := range records {
+		if record.ReceivedAt.Valid {
+			l.observeESMRecordProcessing(source, time.Since(record.ReceivedAt.Time).Seconds())
+		}
+	}
 }
 
 // shardKeyFor derives the shard label for the lag metric from

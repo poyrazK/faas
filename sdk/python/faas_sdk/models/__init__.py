@@ -139,6 +139,7 @@ from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_status import AppResponseStatus
 from .app_response_type import AppResponseType
+from .app_response_visibility import AppResponseVisibility
 from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
@@ -262,6 +263,7 @@ from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
+from .create_app_request_visibility import CreateAppRequestVisibility
 from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
@@ -299,6 +301,13 @@ from .create_managed_postgres_database_request import CreateManagedPostgresDatab
 from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
 from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
 from .create_managed_realtime_endpoint_request import CreateManagedRealtimeEndpointRequest
+from .create_managed_realtime_endpoint_request_auth_algorithms_item import (
+    CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+)
+from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRealtimeEndpointRequestAuthMode
+from .create_managed_realtime_endpoint_request_auth_required_claims import (
+    CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
+)
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
@@ -434,6 +443,13 @@ from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
 from .dev_postgres_response_state import DevPostgresResponseState
 from .dev_session_response import DevSessionResponse
+from .dev_sync_history_item import DevSyncHistoryItem
+from .dev_sync_history_item_status import DevSyncHistoryItemStatus
+from .dev_sync_history_response import DevSyncHistoryResponse
+from .dev_sync_history_summary import DevSyncHistorySummary
+from .dev_sync_phase import DevSyncPhase
+from .dev_sync_phase_phase import DevSyncPhasePhase
+from .dev_sync_phase_status import DevSyncPhaseStatus
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
@@ -679,6 +695,9 @@ from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
+from .managed_realtime_endpoint_response_auth_algorithms_item import ManagedRealtimeEndpointResponseAuthAlgorithmsItem
+from .managed_realtime_endpoint_response_auth_mode import ManagedRealtimeEndpointResponseAuthMode
+from .managed_realtime_endpoint_response_auth_required_claims import ManagedRealtimeEndpointResponseAuthRequiredClaims
 from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
@@ -941,6 +960,8 @@ from .queue_state_response import QueueStateResponse
 from .queue_state_response_plan import QueueStateResponsePlan
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
+from .record_dev_sync_request import RecordDevSyncRequest
+from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .refund_account_invoice_body import RefundAccountInvoiceBody
@@ -1094,6 +1115,9 @@ from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExe
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
+from .update_app_request_visibility_type_1 import UpdateAppRequestVisibilityType1
+from .update_app_request_visibility_type_2_type_1 import UpdateAppRequestVisibilityType2Type1
+from .update_app_request_visibility_type_3_type_1 import UpdateAppRequestVisibilityType3Type1
 from .update_app_webhook_request import UpdateAppWebhookRequest
 from .update_app_webhook_request_delivery_format import UpdateAppWebhookRequestDeliveryFormat
 from .update_app_webhook_request_event_filter_item import UpdateAppWebhookRequestEventFilterItem
@@ -1113,6 +1137,13 @@ from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
 from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
+from .update_managed_realtime_endpoint_request_auth_algorithms_item import (
+    UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+)
+from .update_managed_realtime_endpoint_request_auth_mode import UpdateManagedRealtimeEndpointRequestAuthMode
+from .update_managed_realtime_endpoint_request_auth_required_claims import (
+    UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
+)
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
@@ -1311,6 +1342,7 @@ __all__ = (
     "AppResponseRuntime",
     "AppResponseStatus",
     "AppResponseType",
+    "AppResponseVisibility",
     "AppResponseWorkloadClass",
     "AppRestartResponse",
     "AppRoutesResponse",
@@ -1430,6 +1462,7 @@ __all__ = (
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
+    "CreateAppRequestVisibility",
     "CreateAppWebhookRequest",
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
@@ -1467,6 +1500,9 @@ __all__ = (
     "CreateManagedPostgresDatabaseRequestAvailability",
     "CreateManagedPostgresDatabaseRequestServiceClass",
     "CreateManagedRealtimeEndpointRequest",
+    "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
+    "CreateManagedRealtimeEndpointRequestAuthMode",
+    "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
@@ -1598,6 +1634,13 @@ __all__ = (
     "DevPostgresResponseBindingState",
     "DevPostgresResponseState",
     "DevSessionResponse",
+    "DevSyncHistoryItem",
+    "DevSyncHistoryItemStatus",
+    "DevSyncHistoryResponse",
+    "DevSyncHistorySummary",
+    "DevSyncPhase",
+    "DevSyncPhasePhase",
+    "DevSyncPhaseStatus",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
@@ -1843,6 +1886,9 @@ __all__ = (
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeEndpointResponse",
+    "ManagedRealtimeEndpointResponseAuthAlgorithmsItem",
+    "ManagedRealtimeEndpointResponseAuthMode",
+    "ManagedRealtimeEndpointResponseAuthRequiredClaims",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
     "ManagedRealtimeMessageRequest",
@@ -2083,6 +2129,8 @@ __all__ = (
     "QueueStateResponsePlan",
     "QuotaBlock",
     "RaiseOverageCapRequest",
+    "RecordDevSyncRequest",
+    "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
     "RefundAccountInvoiceBody",
@@ -2234,6 +2282,9 @@ __all__ = (
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
+    "UpdateAppRequestVisibilityType1",
+    "UpdateAppRequestVisibilityType2Type1",
+    "UpdateAppRequestVisibilityType3Type1",
     "UpdateAppWebhookRequest",
     "UpdateAppWebhookRequestDeliveryFormat",
     "UpdateAppWebhookRequestEventFilterItem",
@@ -2253,6 +2304,9 @@ __all__ = (
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
     "UpdateManagedRealtimeEndpointRequest",
+    "UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
+    "UpdateManagedRealtimeEndpointRequestAuthMode",
+    "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateProjectEnvironmentConfigRequest",

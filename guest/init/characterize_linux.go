@@ -135,10 +135,17 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 	res := CharacterizationResult{Reason: "ok", ExitCode: -1}
 	defer func() {
 		res.Duration = args.Now().Sub(start)
+		// bind_timeout is only actionable if the report says which step
+		// came up empty: no pid, no owned sockets, or no LISTEN row for them.
+		pid := args.AppPID()
+		owned := len(ownedSocketInodes(pid))
 		args.Log.Info("characterization complete",
 			"mode", res.Mode, "port", res.Port, "class", res.ObservedClass,
 			"exit", res.ExitCode, "shipped", res.Shipped, "reason", res.Reason,
-			"duration", res.Duration)
+			"duration", res.Duration,
+			"pid", pid, "owned_sockets", owned,
+			"listen_rows_tcp", countListenRows("/proc/net/tcp"),
+			"listen_rows_tcp6", countListenRows("/proc/net/tcp6"))
 	}()
 
 	// 1. Observe the bind: watch /proc/net/tcp{,6} filtered to the
@@ -883,3 +890,23 @@ func setSockTimeout(fd int, opt int, d time.Duration) error {
 }
 
 // truncateLog lives in characterize_common.go (build-tag-free).
+
+// countListenRows counts LISTEN (0A) rows in a /proc/net/tcp{,6} table,
+// ignoring ownership — the denominator for a bind_timeout report.
+func countListenRows(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return -1
+	}
+	n := 0
+	for i, line := range strings.Split(string(data), "\n") {
+		if i == 0 {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) > 3 && fields[3] == "0A" {
+			n++
+		}
+	}
+	return n
+}

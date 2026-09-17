@@ -41,6 +41,8 @@ gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 gregale dev status             # show developer-environment quota usage
 gregale dev history            # inspect recent edit-to-live timings and SLO guidance
+gregale dev setup              # preflight a project and print the exact next command
+gregale dev setup --start      # preflight, provision, and start the developer loop
 gregale dev history --limit 50 # show a larger bounded history
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
@@ -62,6 +64,15 @@ edit-to-live timing, and a phase-level hint when the latest sync regresses.
 `--path` or `--name` to select a workspace and `--json` for the summary and
 receipt list as one stable object. History is keyed by deployment ID, so a
 retry cannot double-count a sync.
+
+`gregale dev setup` is the first-run preflight. It is local and read-only: it
+uses the same source-shape detector as `gregale dev`, validates
+`gregale.yaml`, checks an explicitly selected `--env-file` without printing
+values, and reports local source errors before creating a remote environment.
+It also reports whether this machine is logged in and prints the exact
+copy-paste command for the next step. `--start` hands the validated plan to
+`gregale dev`, which provisions the stable URL, waits for the first sync to
+become live, and watches for changes unless `--once` is supplied.
 
 `--open` launches the stable developer URL in the default browser after the
 first successful sync. It opens at most once per session, including with

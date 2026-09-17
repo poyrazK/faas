@@ -67,6 +67,12 @@ type defaultMirrorRoundTripper struct {
 	client *http.Client
 }
 
+// mirrorResponseBodyCap bounds the response snapshot retained for mirror
+// classification. The source request snapshot uses the same cap; retaining
+// more bytes here would let a customer-controlled mirror response consume
+// unbounded gateway memory.
+const mirrorResponseBodyCap = int64(api.MirrorBodySnapshotCap)
+
 // NewDefaultMirrorRoundTripper (issue #72 / ADR-124 PR-A3) is
 // the production MirrorRoundTripper. nil client = the per-request
 // http.DefaultClient (no Transport override). The per-request
@@ -227,7 +233,17 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
-	mirrorBody, _ := io.ReadAll(resp.Body)
+	mirrorBody, readErr := readMirrorResponseBody(resp.Body)
+	if readErr != nil {
+		if h.metrics != nil {
+			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "mirror_roundtrip_error")
+			h.metrics.ObserveMirrorLatency(rule.AppID, rule.ID, latency.Seconds())
+		}
+		if h.log != nil {
+			h.log.Warn("mirror: response body read failed", "rule_id", rule.ID, "err", readErr)
+		}
+		return
+	}
 
 	// 4. Classify. Source side: read the committed status from
 	// rec's mirrorStatusSink (the proxy committed it via WriteHeader
@@ -255,6 +271,10 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.metrics.ObserveMirrorBodyDiff(rule.AppID, rule.ID)
 		}
 	}
+}
+
+func readMirrorResponseBody(body io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(body, mirrorResponseBodyCap))
 }
 
 // isCapAtMaxCode (PR-A3 code-review #5 fix) is the *api.Problem

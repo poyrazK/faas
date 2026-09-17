@@ -74,6 +74,10 @@ type Poller struct {
 	// NodeRegistry is the same notification-backed active-node snapshot used
 	// by placement and heartbeat. Nil preserves the legacy store lookup.
 	NodeRegistry *sched.NodeRegistry
+	// OwnerNodeID scopes stream-backed telemetry to the instances this schedd
+	// is authoritative for. Empty identifies a control-plane observer, which
+	// must not report missing remote streams as owner failures.
+	OwnerNodeID string
 	// DiskPressureHandler turns a full guest writable filesystem into an
 	// explicit lifecycle action. Nil keeps the poller observation-only.
 	DiskPressureHandler DiskPressureHandler
@@ -94,6 +98,13 @@ func (p *Poller) WithTelemetry(cache *sched.NodeTelemetryCache) *Poller {
 func (p *Poller) WithNodeRegistry(reg *sched.NodeRegistry) *Poller {
 	if p != nil {
 		p.NodeRegistry = reg
+	}
+	return p
+}
+
+func (p *Poller) WithOwnerNodeID(nodeID string) *Poller {
+	if p != nil {
+		p.OwnerNodeID = nodeID
 	}
 	return p
 }
@@ -184,6 +195,15 @@ func (p *Poller) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if p.Telemetry != nil && p.OwnerNodeID != "" {
+		local := instances[:0]
+		for _, instance := range instances {
+			if instance.NodeID == p.OwnerNodeID {
+				local = append(local, instance)
+			}
+		}
+		instances = local
+	}
 	// Group instances by node for the join.
 	byNode := make(map[string][]state.Instance, len(nodes))
 	for _, in := range instances {
@@ -225,7 +245,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	if p.Telemetry != nil {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
-		if p.Metrics != nil && len(rows) < len(instances) {
+		if p.Metrics != nil && p.OwnerNodeID != "" && len(rows) < len(instances) {
 			reported := make(map[string]struct{}, len(rows))
 			for _, row := range rows {
 				reported[row.InstanceID] = struct{}{}

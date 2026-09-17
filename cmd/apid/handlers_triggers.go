@@ -821,6 +821,11 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		}
 		filterCriteriaBytes = &b
 	}
+	var source *string
+	if mergedConfig != nil && t.Kind == string(api.TriggerKindQueue) {
+		mode := triggerSourceForConfig(api.TriggerKindQueue, mergedConfig)
+		source = &mode
+	}
 	// Review finding #4 (PR #910): for kind=cron rows the
 	// schedule/path columns live on the `crons` table (the
 	// triggers.cron_id FK points at it). The old code accepted
@@ -840,13 +845,13 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			return
 		}
 		// Update the non-cron fields on the triggers row.
-		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes)
+		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes, source)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 			return
 		}
 	} else {
-		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes)
+		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes, source)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 			return
@@ -939,7 +944,7 @@ func (s *server) setTriggerEnabled(w http.ResponseWriter, r *http.Request, acct 
 		s.notFound(w, "no such trigger")
 		return
 	}
-	updated, err := s.store.UpdateTrigger(r.Context(), id, &enabled, nil, nil, nil, nil, nil, nil, nil)
+	updated, err := s.store.UpdateTrigger(r.Context(), id, &enabled, nil, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 		return
