@@ -2063,6 +2063,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/queues/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.queueState))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queues/peek", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.queuePeek))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queues/dead_letter", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.queueDeadLetter))))
+	// Issue #1278: unified app-scoped DLQ ledger. Queue and trigger-specific
+	// endpoints remain available for backwards compatibility.
+	mux.HandleFunc("GET /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeadLetterEvents))))
+	mux.HandleFunc("GET /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeadLetterEvent))))
+	mux.HandleFunc("POST /v1/apps/{slug}/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayDeadLetterEvent)))))
 	// ADR-134 PR-C: replay a dead_letter queue row back to
 	// pending. Idempotent-wrapped because a retried POST after a
 	// network blip must not double-enqueue; the SDK mints

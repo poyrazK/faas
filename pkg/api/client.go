@@ -2911,6 +2911,51 @@ func (c *Client) QueueDeadLetter(ctx context.Context, slug string, limit int, be
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListDeadLetterEvents returns the unified app-level dead-letter ledger for
+// queue invocations and broker trigger records, newest first.
+func (c *Client) ListDeadLetterEvents(ctx context.Context, slug string, limit int, before string) (DeadLetterEventsResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/apps/" + slug + "/dlq"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out DeadLetterEventsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetDeadLetterEvent reads one unified dead-letter event by app-scoped id.
+func (c *Client) GetDeadLetterEvent(ctx context.Context, slug, eventID string) (DeadLetterEvent, error) {
+	var out DeadLetterEvent
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/dlq/"+eventID, nil, &out)
+}
+
+// ReplayDeadLetterEvent atomically resets the source queue or trigger record
+// to pending and stamps the event's replayed_at audit field.
+func (c *Client) ReplayDeadLetterEvent(ctx context.Context, slug, eventID string) (DeadLetterEvent, error) {
+	var out DeadLetterEvent
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/dlq/"+eventID+"/replay", nil, &out)
+}
+
+// Generated-name compatibility helpers kept alongside the ergonomic methods
+// above so sdk-check can prove every OpenAPI path has a Go entry point.
+func (c *Client) GetAppsSlugDlq(ctx context.Context, slug string, limit int, before string) (DeadLetterEventsResponse, error) {
+	return c.ListDeadLetterEvents(ctx, slug, limit, before)
+}
+
+func (c *Client) GetAppsSlugDlqId(ctx context.Context, slug, eventID string) (DeadLetterEvent, error) {
+	return c.GetDeadLetterEvent(ctx, slug, eventID)
+}
+
+func (c *Client) PostAppsSlugDlqIdReplay(ctx context.Context, slug, eventID string) (DeadLetterEvent, error) {
+	return c.ReplayDeadLetterEvent(ctx, slug, eventID)
+}
+
 // CreateDelayedTask schedules a delayed-task row to fire at the
 // given future timestamp. Cap-checked against MaxDelayedTasksPerApp.
 func (c *Client) CreateDelayedTask(ctx context.Context, slug string, req DelayedTaskRequest) (DelayedTaskResponse, error) {

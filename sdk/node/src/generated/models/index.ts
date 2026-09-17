@@ -176,6 +176,8 @@ export type { DataUpstreamHistoryBucket } from './DataUpstreamHistoryBucket.js';
 export type { DataUpstreamHistoryResponse } from './DataUpstreamHistoryResponse.js';
 export type { DataUpstreamListResponse } from './DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './DataUpstreamResponse.js';
+export type { DeadLetterEvent } from './DeadLetterEvent.js';
+export type { DeadLetterEventsResponse } from './DeadLetterEventsResponse.js';
 export type { DebugCompareRequest } from './DebugCompareRequest.js';
 export type { DebugCompareResponse } from './DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './DebugCompareRouteStats.js';

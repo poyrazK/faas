@@ -13100,6 +13100,70 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Issue #1278 — unified app-scoped dead-letter ledger. The legacy
+  # queue-specific and trigger-specific DLQ routes remain supported.
+  /v1/apps/{slug}/dlq:
+    get:
+      tags: [queues]
+      operationId: listDeadLetterEvents
+      summary: List dead-letter events for an app.
+      description: |
+        Returns queue invocation and broker trigger failures in one durable,
+        newest-first ledger. The source row is not leased or mutated.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueCursorLimit'
+        - $ref: '#/components/parameters/QueueCursorBefore'
+      responses:
+        '200':
+          description: A page of unified dead-letter events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterEventsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/dlq/{id}:
+    get:
+      tags: [queues]
+      operationId: getDeadLetterEvent
+      summary: Get one dead-letter event for an app.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/Id32'
+      responses:
+        '200':
+          description: The dead-letter event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/dlq/{id}/replay:
+    post:
+      tags: [queues]
+      operationId: replayDeadLetterEvent
+      summary: Replay one dead-letter event atomically.
+      description: |
+        Resets the source invocation or trigger record to pending, clears its
+        retry error, and records replayed_at on the unified ledger.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/Id32'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Replay accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/delayed-tasks:
     post:
       tags: [delayed_tasks]
@@ -27877,6 +27941,39 @@ components:
           type: array
           items: { $ref: '#/components/schemas/QueueDeadLetterMessage' }
         next_before: { type: string, pattern: '^[a-f0-9]{32}$', description: "Cursor for the previous page; absent on the final page." }
+
+    DeadLetterEvent:
+      description: "One unified queue invocation or broker trigger dead-letter event."
+      type: object
+      required: [id, source, source_id, payload, headers, error_kind,
+                 error_detail, retry_count, first_failed_at, last_failed_at,
+                 created_at]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        source: { type: string, enum: [invocation, trigger_record] }
+        source_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        origin: { type: string, description: "Invocation source or trigger kind." }
+        trigger_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        payload: { type: object, additionalProperties: true }
+        headers: { type: object, additionalProperties: true }
+        error_kind: { type: string }
+        error_detail: { type: object, additionalProperties: true }
+        retry_count: { type: integer, minimum: 0 }
+        first_failed_at: { type: string, format: date-time }
+        last_failed_at: { type: string, format: date-time }
+        replayed_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    DeadLetterEventsResponse:
+      description: "A page of unified dead-letter events ordered newest-first."
+      type: object
+      required: [app_slug, events]
+      properties:
+        app_slug: { type: string }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/DeadLetterEvent' }
+        next_before: { type: string, pattern: '^[a-f0-9]{32}$' }
 
     DelayedTaskResponse:
       description: "Delayed task create/get shape. ScheduledAt is the customer-facing UTC dispatch time. State is populated on get, omitted on create (always `pending` there)."

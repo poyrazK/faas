@@ -27004,6 +27004,172 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 	return inv, nil
 }
 
+// ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
+// cursor is the last event id returned by the previous page; ordering uses
+// (last_failed_at, id) so simultaneous failures page deterministically.
+func (s *PgStore) ListDeadLetterEvents(ctx context.Context, appID string, limit int, before string) ([]DeadLetterEvent, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	var beforeParam any
+	if before != "" {
+		beforeParam = before
+	}
+	rows, err := s.pool.Query(ctx, `
+		with anchor as (
+			select last_failed_at, id from dead_letter_events where id = $2
+		)
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where app_id = $1
+		   and ($2::uuid is null or
+		        (last_failed_at, id) < (select last_failed_at, id from anchor))
+		 order by last_failed_at desc, id desc
+		 limit $3`, appID, beforeParam, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanDeadLetterEvents(rows)
+}
+
+// DeadLetterEventByID reads one unified DLQ event while enforcing app scope.
+func (s *PgStore) DeadLetterEventByID(ctx context.Context, appID, eventID string) (DeadLetterEvent, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where id = $1 and app_id = $2`, eventID, appID)
+	events, err := scanDeadLetterEventRows(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		return DeadLetterEvent{}, err
+	}
+	return events, nil
+}
+
+// ReplayDeadLetterEvent atomically resets the source row and stamps the
+// unified event. Trigger dead-letter rows are removed so a subsequent failure
+// can create a fresh trigger_dead_letter row for the same record.
+func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		select id::text, account_id::text, app_id::text, source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where id = $1 and app_id = $2 and account_id = $3
+		   and replayed_at is null
+		 for update`, eventID, appID, accountID)
+	ev, err := scanDeadLetterEventRows(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		return DeadLetterEvent{}, err
+	}
+
+	var tag pgconn.CommandTag
+	switch ev.Source {
+	case "invocation":
+		tag, err = tx.Exec(ctx, `
+			update invocations
+			   set state = 'pending', attempts = 0, last_error = null,
+			       outcome = null, due_at = now(), lease_expires_at = null,
+			       instance_id = null, last_replayed_at = now(), completed_at = null
+			 where id = $1 and account_id = $2 and app_id = $3
+			   and state = 'dead_letter'`, ev.SourceID, accountID, appID)
+	case "trigger_record":
+		tag, err = tx.Exec(ctx, `
+			update trigger_records r
+			   set state = 'pending', attempts = 0, last_error = null,
+			       next_fire_at = now()
+			 where r.id = $1 and r.state = 'dead_letter'
+			   and exists (select 1 from triggers t
+			                 where t.id = r.trigger_id
+			                   and t.app_id = $2 and t.account_id = $3)`,
+			ev.SourceID, appID, accountID)
+		if err == nil {
+			_, err = tx.Exec(ctx, `delete from trigger_dead_letter where record_id = $1`, ev.SourceID)
+		}
+	default:
+		return DeadLetterEvent{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
+	}
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return DeadLetterEvent{}, ErrNotFound
+	}
+
+	now := time.Now().UTC()
+	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, eventID); err != nil {
+		return DeadLetterEvent{}, err
+	}
+	ev.ReplayedAt = &now
+	if err = tx.Commit(ctx); err != nil {
+		return DeadLetterEvent{}, err
+	}
+	return ev, nil
+}
+
+func scanDeadLetterEvents(rows pgx.Rows) ([]DeadLetterEvent, error) {
+	defer rows.Close()
+	out := make([]DeadLetterEvent, 0, 20)
+	for rows.Next() {
+		ev, err := scanDeadLetterEventRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type deadLetterEventScanner interface {
+	Scan(...any) error
+}
+
+func scanDeadLetterEventRows(row deadLetterEventScanner) (DeadLetterEvent, error) {
+	return scanDeadLetterEventRow(row)
+}
+
+func scanDeadLetterEventRow(row deadLetterEventScanner) (DeadLetterEvent, error) {
+	var ev DeadLetterEvent
+	var replayedAt pgtype.Timestamptz
+	if err := row.Scan(
+		&ev.ID, &ev.AccountID, &ev.AppID, &ev.Source, &ev.SourceID,
+		&ev.Origin, &ev.TriggerID, &ev.Payload, &ev.Headers, &ev.ErrorKind,
+		&ev.ErrorDetail, &ev.RetryCount, &ev.FirstFailedAt, &ev.LastFailedAt,
+		&replayedAt, &ev.CreatedAt,
+	); err != nil {
+		return DeadLetterEvent{}, err
+	}
+	if replayedAt.Valid {
+		t := replayedAt.Time
+		ev.ReplayedAt = &t
+	}
+	return ev, nil
+}
+
 // DropTriggerRecordByOperator (issue #757 / ADR-0NN, commit #6)
 // deletes the record outright — an operator verb for "this row
 // should not be retried". Distinct from the dead_letter transition

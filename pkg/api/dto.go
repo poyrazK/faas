@@ -4340,6 +4340,31 @@ type QueueDeadLetterResponse struct {
 	NextBefore string                   `json:"next_before,omitempty"`
 }
 
+// DeadLetterEvent is the unified app-level DLQ contract. Payload and headers
+// are JSON values preserved from the source queue or broker record.
+type DeadLetterEvent struct {
+	ID            string          `json:"id"`
+	Source        string          `json:"source"`
+	SourceID      string          `json:"source_id"`
+	Origin        string          `json:"origin,omitempty"`
+	TriggerID     string          `json:"trigger_id,omitempty"`
+	Payload       json.RawMessage `json:"payload"`
+	Headers       json.RawMessage `json:"headers"`
+	ErrorKind     string          `json:"error_kind"`
+	ErrorDetail   json.RawMessage `json:"error_detail"`
+	RetryCount    int             `json:"retry_count"`
+	FirstFailedAt time.Time       `json:"first_failed_at"`
+	LastFailedAt  time.Time       `json:"last_failed_at"`
+	ReplayedAt    *time.Time      `json:"replayed_at,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+type DeadLetterEventsResponse struct {
+	AppSlug    string            `json:"app_slug"`
+	Events     []DeadLetterEvent `json:"events"`
+	NextBefore string            `json:"next_before,omitempty"`
+}
+
 // --- IAM-4 (ADR-035) — auth audit event surface -----------------------------
 //
 // AuditEventResponse is one row of the customer's own security event

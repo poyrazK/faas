@@ -353,6 +353,12 @@ from .data_upstream_list_response import DataUpstreamListResponse
 from .data_upstream_response import DataUpstreamResponse
 from .data_upstream_response_kind import DataUpstreamResponseKind
 from .data_upstream_response_source import DataUpstreamResponseSource
+from .dead_letter_event import DeadLetterEvent
+from .dead_letter_event_error_detail import DeadLetterEventErrorDetail
+from .dead_letter_event_headers import DeadLetterEventHeaders
+from .dead_letter_event_payload import DeadLetterEventPayload
+from .dead_letter_event_source import DeadLetterEventSource
+from .dead_letter_events_response import DeadLetterEventsResponse
 from .debug_compare_request import DebugCompareRequest
 from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
@@ -1544,6 +1550,12 @@ __all__ = (
     "DataUpstreamResponse",
     "DataUpstreamResponseKind",
     "DataUpstreamResponseSource",
+    "DeadLetterEvent",
+    "DeadLetterEventErrorDetail",
+    "DeadLetterEventHeaders",
+    "DeadLetterEventPayload",
+    "DeadLetterEventSource",
+    "DeadLetterEventsResponse",
     "DebugCompareRequest",
     "DebugCompareResponse",
     "DebugCompareRouteStats",
