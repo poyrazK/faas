@@ -67,3 +67,43 @@ func TestMemStoreSetDeploymentFailedClosesActiveStage(t *testing.T) {
 		t.Fatalf("idempotent failure appended history: len=%d", len(stages.History))
 	}
 }
+
+func TestFinalizeActiveDeploymentStageEdgeCases(t *testing.T) {
+	if finalizeActiveDeploymentStage(nil, time.Time{}, time.Time{}, stageHistoryStatusFailed, "") {
+		t.Fatal("nil stage state reported an active stage")
+	}
+	if finalizeActiveDeploymentStage(&StageState{}, time.Time{}, time.Time{}, stageHistoryStatusFailed, "") {
+		t.Fatal("empty stage state reported an active stage")
+	}
+
+	at := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	startedAfterEnd := at.Add(time.Hour)
+	state := StageState{
+		Current:          StageImageBuild,
+		CurrentStartedAt: &startedAfterEnd,
+		History:          make([]StageStateItem, MaxStageHistory),
+	}
+	if !finalizeActiveDeploymentStage(&state, at.Add(-time.Hour), at, stageHistoryStatusFailed, "boom") {
+		t.Fatal("active stage was not finalized")
+	}
+	if state.Current != "" || state.CurrentStartedAt != nil {
+		t.Fatalf("active stage survived finalization: %+v", state)
+	}
+	if len(state.History) != MaxStageHistory {
+		t.Fatalf("history length = %d, want %d", len(state.History), MaxStageHistory)
+	}
+	last := state.History[len(state.History)-1]
+	if last.Status != stageHistoryStatusFailed || last.Reason != "boom" || last.DurationMs != 0 {
+		t.Fatalf("finalized stage = %+v", last)
+	}
+
+	// A zero timestamp uses the current UTC time and an absent start falls
+	// back to the deployment creation time.
+	zeroAt := StageState{Current: StageSourceDownload}
+	if !finalizeActiveDeploymentStage(&zeroAt, at, time.Time{}, stageHistoryStatusFailed, "") {
+		t.Fatal("zero-time active stage was not finalized")
+	}
+	if len(zeroAt.History) != 1 || zeroAt.History[0].DurationMs < 0 {
+		t.Fatalf("zero-time stage history = %+v", zeroAt.History)
+	}
+}

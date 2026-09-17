@@ -24,6 +24,15 @@ func TestMigrations_RepairTerminalDeploymentStageState(t *testing.T) {
 	accountID := seedAccount(t, ctx, pool)
 	appID := seedApp(t, ctx, pool, accountID)
 	started := time.Now().UTC().Add(-time.Minute)
+	// The current schema also installs the later failed-deployment fence. Keep
+	// it out of the stale-row fixture so this test exercises the repair
+	// migration itself rather than the trigger clearing current on write.
+	if _, err := pool.Exec(ctx, `ALTER TABLE deployments DISABLE TRIGGER deployments_failed_stage_fence`); err != nil {
+		t.Fatalf("disable failed-stage fence for fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `ALTER TABLE deployments ENABLE TRIGGER deployments_failed_stage_fence`)
+	})
 
 	tests := []struct {
 		status      string
