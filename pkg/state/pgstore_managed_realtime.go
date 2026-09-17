@@ -61,6 +61,9 @@ func (s *PgStore) CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context,
 	if in.AuthAlgorithms == nil {
 		in.AuthAlgorithms = []string{}
 	}
+	if in.AuthTokenPreviousSealed == nil {
+		in.AuthTokenPreviousSealed = []byte{}
+	}
 	authClaims, err := json.Marshal(in.AuthRequiredClaims)
 	if err != nil {
 		return ManagedRealtimeEndpoint{}, fmt.Errorf("state: encode realtime auth claims: %w", err)
