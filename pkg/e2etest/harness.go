@@ -847,6 +847,11 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	env := append(testEnvCommon(dbURL),
 		"FAAS_APID_LISTEN="+addr,
 		"FAAS_APPS_DOMAIN="+testDomain,
+		// Its own metrics port, like every daemon — see metricsAddrFor.
+		// This is the apid start path Start uses; #2881 stamped only
+		// the other one, and smoke run 35220096082 still lost three
+		// tests to `bind: address already in use` on 9101.
+		"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
