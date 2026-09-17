@@ -92,6 +92,12 @@ func TestPathsExtra_LayerKey(t *testing.T) {
 	}
 }
 
+func TestPathsExtra_JobLayerKey(t *testing.T) {
+	if got := JobLayerKey("job-1"); got != "jobs/job-1.ext4" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestPathsExtra_KernelKey(t *testing.T) {
 	if got := KernelKey("v1.7.0"); got != "kernel/v1.7.0" {
 		t.Errorf("got %q", got)
