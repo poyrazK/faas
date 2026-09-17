@@ -1,3 +1,4 @@
+// adr: 179 — deadline failures must reach the configured failure destination.
 package sched
 
 import (
