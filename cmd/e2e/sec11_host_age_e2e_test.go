@@ -144,12 +144,12 @@ func TestSec11_HostAgeIdentity_LoadCredentialDecouple(t *testing.T) {
 		"FAAS_APID_LISTEN="+addr,
 		"FAAS_HOST_AGE_IDENTITY_PATH="+credCopyPath,
 	))
-	// waitTCP budget: 15s. The 10s default used elsewhere in
-	// this package is occasionally tight on a fresh-built apid
-	// binary's first cold-start under CI load (observed 8-12s
-	// on ubuntu-latest). 15s is conservative without bloat; do
-	// not revert without re-measuring cold-start latency on CI.
-	waitTCP(t, addr, 15*time.Second)
+	// APID performs a pool warm-up and migration check before binding. Keep
+	// the same bounded 30s allowance as startAPIDWithEnv: shard contention
+	// can push a healthy cold start beyond 15s. Supplying proc also preserves
+	// its captured output if startup really fails, instead of reporting only
+	// a misleading connection timeout.
+	waitTCP(t, addr, 30*time.Second, proc)
 	t.Cleanup(func() {
 		if proc.Process == nil {
 			return
