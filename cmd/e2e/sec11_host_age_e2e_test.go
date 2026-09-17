@@ -301,7 +301,10 @@ func TestSec11_HostAgeIdentity_OnDiskInsecurePermsFailsFast(t *testing.T) {
 	// Shared CI PostgreSQL can take slightly over five seconds, which used to
 	// kill apid before it reached the permission check and produce a false
 	// negative containing only migration output.
-	out, werr := startAPIDAndExpectFail(t, env, 15*time.Second)
+	// The full migration set can exceed 15 seconds on a shared CI PostgreSQL
+	// service before apid reaches the host-key permission check. Keep the
+	// fail-fast assertion bounded, but leave enough headroom for migrations.
+	out, werr := startAPIDAndExpectFail(t, env, 30*time.Second)
 	if werr == nil {
 		t.Fatalf("apid should have exited non-zero on 0440 host.age but exited cleanly:\n%s", out)
 	}
