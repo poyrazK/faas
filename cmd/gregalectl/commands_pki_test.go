@@ -69,6 +69,33 @@ func TestPKIIdentityRejectsNodeIdentityOnControlPlane(t *testing.T) {
 	}
 }
 
+func TestPKIRenewalRecreatesSecureExportParentBeforeExport(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
+	if err != nil {
+		t.Fatalf("read pki renewal playbook: %v", err)
+	}
+	text := string(body)
+	remove := strings.Index(text, "pki renewal — remove prior target export material")
+	recreate := strings.Index(text, "pki renewal — recreate target export staging parent")
+	export := strings.Index(text, "pki renewal — export active trust material without ca.key")
+	if remove < 0 || recreate < 0 || export < 0 || !(remove < recreate && recreate < export) {
+		t.Fatalf("renewal export staging order is unsafe: remove=%d recreate=%d export=%d", remove, recreate, export)
+	}
+	stagingTask := text[recreate:export]
+	for _, required := range []string{
+		`path: "{{ faas_pki_remote_export }}"`,
+		"state: directory",
+		"owner: root",
+		"group: root",
+		`mode: "0700"`,
+		"when: faas_pki_action_required and not faas_pki_resume_activation",
+	} {
+		if !strings.Contains(stagingTask, required) {
+			t.Errorf("renewal export staging task missing %q", required)
+		}
+	}
+}
+
 func TestRenderPKIMetricsExportsBoundedDaemonExpiryAndRenewalState(t *testing.T) {
 	rootDir := seedPKIRootDir(t)
 	statePath := filepath.Join(t.TempDir(), "status.json")
