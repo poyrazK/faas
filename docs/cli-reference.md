@@ -1616,8 +1616,6 @@ List live connections for an endpoint
 
 Close a bounded, filtered set of live connections
 
-`gregale realtime drain <APP_SLUG> <ENDPOINT_ID> --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial]`
-
 | Flag | Meaning | |
 |---|---|---|
 | `--reason <TEXT>` | required audit reason | required |
