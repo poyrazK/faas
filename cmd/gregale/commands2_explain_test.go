@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -123,5 +126,83 @@ func TestExplainCollector_PatternBucketPrefix(t *testing.T) {
 		if v != 100 {
 			t.Errorf("expected pattern count 100, got %d", v)
 		}
+	}
+}
+
+func TestCmdLogsExplain_ParsesStructuredProductionFrames(t *testing.T) {
+	previousJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = previousJSON })
+	var stdout bytes.Buffer
+	previousOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = previousOut })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w,
+			"event: log\ndata: {\"instance\":\"inst-1\",\"line\":\"database connection failed\",\"seq\":7,\"stream\":\"stdout\",\"level\":\"error\",\"written_at\":\"2026-09-16T16:40:31Z\"}\n\n",
+			"event: end\ndata: {}\n\n",
+		)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+
+	if code := cmdLogs([]string{"myapp", "--explain"}); code != 0 {
+		t.Fatalf("cmdLogs = %d, want 0; output=%q", code, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `"line":"database connection failed"`) {
+		t.Fatalf("structured log row was not rendered: %q", out)
+	}
+	if !strings.Contains(out, "levels: error=1") || !strings.Contains(out, "database connection failed") {
+		t.Fatalf("structured error was not included in explanation: %q", out)
+	}
+}
+
+func TestCmdLogsExplainRejectsJSONMode(t *testing.T) {
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
+	_, readStderr, restore := swapIO(t)
+	defer restore()
+
+	if code := cmdLogs([]string{"myapp", "--explain"}); code != 2 {
+		t.Fatalf("cmdLogs = %d, want 2", code)
+	}
+	if stderr := readStderr(); !strings.Contains(stderr, `"code":"validation_failed"`) {
+		t.Fatalf("expected typed validation problem, got %q", stderr)
+	}
+}
+
+func TestExplainCollector_StructuredSeverityFallbacks(t *testing.T) {
+	cases := []struct {
+		name, record, wantLevel string
+	}{
+		{"numeric error", `{"line":"failed request","stream":"stdout","level":50}`, "error"},
+		{"stderr fallback", `{"line":"worker output","stream":"stderr"}`, "warn"},
+		{"stdout fallback", `{"line":"worker output","stream":"stdout"}`, "info"},
+		{"keyword fallback", `{"line":"panic: boom","stream":"stdout"}`, "error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newExplainCollector("test-app", "")
+			c.observe(tc.record)
+			switch tc.wantLevel {
+			case "error":
+				if c.errorCount != 1 {
+					t.Fatalf("errorCount=%d, want 1", c.errorCount)
+				}
+			case "warn":
+				if c.warnCount != 1 {
+					t.Fatalf("warnCount=%d, want 1", c.warnCount)
+				}
+			case "info":
+				if c.infoCount != 1 {
+					t.Fatalf("infoCount=%d, want 1", c.infoCount)
+				}
+			}
+		})
 	}
 }

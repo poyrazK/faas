@@ -4620,6 +4620,10 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD]", "logs")
 		return 1
 	}
+	if *explain && jsonOutput {
+		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable)", "logs")
+		return 2
+	}
 	if fs.NArg() > 1 {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD] (slug defaults to linked project context)", "logs")
 		return 1
@@ -4797,27 +4801,27 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			} else {
 				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
 			}
-			if collector != nil {
-				collector.flush(os.Stdout)
+			if collector != nil && !jsonOutput {
+				collector.flush(osStdout)
 			}
 			return true, 3
 		}
 		if e.Event == "end" {
-			if collector != nil {
-				collector.flush(os.Stdout)
+			if collector != nil && !jsonOutput {
+				collector.flush(osStdout)
 			}
 			return true, 0
 		}
 		if e.Data != "" {
-			fmt.Println(e.Data)
+			_, _ = fmt.Fprintln(osStdout, e.Data)
 			if collector != nil {
 				collector.observe(e.Data)
 			}
 		}
 		return false, 0
 	})
-	if collector != nil && code == 130 {
-		collector.flush(os.Stdout)
+	if collector != nil && !jsonOutput && code == 130 {
+		collector.flush(osStdout)
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
@@ -4897,6 +4901,16 @@ type explainCollector struct {
 	lastError  string
 }
 
+// explainLogRecord is the production app-log SSE data envelope. Line is a
+// pointer so a JSON object without a line field can still fall through to the
+// legacy text parser instead of being treated as an empty log line.
+type explainLogRecord struct {
+	Line     *string         `json:"line"`
+	Stream   string          `json:"stream"`
+	Level    json.RawMessage `json:"level"`
+	Severity json.RawMessage `json:"severity"`
+}
+
 // newExplainCollector constructs the per-invocation collector.
 // The patterns map is allocated lazily on first observe() — most
 // log lines are info/warn, and we only count errors.
@@ -4908,19 +4922,42 @@ func newExplainCollector(slug, deployment string) *explainCollector {
 	}
 }
 
-// observe ingests one SSE data line. The line shape is
-// `{ts} {level} {message}` (the apid's Move 3 wire shape). We
-// bucket by level + count the first 64 bytes of each error-level
-// message as a pattern bucket (sufficient for naive grep
-// de-duplication without a real log-classifier).
+// observe ingests one SSE data line. Production streams carry a JSON
+// envelope with a raw guest line plus optional structured severity; older
+// streams use the legacy `{ts} {level} {message}` shape. The latter remains
+// byte-compatible while the former gets a conservative stdout/stderr
+// fallback when no level was classified server-side.
 func (c *explainCollector) observe(line string) {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "{") {
+		var record explainLogRecord
+		if err := json.Unmarshal([]byte(trimmed), &record); err == nil && record.Line != nil {
+			msg := *record.Line
+			level := explainStructuredLevel(record.Level, record.Severity)
+			if level == "" {
+				if nestedLevel, nestedMessage := explainNestedStructuredLine(msg); nestedLevel != "" {
+					level, msg = nestedLevel, nestedMessage
+				}
+			}
+			if level == "" {
+				level = explainFallbackLevel(record.Stream, msg)
+			}
+			c.observeLevel(level, msg)
+			return
+		}
+	}
 	// Split into at most 3 parts: ts, level, message.
 	parts := strings.SplitN(line, " ", 3)
 	if len(parts) < 3 {
 		return
 	}
-	level := parts[1]
-	msg := parts[2]
+	c.observeLevel(parts[1], parts[2])
+}
+
+// observeLevel updates the summary counters for an already-canonical level.
+// Keeping this bookkeeping in one place prevents structured and legacy rows
+// from drifting apart.
+func (c *explainCollector) observeLevel(level, msg string) {
 	switch level {
 	case "error":
 		c.errorCount++
@@ -4950,6 +4987,121 @@ func (c *explainCollector) observe(line string) {
 	case "info":
 		c.infoCount++
 	}
+}
+
+// explainStructuredLevel maps the string and numeric severity encodings used
+// by common guest loggers (Pino/Zap/Cloud Logging) to the CLI's three-level
+// vocabulary. If both fields are present, the most severe recognized value
+// wins.
+func explainStructuredLevel(fields ...json.RawMessage) string {
+	best := ""
+	for _, raw := range fields {
+		value := strings.TrimSpace(string(raw))
+		if value == "" || value == "null" {
+			continue
+		}
+		level := ""
+		if strings.HasPrefix(value, "\"") {
+			var text string
+			if json.Unmarshal([]byte(value), &text) == nil {
+				level = explainNormalizeLevel(text)
+			}
+		} else if number, err := strconv.Atoi(value); err == nil {
+			level = explainNormalizeNumericLevel(number)
+		}
+		if explainLevelRank(level) > explainLevelRank(best) {
+			best = level
+		}
+	}
+	return best
+}
+
+func explainNormalizeLevel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "trace", "debug", "info", "notice":
+		return "info"
+	case "warn", "warning":
+		return "warn"
+	case "error", "err", "fatal", "critical", "alert", "emergency":
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func explainNormalizeNumericLevel(value int) string {
+	switch {
+	case value >= 10 && value <= 30:
+		return "info"
+	case value == 40:
+		return "warn"
+	case value >= 50:
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func explainLevelRank(level string) int {
+	switch level {
+	case "error":
+		return 2
+	case "warn":
+		return 1
+	case "info":
+		return 0
+	default:
+		return -1
+	}
+}
+
+// explainNestedStructuredLine handles a guest line that is itself a JSON log
+// object when the server did not attach its additive outer level field.
+func explainNestedStructuredLine(line string) (string, string) {
+	if !strings.HasPrefix(strings.TrimSpace(line), "{") {
+		return "", line
+	}
+	var record struct {
+		Level    json.RawMessage `json:"level"`
+		Severity json.RawMessage `json:"severity"`
+		Msg      string          `json:"msg"`
+		Message  string          `json:"message"`
+		Error    string          `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		return "", line
+	}
+	level := explainStructuredLevel(record.Level, record.Severity)
+	if level == "" {
+		return "", line
+	}
+	for _, message := range []string{record.Msg, record.Message, record.Error} {
+		if message != "" {
+			return level, message
+		}
+	}
+	return level, line
+}
+
+// explainFallbackLevel gives raw guest output a useful, deterministic level
+// when no structured field was emitted. Explicit error/warning words win;
+// stderr is otherwise a warning and stdout (or an unknown stream) is info.
+func explainFallbackLevel(stream, msg string) string {
+	lower := strings.ToLower(msg)
+	for _, keyword := range []string{"fatal", "panic", "error", "failed", "failure"} {
+		if strings.Contains(lower, keyword) {
+			return "error"
+		}
+	}
+	for _, keyword := range []string{"warn", "warning"} {
+		if strings.Contains(lower, keyword) {
+			return "warn"
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(stream), "stderr") {
+		return "warn"
+	}
+	return "info"
 }
 
 // flush emits the 3-line summary on stream end. Output shape:
