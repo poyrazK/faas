@@ -4906,9 +4906,10 @@ func ErrInvalidCooldown(field string, got, minSeconds, maxSeconds int) *Problem 
 // concurrent_requests because they have no inbound request signal.
 func ErrScalingTargetIncompatibleWithWorkloadClass(metric string) *Problem {
 	detail := fmt.Sprintf("target.metric=%q is not compatible with this workload class.", metric)
-	if metric == "concurrent_requests" {
+	switch metric {
+	case "concurrent_requests":
 		detail = "target.metric=\"concurrent_requests\" is not compatible with worker-class apps; use an rps, queue_depth, or p99_latency_ms target instead."
-	} else if metric == "queue_depth" {
+	case "queue_depth":
 		detail = "target.metric=\"queue_depth\" is only compatible with job or worker apps."
 	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeScalingTargetIncompatibleWithWorkloadClass,

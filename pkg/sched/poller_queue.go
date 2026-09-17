@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -296,18 +297,18 @@ func parseJSONMetadata(s string) map[string]any {
 // currentLoopPool is set once at schedd startup by Loop.New so the
 // init-time factory closure can reach the pool without each Loop
 // having to thread it through the registry.
-var currentLoopPool *pgxpool.Pool
+var currentLoopPool atomic.Pointer[pgxpool.Pool]
 
 // setCurrentLoopPool is invoked from Loop.New at schedd startup.
 // Race-free at startup (called once before any Poll happens).
 //
 //nolint:unused // reserved for cmd/schedd boot wiring (PR-B).
-func setCurrentLoopPool(p *pgxpool.Pool) { currentLoopPool = p }
+func setCurrentLoopPool(p *pgxpool.Pool) { currentLoopPool.Store(p) }
 
 // getCurrentLoopPool returns the pool a Loop registered at
 // startup, or nil if no Loop has booted. The dispatcher treats
 // nil as "this sched has no pool yet" and skips until set.
-func getCurrentLoopPool() *pgxpool.Pool { return currentLoopPool }
+func getCurrentLoopPool() *pgxpool.Pool { return currentLoopPool.Load() }
 
 func init() {
 	registerPoller("queue", func(t sqlc.Trigger) (triggerSource, error) {
