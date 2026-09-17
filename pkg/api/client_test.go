@@ -490,6 +490,45 @@ func TestListJobs_OmitsDefaultPagination(t *testing.T) {
 	}
 }
 
+func TestGetJobTaskLogsWithMaxBytes_PassesQuery(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"task_status":"succeeded","log_content":"tail","truncated":true,"max_bytes":9}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.GetJobTaskLogsWithMaxBytes(context.Background(), "job-name", "00000000-0000-0000-0000-000000000000", 0, 9); err != nil {
+		t.Fatalf("GetJobTaskLogsWithMaxBytes: %v", err)
+	}
+	if gotPath != "/v1/jobs/job-name/runs/00000000-0000-0000-0000-000000000000/tasks/0/logs?max_bytes=9" {
+		t.Fatalf("RequestURI = %q, want max_bytes query", gotPath)
+	}
+}
+
+func TestGetJobTaskLogsWithMaxBytes_DefaultAndRange(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"task_status":"queued","log_content":"","truncated":false,"max_bytes":65536}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.GetJobTaskLogs(context.Background(), "job-name", "run", 0); err != nil {
+		t.Fatalf("GetJobTaskLogs: %v", err)
+	}
+	if gotPath != "/v1/jobs/job-name/runs/run/tasks/0/logs" {
+		t.Fatalf("default RequestURI = %q, want no query", gotPath)
+	}
+	for _, value := range []int{-1, MaxJobTaskLogMaxBytes + 1} {
+		if _, err := c.GetJobTaskLogsWithMaxBytes(context.Background(), "job-name", "run", 0, value); err == nil {
+			t.Errorf("max_bytes=%d returned nil error", value)
+		}
+	}
+}
+
 // --- Pagination --------------------------------------------------------------
 
 // TestListDeploymentsAll_WalksCursor pins the spec's RFC3339Nano

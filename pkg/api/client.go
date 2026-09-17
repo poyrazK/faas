@@ -2395,8 +2395,24 @@ func (c *Client) RetryJobTask(ctx context.Context, name, runID string, taskIndex
 // more. Empty LogContent with Truncated=false means the task
 // never produced output (common for OOM-killed tasks).
 func (c *Client) GetJobTaskLogs(ctx context.Context, name, runID string, taskIndex int) (JobTaskLogResponse, error) {
+	return c.GetJobTaskLogsWithMaxBytes(ctx, name, runID, taskIndex, 0)
+}
+
+// GetJobTaskLogsWithMaxBytes is GetJobTaskLogs with an optional tail size.
+// A value of zero preserves the server default; positive values are sent as
+// max_bytes and must be within the public 1..1 MiB range.
+func (c *Client) GetJobTaskLogsWithMaxBytes(ctx context.Context, name, runID string, taskIndex, maxBytes int) (JobTaskLogResponse, error) {
+	if maxBytes < 0 || maxBytes > MaxJobTaskLogMaxBytes {
+		return JobTaskLogResponse{}, fmt.Errorf("max_bytes must be between 1 and %d (or 0 for the default)", MaxJobTaskLogMaxBytes)
+	}
+	path := "/v1/jobs/" + name + "/runs/" + runID + "/tasks/" + strconv.Itoa(taskIndex) + "/logs"
+	if maxBytes > 0 {
+		q := url.Values{}
+		q.Set("max_bytes", strconv.Itoa(maxBytes))
+		path += "?" + q.Encode()
+	}
 	var out JobTaskLogResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks/"+strconv.Itoa(taskIndex)+"/logs", nil, &out)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // --- Triggers (issue #757 / ADR-100) ----------------------------------------

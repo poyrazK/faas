@@ -20,7 +20,7 @@
 //   gregale jobs cancel <name> <run-id>                                  CancelJobRun
 //   gregale jobs tasks <name> <run-id>                                  ListJobRunTasks
 //   gregale jobs retry  <name> <run-id> <task-index>                    RetryJobTask
-//   gregale jobs logs  <name> <run-id> <task-index>                    GetJobTaskLogs
+//   gregale jobs logs  <name> <run-id> <task-index> [--max-bytes N]     GetJobTaskLogs
 //
 // Authentication is via authedClient() (the same Bearer-token
 // surface as crons). All mutating calls are auto-minted an
@@ -526,31 +526,34 @@ func cmdJobsRetry(args []string) int {
 }
 
 // cmdJobsLogs implements `gregale jobs logs <name> <run-id>
-// <task-index>`. Tails stdout/stderr via vmmd (same path the
+// <task-index> [--max-bytes N]`. Tails stdout/stderr via vmmd (same path the
 // dashboard uses for live app logs). Truncated=true means the
 // tail was capped at MaxBytes; re-fetch with --max-bytes N for
 // more. Empty LogContent with Truncated=false means the task
 // never produced output (common for OOM-killed tasks).
 func cmdJobsLogs(args []string) int {
-	if len(args) != 3 {
+	positionals, maxBytes, maxBytesSet, ok := parseJobsLogsArgs(args)
+	if !ok || len(positionals) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index> [--max-bytes N]", "jobs")
 		return 1
 	}
-	if !jobRunIDPattern.MatchString(args[1]) {
+	if !jobRunIDPattern.MatchString(positionals[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index>   (run-id is uuid v4)", "jobs")
 		return 1
 	}
-	taskIdx, err := strconv.Atoi(args[2])
+	taskIdx, err := strconv.Atoi(positionals[2])
 	if err != nil || taskIdx < 0 {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
 		return 1
 	}
-	_ = taskIdx
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	logs, err := client.GetJobTaskLogs(context.Background(), args[0], args[1], taskIdx)
+	if !maxBytesSet {
+		maxBytes = 0 // preserve the server's default when the flag is omitted
+	}
+	logs, err := client.GetJobTaskLogsWithMaxBytes(context.Background(), positionals[0], positionals[1], taskIdx, maxBytes)
 	if err != nil {
 		return printErr("Logs request failed", err)
 	}
@@ -566,6 +569,46 @@ func cmdJobsLogs(args []string) int {
 		_, _ = fmt.Fprintln(os.Stdout, "...[truncated]")
 	}
 	return 0
+}
+
+// parseJobsLogsArgs accepts flags before or after the three positional
+// arguments. The standard flag package stops parsing at the first positional,
+// while the documented CLI form places --max-bytes after task-index, so this
+// small parser keeps both forms valid and rejects unknown flags locally.
+func parseJobsLogsArgs(args []string) (positionals []string, maxBytes int, maxBytesSet, ok bool) {
+	maxBytes = api.DefaultJobTaskLogMaxBytes
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--max-bytes" || arg == "-max-bytes" {
+			if maxBytesSet || i+1 >= len(args) {
+				return nil, 0, false, false
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 1 || n > api.MaxJobTaskLogMaxBytes {
+				return nil, 0, false, false
+			}
+			maxBytes, maxBytesSet = n, true
+			continue
+		}
+		if strings.HasPrefix(arg, "--max-bytes=") || strings.HasPrefix(arg, "-max-bytes=") {
+			if maxBytesSet {
+				return nil, 0, false, false
+			}
+			raw := arg[strings.IndexByte(arg, '=')+1:]
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > api.MaxJobTaskLogMaxBytes {
+				return nil, 0, false, false
+			}
+			maxBytes, maxBytesSet = n, true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return nil, 0, false, false
+		}
+		positionals = append(positionals, arg)
+	}
+	return positionals, maxBytes, maxBytesSet, true
 }
 
 // renderJobsTable writes the human multi-line state block for one

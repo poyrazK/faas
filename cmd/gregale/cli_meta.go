@@ -560,7 +560,9 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel a run"},
 			{Name: "tasks", Short: "List tasks for one run"},
 			{Name: "retry", Short: "Retry one failed task"},
-			{Name: "logs", Short: "Tail logs for one task"},
+			{Name: "logs", Short: "Tail logs for one task", Flags: []cliFlag{
+				{Name: "max-bytes", Short: "maximum log payload size (1..1048576)", Value: "N"},
+			}},
 		},
 	},
 	{

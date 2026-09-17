@@ -772,8 +772,24 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 
 // GetJobTaskLogs tails the task's stdout/stderr via vmmd's tail endpoint.
 func (c *Client) GetJobTaskLogs(ctx context.Context, name, runID string, taskIndex int) (JobTaskLogResponse, error) {
+	return c.GetJobTaskLogsWithMaxBytes(ctx, name, runID, taskIndex, 0)
+}
+
+// GetJobTaskLogsWithMaxBytes is GetJobTaskLogs with an optional tail size.
+// A value of zero preserves the server default; positive values are sent as
+// max_bytes and must be within the public 1..1 MiB range.
+func (c *Client) GetJobTaskLogsWithMaxBytes(ctx context.Context, name, runID string, taskIndex, maxBytes int) (JobTaskLogResponse, error) {
+	if maxBytes < 0 || maxBytes > 1024*1024 {
+		return JobTaskLogResponse{}, fmt.Errorf("max_bytes must be between 1 and %d (or 0 for the default)", 1024*1024)
+	}
+	path := "/v1/jobs/" + name + "/runs/" + runID + "/tasks/" + strconv.Itoa(taskIndex) + "/logs"
+	if maxBytes > 0 {
+		q := url.Values{}
+		q.Set("max_bytes", strconv.Itoa(maxBytes))
+		path += "?" + q.Encode()
+	}
 	var out JobTaskLogResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks/"+strconv.Itoa(taskIndex)+"/logs", nil, &out)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // RetryJobTask re-queues one failed, timeout, OOM, or cancelled task while

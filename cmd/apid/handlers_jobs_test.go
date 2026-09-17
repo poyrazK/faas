@@ -358,6 +358,27 @@ func TestGetJobTaskLogs_ReturnsPersistedTail(t *testing.T) {
 	}
 }
 
+func TestGetJobTaskLogs_RejectsInvalidMaxBytes(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "invalid-log-limit", "ghcr.io/example/worker:v1")
+	runID := seedJobRun(t, e, "invalid-log-limit", 1)
+	for _, value := range []string{"0", "1048577", "not-a-number"} {
+		t.Run(value, func(t *testing.T) {
+			rec := e.do(t, "GET", "/v1/jobs/invalid-log-limit/runs/"+runID+"/tasks/0/logs?max_bytes="+value, nil, nil)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("GET max_bytes=%s = %d, want 400; body=%s", value, rec.Code, rec.Body.String())
+			}
+			var problem api.Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("decode problem: %v", err)
+			}
+			if problem.Code != api.CodeValidation {
+				t.Fatalf("problem code = %q, want %q", problem.Code, api.CodeValidation)
+			}
+		})
+	}
+}
+
 // TestCancelJobRun_HappyPath pins the cancel shape. The
 // JobRunCancelledResponse wraps the post-cancel run aggregate +
 // a cancelled_at timestamp. Naturally idempotent — a second
