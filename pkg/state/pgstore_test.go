@@ -127,6 +127,33 @@ func seedLiveDeploy(t *testing.T, s *state.PgStore, ctx context.Context, emailSu
 	return acct.ID, app.ID, dep.ID
 }
 
+func TestPg_TriggerDeadLetterNormalizesInvalidJSON(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx, "trigger-dlq-json", "trigger-dlq-json")
+	trigger, err := s.CreateTriggerIfUnderQuota(
+		ctx, appID, "queue", "dlq-json", true,
+		[]byte(`{"mode":"queue"}`), "queue", 10, 1000, 3, 1<<20, "commit",
+		api.MustLimitsFor(api.PlanPro),
+	)
+	if err != nil {
+		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
+	}
+	recordID, err := s.InsertTriggerRecord(ctx, trigger.ID.String(), "item-1", []byte(`{"payload":1}`), nil, nil)
+	if err != nil {
+		t.Fatalf("InsertTriggerRecord: %v", err)
+	}
+	if err := s.InsertTriggerDeadLetter(ctx, recordID, trigger.ID.String(), "broker_error", "drop", []byte("not-json")); err != nil {
+		t.Fatalf("InsertTriggerDeadLetter: %v", err)
+	}
+	rows, err := s.ListTriggerDeadLetter(ctx, trigger.ID.String(), 10)
+	if err != nil {
+		t.Fatalf("ListTriggerDeadLetter: %v", err)
+	}
+	if len(rows) != 1 || !json.Valid(rows[0].Detail) || string(rows[0].Detail) != `"not-json"` {
+		t.Fatalf("dead-letter rows = %+v; want JSON string detail", rows)
+	}
+}
+
 func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
