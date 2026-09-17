@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -379,15 +380,24 @@ func cmdProjectsEnvironmentConfigDiff(args []string) int {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key")
+	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
 	yes := fs.Bool("yes", false, "confirm the promotion")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this promotion")
+	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
+	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
+	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for promotion completion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes] [--idempotency-key <KEY>]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
 		return 1
+	}
+	if *progress && !*wait {
+		return printErr("Invalid wait options", errors.New("--progress requires --wait"))
+	}
+	if *timeoutSeconds <= 0 || *timeoutSeconds > 24*60*60 {
+		return printErr("Invalid wait timeout", errors.New("--timeout must be between 1 and 86400 seconds"))
 	}
 	if *from == *to {
 		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
@@ -445,6 +455,36 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	if err != nil {
 		return printErr("Promotion failed", err)
 	}
+	if *wait {
+		initial := api.ProjectEnvironmentPromotionStatusResponse{
+			PromotionID: promoted.PromotionID, ProjectSlug: promoted.ProjectSlug,
+			FromEnvironment: promoted.FromEnvironment, ToEnvironment: promoted.ToEnvironment,
+			PromotionHash: promoted.PromotionHash, Status: "running",
+		}
+		if !jsonOutput {
+			PrintProgress(osStdout, "Waiting for promotion %s to finish...", promoted.PromotionID)
+		}
+		var lastProgress string
+		var onProgress func(api.ProjectEnvironmentPromotionStatusResponse)
+		if *progress && !jsonOutput {
+			onProgress = func(status api.ProjectEnvironmentPromotionStatusResponse) {
+				key := projectEnvironmentPromotionProgressKey(status)
+				if key == lastProgress {
+					return
+				}
+				lastProgress = key
+				renderProjectEnvironmentPromotionProgress(status)
+			}
+		}
+		status, timedOut, waitErr := waitForProjectEnvironmentPromotion(
+			context.Background(), client, promoted.ProjectSlug, promoted.ToEnvironment, promoted.PromotionID,
+			time.Duration(*timeoutSeconds)*time.Second, initial, onProgress,
+		)
+		if waitErr != nil {
+			return printErr("Promotion status failed", waitErr)
+		}
+		return renderProjectEnvironmentPromotionWait(status, timedOut, time.Duration(*timeoutSeconds)*time.Second)
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(promoted))
 	}
@@ -474,24 +514,7 @@ func cmdProjectsEnvironmentPromotionStatus(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(status))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Promotion %s: %s -> %s (%s)\n", status.PromotionID, status.FromEnvironment, status.ToEnvironment, status.Status)
-	if status.VerificationStatus != "" {
-		line := "  verification: " + status.VerificationStatus
-		if status.VerificationError != "" {
-			line += " — " + status.VerificationError
-		}
-		_, _ = fmt.Fprintln(osStdout, line)
-	}
-	for _, workload := range status.Workloads {
-		line := fmt.Sprintf("  %-20s %s", workload.WorkloadSlug, workload.Status)
-		if workload.VerificationStatus != "" {
-			line += " (verification: " + workload.VerificationStatus + ")"
-		}
-		if workload.Error != "" {
-			line += " — " + workload.Error
-		}
-		_, _ = fmt.Fprintln(osStdout, line)
-	}
+	renderProjectEnvironmentPromotionStatus(status)
 	return 0
 }
 
