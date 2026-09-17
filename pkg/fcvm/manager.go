@@ -5422,7 +5422,7 @@ func (m *Manager) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs 
 
 	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
 	for _, t := range targets {
-		if samePrefixSet(t.prior, cidrs) && !(len(cidrs) == 0 && t.net.PrivateVethHost != "") {
+		if samePrefixSet(t.prior, cidrs) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
 		}
