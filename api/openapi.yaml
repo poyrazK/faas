@@ -167,6 +167,8 @@ tags:
       persistent sandbox state is exposed by this API.
   - name: workflows
     description: Durable multi-step workflow runs and external events (ADR-081).
+  - name: events
+    description: Tenant-scoped internal event ingress (EPIC #1278 / ADR-180).
   - name: queues
     description: Per-app FIFO queues (send / receive / ack).
   - name: delayed_tasks
@@ -1608,6 +1610,36 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/events:publish:
+    post:
+      tags: [events]
+      operationId: publishEvent
+      summary: Publish one tenant-scoped internal event.
+      description: |
+        Persists a canonical CloudEvents-shaped envelope for later content
+        matching and delivery. The authenticated account owns the event;
+        account_id is server-stamped and a supplied value must match it.
+        Matching and delivery are asynchronous follow-up work.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishEventRequest' }
+      responses:
+        '202':
+          description: Event accepted for durable processing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublishEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
 
   /v1/executions:
     get:
@@ -21362,6 +21394,52 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
+
+    PublishEventRequest:
+      description: Caller-authored envelope for the tenant-scoped internal event router.
+      type: object
+      additionalProperties: false
+      required: [id, source, type, data]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Caller-chosen idempotent event identifier.
+        source:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Logical producer or service that emitted the event.
+        type:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Event type used by future content-based matching.
+        time:
+          type: string
+          format: date-time
+          description: Event occurrence time; omitted values are stamped at ingress.
+        data_content_type:
+          type: string
+          enum: [application/json]
+          default: application/json
+        data:
+          description: JSON event payload.
+        account_id:
+          type: string
+          format: uuid
+          description: Optional tenancy assertion; must match the bearer account.
+
+    PublishEventResponse:
+      description: Durable acceptance receipt for a published internal event.
+      type: object
+      additionalProperties: false
+      required: [id, accepted_at, account_id]
+      properties:
+        id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        account_id: { type: string, format: uuid }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."

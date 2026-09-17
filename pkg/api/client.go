@@ -5852,6 +5852,14 @@ func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string,
 	return resp, err
 }
 
+// PublishEvent durably accepts one tenant-scoped internal event envelope.
+// Matching and delivery are asynchronous consumers of the accepted event.
+func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {
+	var resp PublishEventResponse
+	err := c.do(ctx, "POST", "/v1/events:publish", req, &resp)
+	return resp, err
+}
+
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
 func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse

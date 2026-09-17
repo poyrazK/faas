@@ -18,6 +18,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
+// PublishEventRequest is the caller-authored envelope for the internal event
+// router (EPIC #1278, Workstream B). account_id is optional on input and is
+// always replaced with the authenticated account after a match check.
+type PublishEventRequest struct {
+	ID              string          `json:"id"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+	AccountID       string          `json:"account_id,omitempty"`
+}
+
+// PublishEventResponse confirms durable acceptance of one event envelope.
+type PublishEventResponse struct {
+	ID         string    `json:"id"`
+	AcceptedAt time.Time `json:"accepted_at"`
+	AccountID  string    `json:"account_id"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.

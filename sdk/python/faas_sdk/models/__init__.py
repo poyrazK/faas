@@ -977,6 +977,9 @@ from .public_status_update import PublicStatusUpdate
 from .public_status_update_components_item import PublicStatusUpdateComponentsItem
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
+from .publish_event_request import PublishEventRequest
+from .publish_event_request_data_content_type import PublishEventRequestDataContentType
+from .publish_event_response import PublishEventResponse
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
@@ -2186,6 +2189,9 @@ __all__ = (
     "PublicStatusUpdateComponentsItem",
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
+    "PublishEventRequest",
+    "PublishEventRequestDataContentType",
+    "PublishEventResponse",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",

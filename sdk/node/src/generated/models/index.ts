@@ -487,6 +487,8 @@ export type { PublicStatusEventID } from './PublicStatusEventID.js';
 export type { PublicStatusIndicator } from './PublicStatusIndicator.js';
 export type { PublicStatusOverview } from './PublicStatusOverview.js';
 export type { PublicStatusUpdate } from './PublicStatusUpdate.js';
+export type { PublishEventRequest } from './PublishEventRequest.js';
+export type { PublishEventResponse } from './PublishEventResponse.js';
 export type { PutAppEnvRequest } from './PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretRequest } from './PutAppSecretRequest.js';

@@ -435,6 +435,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/workflows/runs/{id}/steps":          "ListWorkflowSteps",
 	"POST /v1/workflows/runs/{id}/events":        "SendWorkflowEvent",
 	"POST /v1/workflows/runs/{id}/cancel":        "CancelWorkflowRun",
+	"POST /v1/events:publish":                    "PublishEvent",
 	"GET /v1/usage/summary":                      "UsageSummary",
 	"GET /v1/usage":                              "GetUsage",
 	"GET /v1/usage/daily":                        "UsageDaily",
