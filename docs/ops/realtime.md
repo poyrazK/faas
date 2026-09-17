@@ -21,6 +21,8 @@ writing the daemon socket directly:
 ```
 POST /v1/apps/{slug}/realtime/endpoints
 GET|PATCH|DELETE /v1/apps/{slug}/realtime/endpoints/{id}
+POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate
+POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize
 POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send
 POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close
 PUT|DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}
@@ -35,6 +37,31 @@ active realtime nodes. In a single-box install this is the local
 operations are routed through the leased owner directory, while publish is
 broadcast to active nodes. The daemon-socket example below remains useful for
 node-local bootstrap and recovery tooling.
+
+## Zero-downtime static bearer rotation
+
+Static bearer credentials are rotated without disconnecting clients. The
+replacement becomes current immediately; the old credential remains accepted
+for the requested grace period (5 minutes by default, at most 24 hours).
+Responses expose only the predecessor expiry timestamp—never either token.
+
+```sh
+# Read the replacement from a secret manager or protected pipe.
+secret-manager read realtime/new-token | \
+  gregale realtime auth rotate my-app ENDPOINT_ID --token-stdin --grace-period 900
+
+# Inspect the safe status later; this never prints token material.
+gregale realtime auth status my-app ENDPOINT_ID
+
+# Revoke the predecessor before its deadline when every client has migrated.
+gregale realtime auth finalize my-app ENDPOINT_ID
+```
+
+Use `--token TOKEN` only for compatibility with automation that cannot pipe
+stdin; it is visible in shell history and process inspection. After the grace
+deadline the predecessor is rejected even if finalization has not been called.
+An explicit finalize is useful when migration completes early or when a
+credential may have been exposed.
 
 Realtime v2 endpoint policies can add `allowed_origins`,
 `max_connections`, `max_message_bytes`, and `max_connection_age_seconds` to

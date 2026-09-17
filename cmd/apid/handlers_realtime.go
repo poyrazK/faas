@@ -107,7 +107,7 @@ func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealti
 	}
 	out := api.ManagedRealtimeEndpointResponseFromRow(e.ID, e.AppID, e.AccountID, e.CallbackURL,
 		e.ConnectPath, e.MessagePath, e.DisconnectPath, authMode, e.AuthIssuer, e.AuthJWKSURL,
-		e.AuthAudience, e.AuthAlgorithms, e.AuthRequiredClaims, e.AllowedOrigins, e.MaxConnections,
+		e.AuthAudience, e.AuthAlgorithms, e.AuthRequiredClaims, e.AuthTokenPreviousExpiresAt, e.AllowedOrigins, e.MaxConnections,
 		e.MaxMessageBytes, e.MaxConnectionAgeSeconds, e.Enabled, e.CreatedAt, e.UpdatedAt)
 	if len(e.AuthTokenSealed) == 0 {
 		out.AuthTokenMasked = ""

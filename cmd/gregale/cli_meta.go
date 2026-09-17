@@ -130,7 +130,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "slo", "status", "tail", "throttle-suggestions":
+	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions":
 		return "Observe"
 	default:
 		return "Core"
@@ -1229,6 +1229,16 @@ var cliCommands = []cliCommand{
 			{Name: "rm", Short: "Remove a registry credential"},
 		},
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},
+	},
+	{
+		Name:    "realtime",
+		DocSlug: "realtime",
+		Short:   "Manage managed realtime endpoints and rotate static bearer credentials",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List managed realtime endpoints"},
+			{Name: "get", Short: "Show one endpoint and safe auth-rotation status"},
+			{Name: "auth", Short: "Rotate, finalize, or inspect static bearer auth (auth rotate|finalize|status)"},
+		},
 	},
 	{
 		Name:        "rollback",

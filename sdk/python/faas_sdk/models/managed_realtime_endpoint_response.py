@@ -59,6 +59,8 @@ class ManagedRealtimeEndpointResponse:
     enabled: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    auth_token_previous_expires_at: datetime.datetime | None | Unset = UNSET
+    """When the previous static bearer credential stops being accepted during rotation."""
     auth_issuer: str | Unset = UNSET
     auth_jwks_url: str | Unset = UNSET
     auth_audience: list[str] | Unset = UNSET
@@ -100,6 +102,14 @@ class ManagedRealtimeEndpointResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        auth_token_previous_expires_at: None | str | Unset
+        if isinstance(self.auth_token_previous_expires_at, Unset):
+            auth_token_previous_expires_at = UNSET
+        elif isinstance(self.auth_token_previous_expires_at, datetime.datetime):
+            auth_token_previous_expires_at = self.auth_token_previous_expires_at.isoformat()
+        else:
+            auth_token_previous_expires_at = self.auth_token_previous_expires_at
 
         auth_issuer = self.auth_issuer
 
@@ -143,6 +153,8 @@ class ManagedRealtimeEndpointResponse:
                 "updated_at": updated_at,
             }
         )
+        if auth_token_previous_expires_at is not UNSET:
+            field_dict["auth_token_previous_expires_at"] = auth_token_previous_expires_at
         if auth_issuer is not UNSET:
             field_dict["auth_issuer"] = auth_issuer
         if auth_jwks_url is not UNSET:
@@ -199,6 +211,25 @@ class ManagedRealtimeEndpointResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        def _parse_auth_token_previous_expires_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                auth_token_previous_expires_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return auth_token_previous_expires_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        auth_token_previous_expires_at = _parse_auth_token_previous_expires_at(
+            d.pop("auth_token_previous_expires_at", UNSET)
+        )
+
         auth_issuer = d.pop("auth_issuer", UNSET)
 
         auth_jwks_url = d.pop("auth_jwks_url", UNSET)
@@ -241,6 +272,7 @@ class ManagedRealtimeEndpointResponse:
             enabled=enabled,
             created_at=created_at,
             updated_at=updated_at,
+            auth_token_previous_expires_at=auth_token_previous_expires_at,
             auth_issuer=auth_issuer,
             auth_jwks_url=auth_jwks_url,
             auth_audience=auth_audience,

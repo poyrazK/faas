@@ -536,6 +536,8 @@ from .field_error import FieldError
 from .filter_criteria import FilterCriteria
 from .filter_criteria_clause import FilterCriteriaClause
 from .filter_criteria_op import FilterCriteriaOp
+from .finalize_managed_realtime_auth_response import FinalizeManagedRealtimeAuthResponse
+from .finalize_managed_realtime_auth_response_auth_mode import FinalizeManagedRealtimeAuthResponseAuthMode
 from .fire_cron_request_response import FireCronRequestResponse
 from .fire_cron_request_response_status import FireCronRequestResponseStatus
 from .fire_cron_response import FireCronResponse
@@ -1007,6 +1009,9 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_response import RotateKeyResponse
+from .rotate_managed_realtime_auth_request import RotateManagedRealtimeAuthRequest
+from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResponse
+from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
@@ -1727,6 +1732,8 @@ __all__ = (
     "FilterCriteria",
     "FilterCriteriaClause",
     "FilterCriteriaOp",
+    "FinalizeManagedRealtimeAuthResponse",
+    "FinalizeManagedRealtimeAuthResponseAuthMode",
     "FireCronRequestResponse",
     "FireCronRequestResponseStatus",
     "FireCronResponse",
@@ -2174,6 +2181,9 @@ __all__ = (
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
     "RotateKeyResponse",
+    "RotateManagedRealtimeAuthRequest",
+    "RotateManagedRealtimeAuthResponse",
+    "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",

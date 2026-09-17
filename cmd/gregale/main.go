@@ -275,6 +275,8 @@ func run(args []string) (status int) {
 		return cmdDeployment(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
+	case "realtime":
+		return cmdRealtime(args[1:])
 	case dispatchDeploys:
 		// ADR-117 companion read surface (post-stream stage
 		// summary). Routes to cmdDeploys in deploys_show.go,

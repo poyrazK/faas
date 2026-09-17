@@ -29388,6 +29388,7 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token_masked: { type: string, enum: ["***"] }
         auth_token_masked: { type: string, enum: ["***"] }
+        auth_token_previous_expires_at: { type: [string, 'null'], format: date-time, description: When the previous static bearer credential stops being accepted during rotation. }
         auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
         auth_issuer: { type: string, format: uri, maxLength: 2048 }
         auth_jwks_url: { type: string, format: uri, maxLength: 2048 }

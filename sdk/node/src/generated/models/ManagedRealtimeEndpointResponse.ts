@@ -17,6 +17,10 @@ export type ManagedRealtimeEndpointResponse = {
   disconnect_path: string;
   callback_auth_token_masked: '***';
   auth_token_masked: '***';
+  /**
+   * When the previous static bearer credential stops being accepted during rotation.
+   */
+  auth_token_previous_expires_at?: string | null;
   auth_mode: 'none' | 'static_bearer' | 'oidc_jwt';
   auth_issuer?: string;
   auth_jwks_url?: string;
