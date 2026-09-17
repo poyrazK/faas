@@ -335,7 +335,8 @@ export class AuthService {
    * GitHub-style Google OAuth 2.0 consent redirect.
    * Sets a 16-byte CSRF state cookie scoped to
    * `/v1/auth/google/callback` and 302s to the Google consent
-   * screen. The callback consumes the state cookie, exchanges
+   * screen with an RFC 7636 `S256` PKCE challenge. The callback consumes
+   * the state and verifier cookies, exchanges
    * the code at `oauth2.googleapis.com/token`, fetches the
    * userinfo, and verifies `email_verified=true` before
    * minting a session (issue #165 PR #2, ADR-032).
@@ -370,7 +371,7 @@ export class AuthService {
   /**
    * Google OAuth 2.0 callback.
    * Verifies state, exchanges the code, fetches the profile,
-   * enforces `email_verified=true`, and signs the user in.
+   * enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
    * Sub-first lookup against `oauth_links` enforces the §11
    * anti-takeover invariant.
    *
@@ -424,7 +425,8 @@ export class AuthService {
    * GitHub OAuth 2.0 consent redirect.
    * Sets a 16-byte CSRF state cookie scoped to
    * `/v1/auth/github/callback` and 302s to the GitHub consent
-   * with `scope=read:user user:email`. The callback requires
+   * with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
+   * challenge. The callback requires
    * a primary && verified email before minting a session
    * (issue #165 PR #2, ADR-032).
    *
@@ -458,7 +460,7 @@ export class AuthService {
    * GitHub OAuth 2.0 callback.
    * Verifies state, exchanges the code, fetches `/user` and
    * `/user/emails`, filters the primary && verified email,
-   * and signs the user in. Sub-first lookup against
+   * enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
    * `oauth_links` enforces the §11 anti-takeover invariant.
    *
    * On success, `auth.login` is appended to the events table
