@@ -156,6 +156,7 @@ CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
 CreateProjectEnvironmentApproval
 CreateProjectEnvironmentPromotion
+CreateQueueBinding
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
@@ -207,6 +208,7 @@ DeleteOIDCExchangedToken
 DeleteOldEvents
 DeleteOldLoginTokens
 DeleteProject
+DeleteQueueBinding
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
 DeleteTenantSurface
@@ -439,6 +441,7 @@ ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
+ListQueueBindingsForApp
 ListRecentEventsForAccount
 ListRequestTelemetryByApp
 ListRunningInstancesOnDeadNodes
@@ -542,6 +545,7 @@ PublishRuntimeSnapshot
 PutIdempotent
 PutManagedObjectStorageSecret
 PutManagedPostgresSecret
+QueueBindingByID
 QueueDeadLetter
 QueuePeek
 QueueState
@@ -680,6 +684,7 @@ UpdateProjectEnvironmentPromotionRollbackWorkload
 UpdateProjectEnvironmentPromotionVerification
 UpdateProjectEnvironmentPromotionVerificationWorkload
 UpdateProjectEnvironmentPromotionWorkload
+UpdateQueueBinding
 UpdateSessionBinding
 UpdateSpansSummary
 UpdateTenantSurfaceCert
