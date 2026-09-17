@@ -20,6 +20,9 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 	manager.acceptedConnections.Store(3)
 	manager.receivedBytes.Store(128)
 	manager.callbackErrors.Store(1)
+	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeAccepted)
+	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeRejected)
+	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeRejected)
 
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(NewStatsCollector(manager))
@@ -34,9 +37,14 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 		`realtimed_accepted_connections_total 3`,
 		`realtimed_received_bytes_total 128`,
 		`realtimed_callback_errors_total 1`,
+		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="accepted"} 1`,
+		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="rejected"} 2`,
 	} {
 		if !strings.Contains(text, metric) {
 			t.Errorf("metric %q missing from:\n%s", metric, text)
 		}
+	}
+	if strings.Contains(text, "endpoint_id=") || strings.Contains(text, "principal=") || strings.Contains(text, "token=") {
+		t.Fatalf("auth metrics exposed an unbounded label:\n%s", text)
 	}
 }

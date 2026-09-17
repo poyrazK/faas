@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -121,6 +124,43 @@ func cloneRealtimeClaims(values map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func realtimeAuthMode(row state.ManagedRealtimeEndpoint) string {
+	if row.AuthMode != "" {
+		return row.AuthMode
+	}
+	if len(row.AuthTokenSealed) > 0 {
+		return api.RealtimeAuthModeStaticBearer
+	}
+	return api.RealtimeAuthModeNone
+}
+
+// realtimeAuthPolicyAuditData intentionally contains only policy shape and
+// configuration booleans. Sealed credential bytes and trust URLs never cross
+// the audit boundary.
+func realtimeAuthPolicyAuditData(row state.ManagedRealtimeEndpoint) map[string]any {
+	return map[string]any{
+		"endpoint_id":           row.ID,
+		"app_id":                row.AppID,
+		"auth_mode":             realtimeAuthMode(row),
+		"auth_token_configured": len(row.AuthTokenSealed) > 0,
+		"issuer_configured":     row.AuthIssuer != "",
+		"jwks_url_configured":   row.AuthJWKSURL != "",
+		"audience_count":        len(row.AuthAudience),
+		"algorithm_count":       len(row.AuthAlgorithms),
+		"required_claim_count":  len(row.AuthRequiredClaims),
+	}
+}
+
+func realtimeAuthPolicyChanged(before, after state.ManagedRealtimeEndpoint) bool {
+	return realtimeAuthMode(before) != realtimeAuthMode(after) ||
+		!bytes.Equal(before.AuthTokenSealed, after.AuthTokenSealed) ||
+		before.AuthIssuer != after.AuthIssuer ||
+		before.AuthJWKSURL != after.AuthJWKSURL ||
+		!slices.Equal(before.AuthAudience, after.AuthAudience) ||
+		!slices.Equal(before.AuthAlgorithms, after.AuthAlgorithms) ||
+		!maps.Equal(before.AuthRequiredClaims, after.AuthRequiredClaims)
 }
 
 // syncManagedRealtimeEndpoint mirrors durable endpoint state onto the
@@ -331,6 +371,9 @@ func (s *server) createManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		s.log.WarnContext(r.Context(), "sync managed realtime endpoint", "endpoint_id", row.ID, "err", err)
 	}
 	s.audit.Emit(r.Context(), "realtime.endpoint_created", &acct.ID, map[string]any{"endpoint_id": row.ID, "app_id": app.ID})
+	if realtimeAuthMode(row) != api.RealtimeAuthModeNone {
+		s.audit.Emit(r.Context(), "realtime.auth_policy_configured", &acct.ID, realtimeAuthPolicyAuditData(row))
+	}
 	writeJSON(w, http.StatusCreated, realtimeEndpointResponse(row))
 }
 
@@ -529,6 +572,12 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		s.log.WarnContext(r.Context(), "sync managed realtime endpoint", "endpoint_id", row.ID, "err", err)
 	}
 	s.audit.Emit(r.Context(), "realtime.endpoint_updated", &acct.ID, map[string]any{"endpoint_id": row.ID, "app_id": row.AppID})
+	if realtimeAuthPolicyChanged(existing, row) {
+		data := realtimeAuthPolicyAuditData(row)
+		data["previous_auth_mode"] = realtimeAuthMode(existing)
+		data["auth_token_changed"] = !bytes.Equal(existing.AuthTokenSealed, row.AuthTokenSealed)
+		s.audit.Emit(r.Context(), "realtime.auth_policy_updated", &acct.ID, data)
+	}
 	writeJSON(w, http.StatusOK, realtimeEndpointResponse(row))
 }
 

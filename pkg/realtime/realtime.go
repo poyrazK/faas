@@ -283,6 +283,7 @@ type Manager struct {
 	sentBytes           atomic.Uint64
 	droppedMessages     atomic.Uint64
 	callbackErrors      atomic.Uint64
+	authOutcomes        authOutcomeCounters
 }
 
 // NewManager creates a managed realtime owner. Call Close during daemon
@@ -417,11 +418,13 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	state := value.(*endpointState)
 	endpoint := state.Endpoint
+	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
 	switch endpoint.ClientAuth.Mode {
 	case AuthModeStaticBearer:
 		token, ok := bearerToken(r)
 		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) != 1 {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -430,6 +433,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case AuthModeOIDCJWT:
 		token, ok := bearerToken(r)
 		if !ok || m.cfg.JWTAuthorizer == nil {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -437,6 +441,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var err error
 		principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
 		if err != nil || strings.TrimSpace(principal) == "" {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -446,11 +451,13 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var err error
 		principal, err = endpoint.Authorize(r.Context(), r)
 		if err != nil {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
+	m.recordAuthOutcome(authMetricMode, authMetricOutcomeAccepted)
 	upgrader := m.upgrader
 	if endpoint.CheckOrigin != nil {
 		upgrader.CheckOrigin = endpoint.CheckOrigin
