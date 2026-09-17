@@ -474,6 +474,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// store stays independent of the audit seam.
 			if err != nil {
 				if errors.Is(err, state.ErrAPIKeyExpired) {
+					setBearerChallenge(w, "invalid_token")
 					m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{
 						"key_id": key.ID,
 					})
@@ -481,6 +482,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
+					setBearerChallenge(w, "invalid_token")
 					m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{
 						"key_id": key.ID,
 					})
@@ -603,10 +605,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyExpired) {
+					setBearerChallenge(w, "invalid_token")
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
+					setBearerChallenge(w, "invalid_token")
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}
@@ -684,6 +688,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		}
 
 		// (3) No credentials.
+		if tok != "" {
+			setBearerChallenge(w, "invalid_token")
+		} else {
+			setBearerChallenge(w, "")
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "provide a valid API key as a Bearer token or sign in via session cookie"))
 	}
@@ -1193,6 +1202,9 @@ func (m *Middleware) RequireScope(allowed ...string) func(AccountHandler) Accoun
 				return
 			}
 			if !principalHasScope(p, allowed) {
+				if p.Key != nil {
+					setBearerChallenge(w, "insufficient_scope", allowed...)
+				}
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
 					"Insufficient scope", "this endpoint requires one of: "+strings.Join(allowed, ",")))
 				return
@@ -1322,6 +1334,21 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(h[len(scheme):])
 	}
 	return ""
+}
+
+// setBearerChallenge emits the RFC 6750 §3 challenge for a protected
+// resource. Gregale's API accepts bearer credentials on top of the
+// dashboard cookie, so cookie-authenticated failures deliberately do not
+// receive an insufficient_scope bearer challenge from RequireScope.
+func setBearerChallenge(w http.ResponseWriter, errorCode string, scopes ...string) {
+	challenge := `Bearer realm="api"`
+	if errorCode != "" {
+		challenge += `, error="` + errorCode + `"`
+	}
+	if len(scopes) > 0 {
+		challenge += `, scope="` + strings.Join(scopes, " ") + `"`
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
 }
 
 // clearSessionCookie evicts the session cookie on the client. Path

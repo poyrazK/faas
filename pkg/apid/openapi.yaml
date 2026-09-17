@@ -16133,6 +16133,14 @@ components:
       description: Browser dashboard session cookie. The browser sends this HttpOnly cookie automatically.
 
   headers:
+    WWWAuthenticate:
+      description: |
+        RFC 6750 Bearer challenge emitted when a protected API resource
+        needs credentials, rejects an invalid bearer token, or requires
+        additional bearer scopes. The `scope` auth-param is space-delimited.
+      schema:
+        type: string
+        example: 'Bearer realm="api", error="invalid_token"'
     Deprecation:
       description: |
         RFC 9745 Item Structured Field Date indicating when the operation
@@ -30156,6 +30164,9 @@ components:
 
     Unauthorized:
       description: 'code: unauthorized'
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -30258,6 +30269,9 @@ components:
 
     Forbidden:
       description: 'code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.'
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -355,6 +355,9 @@ func TestRequireSession_BearerInvalidFormat(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), api.CodeUnauthorized) {
 		t.Errorf("body missing CodeUnauthorized: %q", rec.Body.String())
 	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="api", error="invalid_token"` {
+		t.Errorf("WWW-Authenticate = %q, want invalid-token bearer challenge", got)
+	}
 }
 
 // --- IAM-5: API-key lifecycle sentinels (issue #189) ---------------------
@@ -396,6 +399,9 @@ func TestRequireSession_BearerExpiredKeyReturns401(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), api.CodeAPIKeyExpired) {
 		t.Errorf("body missing %s: %q", api.CodeAPIKeyExpired, rec.Body.String())
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="api", error="invalid_token"` {
+		t.Errorf("WWW-Authenticate = %q, want invalid-token bearer challenge", got)
 	}
 	// Audit: one key.expired row, no other key.* event.
 	rows := audit.rowsOf("key.expired")
@@ -441,6 +447,9 @@ func TestRequireSession_BearerRevokedKeyReturns401(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), api.CodeAPIKeyRevoked) {
 		t.Errorf("body missing %s: %q", api.CodeAPIKeyRevoked, rec.Body.String())
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="api", error="invalid_token"` {
+		t.Errorf("WWW-Authenticate = %q, want invalid-token bearer challenge", got)
 	}
 	rows := audit.rowsOf("key.auth_rejected_revoked")
 	if len(rows) != 1 {
@@ -1067,6 +1076,9 @@ func TestRequireSession_NoCredentialsReturns401(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="api"` {
+		t.Errorf("WWW-Authenticate = %q, want bearer challenge", got)
+	}
 }
 
 // --- RequireMFA ----------------------------------------------------------
@@ -1178,6 +1190,9 @@ func TestRequireScope_BearerWithWrongScopeForbidden(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), api.CodeForbidden) {
 		t.Errorf("body missing CodeForbidden: %q", rec.Body.String())
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="api", error="insufficient_scope", scope="apps:read"` {
+		t.Errorf("WWW-Authenticate = %q, want insufficient-scope bearer challenge", got)
 	}
 }
 

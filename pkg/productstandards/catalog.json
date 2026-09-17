@@ -342,6 +342,35 @@
       ]
     },
     {
+      "id": "rfc-6750-bearer",
+      "name": "OAuth 2.0 Bearer Token Usage",
+      "version": "RFC 6750",
+      "category": "identity",
+      "surface": "HTTP API authentication challenges",
+      "status": "partial",
+      "scope": "Protected API routes accept Authorization: Bearer credentials and emit RFC 6750 WWW-Authenticate challenges for missing credentials, invalid tokens, and insufficient scope.",
+      "limitations": "Gregale API keys, OIDC bearers, and deploy tokens are platform credentials rather than OAuth authorization-server access tokens; only the Authorization-header transport is implemented, not form/query token transport or the full OAuth resource-server profile.",
+      "docs_url": "https://www.rfc-editor.org/rfc/rfc6750",
+      "evidence": "pkg/auth/middleware/middleware.go; pkg/auth/middleware/middleware_test.go; api/openapi.yaml components.headers.WWWAuthenticate",
+      "conformance": [
+        {
+          "fixture": "bearer-challenge-missing",
+          "tier": "unit",
+          "target": "pkg/auth/middleware/middleware_test.go::TestRequireSession_NoCredentialsReturns401"
+        },
+        {
+          "fixture": "bearer-challenge-invalid",
+          "tier": "unit",
+          "target": "pkg/auth/middleware/middleware_test.go::TestRequireSession_BearerInvalidFormat"
+        },
+        {
+          "fixture": "bearer-challenge-scope",
+          "tier": "unit",
+          "target": "pkg/auth/middleware/middleware_test.go::TestRequireScope_BearerWithWrongScopeForbidden"
+        }
+      ]
+    },
+    {
       "id": "rfc-7807-problem-details",
       "name": "HTTP Problem Details",
       "version": "RFC 7807",
