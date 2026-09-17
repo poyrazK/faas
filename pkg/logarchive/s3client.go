@@ -80,6 +80,8 @@ type S3Client struct {
 	HTTP        *http.Client
 }
 
+const s3ErrorBodyMaxBytes = 64 << 10
+
 // NewS3Client constructs a client. Returns ErrAuthMissing if
 // KeyID or Secret is empty (matches the apid wire-up's
 // fail-closed posture). HTTP defaults to a 30s-timeout client.
@@ -352,16 +354,31 @@ func checkS3Status(resp *http.Response, verb string) error {
 // errorFromS3Status reads the body (only called on non-2xx)
 // and maps the status code to the typed sentinel.
 func errorFromS3Status(resp *http.Response, verb string) error {
-	body, _ := io.ReadAll(resp.Body)
+	body, truncated := readS3ErrorBody(resp.Body)
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		code, message := parseS3ErrorBody(body)
+		if truncated {
+			message += " [truncated]"
+		}
 		return &Permanent{
 			StatusCode: resp.StatusCode,
 			Code:       code,
 			Message:    message,
 		}
 	}
-	return fmt.Errorf("logarchive: %s unexpected status %d: %s", verb, resp.StatusCode, string(body))
+	message := string(body)
+	if truncated {
+		message += " [truncated]"
+	}
+	return fmt.Errorf("logarchive: %s unexpected status %d: %s", verb, resp.StatusCode, message)
+}
+
+func readS3ErrorBody(r io.Reader) ([]byte, bool) {
+	body, _ := io.ReadAll(io.LimitReader(r, s3ErrorBodyMaxBytes+1))
+	if len(body) > s3ErrorBodyMaxBytes {
+		return body[:s3ErrorBodyMaxBytes], true
+	}
+	return body, false
 }
 
 // parseS3ErrorBody extracts Code + Message from an S3 error

@@ -198,8 +198,7 @@ func (s *sqsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		return PollResult{Records: []SourceRecord{}}
 	}
 	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, api.TriggerBrokerErrorBodyMaxBytes))
-		return PollResult{Error: fmt.Errorf("sqs_poller: receive status %d: %s", resp.StatusCode, raw)}
+		return PollResult{Error: fmt.Errorf("sqs_poller: receive status %d: %s", resp.StatusCode, readTriggerBrokerErrorBody(resp.Body))}
 	}
 	payloadBudget := int64(t.PayloadMaxBytes)
 	if payloadBudget < 1 {
@@ -277,8 +276,7 @@ func (s *sqsPoller) deleteReceipts(ctx context.Context, ids []string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sqs_poller: delete status %d: %s", resp.StatusCode, raw)
+		return fmt.Errorf("sqs_poller: delete status %d: %s", resp.StatusCode, readTriggerBrokerErrorBody(resp.Body))
 	}
 	s.mu.Lock()
 	for _, id := range ids {
@@ -318,8 +316,7 @@ func (s *sqsPoller) Nack(ctx context.Context, _ sqlc.Trigger, ids []string, reas
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sqs_poller: release status %d: %s", resp.StatusCode, raw)
+		return fmt.Errorf("sqs_poller: release status %d: %s", resp.StatusCode, readTriggerBrokerErrorBody(resp.Body))
 	}
 	s.mu.Lock()
 	for _, id := range ids {
@@ -327,6 +324,14 @@ func (s *sqsPoller) Nack(ctx context.Context, _ sqlc.Trigger, ids []string, reas
 	}
 	s.mu.Unlock()
 	return nil
+}
+
+func readTriggerBrokerErrorBody(r io.Reader) string {
+	raw, _ := io.ReadAll(io.LimitReader(r, api.TriggerBrokerErrorBodyMaxBytes+1))
+	if len(raw) > api.TriggerBrokerErrorBodyMaxBytes {
+		return string(raw[:api.TriggerBrokerErrorBodyMaxBytes]) + " [truncated]"
+	}
+	return string(raw)
 }
 
 // Close releases the http.Client's idle connection pool.

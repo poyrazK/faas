@@ -28,18 +28,43 @@
 //
 // Tests build the sqlc.Trigger row by hand (the function takes
 // the trigger struct verbatim; only Config + ConfigBytes are
-// consumed by decodeSQSConfig). The tests are pure CPU work —
-// no network calls, no Postgres.
+// consumed by decodeSQSConfig). The config tests are pure CPU work;
+// the bounded error-body regression uses only an in-process httptest server.
 
 package sched
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+func TestSQSPollerDeleteErrorBodyIsBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(strings.Repeat("x", api.TriggerBrokerErrorBodyMaxBytes+1024)))
+	}))
+	defer server.Close()
+
+	p := &sqsPoller{
+		client:   server.Client(),
+		baseURL:  server.URL,
+		inFlight: make(map[string]string),
+	}
+	err := p.deleteReceipts(context.Background(), []string{"receipt-1"})
+	if err == nil {
+		t.Fatal("deleteReceipts() returned nil")
+	}
+	if !strings.Contains(err.Error(), "[truncated]") {
+		t.Fatalf("error = %q, want truncation marker", err)
+	}
+}
 
 // sqsTestTrigger builds a sqlc.Trigger with the given config
 // JSON. The other fields (Kind, Slug, etc.) are zero values; the

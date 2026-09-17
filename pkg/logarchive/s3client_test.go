@@ -188,6 +188,23 @@ func TestS3_PutObject_Transient5xx(t *testing.T) {
 	}
 }
 
+func TestS3_ErrorBodyIsBounded(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Body:       io.NopCloser(strings.NewReader(strings.Repeat("x", s3ErrorBodyMaxBytes+1024))),
+	}
+	err := errorFromS3Status(resp, "PUT")
+	if err == nil {
+		t.Fatal("errorFromS3Status() returned nil")
+	}
+	if !strings.Contains(err.Error(), "[truncated]") {
+		t.Fatalf("error = %q, want truncation marker", err)
+	}
+	if strings.Contains(err.Error(), strings.Repeat("x", s3ErrorBodyMaxBytes+1)) {
+		t.Fatal("error contains more than the bounded S3 response body")
+	}
+}
+
 // TestS3_PutObject_BodyLengthMismatch is the defensive guard:
 // r produced N bytes but the caller passed size != N. The
 // shipper would never do this in production, but a bug in
