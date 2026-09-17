@@ -4614,7 +4614,7 @@ type AppMetricsResponse struct {
 	// predicate is NOT covered by the existing events_wake_id_idx
 	// jsonb expression index (migration 00114 indexes
 	// data->>'wake_id'); on a Scale-tier app with a large fleet
-	// the underlying query can seq-scan + jsonb-cast per row.
+	// the underlying query can seq-scan the trailing event rows.
 	// Best-effort: 0 when Prometheus is degraded, the events
 	// row hasn't been written, or the store query fails. The
 	// customer-facing dashboard surfaces this as the "wakes

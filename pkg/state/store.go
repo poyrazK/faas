@@ -4009,17 +4009,17 @@ type Store interface {
 	// — see pkg/api/limits.go::PerAppMetricsAllowed). Returns 0 on
 	// an empty app, a degraded store call, or when the events
 	// table predates the post-ADR-123 schema (pre-ADR-123
-	// boot_started rows carry no app_id field, so the cast
-	// returns NULL which COUNT(*) coerces to 0).
+	// boot_started rows carry no app_id field, so the text predicate
+	// simply does not match).
 	//
-	// Performance: the (data->>'app_id')::uuid predicate is NOT
+	// Performance: the data->>'app_id' predicate is NOT
 	// covered by the existing events_wake_id_idx jsonb expression
 	// index (migration 00114 indexes data->>'wake_id', not app_id).
 	// On a Scale-tier app with a large wake fleet the planner will
-	// seq-scan the trailing-24h wake.boot_started rows and
-	// re-evaluate the jsonb cast per row. A follow-up migration
+	// seq-scan the trailing-24h wake.boot_started rows. A follow-up migration
 	// adding a covering index on (data->>'app_id', at) is tracked
-	// separately.
+	// separately. Blank or malformed app IDs are rejected before SQL
+	// execution so callers never issue an empty UUID cast.
 	CountWakeBootStarted24h(ctx context.Context, appID string) (int64, error)
 	// ListAllInstances returns every instance on the box, ordered newest
 	// first. schedd's G7 reaper warm-passes this slice to the conntrack

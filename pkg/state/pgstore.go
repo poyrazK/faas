@@ -17710,29 +17710,37 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 // literal, which would always return 0). See the rationale
 // comment at pkg/state/queries.sql for the full story.
 //
-// Performance note: the (data->>'app_id')::uuid predicate is NOT
+// Performance note: the data->>'app_id' predicate is NOT
 // covered by the existing events_wake_id_idx jsonb expression
 // index (migration 00114 indexes data->>'wake_id', not app_id).
 // On a Scale-tier app with a large wake fleet the planner will
-// seq-scan the trailing-24h wake.boot_started rows and
-// re-evaluate the jsonb cast per row. The PR description's
+// seq-scan the trailing-24h wake.boot_started rows. The PR description's
 // "sub-second via the existing index" claim was therefore wrong;
 // a follow-up migration adding a covering index on
-// (data->>'app_id', at) is tracked separately. Returns 0 on an
+// (data->>'app_id', at) is tracked separately. Blank app IDs return
+// zero before SQL execution. Returns 0 on an
 // empty app, a degraded store call, or when the events table
 // predates the post-ADR-123 schema (pre-ADR-123 boot_started
-// rows carry no app_id field, so the cast returns NULL which
-// COUNT(DISTINCT wake_id) coerces to 0 — same posture as the wake-timeline
+// rows carry no app_id field, so the text predicate simply does not
+// match — same posture as the wake-timeline
 // view's `WakeCountWithMeta` denominator at
 // cmd/apid/handlers_dashboard.go:2659).
 func (s *PgStore) CountWakeBootStarted24h(ctx context.Context, appID string) (int64, error) {
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return 0, nil
+	}
+	parsed, err := uuid.Parse(appID)
+	if err != nil {
+		return 0, fmt.Errorf("CountWakeBootStarted24h: invalid app id %q", appID)
+	}
 	const q = `SELECT COUNT(DISTINCT data->>'wake_id') FROM events
 WHERE kind = 'wake.boot_started'
-  AND (data->>'app_id')::uuid = $1::uuid
+  AND data->>'app_id' = $1
   AND data->>'wake_id' IS NOT NULL
   AND at >= now() - interval '24 hours'`
 	var n int64
-	if err := s.pool.QueryRow(ctx, q, appID).Scan(&n); err != nil {
+	if err := s.pool.QueryRow(ctx, q, parsed.String()).Scan(&n); err != nil {
 		return 0, fmt.Errorf("CountWakeBootStarted24h: %w", err)
 	}
 	return n, nil
