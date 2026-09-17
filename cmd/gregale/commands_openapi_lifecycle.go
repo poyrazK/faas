@@ -370,7 +370,7 @@ func parseOpenapiDocumentArgs(command string, args []string, allowLinkedContext 
 	if err := fs.Parse(flags); err != nil {
 		return nil, "", false
 	}
-	if len(pos) != 2 && !(allowLinkedContext && len(pos) == 1) {
+	if len(pos) != 2 && (!allowLinkedContext || len(pos) != 1) {
 		usage := "usage: gregale " + command + " <slug> <file|->"
 		if allowLinkedContext {
 			usage = "usage: gregale " + command + " [<slug>] <file|->"
