@@ -58,6 +58,16 @@ const jobTaskSelectCols = `run_id, task_index, status, attempt, instance_id, err
        next_attempt_at, lease_token, lease_expires_at, last_lease_node,
        log_content, log_truncated`
 
+// jobTaskSelectColsQualified is the same column order as jobTaskSelectCols,
+// with an explicit table qualifier for joins that also expose a status column.
+const jobTaskSelectColsQualified = `job_tasks.run_id, job_tasks.task_index,
+       job_tasks.status, job_tasks.attempt, job_tasks.instance_id,
+       job_tasks.error_class, job_tasks.error_message, job_tasks.exit_code,
+       job_tasks.started_at, job_tasks.finished_at, job_tasks.created_at,
+       job_tasks.next_attempt_at, job_tasks.lease_token,
+       job_tasks.lease_expires_at, job_tasks.last_lease_node,
+       job_tasks.log_content, job_tasks.log_truncated`
+
 // scanJobCols reads the jobSelectCols row into a Job. Nullable columns
 // don't apply (every column on jobs is NOT NULL), but env_overrides
 // is jsonb — pgx decodes it into json.RawMessage directly via Scan.
@@ -806,7 +816,7 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	rows, err := tx.Query(ctx,
-		`select `+jobTaskSelectCols+` from job_tasks
+		`select `+jobTaskSelectColsQualified+` from job_tasks
 		  join job_runs r on r.id = job_tasks.run_id
 		  join jobs j on j.id = r.job_id
 		  where job_tasks.status = 'queued'
