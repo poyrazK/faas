@@ -27,6 +27,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -63,7 +64,7 @@ func cmdWakeTimeline(args []string) int {
 	// the front so the parser sees them. Mirrors cmdDelayedTaskAdd
 	// (commands_delayed_task.go:118) + cmdAppSecurity
 	// (commands_app_security.go:42).
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "all", "verbose")
 	fs := newFlagSet("wake-timeline", flag.ContinueOnError)
 	since := fs.String("since", "", "RFC3339 timestamp; rows with `at >= since` returned (cursor when paging)")
 	limit := fs.Int("limit", wakeTimelineDefaultLimit, "page size (1..1000)")
@@ -72,8 +73,8 @@ func cmdWakeTimeline(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale wake-timeline <slug> <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose]", "wake-timeline")
+	if len(pos) < 1 || len(pos) > 2 {
+		PrintUsage(os.Stderr, "usage: gregale wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose]", "wake-timeline")
 		return 1
 	}
 	if *limit < 1 || *limit > wakeTimelineMaxLimit {
@@ -84,8 +85,22 @@ func cmdWakeTimeline(args []string) int {
 			return printErr("Invalid --since", fmt.Errorf("--since must be RFC 3339; got %q (%w)", *since, err))
 		}
 	}
-	slug := pos[0]
-	wakeID := pos[1]
+	slug := ""
+	wakeID := pos[0]
+	if len(pos) == 2 {
+		slug = pos[0]
+		wakeID = pos[1]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose] (or run `gregale link <project-slug>`)", "wake-timeline")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

@@ -215,6 +215,14 @@ func resolveAppFlagOrContext(explicit string) (string, error) {
 	return resolveLinkedApp("", cwd)
 }
 
+// resolveRequiredAppSlug gives app-scoped read commands a consistent
+// context fallback. Callers own their usage text so each PrintUsage call
+// keeps a statically discoverable docs topic. Explicit slugs still win
+// without touching the filesystem.
+func resolveRequiredAppSlug(explicit string) (string, error) {
+	return resolveAppFlagOrContext(explicit)
+}
+
 func displayProjectContextPath(cwd, path string) string {
 	rel, err := filepath.Rel(cwd, path)
 	if err == nil && rel != "" && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {

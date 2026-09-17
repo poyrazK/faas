@@ -166,6 +166,12 @@ func cmdDeployments(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale deployments --limit N (1 <= N <= 200)", "deployments")
 		return 1
 	}
+	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
+	if resolveErr == nil {
+		*app = resolvedApp
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+		return printErr("Could not read local project context", resolveErr)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

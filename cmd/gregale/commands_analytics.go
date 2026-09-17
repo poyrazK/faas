@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const analyticsCmdUsage = "usage: gregale analytics <slug> [--since 24h] [--until RFC3339] [--by route|country|referrer_host|ua_family|status]"
+const analyticsCmdUsage = "usage: gregale analytics [<slug>] [--since 24h] [--until RFC3339] [--by route|country|referrer_host|ua_family|status]"
 const analyticsCmdDocsTopic = "analytics"
 
 var analyticsGroupBys = map[string]struct{}{
@@ -26,9 +27,23 @@ func cmdAnalytics(args []string) int {
 	if err := fs.Parse(normalizeAnalyticsArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if fs.NArg() > 1 {
 		PrintUsage(os.Stderr, analyticsCmdUsage, analyticsCmdDocsTopic)
 		return 1
+	}
+	slug := ""
+	if fs.NArg() == 1 {
+		slug = fs.Arg(0)
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, analyticsCmdUsage+" (or run `gregale link <project-slug>`)", analyticsCmdDocsTopic)
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
 	}
 	if _, ok := analyticsGroupBys[*by]; !ok {
 		PrintUsage(os.Stderr, analyticsCmdUsage+"\nerror: --by must be one of route, country, referrer_host, ua_family, status", analyticsCmdDocsTopic)
@@ -38,7 +53,7 @@ func cmdAnalytics(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	response, err := client.GetAppRequestAnalyticsOpts(context.Background(), fs.Arg(0), api.AppRequestAnalyticsOptions{
+	response, err := client.GetAppRequestAnalyticsOpts(context.Background(), slug, api.AppRequestAnalyticsOptions{
 		Since: *since, Until: *until, GroupBy: *by,
 	})
 	if err != nil {

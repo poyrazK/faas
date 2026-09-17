@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -33,11 +34,24 @@ func cmdInvoke(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] <slug>", "invoke")
+	if len(positional) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [<slug>]", "invoke")
 		return 1
 	}
-	slug := positional[0]
+	slug := ""
+	if len(positional) == 1 {
+		slug = positional[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	body, err := resolvePayload(*payload)
 	if err != nil {
 		return printErr("Invalid payload", err)

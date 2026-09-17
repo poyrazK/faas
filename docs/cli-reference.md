@@ -24,7 +24,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
-| [`deployments`](#deployments) | List deployments (--app SLUG \| --limit N \| --before C \| --all \| --wide) |
+| [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
@@ -35,8 +35,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context) |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
-| [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals |
-| [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]) |
+| [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
+| [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
@@ -52,28 +52,28 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Read app or deployment logs (gregale logs &lt;slug&gt;; slug defaults to linked context) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
-| [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
+| [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (slug defaults to linked context) |
 | [`orgs`](#orgs) | Manage orgs + members (orgs ls\|create\|info\|rm\|members ...\|keys ...\|transfer-ownership\|seat-usage\|invitations ...\|me) |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`ps`](#ps) | Show live instances + state for an app |
+| [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
-| [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]) |
+| [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
-| [`tail`](#tail) | Live tail of the unified event stream |
+| [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
 | [`trusted-publishers`](#trusted-publishers) | Per-app cosign trusted-publisher list (admin; trusted-publishers add\|remove\|list) |
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
 | [`version`](#version) | Print the CLI version |
 | [`config`](#config) | Manage non-secret local CLI settings (config get\|set\|list) |
-| [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]) |
+| [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]; slug defaults to linked context) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
@@ -454,7 +454,7 @@ Attach a CORS rule to &lt;slug&gt;
 
 ### cors ls
 
-List CORS rules bound to &lt;slug&gt;
+List CORS rules bound to &lt;slug&gt; (defaults to linked context)
 
 ### cors rm
 
@@ -462,7 +462,7 @@ Delete a CORS rule by id
 
 ### cors show
 
-Show per-app default CORS + active rules
+Show per-app default CORS + active rules (defaults to linked context)
 
 
 ## crons
@@ -720,7 +720,7 @@ Cancel a delayed task
 
 ## deployments
 
-List deployments (--app SLUG | --limit N | --before C | --all | --wide)
+List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)
 
 `gregale deployments [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
 
@@ -1007,7 +1007,7 @@ Diff two openapi.yaml files; exit 2 on any BREAKING row
 
 ### openapi get
 
-Fetch an app OpenAPI document (manual_import|auto)
+Fetch an app OpenAPI document (manual_import|auto; slug defaults to linked context)
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1019,11 +1019,11 @@ Import an app OpenAPI document from a JSON file or stdin
 
 ### openapi dry-run
 
-Preview uncovered routes without importing the document
+Preview uncovered routes without importing the document (slug defaults to linked context)
 
 ### openapi preview
 
-Preview routes, edge policies, and the read-only OpenAPI contract diff
+Preview routes, edge policies, and the read-only OpenAPI contract diff (slug defaults to linked context)
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1090,9 +1090,9 @@ Scaffold a reference project from a built-in template (--template NAME --path DI
 
 ## inspect
 
-Explain an app from its runtime, deployment, API, data, scaling, and release signals
+Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)
 
-`gregale inspect <slug> [--upstreams] [--scope <scope>] [--errors]`
+`gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1103,9 +1103,9 @@ Explain an app from its runtime, deployment, API, data, scaling, and release sig
 
 ## invoke
 
-Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-])
+Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug defaults to linked context)
 
-`gregale invoke <slug> [--async] [--payload <J|@file|->]`
+`gregale invoke [<slug>] [--async] [--payload <J|@file|->]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1350,9 +1350,9 @@ Per-app or account-wide metrics (slug defaults to linked context)
 
 ## analytics
 
-Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route|country|referrer_host|ua_family|status])
+Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route|country|referrer_host|ua_family|status]; slug defaults to linked context)
 
-`gregale analytics <slug> [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>]`
+`gregale analytics [<slug>] [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1477,9 +1477,9 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 ## ps
 
-Show live instances + state for an app
+Show live instances + state for an app (slug defaults to linked context)
 
-`gregale ps [--all]`
+`gregale ps [<slug>] [--all]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1655,9 +1655,9 @@ Re-seal one secret under the current host key
 
 ## slo
 
-Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h])
+Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context)
 
-`gregale slo <slug> [--window <WINDOW>]`
+`gregale slo [<slug>] [--window <WINDOW>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1673,7 +1673,7 @@ Personal SLO numbers (availability, wake p95, build success)
 
 ## tail
 
-Live tail of the unified event stream
+Live tail of the unified event stream (app defaults to linked context)
 
 `gregale tail [--app <slug>] [--include-stateless]`
 
@@ -1754,9 +1754,9 @@ Show all effective settings
 
 ## wake-timeline
 
-Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all])
+Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]; slug defaults to linked context)
 
-`gregale wake-timeline <slug> <wake-id> [--since <RFC3339>] [--limit <N>] [--all]`
+`gregale wake-timeline [<slug>] <wake-id> [--since <RFC3339>] [--limit <N>] [--all]`
 
 | Flag | Meaning | |
 |---|---|---|

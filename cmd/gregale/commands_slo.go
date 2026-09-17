@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,7 +32,7 @@ import (
 // `gregale slo` errors. Mirrors PrintUsage's docs URL convention
 // (output.go:144) so the line carries the stable docs site
 // pointer.
-const sloCmdUsage = "usage: gregale slo <slug> [--window 24h]"
+const sloCmdUsage = "usage: gregale slo [<slug>] [--window 24h]"
 
 // sloCmdDocsTopic is the docs topic slug passed to PrintUsage
 // when PrintUsage emits the trailing "Docs:" row. Keeps the CLI's
@@ -57,11 +58,24 @@ func cmdSLO(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
+	if len(pos) > 1 {
 		PrintUsage(os.Stderr, sloCmdUsage, sloCmdDocsTopic)
 		return 1
 	}
-	slug := pos[0]
+	slug := ""
+	if len(pos) == 1 {
+		slug = pos[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, sloCmdUsage+" (or run `gregale link <project-slug>`)", sloCmdDocsTopic)
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

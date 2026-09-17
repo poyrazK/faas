@@ -41,6 +41,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -231,11 +232,24 @@ func cmdCorsAllow(args []string) int {
 // a kind filter; the volume per app is bounded by the EdgeRulesPerApp
 // quota so an in-memory filter stays cheap.
 func cmdCorsLs(args []string) int {
-	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale cors ls <slug>", "cors")
+	if len(args) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale cors ls [<slug>]", "cors")
 		return 1
 	}
-	slug := args[0]
+	slug := ""
+	if len(args) == 1 {
+		slug = args[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale cors ls [<slug>] (or run `gregale link <project-slug>`)", "cors")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -297,11 +311,24 @@ func cmdCorsRm(args []string) int {
 // {app:{...}, cors_rules:[...]}, human mode prints the per-app
 // defaults first then the rule list.
 func cmdCorsShow(args []string) int {
-	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale cors show <slug>", "cors")
+	if len(args) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale cors show [<slug>]", "cors")
 		return 1
 	}
-	slug := args[0]
+	slug := ""
+	if len(args) == 1 {
+		slug = args[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale cors show [<slug>] (or run `gregale link <project-slug>`)", "cors")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

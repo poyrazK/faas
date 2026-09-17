@@ -75,7 +75,7 @@ type cliCommand struct {
 	// Positionals documents the required positional args in order.
 	// Used by the man-page renderer to fill the SYNOPSIS section.
 	// Example: ["<slug>", "<wake-id>"] for `gregale wake-timeline`.
-	// A leading `<slug>` marker also drives cache-backed completion
+	// A leading `<slug>` or `[<slug>]` marker also drives cache-backed completion
 	// across all four shell backends (see hasSlugFirst).
 	Positionals []string
 	// ClosedSet enumerates the allowed values for the FIRST positional
@@ -143,7 +143,10 @@ func cliHelpGroup(command cliCommand) string {
 // (app, invoke, metrics, slo, wake-timeline) — driven by the manifest
 // rather than a hardcoded name list.
 func (c cliCommand) hasSlugFirst() bool {
-	return len(c.Positionals) > 0 && c.Positionals[0] == "<slug>"
+	if len(c.Positionals) == 0 {
+		return false
+	}
+	return c.Positionals[0] == "<slug>" || c.Positionals[0] == "[<slug>]"
 }
 
 func (c cliCommand) subcommandChoice() string {
@@ -473,9 +476,9 @@ var cliCommands = []cliCommand{
 		Short:   "Configure CORS for an app (allow|ls|rm|show)",
 		Subcommands: []cliSub{
 			{Name: "allow", Short: "Attach a CORS rule to <slug>"},
-			{Name: "ls", Short: "List CORS rules bound to <slug>"},
+			{Name: "ls", Short: "List CORS rules bound to <slug> (defaults to linked context)"},
 			{Name: "rm", Short: "Delete a CORS rule by id"},
-			{Name: "show", Short: "Show per-app default CORS + active rules"},
+			{Name: "show", Short: "Show per-app default CORS + active rules (defaults to linked context)"},
 		},
 	},
 	{
@@ -607,7 +610,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
-		Short:   "List deployments (--app SLUG | --limit N | --before C | --all | --wide)",
+		Short:   "List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)",
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug (app-scoped deployment history)", Value: "slug"},
 			{Name: "limit", Short: "page size (1-200)", Value: "N"},
@@ -866,12 +869,12 @@ var cliCommands = []cliCommand{
 		Short:   "Manage app OpenAPI docs + pre-publish schema-drift checks",
 		Subcommands: []cliSub{
 			{Name: "diff", Short: "Diff two openapi.yaml files; exit 2 on any BREAKING row"},
-			{Name: "get", Short: "Fetch an app OpenAPI document (manual_import|auto)", Flags: []cliFlag{
+			{Name: "get", Short: "Fetch an app OpenAPI document (manual_import|auto; slug defaults to linked context)", Flags: []cliFlag{
 				{Name: "source", Short: "document source", Value: "manual_import|auto", ClosedSet: []string{"manual_import", "auto"}},
 			}},
 			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin"},
-			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
-			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff", Flags: []cliFlag{
+			{Name: "dry-run", Short: "Preview uncovered routes without importing the document (slug defaults to linked context)"},
+			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff (slug defaults to linked context)", Flags: []cliFlag{
 				{Name: "scope", Short: "deployment scope to compare", Value: "scope"},
 				{Name: "fail-on-unavailable", Short: "fail when the contract-diff backend is unavailable"},
 			}},
@@ -912,8 +915,8 @@ var cliCommands = []cliCommand{
 	{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
-		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals",
-		Positionals: []string{"<slug>"},
+		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)",
+		Positionals: []string{"[<slug>]"},
 		// Leaf-selectors are flags on this verb, not positional
 		// sub-verbs (issue #952 UX: `gregale inspect <slug>
 		// --upstreams`). The bare form renders the application-
@@ -930,12 +933,12 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "invoke",
 		DocSlug: "invoke",
-		Short:   "Functional smoke test (invoke [--async] <slug> [--payload J|@file|-])",
+		Short:   "Functional smoke test (invoke [--async] <slug> [--payload J|@file|-]; slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "async", Short: "return immediately with status_url"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 		},
-		Positionals: []string{"<slug>"},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    "run",
@@ -1095,13 +1098,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "analytics",
 		DocSlug: "analytics",
-		Short:   "Historical request analytics (analytics <slug> [--since 24h] [--by route|country|referrer_host|ua_family|status])",
+		Short:   "Historical request analytics (analytics <slug> [--since 24h] [--by route|country|referrer_host|ua_family|status]; slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "since", Short: "lookback window", Value: "WINDOW"},
 			{Name: "until", Short: "exclusive RFC3339 end", Value: "TIMESTAMP"},
 			{Name: "by", Short: "grouping dimension", Value: "DIMENSION", ClosedSet: []string{"route", "country", "referrer_host", "ua_family", "status"}},
 		},
-		Positionals: []string{"<slug>"},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    "mfa",
@@ -1194,10 +1197,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "ps",
 		DocSlug: "ps",
-		Short:   "Show live instances + state for an app",
+		Short:   "Show live instances + state for an app (slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "all", Short: "include the newest 100 retained history rows (parked rows expire after 30d by default)"},
 		},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    "queue",
@@ -1338,11 +1342,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "slo",
 		DocSlug: "slo",
-		Short:   "Per-app SLO panel (gregale slo <slug> [--window 24h])",
+		Short:   "Per-app SLO panel (gregale slo <slug> [--window 24h]; slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "window", Short: "window (1h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 		},
-		Positionals: []string{"<slug>"},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    statusLiteral,
@@ -1352,7 +1356,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "tail",
 		DocSlug: "tail",
-		Short:   "Live tail of the unified event stream",
+		Short:   "Live tail of the unified event stream (app defaults to linked context)",
 		// The stream is always followed; there is no --follow flag on
 		// cmdTail (commands5.go) and the manifest must not invent one.
 		Flags: []cliFlag{
@@ -1402,13 +1406,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "wake-timeline",
 		DocSlug: "wake-timeline",
-		Short:   "Walk the per-wake event stream (wake-timeline <slug> <wake-id> [--since RFC3339] [--limit N] [--all])",
+		Short:   "Walk the per-wake event stream (wake-timeline <slug> <wake-id> [--since RFC3339] [--limit N] [--all]; slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "since", Short: "RFC3339 timestamp", Value: "RFC3339"},
 			{Name: "limit", Short: "page size (1..1000)", Value: "N"},
 			{Name: "all", Short: "walk every page"},
 		},
-		Positionals: []string{"<slug>", "<wake-id>"},
+		Positionals: []string{"[<slug>]", "<wake-id>"},
 	},
 	{
 		Name:    "throttle-suggestions",

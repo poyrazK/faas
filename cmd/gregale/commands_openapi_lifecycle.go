@@ -26,19 +26,33 @@ type openapiPreviewOutput struct {
 // route matching; this command only renders the response for humans or JSON
 // consumers.
 func cmdOpenapiPreview(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "fail-on-unavailable")
 	fs := newOpenapiFlagSet("openapi preview")
 	scope := fs.String("scope", "prod", "deployment scope to compare")
 	failOnUnavailable := fs.Bool("fail-on-unavailable", false, "fail when the contract-diff backend is unavailable")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		PrintUsage(osStderr, "usage: gregale openapi preview <slug> [--scope <scope>] [--fail-on-unavailable]", "openapi")
+	if len(pos) > 1 {
+		PrintUsage(osStderr, "usage: gregale openapi preview [<slug>] [--scope <scope>] [--fail-on-unavailable]", "openapi")
 		return 1
 	}
-	if !validCLISlug(pos[0]) {
-		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", pos[0]))
+	slug := ""
+	if len(pos) == 1 {
+		slug = pos[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(osStderr, "usage: gregale openapi preview [<slug>] [--scope <scope>] [--fail-on-unavailable] (or run `gregale link <project-slug>`)", "openapi")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
+	if !validCLISlug(slug) {
+		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", slug))
 	}
 	if problem := api.ValidateScope(*scope); problem != nil {
 		return printErr("Invalid --scope", &api.APIError{Problem: *problem})
@@ -48,11 +62,11 @@ func cmdOpenapiPreview(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	resp, err := client.PreviewAppOpenAPIPolicy(ctx, pos[0])
+	resp, err := client.PreviewAppOpenAPIPolicy(ctx, slug)
 	if err != nil {
 		return printErr("Could not preview OpenAPI policy", err)
 	}
-	contract, contractErr := client.DiffAppOpenAPIContract(ctx, pos[0], *scope)
+	contract, contractErr := client.DiffAppOpenAPIContract(ctx, slug, *scope)
 	if contractErr != nil && !contractDiffDisabled(contractErr) {
 		return printErr("Could not preview OpenAPI contract", contractErr)
 	}
@@ -76,7 +90,7 @@ func cmdOpenapiPreview(args []string) int {
 		}
 		return 0
 	}
-	_, _ = fmt.Fprintf(osStdout, "OpenAPI policy preview for %s (source=%s, observed=%t)\n", pos[0], resp.Source, resp.ObservedAvailable)
+	_, _ = fmt.Fprintf(osStdout, "OpenAPI policy preview for %s (source=%s, observed=%t)\n", slug, resp.Source, resp.ObservedAvailable)
 	if contractErr == nil {
 		printOpenapiContractPreview(contract)
 	} else {
@@ -212,21 +226,35 @@ func cmdOpenapiGet(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		PrintUsage(osStderr, "usage: gregale openapi get <slug> [--source manual_import|auto]", "openapi")
+	if len(pos) > 1 {
+		PrintUsage(osStderr, "usage: gregale openapi get [<slug>] [--source manual_import|auto]", "openapi")
 		return 1
+	}
+	slug := ""
+	if len(pos) == 1 {
+		slug = pos[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(osStderr, "usage: gregale openapi get [<slug>] [--source manual_import|auto] (or run `gregale link <project-slug>`)", "openapi")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
 	}
 	if !validOpenapiSource(*source) {
 		return printErr("Invalid --source", fmt.Errorf("must be manual_import or auto; got %q", *source))
 	}
-	if !validCLISlug(pos[0]) {
-		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", pos[0]))
+	if !validCLISlug(slug) {
+		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", slug))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	doc, err := client.GetAppOpenAPI(context.Background(), pos[0], *source)
+	doc, err := client.GetAppOpenAPI(context.Background(), slug, *source)
 	if err != nil {
 		return printErr("Could not fetch OpenAPI document", err)
 	}
@@ -243,7 +271,7 @@ func cmdOpenapiGet(args []string) int {
 // file, or '-' to read JSON from stdin. The server remains the canonical
 // validator for the OpenAPI version and endpoint limits.
 func cmdOpenapiImport(args []string) int {
-	doc, slug, ok := parseOpenapiDocumentArgs("openapi import", args)
+	doc, slug, ok := parseOpenapiDocumentArgs("openapi import", args, false)
 	if !ok {
 		return 1
 	}
@@ -267,7 +295,7 @@ func cmdOpenapiImport(args []string) int {
 // routes without persisting it. --json preserves the complete suggestion
 // action payload for a follow-up edge-rules command.
 func cmdOpenapiDryRun(args []string) int {
-	doc, slug, ok := parseOpenapiDocumentArgs("openapi dry-run", args)
+	doc, slug, ok := parseOpenapiDocumentArgs("openapi dry-run", args, true)
 	if !ok {
 		return 1
 	}
@@ -336,26 +364,47 @@ func validOpenapiSource(source string) bool {
 	return source == openapiDefaultSource || source == "auto"
 }
 
-func parseOpenapiDocumentArgs(command string, args []string) (map[string]any, string, bool) {
+func parseOpenapiDocumentArgs(command string, args []string, allowLinkedContext bool) (map[string]any, string, bool) {
 	flags, pos := splitArgsForFlags(args)
 	fs := newOpenapiFlagSet(command)
 	if err := fs.Parse(flags); err != nil {
 		return nil, "", false
 	}
-	if len(pos) != 2 {
-		PrintUsage(osStderr, "usage: gregale "+command+" <slug> <file|->", "openapi")
+	if len(pos) != 2 && !(allowLinkedContext && len(pos) == 1) {
+		usage := "usage: gregale " + command + " <slug> <file|->"
+		if allowLinkedContext {
+			usage = "usage: gregale " + command + " [<slug>] <file|->"
+		}
+		PrintUsage(osStderr, usage, "openapi")
 		return nil, "", false
 	}
-	if !validCLISlug(pos[0]) {
-		printErr("Invalid app slug", fmt.Errorf("invalid slug %q", pos[0]))
+	slug := ""
+	documentPath := pos[0]
+	if len(pos) == 2 {
+		slug = pos[0]
+		documentPath = pos[1]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(osStderr, "usage: gregale "+command+" [<slug>] <file|-> (or run `gregale link <project-slug>`)", "openapi")
+				return nil, "", false
+			}
+			printErr("Could not read local project context", resolveErr)
+			return nil, "", false
+		}
+	}
+	if !validCLISlug(slug) {
+		printErr("Invalid app slug", fmt.Errorf("invalid slug %q", slug))
 		return nil, "", false
 	}
-	doc, err := readOpenapiDocument(pos[1])
+	doc, err := readOpenapiDocument(documentPath)
 	if err != nil {
 		printErr("Could not read OpenAPI document", err)
 		return nil, "", false
 	}
-	return doc, pos[0], true
+	return doc, slug, true
 }
 
 func readOpenapiDocument(path string) (map[string]any, error) {

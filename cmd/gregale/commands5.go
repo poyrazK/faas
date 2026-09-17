@@ -83,11 +83,25 @@ func cmdPS(args []string) int {
 	fs := newFlagSet("ps", flag.ContinueOnError)
 	setFlagOutput(fs, os.Stderr)
 	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale ps [--all] <app>", "ps")
+	flags, positional := splitArgsForFlags(args, "all")
+	if err := fs.Parse(flags); err != nil || len(positional) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]", "ps")
 		return 1
 	}
-	slug := fs.Arg(0)
+	slug := ""
+	if len(positional) == 1 {
+		slug = positional[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>] (or run `gregale link <project-slug>`)", "ps")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -1466,6 +1480,12 @@ func cmdTail(args []string) int {
 	if fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale tail [--app <slug>] [--include-stateless]", "tail")
 		return 1
+	}
+	resolvedApp, resolveErr := resolveAppFlagOrContext(*onlySlug)
+	if resolveErr == nil {
+		*onlySlug = resolvedApp
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+		return printErr("Could not read local project context", resolveErr)
 	}
 	client, err := authedClient()
 	if err != nil {

@@ -26,6 +26,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -45,24 +46,10 @@ import (
 // inspectUsage is the single source of truth for the verb's
 // usage line. The dispatcher prints it on bad-args paths, and the
 // test file pins this exact wording.
-const inspectUsage = "usage: gregale inspect <slug> [--upstreams] [--scope <scope>] [--errors] [--json]"
+const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--json]"
 
 func cmdInspect(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, inspectUsage, "inspect")
-		return 1
-	}
-	// The slug is always args[0]; flags follow. Mirrors the
-	// cmdCronsUpdate shape (commands2.go) — stdlib flag.Parse
-	// stops parsing flags at the first positional, so the
-	// slug-shaped args[0] would otherwise eat the --upstreams
-	// flag. We pass args[1:] to the FlagSet so the leaf's flags
-	// are visible.
-	slug := args[0]
-	if !validCLISlug(slug) {
-		fmt.Fprintf(os.Stderr, "invalid slug %q (3..40 chars, lowercase alnum + dash, no leading/trailing dash)\n", slug)
-		return 1
-	}
+	flags, positional := splitArgsForFlags(args, "upstreams", "errors")
 	fs := newFlagSet("inspect", flag.ContinueOnError)
 	upstreams := fs.Bool("upstreams", false, "list data upstreams captured for this app (ADR-098 §9.A)")
 	scope := fs.String("scope", "", "filter upstreams by scope (forwarded as ?scope=<scope>)")
@@ -71,11 +58,29 @@ func cmdInspect(args []string) int {
 	// RelevantLogs}) from the latest failed deployment for the app.
 	// Auth required; no scope filter (errors are per-deployment).
 	errorsFlag := fs.Bool("errors", false, "show the latest failed deployment's persisted error explanation (Hint/Why/Fix/RelevantLogs)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
+	if len(positional) > 1 {
 		PrintUsage(os.Stderr, inspectUsage, "inspect")
+		return 1
+	}
+	slug := ""
+	if len(positional) == 1 {
+		slug = positional[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveRequiredAppSlug("")
+		if resolveErr != nil {
+			if errors.Is(resolveErr, errProjectContextNotFound) {
+				PrintUsage(os.Stderr, inspectUsage+" (or run `gregale link <project-slug>`)", "inspect")
+				return 1
+			}
+			return printErr("Could not read local project context", resolveErr)
+		}
+	}
+	if !validCLISlug(slug) {
+		fmt.Fprintf(os.Stderr, "invalid slug %q (3..40 chars, lowercase alnum + dash, no leading/trailing dash)\n", slug)
 		return 1
 	}
 	// The bare form is the application-intelligence summary. A scope
