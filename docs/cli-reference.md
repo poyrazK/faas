@@ -958,6 +958,23 @@ Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
 
 `gregale preview [<subcommand>]`
 
+### preview create
+
+Create and deploy a pull-request preview from a GitHub ref
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | parent app slug (defaults to the linked app) |  |
+| `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME | required |
+| `--ref <REF>` | branch, tag, or commit SHA | required |
+| `--pr-number <N>` | pull-request number | required |
+| `--ttl-hours <HOURS>` | preview lease in hours (default 168) |  |
+| `--wait` | wait for the deployment to become live (default) |  |
+| `--no-wait` | return after the deployment is queued |  |
+| `--timeout <SECONDS>` | deployment wait timeout in seconds |  |
+| `--idempotency-key <KEY>` | stable retry key |  |
+| `--open` | open the preview URL after a successful create |  |
+
 ### preview list
 
 List pull-request and developer previews (defaults to the linked app)

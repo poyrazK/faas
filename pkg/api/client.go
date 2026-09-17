@@ -675,6 +675,13 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppRespon
 	return out, c.do(ctx, "POST", "/v1/apps", req, &out)
 }
 
+// CreatePreview provisions or reopens the stable pull-request preview for a
+// parent app. The returned app is ready to receive a deployment.
+func (c *Client) CreatePreview(ctx context.Context, parentSlug string, req CreatePreviewRequest) (AppResponse, error) {
+	var out AppResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+parentSlug+"/previews", req, &out)
+}
+
 // ListAPIConsumers returns the end-customer identities registered for an app.
 func (c *Client) ListAPIConsumers(ctx context.Context, slug string) (APIConsumerListResponse, error) {
 	var out APIConsumerListResponse

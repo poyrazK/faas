@@ -2629,6 +2629,24 @@ func (s *PgStore) RefreshDevSession(ctx context.Context, appID string, expiresAt
 	return a, nil
 }
 
+// RefreshPRPreview renews a pull-request preview lease and reopens it. The
+// positive PR-number guard keeps this path separate from developer sessions.
+func (s *PgStore) RefreshPRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2, preview_expires_at = $3
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) > 0
+		  and status <> 'deleted'
+		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
 // StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961 leaf 3)
 // records that the one-click PR comment destroy hint was posted
 // to GitHub for this preview row. githubd's previewCommentOnce

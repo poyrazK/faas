@@ -1687,6 +1687,9 @@ type Store interface {
 	// preview rows with preview_pr_number=0; the implementation must refuse
 	// ordinary PR previews and production apps.
 	RefreshDevSession(ctx context.Context, appID string, expiresAt time.Time) (App, error)
+	// RefreshPRPreview renews a pull-request preview lease and restores its
+	// serving state to open. It refuses developer previews and production apps.
+	RefreshPRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961
 	// leaf 3) records that the one-click PR comment destroy hint
 	// was posted to GitHub for this preview row. githubd's

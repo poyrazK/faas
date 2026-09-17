@@ -3613,6 +3613,23 @@ func (m *MemStore) RefreshDevSession(_ context.Context, appID string, expiresAt 
 	return a, nil
 }
 
+// RefreshPRPreview is the in-memory mirror of PgStore.RefreshPRPreview.
+// Positive preview_pr_number distinguishes pull-request previews from
+// CLI-created developer sessions.
+func (m *MemStore) RefreshPRPreview(_ context.Context, appID string, expiresAt time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted {
+		return App{}, ErrNotFound
+	}
+	t := expiresAt
+	a.PreviewPrState = PreviewPrStateOpen
+	a.PreviewExpiresAt = &t
+	m.apps[appID] = a
+	return a, nil
+}
+
 // StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961 leaf 3)
 // is the MemStore mirror of PgStore.StampPreviewDestroyCommentedAt.
 // Preview-only by construction; production rows return

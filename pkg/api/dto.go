@@ -185,6 +185,14 @@ type CreateAppRequest struct {
 	OverflowNode *string `json:"overflow_node,omitempty"`
 }
 
+// CreatePreviewRequest provisions a pull-request preview for an existing app.
+// The preview gets the stable slug pr-{pr_number}-{parent_slug}; source bytes
+// are supplied separately through the source-ref deployment endpoint.
+type CreatePreviewRequest struct {
+	PRNumber int `json:"pr_number"`
+	TTLHours int `json:"ttl_hours,omitempty"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.

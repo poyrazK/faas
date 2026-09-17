@@ -3765,6 +3765,43 @@ paths:
                 example: {"type":"https://gregale.dev/docs/errors/preview-not-found","code":"preview_not_found","title":"Preview not found","detail":"the slug does not identify a preview app; use DELETE /v1/apps/{slug} to destroy a production app","status":404}
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/previews:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [previews]
+      operationId: createPreview
+      summary: Provision or reopen a pull-request preview app.
+      description: |
+        Creates the stable `pr-{N}-{parent_slug}` preview environment for a
+        production app. The operation is idempotent for the same pull request
+        and returns the app metadata; deploy source separately with
+        `POST /v1/apps/{slug}/deployments/source-ref`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePreviewRequest' }
+      responses:
+        '201':
+          description: Preview environment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '200':
+          description: Existing preview environment returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/dev/sessions/{project}:
     parameters:
       - name: project
@@ -19304,6 +19341,23 @@ components:
           description: "Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false). Pro/Scale only."
           type: boolean
           example: false
+
+    CreatePreviewRequest:
+      description: Pull-request preview provisioning payload. Source is deployed separately after the preview app is created.
+      type: object
+      required: [pr_number]
+      properties:
+        pr_number:
+          type: integer
+          minimum: 1
+          description: Pull-request number used to derive the stable preview slug pr-{N}-{parent_slug}.
+          example: 42
+        ttl_hours:
+          type: integer
+          minimum: 1
+          maximum: 720
+          default: 168
+          description: Preview lease duration. The server defaults to 168 hours and caps it at 30 days.
 
     UpsertDevSessionRequest:
       description: Application shape and opaque local identity for a CLI-managed developer environment.

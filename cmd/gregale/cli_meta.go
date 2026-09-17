@@ -817,6 +817,18 @@ var cliCommands = []cliCommand{
 		DocSlug: "preview",
 		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
 		Subcommands: []cliSub{
+			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Flags: []cliFlag{
+				{Name: "app", Short: "parent app slug (defaults to the linked app)", Value: "slug"},
+				{Name: "repo", Short: "GitHub repository OWNER/NAME", Req: true, Value: "OWNER/NAME"},
+				{Name: "ref", Short: "branch, tag, or commit SHA", Req: true, Value: "REF"},
+				{Name: "pr-number", Short: "pull-request number", Req: true, Value: "N"},
+				{Name: "ttl-hours", Short: "preview lease in hours (default 168)", Value: "HOURS"},
+				{Name: "wait", Short: "wait for the deployment to become live (default)"},
+				{Name: "no-wait", Short: "return after the deployment is queued"},
+				{Name: "timeout", Short: "deployment wait timeout in seconds", Value: "SECONDS"},
+				{Name: "idempotency-key", Short: "stable retry key", Value: "KEY"},
+				{Name: "open", Short: "open the preview URL after a successful create"},
+			}},
 			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},

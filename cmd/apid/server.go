@@ -1307,6 +1307,7 @@ func (s *server) handler() http.Handler {
 	// loopback metrics listener; see metricsDiscoveryHandler.
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createApp))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createPreview))))))
 	// `gregale dev`: one stable, expiring preview app per account/project.
 	// Source bytes still flow through the normal deployment endpoints; these
 	// routes only own the developer-session lease.
