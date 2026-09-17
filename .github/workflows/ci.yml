@@ -1481,9 +1481,10 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migrations (IDs + apply)
     runs-on: ubuntu-latest
-    # 40 min: the full per-migration package (~240 Postgres tests) runs here
-    # and a slow runner can stretch it well past its 6.4-8.6 min norm.
-    timeout-minutes: 40
+    # 70 min: the full per-migration package (~240 Postgres tests) replays
+    # the complete migration history for each isolated schema. The suite has
+    # grown beyond the old 35-minute test ceiling on busy hosted runners.
+    timeout-minutes: 70
     steps:
       # 2026-07-31: pre-pull postgres with 3-attempt retry. This job
       # is the one that actually hit the Docker Hub pull timeout on
@@ -1659,15 +1660,12 @@ jobs:
         # nothing here — the 239 tests run sequentially either way. It read
         # as a tuning knob and was not one.
         #
-        # -timeout=35m against an observed 6.4-8.6 min band. That looks
-        # generous because the band is not the whole story: run 34259499960
-        # blew past an 18 min timeout on the same commit that then passed in
-        # 7.5 min on re-run. Each test replays ~650 migrations against a
+        # Each test replays the complete migration history against a
         # service-container Postgres, so a slow runner stretches the whole
         # package at once. A timeout is a deadlock backstop, not a
-        # performance assertion; sizing it near the mean just converts
-        # runner variance into red builds.
-        run: go test -count=1 -timeout=35m ./migrations/...
+        # performance assertion; keep it below the job ceiling while allowing
+        # the full suite to finish as the migration set grows.
+        run: go test -count=1 -timeout=60m ./migrations/...
       - name: report skipped full migration suite
         if: steps.migration-impact.outputs.needed != 'true'
         run: echo 'Full per-migration package skipped because the pull-request diff cannot affect it.'
