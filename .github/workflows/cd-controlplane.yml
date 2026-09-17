@@ -546,6 +546,12 @@ jobs:
               "$release_dir/host-config/outboundd.toml" \
               /etc/faas/outboundd.toml
           fi
+
+          # APID opens the OCI-backed SBOM store during startup. The cache
+          # root is host state and may not exist on control-only nodes, while
+          # /var/lib/faas itself is intentionally not group-writable.
+          install -d -o faas-apid -g faas -m 2770 /var/lib/faas/cache
+
           install -d -o root -g root -m 0700 /etc/faas/secrets/outboundd
           outbound_env="$(mktemp /etc/faas/secrets/outboundd/.outboundd.env.XXXXXX)"
           trap 'rm -f "$outbound_env"' EXIT
