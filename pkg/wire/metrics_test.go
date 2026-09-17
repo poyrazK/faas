@@ -2121,6 +2121,23 @@ func TestOpsMetrics_ObserveESMLag(t *testing.T) {
 	nilM.ObserveESMLag("kafka", "0", 1.0) // must not panic
 }
 
+func TestOpsMetrics_ObserveESMConsumerLag(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.ObserveESMConsumerLag("kafka", "0", 6, 2.5)
+	m.ObserveESMConsumerLag("nats", "", 3, 1)
+	m.ObserveESMConsumerLag("kafka", "0", -1, 1) // no-op
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_esm_consumer_lag_messages{shard="0",source="kafka"} 6`,
+		`schedd_esm_consumer_lag_age_seconds{shard="0",source="kafka"} 2.5`,
+		`schedd_esm_consumer_lag_messages{shard="_agg",source="nats"} 3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing consumer lag metric %q in:\n%s", want, body)
+		}
+	}
+}
+
 // TestOpsMetrics_ObserveESMRecordOutcome pins the queue-consumer outcome
 // counters and processing histogram. The closed outcome guard prevents a
 // malformed gateway status from creating an unbounded Prometheus series.

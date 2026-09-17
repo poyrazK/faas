@@ -437,7 +437,12 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	l.observeESMPoll(t.Kind, wire.ESMPollOutcomeSuccess)
 	l.observeESMRecords(t.Kind, len(batch))
 	for _, rec := range batch {
-		l.observeESMLag(t.Kind, shardKeyFor(rec, t.Kind), time.Since(rec.ReceivedAt).Seconds())
+		shard := shardKeyFor(rec, t.Kind)
+		ageSeconds := time.Since(rec.ReceivedAt).Seconds()
+		l.observeESMLag(t.Kind, shard, ageSeconds)
+		if lagMessages, ok := consumerLagFor(rec, t.Kind); ok {
+			l.observeESMConsumerLag(t.Kind, shard, lagMessages, ageSeconds)
+		}
 	}
 
 	// 4. Persist polled records before applying terminal policy. This ordering
@@ -1286,6 +1291,13 @@ func (l *Loop) observeESMRecordProcessing(source string, seconds float64) {
 	l.ops.ObserveESMRecordProcessing(source, seconds)
 }
 
+func (l *Loop) observeESMConsumerLag(source, shard string, messages int64, ageSeconds float64) {
+	if l.ops == nil {
+		return
+	}
+	l.ops.ObserveESMConsumerLag(source, shard, messages, ageSeconds)
+}
+
 func (l *Loop) observeESMRecordProcessingBatch(source string, records []sqlc.TriggerRecord) {
 	for _, record := range records {
 		if record.ReceivedAt.Valid {
@@ -1341,6 +1353,40 @@ func shardKeyFor(rec SourceRecord, kind string) string {
 		return "_agg"
 	}
 	return key
+}
+
+// consumerLagFor extracts a broker-native lag sample when the poller exposes
+// a high-water mark. Kafka is the first source with that information; other
+// brokers continue to use the existing per-record age histogram until their
+// native watermark APIs are wired.
+func consumerLagFor(rec SourceRecord, kind string) (int64, bool) {
+	if kind != string(api.TriggerKindKafka) || rec.Metadata == nil {
+		return 0, false
+	}
+	offset, okOffset := numericMetadataInt64(rec.Metadata["offset"])
+	high, okHigh := numericMetadataInt64(rec.Metadata["high_water_mark"])
+	if !okOffset || !okHigh || high <= offset {
+		return 0, false
+	}
+	return high - offset - 1, true
+}
+
+func numericMetadataInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), n >= 0 && n == float64(int64(n))
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // classifyDLQReason maps the gateway's per-record outcome onto

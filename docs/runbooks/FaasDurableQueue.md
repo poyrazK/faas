@@ -7,6 +7,10 @@ The schedd publishes bounded per-app gauges for the durable queue:
 - `schedd_queue_oldest_age_seconds` is the age of the oldest pending item.
 - `schedd_queue_dead_letter` is the terminal dead-letter count.
 
+Kafka bindings also publish `schedd_esm_consumer_lag_messages` and
+`schedd_esm_consumer_lag_age_seconds` by bounded source shard. These are
+broker-native lag snapshots, distinct from the dispatch latency histogram.
+
 `FaasDurableQueueStalled` means work is present but the oldest pending item
 has been waiting for more than five minutes. Check queue-depth scaling,
 worker admission capacity, and the schedd lease-recovery log. A non-zero
@@ -18,13 +22,17 @@ dead-letter endpoint, fix the worker error, then replay deliberately.
 `FaasDurableQueueStalled` means work is present but the oldest pending item
 has waited more than five minutes. `FaasDurableQueueDeadLetters` means one or
 more invocations exhausted their retry budget and reached the terminal state.
+`FaasBrokerConsumerLagHigh` means a broker high-water mark is more than 1,000
+messages ahead of the schedd consumer.
 
 ## Check
 
 Inspect the app's queue depth, in-flight leases, and oldest age together.
 Check worker admission capacity, queue-depth autoscaling decisions, and
 schedd lease-recovery logs. For dead letters, inspect the queue dead-letter
-endpoint and the recorded last error before attempting a replay.
+endpoint and the recorded last error before attempting a replay. For broker
+lag, check the binding's group/partition health, retry rates, and broker
+connectivity.
 
 ## Recover
 

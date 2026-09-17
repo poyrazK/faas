@@ -357,6 +357,31 @@ func TestShardKeyFor_NilMetadata(t *testing.T) {
 	}
 }
 
+func TestConsumerLagFor_KafkaHighWaterMark(t *testing.T) {
+	rec := SourceRecord{Metadata: map[string]any{
+		"offset":          int64(40),
+		"high_water_mark": int64(47),
+	}}
+	if got, ok := consumerLagFor(rec, string(api.TriggerKindKafka)); !ok || got != 6 {
+		t.Fatalf("consumerLagFor = %d, %v; want 6, true", got, ok)
+	}
+}
+
+func TestConsumerLagFor_UnsupportedOrMalformed(t *testing.T) {
+	cases := []SourceRecord{
+		{Metadata: map[string]any{"offset": int64(1)}},
+		{Metadata: map[string]any{"offset": int64(5), "high_water_mark": int64(5)}},
+	}
+	for _, rec := range cases {
+		if got, ok := consumerLagFor(rec, string(api.TriggerKindKafka)); ok || got != 0 {
+			t.Fatalf("consumerLagFor(%v) = %d, %v; want 0, false", rec.Metadata, got, ok)
+		}
+	}
+	if got, ok := consumerLagFor(cases[0], string(api.TriggerKindNATS)); ok || got != 0 {
+		t.Fatalf("non-kafka consumerLagFor = %d, %v; want 0, false", got, ok)
+	}
+}
+
 // --- classifyDLQReason -------------------------------------------
 
 func TestClassifyDLQReason_CodeBranches(t *testing.T) {

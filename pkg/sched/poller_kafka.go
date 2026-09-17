@@ -366,9 +366,10 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			hdrs[h.Key] = string(h.Value)
 		}
 		meta := map[string]any{
-			"topic":     msg.Topic,
-			"partition": msg.Partition,
-			"offset":    msg.Offset,
+			"topic":           msg.Topic,
+			"partition":       msg.Partition,
+			"offset":          msg.Offset,
+			"high_water_mark": msg.HighWaterMark,
 		}
 		seqStr := fmt.Sprintf("%d-%d-%d", msg.Partition, msg.Offset, msg.HighWaterMark)
 		out = append(out, SourceRecord{

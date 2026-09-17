@@ -3265,3 +3265,14 @@ groups:
           summary: "Durable queue has dead letters for app {{ $labels.app }}"
           description: "App {{ $labels.app }} has {{ $value }} durable queue invocation(s) in the terminal dead-letter state. Inspect the queue dead-letter API and replay only after correcting the worker failure."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"
+      - alert: FaasBrokerConsumerLagHigh
+        expr: schedd_esm_consumer_lag_messages{source!="queue"} > 1000
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: durable_queue
+        annotations:
+          summary: "Broker consumer lag is high for {{ $labels.source }} shard {{ $labels.shard }}"
+          description: "The schedd consumer is at least 1,000 messages behind the broker high-water mark for source {{ $labels.source }} shard {{ $labels.shard }} for ten minutes. Check the binding's worker capacity, retry rate, and broker connectivity before increasing concurrency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"

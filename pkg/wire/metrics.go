@@ -1843,7 +1843,12 @@ type OpsMetrics struct {
 	// the bounded source label, keeping queue latency observable without
 	// putting app or trigger IDs into Prometheus labels.
 	esmRecordProcessingSeconds *prometheus.HistogramVec
-	queue                      *queueMetrics
+	// esmConsumerLagMessages and esmConsumerLagAgeSeconds are current
+	// broker-native lag snapshots. They are labelled only by the closed
+	// source vocabulary and the bounded shard label used by the dispatcher.
+	esmConsumerLagMessages   *prometheus.GaugeVec
+	esmConsumerLagAgeSeconds *prometheus.GaugeVec
+	queue                    *queueMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -4131,6 +4136,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			1, 2.5, 5, 10, 30, 60, 120,
 		},
 	}, []string{"source"})
+	esmConsumerLagMessages := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_esm_consumer_lag_messages",
+		Help: "Current broker-native consumer lag in messages, labelled by source and bounded shard. Sources without a broker high-water mark leave this signal unchanged.",
+	}, []string{"source", "shard"})
+	esmConsumerLagAgeSeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_esm_consumer_lag_age_seconds",
+		Help: "Age in seconds of the newest broker record represented by the current consumer lag sample, labelled by source and bounded shard.",
+	}, []string{"source", "shard"})
 	esmRecordOutcomeClosedSet := []string{"succeeded", "retry", "dead_letter"}
 	for _, source := range esmSourceClosedSet {
 		for _, outcome := range esmOutcomeClosedSet {
@@ -4141,12 +4154,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			esmRecordsOutcomeTotal.WithLabelValues(source, outcome)
 		}
 		esmRecordProcessingSeconds.WithLabelValues(source)
+		esmConsumerLagMessages.WithLabelValues(source, "_agg")
+		esmConsumerLagAgeSeconds.WithLabelValues(source, "_agg")
 		// Pre-instantiate the `_agg` bucket so the histogram
 		// surfaces in /metrics from boot. The 32-bucket cap
 		// lives in dispatch_triggers.go (commit 9 wiring).
 		esmLagSeconds.WithLabelValues(source, "_agg")
 	}
-	commonCollectors = append(commonCollectors, esmPollsTotal, esmRecordsConsumedTotal, esmLagSeconds, esmRecordsOutcomeTotal, esmRecordProcessingSeconds)
+	commonCollectors = append(commonCollectors, esmPollsTotal, esmRecordsConsumedTotal, esmLagSeconds, esmRecordsOutcomeTotal, esmRecordProcessingSeconds, esmConsumerLagMessages, esmConsumerLagAgeSeconds)
 
 	// PR-#TBD / C5 — operator-action observability layer
 	// (PR #1106 P2d follow-on). Four new series feed the
@@ -4964,6 +4979,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		esmLagSeconds:                                         esmLagSeconds,
 		esmRecordsOutcomeTotal:                                esmRecordsOutcomeTotal,
 		esmRecordProcessingSeconds:                            esmRecordProcessingSeconds,
+		esmConsumerLagMessages:                                esmConsumerLagMessages,
+		esmConsumerLagAgeSeconds:                              esmConsumerLagAgeSeconds,
 		queue:                                                 queue,
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
@@ -9636,6 +9653,22 @@ func (m *OpsMetrics) ObserveESMRecordProcessing(source string, seconds float64) 
 		return
 	}
 	m.esmRecordProcessingSeconds.WithLabelValues(source).Observe(seconds)
+}
+
+// ObserveESMConsumerLag records the latest broker-native lag snapshot. The
+// dispatcher supplies a bounded shard key; invalid or negative samples are
+// dropped so a broker clock/offset regression cannot poison alerting.
+func (m *OpsMetrics) ObserveESMConsumerLag(source, shard string, messages int64, ageSeconds float64) {
+	if m == nil || m.esmConsumerLagMessages == nil || !isESMSource(source) || messages < 0 || ageSeconds < 0 || math.IsNaN(ageSeconds) || math.IsInf(ageSeconds, 0) {
+		return
+	}
+	if shard == "" {
+		shard = "_agg"
+	}
+	m.esmConsumerLagMessages.WithLabelValues(source, shard).Set(float64(messages))
+	if m.esmConsumerLagAgeSeconds != nil {
+		m.esmConsumerLagAgeSeconds.WithLabelValues(source, shard).Set(ageSeconds)
+	}
 }
 
 // ESMPollCounterForTest returns the pre-instantiated Prometheus
