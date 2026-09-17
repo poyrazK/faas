@@ -190,7 +190,7 @@ func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
 			sourceDeployment.ID, mirrorDeployment.ID)
 	}
 
-	if got := waitForNormalPathResponse(t, f.h, f.host, "normal-path:mirror-source\n", 10*time.Second); string(got) != "normal-path:mirror-source\n" {
+	if got := waitForNormalPathTrafficResponse(t, f, "normal-path:mirror-source\n", 10*time.Second); string(got) != "normal-path:mirror-source\n" {
 		t.Fatalf("source response=%q, want source deployment response", got)
 	}
 
