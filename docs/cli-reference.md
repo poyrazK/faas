@@ -62,6 +62,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
+| [`realtime`](#realtime) | Manage managed realtime endpoints and rotate static bearer credentials |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
@@ -1553,6 +1554,25 @@ Set a registry credential
 ### registry rm
 
 Remove a registry credential
+
+
+## realtime
+
+Manage managed realtime endpoints and rotate static bearer credentials
+
+`gregale realtime [<subcommand>]`
+
+### realtime list
+
+List managed realtime endpoints
+
+### realtime get
+
+Show one endpoint and safe auth-rotation status
+
+### realtime auth
+
+Rotate, finalize, or inspect static bearer auth (auth rotate|finalize|status)
 
 
 ## rollback
