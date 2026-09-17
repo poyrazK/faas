@@ -929,9 +929,7 @@ show edit-to-live timings and SLO guidance
 
 ### dev setup
 
-Preflight a project and prepare the first developer environment
-
-`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--start] [--once] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>]`
+preflight a project and prepare the first developer environment
 
 | Flag | Meaning | |
 |---|---|---|
@@ -939,10 +937,10 @@ Preflight a project and prepare the first developer environment
 | `--name <PROJECT>` | developer-session project name |  |
 | `--env-file <PATH>` | validate and sync developer secrets |  |
 | `--start` | start after preflight |  |
-| `--once` | sync once and exit; requires `--start` |  |
-| `--no-logs` | do not attach runtime logs; requires `--start` |  |
-| `--open` | open the verified URL; requires `--start` |  |
-| `--postgres` | provision an isolated PostgreSQL database when starting |  |
+| `--once` | sync once and exit |  |
+| `--no-logs` | do not attach runtime logs |  |
+| `--open` | open the verified URL |  |
+| `--postgres` | provision an isolated PostgreSQL database |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 
 
