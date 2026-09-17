@@ -231,6 +231,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
+| `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
 | `FAAS_PADDLE_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_SANDBOX` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
@@ -276,6 +277,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_NETWORKS` | schedd | `default` |  |  | `` | JSON array of operator-managed private networks consumed by the provider-neutral reconciler |
 | `FAAS_PRIVATE_NETWORK_ENABLED` | schedd, shared | `default` |  |  | `` | dark-launch switch for provider-neutral private-network attachment intent; disabled by default until a connector is deployed |
 | `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED` | apid, schedd, shared | `default` |  |  | `` | dark-launch switch for Gregale-owned private network CRUD and attachment addresses; disabled by default until the fabric is deployed |
+| `FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED` | vmmd | `default` |  |  | `` | opt-in node-to-node VXLAN over the operator-managed encrypted overlay; disabled until every regional peer is configured |
+| `FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE` | vmmd | `default` |  |  | `` | optional underlay interface for Gregale private-network VXLAN; falls back to FAAS_OVERLAY_INTERFACE |
+| `FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS` | vmmd | `default` |  |  | `` | comma-separated IPv4 overlay addresses for the other compute nodes in this region |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |

@@ -562,6 +562,49 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("config", "listen_addr", listenTarget, "target_url", targetURL, "socket", cfg.SocketPath, "kernel_key", cfg.KernelKey,
 		"kernel_path_legacy", cfg.KernelPath,
 		"metrics_addr", cfg.MetricsAddr)
+	var privateNetworkTransport fcvm.PrivateNetworkTransportConfig
+	if cfg.ComputeNode.PrivateNetworkTransportEnabled {
+		transportIP := strings.TrimSpace(cfg.ComputeNode.OverlayIP)
+		if transportIP == "" {
+			detect := deps.detectOverlayIP
+			if detect == nil {
+				detect = func(ctx context.Context) (string, error) {
+					return defaultDetectOverlayIP(ctx, cfg.ComputeNode)
+				}
+			}
+			var detectErr error
+			transportIP, detectErr = detect(ctx)
+			if detectErr != nil {
+				return fmt.Errorf("vmmd: private network transport overlay IP detection: %w", detectErr)
+			}
+		}
+		localAddress, parseErr := netip.ParseAddr(strings.TrimSpace(transportIP))
+		if parseErr != nil || !localAddress.Is4() {
+			return fmt.Errorf("vmmd: private network transport overlay_ip %q must be an IPv4 address", transportIP)
+		}
+		transportInterface := strings.TrimSpace(cfg.ComputeNode.PrivateNetworkTransportInterface)
+		if transportInterface == "" {
+			transportInterface = strings.TrimSpace(cfg.ComputeNode.OverlayInterface)
+		}
+		peers := make([]netip.Addr, 0, len(cfg.ComputeNode.PrivateNetworkTransportPeers))
+		for _, raw := range cfg.ComputeNode.PrivateNetworkTransportPeers {
+			peer, parseErr := netip.ParseAddr(strings.TrimSpace(raw))
+			if parseErr != nil || !peer.Is4() {
+				return fmt.Errorf("vmmd: private network transport peer %q must be an IPv4 address", raw)
+			}
+			peers = append(peers, peer)
+		}
+		privateNetworkTransport = fcvm.PrivateNetworkTransportConfig{
+			Enabled:          true,
+			OverlayInterface: transportInterface,
+			LocalAddress:     localAddress,
+			PeerAddresses:    peers,
+		}
+		log.Info("vmmd: private network transport enabled",
+			"overlay_interface", transportInterface,
+			"local_address", localAddress,
+			"peer_count", len(peers))
+	}
 
 	// Slice-3 / ADR-053: the node signing key is loaded once at
 	// startup and reused in two places — the per-node
@@ -861,6 +904,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		cbm,
 	).WithFrameworkReady(frm).
 		WithCaptureRunner(wire.ExecRunner{}).
+		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
 		SetWakePhaseMetrics(wpm).
 		// Configure the owner RPC after loading scheduler TLS, before serving.

@@ -28,6 +28,37 @@ type privateNetworkRouterFake struct {
 	errByNode map[string]error
 }
 
+type privateNetworkFabricCall struct {
+	nodeID    string
+	accountID string
+	networkID string
+	region    string
+	cidr      netip.Prefix
+}
+
+type privateNetworkFabricRouterFake struct {
+	mu    sync.Mutex
+	calls []privateNetworkFabricCall
+}
+
+func (f *privateNetworkFabricRouterFake) ReconcilePrivateNetworkFabric(_ context.Context, nodeID, accountID, networkID, region string, cidr netip.Prefix) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, privateNetworkFabricCall{
+		nodeID: nodeID, accountID: accountID, networkID: networkID,
+		region: region, cidr: cidr,
+	})
+	return nil
+}
+
+func (f *privateNetworkFabricRouterFake) callsSnapshot() []privateNetworkFabricCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]privateNetworkFabricCall, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
 func (f *privateNetworkRouterFake) UpdatePrivateNetwork(_ context.Context, nodeID, appID string, cidrs []netip.Prefix) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, privateNetworkRouteCall{
@@ -147,6 +178,48 @@ func TestPrivateNetworkRouteApplierReportsPerNodeHealth(t *testing.T) {
 	}
 	if report.Nodes[1].Detail != wantErr.Error() {
 		t.Fatalf("node-b detail = %q, want %q", report.Nodes[1].Detail, wantErr)
+	}
+}
+
+func TestPrivateNetworkFabricApplierPreparesActiveRegionalNodesWithoutLiveInstances(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	region := "fra1"
+	otherRegion := "hel1"
+	for _, node := range []state.ComputeNode{
+		{ID: "node-fra", Name: "node-fra", TargetURL: "tcp://10.42.0.2:50051", VPCPUs: 8, MemMB: 8192, MaxConcurrency: 4, AdmissionCeilingMB: 4096, Active: true, Region: &region},
+		{ID: "node-hel", Name: "node-hel", TargetURL: "tcp://10.42.0.3:50051", VPCPUs: 8, MemMB: 8192, MaxConcurrency: 4, AdmissionCeilingMB: 4096, Active: true, Region: &otherRegion},
+		{ID: "node-legacy", Name: "node-legacy", TargetURL: "tcp://10.42.0.4:50051", VPCPUs: 8, MemMB: 8192, MaxConcurrency: 4, AdmissionCeilingMB: 4096, Active: true},
+	} {
+		if _, err := store.CreateComputeNode(ctx, node); err != nil {
+			t.Fatalf("CreateComputeNode(%s): %v", node.Name, err)
+		}
+	}
+
+	router := &privateNetworkFabricRouterFake{}
+	applier := NewPrivateNetworkFabricApplier(store, router, nil)
+	cidr := netip.MustParsePrefix("10.42.0.0/16")
+	_, err := applier.ApplyWithReport(ctx, state.AppPrivateNetworkAttachment{
+		AccountID: "acct-private", AppID: "app-private", NetworkID: "net-private",
+		Region: region, CIDRs: []netip.Prefix{cidr}, Status: api.PrivateNetworkAttachmentStatusReady,
+	})
+	if err != nil {
+		t.Fatalf("ApplyWithReport: %v", err)
+	}
+
+	calls := router.callsSnapshot()
+	got := make([]string, 0, len(calls))
+	for _, call := range calls {
+		got = append(got, call.nodeID)
+		if call.accountID != "acct-private" || call.networkID != "net-private" || call.region != region || call.cidr != cidr {
+			t.Errorf("fabric call = %+v, want attachment identity and CIDR", call)
+		}
+	}
+	sort.Strings(got)
+	// node-legacy has no region metadata and remains eligible during fleet
+	// rollout; node-hel and the single-box local node are excluded by region.
+	if want := []string{"node-fra", "node-legacy"}; !equalStrings(got, want) {
+		t.Fatalf("fabric nodes = %v, want %v", got, want)
 	}
 }
 

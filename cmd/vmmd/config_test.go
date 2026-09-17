@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,38 @@ func TestLoadConfigRejectsInvalidPublicIface(t *testing.T) {
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err == nil || !strings.Contains(err.Error(), "public_iface") {
 		t.Fatalf("LoadConfig error = %v, want public_iface validation error", err)
+	}
+}
+
+func TestLoadConfigPrivateNetworkTransportEnvOverlay(t *testing.T) {
+	t.Setenv("FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED", "true")
+	t.Setenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE", "tailscale0")
+	t.Setenv("FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS", "100.64.0.12, 100.64.0.11")
+	t.Setenv("FAAS_OVERLAY_IP", "100.64.0.10")
+
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ComputeNode.PrivateNetworkTransportEnabled {
+		t.Fatal("transport enabled = false, want true")
+	}
+	if cfg.ComputeNode.PrivateNetworkTransportInterface != "tailscale0" {
+		t.Fatalf("transport interface = %q, want tailscale0", cfg.ComputeNode.PrivateNetworkTransportInterface)
+	}
+	if got, want := cfg.ComputeNode.PrivateNetworkTransportPeers, []string{"100.64.0.12", "100.64.0.11"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("transport peers = %v, want %v", got, want)
+	}
+	if cfg.ComputeNode.OverlayIP != "100.64.0.10" {
+		t.Fatalf("overlay IP = %q, want 100.64.0.10", cfg.ComputeNode.OverlayIP)
+	}
+}
+
+func TestLoadConfigRejectsInvalidPrivateNetworkTransportEnabled(t *testing.T) {
+	t.Setenv("FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED", "sometimes")
+	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err == nil || !strings.Contains(err.Error(), "FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED") {
+		t.Fatalf("LoadConfig error = %v, want named transport-enabled validation error", err)
 	}
 }
 

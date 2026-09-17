@@ -283,6 +283,17 @@ type ComputeNodeConfig struct {
 	// auto-detect behavior. Operators with multiple NICs (LAN +
 	// tail/wg) on a single host use this to disambiguate.
 	OverlayInterface string `toml:"overlay_interface"`
+	// PrivateNetworkTransportEnabled turns on the Gregale-owned node-to-node
+	// VXLAN seam. It is disabled by default until the operator has provisioned
+	// a shared encrypted overlay for every node in the region.
+	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
+	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
+	// packets. Empty falls back to OverlayInterface, which keeps the common
+	// Tailscale/WireGuard deployment concise.
+	PrivateNetworkTransportInterface string `toml:"private_network_transport_interface"`
+	// PrivateNetworkTransportPeers lists the IPv4 overlay addresses of the
+	// other compute nodes in this region. The local OverlayIP is excluded.
+	PrivateNetworkTransportPeers []string `toml:"private_network_transport_peers"`
 }
 
 // ResolveListenTarget returns the gRPC target the server should bind.
@@ -519,6 +530,22 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_OVERLAY_INTERFACE"); v != "" {
 		c.ComputeNode.OverlayInterface = v
 	}
+	if v := os.Getenv("FAAS_OVERLAY_IP"); v != "" {
+		c.ComputeNode.OverlayIP = v
+	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED"); v != "" {
+		parsed, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.PrivateNetworkTransportEnabled = parsed
+	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
+		c.ComputeNode.PrivateNetworkTransportInterface = v
+	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS"); v != "" {
+		c.ComputeNode.PrivateNetworkTransportPeers = splitNonEmpty(v)
+	}
 	// Production capacity is host-specific. The manifest renderer cannot own
 	// these values because one fleet can contain different machine sizes, so
 	// node_join derives them from Ansible facts and publishes this drop-in
@@ -639,6 +666,22 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: [compute_node].public_iface %q invalid: %w", iface, err)
 		}
 		c.ComputeNode.PublicIface = iface
+	}
+	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
+		if err := validatePublicIface(iface); err != nil {
+			return nil, fmt.Errorf("vmmd: [compute_node].private_network_transport_interface %q invalid: %w", iface, err)
+		}
+		c.ComputeNode.PrivateNetworkTransportInterface = iface
+	}
+	for i, raw := range c.ComputeNode.PrivateNetworkTransportPeers {
+		addr, perr := netip.ParseAddr(strings.TrimSpace(raw))
+		if perr != nil || !addr.Is4() {
+			return nil, fmt.Errorf("vmmd: private_network_transport_peers[%d] %q must be an IPv4 address", i, raw)
+		}
+		c.ComputeNode.PrivateNetworkTransportPeers[i] = addr.String()
+	}
+	if c.ComputeNode.PrivateNetworkTransportEnabled && strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface) == "" && strings.TrimSpace(c.ComputeNode.OverlayInterface) == "" {
+		return nil, fmt.Errorf("vmmd: private network transport requires private_network_transport_interface or overlay_interface")
 	}
 	if len(c.ComputeNode.PrivateIngressCIDRs) > 0 && len(c.ComputeNode.PrivateIngressTCPPorts) == 0 {
 		return nil, fmt.Errorf("vmmd: private_ingress_cidrs requires private_ingress_tcp_ports")

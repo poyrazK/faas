@@ -61,6 +61,25 @@ failure keeps the attachment in `error` and is retried by the next sweep;
 successful nodes are still reported so operators can identify the unhealthy
 box without guessing from aggregate status.
 
+For multi-node Gregale networks, vmmd can add a provider-neutral VXLAN link
+over an operator-managed encrypted overlay (Tailscale, WireGuard, or another
+routable underlay). This is disabled by default and does not call DigitalOcean:
+
+```toml
+[compute_node]
+private_network_transport_enabled = true
+private_network_transport_interface = "tailscale0"
+private_network_transport_peers = ["100.64.0.11", "100.64.0.12"]
+overlay_ip = "100.64.0.10"
+```
+
+`FAAS_PRIVATE_NETWORK_TRANSPORT_*` environment variables provide the same
+overrides. vmmd derives a stable `gpx-*` link and VNI per account/network,
+installs static peer FDB entries, and removes the link before deleting the
+bridge. Every node in a region must use the same encrypted overlay and peer
+list; leave the flag off until the control-plane mTLS and underlay policy are
+validated.
+
 Legacy external-network attachments still use the operator-managed connector
 and are enabled in schedd with
 `FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,

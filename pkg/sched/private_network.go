@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -130,10 +131,11 @@ func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID 
 	return report, errors.Join(errs...)
 }
 
-// PrivateNetworkFabricApplier fans one Gregale network definition out to the
-// vmmds that own the app's live instances. Fabric setup runs before route
-// activation, so a node cannot be reported ready while its host bridge is
-// missing. External/provider attachments simply omit this applier.
+// PrivateNetworkFabricApplier fans one Gregale network definition out to every
+// active compute node in the network's region. The bridge is network state, not
+// workload state: provisioning it before the first wake removes the race where
+// a scale-to-zero app tries to attach a side-link to a bridge that has never
+// been created. External/provider attachments simply omit this applier.
 type PrivateNetworkFabricApplier struct {
 	store  state.Store
 	router PrivateNetworkFabricRouter
@@ -148,20 +150,16 @@ func NewPrivateNetworkFabricApplier(store state.Store, router PrivateNetworkFabr
 }
 
 func (a *PrivateNetworkFabricApplier) ApplyWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (privatenetwork.FabricApplyReport, error) {
-	rows, err := a.store.ListInstancesForApp(ctx, attachment.AppID)
+	rows, err := a.store.ActiveComputeNodes(ctx)
 	if err != nil {
 		return privatenetwork.FabricApplyReport{}, err
 	}
-	seen := make(map[string]struct{}, len(rows))
-	for _, ins := range rows {
-		if !state.IsLive(ins.State) || ins.NodeID == "" {
+	nodes := make([]string, 0, len(rows))
+	for _, node := range rows {
+		if strings.TrimSpace(node.ID) == "" || !fabricNodeInRegion(node, attachment.Region) {
 			continue
 		}
-		seen[ins.NodeID] = struct{}{}
-	}
-	nodes := make([]string, 0, len(seen))
-	for nodeID := range seen {
-		nodes = append(nodes, nodeID)
+		nodes = append(nodes, node.ID)
 	}
 	sort.Strings(nodes)
 	report := privatenetwork.FabricApplyReport{Nodes: make([]privatenetwork.RouteNodeObservation, 0, len(nodes))}
@@ -176,6 +174,19 @@ func (a *PrivateNetworkFabricApplier) ApplyWithReport(ctx context.Context, attac
 		report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusReady, Detail: "fabric bridge ready"})
 	}
 	return report, errors.Join(errs...)
+}
+
+// fabricNodeInRegion keeps a region-scoped network off unrelated compute
+// nodes. Older compute_nodes rows have no region; treating those rows as
+// eligible preserves the single-box/default-local contract while operators
+// roll out region metadata across an existing fleet.
+func fabricNodeInRegion(node state.ComputeNode, region string) bool {
+	want := strings.TrimSpace(region)
+	if want == "" || node.Region == nil {
+		return true
+	}
+	have := strings.TrimSpace(*node.Region)
+	return have == "" || have == want
 }
 
 func firstCIDR(cidrs []netip.Prefix) netip.Prefix {
