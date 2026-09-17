@@ -19579,6 +19579,17 @@ components:
           minimum: 5
           maximum: 86400
           example: 60
+        concurrency_overflow:
+          description: "Behavior when the app concurrency boundary is saturated. queue waits up to max_queue_wait_ms; drop returns 429 immediately. Empty uses queue."
+          type: string
+          enum: [queue, drop]
+          example: queue
+        max_queue_wait_ms:
+          description: "Maximum admission wait in milliseconds. 0 uses the plan default; capped at 120000."
+          type: integer
+          minimum: 0
+          maximum: 120000
+          example: 5000
 
     PublicAuthBlock:
       description: "Per-app public-URL auth write shape (issue #477 / ADR-077 + ADR-118). Sent on PATCH /v1/apps/{slug}; apid seals the basic_user + basic_pass into a single APP_BASIC_AUTH secretbox blob before persistence. The plaintext is never echoed on read (see PublicAuthStatus). For mode='ip_allowlist' (ADR-118), ip_allowlist carries the per-app CIDR allowlist (Pro 16 max, Scale 64 max — Free/Hobby → 403 plan_public_auth_ip_allowlist_not_allowed)."
