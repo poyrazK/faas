@@ -22,7 +22,7 @@ func TestWakeAdmissionPolicyForPlan(t *testing.T) {
 		wait     time.Duration
 		priority int
 	}{
-		{api.PlanFree, 16, 10 * time.Second, 1},
+		{api.PlanFree, 4, 10 * time.Second, 1},
 		{api.PlanHobby, 16, 30 * time.Second, 2},
 		{api.PlanPro, 64, 30 * time.Second, 3},
 		{api.PlanScale, 128, 30 * time.Second, 4},
@@ -49,6 +49,14 @@ func TestWakeAdmissionPolicyForAppOverrides(t *testing.T) {
 	drop := WakeAdmissionPolicyForApp(api.PlanPro, api.ConcurrencyOverflowDrop, 1250)
 	if drop.MaxWaiters != 1 || drop.MaxWait != 1250*time.Millisecond {
 		t.Fatalf("drop policy = %+v", drop)
+	}
+	wake := WakeAdmissionPolicyForAppWithWakeLimits(api.PlanPro, api.ConcurrencyOverflowQueue, 1250, 80, 45)
+	if wake.MaxWaiters != 80 || wake.MaxWait != 45*time.Second {
+		t.Fatalf("wake policy = %+v", wake)
+	}
+	clamped := WakeAdmissionPolicyForAppWithWakeLimits(api.PlanFree, api.ConcurrencyOverflowQueue, 0, 999, 999)
+	if clamped.MaxWaiters != api.WakeQueueMaxDepthForPlan(api.PlanFree) || clamped.MaxWait != api.WakeQueueMaxWaitSeconds*time.Second {
+		t.Fatalf("clamped wake policy = %+v", clamped)
 	}
 }
 

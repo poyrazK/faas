@@ -29,6 +29,8 @@ scaling:
   scale_in_cooldown_s: 60
   concurrency_overflow: queue # queue or drop
   max_queue_wait_ms: 2500 # 0 uses the plan default
+  wake_max_queue_depth: 32 # 0 uses the plan default; max 8x plan default
+  wake_max_queue_wait_seconds: 30 # 0 uses the plan default; max 60
 ```
 
 The CLI validates the shape and shows the nested policy in `gregale deploy
@@ -38,3 +40,7 @@ plan quotas, cooldown bounds, and workload compatibility.
 `concurrency_overflow: queue` keeps requests in the bounded admission queue;
 `drop` returns HTTP 429 when the app's concurrency boundary is saturated.
 `max_queue_wait_ms` overrides the plan wait budget and is bounded by the API.
+
+`wake_max_queue_depth` and `wake_max_queue_wait_seconds` independently bound
+the per-app cold-wake queue. Zero keeps the plan default; the depth override is
+limited to eight times the plan default and the wait override to 60 seconds.

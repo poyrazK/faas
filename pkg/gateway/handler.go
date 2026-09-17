@@ -111,6 +111,12 @@ type App struct {
 	ConcurrencyOverflow string
 	// MaxQueueWaitMS overrides the plan-derived wait budget for admission.
 	MaxQueueWaitMS int
+	// WakeMaxQueueDepth overrides the per-app cold-wake waiter cap. Zero uses
+	// the plan default.
+	WakeMaxQueueDepth int
+	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
+	// uses the plan default.
+	WakeMaxQueueWaitSeconds int
 	// AutoscaleTargetRPS is the configured per-instance request-rate target.
 	// The gateway uses it as an immediate burst signal while schedd remains the
 	// authority for admissions and sustained autoscaling decisions.
@@ -309,12 +315,19 @@ type App struct {
 }
 
 type concurrencyAdmissionConfig struct {
-	overflow       string
-	maxQueueWaitMS int
+	overflow             string
+	maxQueueWaitMS       int
+	wakeMaxQueueDepth    int
+	wakeMaxQueueWaitSecs int
 }
 
 func concurrencyConfigForApp(app App) concurrencyAdmissionConfig {
-	return concurrencyAdmissionConfig{overflow: app.ConcurrencyOverflow, maxQueueWaitMS: app.MaxQueueWaitMS}
+	return concurrencyAdmissionConfig{
+		overflow:             app.ConcurrencyOverflow,
+		maxQueueWaitMS:       app.MaxQueueWaitMS,
+		wakeMaxQueueDepth:    app.WakeMaxQueueDepth,
+		wakeMaxQueueWaitSecs: app.WakeMaxQueueWaitSeconds,
+	}
 }
 
 // DeclaredRoute is the gateway-local projection of an explicitly declared
@@ -4976,6 +4989,11 @@ func (h *Handler) SetWakeGateHook() {
 			h.metrics.SetQueueDepth(appID, accountID, depth)
 		}
 	}
+	h.gate.onPlanChange = func(appID, plan string, depth int) {
+		if h.metrics != nil {
+			h.metrics.SetWakeQueueDepth(appID, plan, depth)
+		}
+	}
 	h.gate.SetMetrics(h.metrics)
 }
 
@@ -7419,7 +7437,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 	if len(configs) > 0 {
 		config = configs[0]
 	}
-	policy := WakeAdmissionPolicyForApp(plan, config.overflow, config.maxQueueWaitMS)
+	policy := WakeAdmissionPolicyForAppWithWakeLimits(plan, config.overflow, config.maxQueueWaitMS, config.wakeMaxQueueDepth, config.wakeMaxQueueWaitSecs)
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
 			// max_concurrency is a ceiling for scheduler-driven scale-up,

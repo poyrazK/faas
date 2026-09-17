@@ -22,6 +22,9 @@ type WakeAdmissionPolicy struct {
 	MaxWaiters int
 	MaxWait    time.Duration
 	Priority   int
+	// Plan is carried only for per-app queue-depth metrics. It is empty for
+	// custom test policies and does not affect admission decisions.
+	Plan string
 }
 
 // WakeAdmissionPolicyForPlan returns the bounded cold-wake policy for plan.
@@ -29,15 +32,15 @@ type WakeAdmissionPolicy struct {
 func WakeAdmissionPolicyForPlan(plan api.Plan) WakeAdmissionPolicy {
 	switch plan {
 	case api.PlanFree:
-		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionFreeMaxWaiters, MaxWait: api.GatewayWakeAdmissionFreeMaxWait, Priority: api.GatewayWakeAdmissionFreePriority}
+		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionFreeMaxWaiters, MaxWait: api.GatewayWakeAdmissionFreeMaxWait, Priority: api.GatewayWakeAdmissionFreePriority, Plan: string(plan)}
 	case api.PlanHobby:
-		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionHobbyMaxWaiters, MaxWait: api.GatewayWakeAdmissionPaidMaxWait, Priority: api.GatewayWakeAdmissionHobbyPriority}
+		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionHobbyMaxWaiters, MaxWait: api.GatewayWakeAdmissionPaidMaxWait, Priority: api.GatewayWakeAdmissionHobbyPriority, Plan: string(plan)}
 	case api.PlanPro:
-		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionProMaxWaiters, MaxWait: api.GatewayWakeAdmissionPaidMaxWait, Priority: api.GatewayWakeAdmissionProPriority}
+		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionProMaxWaiters, MaxWait: api.GatewayWakeAdmissionPaidMaxWait, Priority: api.GatewayWakeAdmissionProPriority, Plan: string(plan)}
 	case api.PlanScale:
-		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionScaleMaxWaiters, MaxWait: api.GatewayWakeAdmissionPaidMaxWait, Priority: api.GatewayWakeAdmissionScalePriority}
+		return WakeAdmissionPolicy{MaxWaiters: api.GatewayWakeAdmissionScaleMaxWaiters, MaxWait: api.GatewayWakeAdmissionPaidMaxWait, Priority: api.GatewayWakeAdmissionScalePriority, Plan: string(plan)}
 	default:
-		return WakeAdmissionPolicy{MaxWaiters: 1, MaxWait: api.GatewayWakeAdmissionFreeMaxWait, Priority: api.GatewayWakeAdmissionFreePriority}
+		return WakeAdmissionPolicy{MaxWaiters: 1, MaxWait: api.GatewayWakeAdmissionFreeMaxWait, Priority: api.GatewayWakeAdmissionFreePriority, Plan: string(plan)}
 	}
 }
 
@@ -46,6 +49,18 @@ func WakeAdmissionPolicyForPlan(plan api.Plan) WakeAdmissionPolicy {
 // existing bounded waiter budget. Drop mode admits only the single wake
 // leader; followers receive a typed 429 outcome at the handler boundary.
 func WakeAdmissionPolicyForApp(plan api.Plan, overflow string, maxQueueWaitMS int) WakeAdmissionPolicy {
+	return wakeAdmissionPolicyForApp(plan, overflow, maxQueueWaitMS, 0, 0)
+}
+
+// WakeAdmissionPolicyForAppWithWakeLimits applies both the existing
+// concurrency admission override and the per-app cold-wake queue controls.
+// The wake-specific fields are intentionally independent so a customer can
+// keep a long VM-concurrency wait while bounding cold-wake fan-in more tightly.
+func WakeAdmissionPolicyForAppWithWakeLimits(plan api.Plan, overflow string, maxQueueWaitMS, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds int) WakeAdmissionPolicy {
+	return wakeAdmissionPolicyForApp(plan, overflow, maxQueueWaitMS, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds)
+}
+
+func wakeAdmissionPolicyForApp(plan api.Plan, overflow string, maxQueueWaitMS, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds int) WakeAdmissionPolicy {
 	p := WakeAdmissionPolicyForPlan(plan)
 	if overflow == api.ConcurrencyOverflowDrop {
 		p.MaxWaiters = 1
@@ -55,6 +70,18 @@ func WakeAdmissionPolicyForApp(plan api.Plan, overflow string, maxQueueWaitMS in
 			maxQueueWaitMS = api.MaxConcurrencyQueueWaitMS
 		}
 		p.MaxWait = time.Duration(maxQueueWaitMS) * time.Millisecond
+	}
+	if overflow != api.ConcurrencyOverflowDrop && wakeMaxQueueDepth > 0 {
+		if max := api.WakeQueueMaxDepthForPlan(plan); wakeMaxQueueDepth > max {
+			wakeMaxQueueDepth = max
+		}
+		p.MaxWaiters = wakeMaxQueueDepth
+	}
+	if wakeMaxQueueWaitSeconds > 0 {
+		if wakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
+			wakeMaxQueueWaitSeconds = api.WakeQueueMaxWaitSeconds
+		}
+		p.MaxWait = time.Duration(wakeMaxQueueWaitSeconds) * time.Second
 	}
 	return p
 }

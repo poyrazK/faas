@@ -3307,7 +3307,7 @@ const (
 	// A waiter costs no additional VM admission because WakeGate coalesces the
 	// whole app generation. Keep enough room for an ordinary first burst after
 	// snapshot invalidation instead of rejecting siblings behind the one boot.
-	GatewayWakeAdmissionFreeMaxWaiters  = 16
+	GatewayWakeAdmissionFreeMaxWaiters  = 4
 	GatewayWakeAdmissionHobbyMaxWaiters = 16
 	GatewayWakeAdmissionProMaxWaiters   = 64
 	GatewayWakeAdmissionScaleMaxWaiters = 128
@@ -3317,6 +3317,11 @@ const (
 	GatewayWakeAdmissionHobbyPriority   = 2
 	GatewayWakeAdmissionProPriority     = 3
 	GatewayWakeAdmissionScalePriority   = 4
+	// Wake queue overrides are intentionally bounded relative to the plan
+	// default so one app cannot reserve the entire gateway's single-flight
+	// waiter budget. A zero value means "use the plan default".
+	WakeQueueMaxDepthMultiplier = 8
+	WakeQueueMaxWaitSeconds     = 60
 	// MaxConcurrencyQueueWaitMS bounds the customer-controlled admission
 	// wait override. The zero value keeps the plan-derived default.
 	MaxConcurrencyQueueWaitMS = 120_000
@@ -4582,6 +4587,35 @@ func execCmd(name string, args ...string) ([]byte, error) {
 func LimitsFor(p Plan) (Limits, bool) {
 	l, ok := planLimits[p]
 	return l, ok
+}
+
+// WakeQueueDefaultsForPlan returns the per-app cold-wake waiter and wait
+// defaults. The values are kept beside the gateway admission constants so the
+// API validator, gateway, and CLI share one plan matrix.
+func WakeQueueDefaultsForPlan(p Plan) (maxDepth int, maxWait time.Duration, ok bool) {
+	switch p {
+	case PlanFree:
+		return GatewayWakeAdmissionFreeMaxWaiters, GatewayWakeAdmissionFreeMaxWait, true
+	case PlanHobby:
+		return GatewayWakeAdmissionHobbyMaxWaiters, GatewayWakeAdmissionPaidMaxWait, true
+	case PlanPro:
+		return GatewayWakeAdmissionProMaxWaiters, GatewayWakeAdmissionPaidMaxWait, true
+	case PlanScale:
+		return GatewayWakeAdmissionScaleMaxWaiters, GatewayWakeAdmissionPaidMaxWait, true
+	default:
+		return 1, GatewayWakeAdmissionFreeMaxWait, false
+	}
+}
+
+// WakeQueueMaxDepthForPlan is the largest customer-configurable waiter cap.
+// The zero value remains the plan default; callers should validate only
+// positive overrides.
+func WakeQueueMaxDepthForPlan(p Plan) int {
+	depth, _, ok := WakeQueueDefaultsForPlan(p)
+	if !ok {
+		depth = 1
+	}
+	return depth * WakeQueueMaxDepthMultiplier
 }
 
 // MustLimitsFor returns the limits for a plan and panics on an unknown plan.

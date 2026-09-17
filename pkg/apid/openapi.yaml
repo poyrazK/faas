@@ -19794,6 +19794,17 @@ components:
           minimum: 0
           maximum: 120000
           example: 5000
+        wake_max_queue_depth:
+          description: "Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default."
+          type: integer
+          minimum: 0
+          example: 32
+        wake_max_queue_wait_seconds:
+          description: "Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds."
+          type: integer
+          minimum: 0
+          maximum: 60
+          example: 30
 
     PublicAuthBlock:
       description: "Per-app public-URL auth write shape (issue #477 / ADR-077 + ADR-118). Sent on PATCH /v1/apps/{slug}; apid seals the basic_user + basic_pass into a single APP_BASIC_AUTH secretbox blob before persistence. The plaintext is never echoed on read (see PublicAuthStatus). For mode='ip_allowlist' (ADR-118), ip_allowlist carries the per-app CIDR allowlist (Pro 16 max, Scale 64 max — Free/Hobby → 403 plan_public_auth_ip_allowlist_not_allowed)."

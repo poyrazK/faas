@@ -40,6 +40,10 @@ class ScalingPolicy:
     scale_in_cooldown_s: int | Unset = UNSET
     """Minimum seconds between two scale-in events. Floor 5 (matches the reaper's 5 s idle window); ceiling 86400
     (1 day). Out-of-range → 422 invalid_cooldown."""
+    wake_max_queue_depth: int | Unset = UNSET
+    """Per-app cold-wake waiter cap. 0 uses the plan default; capped to 8x the plan default."""
+    wake_max_queue_wait_seconds: int | Unset = UNSET
+    """Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds."""
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.scaling_target import ScalingTarget
@@ -60,6 +64,10 @@ class ScalingPolicy:
 
         scale_in_cooldown_s = self.scale_in_cooldown_s
 
+        wake_max_queue_depth = self.wake_max_queue_depth
+
+        wake_max_queue_wait_seconds = self.wake_max_queue_wait_seconds
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -73,6 +81,10 @@ class ScalingPolicy:
             field_dict["scale_out_cooldown_s"] = scale_out_cooldown_s
         if scale_in_cooldown_s is not UNSET:
             field_dict["scale_in_cooldown_s"] = scale_in_cooldown_s
+        if wake_max_queue_depth is not UNSET:
+            field_dict["wake_max_queue_depth"] = wake_max_queue_depth
+        if wake_max_queue_wait_seconds is not UNSET:
+            field_dict["wake_max_queue_wait_seconds"] = wake_max_queue_wait_seconds
 
         return field_dict
 
@@ -106,12 +118,18 @@ class ScalingPolicy:
 
         scale_in_cooldown_s = d.pop("scale_in_cooldown_s", UNSET)
 
+        wake_max_queue_depth = d.pop("wake_max_queue_depth", UNSET)
+
+        wake_max_queue_wait_seconds = d.pop("wake_max_queue_wait_seconds", UNSET)
+
         scaling_policy = cls(
             min_instances=min_instances,
             max_instances=max_instances,
             target=target,
             scale_out_cooldown_s=scale_out_cooldown_s,
             scale_in_cooldown_s=scale_in_cooldown_s,
+            wake_max_queue_depth=wake_max_queue_depth,
+            wake_max_queue_wait_seconds=wake_max_queue_wait_seconds,
         )
 
         return scaling_policy

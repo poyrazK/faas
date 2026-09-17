@@ -28,6 +28,9 @@ type WakeGate struct {
 	// changes, so the metrics layer can keep gateway_queue_depth current.
 	// Optional; nil-safe at every call site.
 	onChange func(appID, accountID string, depth int)
+	// onPlanChange mirrors onChange with the resolved plan label so metrics can
+	// expose the issue-1060 gateway_wake_queue_depth{app,plan} series.
+	onPlanChange func(appID, plan string, depth int)
 	// metrics observes how long each caller waited in the queue. Optional;
 	// nil keeps the gate usable in unit tests that don't wire metrics.
 	metrics *Metrics
@@ -49,6 +52,7 @@ type wakeCall struct {
 	// correlation. Empty string falls through to "__other__" at the
 	// SetQueueDepth call site (bounded cardinality).
 	accountID string
+	plan      string
 }
 
 // ErrQueueFull is returned when the per-app waiter cap is exceeded (→ 503).
@@ -158,9 +162,7 @@ func (g *WakeGate) WaitWithPolicy(
 		if call.waiters >= policy.MaxWaiters {
 			depth := call.waiters
 			g.mu.Unlock()
-			if g.onChange != nil {
-				g.onChange(appID, call.accountID, depth)
-			}
+			g.notifyChange(appID, call.accountID, call.plan, depth)
 			return &WakeQueueFullError{
 				Depth:      depth,
 				Limit:      policy.MaxWaiters,
@@ -170,9 +172,7 @@ func (g *WakeGate) WaitWithPolicy(
 		call.waiters++
 		depth := call.waiters
 		g.mu.Unlock()
-		if g.onChange != nil {
-			g.onChange(appID, call.accountID, depth)
-		}
+		g.notifyChange(appID, call.accountID, call.plan, depth)
 		observed = true
 		// Hold the followers' reference until await returns; release on exit.
 		err := g.awaitWithPolicy(ctx, call, policy)
@@ -186,12 +186,10 @@ func (g *WakeGate) WaitWithPolicy(
 		return err
 	}
 
-	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID}
+	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID, plan: policy.Plan}
 	g.inflight[appID] = call
 	g.mu.Unlock()
-	if g.onChange != nil {
-		g.onChange(appID, accountID, 1)
-	}
+	g.notifyChange(appID, accountID, policy.Plan, 1)
 
 	// Leader-only: skip the wake if the Backend already has a ready instance
 	// (a peer's wake just finished and we observe it here). shouldWake runs
@@ -400,14 +398,23 @@ func (g *WakeGate) release(appID string, call *wakeCall) {
 	if call.completed && call.waiters == 0 {
 		delete(g.inflight, appID)
 	}
+	depth := 0
+	acct := call.accountID
+	plan := call.plan
+	if c, ok := g.inflight[appID]; ok {
+		depth = c.waiters
+		acct = c.accountID
+		plan = c.plan
+	}
+	g.notifyChange(appID, acct, plan, depth)
+}
+
+func (g *WakeGate) notifyChange(appID, accountID, plan string, depth int) {
 	if g.onChange != nil {
-		depth := 0
-		acct := call.accountID
-		if c, ok := g.inflight[appID]; ok {
-			depth = c.waiters
-			acct = c.accountID
-		}
-		g.onChange(appID, acct, depth)
+		g.onChange(appID, accountID, depth)
+	}
+	if g.onPlanChange != nil {
+		g.onPlanChange(appID, plan, depth)
 	}
 }
 

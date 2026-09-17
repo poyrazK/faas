@@ -642,6 +642,16 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Invalid scaling policy",
 				fmt.Sprintf("max_queue_wait_ms must be between 0 and %d", api.MaxConcurrencyQueueWaitMS))
 		}
+		if sp.WakeMaxQueueDepth < 0 || (sp.WakeMaxQueueDepth > 0 && sp.WakeMaxQueueDepth > api.WakeQueueMaxDepthForPlan(acct.Plan)) {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Invalid scaling policy",
+				fmt.Sprintf("wake_max_queue_depth must be between 0 and %d for the %s plan", api.WakeQueueMaxDepthForPlan(acct.Plan), acct.Plan))
+		}
+		if sp.WakeMaxQueueWaitSeconds < 0 || sp.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Invalid scaling policy",
+				fmt.Sprintf("wake_max_queue_wait_seconds must be between 0 and %d", api.WakeQueueMaxWaitSeconds))
+		}
 		// Worker-class carve-out (PR-D): live here in the validator
 		// (rather than at the call site in updateApp) so an
 		// unknown-field error surfaces before the workload-class
@@ -6284,12 +6294,14 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	}
 	sp := req.ScalingPolicy
 	out := &state.ScalingPolicy{
-		MinInstances:        sp.MinInstances,
-		MaxInstances:        sp.MaxInstances,
-		ScaleOutCooldownS:   sp.ScaleOutCooldownS,
-		ScaleInCooldownS:    sp.ScaleInCooldownS,
-		ConcurrencyOverflow: sp.ConcurrencyOverflow,
-		MaxQueueWaitMS:      sp.MaxQueueWaitMS,
+		MinInstances:            sp.MinInstances,
+		MaxInstances:            sp.MaxInstances,
+		ScaleOutCooldownS:       sp.ScaleOutCooldownS,
+		ScaleInCooldownS:        sp.ScaleInCooldownS,
+		ConcurrencyOverflow:     sp.ConcurrencyOverflow,
+		MaxQueueWaitMS:          sp.MaxQueueWaitMS,
+		WakeMaxQueueDepth:       sp.WakeMaxQueueDepth,
+		WakeMaxQueueWaitSeconds: sp.WakeMaxQueueWaitSeconds,
 	}
 	if sp.Target != nil {
 		out.Target = &state.ScalingTarget{

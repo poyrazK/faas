@@ -757,6 +757,12 @@ type ScalingPolicy struct {
 	// MaxQueueWaitMS overrides the plan-derived admission wait. Zero uses
 	// the plan default. The handler caps this at MaxConcurrencyQueueWaitMS.
 	MaxQueueWaitMS int `json:"max_queue_wait_ms,omitempty"`
+	// WakeMaxQueueDepth overrides the per-app cold-wake waiter cap. Zero uses
+	// the plan default; the API bounds positive values to 8x that default.
+	WakeMaxQueueDepth int `json:"wake_max_queue_depth,omitempty"`
+	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
+	// uses the plan default; positive values are capped at 60 seconds.
+	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
 	// unknownFields is the set of unknown JSON keys encountered
 	// during a strict Unmarshal. Stored as a one-shot value so
 	// the validator can surface a single error without
@@ -794,13 +800,15 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 	// alternative json.Unmarshal+json.Unmarshal paid twice the cost
 	// we now avoid by deferring the typed decode to the alias).
 	allowed := map[string]struct{}{
-		"min_instances":        {},
-		"max_instances":        {},
-		"target":               {},
-		"scale_out_cooldown_s": {},
-		"scale_in_cooldown_s":  {},
-		"concurrency_overflow": {},
-		"max_queue_wait_ms":    {},
+		"min_instances":               {},
+		"max_instances":               {},
+		"target":                      {},
+		"scale_out_cooldown_s":        {},
+		"scale_in_cooldown_s":         {},
+		"concurrency_overflow":        {},
+		"max_queue_wait_ms":           {},
+		"wake_max_queue_depth":        {},
+		"wake_max_queue_wait_seconds": {},
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {

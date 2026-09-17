@@ -35,5 +35,12 @@ export type ScalingPolicy = {
    * Maximum admission wait in milliseconds. 0 uses the plan default; capped at 120000.
    */
   max_queue_wait_ms?: number;
+  /**
+   * Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default.
+   */
+  wake_max_queue_depth?: number;
+  /**
+   * Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds.
+   */
+  wake_max_queue_wait_seconds?: number;
 };
-

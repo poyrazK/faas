@@ -421,7 +421,9 @@ type ScalingConfig struct {
 	ConcurrencyOverflow string `yaml:"concurrency_overflow,omitempty"`
 	// MaxQueueWaitMS overrides the plan-derived admission wait. Zero uses
 	// the plan default.
-	MaxQueueWaitMS int `yaml:"max_queue_wait_ms,omitempty"`
+	MaxQueueWaitMS          int `yaml:"max_queue_wait_ms,omitempty"`
+	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
+	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
 }
 
 const (
@@ -457,6 +459,12 @@ func (s *ScalingConfig) Validate() error {
 	if s.MaxQueueWaitMS < 0 || s.MaxQueueWaitMS > api.MaxConcurrencyQueueWaitMS {
 		return fmt.Errorf("scaling: max_queue_wait_ms must be between 0 and %d; got %d", api.MaxConcurrencyQueueWaitMS, s.MaxQueueWaitMS)
 	}
+	if s.WakeMaxQueueDepth < 0 {
+		return fmt.Errorf("scaling: wake_max_queue_depth must be >= 0; got %d", s.WakeMaxQueueDepth)
+	}
+	if s.WakeMaxQueueWaitSeconds < 0 || s.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
+		return fmt.Errorf("scaling: wake_max_queue_wait_seconds must be between 0 and %d; got %d", api.WakeQueueMaxWaitSeconds, s.WakeMaxQueueWaitSeconds)
+	}
 	if s.Target != nil {
 		switch s.Target.Metric {
 		case "rps", "concurrent_requests", "queue_depth", "p99_latency_ms":
@@ -481,10 +489,12 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		return nil
 	}
 	out := &api.ScalingPolicy{
-		ScaleOutCooldownS:   defaultScaleOutCooldownS,
-		ScaleInCooldownS:    defaultScaleInCooldownS,
-		ConcurrencyOverflow: s.ConcurrencyOverflow,
-		MaxQueueWaitMS:      s.MaxQueueWaitMS,
+		ScaleOutCooldownS:       defaultScaleOutCooldownS,
+		ScaleInCooldownS:        defaultScaleInCooldownS,
+		ConcurrencyOverflow:     s.ConcurrencyOverflow,
+		MaxQueueWaitMS:          s.MaxQueueWaitMS,
+		WakeMaxQueueDepth:       s.WakeMaxQueueDepth,
+		WakeMaxQueueWaitSeconds: s.WakeMaxQueueWaitSeconds,
 	}
 	if s.MinInstances != nil {
 		out.MinInstances = *s.MinInstances

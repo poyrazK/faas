@@ -114,7 +114,7 @@ func TestAppManifestMarshalJSON(t *testing.T) {
 
 func TestScalingPolicyJSON(t *testing.T) {
 	// MarshalJSON with a populated target.
-	p := ScalingPolicy{MinInstances: 1, MaxInstances: 4, Target: &ScalingTarget{Metric: "rps", Value: 10}, ScaleOutCooldownS: 60, ConcurrencyOverflow: "drop", MaxQueueWaitMS: 1250}
+	p := ScalingPolicy{MinInstances: 1, MaxInstances: 4, Target: &ScalingTarget{Metric: "rps", Value: 10}, ScaleOutCooldownS: 60, ConcurrencyOverflow: "drop", MaxQueueWaitMS: 1250, WakeMaxQueueDepth: 32, WakeMaxQueueWaitSeconds: 20}
 	b, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestScalingPolicyJSON(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.MinInstances != 1 || got.MaxInstances != 4 || got.Target == nil || got.Target.Metric != "rps" || got.ScaleOutCooldownS != 60 || got.ConcurrencyOverflow != "drop" || got.MaxQueueWaitMS != 1250 {
+	if got.MinInstances != 1 || got.MaxInstances != 4 || got.Target == nil || got.Target.Metric != "rps" || got.ScaleOutCooldownS != 60 || got.ConcurrencyOverflow != "drop" || got.MaxQueueWaitMS != 1250 || got.WakeMaxQueueDepth != 32 || got.WakeMaxQueueWaitSeconds != 20 {
 		t.Fatalf("round-trip scaling policy = %+v", got)
 	}
 	// UnmarshalJSON on malformed input → error.

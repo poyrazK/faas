@@ -232,27 +232,33 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 	concurrencyOverflow := ""
 	maxQueueWaitMS := 0
+	wakeMaxQueueDepth := 0
+	wakeMaxQueueWaitSeconds := 0
 	if app.ScalingPolicy != nil {
 		concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
 		maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
+		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
+		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 	}
 	return gateway.App{
-		ID:                  app.ID,
-		AccountID:           acct.ID,
-		Visibility:          api.NormalizeAppVisibility(app.Visibility),
-		AccountStatus:       string(acct.Status),
-		Type:                gateway.AppType(app.Type),
-		Plan:                acct.Plan,
-		MaxConcurrency:      app.MaxConcurrency,
-		ConcurrencyOverflow: concurrencyOverflow,
-		MaxQueueWaitMS:      maxQueueWaitMS,
-		AutoscaleTargetRPS:  app.AutoscaleTargetRPS,
-		IdleTimeoutS:        app.IdleTimeoutS,
-		Slug:                app.Slug,
-		IsPreview:           app.PreviewOfSlug != "",
-		StreamingEnabled:    app.StreamingEnabled,
-		NodeID:              app.NodeID,
-		Ports:               gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
+		ID:                      app.ID,
+		AccountID:               acct.ID,
+		Visibility:              api.NormalizeAppVisibility(app.Visibility),
+		AccountStatus:           string(acct.Status),
+		Type:                    gateway.AppType(app.Type),
+		Plan:                    acct.Plan,
+		MaxConcurrency:          app.MaxConcurrency,
+		ConcurrencyOverflow:     concurrencyOverflow,
+		MaxQueueWaitMS:          maxQueueWaitMS,
+		WakeMaxQueueDepth:       wakeMaxQueueDepth,
+		WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds,
+		AutoscaleTargetRPS:      app.AutoscaleTargetRPS,
+		IdleTimeoutS:            app.IdleTimeoutS,
+		Slug:                    app.Slug,
+		IsPreview:               app.PreviewOfSlug != "",
+		StreamingEnabled:        app.StreamingEnabled,
+		NodeID:                  app.NodeID,
+		Ports:                   gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade
 		// bridge flag. Plumbed from apps.websocket_enabled
 		// through pgRouter.toApp so Handler.ServeHTTP's

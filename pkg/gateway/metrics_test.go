@@ -835,6 +835,23 @@ func TestMetricsSetQueueDepthAccountIDLabel(t *testing.T) {
 	}
 }
 
+func TestMetricsSetWakeQueueDepthPlanLabel(t *testing.T) {
+	m := NewMetrics()
+	m.SetWakeQueueDepth("app-wake", "pro", 7)
+	m.SetWakeQueueDepth("app-wake", "bogus", 3)
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_wake_queue_depth{app="app-wake",plan="pro"} 7`,
+		`gateway_wake_queue_depth{app="app-wake",plan="__other__"} 3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q in body", want)
+		}
+	}
+}
+
 // TestMetricsAccountRateLimitedNilSafe — the helper must not panic on a
 // nil receiver (the call site in pkg/gateway/handler.go already
 // nil-guards, but the helper itself is nil-safe by design — mirror of
