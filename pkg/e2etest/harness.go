@@ -53,6 +53,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -131,6 +132,11 @@ type Harness struct {
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
 	procs []*exec.Cmd
+	// scheddEnv/config retain the launch recipe so metal acceptance tests can
+	// fault-inject a schedd restart without reaching into this package's
+	// private process list.
+	scheddEnv        []string
+	scheddConfigPath string
 }
 
 // currentHarness points at the most recently booted Harness. Used by
@@ -265,6 +271,8 @@ kernel_path = %q
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
+		h.scheddConfigPath = cfgPath
+		h.scheddEnv = append([]string(nil), env...)
 		// Repoint the seeded node before schedd's initial heartbeat. A
 		// KVM-free test may already have a fake VMMD listening on the
 		// configured socket; even when it does not, keeping the durable
@@ -794,6 +802,8 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
 		env = append(env, extraEnv...)
+		h.scheddConfigPath = cfgPath
+		h.scheddEnv = append([]string(nil), env...)
 		// See Start: make the node target correct before schedd performs
 		// its initial heartbeat, including for a pre-bound fake VMMD.
 		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
@@ -1345,6 +1355,78 @@ func (h *Harness) Stop() {
 		return
 	}
 	h.stop()
+}
+
+// SetScheddEnv updates one environment entry in the retained schedd launch
+// recipe. It is intentionally separate from os.Setenv: daemon children get a
+// snapshot of the environment at exec time, so callers should follow this
+// with RestartSchedd when they need the value to take effect.
+func (h *Harness) SetScheddEnv(key, value string) error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if key == "" || strings.ContainsAny(key, "=\x00") {
+		return fmt.Errorf("e2etest: invalid schedd env key %q", key)
+	}
+	entry := key + "=" + value
+	for i, existing := range h.scheddEnv {
+		if strings.HasPrefix(existing, key+"=") {
+			h.scheddEnv[i] = entry
+			return nil
+		}
+	}
+	h.scheddEnv = append(h.scheddEnv, entry)
+	return nil
+}
+
+// KillSchedd terminates and reaps the schedd child, leaving the rest of the
+// harness alive. Reaping here is important because Harness.stop owns the
+// single Wait call for every process it starts.
+func (h *Harness) KillSchedd() error {
+	if h == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	for _, proc := range h.procs {
+		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != "schedd" {
+			continue
+		}
+		if proc.ProcessState == nil {
+			if err := proc.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				return fmt.Errorf("e2etest: kill schedd: %w", err)
+			}
+			if err := proc.Wait(); err != nil {
+				// A signal exit is the expected result of this fault injection.
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					return fmt.Errorf("e2etest: reap schedd: %w", err)
+				}
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("e2etest: schedd process not found")
+}
+
+// RestartSchedd launches a fresh schedd with the retained config and env.
+// The method is a small, test-only fault-injection seam; production code
+// continues to supervise schedd through its service manager.
+func (h *Harness) RestartSchedd() error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if h.scheddConfigPath == "" || h.ScheddSock == "" {
+		return fmt.Errorf("e2etest: schedd launch recipe unavailable")
+	}
+	if err := h.KillSchedd(); err != nil {
+		return err
+	}
+	_ = os.Remove(h.ScheddSock)
+	proc := startProc(h.T, h.BinDir, "schedd", append([]string(nil), h.scheddEnv...))
+	h.procs = append(h.procs, proc)
+	waitUnix(h.T, h.ScheddSock, 30*time.Second)
+	setDefaultLocalScheddTarget(h.T, h.Pool, h.ScheddSock, h.VMMDSock)
+	h.requireDaemonsAlive(h.T)
+	return nil
 }
 
 // DaemonBinaries is every daemon the harness can start. EnsureSharedBinaries
