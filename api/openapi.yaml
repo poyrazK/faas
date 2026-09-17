@@ -28033,7 +28033,7 @@ components:
         instance:
           type: string
           format: uri-reference
-          description: URI reference identifying this problem occurrence; derived from X-Faas-Request-Id when available.
+          description: URI reference identifying this problem occurrence when supplied by the caller.
         code: { type: string, description: 'Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.' }
         detail: { type: string }
         limit: { type: [integer, "null"] }

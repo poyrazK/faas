@@ -50,7 +50,7 @@ class Problem:
     """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
-    """URI reference identifying this problem occurrence; derived from X-Faas-Request-Id when available."""
+    """URI reference identifying this problem occurrence when supplied by the caller."""
     detail: str | Unset = UNSET
     limit: int | None | Unset = UNSET
     observed: int | None | Unset = UNSET

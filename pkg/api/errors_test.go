@@ -107,9 +107,8 @@ func TestWriteProblem(t *testing.T) {
 	}
 }
 
-func TestWriteProblemAddsRFC9457InstanceFromRequestID(t *testing.T) {
+func TestWriteProblemUsesRFC9457Defaults(t *testing.T) {
 	rr := httptest.NewRecorder()
-	rr.Header().Set(RequestIDHeader, "request/123")
 	WriteProblem(rr, NewProblem(http.StatusBadRequest, "validation_failed", "Validation failed", "bad input"))
 
 	var got Problem
@@ -119,14 +118,13 @@ func TestWriteProblemAddsRFC9457InstanceFromRequestID(t *testing.T) {
 	if got.Type != "about:blank" {
 		t.Fatalf("type = %q, want RFC 9457 default about:blank", got.Type)
 	}
-	if got.Instance != "urn:gregale:request:request%2F123" {
-		t.Fatalf("instance = %q, want escaped request URI", got.Instance)
+	if got.Instance != "" {
+		t.Fatalf("instance = %q, want omitted when no occurrence URI is supplied", got.Instance)
 	}
 }
 
 func TestWriteProblemPreservesExplicitInstance(t *testing.T) {
 	rr := httptest.NewRecorder()
-	rr.Header().Set(RequestIDHeader, "request-ignored")
 	p := NewProblem(http.StatusBadRequest, "validation_failed", "Validation failed", "bad input").
 		WithInstance("https://gregale.dev/problem-instances/abc")
 	WriteProblem(rr, p)

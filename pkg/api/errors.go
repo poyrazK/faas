@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -77,8 +76,8 @@ type Problem struct {
 	Title string `json:"title"`
 	// Status is the HTTP status code, duplicated in the body per RFC 9457.
 	Status int `json:"status"`
-	// Instance identifies this occurrence. WriteProblem derives an opaque
-	// request URI from X-Faas-Request-Id when callers have not set it.
+	// Instance identifies this occurrence when the caller has a URI reference
+	// available. It is optional per RFC 9457.
 	Instance string `json:"instance,omitempty"`
 	// Code is a stable machine-readable string (e.g. "plan_limit_apps") that
 	// clients branch on. It must never change once shipped.
@@ -253,11 +252,6 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 	if strings.TrimSpace(wire.Type) == "" {
 		wire.Type = "about:blank"
 	}
-	if wire.Instance == "" {
-		if requestID := strings.TrimSpace(w.Header().Get(RequestIDHeader)); requestID != "" {
-			wire.Instance = "urn:gregale:request:" + url.PathEscape(requestID)
-		}
-	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	for k, vs := range p.extraHeaders {
 		for _, v := range vs {
@@ -289,8 +283,7 @@ func NewProblem(status int, code, title, detail string) *Problem {
 }
 
 // WithInstance annotates a Problem with a URI identifying the specific
-// occurrence and returns the same pointer for chaining. When omitted,
-// WriteProblem derives an opaque request URI from the response request id.
+// occurrence and returns the same pointer for chaining.
 func (p *Problem) WithInstance(instance string) *Problem {
 	p.Instance = instance
 	return p

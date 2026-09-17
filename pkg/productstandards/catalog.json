@@ -386,7 +386,7 @@
       "category": "api-contract",
       "surface": "public REST API errors",
       "status": "partial",
-      "scope": "Public JSON errors use the RFC 9457 problem-details envelope with application/problem+json, stable Gregale error codes and extensions, and an occurrence URI derived from X-Faas-Request-Id when available.",
+      "scope": "Public JSON errors use the RFC 9457 problem-details envelope with application/problem+json, stable Gregale error codes and extensions, and support the standard occurrence URI when supplied.",
       "limitations": "The contract is JSON-only and retains Gregale-specific code and extension members; XML serialization and registered common problem types are not claimed.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9457",
       "evidence": "pkg/api/errors.go; api/openapi.yaml Problem; docs/errors.md",
@@ -394,7 +394,7 @@
         {
           "fixture": "rfc9457-problem-wire",
           "tier": "unit",
-          "target": "pkg/api/errors_test.go::TestWriteProblemAddsRFC9457InstanceFromRequestID"
+          "target": "pkg/api/errors_test.go::TestWriteProblemUsesRFC9457Defaults"
         }
       ]
     },

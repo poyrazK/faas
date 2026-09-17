@@ -30,7 +30,7 @@ export type Problem = {
   title: string;
   status: number;
   /**
-   * URI reference identifying this problem occurrence; derived from X-Faas-Request-Id when available.
+   * URI reference identifying this problem occurrence when supplied by the caller.
    */
   instance?: string;
   /**
