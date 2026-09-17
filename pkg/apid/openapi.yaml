@@ -21910,8 +21910,8 @@ components:
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
-          nullable: true
-          description: "Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap."
+          type: [object, "null"]
+          description: "Optional retry delay and jitter configuration; max_attempts remains the trigger attempt cap."
         payload_max_bytes: { type: [integer, "null"], minimum: 1024, maximum: 67108864 }
         broker_poison_strategy:
           type: [string, "null"]
@@ -21948,8 +21948,8 @@ components:
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
-          nullable: true
-          description: "Optional per-trigger retry delay/jitter curve. Set {} to clear the curve."
+          type: [object, "null"]
+          description: "Retry delay and jitter configuration; pass {} to clear the stored curve."
         payload_max_bytes: { type: [integer, "null"], minimum: 1024, maximum: 67108864 }
         broker_poison_strategy:
           type: [string, "null"]

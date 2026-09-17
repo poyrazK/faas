@@ -27,9 +27,9 @@ export type CreateTriggerRequest = {
   batch_window_ms?: number | null;
   max_attempts?: number | null;
   /**
-   * Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap.
+   * Optional retry delay and jitter configuration; max_attempts remains the trigger attempt cap.
    */
-  retry_policy?: RetryPolicyDTO | null;
+  retry_policy?: RetryPolicyDTO;
   payload_max_bytes?: number | null;
   /**
    * Kafka-only poison-record handling strategy. null/omitted

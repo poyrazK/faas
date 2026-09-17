@@ -20,9 +20,9 @@ export type UpdateTriggerRequest = {
   batch_window_ms?: number | null;
   max_attempts?: number | null;
   /**
-   * Optional per-trigger retry delay/jitter curve. Set {} to clear the curve.
+   * Retry delay and jitter configuration; pass {} to clear the stored curve.
    */
-  retry_policy?: RetryPolicyDTO | null;
+  retry_policy?: RetryPolicyDTO;
   payload_max_bytes?: number | null;
   /**
    * Kafka-only poison-record handling strategy. null/omitted
