@@ -37,6 +37,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,10 +45,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
 	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 )
 
 // seedMirrorFixture inserts the parent rows the mirror_invocation_results
@@ -154,14 +157,40 @@ INSERT INTO mirror_invocation_results (
 // contract is covered separately by gateway unit tests; this test
 // owns the previously missing cross-daemon admission contract.
 func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
-	f := newNormalPathFixtureWithPlan(t, "normal-mirror-dispatch", api.PlanPro)
+	artifactRoot := t.TempDir()
+	f := newNormalPathFixtureWithPlanAndEnv(t, "normal-mirror-dispatch", api.PlanPro,
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT="+artifactRoot,
+		"FAAS_APPS_ROOT="+artifactRoot,
+		"FAAS_STORAGE_CACHE_DIR=",
+	)
 	if f == nil {
 		return
+	}
+	artifacts, err := artifactstorage.NewLocalStorageBackend(artifactRoot)
+	if err != nil {
+		t.Fatalf("create mirror artifact backend: %v", err)
+	}
+	signer, err := cosign.NewLocalSigner(f.h.SignKeyPath, artifacts, nil)
+	if err != nil {
+		t.Fatalf("create mirror artifact signer: %v", err)
 	}
 	sourceDeployment, sourceInstance := createNormalPathExplicitTrafficDeployment(
 		t, f, "mirror-source", 100)
 	mirrorDeployment, _ := createNormalPathExplicitTrafficDeployment(
 		t, f, "mirror-target", 0)
+	mirrorLayerKey := "apps/" + f.app.Slug + "/" + mirrorDeployment.ID + ".ext4"
+	mirrorLayer := []byte("gregale mirror dispatch fixture artifact\n")
+	if err := artifacts.Put(f.ctx, mirrorLayerKey, strings.NewReader(string(mirrorLayer))); err != nil {
+		t.Fatalf("publish mirror layer: %v", err)
+	}
+	if err := signer.Sign(f.ctx, mirrorLayerKey, cosign.SigKeyFor(mirrorLayerKey)); err != nil {
+		t.Fatalf("sign mirror layer: %v", err)
+	}
+	if err := f.store.SetDeploymentRootfs(f.ctx, mirrorDeployment.ID,
+		"/e2e/"+mirrorLayerKey, mirrorLayerKey, int64(len(mirrorLayer))); err != nil {
+		t.Fatalf("publish mirror rootfs metadata: %v", err)
+	}
 	f.vmmd.SetVersion(sourceInstance.ID, "mirror-source")
 
 	// Publish the live deployment/instance state to the real gateway
