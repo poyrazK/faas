@@ -278,11 +278,19 @@ func (d *Drain) Tick(ctx context.Context) {
 		}
 		parallelRows := make([]state.Invocation, 0, len(rows))
 		queueRowsByApp := make(map[string][]state.Invocation)
+		queueBindings := make(map[string]map[state.InvocationSource]bool)
+		queueTriggerSkipped := false
 		for _, appID := range order {
 			for _, inv := range byApp[appID] {
-				if inv.Source == state.InvocationQueue {
-					queueRowsByApp[appID] = append(queueRowsByApp[appID], inv)
-					continue
+				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
+					if d.queueSourceBound(ctx, appID, inv.Source, queueBindings) {
+						queueTriggerSkipped = true
+						continue
+					}
+					if inv.Source == state.InvocationQueue {
+						queueRowsByApp[appID] = append(queueRowsByApp[appID], inv)
+						continue
+					}
 				}
 				parallelRows = append(parallelRows, inv)
 			}
@@ -295,10 +303,43 @@ func (d *Drain) Tick(ctx context.Context) {
 				d.dispatchOne(ctx, inv)
 			}
 		}
+		// A bound queue trigger owns its source rows; the trigger poller
+		// will claim them on its event-driven tick. Returning here prevents
+		// the generic drain from repeatedly selecting the same pending rows
+		// while the push consumer is processing them.
+		if queueTriggerSkipped {
+			return
+		}
 		if len(rows) < d.batchSize {
 			return
 		}
 	}
+}
+
+func (d *Drain) queueSourceBound(ctx context.Context, appID string, source state.InvocationSource, cache map[string]map[state.InvocationSource]bool) bool {
+	bySource, ok := cache[appID]
+	if !ok {
+		bySource = make(map[state.InvocationSource]bool)
+		triggers, err := d.store.ListTriggersForApp(ctx, appID)
+		if err != nil {
+			// Fail open: a binding lookup outage must not strand generic
+			// queue traffic. The next tick retries the lookup.
+			d.log.Warn("drain: queue binding lookup failed", "app_id", appID, "err", err)
+			cache[appID] = bySource
+			return false
+		}
+		for _, trigger := range triggers {
+			if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid {
+				continue
+			}
+			bound := state.InvocationSource(trigger.Source.String)
+			if bound == state.InvocationQueue || bound == state.InvocationDelayedTask {
+				bySource[bound] = true
+			}
+		}
+		cache[appID] = bySource
+	}
+	return bySource[source]
 }
 
 // dispatchParallel runs non-FIFO invocation sources through a bounded worker

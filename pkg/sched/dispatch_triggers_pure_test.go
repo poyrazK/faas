@@ -168,6 +168,18 @@ func TestClaimedItemIDs_Multiple(t *testing.T) {
 	}
 }
 
+func TestUnclaimedItemIDsAndRecordsForClaimed(t *testing.T) {
+	batch := []SourceRecord{{ItemIdentifier: "a"}, {ItemIdentifier: "b"}, {ItemIdentifier: "c"}}
+	claimed := []sqlc.TriggerRecord{{ItemIdentifier: "b"}, {ItemIdentifier: "c"}}
+	if got := unclaimedItemIDs(batch, claimed); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("unclaimedItemIDs = %v, want [a]", got)
+	}
+	got := recordsForClaimed(batch, claimed)
+	if len(got) != 2 || got[0].ItemIdentifier != "b" || got[1].ItemIdentifier != "c" {
+		t.Fatalf("recordsForClaimed = %#v, want [b c]", got)
+	}
+}
+
 // --- byteReadCloser ----------------------------------------------
 
 func TestByteReadCloser_ReadAll(t *testing.T) {

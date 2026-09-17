@@ -1859,7 +1859,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (sibling to the dial above) with a 5s retry ticker so a
 	// transient Postgres blip recovers without a daemon restart.
 	triggerNotifC, triggerSubErr := db.SubscribeWithReconnect(ctx, pool,
-		[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged}, log)
+		[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged, db.NotifyInvocationDue}, log)
 	if triggerSubErr != nil {
 		log.Error("schedd: trigger notify first-subscribe failed; safety ticker + retry-loop running",
 			"err", triggerSubErr)
@@ -1878,7 +1878,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					return
 				case <-ticker.C:
 					ch, sErr := db.SubscribeWithReconnect(ctx, pool,
-						[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged}, log)
+						[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged, db.NotifyInvocationDue}, log)
 					if sErr != nil {
 						log.Warn("schedd: trigger notify subscribe retry failed",
 							"err", sErr)
@@ -1889,11 +1889,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						select {
 						case <-ctx.Done():
 							return
-						case _, ok := <-ch:
+						case n, ok := <-ch:
 							if !ok {
 								break
 							}
-							loop.WakeupTriggers()
+							if triggerWakeNotification(n) {
+								loop.WakeupTriggers()
+							}
 						}
 					}
 				}
@@ -1905,11 +1907,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				select {
 				case <-ctx.Done():
 					return
-				case _, ok := <-triggerNotifC:
+				case n, ok := <-triggerNotifC:
 					if !ok {
 						return
 					}
-					loop.WakeupTriggers()
+					if triggerWakeNotification(n) {
+						loop.WakeupTriggers()
+					}
 				}
 			}
 		}()
@@ -2030,6 +2034,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	_ = lis.Close()
 	return nil
+}
+
+// triggerWakeNotification keeps the trigger tick event-driven without
+// waking it for every async invocation. Queue and delayed-task rows are
+// push-consumer inputs once a first-class queue trigger is bound; trigger
+// records and trigger mutations always wake the tick.
+func triggerWakeNotification(n db.Notification) bool {
+	if n.Channel != db.NotifyInvocationDue {
+		return true
+	}
+	var payload struct {
+		Source string `json:"source"`
+	}
+	if json.Unmarshal([]byte(n.Payload), &payload) != nil {
+		return false
+	}
+	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
 }
 
 // jobsDispatchEnabled is intentionally an exact opt-in. Treating any

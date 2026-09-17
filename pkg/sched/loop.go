@@ -175,6 +175,11 @@ type Loop struct {
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
+	// Queue trigger pollers are constructed lazily from the trigger
+	// registry, so register the shared scheduler pool before the first
+	// dispatch tick can ask the factory for one. The loop owns this pool;
+	// pollers only borrow it for short claim/ack transactions.
+	setCurrentLoopPool(pool)
 	return &Loop{
 		pool: pool, engine: engine, log: log,
 		now:        time.Now,

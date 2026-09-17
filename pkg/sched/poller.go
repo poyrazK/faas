@@ -98,11 +98,11 @@ type PollResult struct {
 // Nack semantics:
 //
 //	Nack(t, ids, reason) → signal broker to redeliver. On
-//	poller_queue (in-platform), Nack is a no-op since the rows
-//	stay in `invocations` in state='pending' by definition; on
-//	external brokers, Nack is the broker-native delay/retry
-//	path. The dispatch tick transitions trigger_records to
-//	state='retry' first, and on attempts >= max_attempts to
+//	poller_queue (in-platform), Nack durably returns the claimed
+//	invocations to `pending` (or `dead_letter` after the trigger's
+//	attempt budget); on external brokers it is the broker-native
+//	delay/retry path. The dispatch tick transitions trigger_records
+//	to state='retry' first, and on attempts >= max_attempts to
 //	'dead_letter' + trigger_dead_letter row.
 type triggerSource interface {
 	// Kind returns the trigger kind this poller handles. The

@@ -20,17 +20,12 @@
 // async_invoke traffic keeps its single-record semantics), so the
 // poller is the seam that decides which rows opt in.
 //
-// Ack semantics are a no-op: the underlying `invocations` rows
-// stay in state='pending' (they were already committed before the
-// poller saw them; we don't translate them into the trigger FSM's
-// succeed transition). The trigger_records rows we mint in commit
-// #14 carry the operator-facing "did this trigger fire it?"
-// answer; the in-platform queue's own persistence is the
-// `invocations` table.
-//
-// Nack is a no-op for the same reason — the underlying broker
-// (the postgres queue) is durable by definition; redelivery would
-// just create a duplicate 'retry' row.
+// Poll claims the invocation row before it is handed to the gateway. Ack
+// transitions that claim to completed and Nack returns it to pending (or
+// dead-letters it after the trigger's attempt budget). This makes the
+// Postgres-backed queue behave like the external brokers: a scheduler crash
+// leaves a leased row for the expiry reaper, while a gateway failure is
+// redelivered without creating a second invocation.
 
 package sched
 
@@ -60,11 +55,8 @@ type queuePoller struct {
 
 	// mu protects itemsInFlight — the dispatcher passes item
 	// identifiers to Ack/Nack and we record them here so a
-	// subsequent Poll sees consistent state. In practice this is
-	// a no-op (Ack/Nack are no-ops today) but the field is in
-	// place for when a future queue-poller variant (e.g. an
-	// external Postgres with a separate CDC log) needs to track
-	// in-flight items to dedupe.
+	// subsequent Poll sees consistent state while the durable row
+	// transition is committed.
 	mu            sync.Mutex
 	itemsInFlight map[string]struct{}
 }
@@ -100,20 +92,39 @@ func (q *queuePoller) Kind() string { return "queue" }
 // old queue receive batch size from drain.go).
 //
 // Returned SourceRecord.ItemIdentifier is the invocation id (a
-// UUID); the dispatch tick uses it for Ack/Nack bookkeeping but
-// both methods are no-ops for this kind.
+// UUID); the dispatch tick uses it for the durable Ack/Nack transition.
 func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	const pollLimit = 256
-	rows, err := q.pool.Query(ctx,
-		`select id, payload::text, headers::text, metadata::text,
-		        created_at
-		   from invocations
-		  where app_id = $1
-		    and source = $2
-		    and outcome is null
-		    and completed_at is null
-		  order by created_at asc
-		  limit $3`,
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return PollResult{Error: fmt.Errorf("poller_queue: begin claim: %w", err)}
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx,
+		`with claimed as (
+			select id
+			  from invocations
+			 where app_id = $1
+			   and source = $2
+			   and state = 'pending'
+			   and due_at <= now()
+			 order by created_at asc
+			 limit $3
+			 for update skip locked
+		), updated as (
+			update invocations i
+			   set state = 'dispatching',
+			       lease_expires_at = now() + interval '60 seconds',
+			       received_at = coalesce(i.received_at, now()),
+			       attempts = i.attempts + 1
+			  from claimed c
+			 where i.id = c.id
+			 returning i.id::text, i.payload::text, i.headers::text,
+			           '{}'::text, i.created_at
+		)
+		select id, payload, headers, metadata, created_at
+		  from updated
+		 order by created_at asc, id asc`,
 		t.AppID, q.source, pollLimit,
 	)
 	if err != nil {
@@ -143,6 +154,9 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	if err := rows.Err(); err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: rows iter: %w", err)}
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return PollResult{Error: fmt.Errorf("poller_queue: commit claim: %w", err)}
+	}
 	// Track in-flight items so a subsequent Ack/Nack on the same
 	// trigger sees a consistent set.
 	q.mu.Lock()
@@ -153,14 +167,14 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	return PollResult{Records: out}
 }
 
-// Ack is a no-op for the in-platform queue. The underlying
-// `invocations` row stays in place (it's persisted in Postgres;
-// nothing the broker can forget about). The dispatcher removes
-// it from in-flight tracking and writes the post-dispatch state
-// (success/retry/dead_letter) on the trigger_records table (or
-// for kind=queue, simply updates `invocations.outcome` and
-// `invocations.completed_at`).
-func (q *queuePoller) Ack(_ context.Context, _ sqlc.Trigger, ids []string) error {
+// Ack completes the claimed invocation after the worker gateway reports
+// success. This is the durable push-consumer acknowledgement: the
+// trigger_records row records the trigger-level audit state while the
+// invocations row leaves the generic drain queue.
+func (q *queuePoller) Ack(ctx context.Context, _ sqlc.Trigger, ids []string) error {
+	if err := q.finishInvocations(ctx, ids); err != nil {
+		return err
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, id := range ids {
@@ -169,17 +183,80 @@ func (q *queuePoller) Ack(_ context.Context, _ sqlc.Trigger, ids []string) error
 	return nil
 }
 
-// Nack is a no-op for the in-platform queue. The row is durable in
-// Postgres; we can't "redeliver" it. The dispatcher's retry FSM
-// will mint a new trigger_records row (commit #14) with
-// attempts++ and next_fire_at bumped.
-func (q *queuePoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, _ string) error {
+// Nack requeues the claimed invocation for a later push attempt, or marks
+// it dead_letter when the trigger's attempt budget is exhausted. The
+// trigger_records retry FSM remains the source of the exact next-fire time;
+// the invocation due_at is a short wake guard to avoid a hot poll loop.
+func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
+	terminal := reason == triggerReasonPoisonRecord || reason == triggerReasonPayloadTooLarge || reason == triggerReasonRateLimited
+	if err := q.retryInvocations(ctx, t, ids, terminal, reason); err != nil {
+		return err
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, id := range ids {
 		delete(q.itemsInFlight, id)
 	}
 	return nil
+}
+
+// NackTerminal is the queue-specific terminal disposition used when a
+// record is rejected before a trigger_records row exists (for example, a
+// wake-rate-limit denial). External brokers retain the older Ack-after-DLQ
+// behavior, so dispatch_triggers.go discovers this optional capability.
+func (q *queuePoller) NackTerminal(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
+	return q.Nack(ctx, t, ids, reason)
+}
+
+func (q *queuePoller) finishInvocations(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("poller_queue: begin ack: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, id := range ids {
+		if _, err := tx.Exec(ctx, `
+			update invocations
+			   set state = 'completed', outcome = 'success',
+			       completed_at = now(), lease_expires_at = null,
+			       last_error = ''
+			 where id = $1 and state = 'dispatching'`, id); err != nil {
+			return fmt.Errorf("poller_queue: ack %s: %w", id, err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, terminal bool, reason string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("poller_queue: begin nack: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, id := range ids {
+		if _, err := tx.Exec(ctx, `
+			update invocations
+			   set state = case when $3::boolean or ($4::int > 0 and attempts >= $4)
+			                    then 'dead_letter' else 'pending' end,
+			       outcome = case when $3::boolean or ($4::int > 0 and attempts >= $4)
+			                    then 'dead_letter' else null end,
+			       completed_at = case when $3::boolean or ($4::int > 0 and attempts >= $4)
+			                    then now() else null end,
+			       due_at = case when $3::boolean or ($4::int > 0 and attempts >= $4)
+			                    then due_at else now() + interval '1 second' end,
+			       lease_expires_at = null,
+			       last_error = $2
+			 where id = $1 and state = 'dispatching'`, id, reason, terminal, t.MaxAttempts); err != nil {
+			return fmt.Errorf("poller_queue: nack %s: %w", id, err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // Close releases nothing — the pgxpool is owned by the sched, not
