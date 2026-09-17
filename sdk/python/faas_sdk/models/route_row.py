@@ -31,7 +31,8 @@ class RouteRow:
     p99_ms: float
     """p99 over all classes in the window, in ms."""
     error_pct: float
-    """Share of [45]xx requests with this route in the window."""
+    """Share of 5xx requests with this route in the window. Client-caused 4xx responses do not consume availability
+    budget."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

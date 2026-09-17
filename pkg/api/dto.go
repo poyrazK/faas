@@ -4493,7 +4493,8 @@ type AppMetricsResponse struct {
 	LatencyP50MS float64 `json:"latency_p50_ms"`
 	LatencyP95MS float64 `json:"latency_p95_ms"`
 	LatencyP99MS float64 `json:"latency_p99_ms"`
-	// ErrorRatePct is the share of [45]xx requests in the window.
+	// ErrorRatePct is the share of 5xx requests in the window. Client-caused
+	// 4xx responses remain diagnostic and do not consume availability budget.
 	ErrorRatePct float64 `json:"error_rate_pct"`
 	// ColdStartPct is the share of requests that triggered a cold
 	// boot (the WakeGate leader — see ADR-042 §cold semantics).

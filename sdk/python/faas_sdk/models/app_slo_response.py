@@ -57,7 +57,8 @@ class AppSLOResponse:
     on an empty window is coerced to 0 by the handler.
     """
     error_rate_pct: float
-    """Share of [45]xx requests in the window for this app."""
+    """Share of 5xx requests in the window for this app. Client-caused 4xx responses do not consume availability
+    budget."""
     cold_boot_rate_pct: float
     """Share of requests that triggered a cold boot."""
     instance_hours: float

@@ -443,11 +443,11 @@ groups:
       - record: faas_compute_metrics_healthy_targets:by_job
         expr: |
           sum by (job) (
-            up{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"}
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
           )
           or on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} * 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} * 0
           )
 
       - record: faas_compute_metrics_scrape_coverage:by_job
@@ -456,22 +456,22 @@ groups:
           /
           on (job)
           clamp_min(
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"},
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"},
             1
           )
 
       - alert: FaasComputeMetricsScrapeCoverageLow
         expr: |
           (
-            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} < 1
+            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} < 1
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -486,15 +486,15 @@ groups:
       - alert: FaasComputeMetricsScrapeTargetDown
         expr: |
           (
-            up{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} == 0
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -509,11 +509,11 @@ groups:
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
-            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} == 0
+            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
           )
           or
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 120
           )
         for: 5m
         labels:
@@ -528,15 +528,15 @@ groups:
       - alert: FaasComputeMetricsDiscoveryEmpty
         expr: |
           (
-            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
+            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} == 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -549,7 +549,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryInvalidTargets
-        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
+        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
         for: 10m
         labels:
           severity: warn
@@ -2840,17 +2840,25 @@ groups:
       # remains the account-authoritative webhook path.
       - record: faas_slo_burn_rate_1h:by_app
         expr: |
-          sum by (app) (rate(gateway_requests_total{app!="-",code=~"5.."}[1h]))
-            /
-          sum by (app) (rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
-            / 0.005
+          (
+            sum by (app) (rate(gateway_requests_total{app!="-",code=~"5.."}[1h]))
+              /
+            sum by (app) (rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
+              / 0.005
+          )
+          and on (app)
+          sum by (app) (increase(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) >= 20
 
       - record: faas_slo_burn_rate_6h:by_app
         expr: |
-          sum by (app) (rate(gateway_requests_total{app!="-",code=~"5.."}[6h]))
-            /
-          sum by (app) (rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
-            / 0.005
+          (
+            sum by (app) (rate(gateway_requests_total{app!="-",code=~"5.."}[6h]))
+              /
+            sum by (app) (rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
+              / 0.005
+          )
+          and on (app)
+          sum by (app) (increase(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) >= 20
 
       - alert: FaasSLOBurnRateHigh
         expr: |
@@ -3177,3 +3185,57 @@ groups:
           summary: "A compute host stopped exporting internal mTLS expiry metrics"
           description: "Prometheus cannot scrape node_exporter or cannot find its internal mTLS textfile series on compute host {{ $labels.node }}; certificate expiry is unknown."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+  - name: faas_schedd_instance_stats
+    interval: 30s
+    rules:
+      - alert: FaasScheddInstanceStatsPartialErrors
+        expr: increase(schedd_instance_stats_partial_errors_total[1m]) > 5
+        for: 2m
+        labels:
+          severity: page
+          component: schedd
+          family: instance_stats
+          public_status: degraded
+        annotations:
+          summary: "Instance telemetry is missing on {{ $labels.node }}"
+          description: "The owner schedd recorded more than five missing or unreachable instance telemetry sweeps per minute for node {{ $labels.node }}. Check the vmmd capacity stream and schedd ownership before using autoscaling or customer instance metrics."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+
+  - name: faas_snapshot_drift_audit
+    interval: 30s
+    rules:
+      - alert: FaasSnapshotDriftAuditUnavailable
+        expr: schedd_snapshot_disk_drift_consecutive_failures > 0
+        for: 5m
+        labels:
+          severity: page
+          component: schedd
+          family: snapshot_integrity
+          public_status: degraded
+        annotations:
+          summary: "Snapshot integrity inventory is unavailable"
+          description: "The snapshot drift audit has failed {{ $value }} consecutive times. A zero drift counter is not authoritative until a complete inventory succeeds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"
+      - alert: FaasSnapshotDriftAuditStale
+        expr: |
+          (
+            schedd_snapshot_disk_drift_last_success_timestamp_seconds == 0
+            and on (job, instance)
+            time() - process_start_time_seconds{job=~"schedd|schedd-compute"} > 7200
+          )
+          or
+          (
+            schedd_snapshot_disk_drift_last_success_timestamp_seconds > 0
+            and time() - schedd_snapshot_disk_drift_last_success_timestamp_seconds > 7200
+          )
+        for: 15m
+        labels:
+          severity: page
+          component: schedd
+          family: snapshot_integrity
+          public_status: degraded
+        annotations:
+          summary: "Snapshot integrity inventory is stale"
+          description: "No complete snapshot drift inventory has succeeded for more than two hours. Check OCI enumeration latency and registry availability."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"

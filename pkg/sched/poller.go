@@ -33,6 +33,7 @@ package sched
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -92,14 +93,16 @@ type PollResult struct {
 // Ack semantics:
 //
 //	Ack(t, ids) → commit success to the broker. After Ack returns,
-//	the dispatch tick transitions the matching trigger_records
-//	rows to state='succeeded' (commit #15 audit).
+//	the broker-side delivery is terminal. The dispatch tick marks the matching
+//	trigger_records rows succeeded before Ack; the in-platform queue adapter
+//	repeats that transition atomically with invocation completion so a failed
+//	state write cannot strand a customer-visible pending row.
 //
 // Nack semantics:
 //
 //	Nack(t, ids, reason) → signal broker to redeliver. On
-//	poller_queue (in-platform), Nack is a no-op since the rows
-//	stay in `invocations` in state='pending' by definition; on
+//	poller_queue (in-platform), retry Nacks keep `invocations`
+//	pending while terminal Nacks dead-letter them; on
 //	external brokers, Nack is the broker-native delay/retry
 //	path. The dispatch tick transitions trigger_records to
 //	state='retry' first, and on attempts >= max_attempts to
@@ -188,6 +191,20 @@ func newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 		return nil, true, err
 	}
 	return src, true, nil
+}
+
+// newPollerForTrigger resolves pollers whose dependencies belong to a Loop.
+// External broker factories remain process-wide and immutable after init;
+// the in-platform queue receives the exact pgx pool passed to NewLoop.
+func (l *Loop) newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+	if t.Kind == "queue" {
+		if l == nil || l.pool == nil {
+			return nil, true, fmt.Errorf("poller_queue: schedd database pool is not configured")
+		}
+		src, err := newQueuePoller(l.pool, t)
+		return src, true, err
+	}
+	return newPollerForTrigger(t)
 }
 
 var defaultRegistry = pollerRegistry{}

@@ -427,6 +427,7 @@ func TestRenderTOML_ComputeMetricsBindPrivateHost(t *testing.T) {
 		{daemon: "vmmd", want: `metrics_addr = "10.42.0.2:9104"`},
 		{daemon: "imaged", want: `metrics_addr = "10.42.0.2:9102"`},
 		{daemon: "builderd", want: `metrics_addr = "10.42.0.2:9105"`},
+		{daemon: "schedd", want: `metrics_addr = "10.42.0.2:9103"`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.daemon, func(t *testing.T) {

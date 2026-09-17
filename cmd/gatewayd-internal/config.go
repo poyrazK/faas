@@ -183,9 +183,8 @@ type Config struct {
 	// Phase 4). When Mode = "local" (the default), each
 	// gatewayd-internal serves the rate limit from its
 	// in-process Limiter (the pre-Phase-4 behaviour, unchanged
-	// for back-compat). When Mode = "central", the hot path
-	// consults Postgres on the local-would-reject boundary
-	// case via the CentralBackend interface (see
+	// for back-compat). When Mode = "central", every request
+	// atomically consumes from Postgres via the CentralBackend interface (see
 	// pkg/gateway/ratelimit_central.go). Multi-replica
 	// clusters SHOULD run Mode = "central" to avoid the
 	// sticky-by-warm-node drift the 00126 schema was created

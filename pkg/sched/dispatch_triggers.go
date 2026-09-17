@@ -283,7 +283,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			return fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
 		}
 		pollerTrigger.Config = openedConfig
-		src, registered, err := newPollerForTrigger(pollerTrigger)
+		src, registered, err := l.newPollerForTrigger(pollerTrigger)
 		if !registered {
 			l.log.Debug("sched trigger tick: no poller for kind",
 				"trigger_id", t.ID.String(),
@@ -434,7 +434,25 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.observeESMLag(t.Kind, shardKeyFor(rec, t.Kind), time.Since(rec.ReceivedAt).Seconds())
 	}
 
-	// 4. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
+	// 4. Persist polled records before applying terminal policy. This ordering
+	// gives rate-limit and poison paths a durable record to transition and link
+	// to the DLQ. ON CONFLICT makes a re-poll reuse the same record.
+	for _, rec := range batch {
+		payload := rec.Payload
+		if payload == nil {
+			payload = []byte("{}")
+		}
+		headers := marshalJSON(rec.Headers)
+		metadata := marshalJSON(rec.Metadata)
+		if _, err := store.InsertTriggerRecord(ctx, t.ID.String(), rec.ItemIdentifier, payload, headers, metadata); err != nil {
+			l.log.Warn("sched trigger tick: insert record",
+				"trigger_id", t.ID.String(),
+				"item_identifier", rec.ItemIdentifier,
+				"err", err)
+		}
+	}
+
+	// 5. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
 	// review finding #4: the plan argument was hardcoded to api.PlanFree,
 	// which collapsed Hobby/Pro/Scale customers to the Free bucket's
 	// 1-wake-per-minute ceiling. Resolve the actual account plan via
@@ -462,41 +480,6 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				l.handleRateLimitedBatch(ctx, poller, t, batch, store)
 				return nil
 			}
-		}
-	}
-
-	// 5. Persist polled records into trigger_records (review finding
-	// #1, PR #910: without this insert, ClaimTriggerRecords returns 0
-	// rows and the entire dispatch tick is structurally dead — every
-	// record never reaches the gateway and the function never fires).
-	//
-	// Each Poll() returned SourceRecord becomes one trigger_records
-	// row BEFORE we attempt to claim + dispatch. ON CONFLICT
-	// (trigger_id, item_identifier) DO NOTHING (set in
-	// queries.sql:1283-1310) means a re-poll after a partial commit
-	// + Ack timeout reuses the existing row id rather than doubling
-	// the queue depth.
-	//
-	// Rollback semantics: if the insert fails for a record, the
-	// dispatch tick continues without claiming it (the row didn't
-	// land, so SKIP LOCKED can't see it) and the broker message
-	// stays in poller.inFlight. On the next poll cycle the broker
-	// library re-delivers; the next tick tries the insert again.
-	// This is the "Ack only after the row exists" guarantee the
-	// audit pins: dispatch_triggers.go never calls poller.Ack on a
-	// record whose trigger_records row is missing.
-	for _, rec := range batch {
-		payload := rec.Payload
-		if payload == nil {
-			payload = []byte("{}")
-		}
-		headers := marshalJSON(rec.Headers)
-		metadata := marshalJSON(rec.Metadata)
-		if _, err := store.InsertTriggerRecord(ctx, t.ID.String(), rec.ItemIdentifier, payload, headers, metadata); err != nil {
-			l.log.Warn("sched trigger tick: insert record",
-				"trigger_id", t.ID.String(),
-				"item_identifier", rec.ItemIdentifier,
-				"err", err)
 		}
 	}
 
@@ -540,13 +523,22 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		for _, c := range claimed {
 			ids = append(ids, c.ID.String())
 		}
-		l.deadLetterAll(ctx, t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
 		// Audit finding #6 (paired with the post-error path
 		// above): same partial-claim guard — only Nack the
 		// item_identifiers that have a corresponding
 		// trigger_records row. The other batch entries stay
 		// in poller.inFlight until the next poll cycle.
-		_ = poller.Nack(ctx, t, claimedItemIDs(claimed), triggerReasonPoisonRecord)
+		items := claimedItemIDs(claimed)
+		if _, isQueue := poller.(*queuePoller); isQueue {
+			if err := poller.Nack(ctx, t, items, triggerReasonPoisonRecord); err != nil {
+				l.log.Warn("sched trigger tick: finalize malformed queue response", "trigger_id", t.ID.String(), "err", err)
+				return nil
+			}
+			l.deadLetterAllWithMark(ctx, t.ID.String(), items, triggerReasonPoisonRecord, "gateway response malformed", store, false)
+		} else {
+			l.deadLetterAll(ctx, t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
+			_ = poller.Nack(ctx, t, items, triggerReasonPoisonRecord)
+		}
 		return nil
 	}
 
@@ -565,6 +557,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	succeedItems := []string{}
 	retryItems := []string{}
 	dlqItems := []string{}
+	_, isQueuePoller := poller.(*queuePoller)
 
 	for _, c := range claimed {
 		itemID := c.ItemIdentifier
@@ -607,10 +600,19 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 
 	if len(succeedIDs) > 0 {
+		if isQueuePoller {
+			if err := poller.Ack(ctx, t, succeedItems); err != nil {
+				l.log.Warn("sched trigger tick: finalize successful queue invocations",
+					"trigger_id", t.ID.String(), "err", err)
+				return nil
+			}
+		}
 		for _, id := range succeedIDs {
-			if err := store.MarkTriggerRecordSucceeded(ctx, id); err != nil {
-				l.log.Warn("sched trigger tick: mark succeeded",
-					"id", id, "err", err)
+			if !isQueuePoller {
+				if err := store.MarkTriggerRecordSucceeded(ctx, id); err != nil {
+					l.log.Warn("sched trigger tick: mark succeeded",
+						"id", id, "err", err)
+				}
 			}
 			// Audit: trigger.fired per succeeded record,
 			// dual-emitted as esm.source.created for
@@ -635,9 +637,11 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if err := poller.Ack(ctx, t, succeedItems); err != nil {
-			l.log.Warn("sched trigger tick: poller ack",
-				"trigger_id", t.ID.String(), "err", err)
+		if !isQueuePoller {
+			if err := poller.Ack(ctx, t, succeedItems); err != nil {
+				l.log.Warn("sched trigger tick: poller ack",
+					"trigger_id", t.ID.String(), "err", err)
+			}
 		}
 	}
 	if len(retryIDs) > 0 {
@@ -678,13 +682,25 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		}
 	}
 	if len(dlqIDs) > 0 {
+		if isQueuePoller {
+			if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
+				l.log.Warn("sched trigger tick: finalize queue dead letters",
+					"trigger_id", t.ID.String(), "err", err)
+				return nil
+			}
+		}
 		for i, id := range dlqIDs {
 			reason := dlqReasons[i]
 			lastErr := dlqErrors[i]
 			attempts := dlqAttempts[i]
-			if err := store.MarkTriggerRecordDeadLetter(ctx, id, lastErr); err != nil {
-				l.log.Warn("sched trigger tick: mark dlq",
-					"id", id, "err", err)
+			if err := store.InsertTriggerDeadLetter(ctx, id, t.ID.String(), reason, "drop", []byte(lastErr)); err != nil {
+				l.log.Warn("sched trigger tick: insert dlq", "id", id, "err", err)
+			}
+			if !isQueuePoller {
+				if err := store.MarkTriggerRecordDeadLetter(ctx, id, lastErr); err != nil {
+					l.log.Warn("sched trigger tick: mark dlq",
+						"id", id, "err", err)
+				}
 			}
 			// Audit: trigger.dlq, dual-emitted as
 			// esm.drain.dlq for the operator alias.
@@ -708,9 +724,11 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
-			l.log.Warn("sched trigger tick: poller nack (dlq)",
-				"trigger_id", t.ID.String(), "err", err)
+		if !isQueuePoller {
+			if err := poller.Nack(ctx, t, dlqItems, triggerReasonPoisonRecord); err != nil {
+				l.log.Warn("sched trigger tick: poller nack (dlq)",
+					"trigger_id", t.ID.String(), "err", err)
+			}
 		}
 	}
 	// Audit: trigger.fired.batch — aggregated counts. No ESM
@@ -891,11 +909,28 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 // tick.
 func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource, t sqlc.Trigger, batch []SourceRecord, store storeLike) {
 	items := batchItemIDs(batch)
+	if queue, ok := poller.(*queuePoller); ok {
+		if err := queue.finishInvocations(ctx, t, items, "dead_letter", "dead_letter", "rate_limited", triggerReasonRateLimited, `{"trigger_dispatch":"rate_limited"}`); err != nil {
+			l.log.Warn("sched trigger tick: finalize rate-limited queue invocations",
+				"trigger_id", t.ID.String(),
+				"err", err)
+			return
+		}
+		l.deadLetterAllWithMark(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store, false)
+		return
+	}
 	l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
 	_ = poller.Ack(ctx, t, items)
 }
 
 func (l *Loop) deadLetterAll(ctx context.Context, triggerID string, ids []string, reason, detail string, store storeLike) {
+	l.deadLetterAllWithMark(ctx, triggerID, ids, reason, detail, store, true)
+}
+
+// deadLetterAllWithMark writes the durable DLQ rows and optionally performs
+// the trigger-record transition. Queue pollers set mark=false because they
+// transition trigger_records and invocations together in one SQL statement.
+func (l *Loop) deadLetterAllWithMark(ctx context.Context, triggerID string, ids []string, reason, detail string, store storeLike, mark bool) {
 	if store == nil || len(ids) == 0 {
 		return
 	}
@@ -922,8 +957,10 @@ func (l *Loop) deadLetterAll(ctx context.Context, triggerID string, ids []string
 			l.log.Warn("sched trigger tick: insert dlq", "id", uuid, "err", err)
 			continue
 		}
-		if err := store.MarkTriggerRecordDeadLetter(ctx, uuid, reason); err != nil {
-			l.log.Warn("sched trigger tick: mark dlq", "id", uuid, "err", err)
+		if mark {
+			if err := store.MarkTriggerRecordDeadLetter(ctx, uuid, reason); err != nil {
+				l.log.Warn("sched trigger tick: mark dlq", "id", uuid, "err", err)
+			}
 		}
 	}
 }

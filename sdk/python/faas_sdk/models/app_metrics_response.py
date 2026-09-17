@@ -44,7 +44,7 @@ class AppMetricsResponse:
     latency_p99_ms: float
     """p99 over 2xx traffic in the window, in ms."""
     error_rate_pct: float
-    """Share of [45]xx requests in the window."""
+    """Share of 5xx requests in the window. Client-caused 4xx responses do not consume availability budget."""
     cold_start_pct: float
     """Share of requests that triggered a cold boot (the WakeGate
     leader). Followers waiting on the gate see zero cold

@@ -13328,9 +13328,17 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		select `+invocationSelectCols+`
-		  from invocations
-		 where state = 'pending' and due_at <= $1
-		 order by due_at
+		  from invocations i
+		 where i.state = 'pending' and i.due_at <= $1
+		   and not exists (
+		       select 1
+		         from triggers t
+		        where t.app_id = i.app_id
+		          and t.kind = 'queue'
+		          and t.enabled
+		          and t.source = i.source
+		   )
+		 order by i.due_at
 		 for update skip locked
 		 limit $2`, now.UTC(), limit)
 	if err != nil {
@@ -26188,7 +26196,7 @@ func (s *PgStore) PruneDataUpstreamProbesOlderThan(ctx context.Context, cutoff t
 // or already deleted. The cron kind routes through the existing
 // CreateCronIfUnderQuota path because cron needs the crons row + the
 // schedule+path cron-specific schema.
-func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug, source string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: begin tx: %w", err)
@@ -26247,8 +26255,9 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		}
 	}
 
-	// 4. Insert under the same lock. cron_id + source are NULL for
-	//    the five non-cron kinds; the SQL CHECK + table-level
+	// 4. Insert under the same lock. cron_id is NULL for
+	//    the five non-cron kinds; queue triggers persist source so
+	//    schedd can bind them to queue or delayed_task rows. The SQL CHECK + table-level
 	//    constraint enforces that the cron kind has cron_id set and
 	//    non-cron kinds have it NULL. We default both to NULL here;
 	//    the apid handler routes cron-kind creations through
@@ -26277,7 +26286,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		           created_at, updated_at`,
 		accountID, appID, kind, slug, enabled, config,
 		batchSizeMax, batchWindowMs, maxAttempts,
-		pgtype.UUID{}, pgtype.Text{}, payloadMaxBytes, bps)
+		pgtype.UUID{}, pgtype.Text{String: source, Valid: source != ""}, payloadMaxBytes, bps)
 	t := sqlc.Trigger{}
 	if err := row.Scan(
 		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,
@@ -26305,8 +26314,8 @@ func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, err
 
 // UpdateTrigger patches the mutable fields (enabled, config,
 // batch_size_max, batch_window_ms, max_attempts,
-// broker_poison_strategy, filter_criteria). The kind + slug +
-// cron_id + source fields are immutable after creation; the apid
+// broker_poison_strategy, filter_criteria, and queue source). The kind + slug +
+// cron_id fields are immutable after creation; the apid
 // handler rejects PATCHes that touch them with
 // trigger_immutable_field. The cron_id linkage is set at creation
 // only (kind='cron' is created via the legacy CreateCron path).
@@ -26330,8 +26339,8 @@ func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, err
 // non-nil []byte = "replace the JSONB column" (json.RawMessage
 // shape mirrors the FilterCriteria wire DTO; nil-element means
 // "clear filter to no-op").
-func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte) (sqlc.Trigger, error) {
-	var enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg any
+func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte, source *string) (sqlc.Trigger, error) {
+	var enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg any
 	if enabled != nil {
 		enabledArg = *enabled
 	}
@@ -26354,7 +26363,10 @@ func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, c
 		brokerPoisonArg = *brokerPoisonStrategy
 	}
 	if filterCriteria != nil {
-		filterCriteriaArg = filterCriteria
+		filterCriteriaArg = *filterCriteria
+	}
+	if source != nil {
+		sourceArg = *source
 	}
 	row := s.pool.QueryRow(ctx,
 		`update triggers set
@@ -26365,14 +26377,15 @@ func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, c
 		   max_attempts = coalesce($6, max_attempts),
 		   payload_max_bytes = coalesce($7, payload_max_bytes),
 		   broker_poison_strategy = coalesce($8, broker_poison_strategy),
-		   filter_criteria = coalesce($9::jsonb, filter_criteria)
+		   filter_criteria = coalesce($9::jsonb, filter_criteria),
+		   source = coalesce($10, source)
 		 where id = $1
 		 returning id, account_id, app_id, kind, slug, enabled, config,
 		           batch_size_max, batch_window_ms, max_attempts,
 		           cron_id, source, payload_max_bytes, broker_poison_strategy,
 		           filter_criteria,
 		           created_at, updated_at`,
-		id, enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg)
+		id, enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg)
 	t := sqlc.Trigger{}
 	if err := row.Scan(
 		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,

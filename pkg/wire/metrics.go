@@ -1134,7 +1134,12 @@ type OpsMetrics struct {
 	// as a non-zero rate; the sweep never writes. Registered on every
 	// daemon's OpsMetrics registry (single-registry pattern); only
 	// schedd's Tick produces samples in production.
-	snapshotDiskDrift prometheus.Counter
+	snapshotDiskDrift                    prometheus.Counter
+	snapshotDiskDriftLastSuccess         prometheus.Gauge
+	snapshotDiskDriftDuration            prometheus.Histogram
+	snapshotDiskDriftObjects             prometheus.Gauge
+	snapshotDiskDriftFailures            prometheus.Counter
+	snapshotDiskDriftConsecutiveFailures prometheus.Gauge
 	// capacity_signature_rejected: ADR-053 §3 — every rejected
 	// CapacityReport stream increments this counter once. See
 	// CapacitySignatureRejected() accessor for the operator-facing
@@ -2796,6 +2801,27 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_snapshot_disk_drift_total",
 		Help: "Count of disk-vs-DB discrepancies observed by the read-only /srv/fc/snap drift sweep (PR scale-out readiness #3). Each Tick increments once per missing file, size mismatch, unexpected entry, or non-regular entry under <SnapDir>/<depID>/. Repeated sweeps increment the counter while the discrepancy remains; rate(snapshot_disk_drift_total[5m]) alerts on a non-zero rate. Sweep never writes — diagnostic only.",
 	})
+	snapshotDiskDriftLastSuccess := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_snapshot_disk_drift_last_success_timestamp_seconds",
+		Help: "Unix timestamp of the last complete snapshot drift inventory.",
+	})
+	snapshotDiskDriftDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prefix + "_snapshot_disk_drift_duration_seconds",
+		Help:    "Wall-clock duration of snapshot drift inventory attempts.",
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 180},
+	})
+	snapshotDiskDriftObjects := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_snapshot_disk_drift_objects_processed",
+		Help: "Snapshot objects processed by the latest drift inventory attempt.",
+	})
+	snapshotDiskDriftFailures := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_snapshot_disk_drift_failures_total",
+		Help: "Snapshot drift inventory attempts that failed or returned an incomplete inventory.",
+	})
+	snapshotDiskDriftConsecutiveFailures := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_snapshot_disk_drift_consecutive_failures",
+		Help: "Consecutive failed snapshot drift inventory attempts; reset to zero by a complete sweep.",
+	})
 	// capacity_signature_rejected (ADR-053 §3): every ReportCapacity
 	// frame that fails schedule.VerifyNodeSignature increments the
 	// counter. The handler rejects the whole stream (not per-frame)
@@ -3450,6 +3476,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditOrgEvent, authzDenied, authzAllowed,
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
+		snapshotDiskDriftLastSuccess,
+		snapshotDiskDriftDuration,
+		snapshotDiskDriftObjects,
+		snapshotDiskDriftFailures,
+		snapshotDiskDriftConsecutiveFailures,
 		notificationPayloadRejected,
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
@@ -4827,6 +4858,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		authzAllowed:                                          authzAllowed,
 		wakeIDV4Fallback:                                      wakeIDV4Fallback,
 		snapshotDiskDrift:                                     snapshotDiskDrift,
+		snapshotDiskDriftLastSuccess:                          snapshotDiskDriftLastSuccess,
+		snapshotDiskDriftDuration:                             snapshotDiskDriftDuration,
+		snapshotDiskDriftObjects:                              snapshotDiskDriftObjects,
+		snapshotDiskDriftFailures:                             snapshotDiskDriftFailures,
+		snapshotDiskDriftConsecutiveFailures:                  snapshotDiskDriftConsecutiveFailures,
 		capacitySignatureRejected:                             capacitySignatureRejected,
 		notificationPayloadRejected:                           notificationPayloadRejected,
 		imagedOCIPull:                                         imagedOCIPull,
@@ -6721,6 +6757,21 @@ func (m *OpsMetrics) SnapshotDiskDrift() prometheus.Counter {
 		return nil
 	}
 	return m.snapshotDiskDrift
+}
+
+func (m *OpsMetrics) ObserveSnapshotDiskDriftAudit(success bool, duration time.Duration, objects int) {
+	if m == nil {
+		return
+	}
+	m.snapshotDiskDriftDuration.Observe(duration.Seconds())
+	m.snapshotDiskDriftObjects.Set(float64(objects))
+	if success {
+		m.snapshotDiskDriftLastSuccess.SetToCurrentTime()
+		m.snapshotDiskDriftConsecutiveFailures.Set(0)
+		return
+	}
+	m.snapshotDiskDriftFailures.Inc()
+	m.snapshotDiskDriftConsecutiveFailures.Inc()
 }
 
 // CapacitySignatureRejected returns the counter accessor for the

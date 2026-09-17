@@ -58,12 +58,18 @@ tests:
         alertname: FaasSLOBurnRateHigh
 
   - interval: 30s
-    name: "failed low-volume API traffic still pages"
+    name: "500 502 503 and 504 traffic consumes availability"
     input_series:
       - series: 'gateway_requests_total{code="200",app="low-volume"}'
         values: '0+1x50'
       - series: 'gateway_requests_total{code="500",app="low-volume"}'
         values: '0+3x50'
+      - series: 'gateway_requests_total{code="502",app="low-volume"}'
+        values: '0+1x50'
+      - series: 'gateway_requests_total{code="503",app="low-volume"}'
+        values: '0+1x50'
+      - series: 'gateway_requests_total{code="504",app="low-volume"}'
+        values: '0+1x50'
     alert_rule_test:
       - eval_time: 15m
         alertname: FaasApiAvailabilityLow
@@ -81,7 +87,7 @@ tests:
     name: "all-5xx traffic is unavailable rather than idle"
     input_series:
       - series: 'gateway_requests_total{code="500",app="failed-only"}'
-        values: '0+1x50'
+        values: '0+1x70'
     promql_expr_test:
       - expr: '(((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) * 100) and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0) or vector(100)'
         eval_time: 15m
@@ -111,7 +117,7 @@ tests:
               summary: "API availability is consuming its monthly error budget rapidly"
               description: "The API error rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
-      - eval_time: 15m
+      - eval_time: 25m
         alertname: FaasSLOBurnRateHigh
         exp_alerts:
           - exp_labels:

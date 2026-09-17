@@ -255,7 +255,7 @@ func (s *server) persistCreatedTrigger(
 ) (sqlc.Trigger, *api.Problem) {
 	t, err := s.store.CreateTriggerIfUnderQuota(ctx,
 		appID,
-		string(req.Kind), req.Slug, enabled, []byte(req.Config),
+		string(req.Kind), req.Slug, triggerSource(req.Kind, req.Config), enabled, []byte(req.Config),
 		batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes,
 		brokerPoisonStrategy, limits)
 	if err != nil {
@@ -677,6 +677,11 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		}
 		filterCriteriaBytes = &b
 	}
+	var source *string
+	if mergedConfig != nil && t.Kind == string(api.TriggerKindQueue) {
+		mode := triggerSource(api.TriggerKindQueue, mergedConfig)
+		source = &mode
+	}
 	// Review finding #4 (PR #910): for kind=cron rows the
 	// schedule/path columns live on the `crons` table (the
 	// triggers.cron_id FK points at it). The old code accepted
@@ -696,13 +701,13 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			return
 		}
 		// Update the non-cron fields on the triggers row.
-		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes)
+		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes, source)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 			return
 		}
 	} else {
-		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes)
+		updated, err = s.store.UpdateTrigger(r.Context(), id, req.Enabled, configBytes, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, filterCriteriaBytes, source)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 			return
@@ -795,7 +800,7 @@ func (s *server) setTriggerEnabled(w http.ResponseWriter, r *http.Request, acct 
 		s.notFound(w, "no such trigger")
 		return
 	}
-	updated, err := s.store.UpdateTrigger(r.Context(), id, &enabled, nil, nil, nil, nil, nil, nil, nil)
+	updated, err := s.store.UpdateTrigger(r.Context(), id, &enabled, nil, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 		return
@@ -1034,7 +1039,7 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		}
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
-			string(t.Kind), t.Slug, t.IsEnabled(), sealedConfig,
+			string(t.Kind), t.Slug, triggerSource(kind, config), t.IsEnabled(), sealedConfig,
 			bsm, bwm, ma, pmb, bps, limits)
 		if err != nil {
 			var qe *state.TriggerQuotaError
@@ -1051,6 +1056,19 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		out = append(out, triggerResponse(created))
 	}
 	writeJSON(w, http.StatusOK, batchCreateResponse{Created: out, Errors: errs})
+}
+
+func triggerSource(kind api.TriggerKind, config json.RawMessage) string {
+	if kind != api.TriggerKindQueue {
+		return ""
+	}
+	var queue struct {
+		Mode string `json:"mode"`
+	}
+	if json.Unmarshal(config, &queue) != nil {
+		return ""
+	}
+	return queue.Mode
 }
 
 // batchCreateResponse is the per-trigger success/error list shape.

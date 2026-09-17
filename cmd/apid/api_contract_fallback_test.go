@@ -73,6 +73,7 @@ func TestInternalMetricsRoutesAreAbsentFromPublicHandler(t *testing.T) {
 		imagedMetricsDiscoveryPath,
 		builderdMetricsDiscoveryPath,
 		promtailMetricsDiscoveryPath,
+		scheddMetricsDiscoveryPath,
 	}
 	for _, path := range paths {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

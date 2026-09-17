@@ -1,20 +1,8 @@
-// pgratelimit_invalidator.go — LISTEN-side consumer for the
-// 'rate_limit_changed' pg_notify channel (ADR-104 amendment 5,
-// issue #881 Phase 4 C4).
-//
-// The trigger on pg_ratelimit_counters fires on every INSERT /
-// UPDATE of tokens/last_refill. Each gatewayd-internal replica
-// subscribes via this consumer so that when a PEER replica
-// writes to a central counter row, the local in-process bucket
-// (which still serves the fast-path Peek + the boundary-case
-// consult) is invalidated and the next Allow repopulates it.
-//
-// Without invalidation the in-process cache could leak admits
-// for up to one refill window — the boundary case never fires
-// because the local bucket still says "full" while the central
-// counter has been drained. This is exactly the failure mode the
-// 00126 schema was created to solve; the invalidator is the
-// load-bearing piece that closes it.
+// pgratelimit_invalidator.go contains the retired LISTEN-side consumer for the
+// former per-process admission cache. Central mode now consumes the shared row
+// on every request and migration 20260917160000002 removes the per-consume
+// NOTIFY trigger. The type remains available for rolling-version compatibility
+// and focused tests, but production no longer starts it.
 //
 // The Drain-loop shape mirrors pkg/wire/pgverifier.go
 // (PGNodeVerifier, ADR-056): subscribeWithReconnect +

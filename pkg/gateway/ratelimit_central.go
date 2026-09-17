@@ -8,23 +8,14 @@
 // (ADR-070) does NOT pin a single replica, so per-process buckets
 // see a fraction of customer traffic and the limit leaks.
 //
-// CentralBackend is the seam that closes the leak. The fast-path
-// pattern (cf. PGNodeVerifier at pkg/wire/pgverifier.go):
+// CentralBackend is the seam that closes the leak:
 //
-//   1. The in-process Limiter continues to serve hot-path Peek
-//      (the response-header writer X-RateLimit-* is read from the
-//      local map — sub-1ms, zero PG round-trips).
-//   2. On Allow returning false (local would reject), the limiter
-//      consults central.PeekToken. If central still has tokens, the
-//      request is admitted anyway. This bounds PG round-trips to the
-//      local-would-reject boundary case only — typically < 1% of
-//      admits under normal load.
-//   3. On every admit, central.ConsumeToken decrements the central
-//      counter (single SQL statement, pg_advisory_xact_lock on the
-//      (scope, subject_id, plan) tuple).
-//   4. Peers invalidate their in-process cache on every
-//      'rate_limit_changed' pg_notify tick (see
-//      pkg/wire/pgratelimit_invalidator.go).
+//   1. Every request atomically consumes from Postgres, making one shared
+//      burst authoritative across all gateway replicas.
+//   2. The in-process limiter mirrors the returned balance for response
+//      headers and is used only during a central-store error.
+//   3. The local mirror is overwritten with the authoritative remaining
+//      balance after each successful consume.
 //
 // Phase 4 covers per-app + per-account + per-rule scopes (the 00281
 // migration widened the 00126 CHECK to include scope='rule'). Per-
@@ -71,14 +62,11 @@ type CentralBackend interface {
 	// Single SQL statement (no separate transaction); serialises
 	// contending replicas via pg_advisory_xact_lock on the
 	// hashtext of (scope, subject_id, plan).
-	ConsumeToken(ctx context.Context, scope, subjectID, plan string) (remaining int, ok bool, err error)
+	ConsumeToken(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (remaining int, ok bool, err error)
 
-	// PeekToken returns the central counter's current tokens
-	// for (scope, subject_id, plan) WITHOUT decrementing. Used
-	// by the fast-path-cache's boundary-case consult — the
-	// limiter calls PeekToken only when its in-process bucket
-	// would reject, to check whether the central counter has
-	// refilled enough to admit anyway.
+	// PeekToken returns the central counter's current tokens without
+	// decrementing. It is retained for diagnostics and compatibility; request
+	// admission uses the atomic ConsumeToken operation.
 	//
 	// Returns:
 	//   remaining int  — tokens currently available centrally
@@ -88,11 +76,9 @@ type CentralBackend interface {
 	//                    in-process bucket.
 	PeekToken(ctx context.Context, scope, subjectID, plan string) (remaining int, err error)
 
-	// Invalidate drops any in-process cache entry for
-	// (scope, subject_id, plan). Called by the LISTEN-side
-	// 'rate_limit_changed' pg_notify consumer (pkg/wire) when a
-	// peer replica writes to the counter; the next Allow call
-	// repopulates the entry via PeekToken.
+	// Invalidate drops any implementation-specific cache entry for
+	// (scope, subject_id, plan). The production Postgres backend has no cache;
+	// this method remains for compatibility and operator-triggered resets.
 	Invalidate(scope, subjectID, plan string)
 }
 
@@ -114,14 +100,11 @@ var _ CentralBackend = noopCentralBackend{}
 // is the conservative answer under degraded posture: the in-process
 // bucket is the only source of truth, and a noop answer never
 // flips a local-allow to a local-reject.
-func (noopCentralBackend) ConsumeToken(context.Context, string, string, string) (int, bool, error) {
+func (noopCentralBackend) ConsumeToken(context.Context, string, string, string, float64, float64) (int, bool, error) {
 	return 0, true, nil
 }
 
-// PeekToken on a noop backend returns (0, nil) — the limiter's
-// fast-path consults central only when local would reject, and
-// "no answer from central" is treated as "central says admit" by
-// convention (cf. ConsumeToken above).
+// PeekToken on a noop backend returns (0, nil). Admission bypasses this method.
 func (noopCentralBackend) PeekToken(context.Context, string, string, string) (int, error) {
 	return 0, nil
 }

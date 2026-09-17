@@ -215,7 +215,7 @@ func TestUpdateTriggerCorruptStoredSecretReturnsSanitizedProblem(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	limits := api.MustLimitsFor(api.PlanPro)
-	created, err := e.store.CreateTriggerIfUnderQuota(t.Context(), app.ID, string(api.TriggerKindKafka), "orders", true,
+	created, err := e.store.CreateTriggerIfUnderQuota(t.Context(), app.ID, string(api.TriggerKindKafka), "orders", "", true,
 		[]byte(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_sealed":"bm90LWFnZQ=="}}`),
 		64, 1000, 5, 6_291_456, "commit", limits)
 	if err != nil {

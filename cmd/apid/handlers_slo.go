@@ -182,8 +182,8 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 
 	// 5. error_rate_pct.
 	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, app.ID, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, app.ID, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, app.ID, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -303,8 +303,8 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 
 	// 5. error_rate_pct.
 	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"[45]xx"}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class="5xx"}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"2xx|5xx"}[%s]))`, appMatcher, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {

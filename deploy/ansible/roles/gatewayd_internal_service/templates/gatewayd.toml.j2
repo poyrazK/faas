@@ -31,6 +31,9 @@ route_metrics_enabled = {{ gatewayd_route_metrics_enabled | default(true) | stri
 # FAAS_GATEWAY_STREAMING remains the emergency env override.
 streaming_enabled = {{ gatewayd_streaming_enabled | default(true) | string | lower }}
 
+[ratelimit]
+mode = "{{ gatewayd_ratelimit_mode | default('central') }}"
+
 # In a single-box deployment this remains apid's loopback listener. The
 # generated split-box inventory overrides it with the control-plane address
 # so compute-only gatewayd-internal does not dial its own box.

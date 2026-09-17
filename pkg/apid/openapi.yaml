@@ -25738,7 +25738,7 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: "Share of [45]xx requests in the window."
+          description: "Share of 5xx requests in the window. Client-caused 4xx responses do not consume availability budget."
           x-since: "2026-07"
           x-issue: "273"
         cold_start_pct:
@@ -25894,7 +25894,7 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: "Share of [45]xx requests with this route in the window."
+          description: "Share of 5xx requests with this route in the window. Client-caused 4xx responses do not consume availability budget."
           x-since: "2026-08"
           x-issue: "273"
 
@@ -27172,7 +27172,7 @@ components:
           description: '"prometheus" on success; "degraded: <reason>" otherwise. Per-app shape: when Postgres fails only instance_hours/gb_hours are zeroed.'
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC stamp at which the SLO panel was assembled." }
         request_duration: { $ref: '#/components/schemas/SLODuration' }
-        error_rate_pct: { type: number, description: "Share of [45]xx requests in the window for this app." }
+        error_rate_pct: { type: number, description: "Share of 5xx requests in the window for this app. Client-caused 4xx responses do not consume availability budget." }
         cold_boot_rate_pct: { type: number, description: "Share of requests that triggered a cold boot." }
         instance_hours: { type: number, description: "Sum of instance × minute / 60 over the window (from `usage_minutes`)." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }

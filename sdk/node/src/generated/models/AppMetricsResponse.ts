@@ -43,7 +43,7 @@ export type AppMetricsResponse = {
    */
   latency_p99_ms: number;
   /**
-   * Share of [45]xx requests in the window.
+   * Share of 5xx requests in the window. Client-caused 4xx responses do not consume availability budget.
    */
   error_rate_pct: number;
   /**

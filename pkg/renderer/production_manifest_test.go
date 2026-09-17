@@ -19,6 +19,7 @@ func TestGCPProductionManifestRendersPrivateComputeReadiness(t *testing.T) {
 		"vmmd":     `metrics_addr = "fsn-2.gregale.dev:9104"`,
 		"imaged":   `metrics_addr = "fsn-2.gregale.dev:9102"`,
 		"builderd": `metrics_addr = "fsn-2.gregale.dev:9105"`,
+		"schedd":   `metrics_addr = "fsn-2.gregale.dev:9103"`,
 	} {
 		t.Run(daemon, func(t *testing.T) {
 			dc := daemonConfigFor(m, daemon)

@@ -11,6 +11,7 @@
 gatewayd_route_metrics_enabled: true
 # ADR-143: streaming responses are a paid Hobby+ feature; production is on.
 gatewayd_streaming_enabled: true
+gatewayd_ratelimit_mode: central
 
 # Shared public wildcard suffix. Operators with a different Cloudflare/public
 # zone override this variable; the split compute gateway must receive the same

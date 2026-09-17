@@ -1,6 +1,7 @@
 // ratelimit_central_iface_test.go — compile-time assertion that
 // state.PGRateLimitBackend implements gateway.CentralBackend
 // (ADR-104 amendment 5, issue #881 Phase 4 C3).
+// adr: 104
 //
 // The production CentralBackend lives in pkg/state (alongside
 // pgstore.go, sharing the pgxpool). pkg/state does NOT import
@@ -26,5 +27,5 @@ var _ CentralBackend = (*state.PGRateLimitBackend)(nil)
 // signature without spinning up a pgxpool.
 var _ func() = func() {
 	// _ is intentional — nil pool is fine for the iface check.
-	_ = state.NewPGRateLimitBackend(nil, nil)
+	_ = state.NewPGRateLimitBackend(nil)
 }

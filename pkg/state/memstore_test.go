@@ -5769,14 +5769,14 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 	// the memstore path (the column starts at nil); use the pgtest
 	// path for the seeded filter check, then UpdateTrigger to
 	// install one.
-	trig, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "orders", true, []byte(`{"brokers":["localhost:9092"]}`), 100, 1000, 3, 1024, "commit", api.Limits{})
+	trig, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "orders", "", true, []byte(`{"brokers":["localhost:9092"]}`), 100, 1000, 3, 1024, "commit", api.Limits{})
 	if err != nil {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 	}
 	triggerID := uuidFromPgtype(trig.ID).String()
 
 	// Round 1: nil pointer → filter_criteria stays nil.
-	if _, err := m.UpdateTrigger(ctx, triggerID, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+	if _, err := m.UpdateTrigger(ctx, triggerID, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateTrigger nil filterCriteria: %v", err)
 	}
 	got, err := m.TriggerByID(ctx, triggerID)
@@ -5789,7 +5789,7 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 
 	// Round 2: non-nil → filter_criteria is replaced.
 	payload := []byte(`{"payload":[{"op":"eq","path":"$.event.type","value":"order.created"}]}`)
-	if _, err := m.UpdateTrigger(ctx, triggerID, nil, nil, nil, nil, nil, nil, nil, &payload); err != nil {
+	if _, err := m.UpdateTrigger(ctx, triggerID, nil, nil, nil, nil, nil, nil, nil, &payload, nil); err != nil {
 		t.Fatalf("UpdateTrigger with filterCriteria: %v", err)
 	}
 	got, err = m.TriggerByID(ctx, triggerID)
@@ -5804,7 +5804,7 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 	// again (not coalesced to the previous one) — proves the
 	// replacement semantics.
 	replacement := []byte(`{"$or":[{"payload":[{"op":"neq","path":"$.x","value":1}]}]}`)
-	if _, err := m.UpdateTrigger(ctx, triggerID, nil, nil, nil, nil, nil, nil, nil, &replacement); err != nil {
+	if _, err := m.UpdateTrigger(ctx, triggerID, nil, nil, nil, nil, nil, nil, nil, &replacement, nil); err != nil {
 		t.Fatalf("UpdateTrigger replacement: %v", err)
 	}
 	got, err = m.TriggerByID(ctx, triggerID)
@@ -5829,13 +5829,14 @@ func TestMemStoreTriggerPersistsCreateAndUpdateFields(t *testing.T) {
 	}
 
 	config := []byte(`{"mode":"delayed_task"}`)
-	created, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+	created, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", "delayed_task", true,
 		config, 12, 345, 2, 8192, "commit", api.Limits{})
 	if err != nil {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 	}
 	config[0] = 'x'
 	if string(created.Config) != `{"mode":"delayed_task"}` ||
+		!created.Source.Valid || created.Source.String != "delayed_task" ||
 		created.BatchSizeMax != 12 || created.BatchWindowMs != 345 ||
 		created.MaxAttempts != 2 || created.PayloadMaxBytes != 8192 {
 		t.Fatalf("created trigger did not preserve inputs: %+v", created)
@@ -5845,8 +5846,9 @@ func TestMemStoreTriggerPersistsCreateAndUpdateFields(t *testing.T) {
 	filter := []byte(`{"payload":[{"op":"eq","path":"$.kind","value":"job"}]}`)
 	batchSize, batchWindow, attempts, payload := int32(7), int32(890), int32(4), int32(16384)
 	strategy := "seek-to-offset"
+	updatedSource := "queue"
 	updated, err := m.UpdateTrigger(ctx, uuidFromPgtype(created.ID).String(), nil,
-		updatedConfig, &batchSize, &batchWindow, &attempts, &payload, &strategy, &filter)
+		updatedConfig, &batchSize, &batchWindow, &attempts, &payload, &strategy, &filter, &updatedSource)
 	if err != nil {
 		t.Fatalf("UpdateTrigger: %v", err)
 	}
@@ -5855,8 +5857,74 @@ func TestMemStoreTriggerPersistsCreateAndUpdateFields(t *testing.T) {
 	if string(updated.Config) != `{"mode":"queue"}` || updated.BatchSizeMax != batchSize ||
 		updated.BatchWindowMs != batchWindow || updated.MaxAttempts != attempts ||
 		updated.PayloadMaxBytes != payload || updated.BrokerPoisonStrategy != strategy ||
+		!updated.Source.Valid || updated.Source.String != updatedSource ||
 		string(updated.FilterCriteria) != `{"payload":[{"op":"eq","path":"$.kind","value":"job"}]}` {
 		t.Fatalf("updated trigger did not preserve inputs: %+v", updated)
+	}
+}
+
+func TestMemStoreListDueInvocationsExcludesEnabledQueueTriggerOwner(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "trigger-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "trigger-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := m.EnqueueInvocation(ctx, Invocation{AccountID: acct.ID, AppID: app.ID, Source: InvocationQueue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", "queue", true,
+		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := m.ListDueInvocations(ctx, time.Now().Add(time.Second), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == inv.ID {
+			t.Fatalf("legacy drain claimed queue-trigger-owned invocation %s", inv.ID)
+		}
+	}
+}
+
+func TestMemStoreQueueTriggerOwnershipIsUnique(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "trigger-unique@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "trigger-unique"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", "queue", true,
+		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs-2", "queue", true,
+		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate enabled owner error=%v, want ErrConflict", err)
+	}
+	disabled := false
+	if _, err := m.UpdateTrigger(ctx, first.ID.String(), &disabled, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("disable first owner: %v", err)
+	}
+	second, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs-2", "queue", true,
+		[]byte(`{"mode":"queue"}`), 1, 20, 1, 8192, "commit", api.Limits{})
+	if err != nil {
+		t.Fatalf("create replacement owner: %v", err)
+	}
+	enabled := true
+	if _, err := m.UpdateTrigger(ctx, first.ID.String(), &enabled, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("re-enable duplicate owner error=%v, want ErrConflict (second=%s)", err, second.ID.String())
 	}
 }
 

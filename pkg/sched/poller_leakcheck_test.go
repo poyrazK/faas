@@ -1,11 +1,14 @@
 package sched
 
+// adr: 100
+
 import (
 	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -31,7 +34,6 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 		"nats":          false,
 		"redis_streams": false,
 		"sqs_compat":    false,
-		"queue":         false,
 	}
 	defaultRegistry.mu.Lock()
 	defer defaultRegistry.mu.Unlock()
@@ -46,6 +48,12 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 		if !present {
 			t.Errorf("registry missing poller for kind=%q — every sqlc.Trigger.kind MUST have a registered broker adapter", kind)
 		}
+	}
+	// Queue is deliberately Loop-owned because its pgxpool dependency must be
+	// explicit. A nil-pool loop recognizes the kind and fails closed instead
+	// of relying on a process-global startup side channel.
+	if _, registered, err := NewLoop(nil, nil, nil).newPollerForTrigger(sqlc.Trigger{Kind: "queue"}); !registered || err == nil {
+		t.Errorf("loop-owned queue poller registered=%v err=%v, want recognized dependency error", registered, err)
 	}
 }
 

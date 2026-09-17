@@ -39,7 +39,7 @@ export type AppSLOResponse = {
   as_of: string;
   request_duration: SLODuration;
   /**
-   * Share of [45]xx requests in the window for this app.
+   * Share of 5xx requests in the window for this app. Client-caused 4xx responses do not consume availability budget.
    */
   error_rate_pct: number;
   /**
