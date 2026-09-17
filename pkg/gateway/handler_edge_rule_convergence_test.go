@@ -11,6 +11,8 @@ type convergingEdgeRuleMatcher struct{ noOpEdgeRuleMatcher }
 
 func (convergingEdgeRuleMatcher) Converging(string) bool { return true }
 
+// adr: 091 — policy mutations fence the affected host before any request can
+// reach routing, authentication, wake admission, or the application backend.
 func TestHandlerFailsClosedDuringEdgeRuleConvergence(t *testing.T) {
 	h, backend, _ := newTestHandler(t)
 	h.edgeRules = convergingEdgeRuleMatcher{}
