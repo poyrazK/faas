@@ -13470,16 +13470,17 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 	// PR-B fixup (code-review #1185 finding #4): the dispatching→pending
 	// transition and the per-account counter decrement share one
 	// transaction. Without the tx, a crash between the two leaked
-	// the slot until the next cap hit. Two Execs inside one tx:
-	// the requeue returns the affected-row count we report to the
-	// caller, then the decrement updates every distinct account the
-	// requeue produced.
+	// the slot until the next cap hit. Keep the reclaimed rows in a
+	// data-modifying CTE so each account's counter is decremented once
+	// per row reclaimed, rather than once per account (or once again
+	// for an older row with the same due_at/last_error markers).
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, `
+	var requeued int
+	err = tx.QueryRow(ctx, `
 		with expired as (
 			select id
 			  from invocations
@@ -13489,33 +13490,30 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			 order by lease_expires_at, id
 			 for update skip locked
 			 limit $2
+		), requeued as (
+			update invocations as i
+			   set state = 'pending',
+			       due_at = $1,
+			       lease_expires_at = null,
+			       instance_id = null,
+			       last_error = 'dispatch lease expired; requeued'
+			  from expired
+			 where i.id = expired.id
+			 returning i.account_id
+		), per_account as (
+			select account_id, count(*) as reclaimed
+			  from requeued
+			 group by account_id
+		), decremented as (
+			update account_async_quota as q
+			   set current_inflight = greatest(q.current_inflight - p.reclaimed, 0),
+			       updated_at = now()
+			  from per_account as p
+			 where q.account_id = p.account_id
 		)
-		update invocations as i
-		   set state = 'pending',
-		       due_at = $1,
-		       lease_expires_at = null,
-		       instance_id = null,
-		       last_error = 'dispatch lease expired; requeued'
-		  from expired
-		 where i.id = expired.id
-		returning account_id`, now.UTC(), limit)
+		select count(*) from requeued`, now.UTC(), limit).Scan(&requeued)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
-	}
-	requeued := int(tag.RowsAffected())
-	if requeued > 0 {
-		if _, err := tx.Exec(ctx, `
-			update account_async_quota
-			   set current_inflight = greatest(current_inflight - 1, 0),
-			       updated_at = now()
-			 where account_id in (
-			     select distinct account_id
-			       from invocations
-			      where last_error = 'dispatch lease expired; requeued'
-			        and due_at = $1
-			 )`, now.UTC()); err != nil {
-			return 0, fmt.Errorf("state: invocations reclaim decrement: %w", err)
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
