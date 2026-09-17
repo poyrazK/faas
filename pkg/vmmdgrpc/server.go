@@ -1348,6 +1348,22 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	if req.GetPrivateNetworkId() != "" || req.GetPrivateNetworkAddress() != "" {
+		attachmentUpdater, ok := s.vmm.(interface {
+			UpdatePrivateNetworkAttachment(context.Context, string, string, netip.Addr, []netip.Prefix) error
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_unavailable", "Private network attachment updates unavailable", "vmmd private-network attachment live update is not wired")))
+		}
+		address, parseErr := netip.ParseAddr(req.GetPrivateNetworkAddress())
+		if parseErr != nil || !address.Is4() {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network address", "private_network_address must be an IPv4 address")))
+		}
+		if err := attachmentUpdater.UpdatePrivateNetworkAttachment(ctx, req.GetAppId(), req.GetPrivateNetworkId(), address, cidrs); err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+		return &vmmdpb.UpdatePrivateNetworkAck{}, nil
+	}
 	if err := updater.UpdatePrivateNetwork(ctx, req.GetAppId(), cidrs); err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}

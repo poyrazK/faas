@@ -621,6 +621,7 @@ from .invitation_with_token_response import InvitationWithTokenResponse
 from .invite_member_request import InviteMemberRequest
 from .invite_member_request_role import InviteMemberRequestRole
 from .invocation import Invocation
+from .invocation_destinations import InvocationDestinations
 from .invocation_headers import InvocationHeaders
 from .invocation_payload import InvocationPayload
 from .invocation_result_type_0 import InvocationResultType0
@@ -1851,6 +1852,7 @@ __all__ = (
     "InviteMemberRequest",
     "InviteMemberRequestRole",
     "Invocation",
+    "InvocationDestinations",
     "InvocationHeaders",
     "InvocationPayload",
     "InvocationResultType0",

@@ -181,15 +181,7 @@ func manifestPostgresDeploymentScope(slug, cwd string, environments ...string) (
 }
 
 func manifestDependencyScope(dependency gregalemanifest.DatabaseDependency, environment string) (string, error) {
-	environment = strings.TrimSpace(environment)
-	scope := strings.TrimSpace(dependency.EffectiveScope())
-	if environment == "" {
-		return scope, nil
-	}
-	if dependency.Scope != "" && scope != environment {
-		return "", fmt.Errorf("scope %q does not match deployment environment %q", scope, environment)
-	}
-	return environment, nil
+	return manifestScopeForDeclared(dependency.Scope, environment)
 }
 
 type managedPostgresCatalog struct {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -61,6 +62,10 @@ class Invocation:
     last_replayed_at: datetime.datetime | None | Unset = UNSET
     """ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST
     /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay."""
+    on_success_destination_id: None | Unset | UUID = UNSET
+    """EPIC #1278. App webhook subscription selected for a completed invocation."""
+    on_failure_destination_id: None | Unset | UUID = UNSET
+    """EPIC #1278. App webhook subscription selected for a terminal failure or dead-lettered invocation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -187,6 +192,22 @@ class Invocation:
         else:
             last_replayed_at = self.last_replayed_at
 
+        on_success_destination_id: None | str | Unset
+        if isinstance(self.on_success_destination_id, Unset):
+            on_success_destination_id = UNSET
+        elif isinstance(self.on_success_destination_id, UUID):
+            on_success_destination_id = str(self.on_success_destination_id)
+        else:
+            on_success_destination_id = self.on_success_destination_id
+
+        on_failure_destination_id: None | str | Unset
+        if isinstance(self.on_failure_destination_id, Unset):
+            on_failure_destination_id = UNSET
+        elif isinstance(self.on_failure_destination_id, UUID):
+            on_failure_destination_id = str(self.on_failure_destination_id)
+        else:
+            on_failure_destination_id = self.on_failure_destination_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -235,6 +256,10 @@ class Invocation:
             field_dict["result_retention_until"] = result_retention_until
         if last_replayed_at is not UNSET:
             field_dict["last_replayed_at"] = last_replayed_at
+        if on_success_destination_id is not UNSET:
+            field_dict["on_success_destination_id"] = on_success_destination_id
+        if on_failure_destination_id is not UNSET:
+            field_dict["on_failure_destination_id"] = on_failure_destination_id
 
         return field_dict
 
@@ -465,6 +490,40 @@ class Invocation:
 
         last_replayed_at = _parse_last_replayed_at(d.pop("last_replayed_at", UNSET))
 
+        def _parse_on_success_destination_id(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                on_success_destination_id_type_0 = UUID(data)
+
+                return on_success_destination_id_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        on_success_destination_id = _parse_on_success_destination_id(d.pop("on_success_destination_id", UNSET))
+
+        def _parse_on_failure_destination_id(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                on_failure_destination_id_type_0 = UUID(data)
+
+                return on_failure_destination_id_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        on_failure_destination_id = _parse_on_failure_destination_id(d.pop("on_failure_destination_id", UNSET))
+
         invocation = cls(
             id=id,
             app_id=app_id,
@@ -490,6 +549,8 @@ class Invocation:
             retry_policy=retry_policy,
             result_retention_until=result_retention_until,
             last_replayed_at=last_replayed_at,
+            on_success_destination_id=on_success_destination_id,
+            on_failure_destination_id=on_failure_destination_id,
         )
 
         invocation.additional_properties = d

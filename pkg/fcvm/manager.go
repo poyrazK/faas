@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -2982,6 +2983,12 @@ type WakeRequest struct {
 	// default RFC1918 deny in that case. Ready CIDRs are validated again here
 	// before they reach the netns route and nft renderers.
 	PrivateNetworkCIDRs []string
+	// PrivateNetworkID and PrivateNetworkAddress are present only for a
+	// Gregale-owned, ready attachment. vmmd derives the stable gpn-* bridge
+	// from account+network identity and programs the allocated member address
+	// on the workload's private side-link.
+	PrivateNetworkID      string
+	PrivateNetworkAddress string
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -3135,7 +3142,9 @@ type ColdBootRequest struct {
 	EgressAllowlist []string
 	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
 	// that invoke ColdBoot directly instead of using the scheduler wire.
-	PrivateNetworkCIDRs []string
+	PrivateNetworkCIDRs   []string
+	PrivateNetworkID      string
+	PrivateNetworkAddress string
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3194,11 +3203,13 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
-		APIEnvEntries:       req.APIEnvEntries,
-		EgressAllowlist:     req.EgressAllowlist,
-		PrivateNetworkCIDRs: req.PrivateNetworkCIDRs,
-		Plan:                req.Plan,
-		Port:                req.Port,
+		APIEnvEntries:         req.APIEnvEntries,
+		EgressAllowlist:       req.EgressAllowlist,
+		PrivateNetworkCIDRs:   req.PrivateNetworkCIDRs,
+		PrivateNetworkID:      req.PrivateNetworkID,
+		PrivateNetworkAddress: req.PrivateNetworkAddress,
+		Plan:                  req.Plan,
+		Port:                  req.Port,
 		// ADR-057 / PR-D: forward the per-deployment override
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
@@ -3465,6 +3476,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	defer func() {
 		if err != nil {
 			cleanupNet := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+			if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" {
+				cleanupNet.PrivateVethHost, cleanupNet.PrivateVethPeer = privateVethNames(lease.Slot)
+			}
 			if req.ExecutionOnly {
 				cleanupNet = netns.Config{Instance: lease.Instance}
 			}
@@ -3480,6 +3494,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port
+	if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
+		if req.AccountID == "" {
+			return nil, fmt.Errorf("wake %s: private network: account_id is required for Gregale fabric attachment", req.Instance)
+		}
+		if perr := api.ValidatePrivateNetworkIdentifier(req.PrivateNetworkID); perr != nil {
+			return nil, fmt.Errorf("wake %s: private network: invalid network_id %q: %w", req.Instance, req.PrivateNetworkID, perr)
+		}
+		nc.PrivateNetworkBridge = privatenetwork.BridgeName(req.AccountID, req.PrivateNetworkID)
+		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(lease.Slot)
+	}
 	// Plan validation (issue #301 / ADR-043). An empty / unknown plan
 	// would land the VM under the wrong cgroup sub-slice (or under
 	// none at all) and silently disable per-plan cpu.weight + cpu.max
@@ -3556,6 +3580,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, fmt.Errorf("wake %s: private network: %w", req.Instance, perr)
 		}
 		nc.PrivateNetworkCIDRs = privateCIDRs
+	}
+	if req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
+		address, perr := netip.ParseAddr(req.PrivateNetworkAddress)
+		if perr != nil || !address.Is4() {
+			return nil, fmt.Errorf("wake %s: private network: invalid member address %q", req.Instance, req.PrivateNetworkAddress)
+		}
+		if len(nc.PrivateNetworkCIDRs) == 0 || !nc.PrivateNetworkCIDRs[0].Contains(address) {
+			return nil, fmt.Errorf("wake %s: private network: member address %s is outside network CIDR", req.Instance, address)
+		}
+		nc.PrivateNetworkAddress = address
 	}
 	// ADR-119 (redesign): per-app static egress IP. The
 	// per-netns SNAT was moved to the host renderer (see
@@ -5388,7 +5422,7 @@ func (m *Manager) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs 
 
 	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
 	for _, t := range targets {
-		if samePrefixSet(t.prior, cidrs) {
+		if samePrefixSet(t.prior, cidrs) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
 		}
@@ -5459,6 +5493,24 @@ func (m *Manager) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs 
 				h6 = 0
 			}
 		}
+		if len(cidrs) == 0 && t.net.PrivateVethHost != "" {
+			// Remove the private side-link and rebuild the per-netns table so
+			// its NAT rules cannot reference a detached interface. Public
+			// egress rules are rendered from the same cached Config.
+			if err := m.run.Run(ctx, []string{"ip", "link", "del", t.net.PrivateVethHost}); err != nil {
+				m.log.Warn("fcvm: private side-link removal failed", "netns", t.netns, "veth", t.net.PrivateVethHost, "err", err)
+			}
+			clean := t.net
+			clean.PrivateNetworkCIDRs = nil
+			clean.PrivateNetworkBridge = ""
+			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
+			clean.PrivateNetworkAddress = netip.Addr{}
+			_ = m.runCommands(ctx, clean.NftResetCommands())
+			if err := m.runNftCommands(ctx, clean.Netns, clean.NftCommands()); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s rebuild policy: %w", appID, t.netns, err)
+			}
+			h4, h6 = 0, 0
+		}
 		newHandles[t.id] = struct{ h4, h6 uint64 }{h4, h6}
 	}
 	m.mu.Lock()
@@ -5468,10 +5520,100 @@ func (m *Manager) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs 
 			continue
 		}
 		inst.Net.PrivateNetworkCIDRs = append([]netip.Prefix(nil), cidrs...)
+		if len(cidrs) == 0 && inst.Net.PrivateVethHost != "" {
+			inst.Net.PrivateNetworkBridge = ""
+			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = "", ""
+			inst.Net.PrivateNetworkAddress = netip.Addr{}
+		}
 		inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = nh.h4, nh.h6
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+// UpdatePrivateNetworkAttachment adds the Gregale-owned side-link to every
+// live instance before applying the normal CIDR route/policy patch. Fresh
+// wakes receive the same fields in WakeRequest; this method closes the gap for
+// apps that become ready while already running.
+func (m *Manager) UpdatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs []netip.Prefix) error {
+	if appID == "" || networkID == "" || !address.IsValid() || !address.Is4() {
+		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: invalid identity")
+	}
+	if err := api.ValidatePrivateNetworkIdentifier(networkID); err != nil {
+		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: network_id: %w", err)
+	}
+	if len(cidrs) == 0 || !cidrs[0].Contains(address) {
+		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: member address %s is outside the private network", address)
+	}
+	raw := make([]string, 0, len(cidrs))
+	for _, p := range cidrs {
+		raw = append(raw, p.String())
+	}
+	validated, err := api.ValidatePrivateNetworkCIDRs(raw, api.PrivateNetworkAttachmentMaxCIDRs)
+	if err != nil {
+		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s: %w", appID, err)
+	}
+	cidrs = validated
+	type target struct {
+		id      string
+		account string
+		slot    int
+		net     netns.Config
+	}
+	var targets []target
+	m.mu.Lock()
+	for id, inst := range m.live {
+		if inst.AppID == appID {
+			targets = append(targets, target{id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
+		}
+	}
+	m.mu.Unlock()
+	for _, t := range targets {
+		nc := t.net
+		if t.account == "" {
+			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s: account identity is missing", appID, t.id)
+		}
+		desiredBridge := privatenetwork.BridgeName(t.account, networkID)
+		if nc.PrivateNetworkBridge == desiredBridge && nc.PrivateNetworkAddress == address && nc.PrivateVethHost != "" {
+			continue
+		}
+		if nc.PrivateVethHost != "" && (nc.PrivateNetworkBridge != desiredBridge || nc.PrivateNetworkAddress != address) {
+			if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s remove old side-link: %w", appID, t.id, err)
+			}
+			clean := nc
+			clean.PrivateNetworkCIDRs = nil
+			clean.PrivateNetworkBridge = ""
+			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
+			clean.PrivateNetworkAddress = netip.Addr{}
+			_ = m.runCommands(ctx, clean.NftResetCommands())
+			if err := m.runNftCommands(ctx, clean.Netns, clean.NftCommands()); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s clear old private policy: %w", appID, t.id, err)
+			}
+			nc.PrivateVethHost, nc.PrivateVethPeer, nc.PrivateNetworkBridge = "", "", ""
+			nc.PrivateNetworkAddress = netip.Addr{}
+		}
+		nc.PrivateNetworkBridge = desiredBridge
+		nc.PrivateNetworkAddress = address
+		nc.PrivateNetworkCIDRs = cidrs
+		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(t.slot)
+		if err := m.runCommands(ctx, nc.PrivateNetworkSetupCommands()); err != nil {
+			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s side-link: %w", appID, t.id, err)
+		}
+		if err := m.runCommands(ctx, nc.PrivateNetworkNftCommands()); err != nil {
+			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
+		}
+		m.mu.Lock()
+		if inst := m.live[t.id]; inst != nil {
+			inst.Net.PrivateNetworkBridge = nc.PrivateNetworkBridge
+			inst.Net.PrivateNetworkAddress = nc.PrivateNetworkAddress
+			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = nc.PrivateVethHost, nc.PrivateVethPeer
+		}
+		m.mu.Unlock()
+	}
+	return m.UpdatePrivateNetwork(ctx, appID, cidrs)
 }
 
 func insertNftRule(argv []string) []string {
@@ -5795,6 +5937,12 @@ func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 				"instance", nc.Instance, "veth", nc.VethHost, "err", err)
 		}
 	}
+	if nc.PrivateVethHost != "" {
+		if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+			m.log.Debug("stale private veth cleanup (best-effort)",
+				"instance", nc.Instance, "veth", nc.PrivateVethHost, "err", err)
+		}
+	}
 	if err := m.runIPSetupCommands(ctx, nc.SetupCommands()); err != nil {
 		return err
 	}
@@ -5810,6 +5958,13 @@ func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 	}
 
 	return m.runNftCommands(ctx, nc.Netns, nc.NftCommands())
+}
+
+// privateVethNames derives a bounded, slot-unique side-link pair. The
+// allocator slot is already exclusive for the lifetime of a VM, so no global
+// registry is needed and teardown can deterministically recover the root end.
+func privateVethNames(slot int) (string, string) {
+	return fmt.Sprintf("gpn-h%05d", slot), fmt.Sprintf("gpn-p%05d", slot)
 }
 
 // runNftCommands loads the per-instance ruleset through one nft process when

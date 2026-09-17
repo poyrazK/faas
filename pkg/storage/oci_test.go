@@ -402,6 +402,22 @@ func TestPlan_LayersKey(t *testing.T) {
 	}
 }
 
+func TestPlan_JobsKey(t *testing.T) {
+	o := &OCIRegistryStorageBackend{prefix: "faas"}
+	jobUUID := "550e8400-e29b-41d4-a716-446655440000"
+	key := "jobs/" + jobUUID + ".ext4"
+	repo, tag, err := o.plan(key)
+	if err != nil {
+		t.Fatalf("plan jobs key: %v", err)
+	}
+	if repo != "jobs" || tag != jobUUID {
+		t.Fatalf("got (%q,%q), want (jobs,%s)", repo, tag, jobUUID)
+	}
+	if got, ok := o.unplan(repo, tag); !ok || got != key {
+		t.Fatalf("unplan = (%q,%t), want (%q,true)", got, ok, key)
+	}
+}
+
 func TestPlan_BaseKey(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
 	repo, tag, err := o.plan("base/runner-node22.ext4")
@@ -494,6 +510,7 @@ func TestPlan_InvalidKeys(t *testing.T) {
 		"snap/550e8400-e29b-41d4-a716-446655440000/bogus", // wrong segment
 		"base/runner.ext4.digest.digest",                  // double-suffix
 		"layers/abc.txt",                                  // wrong extension
+		"jobs/not-a-uuid.ext4",                            // job key needs UUID
 		"scans/runner-node22-amd64.ext4",                  // missing scan suffix
 		"sigs/base",                                       // missing signature namespace
 		"sources/not-a-uuid.tar.gz",                       // source key needs build UUID
@@ -547,6 +564,7 @@ func TestOCIRoundTrip(t *testing.T) {
 		"base/runner-node22.ext4",
 		"base/runner-node22.ext4.digest",
 		"layers/" + dep2 + ".ext4",
+		"jobs/" + dep1 + ".ext4",
 		"kernel/v1.10.0",
 	}
 	bodies := [][]byte{
@@ -556,6 +574,7 @@ func TestOCIRoundTrip(t *testing.T) {
 		[]byte("base ext4 bytes"),
 		[]byte("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
 		[]byte("legacy layer bytes"),
+		[]byte("job rootfs bytes"),
 		[]byte("firecracker kernel bytes"),
 	}
 
@@ -1232,6 +1251,40 @@ func TestOCIReconcileSnapshotRepositoryIndexUpgradesLegacyArtifacts(t *testing.T
 	}
 	if len(want) != 0 {
 		t.Fatalf("fresh List missing legacy keys: %v (got %v)", want, got)
+	}
+}
+
+func TestOCIListUnderJobs(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	be := f.client(t)
+	ctx := context.Background()
+	job1 := "550e8400-e29b-41d4-a716-446655440000"
+	job2 := "660e8400-e29b-41d4-a716-446655440001"
+	for _, item := range []struct {
+		key  string
+		body string
+	}{
+		{"jobs/" + job1 + ".ext4", "one"},
+		{"jobs/" + job2 + ".ext4", "two"},
+	} {
+		if err := be.Put(ctx, item.key, bytes.NewReader([]byte(item.body))); err != nil {
+			t.Fatalf("Put %s: %v", item.key, err)
+		}
+	}
+	got, err := be.List(ctx, "jobs/")
+	if err != nil {
+		t.Fatalf("List jobs: %v", err)
+	}
+	want := map[string]bool{
+		"jobs/" + job1 + ".ext4": true,
+		"jobs/" + job2 + ".ext4": true,
+	}
+	for _, key := range got {
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("List jobs missing keys: %v (got %v)", want, got)
 	}
 }
 

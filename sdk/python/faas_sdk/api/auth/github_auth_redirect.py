@@ -57,7 +57,8 @@ def sync_detailed(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/github/callback` and 302s to the GitHub consent
-    with `scope=read:user user:email`. The callback requires
+    with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
+    challenge. The callback requires
     a primary && verified email before minting a session
     (issue #165 PR #2, ADR-032).
 
@@ -91,7 +92,8 @@ def sync(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/github/callback` and 302s to the GitHub consent
-    with `scope=read:user user:email`. The callback requires
+    with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
+    challenge. The callback requires
     a primary && verified email before minting a session
     (issue #165 PR #2, ADR-032).
 
@@ -121,7 +123,8 @@ async def asyncio_detailed(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/github/callback` and 302s to the GitHub consent
-    with `scope=read:user user:email`. The callback requires
+    with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
+    challenge. The callback requires
     a primary && verified email before minting a session
     (issue #165 PR #2, ADR-032).
 
@@ -153,7 +156,8 @@ async def asyncio(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/github/callback` and 302s to the GitHub consent
-    with `scope=read:user user:email`. The callback requires
+    with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
+    challenge. The callback requires
     a primary && verified email before minting a session
     (issue #165 PR #2, ADR-032).
 

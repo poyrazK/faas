@@ -10,6 +10,16 @@ This supplement records the as-built deviations from ADR-099 v1
 Workstream A). ADR-099 itself is unchanged; reading both in
 order is the canonical reference.
 
+## Job image artifact key
+
+The customer-facing `jobs.image_ref` remains an OCI reference. Once the
+image-materialization worker is wired, it publishes the immutable ext4 rootfs
+that vmmd boots at the canonical storage key `jobs/<job-id>.ext4` (the helper is
+`pkg/sched.JobLayerKey`). This keeps the source reference separate from the
+storage key and gives schedd, imaged, and vmmd one round-trippable artifact
+contract. The pull/publish worker and persistence of the resolved key are a
+follow-up slice; this supplement does not claim that pipeline is complete.
+
 ## Locked deviations
 
 1. **Slot bank 00517–00524 is fenced by ADR-134 PR-A.** Mega-1

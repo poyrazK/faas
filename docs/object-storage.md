@@ -228,6 +228,32 @@ and immediately invalidates the previous access key. Revocation invalidates
 the credential first, then removes the managed app secrets. Ordinary secret
 PUT/DELETE calls cannot overwrite or remove a managed binding secret.
 
+### Declare storage bindings in `gregale.yaml`
+
+For source-based deployments, keep the bucket binding beside the application
+code. Deployment resolves an existing ready bucket in the selected app and
+environment, then reuses or creates the managed compute binding idempotently:
+
+```yaml
+buckets:
+  - bucket: assets       # logical bucket name or ID
+    scope: production    # defaults to default; --environment may select it
+    permission: read_write
+    prefix: GREGALE_S3_ASSETS
+```
+
+The optional `app` field scopes a declaration to one app; a single-app deploy
+ignores entries for other apps. The optional `label` is used only when a
+binding is first created. Credentials and provider details stay out of the
+manifest; the API seals the six runtime settings into the app environment.
+`gregale deploy` never creates a bucket from this declaration. Create one
+explicitly first with `gregale add bucket`, then commit the manifest so local
+and CI deploys share the same binding intent.
+
+All database and bucket declarations for one deployment must use one scope.
+An explicit `--environment staging` selects `staging` for declarations that
+omit `scope` and rejects declarations that explicitly name another scope.
+
 Compute remains stateless: this binding supplies S3 SDK configuration, not a
 persistent filesystem mount. The app must still have outbound access to
 `s3.gregale.dev` under its egress policy.

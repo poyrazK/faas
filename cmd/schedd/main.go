@@ -1512,6 +1512,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// from terminal_at and obsolete PARKED history from parked_at after
 		// cfg.RetentionDuration (default api.DefaultInstanceRetention).
 		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration))).
+		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
+		// deadline-breached rows through their configured failure destination.
+		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		// Issue #171: shared Prometheus registry (same instance the

@@ -21,10 +21,12 @@ func cmdRealtimeDrain(args []string) int {
 	limit := fs.Int("limit", 100, "maximum connections to select (1-1000)")
 	dryRun := fs.Bool("dry-run", false, "preview the selected connections without closing them")
 	allowPartial := fs.Bool("allow-partial", false, "allow closing the reachable subset when some nodes are unavailable")
+	wait := fs.Bool("wait", false, "wait for the drain to reach a terminal state")
+	timeout := fs.Duration("timeout", realtimeDrainWaitDefaultTimeout, "maximum time to wait with --wait")
 	var connectionIDs realtimeStringList
 	fs.Var(&connectionIDs, "connection-id", "select a specific connection; may be repeated (max 100)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" {
-		PrintUsage(osStderr, "usage: gregale realtime drain APP_SLUG ENDPOINT_ID --reason TEXT [--channel CHANNEL] [--principal PRINCIPAL] [--connection-id ID ...] [--limit N] [--dry-run] [--allow-partial]", "realtime")
+		PrintUsage(osStderr, "usage: gregale realtime drain APP_SLUG ENDPOINT_ID --reason TEXT [--channel CHANNEL] [--principal PRINCIPAL] [--connection-id ID ...] [--limit N] [--dry-run] [--allow-partial] [--wait] [--timeout DURATION]", "realtime")
 		return 1
 	}
 	if strings.TrimSpace(*reason) == "" {
@@ -32,6 +34,9 @@ func cmdRealtimeDrain(args []string) int {
 	}
 	if *limit < 1 || *limit > realtimeConnectionsCLILimitMax {
 		return printErr("Invalid connection limit", fmt.Errorf("must be between 1 and %d", realtimeConnectionsCLILimitMax))
+	}
+	if *timeout <= 0 {
+		return printErr("Invalid wait timeout", fmt.Errorf("must be positive"))
 	}
 	if *channel != "" && !realtime.ValidateChannel(*channel) {
 		return printErr("Invalid channel", fmt.Errorf("channel must be non-empty, at most 256 bytes, and contain no '/', '?', '#', or whitespace padding"))
@@ -55,8 +60,32 @@ func cmdRealtimeDrain(args []string) int {
 	if err != nil {
 		return printErr("Could not drain realtime connections", err)
 	}
+	timedOut := false
+	if *wait && response.Status == "running" {
+		response, timedOut, err = waitForManagedRealtimeDrain(context.Background(), client, fs.Arg(0), fs.Arg(1), response.OperationID, *timeout, response)
+		if err != nil {
+			return printErr("Could not read realtime drain status", err)
+		}
+	}
 	if jsonOutput {
-		return jsonOut(writeJSON(response))
+		code := jsonOut(writeJSON(response))
+		if code != 0 {
+			return code
+		}
+		if timedOut {
+			printRealtimeDrainTimeout(osStderr, fs.Arg(0), fs.Arg(1), response.OperationID, *timeout)
+			return 3
+		}
+		return 0
+	}
+	if timedOut {
+		renderRealtimeDrainStatus(response)
+		printRealtimeDrainTimeout(osStderr, fs.Arg(0), fs.Arg(1), response.OperationID, *timeout)
+		return 3
+	}
+	if response.Status == "running" {
+		_, _ = fmt.Fprintf(osStdout, "Realtime drain accepted; operation %s is running.\n", response.OperationID)
+		return 0
 	}
 	if response.Partial {
 		PrintWarn(osStderr, fmt.Sprintf("Realtime connection inventory is partial: %d node(s) unavailable.", response.NodesUnavailable))
@@ -74,6 +103,6 @@ func cmdRealtimeDrain(args []string) int {
 
 func normalizeRealtimeDrainArgs(args []string) []string {
 	return normalizeRealtimeValueArgs(args,
-		map[string]bool{"--reason": true, "--channel": true, "--principal": true, "--connection-id": true, "--limit": true},
-		map[string]bool{"--dry-run": true, "--allow-partial": true})
+		map[string]bool{"--reason": true, "--channel": true, "--principal": true, "--connection-id": true, "--limit": true, "--timeout": true},
+		map[string]bool{"--dry-run": true, "--allow-partial": true, "--wait": true})
 }

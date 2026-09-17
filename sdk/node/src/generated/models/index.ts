@@ -308,6 +308,7 @@ export type { InvitationListResponse } from './InvitationListResponse.js';
 export type { InvitationWithTokenResponse } from './InvitationWithTokenResponse.js';
 export type { InviteMemberRequest } from './InviteMemberRequest.js';
 export type { Invocation } from './Invocation.js';
+export type { InvocationDestinations } from './InvocationDestinations.js';
 export type { Invoice } from './Invoice.js';
 export type { InvoiceListResponse } from './InvoiceListResponse.js';
 export type { InvokeRequest } from './InvokeRequest.js';

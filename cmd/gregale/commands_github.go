@@ -15,7 +15,7 @@ import (
 // are for repeatable customer automation after an installation exists.
 func cmdGithub(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale github <status|sync|repos|bind|disconnect> <slug> [flags]", "github")
+		PrintUsage(os.Stderr, "usage: gregale github <status|sync|repos|bind|setup|disconnect> <slug> [flags]", "github")
 		return 1
 	}
 	switch args[0] {
@@ -27,6 +27,8 @@ func cmdGithub(args []string) int {
 		return cmdGithubRepos(args[1:])
 	case "bind":
 		return cmdGithubBind(args[1:])
+	case "setup":
+		return cmdGithubSetup(args[1:])
 	case "disconnect":
 		return cmdGithubDisconnect(args[1:])
 	default:

@@ -156,31 +156,24 @@ func TestManagedRealtimeConnectionDrainFiltersAndSupportsDryRun(t *testing.T) {
 	rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", api.ManagedRealtimeDrainRequest{
 		Channel: "room-a", Principal: "user-a", Limit: 10, Reason: "deploy", DryRun: true,
 	}, nil)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("dry-run: %d %s", rec.Code, rec.Body)
 	}
 	var response api.ManagedRealtimeDrainResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Matched != 1 || response.Closed != 0 || len(response.Results) != 1 || response.Results[0].ID != "conn-a" || response.Results[0].Status != "would_close" {
+	if response.Matched != 1 || response.Closed != 0 || len(response.Results) != 1 || response.Results[0].ID != "conn-a" || response.Results[0].Status != "pending" || response.Status != "running" {
 		t.Fatalf("dry-run response: %+v", response)
 	}
 	if len(owner.closed) != 0 {
 		t.Fatalf("dry-run closed connections: %+v", owner.closed)
 	}
-	if response.OperationID == "" || response.Status != "completed" || response.CompletedAt == nil {
+	if response.OperationID == "" {
 		t.Fatalf("dry-run operation metadata: %+v", response)
 	}
 	statusPath := "/v1/apps/rt-actions/realtime/endpoints/" + endpointID + "/connections/drain/" + response.OperationID
-	statusRec := e.do(t, http.MethodGet, statusPath, nil, nil)
-	if statusRec.Code != http.StatusOK {
-		t.Fatalf("get drain operation: %d %s", statusRec.Code, statusRec.Body)
-	}
-	var stored api.ManagedRealtimeDrainResponse
-	if err := json.Unmarshal(statusRec.Body.Bytes(), &stored); err != nil {
-		t.Fatal(err)
-	}
+	stored := waitForManagedRealtimeDrainOperation(t, e, statusPath)
 	if stored.OperationID != response.OperationID || stored.Results[0].Status != "would_close" || stored.Status != "completed" {
 		t.Fatalf("stored drain operation: %+v", stored)
 	}
@@ -203,12 +196,68 @@ func TestManagedRealtimeConnectionDrainRequiresPartialAcknowledgement(t *testing
 		t.Fatalf("partial drain without acknowledgement: %d %s", rec.Code, rec.Body)
 	}
 	request.AllowPartial = true
-	if rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", request, nil); rec.Code != http.StatusOK {
+	rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", request, nil)
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("partial drain with acknowledgement: %d %s", rec.Code, rec.Body)
 	}
+	var response api.ManagedRealtimeDrainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	waitForManagedRealtimeDrainOperation(t, e, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain/"+response.OperationID)
 	if len(owner.closed) != 1 || owner.closed[0] != "conn-a:node maintenance" {
 		t.Fatalf("closed connections: %+v", owner.closed)
 	}
+}
+
+func TestManagedRealtimeConnectionDrainIdempotencyReplaysAcceptedOperation(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	app, err := e.store.AppBySlug(context.Background(), "rt-actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := &recordingRealtimeOwner{connections: []realtime.ConnectionInfo{{ID: "conn-a", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID}}}
+	e.s.WithRealtimeOwner(owner)
+	request := api.ManagedRealtimeDrainRequest{Reason: "deploy", Limit: 10}
+	headers := map[string]string{"Idempotency-Key": "realtime-drain-retry-1"}
+	first := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", request, headers)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first drain: %d %s", first.Code, first.Body)
+	}
+	var response api.ManagedRealtimeDrainResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	waitForManagedRealtimeDrainOperation(t, e, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain/"+response.OperationID)
+	replay := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", request, headers)
+	if replay.Code != http.StatusAccepted || replay.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("replay: %d headers=%v body=%s", replay.Code, replay.Header(), replay.Body)
+	}
+	if replay.Body.String() != first.Body.String() || len(owner.closed) != 1 {
+		t.Fatalf("replay changed operation: first=%s replay=%s closed=%v", first.Body, replay.Body, owner.closed)
+	}
+}
+
+func waitForManagedRealtimeDrainOperation(t *testing.T, e testEnv, path string) api.ManagedRealtimeDrainResponse {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := e.do(t, http.MethodGet, path, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get drain operation: %d %s", rec.Code, rec.Body)
+		}
+		var response api.ManagedRealtimeDrainResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Status != "running" {
+			return response
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("drain operation did not finish: %s", path)
+	return api.ManagedRealtimeDrainResponse{}
 }
 
 func TestManagedRealtimeConnectionOperationsValidateAndFailClosed(t *testing.T) {

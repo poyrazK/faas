@@ -602,9 +602,53 @@ func (d DatabaseDependency) EffectiveAccess() string {
 	return d.Access
 }
 
+// BucketDependency declares a provider-neutral object-storage bucket binding
+// for an app. `bucket` accepts the logical bucket name or ID returned by
+// `gregale add bucket`; deployment resolves it within the app and environment
+// scope. The binding injects sealed S3 settings under the requested prefix.
+// Credentials and provider details never appear in the manifest.
+//
+// Bucket creation remains explicit through `gregale add bucket`. A deployment
+// only attaches an existing ready bucket, so adding a manifest entry cannot
+// unexpectedly create billable storage during CI.
+type BucketDependency struct {
+	Bucket     string `yaml:"bucket"`
+	App        string `yaml:"app,omitempty"`
+	Scope      string `yaml:"scope,omitempty"`
+	Permission string `yaml:"permission,omitempty"`
+	Label      string `yaml:"label,omitempty"`
+	Prefix     string `yaml:"prefix,omitempty"`
+}
+
+// EffectiveScope returns the scope used by the binding API when the manifest
+// leaves it out.
+func (d BucketDependency) EffectiveScope() string {
+	if d.Scope == "" {
+		return api.DefaultEnvScope
+	}
+	return d.Scope
+}
+
+// EffectivePermission returns the least-surprising default for an application
+// workload. Read-only bindings remain an explicit opt-in.
+func (d BucketDependency) EffectivePermission() string {
+	if d.Permission == "" {
+		return api.ObjectBucketPermissionReadWrite
+	}
+	return d.Permission
+}
+
+// EffectiveLabel returns the label used when the binding is first created.
+func (d BucketDependency) EffectiveLabel() string {
+	if d.Label == "" {
+		return "compute"
+	}
+	return d.Label
+}
+
 // Manifest is the parsed `gregale.yaml` root. The supported top-level
 // declarations are `schema_version`, `hosting`, `function`, `scaling`,
-// `queue_bindings`, `triggers`, `workflows`, and `databases`; other keys are
+// `queue_bindings`, `triggers`, `workflows`, `databases`, and `buckets`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
 // shipping a no-op deploy.
@@ -619,6 +663,7 @@ type Manifest struct {
 	Triggers      []Trigger             `yaml:"triggers"`
 	Workflows     []api.WorkflowSpec    `yaml:"workflows,omitempty"`
 	Databases     []DatabaseDependency  `yaml:"databases,omitempty"`
+	Buckets       []BucketDependency    `yaml:"buckets,omitempty"`
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -885,6 +930,40 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		seenDatabases[key] = struct{}{}
 	}
 
+	seenBuckets := make(map[string]struct{}, len(m.Buckets))
+	for i, dependency := range m.Buckets {
+		if strings.TrimSpace(dependency.Bucket) == "" {
+			return fmt.Errorf("bucket[%d]: bucket is required", i)
+		}
+		if dependency.App != "" && !isDNSSafeSlug(dependency.App) {
+			return fmt.Errorf("bucket[%d]: app %q must match [a-z0-9-]+", i, dependency.App)
+		}
+		if problem := api.ValidateScope(dependency.EffectiveScope()); problem != nil {
+			return fmt.Errorf("bucket[%d]: scope: %w", i, problem)
+		}
+		permission := dependency.EffectivePermission()
+		if permission != api.ObjectBucketPermissionRead && permission != api.ObjectBucketPermissionWrite && permission != api.ObjectBucketPermissionReadWrite {
+			return fmt.Errorf("bucket[%d]: permission %q not in {read, write, read_write}", i, permission)
+		}
+		if label := strings.TrimSpace(dependency.EffectiveLabel()); label == "" || len(label) > 64 {
+			return fmt.Errorf("bucket[%d]: label must be between 1 and 64 characters", i)
+		} else if !validManifestLabel(label) {
+			return fmt.Errorf("bucket[%d]: label contains a control character", i)
+		}
+		if dependency.Prefix != "" && !validManifestBucketPrefix(dependency.Prefix) {
+			return fmt.Errorf("bucket[%d]: prefix must match [A-Z][A-Z0-9_]{0,47}", i)
+		}
+		// One binding owns one (app, scope, prefix) target. An omitted
+		// prefix is resolved from the bucket name before the API call, so
+		// duplicate omitted declarations are rejected by bucket reference
+		// here and by the resolved-prefix check in the deploy adapter.
+		key := strings.Join([]string{dependency.App, dependency.EffectiveScope(), dependency.Prefix, dependency.Bucket}, "\x00")
+		if _, duplicate := seenBuckets[key]; duplicate {
+			return fmt.Errorf("bucket[%d]: duplicate (app, scope, bucket, prefix) dependency", i)
+		}
+		seenBuckets[key] = struct{}{}
+	}
+
 	if len(m.Workflows) == 0 {
 		return nil
 	}
@@ -1110,6 +1189,30 @@ func isDNSSafeSlug(s string) bool {
 
 func isLowerAlpha(b byte) bool { return b >= 'a' && b <= 'z' }
 func isDigit(b byte) bool      { return b >= '0' && b <= '9' }
+
+func validManifestLabel(value string) bool {
+	for _, r := range value {
+		if r < 32 || r == 127 {
+			return false
+		}
+	}
+	return true
+}
+
+func validManifestBucketPrefix(value string) bool {
+	if len(value) < 1 || len(value) > 48 || !isUpperAlpha(value[0]) {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		c := value[i]
+		if !isUpperAlpha(c) && !isDigit(c) && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func isUpperAlpha(b byte) bool { return b >= 'A' && b <= 'Z' }
 
 // validateKafkaTLS enforces the closed shape on KafkaConfig.TLS
 // (ADR-118 / issue #757 §criterion 2). nil is the production

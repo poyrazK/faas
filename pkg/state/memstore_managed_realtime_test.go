@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -95,5 +97,36 @@ func TestMemStoreManagedRealtimeEndpointQuotaCountsDisabledRows(t *testing.T) {
 	}
 	if err := m.DeleteManagedRealtimeEndpoint(ctx, first.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMemStoreManagedRealtimeDrainWorkerClaimRetryAndFinish(t *testing.T) {
+	m, ctx, acct, app := realtimeFixture(t)
+	op, err := m.CreateManagedRealtimeDrainOperation(ctx, ManagedRealtimeDrainOperationInput{
+		AccountID: acct.ID, AppID: app.ID, EndpointID: "endpoint-1", Reason: "deploy",
+		Matched: 2, ConnectionIDs: []string{"conn-a", "conn-b"}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	claims, err := m.ClaimManagedRealtimeDrainOperations(ctx, 1, time.Minute)
+	if err != nil || len(claims) != 1 || claims[0].Operation.Attempts != 1 {
+		t.Fatalf("claim = %+v, %v", claims, err)
+	}
+	result, _ := json.Marshal(map[string]any{"operation_id": op.ID, "status": "running"})
+	if err := m.RetryManagedRealtimeDrainOperation(ctx, op.ID, claims[0].ClaimToken, []string{"conn-b"}, result, 1, 0, 0, time.Now().UTC().Add(-time.Second), "owner offline"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	claims, err = m.ClaimManagedRealtimeDrainOperations(ctx, 1, time.Minute)
+	if err != nil || len(claims) != 1 || len(claims[0].Operation.ConnectionIDs) != 1 || claims[0].Operation.ConnectionIDs[0] != "conn-b" {
+		t.Fatalf("reclaim = %+v, %v", claims, err)
+	}
+	result, _ = json.Marshal(map[string]any{"operation_id": op.ID, "status": "completed"})
+	if err := m.FinishManagedRealtimeDrainOperation(ctx, op.ID, claims[0].ClaimToken, ManagedRealtimeDrainOperationCompleted, result, 2, 0, 0); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	got, err := m.GetManagedRealtimeDrainOperation(ctx, acct.ID, "endpoint-1", op.ID)
+	if err != nil || got.Status != ManagedRealtimeDrainOperationCompleted || len(got.ConnectionIDs) != 0 || got.Closed != 2 {
+		t.Fatalf("finished operation = %+v, %v", got, err)
 	}
 }

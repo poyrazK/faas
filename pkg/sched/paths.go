@@ -249,6 +249,14 @@ func LayerKey(deploymentID string) string {
 	return "layers/" + deploymentID + ".ext4"
 }
 
+// JobLayerKey returns the storage key for a materialized job image.
+// Jobs keep their source OCI reference in jobs.image_ref, while imaged
+// publishes the immutable ext4 rootfs consumed by vmmd under
+// "jobs/<jobID>.ext4". Job IDs are canonical UUIDs in the database.
+func JobLayerKey(jobID string) string {
+	return "jobs/" + jobID + ".ext4"
+}
+
 // KernelKey returns the storage key for a firecracker kernel artifact
 // pinned to a firecracker version. vmmd fetches this on first boot of
 // the version.

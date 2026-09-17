@@ -1,11 +1,12 @@
 from typing import Literal
 
-ManagedRealtimeDrainResultStatus = Literal["closed", "failed", "gone", "would_close"]
+ManagedRealtimeDrainResultStatus = Literal["closed", "failed", "gone", "pending", "would_close"]
 
 MANAGED_REALTIME_DRAIN_RESULT_STATUS_VALUES: set[ManagedRealtimeDrainResultStatus] = {
     "closed",
     "failed",
     "gone",
+    "pending",
     "would_close",
 }
 

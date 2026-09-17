@@ -439,6 +439,24 @@ Bind &lt;slug&gt; to a visible GitHub repository
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
 
+### github setup
+
+Bind GitHub, configure previews, and write an Actions workflow
+
+| Flag | Meaning | |
+|---|---|---|
+| `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
+| `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
+| `--deploy-branches <MAPPINGS>` | comma-separated branch=scope mappings |  |
+| `--workflow <PATH>` | workflow path relative to repository root |  |
+| `--preview` | enable pull-request previews |  |
+| `--no-preview` | disable pull-request previews |  |
+| `--preview-ttl-hours <HOURS>` | preview lease in hours (1-720) |  |
+| `--root-dir <DIR>` | repository-relative source root for the root workload |  |
+| `--ignore <PATHS>` | comma-separated ignored change paths |  |
+| `--dry-run` | show the workflow without writing or changing remote state |  |
+| `--force` | overwrite an existing workflow file |  |
+
 ### github disconnect
 
 Remove the app&#39;s GitHub repository binding
@@ -1163,12 +1181,14 @@ Explain an app from its runtime, deployment, API, data, scaling, and release sig
 
 Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug defaults to linked context)
 
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->]`
+`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--on-success-webhook <ID>] [--on-failure-webhook <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--async` | return immediately with status_url |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
+| `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
+| `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
 
 
 ## run
@@ -1703,6 +1723,17 @@ Close a bounded, filtered set of live connections
 | `--limit <N>` | maximum connections to select (1-1000) |  |
 | `--dry-run` | preview without closing connections |  |
 | `--allow-partial` | allow the reachable subset when nodes are unavailable |  |
+| `--wait` | wait for the drain to reach a terminal state |  |
+| `--timeout <DURATION>` | maximum time to wait with --wait |  |
+
+### realtime drain-status
+
+Show or wait for a durable realtime drain
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the drain to reach a terminal state |  |
+| `--timeout <DURATION>` | maximum time to wait with --wait |  |
 
 ### realtime send
 

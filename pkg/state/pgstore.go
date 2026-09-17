@@ -13461,7 +13461,8 @@ const invocationSelectCols = `id, app_id, account_id, source, state, method, pat
        result, lease_expires_at, received_at, completed_at, attempts,
        last_error, created_at, instance_id, outcome,
        deadline_at, retry_policy, result_retention_until,
-       last_replayed_at`
+       last_replayed_at, on_success_destination_id,
+       on_failure_destination_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	payload, err := jsonOrEmpty(inv.Payload)
@@ -13494,22 +13495,31 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if len(inv.RetryPolicyJSON) > 0 {
 		retryPolicy = inv.RetryPolicyJSON
 	}
+	var onSuccessDestination, onFailureDestination any
+	if inv.OnSuccessDestinationID != "" {
+		onSuccessDestination = inv.OnSuccessDestinationID
+	}
+	if inv.OnFailureDestinationID != "" {
+		onFailureDestination = inv.OnFailureDestinationID
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into invocations
 			(app_id, account_id, source, state, method, path,
 			 payload, headers, due_at, scheduled_at, cron_id,
 			 ack_url, lease_expires_at,
-			 deadline_at, retry_policy, result_retention_until)
+			 deadline_at, retry_policy, result_retention_until,
+			 on_success_destination_id, on_failure_destination_id)
 		values
 			($1, $2, $3, coalesce(nullif($4,''),'pending'), $5, $6,
 			 $7, $8, $9, $10, $11,
 			 nullif($12,''), $13,
-			 $14, $15, $16)
+			 $14, $15, $16, $17, $18)
 		returning `+invocationSelectCols,
 		inv.AppID, inv.AccountID, string(inv.Source), string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
 		scheduledAt, cronID, inv.AckURL, leaseExpires,
-		deadlineAt, retryPolicy, retentionUntil)
+		deadlineAt, retryPolicy, retentionUntil,
+		onSuccessDestination, onFailureDestination)
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -14320,7 +14330,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv := Invocation{}
 	var source, state string
 	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
-	var cronID, ackURL, lastErr, instanceID *string
+	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination *string
 	var payload, headers, result []byte
 	var outcome *string
 	var deadlineAt, retentionUntil, lastReplayedAt *time.Time
@@ -14331,7 +14341,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&result, &leaseExpires, &receivedAt, &completedAt, &inv.Attempts,
 		&lastErr, &inv.CreatedAt, &instanceID, &outcome,
 		&deadlineAt, &retryPolicy, &retentionUntil,
-		&lastReplayedAt,
+		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -14386,6 +14396,12 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	}
 	if lastReplayedAt != nil {
 		inv.LastReplayedAt = lastReplayedAt
+	}
+	if onSuccessDestination != nil {
+		inv.OnSuccessDestinationID = *onSuccessDestination
+	}
+	if onFailureDestination != nil {
+		inv.OnFailureDestinationID = *onFailureDestination
 	}
 	return inv, nil
 }
@@ -28963,18 +28979,32 @@ func (s *PgStore) ListDeadlineBreachedInvocations(ctx context.Context, now time.
 // to dead_letter with outcome='timeout'. Decrements the per-account
 // counter for each one so the cap reflects the abandoned work.
 func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []string) (int, error) {
+	forced, err := s.forceDeadlineBreachedInvocations(ctx, ids)
+	return len(forced), err
+}
+
+// ForceDeadlineBreachedInvocationsWithDetails is the scheduler-facing
+// variant of ForceDeadlineBreachedInvocations. It returns only rows that this
+// transaction actually transitioned, allowing the reaper to emit a terminal
+// destination exactly once even when another worker raced the deadline list.
+func (s *PgStore) ForceDeadlineBreachedInvocationsWithDetails(ctx context.Context, ids []string) ([]Invocation, error) {
+	return s.forceDeadlineBreachedInvocations(ctx, ids)
+}
+
+func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []string) ([]Invocation, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("state: invocations deadline begin: %w", err)
+		return nil, fmt.Errorf("state: invocations deadline begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Return account_ids from the state-changing UPDATE itself. A
-	// deadline batch can contain a row that completed after the list
-	// query; only rows that actually transition may release a slot.
+	// Return the transitioned invocation rows from the state-changing UPDATE
+	// itself. A deadline batch can contain a row that completed after the list
+	// query; only rows that actually transition may release a slot or emit a
+	// terminal destination.
 	rows, err := tx.Query(ctx,
 		`update invocations
 		   set state = 'dead_letter',
@@ -28984,39 +29014,30 @@ func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []st
 		       received_at = coalesce(received_at, now())
 		 where id = any($1::uuid[])
 		   and state in ('pending', 'dispatching')
-		 returning account_id`, ids)
+		 returning `+invocationSelectCols, ids)
 	if err != nil {
-		return 0, fmt.Errorf("state: invocations deadline force: %w", err)
+		return nil, fmt.Errorf("state: invocations deadline force: %w", err)
 	}
-	var accounts []string
-	for rows.Next() {
-		var a string
-		if err := rows.Scan(&a); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("state: invocations deadline scan: %w", err)
-		}
-		accounts = append(accounts, a)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
+	forced, err := scanInvocations(rows)
 	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations deadline scan: %w", err)
+	}
 
-	for _, a := range accounts {
+	for _, inv := range forced {
 		if _, err := tx.Exec(ctx, `
 			update account_async_quota
 			   set current_inflight = greatest(current_inflight - 1, 0),
 			       updated_at = now()
-			 where account_id = $1`, a); err != nil {
-			return 0, fmt.Errorf("state: invocations deadline decrement: %w", err)
+			 where account_id = $1`, inv.AccountID); err != nil {
+			return nil, fmt.Errorf("state: invocations deadline decrement: %w", err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("state: invocations deadline commit: %w", err)
+		return nil, fmt.Errorf("state: invocations deadline commit: %w", err)
 	}
-	return len(accounts), nil
+	return forced, nil
 }
 
 // ----------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { InvocationDestinations } from './InvocationDestinations.js';
 /**
  * Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to POST; path defaults to `/`.
  */
@@ -22,5 +23,9 @@ export type InvokeRequest = {
    * ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
    */
   retention_seconds?: number | null;
+  /**
+   * EPIC #1278. Optional terminal callbacks.
+   */
+  destinations?: (InvocationDestinations | null);
 };
 

@@ -70,6 +70,13 @@ type Config struct {
 	VethHost string     // root-ns end, enslaved to br-tenants
 	VethPeer string     // netns end, holds HostIP
 	HostIP   netip.Addr // routable identity, 10.100.x.y
+	// PrivateVethHost/PrivateVethPeer are an additive side-link for a
+	// Gregale-owned network. The public veth above remains attached to
+	// br-tenants; this pair is attached to the account-scoped gpn-* bridge.
+	PrivateVethHost       string
+	PrivateVethPeer       string
+	PrivateNetworkBridge  string
+	PrivateNetworkAddress netip.Addr
 	// GuestAppPort is the port the customer process binds inside the guest.
 	// The host-facing identity remains fixed at :8080; prerouting translates
 	// that stable port to this deployment-specific target. Zero or an invalid
@@ -217,6 +224,7 @@ func (c Config) SetupCommands() [][]string {
 		inNetns("ip", "addr", "add", TapPrefix, "dev", c.Tap),
 		inNetns("ip", "link", "set", c.Tap, "up"),
 	}
+	cmds = append(cmds, c.PrivateNetworkSetupCommands()...)
 	// Provider-verified private destinations get an explicit route so they
 	// remain stable if the default route is later adjusted by the host
 	// connector. The bridge gateway is directly reachable on VethPeer.
@@ -252,7 +260,15 @@ func privateNetworkRouteCommands(c Config) [][]string {
 	}
 	cmds := make([][]string, 0, len(c.PrivateNetworkCIDRs))
 	for _, prefix := range c.PrivateNetworkCIDRs {
-		cmds = append(cmds, []string{"ip", "netns", "exec", c.Netns, "ip", "route", "replace", prefix.String(), "via", c.HostBridgeIP.String(), "dev", c.VethPeer})
+		dev := c.VethPeer
+		args := []string{"ip", "netns", "exec", c.Netns, "ip", "route", "replace", prefix.String()}
+		if c.privateNetworkEnabled() {
+			dev = c.PrivateVethPeer
+			args = append(args, "dev", dev, "src", c.PrivateNetworkAddress.String())
+		} else {
+			args = append(args, "via", c.HostBridgeIP.String(), "dev", dev)
+		}
+		cmds = append(cmds, args)
 	}
 	return cmds
 }
@@ -280,10 +296,43 @@ func (c Config) PrivateNetworkRouteCommands() [][]string {
 // Errors from either command are tolerated by the caller (cleanup() in
 // pkg/fcvm/manager.go) — a teardown that gives up would leak.
 func (c Config) TeardownCommands() [][]string {
-	return [][]string{
+	cmds := [][]string{
 		{"ip", "netns", "del", c.Netns},
 		{"ip", "link", "del", c.VethHost},
 	}
+	if c.PrivateVethHost != "" {
+		cmds = append(cmds, []string{"ip", "link", "del", c.PrivateVethHost})
+	}
+	return cmds
+}
+
+// PrivateNetworkSetupCommands returns only the additive side-link commands.
+// It is used both by a fresh Wake and by the live attachment reconciler; the
+// latter must not recreate the existing namespace or public veth.
+func (c Config) PrivateNetworkSetupCommands() [][]string {
+	if !c.privateNetworkEnabled() {
+		return nil
+	}
+	prefix := c.PrivateNetworkCIDRs[0]
+	nx := []string{"ip", "netns", "exec", c.Netns}
+	inNetns := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	return [][]string{
+		// The private side-link is deliberately additive: public egress
+		// keeps using VethHost/VethPeer and br-tenants.
+		{"ip", "link", "add", c.PrivateVethHost, "type", "veth", "peer", "name", c.PrivateVethPeer},
+		{"ip", "link", "set", c.PrivateVethHost, "master", c.PrivateNetworkBridge},
+		{"ip", "link", "set", c.PrivateVethHost, "up"},
+		{"ip", "link", "set", c.PrivateVethPeer, "netns", c.Netns},
+		inNetns("ip", "addr", "add", fmt.Sprintf("%s/%d", c.PrivateNetworkAddress, prefix.Bits()), "dev", c.PrivateVethPeer),
+		inNetns("ip", "link", "set", c.PrivateVethPeer, "up"),
+	}
+}
+
+func (c Config) privateNetworkEnabled() bool {
+	return c.PrivateNetworkBridge != "" && c.PrivateVethHost != "" && c.PrivateVethPeer != "" &&
+		c.PrivateNetworkAddress.IsValid() && c.PrivateNetworkAddress.Is4() && len(c.PrivateNetworkCIDRs) > 0 &&
+		c.PrivateNetworkCIDRs[0].IsValid() && c.PrivateNetworkCIDRs[0].Addr().Is4() &&
+		c.PrivateNetworkCIDRs[0].Contains(c.PrivateNetworkAddress)
 }
 
 // NftCommands returns the per-instance nftables ruleset (spec §7) as a sequence
@@ -366,8 +415,23 @@ func (c Config) NftCommands() [][]string {
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
 	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
+	if c.privateNetworkEnabled() {
+		// Private ingress targets the stable allocated app address. DNAT
+		// happens before local-delivery routing, so the address can remain
+		// owned by the private veth while the guest keeps its fixed tap IP.
+		add("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port,
+			"dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
+	}
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
+	if c.privateNetworkEnabled() {
+		// Replies and guest-originated private traffic must carry the
+		// stable member address on the gpn bridge. This is what makes the
+		// side-link routable without changing the guest's 10.0.0.2 world.
+		add("add", "rule", "ip", "faas", "postrouting", "oifname", c.PrivateVethPeer,
+			"ip", "saddr", GuestIP, "snat", "to", c.PrivateNetworkAddress.String())
+	}
 	// ADR-119 redesign: per-netns SNAT rule was REMOVED. The legacy
 	// shape (a MASQUERADE-sibling SNAT rule with `ip saddr 10.0.0.2
 	// snat to <CustomerIP>`) was dead code — nftables NAT is first-
@@ -420,6 +484,12 @@ func (c Config) NftCommands() [][]string {
 	// RFC1918 destinations denied.
 	if rule := c.ForwardPrivateNetworkRule(nft); rule != nil {
 		cmds = append(cmds, rule)
+	}
+	if c.privateNetworkEnabled() {
+		// DNAT'd private ingress is now addressed to the guest tap IP;
+		// admit only the published application port on the private side.
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
 	}
 	// Spec §7 cap (only when ConntrackCap > 0): drop new forward flows whose
 	// origin conntrack table already holds > N entries, so one misbehaving
@@ -545,6 +615,29 @@ func (c Config) NftCommands() [][]string {
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
 	return cmds
+}
+
+// PrivateNetworkNftCommands returns the additive rules needed when a live
+// netns gains a Gregale private side-link. The full Wake ruleset is not safe to
+// replay here because it would recreate counters and chains; callers append
+// these rules after the side-link exists and use the existing private-route
+// patch for the CIDR accept rule.
+func (c Config) PrivateNetworkNftCommands() [][]string {
+	if !c.privateNetworkEnabled() {
+		return nil
+	}
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	port := strconv.Itoa(c.guestAppPort())
+	return [][]string{
+		nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
+			"dnat", "to", fmt.Sprintf("%s:%s", GuestIP, port)),
+		nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.PrivateVethPeer,
+			"ip", "saddr", GuestIP, "snat", "to", c.PrivateNetworkAddress.String()),
+		nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(AppPort), "accept"),
+	}
 }
 
 // denySet returns the DenySet to render against. Falls back to

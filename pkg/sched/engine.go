@@ -248,10 +248,16 @@ func prefixesToCIDRStrings(prefixes []netip.Prefix) []string {
 // attachment intent. Pending and error rows intentionally return nil, so a
 // connector outage can never accidentally widen a guest's network policy.
 // The runtime attachment store is optional for legacy/local state adapters.
-func (e *Engine) privateNetworkCIDRsFor(ctx context.Context, app state.App) []string {
+type privateNetworkProjection struct {
+	CIDRs     []string
+	NetworkID string
+	Address   string
+}
+
+func (e *Engine) privateNetworkProjection(ctx context.Context, app state.App) privateNetworkProjection {
 	store, ok := e.store.(state.AppPrivateNetworkAttachmentStore)
 	if !ok {
-		return nil
+		return privateNetworkProjection{}
 	}
 	attachment, err := store.GetAppPrivateNetworkAttachment(ctx, app.AccountID, app.ID)
 	if err != nil {
@@ -260,12 +266,48 @@ func (e *Engine) privateNetworkCIDRsFor(ctx context.Context, app state.App) []st
 				e.log.Warn("sched: private network attachment lookup failed; keeping traffic blocked", "app_id", app.ID, "err", err)
 			}
 		}
-		return nil
+		return privateNetworkProjection{}
 	}
 	if attachment.Status != api.PrivateNetworkAttachmentStatusReady {
-		return nil
+		return privateNetworkProjection{}
 	}
-	return prefixesToCIDRStrings(attachment.CIDRs)
+	projection := privateNetworkProjection{CIDRs: prefixesToCIDRStrings(attachment.CIDRs)}
+	// A row in private_networks marks this as Gregale-owned. External
+	// provider attachments retain the existing route-only projection.
+	if !api.PrivateNetworkFabricEnabled() {
+		return projection
+	}
+	privateStore, ok := e.store.(state.PrivateNetworkStore)
+	if !ok {
+		return projection
+	}
+	network, err := privateStore.GetPrivateNetwork(ctx, app.AccountID, attachment.NetworkID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) && e.log != nil {
+			e.log.Warn("sched: private network lookup failed; keeping attachment fail-closed", "app_id", app.ID, "network_id", attachment.NetworkID, "err", err)
+			return privateNetworkProjection{}
+		}
+		return projection
+	}
+	if network.Status != "" && network.Status != api.PrivateNetworkStatusReady {
+		return privateNetworkProjection{}
+	}
+	address, err := privateStore.AllocatePrivateNetworkAddress(ctx, app.AccountID, attachment.NetworkID, "app", app.ID)
+	if err != nil {
+		if e.log != nil {
+			e.log.Warn("sched: private network address lookup failed; keeping Gregale attachment disconnected", "app_id", app.ID, "network_id", attachment.NetworkID, "err", err)
+		}
+		return privateNetworkProjection{}
+	}
+	projection.NetworkID = attachment.NetworkID
+	projection.Address = address.Address.String()
+	return projection
+}
+
+// privateNetworkCIDRsFor is retained for callers that only need the legacy
+// route projection (and for source compatibility with existing tests).
+func (e *Engine) privateNetworkCIDRsFor(ctx context.Context, app state.App) []string {
+	return e.privateNetworkProjection(ctx, app).CIDRs
 }
 
 // staticEgressIPString (ADR-119) lifts a *netip.Addr into the
@@ -2857,6 +2899,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load sidecars: %w", err)
 	}
+	privateNetwork := e.privateNetworkProjection(ctx, app)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
@@ -2882,8 +2925,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// lock, so a PATCH that lands between two wakes takes
 		// effect on the next wake. Live instances keep their
 		// old netns — same contract as RAMMB and MaxConcurrency.
-		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
-		PrivateNetworkCIDRs: e.privateNetworkCIDRsFor(ctx, app),
+		EgressAllowlist:       prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs:   privateNetwork.CIDRs,
+		PrivateNetworkID:      privateNetwork.NetworkID,
+		PrivateNetworkAddress: privateNetwork.Address,
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Empty = no static pin
 		// (default behaviour preserved). vmmd sets
@@ -4523,6 +4568,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
+	privateNetwork := e.privateNetworkProjection(ctx, app)
 	return AppSpec{
 		BaseKey:       baseKey(app.Runtime),
 		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
@@ -4550,8 +4596,10 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		APIEnv: e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
-		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
-		PrivateNetworkCIDRs: e.privateNetworkCIDRsFor(ctx, app),
+		EgressAllowlist:       prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs:   privateNetwork.CIDRs,
+		PrivateNetworkID:      privateNetwork.NetworkID,
+		PrivateNetworkAddress: privateNetwork.Address,
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
@@ -5209,6 +5257,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sidecars_invalid")
 		return fmt.Errorf("sched: prime: load sidecars: %w", err)
 	}
+	privateNetwork := e.privateNetworkProjection(ctx, app)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
@@ -5231,8 +5280,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// per-netns ruleset; a freshly-deployed app starts under
 		// its declared egress policy rather than awaiting a later
 		// wake.
-		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
-		PrivateNetworkCIDRs: e.privateNetworkCIDRsFor(ctx, app),
+		EgressAllowlist:       prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs:   privateNetwork.CIDRs,
+		PrivateNetworkID:      privateNetwork.NetworkID,
+		PrivateNetworkAddress: privateNetwork.Address,
 		// ADR-119: see the Wake builder above. Prime threads
 		// the customer-supplied static IPv4 (BYOIP, Scale-only)
 		// onto the vmmd AppSpec so the per-netns renderer

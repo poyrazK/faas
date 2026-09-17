@@ -270,6 +270,7 @@ const (
 	repoSnap    = "snap"
 	repoBase    = "base"
 	repoLayers  = "layers"
+	repoJobs    = "jobs"
 	repoKernel  = "kernel"
 	repoScans   = "scans"
 	repoSigs    = "sigs"
@@ -362,6 +363,17 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 			return "", "", fmt.Errorf("%w: layers dep %q fails hex charset", ErrInvalidKey, dep)
 		}
 		return repoLayers, dep, nil
+	case repoJobs:
+		// jobs/<job>.ext4 → repo "jobs", tag "<job>".
+		// Job IDs are canonical UUIDs, matching jobs.id in Postgres.
+		if len(parts) != 2 || !strings.HasSuffix(parts[1], ".ext4") {
+			return "", "", fmt.Errorf("%w: %q does not match jobs/<job>.ext4", ErrInvalidKey, key)
+		}
+		jobID := strings.TrimSuffix(parts[1], ".ext4")
+		if !depIDCharset.MatchString(jobID) {
+			return "", "", fmt.Errorf("%w: jobs id %q fails UUID charset", ErrInvalidKey, jobID)
+		}
+		return repoJobs, jobID, nil
 	case repoKernel:
 		// kernel/<version> → repo "kernel", tag "<version>"
 		if len(parts) != 2 {
@@ -886,6 +898,8 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(ctx context.Context, prefix s
 		return []string{repoBase}, nil
 	case repoLayers:
 		return []string{repoLayers}, nil
+	case repoJobs:
+		return []string{repoJobs}, nil
 	case repoKernel:
 		return []string{repoKernel}, nil
 	case repoScans:
@@ -1047,6 +1061,11 @@ func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 		return "base/" + tag + ".ext4", true
 	case repoLayers:
 		return "layers/" + tag + ".ext4", true
+	case repoJobs:
+		if !depIDCharset.MatchString(tag) {
+			return "", false
+		}
+		return "jobs/" + tag + ".ext4", true
 	case repoKernel:
 		return "kernel/" + tag, true
 	case repoScans:
