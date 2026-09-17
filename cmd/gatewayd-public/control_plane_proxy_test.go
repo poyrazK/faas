@@ -12,7 +12,41 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/middleware"
 )
+
+// adr: 011
+func TestControlPlaneProxyKeepsOneRequestIDAcrossApidRedirect(t *testing.T) {
+	const edgeRequestID = "edge-request-2735"
+	var apidRequestID string
+	apid := middleware.RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apidRequestID = r.Header.Get(api.RequestIDHeader)
+		// Simulate apid's middleware writing the same ID that it reused.
+		w.Header().Set(api.RequestIDHeader, apidRequestID)
+		http.Redirect(w, r, "/login", http.StatusFound)
+	}))
+	controlPlane := httptest.NewServer(apid)
+	t.Cleanup(controlPlane.Close)
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "https://api.gregale.dev/dashboard", nil)
+	req.Header.Set(api.RequestIDHeader, edgeRequestID)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if apidRequestID != edgeRequestID {
+		t.Fatalf("apid request id = %q, want %q", apidRequestID, edgeRequestID)
+	}
+	if got := rec.Header().Values(api.RequestIDHeader); len(got) != 1 || got[0] != edgeRequestID {
+		t.Fatalf("response request id headers = %v, want one %q", got, edgeRequestID)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	}
+}
 
 func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
