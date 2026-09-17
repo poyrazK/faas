@@ -313,6 +313,7 @@ export type { InvitationListResponse } from './models/InvitationListResponse.js'
 export type { InvitationWithTokenResponse } from './models/InvitationWithTokenResponse.js';
 export type { InviteMemberRequest } from './models/InviteMemberRequest.js';
 export type { Invocation } from './models/Invocation.js';
+export type { InvocationDestinations } from './models/InvocationDestinations.js';
 export type { Invoice } from './models/Invoice.js';
 export type { InvoiceListResponse } from './models/InvoiceListResponse.js';
 export type { InvokeRequest } from './models/InvokeRequest.js';

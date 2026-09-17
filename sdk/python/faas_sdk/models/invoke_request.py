@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.invocation_destinations import InvocationDestinations
     from ..models.invoke_request_headers import InvokeRequestHeaders
     from ..models.invoke_request_payload import InvokeRequestPayload
     from ..models.invoke_request_retry_policy_type_0 import InvokeRequestRetryPolicyType0
@@ -34,9 +35,12 @@ class InvokeRequest:
     retention_seconds: int | None | Unset = UNSET
     """ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default'
     (Limits.MaxAsyncResultRetentionSeconds)."""
+    destinations: InvocationDestinations | None | Unset = UNSET
+    """EPIC #1278. Optional terminal callbacks."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.invocation_destinations import InvocationDestinations
         from ..models.invoke_request_retry_policy_type_0 import InvokeRequestRetryPolicyType0
 
         payload: dict[str, Any] | Unset = UNSET
@@ -73,6 +77,14 @@ class InvokeRequest:
         else:
             retention_seconds = self.retention_seconds
 
+        destinations: dict[str, Any] | None | Unset
+        if isinstance(self.destinations, Unset):
+            destinations = UNSET
+        elif isinstance(self.destinations, InvocationDestinations):
+            destinations = self.destinations.to_dict()
+        else:
+            destinations = self.destinations
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -90,11 +102,14 @@ class InvokeRequest:
             field_dict["retry_policy"] = retry_policy
         if retention_seconds is not UNSET:
             field_dict["retention_seconds"] = retention_seconds
+        if destinations is not UNSET:
+            field_dict["destinations"] = destinations
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.invocation_destinations import InvocationDestinations
         from ..models.invoke_request_headers import InvokeRequestHeaders
         from ..models.invoke_request_payload import InvokeRequestPayload
         from ..models.invoke_request_retry_policy_type_0 import InvokeRequestRetryPolicyType0
@@ -161,6 +176,23 @@ class InvokeRequest:
 
         retention_seconds = _parse_retention_seconds(d.pop("retention_seconds", UNSET))
 
+        def _parse_destinations(data: object) -> InvocationDestinations | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                destinations_type_0 = InvocationDestinations.from_dict(data)
+
+                return destinations_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(InvocationDestinations | None | Unset, data)
+
+        destinations = _parse_destinations(d.pop("destinations", UNSET))
+
         invoke_request = cls(
             payload=payload,
             headers=headers,
@@ -169,6 +201,7 @@ class InvokeRequest:
             deadline_at=deadline_at,
             retry_policy=retry_policy,
             retention_seconds=retention_seconds,
+            destinations=destinations,
         )
 
         invoke_request.additional_properties = d

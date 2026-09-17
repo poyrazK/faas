@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { InvocationDestinations } from './InvocationDestinations.js';
 /**
  * Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to POST; path defaults to `/`.
  */
@@ -23,8 +24,8 @@ export type InvokeRequest = {
    */
   retention_seconds?: number | null;
   /**
-   * EPIC #1278. Optional terminal callbacks. Values are app webhook subscription IDs owned by this app.
+   * EPIC #1278. Optional terminal callbacks.
    */
-  destinations?: any | null;
+  destinations?: (InvocationDestinations | null);
 };
 
