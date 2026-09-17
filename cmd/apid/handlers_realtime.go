@@ -94,11 +94,31 @@ func sealRealtimeToken(plaintext, label string) ([]byte, *api.Problem) {
 }
 
 func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealtimeEndpointResponse {
+	authMode := e.AuthMode
+	if authMode == "" {
+		if len(e.AuthTokenSealed) > 0 {
+			authMode = api.RealtimeAuthModeStaticBearer
+		} else {
+			authMode = api.RealtimeAuthModeNone
+		}
+	}
 	out := api.ManagedRealtimeEndpointResponseFromRow(e.ID, e.AppID, e.AccountID, e.CallbackURL,
-		e.ConnectPath, e.MessagePath, e.DisconnectPath, e.AllowedOrigins, e.MaxConnections,
+		e.ConnectPath, e.MessagePath, e.DisconnectPath, authMode, e.AuthIssuer, e.AuthJWKSURL,
+		e.AuthAudience, e.AuthAlgorithms, e.AuthRequiredClaims, e.AllowedOrigins, e.MaxConnections,
 		e.MaxMessageBytes, e.MaxConnectionAgeSeconds, e.Enabled, e.CreatedAt, e.UpdatedAt)
 	if len(e.AuthTokenSealed) == 0 {
 		out.AuthTokenMasked = ""
+	}
+	return out
+}
+
+func cloneRealtimeClaims(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }
@@ -121,11 +141,25 @@ func (s *server) syncManagedRealtimeEndpoint(ctx context.Context, row state.Mana
 	if err != nil {
 		return err
 	}
+	authMode := row.AuthMode
+	if authMode == "" {
+		if len(authToken) > 0 {
+			authMode = api.RealtimeAuthModeStaticBearer
+		} else {
+			authMode = api.RealtimeAuthModeNone
+		}
+	}
 	return s.realtimeRegistrar.RegisterEndpoint(ctx, realtime.Endpoint{
 		ID: row.ID, AppID: row.AppID, AccountID: row.AccountID,
 		CallbackURL: row.CallbackURL, ConnectPath: row.ConnectPath,
 		MessagePath: row.MessagePath, DisconnectPath: row.DisconnectPath,
 		CallbackAuthToken: string(callbackAuth), AuthToken: string(authToken),
+		ClientAuth: realtime.AuthPolicy{
+			Mode: realtime.AuthMode(authMode), Issuer: row.AuthIssuer, JWKSURL: row.AuthJWKSURL,
+			Audience:       append([]string(nil), row.AuthAudience...),
+			Algorithms:     append([]string(nil), row.AuthAlgorithms...),
+			RequiredClaims: cloneRealtimeClaims(row.AuthRequiredClaims),
+		},
 		AllowedOrigins:   append([]string(nil), row.AllowedOrigins...),
 		MaxConnections:   row.MaxConnections,
 		MaxMessageBytes:  row.MaxMessageBytes,
@@ -216,6 +250,15 @@ func (s *server) createManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, prob)
 		return
 	}
+	authMode, err := api.NormalizeRealtimeAuthMode(req.AuthMode, req.AuthToken != "")
+	if err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if err := api.ValidateRealtimeAuth(authMode, req.AuthToken != "", req.AuthIssuer, req.AuthJWKSURL, req.AuthAudience, req.AuthAlgorithms, req.AuthRequiredClaims); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
 	if prob := validateRealtimePolicy(req.AllowedOrigins, req.MaxConnections, req.MaxMessageBytes, req.MaxConnectionAgeSeconds); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -240,7 +283,11 @@ func (s *server) createManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, prob)
 		return
 	}
-	authSealed, prob := sealRealtimeToken(req.AuthToken, "REALTIME_AUTH")
+	authToken := req.AuthToken
+	if authMode != api.RealtimeAuthModeStaticBearer {
+		authToken = ""
+	}
+	authSealed, prob := sealRealtimeToken(authToken, "REALTIME_AUTH")
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -258,8 +305,12 @@ func (s *server) createManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		AppID: app.ID, AccountID: acct.ID, CallbackURL: req.CallbackURL,
 		ConnectPath: connectPath, MessagePath: messagePath, DisconnectPath: disconnectPath,
 		CallbackAuthTokenSealed: callbackSealed, AuthTokenSealed: authSealed,
-		AllowedOrigins: append([]string(nil), req.AllowedOrigins...),
-		MaxConnections: req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
+		AuthMode: authMode, AuthIssuer: req.AuthIssuer, AuthJWKSURL: req.AuthJWKSURL,
+		AuthAudience:       append([]string(nil), req.AuthAudience...),
+		AuthAlgorithms:     append([]string(nil), req.AuthAlgorithms...),
+		AuthRequiredClaims: cloneRealtimeClaims(req.AuthRequiredClaims),
+		AllowedOrigins:     append([]string(nil), req.AllowedOrigins...),
+		MaxConnections:     req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
 		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled,
 	}, limits.EndpointsPerApp, limits.EndpointsPerAccount)
 	if err != nil {
@@ -311,6 +362,20 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 	params := state.UpdateManagedRealtimeEndpointParams{}
+	authMode := existing.AuthMode
+	if authMode == "" {
+		if len(existing.AuthTokenSealed) > 0 {
+			authMode = api.RealtimeAuthModeStaticBearer
+		} else {
+			authMode = api.RealtimeAuthModeNone
+		}
+	}
+	authIssuer := existing.AuthIssuer
+	authJWKSURL := existing.AuthJWKSURL
+	authAudience := append([]string(nil), existing.AuthAudience...)
+	authAlgorithms := append([]string(nil), existing.AuthAlgorithms...)
+	authRequiredClaims := cloneRealtimeClaims(existing.AuthRequiredClaims)
+	authTokenConfigured := len(existing.AuthTokenSealed) > 0
 	if req.CallbackURL != nil {
 		if prob := validateRealtimeCallbackURL(*req.CallbackURL); prob != nil {
 			api.WriteProblem(w, prob)
@@ -369,7 +434,57 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 			return
 		}
 		params.AuthTokenSealed = &sealed
+		authTokenConfigured = *req.AuthToken != ""
 	}
+	if req.AuthMode != nil {
+		mode, err := api.NormalizeRealtimeAuthMode(*req.AuthMode, authTokenConfigured)
+		if err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+		authMode = mode
+	}
+	if req.AuthIssuer != nil {
+		authIssuer = *req.AuthIssuer
+	}
+	if req.AuthJWKSURL != nil {
+		authJWKSURL = *req.AuthJWKSURL
+	}
+	if req.AuthAudience != nil {
+		authAudience = append([]string(nil), (*req.AuthAudience)...)
+	}
+	if req.AuthAlgorithms != nil {
+		authAlgorithms = append([]string(nil), (*req.AuthAlgorithms)...)
+	}
+	if req.AuthRequiredClaims != nil {
+		authRequiredClaims = cloneRealtimeClaims(*req.AuthRequiredClaims)
+	}
+	// Switching away from static bearer clears the old sealed token, and
+	// switching away from JWT clears its public trust metadata. This avoids
+	// stale credentials surviving an apparently unrelated mode change.
+	if req.AuthMode != nil && authMode != api.RealtimeAuthModeStaticBearer && req.AuthToken == nil {
+		empty := []byte{}
+		params.AuthTokenSealed = &empty
+		authTokenConfigured = false
+	}
+	if req.AuthMode != nil && authMode != api.RealtimeAuthModeOIDCJWT {
+		authIssuer, authJWKSURL = "", ""
+		authAudience, authAlgorithms, authRequiredClaims = nil, nil, nil
+	}
+	if req.AuthMode != nil && authMode == api.RealtimeAuthModeStaticBearer {
+		authIssuer, authJWKSURL = "", ""
+		authAudience, authAlgorithms, authRequiredClaims = nil, nil, nil
+	}
+	if err := api.ValidateRealtimeAuth(authMode, authTokenConfigured, authIssuer, authJWKSURL, authAudience, authAlgorithms, authRequiredClaims); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	params.AuthMode = &authMode
+	params.AuthIssuer = &authIssuer
+	params.AuthJWKSURL = &authJWKSURL
+	params.AuthAudience = &authAudience
+	params.AuthAlgorithms = &authAlgorithms
+	params.AuthRequiredClaims = &authRequiredClaims
 	if req.AllowedOrigins != nil {
 		if prob := validateRealtimePolicy(*req.AllowedOrigins, 0, 0, 0); prob != nil {
 			api.WriteProblem(w, prob)

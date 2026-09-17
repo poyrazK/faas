@@ -28997,7 +28997,7 @@ components:
       description: |
         Durable managed realtime endpoint configuration. Credentials are
         write-only and represented by a constant mask on every response.
-      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
+      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, auth_mode, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -29008,6 +29008,21 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token_masked: { type: string, enum: ["***"] }
         auth_token_masked: { type: string, enum: ["***"] }
+        auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
+        auth_issuer: { type: string, format: uri, maxLength: 2048 }
+        auth_jwks_url: { type: string, format: uri, maxLength: 2048 }
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 256 }
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: { type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512] }
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
         allowed_origins:
           type: array
           maxItems: 16
@@ -29030,6 +29045,21 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/disconnect" }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
+        auth_issuer: { type: string, format: uri, maxLength: 2048 }
+        auth_jwks_url: { type: string, format: uri, maxLength: 2048 }
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 256 }
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: { type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512] }
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
         allowed_origins:
           type: array
           maxItems: 16
@@ -29049,6 +29079,21 @@ components:
         disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
+        auth_mode: { type: string, enum: [none, static_bearer, oidc_jwt] }
+        auth_issuer: { type: string, format: uri, maxLength: 2048 }
+        auth_jwks_url: { type: string, format: uri, maxLength: 2048 }
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 256 }
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: { type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512] }
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
         allowed_origins:
           type: array
           maxItems: 16

@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.filter_criteria import FilterCriteria
+    from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.trigger_config import TriggerConfig
 
 
@@ -78,6 +79,12 @@ class Trigger:
     updated_at: datetime.datetime
     slug: str | Unset = UNSET
     """Unique-per-app handle. Required for non-cron kinds; ignored on cron."""
+    retry_policy: RetryPolicyDTO | Unset = UNSET
+    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
+    decodes this DTO into a dispatch.RetryPolicy before persisting
+    to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
+    can type the override without importing pkg/dispatch directly.
+    """
     filter_criteria: FilterCriteria | Unset = UNSET
     """FilterCriteria on a trigger (migration 00300,
     pkg/sched/filter.go). nil / omitted matches every record.
@@ -121,6 +128,10 @@ class Trigger:
         updated_at = self.updated_at.isoformat()
 
         slug = self.slug
+
+        retry_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry_policy, Unset):
+            retry_policy = self.retry_policy.to_dict()
 
         filter_criteria: dict[str, Any] | Unset = UNSET
         if not isinstance(self.filter_criteria, Unset):
@@ -177,6 +188,8 @@ class Trigger:
         )
         if slug is not UNSET:
             field_dict["slug"] = slug
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
         if filter_criteria is not UNSET:
             field_dict["filter_criteria"] = filter_criteria
         if schedule is not UNSET:
@@ -193,6 +206,7 @@ class Trigger:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.filter_criteria import FilterCriteria
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.trigger_config import TriggerConfig
 
         d = dict(src_dict)
@@ -223,6 +237,13 @@ class Trigger:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         slug = d.pop("slug", UNSET)
+
+        _retry_policy = d.pop("retry_policy", UNSET)
+        retry_policy: RetryPolicyDTO | Unset
+        if isinstance(_retry_policy, Unset):
+            retry_policy = UNSET
+        else:
+            retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
         _filter_criteria = d.pop("filter_criteria", UNSET)
         filter_criteria: FilterCriteria | Unset
@@ -308,6 +329,7 @@ class Trigger:
             created_at=created_at,
             updated_at=updated_at,
             slug=slug,
+            retry_policy=retry_policy,
             filter_criteria=filter_criteria,
             schedule=schedule,
             path=path,

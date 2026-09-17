@@ -3051,6 +3051,12 @@ type ManagedRealtimeEndpoint struct {
 	DisconnectPath          string
 	CallbackAuthTokenSealed []byte
 	AuthTokenSealed         []byte
+	AuthMode                string
+	AuthIssuer              string
+	AuthJWKSURL             string
+	AuthAudience            []string
+	AuthAlgorithms          []string
+	AuthRequiredClaims      map[string]string
 	AllowedOrigins          []string
 	MaxConnections          int
 	MaxMessageBytes         int64
@@ -3067,6 +3073,12 @@ type UpdateManagedRealtimeEndpointParams struct {
 	DisconnectPath          *string
 	CallbackAuthTokenSealed *[]byte
 	AuthTokenSealed         *[]byte
+	AuthMode                *string
+	AuthIssuer              *string
+	AuthJWKSURL             *string
+	AuthAudience            *[]string
+	AuthAlgorithms          *[]string
+	AuthRequiredClaims      *map[string]string
 	AllowedOrigins          *[]string
 	MaxConnections          *int
 	MaxMessageBytes         *int64

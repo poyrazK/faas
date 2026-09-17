@@ -114,6 +114,9 @@ type Endpoint struct {
 	// backed by the app's configured auth provider; this token is never emitted
 	// in events or registry snapshots.
 	AuthToken string
+	// ClientAuth is the explicit per-endpoint client authentication policy.
+	// Empty mode preserves the legacy inference from AuthToken.
+	ClientAuth AuthPolicy
 
 	// Authorize runs before the WebSocket handshake. It should validate the
 	// client credential and return a stable principal identifier. A nil
@@ -166,6 +169,9 @@ type Config struct {
 	WriteWait        time.Duration
 	MaxConnectionAge time.Duration
 	CallbackTimeout  time.Duration
+	// JWTAuthorizer verifies endpoint policies using oidc_jwt. A nil authorizer
+	// deliberately fails closed for JWT-configured endpoints.
+	JWTAuthorizer JWTAuthorizer
 }
 
 func (c Config) withDefaults() Config {
@@ -309,6 +315,11 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	if strings.TrimSpace(e.ID) != e.ID || e.ID == "" || e.ID == "." || e.ID == ".." || strings.ContainsAny(e.ID, "/?#") {
 		return fmt.Errorf("realtime: invalid endpoint id %q", e.ID)
 	}
+	auth, err := normalizeAuthPolicy(e.ClientAuth, e.AuthToken != "")
+	if err != nil {
+		return err
+	}
+	e.ClientAuth = auth
 	for name, path := range map[string]string{
 		"connect_path":    e.ConnectPath,
 		"message_path":    e.MessagePath,
@@ -407,15 +418,29 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	state := value.(*endpointState)
 	endpoint := state.Endpoint
 	principal := ""
-	if endpoint.AuthToken != "" {
-		header := strings.Fields(r.Header.Get("Authorization"))
-		if len(header) != 2 || !strings.EqualFold(header[0], "Bearer") ||
-			subtle.ConstantTimeCompare([]byte(header[1]), []byte(endpoint.AuthToken)) != 1 {
+	switch endpoint.ClientAuth.Mode {
+	case AuthModeStaticBearer:
+		token, ok := bearerToken(r)
+		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) != 1 {
 			m.rejectedConnections.Add(1)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		principal = "token"
+	case AuthModeOIDCJWT:
+		token, ok := bearerToken(r)
+		if !ok || m.cfg.JWTAuthorizer == nil {
+			m.rejectedConnections.Add(1)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var err error
+		principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+		if err != nil || strings.TrimSpace(principal) == "" {
+			m.rejectedConnections.Add(1)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if endpoint.Authorize != nil {
 		var err error

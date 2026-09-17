@@ -30,9 +30,10 @@ class ScalingPolicy:
     Free → 403 plan_max_instances_not_allowed. 0 = use plan max_concurrency."""
     target: None | ScalingTarget | Unset = UNSET
     """Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps |
-    concurrent_requests | p99_latency_ms. Empty/null = engine falls back to the legacy autoscale_target_rps /
-    autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422
-    scaling_target_incompatible_with_workload_class (PR-D carve-out)."""
+    concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for
+    job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct
+    columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class
+    (PR-D carve-out)."""
     scale_out_cooldown_s: int | Unset = UNSET
     """Minimum seconds between two scale-out events. Floor 1 (no 0 traps); ceiling 3600 (1 h). Out-of-range → 422
     invalid_cooldown."""

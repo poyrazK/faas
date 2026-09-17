@@ -46,37 +46,55 @@ const (
 )
 
 const (
+	RealtimeAuthModeNone         = "none"
+	RealtimeAuthModeStaticBearer = "static_bearer"
+	RealtimeAuthModeOIDCJWT      = "oidc_jwt"
+)
+
+const (
 	DefaultRealtimeConnectPath    = "/realtime/connect"
 	DefaultRealtimeMessagePath    = "/realtime/message"
 	DefaultRealtimeDisconnectPath = "/realtime/disconnect"
 )
 
 type CreateManagedRealtimeEndpointRequest struct {
-	CallbackURL             string   `json:"callback_url"`
-	ConnectPath             string   `json:"connect_path,omitempty"`
-	MessagePath             string   `json:"message_path,omitempty"`
-	DisconnectPath          string   `json:"disconnect_path,omitempty"`
-	CallbackAuthToken       string   `json:"callback_auth_token"`
-	AuthToken               string   `json:"auth_token,omitempty"`
-	AllowedOrigins          []string `json:"allowed_origins,omitempty"`
-	MaxConnections          int      `json:"max_connections,omitempty"`
-	MaxMessageBytes         int64    `json:"max_message_bytes,omitempty"`
-	MaxConnectionAgeSeconds int64    `json:"max_connection_age_seconds,omitempty"`
-	Enabled                 *bool    `json:"enabled,omitempty"`
+	CallbackURL             string            `json:"callback_url"`
+	ConnectPath             string            `json:"connect_path,omitempty"`
+	MessagePath             string            `json:"message_path,omitempty"`
+	DisconnectPath          string            `json:"disconnect_path,omitempty"`
+	CallbackAuthToken       string            `json:"callback_auth_token"`
+	AuthToken               string            `json:"auth_token,omitempty"`
+	AuthMode                string            `json:"auth_mode,omitempty"`
+	AuthIssuer              string            `json:"auth_issuer,omitempty"`
+	AuthJWKSURL             string            `json:"auth_jwks_url,omitempty"`
+	AuthAudience            []string          `json:"auth_audience,omitempty"`
+	AuthAlgorithms          []string          `json:"auth_algorithms,omitempty"`
+	AuthRequiredClaims      map[string]string `json:"auth_required_claims,omitempty"`
+	AllowedOrigins          []string          `json:"allowed_origins,omitempty"`
+	MaxConnections          int               `json:"max_connections,omitempty"`
+	MaxMessageBytes         int64             `json:"max_message_bytes,omitempty"`
+	MaxConnectionAgeSeconds int64             `json:"max_connection_age_seconds,omitempty"`
+	Enabled                 *bool             `json:"enabled,omitempty"`
 }
 
 type UpdateManagedRealtimeEndpointRequest struct {
-	CallbackURL             *string   `json:"callback_url,omitempty"`
-	ConnectPath             *string   `json:"connect_path,omitempty"`
-	MessagePath             *string   `json:"message_path,omitempty"`
-	DisconnectPath          *string   `json:"disconnect_path,omitempty"`
-	CallbackAuthToken       *string   `json:"callback_auth_token,omitempty"`
-	AuthToken               *string   `json:"auth_token,omitempty"`
-	AllowedOrigins          *[]string `json:"allowed_origins,omitempty"`
-	MaxConnections          *int      `json:"max_connections,omitempty"`
-	MaxMessageBytes         *int64    `json:"max_message_bytes,omitempty"`
-	MaxConnectionAgeSeconds *int64    `json:"max_connection_age_seconds,omitempty"`
-	Enabled                 *bool     `json:"enabled,omitempty"`
+	CallbackURL             *string            `json:"callback_url,omitempty"`
+	ConnectPath             *string            `json:"connect_path,omitempty"`
+	MessagePath             *string            `json:"message_path,omitempty"`
+	DisconnectPath          *string            `json:"disconnect_path,omitempty"`
+	CallbackAuthToken       *string            `json:"callback_auth_token,omitempty"`
+	AuthToken               *string            `json:"auth_token,omitempty"`
+	AuthMode                *string            `json:"auth_mode,omitempty"`
+	AuthIssuer              *string            `json:"auth_issuer,omitempty"`
+	AuthJWKSURL             *string            `json:"auth_jwks_url,omitempty"`
+	AuthAudience            *[]string          `json:"auth_audience,omitempty"`
+	AuthAlgorithms          *[]string          `json:"auth_algorithms,omitempty"`
+	AuthRequiredClaims      *map[string]string `json:"auth_required_claims,omitempty"`
+	AllowedOrigins          *[]string          `json:"allowed_origins,omitempty"`
+	MaxConnections          *int               `json:"max_connections,omitempty"`
+	MaxMessageBytes         *int64             `json:"max_message_bytes,omitempty"`
+	MaxConnectionAgeSeconds *int64             `json:"max_connection_age_seconds,omitempty"`
+	Enabled                 *bool              `json:"enabled,omitempty"`
 }
 
 // ManagedRealtimeMessageRequest is a binary-safe message sent to one live
@@ -100,25 +118,31 @@ type ManagedRealtimePublishResponse struct {
 }
 
 type ManagedRealtimeEndpointResponse struct {
-	ID                      string   `json:"id"`
-	AppID                   string   `json:"app_id"`
-	AccountID               string   `json:"account_id"`
-	CallbackURL             string   `json:"callback_url"`
-	ConnectPath             string   `json:"connect_path"`
-	MessagePath             string   `json:"message_path"`
-	DisconnectPath          string   `json:"disconnect_path"`
-	CallbackAuthTokenMasked string   `json:"callback_auth_token_masked"`
-	AuthTokenMasked         string   `json:"auth_token_masked"`
-	AllowedOrigins          []string `json:"allowed_origins"`
-	MaxConnections          int      `json:"max_connections"`
-	MaxMessageBytes         int64    `json:"max_message_bytes"`
-	MaxConnectionAgeSeconds int64    `json:"max_connection_age_seconds"`
-	Enabled                 bool     `json:"enabled"`
-	CreatedAt               string   `json:"created_at"`
-	UpdatedAt               string   `json:"updated_at"`
+	ID                      string            `json:"id"`
+	AppID                   string            `json:"app_id"`
+	AccountID               string            `json:"account_id"`
+	CallbackURL             string            `json:"callback_url"`
+	ConnectPath             string            `json:"connect_path"`
+	MessagePath             string            `json:"message_path"`
+	DisconnectPath          string            `json:"disconnect_path"`
+	CallbackAuthTokenMasked string            `json:"callback_auth_token_masked"`
+	AuthTokenMasked         string            `json:"auth_token_masked"`
+	AuthMode                string            `json:"auth_mode"`
+	AuthIssuer              string            `json:"auth_issuer,omitempty"`
+	AuthJWKSURL             string            `json:"auth_jwks_url,omitempty"`
+	AuthAudience            []string          `json:"auth_audience,omitempty"`
+	AuthAlgorithms          []string          `json:"auth_algorithms,omitempty"`
+	AuthRequiredClaims      map[string]string `json:"auth_required_claims,omitempty"`
+	AllowedOrigins          []string          `json:"allowed_origins"`
+	MaxConnections          int               `json:"max_connections"`
+	MaxMessageBytes         int64             `json:"max_message_bytes"`
+	MaxConnectionAgeSeconds int64             `json:"max_connection_age_seconds"`
+	Enabled                 bool              `json:"enabled"`
+	CreatedAt               string            `json:"created_at"`
+	UpdatedAt               string            `json:"updated_at"`
 }
 
-func ManagedRealtimeEndpointResponseFromRow(id, appID, accountID, callbackURL, connectPath, messagePath, disconnectPath string, allowedOrigins []string, maxConnections int, maxMessageBytes, maxConnectionAgeSeconds int64, enabled bool, createdAt, updatedAt time.Time) ManagedRealtimeEndpointResponse {
+func ManagedRealtimeEndpointResponseFromRow(id, appID, accountID, callbackURL, connectPath, messagePath, disconnectPath, authMode, authIssuer, authJWKSURL string, authAudience, authAlgorithms []string, authRequiredClaims map[string]string, allowedOrigins []string, maxConnections int, maxMessageBytes, maxConnectionAgeSeconds int64, enabled bool, createdAt, updatedAt time.Time) ManagedRealtimeEndpointResponse {
 	origins := append([]string{}, allowedOrigins...)
 	return ManagedRealtimeEndpointResponse{
 		ID:                      id,
@@ -130,6 +154,12 @@ func ManagedRealtimeEndpointResponseFromRow(id, appID, accountID, callbackURL, c
 		DisconnectPath:          disconnectPath,
 		CallbackAuthTokenMasked: RealtimeSecretMasked,
 		AuthTokenMasked:         RealtimeSecretMasked,
+		AuthMode:                authMode,
+		AuthIssuer:              authIssuer,
+		AuthJWKSURL:             authJWKSURL,
+		AuthAudience:            append([]string(nil), authAudience...),
+		AuthAlgorithms:          append([]string(nil), authAlgorithms...),
+		AuthRequiredClaims:      cloneStringMap(authRequiredClaims),
 		AllowedOrigins:          origins,
 		MaxConnections:          maxConnections,
 		MaxMessageBytes:         maxMessageBytes,
@@ -138,6 +168,100 @@ func ManagedRealtimeEndpointResponseFromRow(id, appID, accountID, callbackURL, c
 		CreatedAt:               FormatAlertTime(createdAt),
 		UpdatedAt:               FormatAlertTime(updatedAt),
 	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+// NormalizeRealtimeAuthMode applies the compatibility default used by old
+// clients that only supplied auth_token.
+func NormalizeRealtimeAuthMode(mode string, hasStaticToken bool) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		if hasStaticToken {
+			return RealtimeAuthModeStaticBearer, nil
+		}
+		return RealtimeAuthModeNone, nil
+	}
+	switch mode {
+	case RealtimeAuthModeNone, RealtimeAuthModeStaticBearer, RealtimeAuthModeOIDCJWT:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("auth_mode must be one of %q, %q, or %q", RealtimeAuthModeNone, RealtimeAuthModeStaticBearer, RealtimeAuthModeOIDCJWT)
+	}
+}
+
+// ValidateRealtimeAuth validates public endpoint auth configuration. The
+// caller supplies whether a static token exists without exposing plaintext.
+func ValidateRealtimeAuth(mode string, hasStaticToken bool, issuer, jwksURL string, audience, algorithms []string, requiredClaims map[string]string) error {
+	if mode == RealtimeAuthModeNone {
+		if hasStaticToken {
+			return fmt.Errorf("auth_mode none cannot include auth_token")
+		}
+		if issuer != "" || jwksURL != "" || len(audience) > 0 || len(algorithms) > 0 || len(requiredClaims) > 0 {
+			return fmt.Errorf("auth settings require auth_mode oidc_jwt")
+		}
+		return nil
+	}
+	if mode == RealtimeAuthModeStaticBearer {
+		if !hasStaticToken {
+			return fmt.Errorf("auth_mode static_bearer requires auth_token")
+		}
+		if issuer != "" || jwksURL != "" || len(audience) > 0 || len(algorithms) > 0 || len(requiredClaims) > 0 {
+			return fmt.Errorf("oidc auth settings cannot be combined with auth_mode static_bearer")
+		}
+		return nil
+	}
+	if mode != RealtimeAuthModeOIDCJWT {
+		return fmt.Errorf("unsupported auth_mode %q", mode)
+	}
+	if hasStaticToken {
+		return fmt.Errorf("auth_mode oidc_jwt cannot include auth_token")
+	}
+	if issuer == "" || !strings.HasPrefix(issuer, "https://") || len(issuer) > 2048 {
+		return fmt.Errorf("auth_issuer must be an https URL of at most 2048 bytes")
+	}
+	u, err := url.Parse(jwksURL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !strings.HasPrefix(jwksURL, "https://") {
+		return fmt.Errorf("auth_jwks_url must be an https URL without credentials, query, or fragment")
+	}
+	lower := strings.ToLower(jwksURL)
+	for _, prefix := range []string{"https://localhost", "https://localhost.", "https://127.", "https://10.", "https://192.168.", "https://169.254.", "https://[::", "https://[fc", "https://[fd"} {
+		if strings.HasPrefix(lower, prefix) {
+			return fmt.Errorf("auth_jwks_url must not point to a private or loopback address")
+		}
+	}
+	if len(audience) > 16 || len(algorithms) == 0 || len(algorithms) > 16 {
+		return fmt.Errorf("auth_audience and auth_algorithms are bounded to 16 entries")
+	}
+	allowed := map[string]struct{}{"RS256": {}, "RS384": {}, "RS512": {}, "ES256": {}, "ES384": {}, "ES512": {}}
+	seen := map[string]struct{}{}
+	for _, algorithm := range algorithms {
+		if _, ok := allowed[algorithm]; !ok {
+			return fmt.Errorf("auth_algorithms contains unsupported algorithm %q", algorithm)
+		}
+		if _, ok := seen[algorithm]; ok {
+			return fmt.Errorf("auth_algorithms must be unique")
+		}
+		seen[algorithm] = struct{}{}
+	}
+	if len(requiredClaims) > 16 {
+		return fmt.Errorf("auth_required_claims are bounded to 16 entries")
+	}
+	for key, value := range requiredClaims {
+		if strings.TrimSpace(key) != key || key == "" || len(key) > 128 || len(value) > 256 {
+			return fmt.Errorf("auth_required_claims contains an invalid entry")
+		}
+	}
+	return nil
 }
 
 // ValidateRealtimeOrigins validates exact browser origins. Wildcards are

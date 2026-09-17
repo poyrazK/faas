@@ -20,7 +20,8 @@ class ScalingTarget:
 
     metric: ScalingTargetMetric | Unset = UNSET
     value: float | Unset = UNSET
-    """Target value (units depend on Metric). Must be >= 0."""
+    """Target value (units depend on Metric). Must be >= 0; queue_depth requires a positive per-worker backlog
+    budget."""
 
     def to_dict(self) -> dict[str, Any]:
         metric: str | Unset = UNSET

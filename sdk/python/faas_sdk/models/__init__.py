@@ -295,6 +295,13 @@ from .create_managed_postgres_database_request import CreateManagedPostgresDatab
 from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
 from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
 from .create_managed_realtime_endpoint_request import CreateManagedRealtimeEndpointRequest
+from .create_managed_realtime_endpoint_request_auth_algorithms_item import (
+    CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+)
+from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRealtimeEndpointRequestAuthMode
+from .create_managed_realtime_endpoint_request_auth_required_claims import (
+    CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
+)
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
@@ -675,6 +682,9 @@ from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
+from .managed_realtime_endpoint_response_auth_algorithms_item import ManagedRealtimeEndpointResponseAuthAlgorithmsItem
+from .managed_realtime_endpoint_response_auth_mode import ManagedRealtimeEndpointResponseAuthMode
+from .managed_realtime_endpoint_response_auth_required_claims import ManagedRealtimeEndpointResponseAuthRequiredClaims
 from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
@@ -1109,6 +1119,13 @@ from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
 from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
+from .update_managed_realtime_endpoint_request_auth_algorithms_item import (
+    UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+)
+from .update_managed_realtime_endpoint_request_auth_mode import UpdateManagedRealtimeEndpointRequestAuthMode
+from .update_managed_realtime_endpoint_request_auth_required_claims import (
+    UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
+)
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
@@ -1459,6 +1476,9 @@ __all__ = (
     "CreateManagedPostgresDatabaseRequestAvailability",
     "CreateManagedPostgresDatabaseRequestServiceClass",
     "CreateManagedRealtimeEndpointRequest",
+    "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
+    "CreateManagedRealtimeEndpointRequestAuthMode",
+    "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
@@ -1835,6 +1855,9 @@ __all__ = (
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeEndpointResponse",
+    "ManagedRealtimeEndpointResponseAuthAlgorithmsItem",
+    "ManagedRealtimeEndpointResponseAuthMode",
+    "ManagedRealtimeEndpointResponseAuthRequiredClaims",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
     "ManagedRealtimeMessageRequest",
@@ -2245,6 +2268,9 @@ __all__ = (
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
     "UpdateManagedRealtimeEndpointRequest",
+    "UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
+    "UpdateManagedRealtimeEndpointRequestAuthMode",
+    "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateProjectEnvironmentConfigRequest",

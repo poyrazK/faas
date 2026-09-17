@@ -74,8 +74,12 @@ HTTP surface. The loopback health listener exposes only `/healthz` and
 `/readyz`, never `/internal/*` management routes. Deployments must authorize
 endpoint registration and management at the caller boundary. The bootstrap
 `auth_token` field is intended only for
-controlled single-node deployments; production endpoint registration should
-install an app-specific authorizer.
+controlled single-node deployments. Realtime v2 also supports an explicit
+per-endpoint `auth_mode`: `none`, `static_bearer`, or `oidc_jwt`. JWT mode
+stores the issuer, JWKS URL, audience, allowed asymmetric algorithms, and
+exact required claims as public policy; `realtimed` verifies the bearer during
+the WebSocket handshake and stamps the verified JWT subject as `principal`.
+JWKS URLs are HTTPS-only and reject private, loopback, and link-local targets.
 
 ## Limits and operations
 
@@ -109,6 +113,11 @@ node that restarts or becomes active after a mutation-time fan-out, while
 keeping endpoint credentials and customer state in the control plane. A
 temporary node or database failure is logged and retried on the next pass; it
 does not prevent apid from serving requests.
+
+Client authorization is part of the durable endpoint contract. Changing the
+mode clears incompatible stale credentials or trust metadata; switching to
+`oidc_jwt` never leaves a static bearer usable. Existing rows with a sealed
+`auth_token` are interpreted as `static_bearer` during migration.
 
 ## Realtime v2 endpoint policy
 

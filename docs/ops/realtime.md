@@ -51,6 +51,16 @@ removing disabled rows on active nodes. If a node is restarting or unreachable,
 the pass records the failure and retries on the next interval; no endpoint
 mutation is required to heal the node after it becomes active.
 
+Client authentication is configured per endpoint. Use `auth_mode: none` for a
+public endpoint, `static_bearer` with the write-only `auth_token` for a small
+controlled integration, or `oidc_jwt` with `auth_issuer`, `auth_jwks_url`,
+`auth_audience`, `auth_algorithms`, and optional `auth_required_claims` for
+browser or multi-tenant clients. JWTs must be signed with RS256/384/512 or
+ES256/384/512; the verified `sub` claim becomes the callback `principal`.
+JWKS fetches use the daemon's bounded cache and fail closed when the policy
+cannot be verified. The API never returns client tokens; metadata is returned
+for inspection and credentials remain masked.
+
 The connection-owner directory is also swept independently: expired leases
 left by crashed processes are deleted in batches at boot and every minute.
 Active leases are preserved, and a cleanup failure is retried automatically.
