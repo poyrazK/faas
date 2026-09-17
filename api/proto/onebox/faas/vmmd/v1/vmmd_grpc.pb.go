@@ -226,9 +226,11 @@ type VmmdClient interface {
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error)
 	// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
-	// live instance of an app without tearing down its network namespace. An
-	// empty list removes private-network connectivity. Public egress policy is
-	// unchanged; the CIDRs are an additive, explicit accept-and-route set.
+	// live instance of an app without tearing down its network namespace. For a
+	// Gregale-owned attachment, the optional identity fields also add/remove
+	// the node-local private side-link. An empty list removes private-network
+	// connectivity. Public egress policy is unchanged; the CIDRs are an
+	// additive, explicit accept-and-route set.
 	UpdatePrivateNetwork(ctx context.Context, in *UpdatePrivateNetworkRequest, opts ...grpc.CallOption) (*UpdatePrivateNetworkAck, error)
 	// ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
 	// Gregale-owned private network exists before attachment routes are
@@ -955,9 +957,11 @@ type VmmdServer interface {
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error)
 	// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
-	// live instance of an app without tearing down its network namespace. An
-	// empty list removes private-network connectivity. Public egress policy is
-	// unchanged; the CIDRs are an additive, explicit accept-and-route set.
+	// live instance of an app without tearing down its network namespace. For a
+	// Gregale-owned attachment, the optional identity fields also add/remove
+	// the node-local private side-link. An empty list removes private-network
+	// connectivity. Public egress policy is unchanged; the CIDRs are an
+	// additive, explicit accept-and-route set.
 	UpdatePrivateNetwork(context.Context, *UpdatePrivateNetworkRequest) (*UpdatePrivateNetworkAck, error)
 	// ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
 	// Gregale-owned private network exists before attachment routes are
