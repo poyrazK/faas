@@ -2030,6 +2030,7 @@ func (s *server) handler() http.Handler {
 	// owner seam serves the local Unix fast path and leased cross-node resolver.
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listManagedRealtimeConnections))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.drainManagedRealtimeConnections))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeDrainOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimeConnection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))

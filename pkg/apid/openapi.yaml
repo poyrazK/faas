@@ -12794,6 +12794,31 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: drain_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeDrainOperation
+      summary: Get the durable result of a realtime connection drain.
+      description: Returns a previously recorded drain result scoped to the application and endpoint.
+      responses:
+        '200':
+          description: The persisted drain result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeDrainResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29997,8 +30022,15 @@ components:
     ManagedRealtimeDrainResponse:
       type: object
       description: Bounded, auditable result of a realtime connection drain.
-      required: [results, matched, closed, gone, failed, limit, truncated, dry_run, partial, nodes_queried, nodes_unavailable]
+      required: [operation_id, status, created_at, results, matched, closed, gone, failed, limit, truncated, dry_run, partial, nodes_queried, nodes_unavailable]
       properties:
+        operation_id: { type: string, format: uuid, description: Durable identifier for this drain operation. }
+        status:
+          type: string
+          enum: [running, completed, partial]
+          description: Durable operation state. A partial operation had at least one gone or failed connection.
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
         results:
           type: array
           items: { $ref: '#/components/schemas/ManagedRealtimeDrainResult' }

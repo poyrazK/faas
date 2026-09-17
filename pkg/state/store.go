@@ -705,6 +705,15 @@ type ManagedRealtimeEndpointLister interface {
 	ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRealtimeEndpoint, error)
 }
 
+// ManagedRealtimeDrainOperationStore persists the outcome of a bounded live
+// connection drain. It is optional so narrow integrations can adopt the
+// realtime control surface without implementing the operation history seam.
+type ManagedRealtimeDrainOperationStore interface {
+	CreateManagedRealtimeDrainOperation(ctx context.Context, input ManagedRealtimeDrainOperationInput) (ManagedRealtimeDrainOperation, error)
+	CompleteManagedRealtimeDrainOperation(ctx context.Context, id, accountID, endpointID string, status ManagedRealtimeDrainOperationStatus, result json.RawMessage, matched, closed, gone, failed int) (ManagedRealtimeDrainOperation, error)
+	GetManagedRealtimeDrainOperation(ctx context.Context, accountID, endpointID, id string) (ManagedRealtimeDrainOperation, error)
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the

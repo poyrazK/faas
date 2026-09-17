@@ -308,6 +308,47 @@ export class RealtimeService {
     });
   }
   /**
+   * Get the durable result of a realtime connection drain.
+   * Returns a previously recorded drain result scoped to the application and endpoint.
+   * @returns ManagedRealtimeDrainResponse The persisted drain result.
+   * @throws ApiError
+   */
+  public static getManagedRealtimeDrainOperation({
+    slug,
+    id,
+    drainId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    drainId: string,
+  }): CancelablePromise<ManagedRealtimeDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'drain_id': drainId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
    * Rotate a static bearer credential with a bounded overlap window.
    * Promotes the supplied credential to current and accepts the previous
    * credential until previous_token_expires_at. Credentials are sealed at

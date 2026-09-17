@@ -278,13 +278,14 @@ type MemStore struct {
 	// invariant is enforced at insert time. MemStore holds no
 	// concurrency control beyond m.mu — the dispatcher's claim
 	// query is a single goroutine today.
-	appWebhooks              map[string]AppWebhook
-	appWebhookDeliveries     map[string]AppWebhookDelivery
-	managedRealtimeEndpoints map[string]ManagedRealtimeEndpoint
-	managedRealtimeOwners    map[string]ManagedRealtimeConnectionOwner
-	appLogDrains             map[string]AppLogDrain
-	appLogDrainHealth        map[string]AppLogDrainHealth
-	appLogDrainAnalytics     map[string]AppLogDrainDeliveryAnalytics
+	appWebhooks                    map[string]AppWebhook
+	appWebhookDeliveries           map[string]AppWebhookDelivery
+	managedRealtimeEndpoints       map[string]ManagedRealtimeEndpoint
+	managedRealtimeDrainOperations map[string]ManagedRealtimeDrainOperation
+	managedRealtimeOwners          map[string]ManagedRealtimeConnectionOwner
+	appLogDrains                   map[string]AppLogDrain
+	appLogDrainHealth              map[string]AppLogDrainHealth
+	appLogDrainAnalytics           map[string]AppLogDrainDeliveryAnalytics
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -907,34 +908,35 @@ func NewMemStore() *MemStore {
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
-		jobs:                      map[string]Job{},
-		jobRuns:                   map[string]JobRun{},
-		jobTasks:                  map[string]map[int]JobTask{},
-		migrationLeases:           map[string]MigrationLease{},
-		workflowRuns:              map[string]WorkflowRun{},
-		workflowSteps:             map[string]map[string]WorkflowStep{},
-		workflowEvents:            map[string][]WorkflowEvent{},
-		fireNowRequests:           map[string]FireNowRequest{},
-		operatorIntents:           map[string]OperatorIntent{},
-		runtimeConfigs:            map[string]RuntimeConfig{},
-		runtimeConfigOperations:   map[string]RuntimeConfigOperation{},
-		runtimeConfigRevisions:    []RuntimeConfigRevision{},
-		alertRules:                map[string]AlertRule{},
-		alertDeliveries:           map[string]AlertDelivery{},
-		appWebhooks:               map[string]AppWebhook{},
-		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
-		managedRealtimeEndpoints:  map[string]ManagedRealtimeEndpoint{},
-		managedRealtimeOwners:     map[string]ManagedRealtimeConnectionOwner{},
-		appLogDrains:              map[string]AppLogDrain{},
-		appLogDrainHealth:         map[string]AppLogDrainHealth{},
-		appLogDrainAnalytics:      map[string]AppLogDrainDeliveryAnalytics{},
-		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
-		uploadSessions:            map[string]sqlc.UploadSession{},
-		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
-		alertClaimKeys:            map[string]time.Time{},
-		edgeRules:                 map[string]EdgeRule{},
-		corsPresets:               map[string]CorsPreset{},
-		openAPIDocs:               map[string]openAPIDocRow{},
+		jobs:                           map[string]Job{},
+		jobRuns:                        map[string]JobRun{},
+		jobTasks:                       map[string]map[int]JobTask{},
+		migrationLeases:                map[string]MigrationLease{},
+		workflowRuns:                   map[string]WorkflowRun{},
+		workflowSteps:                  map[string]map[string]WorkflowStep{},
+		workflowEvents:                 map[string][]WorkflowEvent{},
+		fireNowRequests:                map[string]FireNowRequest{},
+		operatorIntents:                map[string]OperatorIntent{},
+		runtimeConfigs:                 map[string]RuntimeConfig{},
+		runtimeConfigOperations:        map[string]RuntimeConfigOperation{},
+		runtimeConfigRevisions:         []RuntimeConfigRevision{},
+		alertRules:                     map[string]AlertRule{},
+		alertDeliveries:                map[string]AlertDelivery{},
+		appWebhooks:                    map[string]AppWebhook{},
+		appWebhookDeliveries:           map[string]AppWebhookDelivery{},
+		managedRealtimeEndpoints:       map[string]ManagedRealtimeEndpoint{},
+		managedRealtimeOwners:          map[string]ManagedRealtimeConnectionOwner{},
+		managedRealtimeDrainOperations: map[string]ManagedRealtimeDrainOperation{},
+		appLogDrains:                   map[string]AppLogDrain{},
+		appLogDrainHealth:              map[string]AppLogDrainHealth{},
+		appLogDrainAnalytics:           map[string]AppLogDrainDeliveryAnalytics{},
+		deploymentScopeExclusions:      map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
+		uploadSessions:                 map[string]sqlc.UploadSession{},
+		uploadCommitOutcomes:           map[string]sqlc.UploadCommitOutcome{},
+		alertClaimKeys:                 map[string]time.Time{},
+		edgeRules:                      map[string]EdgeRule{},
+		corsPresets:                    map[string]CorsPreset{},
+		openAPIDocs:                    map[string]openAPIDocRow{},
 		// ADR-126 / issue #975 item #2 — per-app OpenAPI imports.
 		// Keyed by app_id (one row per app, last-write-wins via
 		// the existing overwrite-not-insert contract). Same IDOR

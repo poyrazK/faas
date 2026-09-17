@@ -4875,6 +4875,14 @@ func (c *Client) DrainManagedRealtimeConnections(ctx context.Context, slug, endp
 	return out, c.do(ctx, "POST", path, req, &out)
 }
 
+// GetManagedRealtimeDrainOperation returns a durable drain result scoped to
+// the application and endpoint.
+func (c *Client) GetManagedRealtimeDrainOperation(ctx context.Context, slug, endpointID, drainID string) (ManagedRealtimeDrainResponse, error) {
+	var out ManagedRealtimeDrainResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/connections/drain/" + url.PathEscape(drainID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // SendManagedRealtimeConnection queues a binary-safe message for one live
 // connection owned by the endpoint.
 func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeMessageRequest) error {

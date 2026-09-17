@@ -534,6 +534,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}":                                                     "DeleteManagedRealtimeEndpoint",
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}/connections":                                            "ListManagedRealtimeConnections",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain":                                     "DrainManagedRealtimeConnections",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}":                           "GetManagedRealtimeDrainOperation",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate":                                           "RotateManagedRealtimeAuth",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize":                                  "FinalizeManagedRealtimeAuth",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send":                      "SendManagedRealtimeConnection",

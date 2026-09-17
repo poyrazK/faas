@@ -189,6 +189,10 @@ type ManagedRealtimeDrainResult struct {
 // Matched is the number selected after the limit was applied; Truncated means
 // more eligible connections existed in the point-in-time inventory.
 type ManagedRealtimeDrainResponse struct {
+	OperationID      string                       `json:"operation_id"`
+	Status           string                       `json:"status"`
+	CreatedAt        string                       `json:"created_at"`
+	CompletedAt      *string                      `json:"completed_at,omitempty"`
 	Results          []ManagedRealtimeDrainResult `json:"results"`
 	Matched          int                          `json:"matched"`
 	Closed           int                          `json:"closed"`

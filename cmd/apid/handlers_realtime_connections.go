@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -272,7 +273,23 @@ func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.
 		return
 	}
 	selected, truncated := managedRealtimeDrainCandidates(inventory.Connections, row, acct, request, connectionIDs)
+	operationStore, ok := s.store.(state.ManagedRealtimeDrainOperationStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime drain operation store unavailable"))
+		return
+	}
+	operation, err := operationStore.CreateManagedRealtimeDrainOperation(r.Context(), state.ManagedRealtimeDrainOperationInput{
+		AccountID: acct.ID, AppID: row.AppID, EndpointID: row.ID, Reason: request.Reason,
+		DryRun: request.DryRun, Matched: len(selected),
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not persist managed realtime drain operation"))
+		return
+	}
 	response := api.ManagedRealtimeDrainResponse{
+		OperationID:      operation.ID,
+		Status:           string(operation.Status),
+		CreatedAt:        api.FormatAlertTime(operation.CreatedAt),
 		Results:          make([]api.ManagedRealtimeDrainResult, 0, len(selected)),
 		Matched:          len(selected),
 		Limit:            request.Limit,
@@ -326,8 +343,72 @@ func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.
 	if len(connectionIDs) > 0 {
 		auditData["connection_ids"] = len(connectionIDs)
 	}
+	response.Status = string(state.ManagedRealtimeDrainOperationCompleted)
+	if response.Gone > 0 || response.Failed > 0 {
+		response.Status = string(state.ManagedRealtimeDrainOperationPartial)
+	}
+	result, err := json.Marshal(response)
+	if err != nil {
+		s.log.WarnContext(r.Context(), "encode managed realtime drain operation result", "operation_id", operation.ID, "err", err)
+	} else if completed, completeErr := operationStore.CompleteManagedRealtimeDrainOperation(r.Context(), operation.ID, acct.ID, row.ID, state.ManagedRealtimeDrainOperationStatus(response.Status), result, response.Matched, response.Closed, response.Gone, response.Failed); completeErr != nil {
+		s.log.WarnContext(r.Context(), "complete managed realtime drain operation", "operation_id", operation.ID, "err", completeErr)
+	} else if completed.CompletedAt != nil {
+		completedAt := api.FormatAlertTime(*completed.CompletedAt)
+		response.CompletedAt = &completedAt
+	}
+	auditData["operation_id"] = operation.ID
+	auditData["status"] = response.Status
 	s.audit.Emit(r.Context(), auditKind, &acct.ID, auditData)
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) getManagedRealtimeDrainOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
+	if !ok {
+		return
+	}
+	operationStore, ok := s.store.(state.ManagedRealtimeDrainOperationStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime drain operation store unavailable"))
+		return
+	}
+	operation, err := operationStore.GetManagedRealtimeDrainOperation(r.Context(), acct.ID, row.ID, strings.TrimSpace(r.PathValue("drain_id")))
+	if err != nil {
+		if errors.Is(err, state.ErrManagedRealtimeDrainOperationNotFound) {
+			s.notFound(w, "managed realtime drain operation not found")
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read managed realtime drain operation"))
+		return
+	}
+	if operation.AppID != row.AppID {
+		s.notFound(w, "managed realtime drain operation not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, managedRealtimeDrainResponseFromOperation(operation))
+}
+
+func managedRealtimeDrainResponseFromOperation(operation state.ManagedRealtimeDrainOperation) api.ManagedRealtimeDrainResponse {
+	var response api.ManagedRealtimeDrainResponse
+	if len(operation.Result) > 0 && string(operation.Result) != "{}" {
+		_ = json.Unmarshal(operation.Result, &response)
+	}
+	response.OperationID = operation.ID
+	response.Status = string(operation.Status)
+	response.CreatedAt = api.FormatAlertTime(operation.CreatedAt)
+	response.Matched = operation.Matched
+	response.Closed = operation.Closed
+	response.Gone = operation.Gone
+	response.Failed = operation.Failed
+	response.DryRun = operation.DryRun
+	if response.CompletedAt == nil && operation.CompletedAt != nil {
+		completedAt := api.FormatAlertTime(*operation.CompletedAt)
+		response.CompletedAt = &completedAt
+	}
+	if response.Results == nil {
+		response.Results = []api.ManagedRealtimeDrainResult{}
+	}
+	return response
 }
 
 func managedRealtimeDrainConnectionIDs(values []string) (map[string]struct{}, *api.Problem) {

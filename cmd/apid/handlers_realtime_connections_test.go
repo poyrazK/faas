@@ -169,6 +169,21 @@ func TestManagedRealtimeConnectionDrainFiltersAndSupportsDryRun(t *testing.T) {
 	if len(owner.closed) != 0 {
 		t.Fatalf("dry-run closed connections: %+v", owner.closed)
 	}
+	if response.OperationID == "" || response.Status != "completed" || response.CompletedAt == nil {
+		t.Fatalf("dry-run operation metadata: %+v", response)
+	}
+	statusPath := "/v1/apps/rt-actions/realtime/endpoints/" + endpointID + "/connections/drain/" + response.OperationID
+	statusRec := e.do(t, http.MethodGet, statusPath, nil, nil)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("get drain operation: %d %s", statusRec.Code, statusRec.Body)
+	}
+	var stored api.ManagedRealtimeDrainResponse
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.OperationID != response.OperationID || stored.Results[0].Status != "would_close" || stored.Status != "completed" {
+		t.Fatalf("stored drain operation: %+v", stored)
+	}
 }
 
 func TestManagedRealtimeConnectionDrainRequiresPartialAcknowledgement(t *testing.T) {

@@ -7,6 +7,16 @@ import type { ManagedRealtimeDrainResult } from './ManagedRealtimeDrainResult.js
  * Bounded, auditable result of a realtime connection drain.
  */
 export type ManagedRealtimeDrainResponse = {
+  /**
+   * Durable identifier for this drain operation.
+   */
+  operation_id: string;
+  /**
+   * Durable operation state. A partial operation had at least one gone or failed connection.
+   */
+  status: 'running' | 'completed' | 'partial';
+  created_at: string;
+  completed_at?: string | null;
   results: Array<ManagedRealtimeDrainResult>;
   /**
    * Number selected after applying the limit.
