@@ -10645,6 +10645,12 @@ func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit in
 		if inv.State != InvocationPending {
 			continue
 		}
+		// Explicitly named queue rows belong to their first-class binding,
+		// even while that binding is disabled or waiting for a consumer
+		// projection. The legacy drain only owns empty-name queue rows.
+		if inv.Source == InvocationQueue && inv.QueueName != "" {
+			continue
+		}
 		if inv.DueAt.After(now) {
 			continue
 		}

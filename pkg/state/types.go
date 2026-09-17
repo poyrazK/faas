@@ -3286,27 +3286,30 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
-	ID             string           `json:"id"`
-	AppID          string           `json:"app_id"`
-	AccountID      string           `json:"account_id"`
-	InstanceID     string           `json:"instance_id,omitempty"`
-	Source         InvocationSource `json:"source"`
-	State          InvocationState  `json:"state"`
-	Method         string           `json:"method"`
-	Path           string           `json:"path"`
-	Payload        json.RawMessage  `json:"payload"`
-	Headers        json.RawMessage  `json:"headers"`
-	DueAt          time.Time        `json:"due_at"`
-	ScheduledAt    *time.Time       `json:"scheduled_at,omitempty"`
-	CronID         *string          `json:"cron_id,omitempty"`
-	AckURL         string           `json:"ack_url,omitempty"`
-	Result         json.RawMessage  `json:"result,omitempty"`
-	LeaseExpiresAt *time.Time       `json:"lease_expires_at,omitempty"`
-	ReceivedAt     *time.Time       `json:"received_at,omitempty"`
-	CompletedAt    *time.Time       `json:"completed_at,omitempty"`
-	Attempts       int              `json:"attempts"`
-	LastError      string           `json:"last_error,omitempty"`
-	CreatedAt      time.Time        `json:"created_at"`
+	ID         string           `json:"id"`
+	AppID      string           `json:"app_id"`
+	AccountID  string           `json:"account_id"`
+	InstanceID string           `json:"instance_id,omitempty"`
+	Source     InvocationSource `json:"source"`
+	// QueueName scopes queue-source invocations to a first-class queue
+	// binding. Empty preserves the legacy single per-app queue behavior.
+	QueueName      string          `json:"queue_name,omitempty"`
+	State          InvocationState `json:"state"`
+	Method         string          `json:"method"`
+	Path           string          `json:"path"`
+	Payload        json.RawMessage `json:"payload"`
+	Headers        json.RawMessage `json:"headers"`
+	DueAt          time.Time       `json:"due_at"`
+	ScheduledAt    *time.Time      `json:"scheduled_at,omitempty"`
+	CronID         *string         `json:"cron_id,omitempty"`
+	AckURL         string          `json:"ack_url,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
+	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	Attempts       int             `json:"attempts"`
+	LastError      string          `json:"last_error,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 	// Outcome is the normalized terminal classification (issue #791).
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.

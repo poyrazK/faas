@@ -109,6 +109,17 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			   and tr.item_identifier = i.id::text
 			 where i.app_id = $2
 			   and i.source = $3
+			   and (i.queue_name = $5 or (
+				       i.queue_name = ''
+				   and not exists (
+				       select 1 from triggers other
+				        where other.app_id = $2
+				          and other.kind = 'queue'
+				          and other.enabled
+				          and other.source = $3
+				          and other.id <> $1
+				   )
+			       ))
 			   and i.state = 'pending'
 			   and i.due_at <= now()
 			   and (tr.id is null or (tr.state in ('pending','retry') and tr.next_fire_at <= now()))
@@ -129,7 +140,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		select id, payload, headers, metadata, created_at
 		  from updated
 		 order by created_at asc, id asc`,
-		t.ID, t.AppID, q.source, pollLimit,
+		t.ID, t.AppID, q.source, pollLimit, t.Slug,
 	)
 	if err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: query invocations: %w", err)}

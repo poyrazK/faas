@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -74,6 +76,123 @@ func marshalQueueBindingRetryPolicy(policy *api.RetryPolicyDTO) ([]byte, *api.Pr
 		return nil, queueBindingProblem("retry_policy is not encodable")
 	}
 	return b, nil
+}
+
+// queueBindingTriggerConfig is the private trigger projection used by the
+// existing schedd push-consumer loop. Keeping the binding id in the config
+// lets updates/deletes find only the trigger owned by this binding while the
+// public queue-binding API remains the source of truth.
+func queueBindingTriggerConfig(binding state.QueueBinding) []byte {
+	config := map[string]any{"mode": "queue", "queue_binding_id": binding.ID}
+	if len(binding.RetryPolicyJSON) > 0 {
+		var policy api.RetryPolicyDTO
+		if json.Unmarshal(binding.RetryPolicyJSON, &policy) == nil && (policy.MaxAttempts > 0 || policy.BaseSeconds > 0 || policy.MaxSeconds > 0 || policy.JitterSeconds > 0) {
+			config["retry_policy"] = policy
+		}
+	}
+	b, _ := json.Marshal(config)
+	return b
+}
+
+func queueBindingTriggerID(ctx context.Context, store state.Store, appID, bindingID string) (string, error) {
+	triggers, err := store.ListTriggersForApp(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	for _, trigger := range triggers {
+		if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
+			continue
+		}
+		var marker struct {
+			BindingID string `json:"queue_binding_id"`
+		}
+		if json.Unmarshal(trigger.Config, &marker) == nil && marker.BindingID == bindingID {
+			return trigger.ID.String(), nil
+		}
+	}
+	return "", nil
+}
+
+func queueBindingTriggerAttempts(binding state.QueueBinding, limits api.Limits) int32 {
+	_, _, attempts, _ := triggerDeliveryDefaults(limits)
+	var policy api.RetryPolicyDTO
+	if json.Unmarshal(binding.RetryPolicyJSON, &policy) == nil && policy.MaxAttempts > 0 {
+		attempts = int32(policy.MaxAttempts)
+	}
+	if limits.TriggerMaxAttemptsMax > 0 && attempts > int32(limits.TriggerMaxAttemptsMax) {
+		attempts = int32(limits.TriggerMaxAttemptsMax)
+	}
+	return attempts
+}
+
+func queueBindingTriggerBatch(binding state.QueueBinding, limits api.Limits) int32 {
+	batch := binding.MaxConcurrency
+	if batch < 1 {
+		batch = 1
+	}
+	if batch > 5000 {
+		batch = 5000
+	}
+	if limits.TriggerBatchSizeMax > 0 && batch > limits.TriggerBatchSizeMax {
+		batch = limits.TriggerBatchSizeMax
+	}
+	return int32(batch)
+}
+
+// syncQueueBindingConsumer projects a push binding onto the scheduler's
+// existing queue trigger/poller path. The projection is deliberately private:
+// callers manage it through queue-bindings, while schedd continues to consume
+// the durable trigger rows it already understands.
+func (s *server) syncQueueBindingConsumer(ctx context.Context, app state.App, acct state.Account, binding state.QueueBinding) error {
+	triggerID, err := queueBindingTriggerID(ctx, s.store, app.ID, binding.ID)
+	if err != nil {
+		return fmt.Errorf("find queue consumer: %w", err)
+	}
+	if binding.Mode != "push" {
+		if triggerID != "" {
+			if err := s.store.DeleteTrigger(ctx, triggerID, app.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("remove queue consumer: %w", err)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", app.ID, triggerID))
+		}
+		return nil
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok || !limits.TriggersAllowed {
+		return api.ErrPlanTriggersNotAllowed(acct.Plan)
+	}
+	config := queueBindingTriggerConfig(binding)
+	enabled := binding.Enabled
+	batchSize := queueBindingTriggerBatch(binding, limits)
+	batchWindow := int32(1000)
+	maxAttempts := queueBindingTriggerAttempts(binding, limits)
+	if triggerID != "" {
+		trigger, lookupErr := s.store.TriggerByID(ctx, triggerID)
+		if lookupErr != nil {
+			return fmt.Errorf("read queue consumer: %w", lookupErr)
+		}
+		if trigger.Slug != binding.QueueName {
+			if err := s.store.DeleteTrigger(ctx, triggerID, app.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("replace queue consumer: %w", err)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", app.ID, triggerID))
+			triggerID = ""
+		}
+	}
+	if triggerID != "" {
+		updated, err := s.store.UpdateTrigger(ctx, triggerID, &enabled, config, &batchSize, &batchWindow, &maxAttempts, nil, nil, nil, nil)
+		if err == nil {
+			_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("updated", app.ID, uuidFromPgtype(updated.ID).String()))
+		}
+		return err
+	}
+	created, err := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(api.TriggerKindQueue), binding.QueueName,
+		enabled, config, string(state.InvocationQueue), batchSize, 1000, maxAttempts,
+		int32(limits.TriggerPayloadMaxBytes), api.BrokerPoisonStrategyCommit, limits)
+	if err == nil {
+		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("created", app.ID, uuidFromPgtype(created.ID).String()))
+	}
+	return err
 }
 
 func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -152,6 +271,13 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	if mode == "push" {
+		limits, ok := api.LimitsFor(acct.Plan)
+		if !ok || !limits.TriggersAllowed {
+			api.WriteProblem(w, api.ErrPlanTriggersNotAllowed(acct.Plan))
+			return
+		}
+	}
 	row, err := s.store.CreateQueueBinding(r.Context(), state.QueueBinding{
 		AccountID: acct.ID, AppID: app.ID, Name: req.Name, QueueName: req.QueueName,
 		Mode: mode, WorkloadClass: state.WorkloadClass(class), Enabled: enabled,
@@ -163,6 +289,11 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not create queue binding"))
+		return
+	}
+	if err := s.syncQueueBindingConsumer(r.Context(), app, acct, row); err != nil {
+		_ = s.store.DeleteQueueBinding(r.Context(), acct.ID, app.ID, row.ID)
+		api.WriteProblem(w, api.ErrCapacity("could not provision queue consumer"))
 		return
 	}
 	s.audit.Emit(r.Context(), "queue.binding_created", &acct.ID, map[string]any{"binding_id": row.ID, "app_id": app.ID, "name": row.Name, "queue_name": row.QueueName, "mode": row.Mode})
@@ -193,7 +324,8 @@ func (s *server) updateQueueBinding(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	id := r.PathValue("id")
-	if _, err := s.store.QueueBindingByID(r.Context(), acct.ID, app.ID, id); err != nil {
+	existing, err := s.store.QueueBindingByID(r.Context(), acct.ID, app.ID, id)
+	if err != nil {
 		s.notFound(w, "queue binding not found")
 		return
 	}
@@ -210,6 +342,17 @@ func (s *server) updateQueueBinding(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 		params.Mode = req.Mode
+	}
+	finalMode := existing.Mode
+	if req.Mode != nil {
+		finalMode = *req.Mode
+	}
+	if finalMode == "push" {
+		limits, ok := api.LimitsFor(acct.Plan)
+		if !ok || !limits.TriggersAllowed {
+			api.WriteProblem(w, api.ErrPlanTriggersNotAllowed(acct.Plan))
+			return
+		}
 	}
 	if req.WorkloadClass != nil {
 		if prob := validateQueueBindingClass(*req.WorkloadClass); prob != nil {
@@ -250,6 +393,11 @@ func (s *server) updateQueueBinding(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not update queue binding"))
 		return
 	}
+	if err := s.syncQueueBindingConsumer(r.Context(), app, acct, row); err != nil {
+		// The binding row is durable even if a scheduler projection is
+		// temporarily unavailable; the next update/reconcile repairs it.
+		s.log.Warn("queue binding consumer projection failed", "binding_id", row.ID, "err", err)
+	}
 	s.audit.Emit(r.Context(), "queue.binding_updated", &acct.ID, map[string]any{"binding_id": row.ID, "app_id": app.ID, "name": row.Name})
 	writeJSON(w, http.StatusOK, queueBindingResponse(row))
 }
@@ -259,7 +407,25 @@ func (s *server) deleteQueueBinding(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteQueueBinding(r.Context(), acct.ID, app.ID, r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	row, err := s.store.QueueBindingByID(r.Context(), acct.ID, app.ID, id)
+	if err != nil {
+		s.notFound(w, "queue binding not found")
+		return
+	}
+	triggerID, findErr := queueBindingTriggerID(r.Context(), s.store, app.ID, row.ID)
+	if findErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not find queue consumer"))
+		return
+	}
+	if triggerID != "" {
+		if err := s.store.DeleteTrigger(r.Context(), triggerID, app.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("could not remove queue consumer"))
+			return
+		}
+		_ = s.notif.Notify(r.Context(), db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", app.ID, triggerID))
+	}
+	if err := s.store.DeleteQueueBinding(r.Context(), acct.ID, app.ID, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "queue binding not found")
 			return

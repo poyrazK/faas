@@ -28678,6 +28678,7 @@ components:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         account_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         source: { type: string, enum: [async_invoke, queue, delayed_task, cron, replay] }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue." }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
         method: { type: string }
         path: { type: string }
@@ -28764,6 +28765,7 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'

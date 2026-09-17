@@ -302,10 +302,16 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
+	queueName, problem := s.resolveQueueSendName(r.Context(), acct, app, req.QueueName)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		AppID:           app.ID,
 		AccountID:       acct.ID,
 		Source:          state.InvocationQueue,
+		QueueName:       queueName,
 		Payload:         req.Payload,
 		DueAt:           time.Now().UTC(),
 		RetryPolicyJSON: marshalRetryPolicy(req.RetryPolicy),
@@ -399,6 +405,84 @@ func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Acc
 type queueSendRequest = api.QueueSendRequest
 
 type delayedTaskRequest = api.DelayedTaskRequest
+
+// resolveQueueSendName keeps the legacy single per-app queue ergonomic while
+// making named queues deterministic once an app has more than one binding.
+// An explicit queue_name is always preferred; an omitted name adopts the
+// only active binding/trigger when there is one, otherwise it retains the
+// legacy empty queue name.
+func (s *server) resolveQueueSendName(ctx context.Context, acct state.Account, app state.App, requested string) (string, *api.Problem) {
+	if requested != "" {
+		if prob := validateQueueBindingName("queue_name", requested); prob != nil {
+			return "", prob
+		}
+		if bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID); err == nil {
+			active := 0
+			for _, binding := range bindings {
+				if !binding.Enabled {
+					continue
+				}
+				active++
+				if binding.QueueName == requested {
+					return requested, nil
+				}
+			}
+			if active > 0 {
+				return "", queueBindingProblem(fmt.Sprintf("queue_name %q is not an enabled binding for this app", requested))
+			}
+		}
+		if triggers, err := s.store.ListTriggersForApp(ctx, app.ID); err == nil {
+			active := 0
+			for _, trigger := range triggers {
+				if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
+					continue
+				}
+				active++
+				if trigger.Slug == requested {
+					return requested, nil
+				}
+			}
+			if active > 0 {
+				return "", queueBindingProblem(fmt.Sprintf("queue_name %q is not an enabled queue consumer for this app", requested))
+			}
+		}
+		return requested, nil
+	}
+	bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
+	if err == nil {
+		active := make([]state.QueueBinding, 0, len(bindings))
+		for _, binding := range bindings {
+			if binding.Enabled {
+				active = append(active, binding)
+			}
+		}
+		if len(active) == 1 {
+			return active[0].QueueName, nil
+		}
+		if len(active) > 1 {
+			return "", queueBindingProblem("queue_name is required when an app has multiple enabled queue bindings")
+		}
+	}
+	// Compatibility for pre-binding queue triggers. The old API exposed one
+	// app-scoped queue and used the trigger slug only as a label.
+	triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
+	if err == nil {
+		var queueName string
+		for _, trigger := range triggers {
+			if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
+				continue
+			}
+			if queueName != "" {
+				return "", queueBindingProblem("queue_name is required when an app has multiple enabled queue consumers")
+			}
+			queueName = trigger.Slug
+		}
+		if queueName != "" {
+			return queueName, nil
+		}
+	}
+	return "", nil
+}
 
 // extractInvocationID parses {"invocation_id":"<uuid>"} out of a
 // pg_notify payload. Defensive against partial / extra-key payloads;

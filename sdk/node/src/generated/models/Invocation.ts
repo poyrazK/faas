@@ -10,6 +10,10 @@ export type Invocation = {
   app_id: string;
   account_id: string;
   source: 'async_invoke' | 'queue' | 'delayed_task' | 'cron' | 'replay';
+  /**
+   * Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue.
+   */
+  queue_name?: string;
   state: 'pending' | 'dispatching' | 'completed' | 'failed' | 'cancelled' | 'dead_letter';
   method?: string;
   path?: string;

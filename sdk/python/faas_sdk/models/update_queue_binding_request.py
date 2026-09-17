@@ -6,23 +6,32 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.update_queue_binding_request_mode import (
+    UpdateQueueBindingRequestMode,
+    check_update_queue_binding_request_mode,
+)
+from ..models.update_queue_binding_request_workload_class import (
+    UpdateQueueBindingRequestWorkloadClass,
+    check_update_queue_binding_request_workload_class,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.queue_send_request_payload import QueueSendRequestPayload
     from ..models.retry_policy_dto import RetryPolicyDTO
 
 
-T = TypeVar("T", bound="QueueSendRequest")
+T = TypeVar("T", bound="UpdateQueueBindingRequest")
 
 
 @_attrs_define
-class QueueSendRequest:
-    """Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth."""
+class UpdateQueueBindingRequest:
+    """Partial queue-binding update; omitted fields are unchanged."""
 
-    payload: QueueSendRequestPayload | Unset = UNSET
     queue_name: str | Unset = UNSET
-    """Optional logical queue name. Required when an app has multiple enabled queue consumers."""
+    mode: UpdateQueueBindingRequestMode | Unset = UNSET
+    workload_class: UpdateQueueBindingRequestWorkloadClass | Unset = UNSET
+    enabled: bool | Unset = UNSET
+    max_concurrency: int | Unset = UNSET
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
     decodes this DTO into a dispatch.RetryPolicy before persisting
@@ -32,11 +41,19 @@ class QueueSendRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.payload, Unset):
-            payload = self.payload.to_dict()
-
         queue_name = self.queue_name
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode
+
+        workload_class: str | Unset = UNSET
+        if not isinstance(self.workload_class, Unset):
+            workload_class = self.workload_class
+
+        enabled = self.enabled
+
+        max_concurrency = self.max_concurrency
 
         retry_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
@@ -45,10 +62,16 @@ class QueueSendRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if payload is not UNSET:
-            field_dict["payload"] = payload
         if queue_name is not UNSET:
             field_dict["queue_name"] = queue_name
+        if mode is not UNSET:
+            field_dict["mode"] = mode
+        if workload_class is not UNSET:
+            field_dict["workload_class"] = workload_class
+        if enabled is not UNSET:
+            field_dict["enabled"] = enabled
+        if max_concurrency is not UNSET:
+            field_dict["max_concurrency"] = max_concurrency
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
 
@@ -56,18 +79,28 @@ class QueueSendRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.queue_send_request_payload import QueueSendRequestPayload
         from ..models.retry_policy_dto import RetryPolicyDTO
 
         d = dict(src_dict)
-        _payload = d.pop("payload", UNSET)
-        payload: QueueSendRequestPayload | Unset
-        if isinstance(_payload, Unset):
-            payload = UNSET
-        else:
-            payload = QueueSendRequestPayload.from_dict(_payload)
-
         queue_name = d.pop("queue_name", UNSET)
+
+        _mode = d.pop("mode", UNSET)
+        mode: UpdateQueueBindingRequestMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = check_update_queue_binding_request_mode(_mode)
+
+        _workload_class = d.pop("workload_class", UNSET)
+        workload_class: UpdateQueueBindingRequestWorkloadClass | Unset
+        if isinstance(_workload_class, Unset):
+            workload_class = UNSET
+        else:
+            workload_class = check_update_queue_binding_request_workload_class(_workload_class)
+
+        enabled = d.pop("enabled", UNSET)
+
+        max_concurrency = d.pop("max_concurrency", UNSET)
 
         _retry_policy = d.pop("retry_policy", UNSET)
         retry_policy: RetryPolicyDTO | Unset
@@ -76,14 +109,17 @@ class QueueSendRequest:
         else:
             retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
-        queue_send_request = cls(
-            payload=payload,
+        update_queue_binding_request = cls(
             queue_name=queue_name,
+            mode=mode,
+            workload_class=workload_class,
+            enabled=enabled,
+            max_concurrency=max_concurrency,
             retry_policy=retry_policy,
         )
 
-        queue_send_request.additional_properties = d
-        return queue_send_request
+        update_queue_binding_request.additional_properties = d
+        return update_queue_binding_request
 
     @property
     def additional_keys(self) -> list[str]:

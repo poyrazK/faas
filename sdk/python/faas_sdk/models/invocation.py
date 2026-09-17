@@ -32,6 +32,8 @@ class Invocation:
     source: InvocationSource
     state: InvocationState
     created_at: datetime.datetime
+    queue_name: str | Unset = UNSET
+    """Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue."""
     method: str | Unset = UNSET
     path: str | Unset = UNSET
     payload: InvocationPayload | Unset = UNSET
@@ -83,6 +85,8 @@ class Invocation:
         state: str = self.state
 
         created_at = self.created_at.isoformat()
+
+        queue_name = self.queue_name
 
         method = self.method
 
@@ -220,6 +224,8 @@ class Invocation:
                 "created_at": created_at,
             }
         )
+        if queue_name is not UNSET:
+            field_dict["queue_name"] = queue_name
         if method is not UNSET:
             field_dict["method"] = method
         if path is not UNSET:
@@ -282,6 +288,8 @@ class Invocation:
         state = check_invocation_state(d.pop("state"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        queue_name = d.pop("queue_name", UNSET)
 
         method = d.pop("method", UNSET)
 
@@ -531,6 +539,7 @@ class Invocation:
             source=source,
             state=state,
             created_at=created_at,
+            queue_name=queue_name,
             method=method,
             path=path,
             payload=payload,

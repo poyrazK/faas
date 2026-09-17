@@ -5893,6 +5893,35 @@ func TestMemStoreListDueInvocationsExcludesEnabledQueueTriggerOwner(t *testing.T
 	}
 }
 
+func TestMemStoreListDueInvocationsExcludesNamedQueueRows(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "named-queue-drain@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "named-queue-drain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := m.EnqueueInvocation(ctx, Invocation{
+		AccountID: acct.ID, AppID: app.ID, Source: InvocationQueue,
+		QueueName: "orders", DueAt: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := m.ListDueInvocations(ctx, time.Now(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == inv.ID {
+			t.Fatalf("legacy drain claimed named queue invocation %s", inv.ID)
+		}
+	}
+}
+
 func TestMemStoreQueueTriggerOwnershipIsUnique(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()

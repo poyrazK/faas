@@ -324,6 +324,9 @@ from .create_preview_request import CreatePreviewRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
 from .create_project_environment_request import CreateProjectEnvironmentRequest
+from .create_queue_binding_request import CreateQueueBindingRequest
+from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
+from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
 from .create_trigger_batch_request import CreateTriggerBatchRequest
@@ -983,6 +986,9 @@ from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
+from .queue_binding_response import QueueBindingResponse
+from .queue_binding_response_mode import QueueBindingResponseMode
+from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
 from .queue_dead_letter_message import QueueDeadLetterMessage
 from .queue_dead_letter_response import QueueDeadLetterResponse
 from .queue_peek_message import QueuePeekMessage
@@ -1191,6 +1197,9 @@ from .update_project_environment_config_request import UpdateProjectEnvironmentC
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
 from .update_project_request import UpdateProjectRequest
+from .update_queue_binding_request import UpdateQueueBindingRequest
+from .update_queue_binding_request_mode import UpdateQueueBindingRequestMode
+from .update_queue_binding_request_workload_class import UpdateQueueBindingRequestWorkloadClass
 from .update_trigger_request import UpdateTriggerRequest
 from .update_trigger_request_broker_poison_strategy_type_1 import UpdateTriggerRequestBrokerPoisonStrategyType1
 from .update_trigger_request_broker_poison_strategy_type_2_type_1 import (
@@ -1560,6 +1569,9 @@ __all__ = (
     "CreatePrivateNetworkRequest",
     "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentRequest",
+    "CreateQueueBindingRequest",
+    "CreateQueueBindingRequestMode",
+    "CreateQueueBindingRequestWorkloadClass",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
     "CreateTriggerBatchRequest",
@@ -2193,6 +2205,9 @@ __all__ = (
     "PutAppSecretRequest",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
+    "QueueBindingResponse",
+    "QueueBindingResponseMode",
+    "QueueBindingResponseWorkloadClass",
     "QueueDeadLetterMessage",
     "QueueDeadLetterResponse",
     "QueuePeekMessage",
@@ -2395,6 +2410,9 @@ __all__ = (
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectEnvironmentRequest",
     "UpdateProjectRequest",
+    "UpdateQueueBindingRequest",
+    "UpdateQueueBindingRequestMode",
+    "UpdateQueueBindingRequestWorkloadClass",
     "UpdateTriggerRequest",
     "UpdateTriggerRequestBrokerPoisonStrategyType1",
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",

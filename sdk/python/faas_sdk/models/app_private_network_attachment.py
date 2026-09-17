@@ -30,6 +30,8 @@ class AppPrivateNetworkAttachment:
     region: str
     cidrs: list[str]
     status: AppPrivateNetworkAttachmentStatus
+    address: str | Unset = UNSET
+    """Stable Gregale member address for this app when the fabric is enabled."""
     status_detail: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
@@ -45,6 +47,8 @@ class AppPrivateNetworkAttachment:
         cidrs = self.cidrs
 
         status: str = self.status
+
+        address = self.address
 
         status_detail = self.status_detail
 
@@ -67,6 +71,8 @@ class AppPrivateNetworkAttachment:
                 "status": status,
             }
         )
+        if address is not UNSET:
+            field_dict["address"] = address
         if status_detail is not UNSET:
             field_dict["status_detail"] = status_detail
         if created_at is not UNSET:
@@ -88,6 +94,8 @@ class AppPrivateNetworkAttachment:
         cidrs = cast(list[str], d.pop("cidrs"))
 
         status = check_app_private_network_attachment_status(d.pop("status"))
+
+        address = d.pop("address", UNSET)
 
         status_detail = d.pop("status_detail", UNSET)
 
@@ -111,6 +119,7 @@ class AppPrivateNetworkAttachment:
             region=region,
             cidrs=cidrs,
             status=status,
+            address=address,
             status_detail=status_detail,
             created_at=created_at,
             updated_at=updated_at,

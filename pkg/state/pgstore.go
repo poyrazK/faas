@@ -13456,7 +13456,7 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 // rather than required today. State transitions inside a transaction
 // so claim/complete/fail cannot race the cron rewrite in loop.go.
 
-const invocationSelectCols = `id, app_id, account_id, source, state, method, path,
+const invocationSelectCols = `id, app_id, account_id, source, queue_name, state, method, path,
        payload, headers, due_at, scheduled_at, cron_id, ack_url,
        result, lease_expires_at, received_at, completed_at, attempts,
        last_error, created_at, instance_id, outcome,
@@ -13504,18 +13504,18 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	}
 	row := s.pool.QueryRow(ctx, `
 		insert into invocations
-			(app_id, account_id, source, state, method, path,
+			(app_id, account_id, source, queue_name, state, method, path,
 			 payload, headers, due_at, scheduled_at, cron_id,
 			 ack_url, lease_expires_at,
 			 deadline_at, retry_policy, result_retention_until,
 			 on_success_destination_id, on_failure_destination_id)
 		values
-			($1, $2, $3, coalesce(nullif($4,''),'pending'), $5, $6,
-			 $7, $8, $9, $10, $11,
-			 nullif($12,''), $13,
-			 $14, $15, $16, $17, $18)
+			($1, $2, $3, $4, coalesce(nullif($5,''),'pending'), $6, $7,
+			 $8, $9, $10, $11, $12,
+			 nullif($13,''), $14,
+			 $15, $16, $17, $18, $19)
 		returning `+invocationSelectCols,
-		inv.AppID, inv.AccountID, string(inv.Source), string(inv.State),
+		inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
 		scheduledAt, cronID, inv.AckURL, leaseExpires,
 		deadlineAt, retryPolicy, retentionUntil,
@@ -13561,6 +13561,7 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
+		   and (i.source <> 'queue' or i.queue_name = '')
 		   and not exists (
 		       select 1
 		         from triggers t
@@ -14330,13 +14331,14 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv := Invocation{}
 	var source, state string
 	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
+	var queueName string
 	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination *string
 	var payload, headers, result []byte
 	var outcome *string
 	var deadlineAt, retentionUntil, lastReplayedAt *time.Time
 	var retryPolicy []byte
 	if err := scan(
-		&inv.ID, &inv.AppID, &inv.AccountID, &source, &state, &inv.Method, &inv.Path,
+		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
 		&result, &leaseExpires, &receivedAt, &completedAt, &inv.Attempts,
 		&lastErr, &inv.CreatedAt, &instanceID, &outcome,
@@ -14346,6 +14348,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		return Invocation{}, err
 	}
 	inv.Source = InvocationSource(source)
+	inv.QueueName = queueName
 	inv.State = InvocationState(state)
 	if len(payload) > 0 {
 		inv.Payload = payload

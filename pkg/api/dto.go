@@ -4132,6 +4132,7 @@ type RetryPolicyDTO struct {
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
 	Payload     json.RawMessage `json:"payload,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 }
 
@@ -4157,6 +4158,7 @@ type Invocation struct {
 	AccountID      string          `json:"account_id"`
 	InstanceID     string          `json:"instance_id,omitempty"`
 	Source         string          `json:"source"`
+	QueueName      string          `json:"queue_name,omitempty"`
 	State          string          `json:"state"`
 	Method         string          `json:"method"`
 	Path           string          `json:"path"`
