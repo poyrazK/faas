@@ -180,4 +180,17 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	if len(rows) != 1 || rows[0].RecordID.String() != recordID || string(rows[0].Detail) != `{"attempt":3}` {
 		t.Fatalf("dead-letter rows = %+v; want record %s and detail", rows, recordID)
 	}
+
+	badTriggerID := uuid.NewString()
+	badRecordID := uuid.NewString()
+	if err := m.InsertTriggerDeadLetter(ctx, badRecordID, badTriggerID, "broker_error", "drop", []byte("not-json")); err != nil {
+		t.Fatalf("InsertTriggerDeadLetter(invalid detail): %v", err)
+	}
+	badRows, err := m.ListTriggerDeadLetter(ctx, badTriggerID, 10)
+	if err != nil {
+		t.Fatalf("ListTriggerDeadLetter(invalid detail): %v", err)
+	}
+	if len(badRows) != 1 || !json.Valid(badRows[0].Detail) || string(badRows[0].Detail) != `"not-json"` {
+		t.Fatalf("invalid detail row = %+v; want JSON string", badRows)
+	}
 }

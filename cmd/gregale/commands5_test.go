@@ -988,6 +988,44 @@ func TestCmdAppScale_ForwardsExplicitFlags(t *testing.T) {
 	}
 }
 
+func TestCmdAppScale_ConcurrencyPolicyPreservesExistingScalingFields(t *testing.T) {
+	var got api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSONTest(w, api.AppResponse{
+				Slug:         "hello",
+				MinInstances: 1,
+				ScalingPolicy: &api.ScalingPolicy{
+					MinInstances: 1, MaxInstances: 3, ScaleOutCooldownS: 5, ScaleInCooldownS: 60,
+					Target: &api.ScalingTarget{Metric: "rps", Value: 5},
+				},
+			})
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("decode PATCH body: %v", err)
+		}
+		writeJSONTest(w, api.AppResponse{Slug: "hello"})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdAppScale("hello", []string{"--concurrency-overflow", "queue", "--max-queue-wait-ms", "900"}); code != 0 {
+		t.Fatalf("cmdAppScale exit = %d, want 0", code)
+	}
+	if got.ScalingPolicy == nil || got.ScalingPolicy.Target == nil {
+		t.Fatalf("scaling_policy = %+v, want complete replacement policy", got.ScalingPolicy)
+	}
+	if got.ScalingPolicy.MinInstances != 1 || got.ScalingPolicy.MaxInstances != 3 || got.ScalingPolicy.Target.Metric != "rps" || got.ScalingPolicy.Target.Value != 5 {
+		t.Fatalf("existing scaling fields were not preserved: %+v", got.ScalingPolicy)
+	}
+	if got.ScalingPolicy.ConcurrencyOverflow != api.ConcurrencyOverflowQueue || got.ScalingPolicy.MaxQueueWaitMS != 900 {
+		t.Fatalf("concurrency fields = %+v, want queue/900", got.ScalingPolicy)
+	}
+}
+
 func TestCmdAppScale_ForwardsResourceProfile(t *testing.T) {
 	sink := &multiSink{onScale: func(string, []byte) (int, any) {
 		return http.StatusOK, api.AppResponse{Slug: "profile-app", ResourceProfile: api.ResourceProfileSmall}

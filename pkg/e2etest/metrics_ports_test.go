@@ -56,15 +56,11 @@ func TestBuilderdConfig_CarriesMetricsAddr(t *testing.T) {
 	}
 }
 
-func TestMetricsAddrFor_IsLoopbackAndDistinct(t *testing.T) {
-	a, b := metricsAddrFor(t, "apid"), metricsAddrFor(t, "imaged")
-	for _, addr := range []string{a, b} {
-		if !strings.HasPrefix(addr, "127.0.0.1:") || strings.HasSuffix(addr, ":0") {
-			t.Errorf("metricsAddrFor returned %q, want a concrete loopback port", addr)
+func TestMetricsAddrFor_UsesEphemeralLoopback(t *testing.T) {
+	for _, daemon := range []string{"apid", "imaged"} {
+		if got := metricsAddrFor(t, daemon); got != "127.0.0.1:0" {
+			t.Errorf("metricsAddrFor(%q) = %q, want kernel-assigned loopback port", daemon, got)
 		}
-	}
-	if a == b {
-		t.Errorf("two daemons got the same metrics address %q", a)
 	}
 }
 

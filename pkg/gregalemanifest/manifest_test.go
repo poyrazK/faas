@@ -129,6 +129,8 @@ scaling:
     metric: concurrent_requests
     value: 2
   scale_in_cooldown_s: 90
+  concurrency_overflow: drop
+  max_queue_wait_ms: 1250
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -142,7 +144,8 @@ scaling:
 	policy := m.Scaling.ToAPI()
 	if policy.MinInstances != 1 || policy.MaxInstances != 4 || policy.Target == nil ||
 		policy.Target.Metric != "concurrent_requests" || policy.Target.Value != 2 ||
-		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 {
+		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 ||
+		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueWaitMS != 1250 {
 		t.Fatalf("policy = %+v, want manifest values plus default scale-out cooldown", policy)
 	}
 }
@@ -158,6 +161,9 @@ func TestScalingConfigValidation(t *testing.T) {
 		{"max below min", &ScalingConfig{MinInstances: manifestIntPtr(2), MaxInstances: &max}, "max_instances"},
 		{"bad metric", &ScalingConfig{Target: &ScalingTarget{Metric: "cpu"}}, "target.metric"},
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
+		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
+		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
+		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

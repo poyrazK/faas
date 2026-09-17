@@ -2231,20 +2231,18 @@ metrics_addr = %q
 	)
 }
 
-// metricsAddrFor returns a free loopback address for a daemon's /metrics
-// listener.
+// metricsAddrFor returns an ephemeral loopback address for a daemon's
+// /metrics listener.
 //
 // apid, imaged and builderd each default their metrics listener to a fixed
 // loopback port (9101, 9102, 9105). Nothing in a test scrapes it, but the
 // bind is not optional: a daemon that cannot bind its metrics port exits
-// before serving anything. On a host where that port is held — a production
-// unit, a daemon from an earlier test still draining, a sibling test — the
-// daemon dies with `bind: address already in use` and the test reports only
-// that it never came up. Give every daemon its own port instead, the same
-// way its main listener already gets one.
+// before serving anything. Reserving a concrete port by listening and then
+// closing it still leaves a race before the daemon binds it; asking the
+// daemon to bind port 0 lets the kernel choose the port atomically instead.
 func metricsAddrFor(t *testing.T, daemon string) string {
 	t.Helper()
-	addr := freeTCPAddr(t)
+	addr := "127.0.0.1:0"
 	t.Logf("e2etest: %s metrics on %s", daemon, addr)
 	return addr
 }
