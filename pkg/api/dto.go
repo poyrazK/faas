@@ -4116,7 +4116,8 @@ type RetryPolicyDTO struct {
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload json.RawMessage `json:"payload,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.

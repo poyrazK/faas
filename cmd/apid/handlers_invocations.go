@@ -258,11 +258,12 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
-		AppID:     app.ID,
-		AccountID: acct.ID,
-		Source:    state.InvocationQueue,
-		Payload:   req.Payload,
-		DueAt:     time.Now().UTC(),
+		AppID:           app.ID,
+		AccountID:       acct.ID,
+		Source:          state.InvocationQueue,
+		Payload:         req.Payload,
+		DueAt:           time.Now().UTC(),
+		RetryPolicyJSON: marshalRetryPolicy(req.RetryPolicy),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue queue send"))

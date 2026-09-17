@@ -281,6 +281,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                    map[string]AppWebhook
 	appWebhookDeliveries           map[string]AppWebhookDelivery
+	queueBindings                  map[string]QueueBinding
 	managedRealtimeEndpoints       map[string]ManagedRealtimeEndpoint
 	managedRealtimeDrainOperations map[string]ManagedRealtimeDrainOperation
 	managedRealtimeOwners          map[string]ManagedRealtimeConnectionOwner
@@ -926,6 +927,7 @@ func NewMemStore() *MemStore {
 		alertDeliveries:                map[string]AlertDelivery{},
 		appWebhooks:                    map[string]AppWebhook{},
 		appWebhookDeliveries:           map[string]AppWebhookDelivery{},
+		queueBindings:                  map[string]QueueBinding{},
 		managedRealtimeEndpoints:       map[string]ManagedRealtimeEndpoint{},
 		managedRealtimeOwners:          map[string]ManagedRealtimeConnectionOwner{},
 		managedRealtimeDrainOperations: map[string]ManagedRealtimeDrainOperation{},

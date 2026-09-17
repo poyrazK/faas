@@ -3547,6 +3547,36 @@ type QueueStats struct {
 	DeadLetter      int
 }
 
+// QueueBinding is the durable app-scoped contract between a logical queue and
+// a worker workload. The binding is intentionally separate from invocation
+// rows: push consumers and queue-depth autoscaling can reconcile from this
+// stable configuration without scanning customer messages.
+type QueueBinding struct {
+	ID              string
+	AccountID       string
+	AppID           string
+	Name            string
+	QueueName       string
+	Mode            string
+	WorkloadClass   WorkloadClass
+	Enabled         bool
+	MaxConcurrency  int
+	RetryPolicyJSON json.RawMessage
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// UpdateQueueBindingParams uses pointer fields so PATCH can distinguish an
+// omitted value from an explicit zero/false update.
+type UpdateQueueBindingParams struct {
+	QueueName       *string
+	Mode            *string
+	WorkloadClass   *WorkloadClass
+	Enabled         *bool
+	MaxConcurrency  *int
+	RetryPolicyJSON *[]byte
+}
+
 // GdprAction enumerates the GDPR self-service actions recorded in
 // the gdpr_requests ledger. The DB CHECK constraint enforces these
 // three values; exporting the constants avoids typo bugs in apid +

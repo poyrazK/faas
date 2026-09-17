@@ -64,6 +64,7 @@ const (
 	projectsFile          = "projects.go"        // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile           = "dev_sync.go"        // developer edit-to-live history
 	privateNetworkFile    = "private_network.go" // Gregale-owned private network fabric DTOs
+	queueBindingFile      = "queue_bindings.go"  // first-class queue binding DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -307,6 +308,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
 	"AppLogDrainRow":                  true,
+	"QueueBindingRow":                 true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
@@ -933,6 +935,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
+		filepath.Join(root, "pkg", "api", queueBindingFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

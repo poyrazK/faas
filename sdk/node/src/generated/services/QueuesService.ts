@@ -3,16 +3,19 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
+import type { CreateQueueBindingRequest } from '../models/CreateQueueBindingRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsResponse.js';
 import type { DeadLetterPurgeResponse } from '../models/DeadLetterPurgeResponse.js';
 import type { DeadLetterReplayAllResponse } from '../models/DeadLetterReplayAllResponse.js';
+import type { QueueBindingResponse } from '../models/QueueBindingResponse.js';
 import type { QueueDeadLetterResponse } from '../models/QueueDeadLetterResponse.js';
 import type { QueuePeekResponse } from '../models/QueuePeekResponse.js';
 import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
 import type { QueueSendRequest } from '../models/QueueSendRequest.js';
 import type { QueueSendResponse } from '../models/QueueSendResponse.js';
 import type { QueueStateResponse } from '../models/QueueStateResponse.js';
+import type { UpdateQueueBindingRequest } from '../models/UpdateQueueBindingRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -56,6 +59,195 @@ export class QueuesService {
       errors: {
         403: `code: plan_queue_depth — per-app queue at the plan's MaxQueueDepth.`,
         413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List first-class queue bindings for an app.
+   * Returns the durable mappings between logical queues and worker/job
+   * workloads. Bindings are the configuration source for push consumers
+   * and queue-depth autoscaling; queue messages remain under /queues*.
+   *
+   * @returns QueueBindingResponse Queue bindings.
+   * @throws ApiError
+   */
+  public static listQueueBindings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<QueueBindingResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/queue-bindings',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Create a first-class queue binding.
+   * @returns QueueBindingResponse Created queue binding.
+   * @throws ApiError
+   */
+  public static createQueueBinding({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateQueueBindingRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<QueueBindingResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/queue-bindings',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get one queue binding.
+   * @returns QueueBindingResponse Queue binding.
+   * @throws ApiError
+   */
+  public static getQueueBinding({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<QueueBindingResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/queue-bindings/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Update one queue binding.
+   * @returns QueueBindingResponse Updated queue binding.
+   * @throws ApiError
+   */
+  public static updateQueueBinding({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: UpdateQueueBindingRequest,
+  }): CancelablePromise<QueueBindingResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/queue-bindings/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete one queue binding.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteQueueBinding({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/queue-bindings/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

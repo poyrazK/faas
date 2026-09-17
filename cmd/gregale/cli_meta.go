@@ -1237,7 +1237,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "queue",
 		DocSlug: "queue",
-		Short:   "Inspect the wake-queue depth (queue tail|send|receive|state|peek|dead-letter|ack)",
+		Short:   "Inspect queues and manage first-class queue bindings",
 		Subcommands: []cliSub{
 			{Name: "tail", Short: "Tail the wake queue"},
 			{Name: "send", Short: "Enqueue a wake request"},
@@ -1247,6 +1247,7 @@ var cliCommands = []cliCommand{
 			{Name: "peek", Short: "Peek at the next wake"},
 			{Name: "dead-letter", Short: "Inspect the dead-letter queue"},
 			{Name: "ack", Short: "Ack a wake"},
+			{Name: "bindings", Short: "Manage queue bindings"},
 		},
 	},
 	{

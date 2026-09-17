@@ -1100,6 +1100,7 @@ func cmdDashboard(args []string) int {
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
 //	ack          release a leased row
+//	bindings     manage first-class queue bindings
 func cmdQueueDispatch(args []string) int {
 	parent, _ := lookupCliCommand("queue")
 	if len(args) == 0 {
@@ -1110,7 +1111,8 @@ func cmdQueueDispatch(args []string) int {
 			"  state <slug>            depth + cap (no lease)\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n",
+			"  ack <slug> <row-id>    release a leased row\n"+
+			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		return 1
 	}
@@ -1129,6 +1131,8 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueDeadLetter(args[1:])
 	case "ack":
 		return cmdQueueAck(args[1:])
+	case "bindings":
+		return cmdQueueBindings(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
@@ -1138,11 +1142,125 @@ func cmdQueueDispatch(args []string) int {
 			"  state <slug>            depth + cap\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n",
+			"  ack <slug> <row-id>    release a leased row\n"+
+			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		maybeSuggestSub(sug)
 		return 1
 	}
+}
+
+func cmdQueueBindings(args []string) int {
+	if len(args) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings <list|create|update|rm> <slug> [args]", "queue")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 2 {
+			PrintUsage(os.Stderr, "usage: gregale queue bindings list <slug>", "queue")
+			return 1
+		}
+		rows, err := client.ListQueueBindings(context.Background(), args[1])
+		if err != nil {
+			return printErr("Queue binding list failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(rows))
+		}
+		for _, row := range rows {
+			fmt.Printf("%-32s %-16s %-6s %-6s enabled=%t max=%d\n", row.ID, row.Name, row.Mode, row.WorkloadClass, row.Enabled, row.MaxConcurrency)
+		}
+		return 0
+	case "create":
+		return cmdQueueBindingCreate(client, args[1:])
+	case "update":
+		return cmdQueueBindingUpdate(client, args[1:])
+	case "rm", "delete":
+		if len(args) != 3 {
+			PrintUsage(os.Stderr, "usage: gregale queue bindings rm <slug> <binding-id>", "queue")
+			return 1
+		}
+		if err := client.DeleteQueueBinding(context.Background(), args[1], args[2]); err != nil {
+			return printErr("Queue binding delete failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"id": args[2], "deleted": true}))
+		}
+		PrintOK(osStdout, "Queue binding %s deleted.", args[2])
+		return 0
+	default:
+		PrintUsage(os.Stderr, "usage: gregale queue bindings <list|create|update|rm> <slug> [args]", "queue")
+		return 1
+	}
+}
+
+func cmdQueueBindingCreate(client *api.Client, args []string) int {
+	fs := newFlagSet("queue bindings create", flag.ContinueOnError)
+	name := fs.String("name", "", "binding name")
+	queueName := fs.String("queue-name", "", "logical queue name")
+	mode := fs.String("mode", "pull", "delivery mode: pull|push")
+	workloadClass := fs.String("workload-class", "worker", "workload class: worker|job")
+	maxConcurrency := fs.Int("max-concurrency", 1, "maximum concurrent deliveries")
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil || len(pos) != 1 || *name == "" || *queueName == "" {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job] [--max-concurrency N]", "queue")
+		return 1
+	}
+	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
+	if err != nil {
+		return printErr("Queue binding create failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(row))
+	}
+	PrintOK(osStdout, "Queue binding %s created.", row.ID)
+	return 0
+}
+
+func cmdQueueBindingUpdate(client *api.Client, args []string) int {
+	fs := newFlagSet("queue bindings update", flag.ContinueOnError)
+	queueName := fs.String("queue-name", "", "logical queue name")
+	mode := fs.String("mode", "", "delivery mode: pull|push")
+	workloadClass := fs.String("workload-class", "", "workload class: worker|job")
+	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job] [--max-concurrency N]", "queue")
+		return 1
+	}
+	req := api.UpdateQueueBindingRequest{}
+	if *queueName != "" {
+		req.QueueName = queueName
+	}
+	if *mode != "" {
+		req.Mode = mode
+	}
+	if *workloadClass != "" {
+		req.WorkloadClass = workloadClass
+	}
+	maxConcurrencySet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max-concurrency" {
+			maxConcurrencySet = true
+		}
+	})
+	if maxConcurrencySet {
+		req.MaxConcurrency = maxConcurrency
+	}
+	row, err := client.UpdateQueueBinding(context.Background(), pos[0], pos[1], req)
+	if err != nil {
+		return printErr("Queue binding update failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(row))
+	}
+	PrintOK(osStdout, "Queue binding %s updated.", row.ID)
+	return 0
 }
 
 // cmdQueueSend enqueues one payload. Mirrors cmdInvoke's

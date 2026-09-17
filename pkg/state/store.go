@@ -3914,6 +3914,16 @@ type Store interface {
 	// an app. Same cursor / limit / ordering as QueuePeek. Backed by
 	// invocations_app_dead_letter_idx.
 	QueueDeadLetter(ctx context.Context, appID string, limit int, before string) ([]Invocation, error)
+
+	// Queue bindings are the durable app-scoped mapping between a logical queue
+	// and a worker/job workload. They are the configuration seam consumed by
+	// push workers and queue-depth autoscaling.
+	CreateQueueBinding(ctx context.Context, binding QueueBinding) (QueueBinding, error)
+	QueueBindingByID(ctx context.Context, accountID, appID, id string) (QueueBinding, error)
+	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]QueueBinding, error)
+	UpdateQueueBinding(ctx context.Context, accountID, appID, id string, params UpdateQueueBindingParams) (QueueBinding, error)
+	DeleteQueueBinding(ctx context.Context, accountID, appID, id string) error
+
 	// CountInstanceInvocationsInMinute is the meter's join key: it counts
 	// dispatched rows for (instance, minute) so SampleAndRoll can set
 	// usage_minutes.requests = N on each rolling minute. Index-backed by

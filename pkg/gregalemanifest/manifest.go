@@ -426,6 +426,51 @@ type ScalingConfig struct {
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
 }
 
+// QueueBinding declares a durable app queue-to-workload mapping. The deploy
+// reconciler can apply this block after the app exists; keeping it in the
+// source manifest makes push consumers and autoscaling reproducible.
+type QueueBinding struct {
+	Name           string             `yaml:"name"`
+	QueueName      string             `yaml:"queue_name"`
+	Mode           string             `yaml:"mode,omitempty"`
+	WorkloadClass  string             `yaml:"workload_class,omitempty"`
+	Enabled        *bool              `yaml:"enabled,omitempty"`
+	MaxConcurrency int                `yaml:"max_concurrency,omitempty"`
+	RetryPolicy    *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
+}
+
+func (b QueueBinding) Validate() error {
+	if !isDNSSafeSlug(b.Name) || len(b.Name) > 63 {
+		return fmt.Errorf("queue binding %q: name must match [a-z][a-z0-9-]{0,62}", b.Name)
+	}
+	if !isDNSSafeSlug(b.QueueName) || len(b.QueueName) > 63 {
+		return fmt.Errorf("queue binding %q: queue_name must match [a-z][a-z0-9-]{0,62}", b.Name)
+	}
+	mode := b.Mode
+	if mode == "" {
+		mode = "pull"
+	}
+	if mode != "pull" && mode != "push" {
+		return fmt.Errorf("queue binding %q: mode must be pull or push", b.Name)
+	}
+	class := b.WorkloadClass
+	if class == "" {
+		class = "worker"
+	}
+	if class != "worker" && class != "job" {
+		return fmt.Errorf("queue binding %q: workload_class must be worker or job", b.Name)
+	}
+	if b.MaxConcurrency < 0 || b.MaxConcurrency > 10000 {
+		return fmt.Errorf("queue binding %q: max_concurrency must be between 0 and 10000", b.Name)
+	}
+	if b.RetryPolicy != nil {
+		if b.RetryPolicy.MaxAttempts < 0 || b.RetryPolicy.MaxAttempts > 25 || b.RetryPolicy.BaseSeconds < 0 || b.RetryPolicy.MaxSeconds < 0 || b.RetryPolicy.JitterSeconds < 0 || b.RetryPolicy.JitterSeconds > 1 {
+			return fmt.Errorf("queue binding %q: invalid retry_policy", b.Name)
+		}
+	}
+	return nil
+}
+
 const (
 	defaultScaleOutCooldownS = 5
 	defaultScaleInCooldownS  = 60
@@ -559,7 +604,7 @@ func (d DatabaseDependency) EffectiveAccess() string {
 
 // Manifest is the parsed `gregale.yaml` root. The supported top-level
 // declarations are `schema_version`, `hosting`, `function`, `scaling`,
-// `triggers`, `workflows`, and `databases`; other keys are
+// `queue_bindings`, `triggers`, `workflows`, and `databases`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
 // shipping a no-op deploy.
@@ -570,6 +615,7 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
+	QueueBindings []QueueBinding        `yaml:"queue_bindings,omitempty"`
 	Triggers      []Trigger             `yaml:"triggers"`
 	Workflows     []api.WorkflowSpec    `yaml:"workflows,omitempty"`
 	Databases     []DatabaseDependency  `yaml:"databases,omitempty"`
@@ -689,6 +735,21 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := m.Scaling.Validate(); err != nil {
 			return err
 		}
+	}
+	seenBindings := make(map[string]struct{}, len(m.QueueBindings))
+	seenQueues := make(map[string]struct{}, len(m.QueueBindings))
+	for i, binding := range m.QueueBindings {
+		if err := binding.Validate(); err != nil {
+			return fmt.Errorf("queue_binding[%d]: %w", i, err)
+		}
+		if _, exists := seenBindings[binding.Name]; exists {
+			return fmt.Errorf("queue_binding[%d]: duplicate name %q", i, binding.Name)
+		}
+		if _, exists := seenQueues[binding.QueueName]; exists {
+			return fmt.Errorf("queue_binding[%d]: duplicate queue_name %q", i, binding.QueueName)
+		}
+		seenBindings[binding.Name] = struct{}{}
+		seenQueues[binding.QueueName] = struct{}{}
 	}
 	if m.Function != nil {
 		if strings.TrimSpace(m.Function.Runtime) == "" {

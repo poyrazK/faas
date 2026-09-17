@@ -13248,6 +13248,99 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/queue-bindings:
+    get:
+      tags: [queues]
+      operationId: listQueueBindings
+      summary: List first-class queue bindings for an app.
+      description: |
+        Returns the durable mappings between logical queues and worker/job
+        workloads. Bindings are the configuration source for push consumers
+        and queue-depth autoscaling; queue messages remain under /queues/*.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Queue bindings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [queues]
+      operationId: createQueueBinding
+      summary: Create a first-class queue binding.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateQueueBindingRequest' }
+      responses:
+        '201':
+          description: Created queue binding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queue-bindings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [queues]
+      operationId: getQueueBinding
+      summary: Get one queue binding.
+      responses:
+        '200':
+          description: Queue binding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [queues]
+      operationId: updateQueueBinding
+      summary: Update one queue binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateQueueBindingRequest' }
+      responses:
+        '200':
+          description: Updated queue binding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [queues]
+      operationId: deleteQueueBinding
+      summary: Delete one queue binding.
+      responses:
+        '204': { description: Queue binding deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/queues/receive:
     post:
       tags: [queues]
@@ -28645,6 +28738,57 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: Optional per-message retry curve override.
+
+    CreateQueueBindingRequest:
+      description: Durable mapping from a logical queue to a worker/job workload.
+      type: object
+      required: [name, queue_name]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push], default: pull }
+        workload_class: { type: string, enum: [worker, job], default: worker }
+        enabled: { type: boolean, default: true }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000, default: 1 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: Optional per-binding retry curve; zero values use platform defaults.
+
+    UpdateQueueBindingRequest:
+      description: Partial queue-binding update; omitted fields are unchanged.
+      type: object
+      properties:
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push] }
+        workload_class: { type: string, enum: [worker, job] }
+        enabled: { type: boolean }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+
+    QueueBindingResponse:
+      description: Durable queue-to-workload binding.
+      type: object
+      required: [id, app_id, account_id, name, queue_name, mode, workload_class, enabled, max_concurrency, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        account_id: { type: string, format: uuid }
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push] }
+        workload_class: { type: string, enum: [worker, job] }
+        enabled: { type: boolean }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     RetryPolicyDTO:
       description: |

@@ -2015,6 +2015,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
 
+	// Queue bindings are the durable app-scoped contract consumed by push
+	// workers and queue-depth autoscaling. The message ledger remains under
+	// /queues/*; these routes manage only binding configuration.
+	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listQueueBindings))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createQueueBinding)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBinding))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteQueueBinding))))
+
 	// Managed realtime endpoint resources (ADR-156). These routes persist the
 	// callback contract and sealed credentials; live connections remain owned by
 	// realtimed and are reconciled from this durable source of truth.

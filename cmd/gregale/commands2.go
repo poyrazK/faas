@@ -1063,6 +1063,13 @@ type manifestCronClient interface {
 	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
+type manifestQueueBindingClient interface {
+	ListQueueBindings(ctx context.Context, slug string) ([]api.QueueBindingResponse, error)
+	CreateQueueBinding(ctx context.Context, slug string, req api.CreateQueueBindingRequest) (api.QueueBindingResponse, error)
+	UpdateQueueBinding(ctx context.Context, slug, id string, req api.UpdateQueueBindingRequest) (api.QueueBindingResponse, error)
+	DeleteQueueBinding(ctx context.Context, slug, id string) error
+}
+
 // manifestScalingClient is the narrow surface used to apply the app-level
 // scaling declaration after a deployment is accepted. Keeping it separate
 // from the cron seam makes the manifest helpers easy to exercise with small
@@ -1498,6 +1505,85 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 		_, _ = fmt.Fprintf(osStdout, "  ✓ %s: %d trigger(s) applied\n", slug, applied)
 	}
 	return txn, nil
+}
+
+// deployManifestQueueBindings reconciles the optional queue_bindings block as
+// desired state. Binding identity is the stable name; queue_name changes are
+// PATCHed in place so the consumer/autoscaling controller keeps its binding id.
+func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindingClient, slug, cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil || !ok || m == nil || m.QueueBindings == nil {
+		return err
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	existing, err := client.ListQueueBindings(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("list existing queue bindings: %w", err)
+	}
+	existingByName := make(map[string]api.QueueBindingResponse, len(existing))
+	for _, row := range existing {
+		existingByName[row.Name] = row
+	}
+	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
+	for _, binding := range m.QueueBindings {
+		desired[binding.Name] = binding
+	}
+	for _, row := range existing {
+		if _, keep := desired[row.Name]; !keep {
+			if err := client.DeleteQueueBinding(ctx, slug, row.ID); err != nil {
+				return fmt.Errorf("delete stale queue binding %s: %w", row.Name, err)
+			}
+		}
+	}
+	for _, binding := range m.QueueBindings {
+		mode := binding.Mode
+		if mode == "" {
+			mode = "pull"
+		}
+		class := binding.WorkloadClass
+		if class == "" {
+			class = "worker"
+		}
+		maxConcurrency := binding.MaxConcurrency
+		if maxConcurrency == 0 {
+			maxConcurrency = 1
+		}
+		enabled := true
+		if binding.Enabled != nil {
+			enabled = *binding.Enabled
+		}
+		retry := (*api.RetryPolicyDTO)(nil)
+		if binding.RetryPolicy != nil {
+			retry = &api.RetryPolicyDTO{MaxAttempts: binding.RetryPolicy.MaxAttempts, BaseSeconds: binding.RetryPolicy.BaseSeconds, MaxSeconds: binding.RetryPolicy.MaxSeconds, JitterSeconds: binding.RetryPolicy.JitterSeconds}
+		}
+		current, exists := existingByName[binding.Name]
+		if !exists {
+			if _, err := client.CreateQueueBinding(ctx, slug, api.CreateQueueBindingRequest{Name: binding.Name, QueueName: binding.QueueName, Mode: mode, WorkloadClass: class, Enabled: &enabled, MaxConcurrency: maxConcurrency, RetryPolicy: retry}); err != nil {
+				return fmt.Errorf("create queue binding %s: %w", binding.Name, err)
+			}
+			continue
+		}
+		retryChanged := retry != nil && !queueBindingRetryPolicyEqual(current.RetryPolicy, retry)
+		if current.QueueName == binding.QueueName && current.Mode == mode && current.WorkloadClass == class && current.Enabled == enabled && current.MaxConcurrency == maxConcurrency && !retryChanged {
+			continue
+		}
+		if _, err := client.UpdateQueueBinding(ctx, slug, current.ID, api.UpdateQueueBindingRequest{QueueName: &binding.QueueName, Mode: &mode, WorkloadClass: &class, Enabled: &enabled, MaxConcurrency: &maxConcurrency, RetryPolicy: retry}); err != nil {
+			return fmt.Errorf("update queue binding %s: %w", binding.Name, err)
+		}
+	}
+	return nil
+}
+
+func queueBindingRetryPolicyEqual(a, b *api.RetryPolicyDTO) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.MaxAttempts == b.MaxAttempts && a.BaseSeconds == b.BaseSeconds && a.MaxSeconds == b.MaxSeconds && a.JitterSeconds == b.JitterSeconds
 }
 
 // templateFunctionConfig returns the wire defaults for templates whose
@@ -3043,6 +3129,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if triggerErr != nil {
 			return printErr("Manifest triggers fan-out failed", triggerErr)
 		}
+	}
+	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest queue bindings failed", err)
 	}
 
 	if *tarball != "" {
