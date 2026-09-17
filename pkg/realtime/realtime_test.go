@@ -201,6 +201,41 @@ func TestManagerAllowsIdleConnectionUntilFirstHeartbeat(t *testing.T) {
 	}
 }
 
+func TestManagerPublishRetainsEndpointLimitAfterRemoval(t *testing.T) {
+	m := NewManager(Config{MaxMessageBytes: 16, Heartbeat: time.Hour}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxMessageBytes: 4}); err != nil {
+		t.Fatalf("register endpoint: %v", err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	url := "ws" + server.URL[len("http"):] + ManagedPathPrefix + "limited"
+	client, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	connections := m.Snapshot()
+	if len(connections) != 1 {
+		t.Fatalf("connections = %d, want 1", len(connections))
+	}
+	if err := m.Subscribe(connections[0].ID, "alerts"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	m.RemoveEndpoint("limited")
+	if _, err := m.Publish(context.Background(), "limited", "alerts", Message{Data: []byte("12345")}); err == nil {
+		t.Fatal("publish over removed endpoint's limit unexpectedly succeeded")
+	}
+}
+
 func TestManagerOperationsReturnStableErrors(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.Close()
