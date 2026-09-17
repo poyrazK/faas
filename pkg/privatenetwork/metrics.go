@@ -14,6 +14,7 @@ type Metrics struct {
 	reconcileTotal   *prometheus.CounterVec
 	reconcileLatency *prometheus.HistogramVec
 	routeNodesTotal  *prometheus.CounterVec
+	fabricNodesTotal *prometheus.CounterVec
 }
 
 // NewMetrics registers private-network convergence metrics on an existing
@@ -41,9 +42,13 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_route_nodes_total",
 			Help: "Private-network route applications by per-node outcome.",
 		}, []string{"status"}),
+		fabricNodesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_fabric_nodes_total",
+			Help: "Gregale private-network fabric preparations by per-node outcome.",
+		}, []string{"status"}),
 	}
 	if reg != nil {
-		reg.MustRegister(m.reconcileTotal, m.reconcileLatency, m.routeNodesTotal)
+		reg.MustRegister(m.reconcileTotal, m.reconcileLatency, m.routeNodesTotal, m.fabricNodesTotal)
 	}
 	for _, outcome := range []string{"ready", "pending", "error", "contended"} {
 		m.reconcileTotal.WithLabelValues(outcome)
@@ -51,11 +56,12 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 	}
 	for _, status := range []string{"ready", "error"} {
 		m.routeNodesTotal.WithLabelValues(status)
+		m.fabricNodesTotal.WithLabelValues(status)
 	}
 	return m
 }
 
-// Observe records one attachment observation and any per-node route results.
+// Observe records one attachment observation plus per-node fabric and route results.
 func (m *Metrics) Observe(observation ReconcileObservation) {
 	if m == nil {
 		return
@@ -71,6 +77,13 @@ func (m *Metrics) Observe(observation ReconcileObservation) {
 			continue
 		}
 		m.routeNodesTotal.WithLabelValues(status).Inc()
+	}
+	for _, node := range observation.FabricNodes {
+		status := node.Status
+		if status != "ready" && status != "error" {
+			continue
+		}
+		m.fabricNodesTotal.WithLabelValues(status).Inc()
 	}
 }
 

@@ -23,6 +23,12 @@ type PrivateNetworkRouter interface {
 	UpdatePrivateNetwork(context.Context, string, string, []netip.Prefix) error
 }
 
+// PrivateNetworkFabricRouter is the additive vmmd capability used to prepare
+// Gregale-owned network bridges on each live compute node.
+type PrivateNetworkFabricRouter interface {
+	ReconcilePrivateNetworkFabric(context.Context, string, string, string, string, netip.Prefix) error
+}
+
 // PrivateNetworkRouteApplier fans one app-level CIDR set out to the vmmds that
 // own its live instances. vmmd itself fans that update out to all of its local
 // instances, so schedd only sends one update per node.
@@ -85,6 +91,61 @@ func (a *PrivateNetworkRouteApplier) ApplyWithReport(ctx context.Context, appID 
 		})
 	}
 	return report, errors.Join(errs...)
+}
+
+// PrivateNetworkFabricApplier fans one Gregale network definition out to the
+// vmmds that own the app's live instances. Fabric setup runs before route
+// activation, so a node cannot be reported ready while its host bridge is
+// missing. External/provider attachments simply omit this applier.
+type PrivateNetworkFabricApplier struct {
+	store  state.Store
+	router PrivateNetworkFabricRouter
+	log    *slog.Logger
+}
+
+func NewPrivateNetworkFabricApplier(store state.Store, router PrivateNetworkFabricRouter, log *slog.Logger) *PrivateNetworkFabricApplier {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PrivateNetworkFabricApplier{store: store, router: router, log: log}
+}
+
+func (a *PrivateNetworkFabricApplier) ApplyWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (privatenetwork.FabricApplyReport, error) {
+	rows, err := a.store.ListInstancesForApp(ctx, attachment.AppID)
+	if err != nil {
+		return privatenetwork.FabricApplyReport{}, err
+	}
+	seen := make(map[string]struct{}, len(rows))
+	for _, ins := range rows {
+		if !state.IsLive(ins.State) || ins.NodeID == "" {
+			continue
+		}
+		seen[ins.NodeID] = struct{}{}
+	}
+	nodes := make([]string, 0, len(seen))
+	for nodeID := range seen {
+		nodes = append(nodes, nodeID)
+	}
+	sort.Strings(nodes)
+	report := privatenetwork.FabricApplyReport{Nodes: make([]privatenetwork.RouteNodeObservation, 0, len(nodes))}
+	var errs []error
+	for _, nodeID := range nodes {
+		if err := a.router.ReconcilePrivateNetworkFabric(ctx, nodeID, attachment.AccountID, attachment.NetworkID, attachment.Region, firstCIDR(attachment.CIDRs)); err != nil {
+			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
+			a.log.Warn("schedd: private network fabric update failed", "app", attachment.AppID, "network", attachment.NetworkID, "node", nodeID, "err", err)
+			report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusError, Detail: err.Error()})
+			continue
+		}
+		report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusReady, Detail: "fabric bridge ready"})
+	}
+	return report, errors.Join(errs...)
+}
+
+func firstCIDR(cidrs []netip.Prefix) netip.Prefix {
+	if len(cidrs) == 0 {
+		return netip.Prefix{}
+	}
+	return cidrs[0]
 }
 
 // PrivateNetworkAttachmentSubscriber handles the one event the poll-based

@@ -215,6 +215,12 @@ service Vmmd {
   // unchanged; the CIDRs are an additive, explicit accept-and-route set.
   rpc UpdatePrivateNetwork(UpdatePrivateNetworkRequest) returns (UpdatePrivateNetworkAck);
 
+  // ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
+  // Gregale-owned private network exists before attachment routes are
+  // published. The operation is idempotent and does not contact a cloud
+  // provider; cross-node transport is layered on after this local seam.
+  rpc ReconcilePrivateNetworkFabric(ReconcilePrivateNetworkFabricRequest) returns (ReconcilePrivateNetworkFabricAck);
+
   // SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
   // Linux kernel seccomp state of the jailer child process backing
   // this instance. Spec §11: "Firecracker's default seccomp filter
@@ -1814,3 +1820,15 @@ message RestoreExecutionResponse {
   WakeMethod method = 3;
   WakeMethod requested_method = 4;
 }
+
+// ReconcilePrivateNetworkFabricRequest carries the account-scoped identity
+// and immutable address space of one Gregale-owned network.
+message ReconcilePrivateNetworkFabricRequest {
+  string account_id = 1;
+  string network_id = 2;
+  string region = 3;
+  string cidr = 4;
+}
+
+// ReconcilePrivateNetworkFabricAck is the empty success response.
+message ReconcilePrivateNetworkFabricAck {}

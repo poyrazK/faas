@@ -945,6 +945,21 @@ func (c *VMMClient) UpdatePrivateNetwork(ctx context.Context, appID string, cidr
 	return nil
 }
 
+// ReconcilePrivateNetworkFabric prepares the node-local Gregale network
+// bridge. The vmmd owns the privileged host mutation; schedd only forwards
+// the validated, provider-neutral identity.
+func (c *VMMClient) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	if _, err := c.cli.ReconcilePrivateNetworkFabric(ctx, &vmmdpb.ReconcilePrivateNetworkFabricRequest{
+		AccountId: accountID,
+		NetworkId: networkID,
+		Region:    region,
+		Cidr:      cidr.String(),
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
 // UpdateStaticEgressIP implements VMM (ADR-119). The wire is
 // the customer-supplied IPv4 (dotted-quad); empty string is
 // valid (clears the per-app pin on vmmd's side, removes the

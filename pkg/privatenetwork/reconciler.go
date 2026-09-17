@@ -67,14 +67,27 @@ type RouteReportingApplier interface {
 	ApplyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix) (RouteApplyReport, error)
 }
 
+// FabricApplier prepares the node-local realization of a Gregale-owned
+// network before route policy is published. It is optional so external
+// provider attachments and older test doubles can keep using RouteApplier
+// alone during the staged rollout.
+type FabricApplier interface {
+	ApplyWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (FabricApplyReport, error)
+}
+
+type FabricApplyReport struct {
+	Nodes []RouteNodeObservation
+}
+
 type NotifyFunc func(ctx context.Context, attachment state.AppPrivateNetworkAttachment)
 
 type ReconcileObservation struct {
-	AppID    string
-	Status   string
-	Outcome  string
-	Duration time.Duration
-	Nodes    []RouteNodeObservation
+	AppID       string
+	Status      string
+	Outcome     string
+	Duration    time.Duration
+	Nodes       []RouteNodeObservation
+	FabricNodes []RouteNodeObservation
 }
 
 type ReconcileSummary struct {
@@ -94,6 +107,7 @@ type ReconcilerOptions struct {
 	Observe   func(ReconcileObservation)
 	Notify    NotifyFunc
 	Logger    *slog.Logger
+	Fabric    FabricApplier
 }
 
 // Reconciler is intentionally independent of apid and vmmd. This keeps the
@@ -103,6 +117,7 @@ type Reconciler struct {
 	store     state.AppPrivateNetworkAttachmentReconcileStore
 	connector Connector
 	applier   RouteApplier
+	fabric    FabricApplier
 	interval  time.Duration
 	batchSize int
 	now       func() time.Time
@@ -131,7 +146,7 @@ func NewReconciler(store state.AppPrivateNetworkAttachmentReconcileStore, connec
 		options.Logger = slog.Default()
 	}
 	return &Reconciler{
-		store: store, connector: connector, applier: applier,
+		store: store, connector: connector, applier: applier, fabric: options.Fabric,
 		interval: options.Interval, batchSize: options.BatchSize,
 		now: options.Now, observe: options.Observe, notify: options.Notify,
 		logger: options.Logger,
@@ -154,6 +169,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		started := r.now()
 		outcome := "pending"
 		var routeReport RouteApplyReport
+		var fabricReport FabricApplyReport
 		check, checkErr := r.connector.Check(ctx, attachment)
 		switch {
 		case checkErr != nil:
@@ -184,6 +200,20 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 					sweepErrs = append(sweepErrs, err)
 				}
 				break
+			}
+			if r.fabric != nil {
+				fabricReport, checkErr = r.fabric.ApplyWithReport(ctx, attachment)
+				if checkErr != nil {
+					summary.Failed++
+					detail := boundedDetail(fmt.Sprintf("network fabric activation failed: %v", checkErr))
+					if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+						sweepErrs = append(sweepErrs, updateErr)
+					} else {
+						sweepErrs = append(sweepErrs, checkErr)
+					}
+					outcome = "error"
+					break
+				}
 			}
 			if reporting, ok := r.applier.(RouteReportingApplier); ok {
 				routeReport, checkErr = reporting.ApplyWithReport(ctx, attachment.AppID, attachment.CIDRs)
@@ -231,6 +261,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 			r.observe(ReconcileObservation{
 				AppID: attachment.AppID, Status: attachment.Status, Outcome: outcome,
 				Duration: r.now().Sub(started), Nodes: cloneRouteNodeObservations(routeReport.Nodes),
+				FabricNodes: cloneRouteNodeObservations(fabricReport.Nodes),
 			})
 		}
 	}

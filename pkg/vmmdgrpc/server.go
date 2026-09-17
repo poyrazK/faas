@@ -1354,6 +1354,33 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 	return &vmmdpb.UpdatePrivateNetworkAck{}, nil
 }
 
+// ReconcilePrivateNetworkFabric creates or refreshes the node-local bridge
+// for a Gregale-owned network. It is separate from the app route update: a
+// network can be prepared before its first workload is attached, and a bridge
+// failure keeps the attachment fail-closed.
+func (s *Server) ReconcilePrivateNetworkFabric(ctx context.Context, req *vmmdpb.ReconcilePrivateNetworkFabricRequest) (*vmmdpb.ReconcilePrivateNetworkFabricAck, error) {
+	const op = "ReconcilePrivateNetworkFabric"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	if req.GetAccountId() == "" || req.GetNetworkId() == "" {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Missing network identity", "account_id and network_id are required").WithDocs(wire.DocsBaseURL + "/vmmd#reconcile-private-network-fabric")))
+	}
+	fabricator, ok := s.vmm.(interface {
+		ReconcilePrivateNetworkFabric(context.Context, string, string, string, netip.Prefix) error
+	})
+	if !ok {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_fabric_unavailable", "Private network fabric unavailable", "vmmd private-network fabric is not wired")))
+	}
+	prefix, err := api.ValidatePrivateNetworkCIDR(req.GetCidr())
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if err := fabricator.ReconcilePrivateNetworkFabric(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.ReconcilePrivateNetworkFabricAck{}, nil
+}
+
 // SeccompStatus (M8 §11) reports the kernel seccomp state of the
 // jailer child backing instance. Sequence:
 //  1. Resolve the running jailer PID via VmmdAPI.InstancePID.

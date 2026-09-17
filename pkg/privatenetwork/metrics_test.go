@@ -17,6 +17,7 @@ func TestMetricsObserveRecordsAttachmentAndNodeOutcomes(t *testing.T) {
 			{NodeID: "node-a", Status: "ready"},
 			{NodeID: "node-b", Status: "error"},
 		},
+		FabricNodes: []RouteNodeObservation{{NodeID: "node-a", Status: "ready"}},
 	})
 
 	families, err := reg.Gather()
@@ -31,6 +32,7 @@ func TestMetricsObserveRecordsAttachmentAndNodeOutcomes(t *testing.T) {
 		"schedd_private_network_reconcile_total",
 		"schedd_private_network_reconcile_duration_seconds",
 		"schedd_private_network_route_nodes_total",
+		"schedd_private_network_fabric_nodes_total",
 	} {
 		if !seen[name] {
 			t.Fatalf("metric family %q missing from registry", name)

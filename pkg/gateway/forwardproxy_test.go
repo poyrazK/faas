@@ -448,6 +448,10 @@ func (f *fakeVmmdClient) UpdatePrivateNetwork(context.Context, *vmmdpb.UpdatePri
 	panic("UpdatePrivateNetwork: not stubbed")
 }
 
+func (f *fakeVmmdClient) ReconcilePrivateNetworkFabric(context.Context, *vmmdpb.ReconcilePrivateNetworkFabricRequest, ...grpc.CallOption) (*vmmdpb.ReconcilePrivateNetworkFabricAck, error) {
+	panic("ReconcilePrivateNetworkFabric: not stubbed")
+}
+
 // Logs (issue #254 / Move 4) — the gateway hot path never dials
 // the per-instance log stream directly; apid dials schedd for
 // that. Panics so a future test that exercises the RPC from the

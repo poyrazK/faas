@@ -189,6 +189,10 @@ func (s *stubVmmdClient) UpdatePrivateNetwork(context.Context, *vmmdpb.UpdatePri
 	return &vmmdpb.UpdatePrivateNetworkAck{}, nil
 }
 
+func (s *stubVmmdClient) ReconcilePrivateNetworkFabric(context.Context, *vmmdpb.ReconcilePrivateNetworkFabricRequest, ...grpc.CallOption) (*vmmdpb.ReconcilePrivateNetworkFabricAck, error) {
+	return &vmmdpb.ReconcilePrivateNetworkFabricAck{}, nil
+}
+
 // Logs (issue #254 / Move 4) — the gateway hot path never dials
 // the per-instance log stream directly; apid dials schedd for
 // that. The stub returns Unimplemented so any accidental test

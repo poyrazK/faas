@@ -13,11 +13,15 @@ Gregale-owned private networks are account-scoped API resources. They are not
 DigitalOcean VPCs and do not require cloud credentials. Use `GET/POST
 /v1/networks` and `GET/DELETE /v1/networks/{id}` with the API or SDK.
 
-The first fabric slice persists the network definition and reserves stable
-member addresses (network+1 is reserved as the gateway; allocation starts at
-network+2). Host bridges and cross-node overlays consume those rows in a later
-runtime slice. Set `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the
-resource API; app attachment remains separately gated by
+The fabric slice persists the network definition and reserves stable member
+addresses (network+1 is reserved as the gateway; allocation starts at
+network+2). When the fabric flag is enabled, schedd first asks every vmmd
+hosting the app to reconcile a dedicated, account-scoped host bridge for that
+network, then activates app routes. A bridge failure leaves the attachment in
+`error` and traffic blocked. Cross-node transport and workload address
+programming are the next runtime layer. Set
+`FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the resource API; app
+attachment remains separately gated by
 `FAAS_PRIVATE_NETWORK_ENABLED=1` and stays fail-closed until reconciliation.
 
 `network show` combines the app's outbound CIDR allowlist, static egress

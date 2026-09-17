@@ -1064,12 +1064,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				connector = configuredConnector
 				configuredCount = len(networks)
 			}
+			var fabricApplier privatenetwork.FabricApplier
+			if api.PrivateNetworkFabricEnabled() {
+				fabricRouter, fabricOK := any(vmmRouter).(sched.PrivateNetworkFabricRouter)
+				if !fabricOK {
+					log.Warn("schedd: Gregale network fabric unavailable; vmmd router lacks fabric capability")
+					// Do not fall back to route-only readiness when the
+					// Gregale fabric flag is on. That would publish a
+					// ready attachment without a node bridge.
+					connector = nil
+				} else {
+					fabricApplier = sched.NewPrivateNetworkFabricApplier(store, fabricRouter, log)
+				}
+			}
 			if connector == nil {
 				log.Warn("schedd: private network reconciler skipped; connector unavailable")
 			} else {
 				applier := sched.NewPrivateNetworkRouteApplier(store, vmmRouter, log)
 				reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
 					Logger: log,
+					Fabric: fabricApplier,
 					Observe: func(obs privatenetwork.ReconcileObservation) {
 						privateNetworkMetrics.Observe(obs)
 						readyNodes, failedNodes := 0, 0
@@ -1081,7 +1095,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 								failedNodes++
 							}
 						}
-						log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration, "ready_nodes", readyNodes, "failed_nodes", failedNodes)
+						fabricReady, fabricFailed := 0, 0
+						for _, node := range obs.FabricNodes {
+							switch node.Status {
+							case api.PrivateNetworkAttachmentStatusReady:
+								fabricReady++
+							case api.PrivateNetworkAttachmentStatusError:
+								fabricFailed++
+							}
+						}
+						log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration, "ready_nodes", readyNodes, "failed_nodes", failedNodes, "fabric_ready_nodes", fabricReady, "fabric_failed_nodes", fabricFailed)
 					},
 				})
 				if reconErr != nil {

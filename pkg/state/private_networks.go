@@ -14,8 +14,9 @@ import (
 )
 
 // PrivateNetwork is a Gregale-owned private address space. It is deliberately
-// provider-neutral: the row describes the tenant network contract, while a
-// later node agent is responsible for realizing the bridge/overlay on hosts.
+// provider-neutral: the row describes the tenant network contract, while the
+// vmmd node-fabric operation realizes the account-scoped host bridge. Cross-
+// node transport and workload address programming remain later layers.
 type PrivateNetwork struct {
 	ID           string
 	AccountID    string

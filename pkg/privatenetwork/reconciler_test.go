@@ -177,3 +177,54 @@ func TestReconcilerIncludesPerNodeHealthInObservation(t *testing.T) {
 		t.Fatalf("failed node observation = %+v", observed.Nodes[1])
 	}
 }
+
+type recordingFabricApplier struct {
+	called bool
+	err    error
+}
+
+func (a *recordingFabricApplier) ApplyWithReport(_ context.Context, attachment state.AppPrivateNetworkAttachment) (FabricApplyReport, error) {
+	a.called = true
+	if attachment.NetworkID == "" {
+		return FabricApplyReport{}, errors.New("missing network id")
+	}
+	return FabricApplyReport{Nodes: []RouteNodeObservation{{NodeID: "node-a", Status: api.PrivateNetworkAttachmentStatusReady, Detail: "fabric bridge ready"}}}, a.err
+}
+
+func TestReconcilerRequiresFabricBeforeRouteActivation(t *testing.T) {
+	store := state.NewMemStore()
+	_, err := store.UpsertAppPrivateNetworkAttachment(context.Background(), state.AppPrivateNetworkAttachment{
+		AccountID: "acct", AppID: "app", NetworkID: "vpc-1", Region: "nyc3",
+		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}, Status: api.PrivateNetworkAttachmentStatusPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector, err := NewConfiguredConnector([]ConfiguredNetwork{{ID: "vpc-1", Region: "nyc3", Ready: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fabricErr := errors.New("bridge creation failed")
+	fabric := &recordingFabricApplier{err: fabricErr}
+	routesCalled := false
+	reconciler, err := NewReconciler(store, connector, FuncRouteApplier(func(context.Context, string, []netip.Prefix) error {
+		routesCalled = true
+		return nil
+	}), ReconcilerOptions{Interval: time.Second, Fabric: fabric})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Sweep(context.Background()); !errors.Is(err, fabricErr) {
+		t.Fatalf("Sweep error = %v, want %v", err, fabricErr)
+	}
+	if !fabric.called || routesCalled {
+		t.Fatalf("fabric called=%v routes called=%v, want fabric-only fail-closed path", fabric.called, routesCalled)
+	}
+	got, err := store.GetAppPrivateNetworkAttachment(context.Background(), "acct", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != api.PrivateNetworkAttachmentStatusError {
+		t.Fatalf("attachment status = %q, want error", got.Status)
+	}
+}

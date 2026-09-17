@@ -684,6 +684,23 @@ func (r *VMMRouter) UpdatePrivateNetwork(ctx context.Context, nodeID, appID stri
 	return updater.UpdatePrivateNetwork(ctx, appID, cidrs)
 }
 
+// ReconcilePrivateNetworkFabric routes the node-local Gregale bridge
+// preparation to one compute node. It remains an additive capability so
+// existing RoutedVMM test doubles do not need a new method.
+func (r *VMMRouter) ReconcilePrivateNetworkFabric(ctx context.Context, nodeID, accountID, networkID, region string, cidr netip.Prefix) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	fabricator, ok := cli.(interface {
+		ReconcilePrivateNetworkFabric(context.Context, string, string, string, netip.Prefix) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network fabric unsupported by node %q", nodeID)
+	}
+	return fabricator.ReconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr)
+}
+
 // UpdateStaticEgressIP (ADR-119) routes the patch to the
 // vmmd that owns the live instance. The egress_drift
 // subscriber hands us a single (appID, ip) pair; we

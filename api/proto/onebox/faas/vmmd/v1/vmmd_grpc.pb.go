@@ -22,39 +22,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Vmmd_CreateFromSnapshot_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
-	Vmmd_CreateColdBoot_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
-	Vmmd_JobColdBoot_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
-	Vmmd_ExecuteExecution_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
-	Vmmd_ExecuteExecutionStream_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
-	Vmmd_RestoreExecution_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
-	Vmmd_WaitJobExit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
-	Vmmd_PauseAndSnapshot_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
-	Vmmd_WarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
-	Vmmd_WaitBuilderReady_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
-	Vmmd_DeleteWarmSnapshot_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
-	Vmmd_FrameworkReady_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
-	Vmmd_Destroy_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
-	Vmmd_StopInstance_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
-	Vmmd_Stats_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/Stats"
-	Vmmd_Ping_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/Ping"
-	Vmmd_Heartbeat_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
-	Vmmd_UpdateEgressAllowlist_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
-	Vmmd_UpdateStaticEgressIP_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
-	Vmmd_UpdatePrivateNetwork_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
-	Vmmd_SeccompStatus_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
-	Vmmd_Logs_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/Logs"
-	Vmmd_ForwardHTTPStream_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
-	Vmmd_ForwardRawStream_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
-	Vmmd_MountParentExt4ReadOnly_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
-	Vmmd_MaterializeParentExt4_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
-	Vmmd_UmountParentExt4_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
-	Vmmd_MountOverlayParent_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
-	Vmmd_UmountOverlayParent_FullMethodName     = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
-	Vmmd_PrepareLiveMigration_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
-	Vmmd_AdoptMigratedInstance_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
-	Vmmd_AcknowledgeMigration_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
-	Vmmd_CancelLiveMigration_FullMethodName     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
+	Vmmd_CreateFromSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
+	Vmmd_CreateColdBoot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
+	Vmmd_JobColdBoot_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
+	Vmmd_ExecuteExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
+	Vmmd_ExecuteExecutionStream_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
+	Vmmd_RestoreExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
+	Vmmd_WaitJobExit_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
+	Vmmd_PauseAndSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
+	Vmmd_WarmSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
+	Vmmd_WaitBuilderReady_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
+	Vmmd_DeleteWarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_FrameworkReady_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
+	Vmmd_Destroy_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
+	Vmmd_StopInstance_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
+	Vmmd_Stats_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Stats"
+	Vmmd_Ping_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Ping"
+	Vmmd_Heartbeat_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
+	Vmmd_UpdateEgressAllowlist_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
+	Vmmd_UpdateStaticEgressIP_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
+	Vmmd_UpdatePrivateNetwork_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
+	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
+	Vmmd_SeccompStatus_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
+	Vmmd_Logs_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Logs"
+	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
+	Vmmd_ForwardRawStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
+	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
+	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
+	Vmmd_UmountParentExt4_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
+	Vmmd_MountOverlayParent_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
+	Vmmd_UmountOverlayParent_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
+	Vmmd_PrepareLiveMigration_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
+	Vmmd_AdoptMigratedInstance_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
+	Vmmd_AcknowledgeMigration_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
+	Vmmd_CancelLiveMigration_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -229,6 +230,11 @@ type VmmdClient interface {
 	// empty list removes private-network connectivity. Public egress policy is
 	// unchanged; the CIDRs are an additive, explicit accept-and-route set.
 	UpdatePrivateNetwork(ctx context.Context, in *UpdatePrivateNetworkRequest, opts ...grpc.CallOption) (*UpdatePrivateNetworkAck, error)
+	// ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
+	// Gregale-owned private network exists before attachment routes are
+	// published. The operation is idempotent and does not contact a cloud
+	// provider; cross-node transport is layered on after this local seam.
+	ReconcilePrivateNetworkFabric(ctx context.Context, in *ReconcilePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkFabricAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -626,6 +632,16 @@ func (c *vmmdClient) UpdatePrivateNetwork(ctx context.Context, in *UpdatePrivate
 	return out, nil
 }
 
+func (c *vmmdClient) ReconcilePrivateNetworkFabric(ctx context.Context, in *ReconcilePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkFabricAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcilePrivateNetworkFabricAck)
+	err := c.cc.Invoke(ctx, Vmmd_ReconcilePrivateNetworkFabric_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest, opts ...grpc.CallOption) (*SeccompStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SeccompStatusResponse)
@@ -943,6 +959,11 @@ type VmmdServer interface {
 	// empty list removes private-network connectivity. Public egress policy is
 	// unchanged; the CIDRs are an additive, explicit accept-and-route set.
 	UpdatePrivateNetwork(context.Context, *UpdatePrivateNetworkRequest) (*UpdatePrivateNetworkAck, error)
+	// ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
+	// Gregale-owned private network exists before attachment routes are
+	// published. The operation is idempotent and does not contact a cloud
+	// provider; cross-node transport is layered on after this local seam.
+	ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -1190,6 +1211,9 @@ func (UnimplementedVmmdServer) UpdateStaticEgressIP(context.Context, *UpdateStat
 }
 func (UnimplementedVmmdServer) UpdatePrivateNetwork(context.Context, *UpdatePrivateNetworkRequest) (*UpdatePrivateNetworkAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdatePrivateNetwork not implemented")
+}
+func (UnimplementedVmmdServer) ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReconcilePrivateNetworkFabric not implemented")
 }
 func (UnimplementedVmmdServer) SeccompStatus(context.Context, *SeccompStatusRequest) (*SeccompStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SeccompStatus not implemented")
@@ -1604,6 +1628,24 @@ func _Vmmd_UpdatePrivateNetwork_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_ReconcilePrivateNetworkFabric_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcilePrivateNetworkFabricRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ReconcilePrivateNetworkFabric(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ReconcilePrivateNetworkFabric_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ReconcilePrivateNetworkFabric(ctx, req.(*ReconcilePrivateNetworkFabricRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_SeccompStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SeccompStatusRequest)
 	if err := dec(in); err != nil {
@@ -1891,6 +1933,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdatePrivateNetwork",
 			Handler:    _Vmmd_UpdatePrivateNetwork_Handler,
+		},
+		{
+			MethodName: "ReconcilePrivateNetworkFabric",
+			Handler:    _Vmmd_ReconcilePrivateNetworkFabric_Handler,
 		},
 		{
 			MethodName: "SeccompStatus",

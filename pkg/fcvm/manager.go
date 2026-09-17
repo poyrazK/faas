@@ -979,6 +979,12 @@ type Manager struct {
 	// perVMHostIPMu guards perVMHostIP. Same discipline as
 	// perAppStaticIPMu (brief read-then-set locks).
 	perVMHostIPMu sync.RWMutex
+	// privateNetworkFabric tracks the node-local Gregale network bridges
+	// reconciled through the vmmd control surface. The map is only a cache for
+	// idempotent command planning; the kernel remains the source of truth and
+	// the capture runner probes it after a vmmd restart.
+	privateNetworkFabric   map[string]netip.Prefix
+	privateNetworkFabricMu sync.Mutex
 	// hostRenderer is the seam for vmmd's egress watcher to
 	// push fresh StaticEgressRules into the host renderer.
 	// Set by NewManager via the wire-up path in cmd/vmmd/main.go;
@@ -1044,6 +1050,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		// renderer.
 		perAppStaticIP:       make(map[string]*netip.Addr),
 		perVMHostIP:          make(map[string]netip.Addr),
+		privateNetworkFabric: make(map[string]netip.Prefix),
 		metrics:              metrics,
 		conntrackCap:         api.ConntrackCapProbe(),
 		characterizationWait: api.CharacterizationHostDeadline,
