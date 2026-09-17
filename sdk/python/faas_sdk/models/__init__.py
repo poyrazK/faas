@@ -1041,6 +1041,7 @@ from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
 from .scaling_policy import ScalingPolicy
+from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
@@ -2238,6 +2239,7 @@ __all__ = (
     "RotateOrgAPIKeyResponse",
     "RouteRow",
     "ScalingPolicy",
+    "ScalingPolicyConcurrencyOverflow",
     "ScalingTarget",
     "ScalingTargetMetric",
     "ScanResult",

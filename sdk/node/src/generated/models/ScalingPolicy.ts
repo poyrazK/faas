@@ -44,3 +44,4 @@ export type ScalingPolicy = {
    */
   wake_max_queue_wait_seconds?: number;
 };
+

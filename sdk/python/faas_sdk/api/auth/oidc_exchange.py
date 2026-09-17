@@ -100,11 +100,17 @@ def sync_detailed(
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
-    JWT (RFC 8414; e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
+    JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
     The bearer is then used in `Authorization: Bearer …` on the
     existing deploy routes.
+
+    Gregale publishes the supported OAuth capability metadata at
+    `/.well-known/oauth-authorization-server` (RFC 8414). That document
+    advertises this token-exchange grant and intentionally omits
+    unsupported authorization-code, refresh-token, and client-registration
+    capabilities.
 
     The endpoint is anonymous — the JWT is the auth — so it does
     not require a session or a previous bearer. The first-use
@@ -157,11 +163,17 @@ def sync(
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
-    JWT (RFC 8414; e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
+    JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
     The bearer is then used in `Authorization: Bearer …` on the
     existing deploy routes.
+
+    Gregale publishes the supported OAuth capability metadata at
+    `/.well-known/oauth-authorization-server` (RFC 8414). That document
+    advertises this token-exchange grant and intentionally omits
+    unsupported authorization-code, refresh-token, and client-registration
+    capabilities.
 
     The endpoint is anonymous — the JWT is the auth — so it does
     not require a session or a previous bearer. The first-use
@@ -209,11 +221,17 @@ async def asyncio_detailed(
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
-    JWT (RFC 8414; e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
+    JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
     The bearer is then used in `Authorization: Bearer …` on the
     existing deploy routes.
+
+    Gregale publishes the supported OAuth capability metadata at
+    `/.well-known/oauth-authorization-server` (RFC 8414). That document
+    advertises this token-exchange grant and intentionally omits
+    unsupported authorization-code, refresh-token, and client-registration
+    capabilities.
 
     The endpoint is anonymous — the JWT is the auth — so it does
     not require a session or a previous bearer. The first-use
@@ -264,11 +282,17 @@ async def asyncio(
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
      ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
-    JWT (RFC 8414; e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
+    JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
     The bearer is then used in `Authorization: Bearer …` on the
     existing deploy routes.
+
+    Gregale publishes the supported OAuth capability metadata at
+    `/.well-known/oauth-authorization-server` (RFC 8414). That document
+    advertises this token-exchange grant and intentionally omits
+    unsupported authorization-code, refresh-token, and client-registration
+    capabilities.
 
     The endpoint is anonymous — the JWT is the auth — so it does
     not require a session or a previous bearer. The first-use

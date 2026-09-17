@@ -5,6 +5,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.scaling_policy_concurrency_overflow import (
+    ScalingPolicyConcurrencyOverflow,
+    check_scaling_policy_concurrency_overflow,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -40,8 +44,13 @@ class ScalingPolicy:
     scale_in_cooldown_s: int | Unset = UNSET
     """Minimum seconds between two scale-in events. Floor 5 (matches the reaper's 5 s idle window); ceiling 86400
     (1 day). Out-of-range → 422 invalid_cooldown."""
+    concurrency_overflow: ScalingPolicyConcurrencyOverflow | Unset = UNSET
+    """Behavior when the app concurrency boundary is saturated. queue waits up to max_queue_wait_ms; drop returns
+    429 immediately. Empty uses queue."""
+    max_queue_wait_ms: int | Unset = UNSET
+    """Maximum admission wait in milliseconds. 0 uses the plan default; capped at 120000."""
     wake_max_queue_depth: int | Unset = UNSET
-    """Per-app cold-wake waiter cap. 0 uses the plan default; capped to 8x the plan default."""
+    """Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default."""
     wake_max_queue_wait_seconds: int | Unset = UNSET
     """Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds."""
 
@@ -64,6 +73,12 @@ class ScalingPolicy:
 
         scale_in_cooldown_s = self.scale_in_cooldown_s
 
+        concurrency_overflow: str | Unset = UNSET
+        if not isinstance(self.concurrency_overflow, Unset):
+            concurrency_overflow = self.concurrency_overflow
+
+        max_queue_wait_ms = self.max_queue_wait_ms
+
         wake_max_queue_depth = self.wake_max_queue_depth
 
         wake_max_queue_wait_seconds = self.wake_max_queue_wait_seconds
@@ -81,6 +96,10 @@ class ScalingPolicy:
             field_dict["scale_out_cooldown_s"] = scale_out_cooldown_s
         if scale_in_cooldown_s is not UNSET:
             field_dict["scale_in_cooldown_s"] = scale_in_cooldown_s
+        if concurrency_overflow is not UNSET:
+            field_dict["concurrency_overflow"] = concurrency_overflow
+        if max_queue_wait_ms is not UNSET:
+            field_dict["max_queue_wait_ms"] = max_queue_wait_ms
         if wake_max_queue_depth is not UNSET:
             field_dict["wake_max_queue_depth"] = wake_max_queue_depth
         if wake_max_queue_wait_seconds is not UNSET:
@@ -118,6 +137,15 @@ class ScalingPolicy:
 
         scale_in_cooldown_s = d.pop("scale_in_cooldown_s", UNSET)
 
+        _concurrency_overflow = d.pop("concurrency_overflow", UNSET)
+        concurrency_overflow: ScalingPolicyConcurrencyOverflow | Unset
+        if isinstance(_concurrency_overflow, Unset):
+            concurrency_overflow = UNSET
+        else:
+            concurrency_overflow = check_scaling_policy_concurrency_overflow(_concurrency_overflow)
+
+        max_queue_wait_ms = d.pop("max_queue_wait_ms", UNSET)
+
         wake_max_queue_depth = d.pop("wake_max_queue_depth", UNSET)
 
         wake_max_queue_wait_seconds = d.pop("wake_max_queue_wait_seconds", UNSET)
@@ -128,6 +156,8 @@ class ScalingPolicy:
             target=target,
             scale_out_cooldown_s=scale_out_cooldown_s,
             scale_in_cooldown_s=scale_in_cooldown_s,
+            concurrency_overflow=concurrency_overflow,
+            max_queue_wait_ms=max_queue_wait_ms,
             wake_max_queue_depth=wake_max_queue_depth,
             wake_max_queue_wait_seconds=wake_max_queue_wait_seconds,
         )
