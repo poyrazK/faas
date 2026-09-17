@@ -17463,6 +17463,9 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 	} else if filter.Limit > CustomerEventLimitMax {
 		filter.Limit = CustomerEventLimitMax
 	}
+	if strings.TrimSpace(filter.AppID) != "" {
+		return s.listCustomerEventsByApp(ctx, filter)
+	}
 	var since any
 	if !filter.Since.IsZero() {
 		since = filter.Since
@@ -17494,6 +17497,110 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 		   ))
 		 ORDER BY e.at DESC, e.id DESC
 		 LIMIT $6`, filter.AccountID, filter.IncludeAnonymous, filter.KindPrefix, since, filter.AppID, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Event, 0, CustomerEventLimitMax)
+	for rows.Next() {
+		var event Event
+		var data []byte
+		if err := rows.Scan(&event.ID, &event.At, &event.Actor, &event.Kind, &event.Subject, &data); err != nil {
+			return nil, err
+		}
+		event.Data = json.RawMessage(data)
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+// listCustomerEventsByApp is the indexed app-drill-down path for
+// GET /v1/audit-events?app_id=.... The general customer query must inspect
+// every account event when it evaluates anonymous ownership. That shape is
+// pathological for an app with no matching events: a filter miss scans the
+// account's history before it can return an empty page (issue #2688).
+//
+// Resolve the app first, then build a bounded candidate set from the four
+// event identity keys. Each branch is driven by an expression index on the
+// event payload and compares relationship columns as UUIDs (rather than
+// casting indexed UUID columns to text). UNION removes the rare duplicate
+// where an event carries more than one app identity. The account/anonymous
+// subject policy and user filters remain identical to ListCustomerEvents.
+func (s *PgStore) listCustomerEventsByApp(ctx context.Context, filter CustomerEventFilter) ([]Event, error) {
+	appID, err := uuid.Parse(strings.TrimSpace(filter.AppID))
+	if err != nil {
+		// App ids are UUIDs in the production schema. A malformed filter cannot
+		// match a PostgreSQL app and should be an empty page, not a cast error.
+		return []Event{}, nil
+	}
+	var since any
+	if !filter.Since.IsZero() {
+		since = filter.Since
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH owned_app AS MATERIALIZED (
+			SELECT id
+			  FROM apps
+			 WHERE id = $1::uuid AND account_id = $2::uuid
+		), candidates AS (
+			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+			  FROM events e
+			 CROSS JOIN owned_app a
+			 WHERE e.data ? 'app_id'
+			   AND e.data->>'app_id' = $1::text
+			UNION
+			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+			  FROM events e
+			  JOIN deployments d
+			    ON d.id = CASE
+					 WHEN e.data->>'deployment_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+					 THEN (e.data->>'deployment_id')::uuid
+					 ELSE NULL
+				   END
+			  JOIN owned_app a ON a.id = d.app_id
+			 WHERE e.data ? 'deployment_id'
+			UNION
+			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+			  FROM events e
+			  JOIN builds b
+			    ON b.id = CASE
+					 WHEN e.data->>'build_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+					 THEN (e.data->>'build_id')::uuid
+					 ELSE NULL
+				   END
+			  JOIN deployments d ON d.id = b.deployment_id
+			  JOIN owned_app a ON a.id = d.app_id
+			 WHERE e.data ? 'build_id'
+			UNION
+			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+			  FROM events e
+			  JOIN instances i
+			    ON i.id = CASE
+					 WHEN e.data->>'instance_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+					 THEN (e.data->>'instance_id')::uuid
+					 ELSE NULL
+				   END
+			  JOIN owned_app a ON a.id = i.app_id
+			 WHERE e.data ? 'instance_id'
+			UNION
+			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+			  FROM events e
+			  JOIN instances i
+			    ON i.id = CASE
+					 WHEN e.data->>'instance' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+					 THEN (e.data->>'instance')::uuid
+					 ELSE NULL
+				   END
+			  JOIN owned_app a ON a.id = i.app_id
+			 WHERE e.data ? 'instance'
+		)
+		SELECT id, at, actor, kind, subject, data
+		  FROM candidates
+		 WHERE (subject = $2::uuid OR ($3::bool AND subject IS NULL))
+		   AND ($4::text = '' OR left(kind, length($4::text)) = $4::text)
+		   AND ($5::timestamptz IS NULL OR at >= $5::timestamptz)
+		 ORDER BY at DESC, id DESC
+		 LIMIT $6`, appID, filter.AccountID, filter.IncludeAnonymous, filter.KindPrefix, since, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
