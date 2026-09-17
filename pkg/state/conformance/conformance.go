@@ -352,6 +352,36 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 func testPRPreviewLease(t *testing.T, fx *Fixture) {
 	limits := api.MustLimitsFor(api.PlanPro)
 	oldExpiry := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	developer, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID:        fx.Account.ID,
+		Slug:             "dev-preview-" + uuid.NewString()[:8],
+		Type:             state.AppTypeApp,
+		Runtime:          "node22",
+		RAMMB:            limits.RAMMB,
+		MaxConcurrency:   limits.MaxConcurrency,
+		PreviewOfSlug:    fx.App.Slug,
+		PreviewPrState:   state.PreviewPrStateClosed,
+		PreviewExpiresAt: &oldExpiry,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(developer preview): %v", err)
+	}
+
+	newExpiry := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	refreshedDeveloper, err := fx.Store.RefreshDevSession(fx.Ctx, developer.ID, newExpiry)
+	if err != nil {
+		t.Fatalf("RefreshDevSession: %v", err)
+	}
+	if refreshedDeveloper.PreviewPrState != state.PreviewPrStateOpen {
+		t.Fatalf("developer PreviewPrState after refresh = %q, want %q", refreshedDeveloper.PreviewPrState, state.PreviewPrStateOpen)
+	}
+	if refreshedDeveloper.PreviewExpiresAt == nil || !refreshedDeveloper.PreviewExpiresAt.Equal(newExpiry) {
+		t.Fatalf("developer PreviewExpiresAt after refresh = %v, want %v", refreshedDeveloper.PreviewExpiresAt, newExpiry)
+	}
+	if _, err := fx.Store.RefreshDevSession(fx.Ctx, fx.App.ID, newExpiry); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RefreshDevSession(production app) = %v, want ErrNotFound", err)
+	}
+
 	preview, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
 		AccountID:        fx.Account.ID,
 		Slug:             "pr-42-" + uuid.NewString()[:8],
@@ -368,7 +398,6 @@ func testPRPreviewLease(t *testing.T, fx *Fixture) {
 		t.Fatalf("CreateAppIfUnderQuota(preview): %v", err)
 	}
 
-	newExpiry := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	refreshed, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, newExpiry)
 	if err != nil {
 		t.Fatalf("RefreshPRPreview: %v", err)

@@ -569,7 +569,6 @@ RecordUploadCommitOutcome
 RecordWebhookDelivery
 RecoverRollout
 RefreshCertExpiryStates
-RefreshDevSession
 RegistryCredentialQuotaCheck
 ReinviteMigratingInstance
 RemoveOrgMember
