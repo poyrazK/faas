@@ -179,6 +179,7 @@ type MemStore struct {
 	// the in-memory implementation of the I1 cooldown gate.
 	deployFailedEmailAt map[string]time.Time
 	deployments         map[string]Deployment
+	devSyncHistory      map[string]DevSyncHistory
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
 	// Append-only + resolved_at-stamped; the partial-index read
@@ -855,6 +856,7 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		devSyncHistory:      map[string]DevSyncHistory{},
 		statusCreateKeys:    map[string]string{},
 		statusUpdateKeys:    map[string]string{},
 		statusBuckets:       map[string]StatusBucket{},
@@ -3622,6 +3624,65 @@ func (m *MemStore) ListPreviewsForAccount(_ context.Context, accountID string) (
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
+	return out, nil
+}
+
+// RecordDevSyncHistory is the in-memory mirror of the durable edit-to-live
+// receipt table. Replaying the same deployment is a no-op and returns the
+// original receipt.
+func (m *MemStore) RecordDevSyncHistory(_ context.Context, row DevSyncHistory) (DevSyncHistory, error) {
+	if len(row.Phases) == 0 {
+		row.Phases = json.RawMessage(`[]`)
+	}
+	if err := validateDevSyncHistory(row); err != nil {
+		return DevSyncHistory{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, ok := m.apps[row.AppID]
+	if !ok || app.Status == AppDeleted {
+		return DevSyncHistory{}, ErrNotFound
+	}
+	deployment, ok := m.deployments[row.DeploymentID]
+	if !ok || deployment.AppID != row.AppID {
+		return DevSyncHistory{}, ErrNotFound
+	}
+	for _, existing := range m.devSyncHistory {
+		if existing.AppID == row.AppID && existing.DeploymentID == row.DeploymentID {
+			return cloneDevSyncHistory(existing), nil
+		}
+	}
+	if row.ID == "" {
+		row.ID = newID()
+	}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = time.Now().UTC()
+	}
+	m.devSyncHistory[row.ID] = cloneDevSyncHistory(row)
+	return cloneDevSyncHistory(row), nil
+}
+
+// ListDevSyncHistory returns bounded newest-first edit-to-live receipts for
+// one app. A non-positive limit means the store default of 20.
+func (m *MemStore) ListDevSyncHistory(_ context.Context, appID string, limit int) ([]DevSyncHistory, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if app, ok := m.apps[appID]; !ok || app.Status == AppDeleted {
+		return nil, ErrNotFound
+	}
+	out := make([]DevSyncHistory, 0, len(m.devSyncHistory))
+	for _, row := range m.devSyncHistory {
+		if row.AppID == appID {
+			out = append(out, cloneDevSyncHistory(row))
+		}
+	}
+	devSyncHistorySort(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

@@ -40,6 +40,8 @@ gregale dev --path apps/api    # select one workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 gregale dev status             # show developer-environment quota usage
+gregale dev history            # inspect recent edit-to-live timings and SLO guidance
+gregale dev history --limit 50 # show a larger bounded history
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
@@ -53,6 +55,13 @@ the signed-in account. It shows each stable URL, runtime, current instance
 state, latest sync result, useful links for logs/request analytics/config, and
 the lease expiry. The dashboard uses the same account-scoped developer
 environment list as the CLI, and developer environments have their own quota.
+For each environment it also shows recent sync count, SLO compliance, p50/p95
+edit-to-live timing, and a phase-level hint when the latest sync regresses.
+
+`gregale dev history` provides the same bounded view in the terminal. Use
+`--path` or `--name` to select a workspace and `--json` for the summary and
+receipt list as one stable object. History is keyed by deployment ID, so a
+retry cannot double-count a sync.
 
 `--open` launches the stable developer URL in the default browser after the
 first successful sync. It opens at most once per session, including with

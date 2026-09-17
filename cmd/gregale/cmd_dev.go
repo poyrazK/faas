@@ -283,6 +283,9 @@ func cmdDev(args []string) int {
 		}
 		return cmdDevStatus()
 	}
+	if len(args) > 0 && args[0] == "history" {
+		return cmdDevHistory(args[1:])
+	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
@@ -388,6 +391,7 @@ func cmdDev(args []string) int {
 	runtimeLogsStarted := false
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
+	var syncHistoryWarned atomic.Bool
 	reportDevDiagnostic := func(d devDiagnostic) {
 		d.SourceDir = sourceDir
 		if jsonOutput {
@@ -477,8 +481,12 @@ func cmdDev(args []string) int {
 				devTelemetry.finishRouteSwitch()
 			}
 			if code == 0 {
+				receipt := devTelemetry.receipt("live")
+				if err := reportDevSyncReceipt(client, project, workspaceID, receipt); err != nil && !syncHistoryWarned.Swap(true) {
+					PrintWarn(osStderr, "could not save developer sync history; the live sync succeeded (%v)", err)
+				}
 				if jsonOutput {
-					if receiptCode := jsonOut(writeNDJSON([]devSyncReceipt{devTelemetry.receipt("live")})); receiptCode != 0 {
+					if receiptCode := jsonOut(writeNDJSON([]devSyncReceipt{receipt})); receiptCode != 0 {
 						return receiptCode
 					}
 				} else {
@@ -611,6 +619,89 @@ func cmdDevStatus() int {
 	}
 	PrintOK(osStdout, "Developer environments: %d/%d used (%d available).", status.Used, status.Limit, status.Available)
 	return 0
+}
+
+// cmdDevHistory gives a developer a fast feedback loop on the feedback loop:
+// recent edit-to-live timings, SLO compliance, and the phase most likely to
+// explain a regression.
+func cmdDevHistory(args []string) int {
+	fs := newFlagSet("dev history", flag.ContinueOnError)
+	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
+	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
+	limit := fs.Int("limit", 20, "number of recent syncs to show (1–100)")
+	if err := fs.Parse(args); err != nil {
+		PrintUsage(osStderr, "usage: gregale dev history [--path DIR] [--name PROJECT] [--limit N]", "dev")
+		return 1
+	}
+	if fs.NArg() != 0 || *limit < 1 || *limit > 100 {
+		PrintUsage(osStderr, "usage: gregale dev history [--path DIR] [--name PROJECT] [--limit N]", "dev")
+		return 1
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return printErr("Could not read current directory", err)
+	}
+	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
+	if err != nil {
+		return printErr("Invalid developer source", err)
+	}
+	project := *name
+	if project == "" {
+		project = sanitizeSlug(filepath.Base(sourceDir))
+	}
+	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
+		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))
+	}
+	developerID, err := loadOrCreateDeveloperID()
+	if err != nil {
+		return printErr("Could not load local developer identity", err)
+	}
+	workspaceID, err := deriveDevWorkspaceID(developerID, sourceDir)
+	if err != nil {
+		return printErr("Could not identify developer workspace", err)
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	history, err := client.GetDevSyncHistory(ctx, project, workspaceID, *limit)
+	if err != nil {
+		return printErr("Could not load developer sync history", err)
+	}
+	if jsonOutput {
+		if err := writeJSON(history); err != nil {
+			return jsonOut(err)
+		}
+		return 0
+	}
+	if len(history.Items) == 0 {
+		PrintProgress(osStdout, "No sync history for %s yet.", project)
+		return 0
+	}
+	summary := history.Summary
+	PrintOK(osStdout, "%s: %d/%d syncs within %s SLO · p50 %s · p95 %s", project,
+		summary.WithinSLOCount, summary.Count, formatDevDuration(summary.SLOTargetMS),
+		formatDevDuration(summary.P50EditToLiveMS), formatDevDuration(summary.P95EditToLiveMS))
+	if summary.Guidance != "" {
+		PrintProgress(osStdout, "Guidance: %s", summary.Guidance)
+	}
+	for _, item := range history.Items {
+		mark := "✓"
+		if !item.WithinSLO {
+			mark = "!"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID)
+	}
+	return 0
+}
+
+func formatDevDuration(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return (time.Duration(ms) * time.Millisecond).Round(100 * time.Millisecond).String()
 }
 
 func devDeploymentAlreadyTerminal(err error) bool {

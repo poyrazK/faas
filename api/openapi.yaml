@@ -3793,6 +3793,67 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/dev/sessions/{project}/syncs:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Stable local project label used to derive the developer URL.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    post:
+      tags: [dev]
+      operationId: recordDevSync
+      summary: Record a redacted edit-to-live receipt.
+      description: Stores bounded phase timings for one developer deployment. Repeating the same app and deployment ID is idempotent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordDevSyncRequest' }
+      responses:
+        '201':
+          description: Receipt stored or already present.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSyncHistoryItem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/dev/sessions/{project}/history:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Stable local project label used to derive the developer URL.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    get:
+      tags: [dev]
+      operationId: listDevSyncHistory
+      summary: List bounded edit-to-live history.
+      parameters:
+        - name: workspace_id
+          in: query
+          required: false
+          description: Opaque local workspace identity. Omit only for a legacy session.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: limit
+          in: query
+          required: false
+          description: Number of recent receipts to return.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Newest-first developer sync history and trend summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSyncHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18830,6 +18891,74 @@ components:
         app: { $ref: '#/components/schemas/AppResponse' }
         expires_at: { type: string, format: date-time }
         postgres: { $ref: '#/components/schemas/DevPostgresResponse' }
+
+    DevSyncPhase:
+      description: Safe phase-level timing from a developer sync.
+      type: object
+      required: [phase, status]
+      properties:
+        phase: { type: string, enum: [sync, cache, build, boot, ready, route] }
+        status: { type: string, enum: [completed, failed, in_progress] }
+        duration_ms: { type: integer, minimum: 0, maximum: 3600000 }
+        reason: { type: string, maxLength: 512 }
+
+    RecordDevSyncRequest:
+      description: Redacted edit-to-live receipt written by the developer CLI.
+      type: object
+      required: [workspace_id, deployment_id, status, edit_to_live_ms, slo_target_ms, within_slo, phases]
+      properties:
+        workspace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_id: { type: string, minLength: 1, maxLength: 64 }
+        status: { type: string, enum: [live, failed] }
+        edit_to_live_ms: { type: integer, minimum: 0, maximum: 3600000 }
+        slo_target_ms: { type: integer, minimum: 1, maximum: 3600000 }
+        within_slo: { type: boolean }
+        phases:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/DevSyncPhase' }
+
+    DevSyncHistoryItem:
+      description: One redacted developer sync receipt.
+      type: object
+      required: [deployment_id, status, edit_to_live_ms, slo_target_ms, within_slo, phases, created_at]
+      properties:
+        deployment_id: { type: string }
+        status: { type: string, enum: [live, failed] }
+        edit_to_live_ms: { type: integer, minimum: 0, maximum: 3600000 }
+        slo_target_ms: { type: integer, minimum: 1, maximum: 3600000 }
+        within_slo: { type: boolean }
+        phases:
+          type: array
+          items: { $ref: '#/components/schemas/DevSyncPhase' }
+        created_at: { type: string, format: date-time }
+
+    DevSyncHistorySummary:
+      description: Aggregate trend and regression guidance for recent developer syncs.
+      type: object
+      required: [count, within_slo_count, p50_edit_to_live_ms, p95_edit_to_live_ms, slo_target_ms]
+      properties:
+        count: { type: integer, minimum: 0 }
+        within_slo_count: { type: integer, minimum: 0 }
+        p50_edit_to_live_ms: { type: integer, minimum: 0 }
+        p95_edit_to_live_ms: { type: integer, minimum: 0 }
+        slo_target_ms: { type: integer, minimum: 0 }
+        slowest_phase: { type: string }
+        slowest_phase_ms: { type: integer, minimum: 0 }
+        guidance: { type: string }
+
+    DevSyncHistoryResponse:
+      description: Bounded newest-first developer sync history.
+      type: object
+      required: [project, items, summary]
+      properties:
+        project: { type: string }
+        workspace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/DevSyncHistoryItem' }
+        summary: { $ref: '#/components/schemas/DevSyncHistorySummary' }
 
     UpdateAppRequest:
       description: "Partial update — every field is optional; omitted fields are unchanged."

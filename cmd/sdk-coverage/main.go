@@ -283,6 +283,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/cache":                                  "PurgeAppCache",
 	"POST /v1/apps/{slug}/rollback":                                 "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":                         "RecoverRollout",
+	"POST /v1/dev/sessions/{project}/syncs":                         "RecordDevSync",
+	"GET /v1/dev/sessions/{project}/history":                        "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                              "Deploy",
 	"GET /v1/apps/{slug}/deployments":                               "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                        "GetLatestAppDeployment",

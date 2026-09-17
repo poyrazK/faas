@@ -790,6 +790,11 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "history", Short: "show edit-to-live timings and SLO guidance", Flags: []cliFlag{
+				{Name: "path", Short: "source directory", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+				{Name: "limit", Short: "number of recent syncs to show", Value: "N"},
+			}},
 		},
 	},
 	{

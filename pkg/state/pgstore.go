@@ -2431,6 +2431,79 @@ func (s *PgStore) ListPreviewsForAccount(ctx context.Context, accountID string) 
 	return scanApps(rows)
 }
 
+// RecordDevSyncHistory persists one redacted edit-to-live receipt. The
+// deployment lookup prevents a caller from attaching telemetry to another
+// app, while the unique key makes retries safe.
+func (s *PgStore) RecordDevSyncHistory(ctx context.Context, row DevSyncHistory) (DevSyncHistory, error) {
+	if len(row.Phases) == 0 {
+		row.Phases = json.RawMessage(`[]`)
+	}
+	if err := validateDevSyncHistory(row); err != nil {
+		return DevSyncHistory{}, err
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`select exists(select 1 from deployments where id = $1 and app_id = $2)`, row.DeploymentID, row.AppID).Scan(&exists); err != nil {
+		return DevSyncHistory{}, fmt.Errorf("state: check developer sync deployment: %w", err)
+	}
+	if !exists {
+		return DevSyncHistory{}, ErrNotFound
+	}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = time.Now().UTC()
+	}
+	stored, err := scanDevSyncHistory(s.pool.QueryRow(ctx, `
+		insert into developer_sync_history
+			(app_id, deployment_id, status, edit_to_live_ms, slo_target_ms, within_slo, phases, created_at)
+		values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+		on conflict (app_id, deployment_id) do nothing
+		returning id::text, app_id::text, deployment_id::text, status,
+		          edit_to_live_ms, slo_target_ms, within_slo, phases, created_at`,
+		row.AppID, row.DeploymentID, row.Status, row.EditToLiveMS, row.SLOTargetMS,
+		row.WithinSLO, row.Phases, row.CreatedAt))
+	if err == nil {
+		return stored, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return DevSyncHistory{}, fmt.Errorf("state: record developer sync: %w", err)
+	}
+	return scanDevSyncHistory(s.pool.QueryRow(ctx, `
+		select id::text, app_id::text, deployment_id::text, status,
+		       edit_to_live_ms, slo_target_ms, within_slo, phases, created_at
+		  from developer_sync_history
+		 where app_id = $1 and deployment_id = $2`, row.AppID, row.DeploymentID))
+}
+
+// ListDevSyncHistory returns bounded newest-first receipts for one app.
+func (s *PgStore) ListDevSyncHistory(ctx context.Context, appID string, limit int) ([]DevSyncHistory, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `
+		select id::text, app_id::text, deployment_id::text, status,
+		       edit_to_live_ms, slo_target_ms, within_slo, phases, created_at
+		  from developer_sync_history
+		 where app_id = $1
+		 order by created_at desc, id desc
+		 limit $2`, appID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list developer sync history: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DevSyncHistory, 0, limit)
+	for rows.Next() {
+		row, scanErr := scanDevSyncHistory(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListPreviewsForTeardown (ADR-095 PR-C / issue #272) returns the
 // preview rows the teardown janitor should consider on this tick.
 // See the Store interface docstring for the full contract; the

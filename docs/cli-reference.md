@@ -917,6 +917,18 @@ Sync the dirty working tree to a stable remote developer environment
 
 show developer-environment quota usage
 
+### dev history
+
+show recent edit-to-live timings, SLO compliance, and regression guidance
+
+`gregale dev history [--path <DIR>] [--name <PROJECT>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory used to identify the developer workspace |  |
+| `--name <PROJECT>` | developer-session project name |  |
+| `--limit <N>` | number of recent syncs to show (1–100, default 20) |  |
+
 
 ## preview
 

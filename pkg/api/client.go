@@ -850,6 +850,31 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// RecordDevSync stores one safe edit-to-live receipt. Repeating a deployment
+// ID returns the original row, so a CLI retry cannot double-count a sync.
+func (c *Client) RecordDevSync(ctx context.Context, project string, req RecordDevSyncRequest) (DevSyncHistoryItem, error) {
+	var out DevSyncHistoryItem
+	return out, c.do(ctx, "POST", "/v1/dev/sessions/"+project+"/syncs", req, &out)
+}
+
+// GetDevSyncHistory returns the bounded, newest-first timing history for a
+// project workspace. Omit workspaceID only for a legacy developer session.
+func (c *Client) GetDevSyncHistory(ctx context.Context, project, workspaceID string, limit int) (DevSyncHistoryResponse, error) {
+	query := url.Values{}
+	if workspaceID != "" {
+		query.Set("workspace_id", workspaceID)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/dev/sessions/" + project + "/history"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out DevSyncHistoryResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // Deploy creates a deployment for an app slug (JSON variant).
 // For tarball / dockerfile deploys use DeployMultipart.
 func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {

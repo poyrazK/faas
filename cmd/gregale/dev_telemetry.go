@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -104,6 +105,25 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		Phases:        timings,
 		Postgres:      postgres,
 	}
+}
+
+func reportDevSyncReceipt(client *api.Client, project, workspaceID string, receipt devSyncReceipt) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	phases := make([]api.DevSyncPhase, 0, len(receipt.Phases))
+	for _, phase := range receipt.Phases {
+		phases = append(phases, api.DevSyncPhase{
+			Phase: phase.Phase, Status: phase.Status,
+			DurationMS: phase.DurationMS, Reason: phase.Reason,
+		})
+	}
+	_, err := client.RecordDevSync(ctx, project, api.RecordDevSyncRequest{
+		WorkspaceID: workspaceID, DeploymentID: receipt.DeploymentID,
+		Status: receipt.Status, EditToLiveMS: receipt.EditToLiveMS,
+		SLOTargetMS: receipt.SLOTargetMS, WithinSLO: receipt.WithinSLO,
+		Phases: phases,
+	})
+	return err
 }
 
 func (t *devPhaseTracker) setPostgres(postgres *api.DevPostgresResponse) {
