@@ -1815,6 +1815,18 @@ func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{Registry: m.registry})
 }
 
+// RequestCountHandler serves only the request counter consumed by schedd's
+// reactive scale-up loop. The full gateway registry contains many bounded
+// histograms and can exceed the scheduler's defensive scrape limit even when
+// the request counter itself is small. Registering the same collector in a
+// dedicated registry keeps the internal control input proportional to the
+// number of active app/status tuples.
+func (m *Metrics) RequestCountHandler() http.Handler {
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(m.requests)
+	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
+}
+
 // ObserveRequest records a completed request's outcome. code is the HTTP
 // status class as a 3-digit string ("200", "404", "503"...).
 func (m *Metrics) ObserveRequest(appID, plan, code string) {

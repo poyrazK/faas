@@ -34,6 +34,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.GatewaySynthTarget != "" {
 		t.Errorf("GatewaySynthTarget = %q, want default empty (fallback lives in cmd/schedd/main.go)", cfg.GatewaySynthTarget)
 	}
+	if cfg.GatewayMetricsURL != "http://127.0.0.1:9090/metrics/gateway-requests" {
+		t.Errorf("GatewayMetricsURL = %q, want bounded request metrics endpoint", cfg.GatewayMetricsURL)
+	}
 	if cfg.OwnerUser != "faas-schedd" {
 		t.Errorf("OwnerUser = %q, want default", cfg.OwnerUser)
 	}

@@ -82,6 +82,7 @@ func ControlMux(m *Metrics, ready ReadyFunc, tracker *drain.Tracker) *http.Serve
 	}))
 	if m != nil {
 		mux.Handle("/metrics", wrap("control", m.Handler().ServeHTTP))
+		mux.Handle("/metrics/gateway-requests", wrap("control", m.RequestCountHandler().ServeHTTP))
 	}
 	return mux
 }
@@ -144,6 +145,9 @@ func ControlMuxWithExtra(m *Metrics, extra prometheus.Gatherer, ready ReadyFunc,
 		mux.Handle("/metrics", wrap("control", m.Handler().ServeHTTP))
 	case extra != nil:
 		mux.Handle("/metrics", wrap("control", promhttp.HandlerFor(extra, promhttp.HandlerOpts{Registry: prometheus.NewRegistry()}).ServeHTTP))
+	}
+	if m != nil {
+		mux.Handle("/metrics/gateway-requests", wrap("control", m.RequestCountHandler().ServeHTTP))
 	}
 	return mux
 }
