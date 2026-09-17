@@ -646,6 +646,7 @@ from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
 from .job_response import JobResponse
 from .job_response_env_overrides import JobResponseEnvOverrides
+from .job_response_image_materialization_status import JobResponseImageMaterializationStatus
 from .job_response_kind import JobResponseKind
 from .job_response_status import JobResponseStatus
 from .job_run_cancelled_response import JobRunCancelledResponse
@@ -1877,6 +1878,7 @@ __all__ = (
     "JobFinishedWebhookPayload",
     "JobResponse",
     "JobResponseEnvOverrides",
+    "JobResponseImageMaterializationStatus",
     "JobResponseKind",
     "JobResponseStatus",
     "JobRunCancelledResponse",

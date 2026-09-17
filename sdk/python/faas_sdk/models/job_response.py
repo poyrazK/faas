@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.job_response_image_materialization_status import (
+    JobResponseImageMaterializationStatus,
+    check_job_response_image_materialization_status,
+)
 from ..models.job_response_kind import JobResponseKind, check_job_response_kind
 from ..models.job_response_status import JobResponseStatus, check_job_response_status
 from ..types import UNSET, Unset
@@ -28,6 +32,7 @@ class JobResponse:
     name: str
     kind: JobResponseKind
     image_ref: str
+    image_materialization_status: JobResponseImageMaterializationStatus
     command: list[str]
     ram_mb: int
     task_timeout_sec: int
@@ -36,6 +41,13 @@ class JobResponse:
     status: JobResponseStatus
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    image_resolved_digest: str | Unset = UNSET
+    """Immutable OCI manifest digest selected from image_ref."""
+    image_storage_key: str | Unset = UNSET
+    """Canonical ext4 artifact key consumed by vmmd."""
+    image_materialization_error: str | Unset = UNSET
+    """Actionable pull/build failure when materialization_status is failed."""
+    image_materialized_at: datetime.datetime | Unset = UNSET
     env_overrides: JobResponseEnvOverrides | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -49,6 +61,8 @@ class JobResponse:
         kind: str = self.kind
 
         image_ref = self.image_ref
+
+        image_materialization_status: str = self.image_materialization_status
 
         command = self.command
 
@@ -66,6 +80,16 @@ class JobResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        image_resolved_digest = self.image_resolved_digest
+
+        image_storage_key = self.image_storage_key
+
+        image_materialization_error = self.image_materialization_error
+
+        image_materialized_at: str | Unset = UNSET
+        if not isinstance(self.image_materialized_at, Unset):
+            image_materialized_at = self.image_materialized_at.isoformat()
+
         env_overrides: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env_overrides, Unset):
             env_overrides = self.env_overrides.to_dict()
@@ -79,6 +103,7 @@ class JobResponse:
                 "name": name,
                 "kind": kind,
                 "image_ref": image_ref,
+                "image_materialization_status": image_materialization_status,
                 "command": command,
                 "ram_mb": ram_mb,
                 "task_timeout_sec": task_timeout_sec,
@@ -89,6 +114,14 @@ class JobResponse:
                 "updated_at": updated_at,
             }
         )
+        if image_resolved_digest is not UNSET:
+            field_dict["image_resolved_digest"] = image_resolved_digest
+        if image_storage_key is not UNSET:
+            field_dict["image_storage_key"] = image_storage_key
+        if image_materialization_error is not UNSET:
+            field_dict["image_materialization_error"] = image_materialization_error
+        if image_materialized_at is not UNSET:
+            field_dict["image_materialized_at"] = image_materialized_at
         if env_overrides is not UNSET:
             field_dict["env_overrides"] = env_overrides
 
@@ -109,6 +142,10 @@ class JobResponse:
 
         image_ref = d.pop("image_ref")
 
+        image_materialization_status = check_job_response_image_materialization_status(
+            d.pop("image_materialization_status")
+        )
+
         command = cast(list[str], d.pop("command"))
 
         ram_mb = d.pop("ram_mb")
@@ -125,6 +162,19 @@ class JobResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        image_resolved_digest = d.pop("image_resolved_digest", UNSET)
+
+        image_storage_key = d.pop("image_storage_key", UNSET)
+
+        image_materialization_error = d.pop("image_materialization_error", UNSET)
+
+        _image_materialized_at = d.pop("image_materialized_at", UNSET)
+        image_materialized_at: datetime.datetime | Unset
+        if isinstance(_image_materialized_at, Unset):
+            image_materialized_at = UNSET
+        else:
+            image_materialized_at = datetime.datetime.fromisoformat(_image_materialized_at)
+
         _env_overrides = d.pop("env_overrides", UNSET)
         env_overrides: JobResponseEnvOverrides | Unset
         if isinstance(_env_overrides, Unset):
@@ -138,6 +188,7 @@ class JobResponse:
             name=name,
             kind=kind,
             image_ref=image_ref,
+            image_materialization_status=image_materialization_status,
             command=command,
             ram_mb=ram_mb,
             task_timeout_sec=task_timeout_sec,
@@ -146,6 +197,10 @@ class JobResponse:
             status=status,
             created_at=created_at,
             updated_at=updated_at,
+            image_resolved_digest=image_resolved_digest,
+            image_storage_key=image_storage_key,
+            image_materialization_error=image_materialization_error,
+            image_materialized_at=image_materialized_at,
             env_overrides=env_overrides,
         )
 

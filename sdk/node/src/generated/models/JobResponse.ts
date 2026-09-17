@@ -11,6 +11,20 @@ export type JobResponse = {
   name: string;
   kind: 'batch' | 'recurring';
   image_ref: string;
+  /**
+   * Immutable OCI manifest digest selected from image_ref.
+   */
+  image_resolved_digest?: string;
+  /**
+   * Canonical ext4 artifact key consumed by vmmd.
+   */
+  image_storage_key?: string;
+  image_materialization_status: 'pending' | 'ready' | 'failed';
+  /**
+   * Actionable pull/build failure when materialization_status is failed.
+   */
+  image_materialization_error?: string;
+  image_materialized_at?: string;
   command: Array<string>;
   env_overrides?: Record<string, string>;
   ram_mb: number;
