@@ -161,7 +161,8 @@
               {{ ['/usr/local/bin/gregalectl', 'pki', 'export-bundle',
                   '--source-root', faas_pki_root,
                   '--output-dir', faas_pki_remote_export + '/bundle',
-                  '--box-role', faas_box_role]
+                  '--box-role', faas_box_role,
+                  '--for-renewal']
                  + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
                     if faas_box_role == 'compute-only' else []) }}
           changed_when: true

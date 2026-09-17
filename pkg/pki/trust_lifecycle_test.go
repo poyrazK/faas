@@ -307,6 +307,44 @@ func TestExportTrustBundleNeverCopiesCAKey(t *testing.T) {
 	}
 }
 
+func TestRenewalExportRepairsMissingTransportSANs(t *testing.T) {
+	issuer := t.TempDir()
+	if _, _, err := EnsureCA(issuer, false); err != nil {
+		t.Fatal(err)
+	}
+	nodeCN := "compute-san-drift.faas"
+	active := filepath.Join(t.TempDir(), "active")
+	if err := IssueTrustBundle(issuer, active, "compute-only", nodeCN, AltNames{}); err != nil {
+		t.Fatal(err)
+	}
+	requiredSAN := AltNames{DNSNames: []string{"compute-san-drift.internal"}}
+	strictExport := filepath.Join(t.TempDir(), "strict")
+	if err := ExportTrustBundle(active, strictExport, "compute-only", nodeCN, requiredSAN); err == nil {
+		t.Fatal("strict export accepted a bundle with missing transport SANs")
+	}
+
+	renewalExport := filepath.Join(t.TempDir(), "renewal")
+	if err := ExportTrustBundleForRenewal(active, renewalExport, "compute-only"); err != nil {
+		t.Fatalf("renewal export rejected repairable SAN drift: %v", err)
+	}
+	_, exportedCAKey := CARoot(renewalExport)
+	if _, err := os.Stat(exportedCAKey); !os.IsNotExist(err) {
+		t.Fatalf("renewal export contains CA key: %v", err)
+	}
+
+	candidate := filepath.Join(t.TempDir(), "candidate")
+	changed, err := RenewTrustBundle(issuer, renewalExport, candidate, "compute-only", nodeCN, requiredSAN)
+	if err != nil {
+		t.Fatalf("renew SAN-drifted bundle: %v", err)
+	}
+	if len(changed) != len(RolesForBox("compute-only")) {
+		t.Fatalf("renewed %d leaves, want %d leaves missing the transport SAN", len(changed), len(RolesForBox("compute-only")))
+	}
+	if err := ValidateTrustBundleForNode(candidate, "compute-only", requiredSAN, nodeCN); err != nil {
+		t.Fatalf("renewed bundle remains invalid: %v", err)
+	}
+}
+
 func computeHandshakeRoles(t *testing.T) (Role, Role) {
 	t.Helper()
 	var server, client Role
