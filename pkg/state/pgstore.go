@@ -13468,18 +13468,17 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 		limit = 64
 	}
 	// PR-B fixup (code-review #1185 finding #4): the dispatching→pending
-	// transition and the per-account counter decrement share one
+	// transition and the per-account counter decrements share one
 	// transaction. Without the tx, a crash between the two leaked
-	// the slot until the next cap hit. Two Execs inside one tx:
-	// the requeue returns the affected-row count we report to the
-	// caller, then the decrement updates every distinct account the
-	// requeue produced.
+	// slots until the next cap hit. The UPDATE returns one account ID
+	// per transitioned row so multiple abandoned dispatches from one
+	// account release the same number of slots they claimed.
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, `
+	rows, err := tx.Query(ctx, `
 		with expired as (
 			select id
 			  from invocations
@@ -13498,29 +13497,33 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 		       last_error = 'dispatch lease expired; requeued'
 		  from expired
 		 where i.id = expired.id
-		returning account_id`, now.UTC(), limit)
+		returning i.account_id`, now.UTC(), limit)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
 	}
-	requeued := int(tag.RowsAffected())
-	if requeued > 0 {
-		if _, err := tx.Exec(ctx, `
-			update account_async_quota
-			   set current_inflight = greatest(current_inflight - 1, 0),
-			       updated_at = now()
-			 where account_id in (
-			     select distinct account_id
-			       from invocations
-			      where last_error = 'dispatch lease expired; requeued'
-			        and due_at = $1
-			 )`, now.UTC()); err != nil {
+	var accounts []string
+	for rows.Next() {
+		var accountID string
+		if err := rows.Scan(&accountID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("state: invocations reclaim scan account: %w", err)
+		}
+		accounts = append(accounts, accountID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("state: invocations reclaim iterate: %w", err)
+	}
+	rows.Close()
+	for _, accountID := range accounts {
+		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
 			return 0, fmt.Errorf("state: invocations reclaim decrement: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
 	}
-	return requeued, nil
+	return len(accounts), nil
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
@@ -28393,40 +28396,36 @@ func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Capture account_ids before the UPDATE so we can decrement
-	// the counter for each one. The cap row should already exist
-	// (the increment path created it), but tolerant decrement.
+	// Return account_ids from the state-changing UPDATE itself. A
+	// deadline batch can contain a row that completed after the list
+	// query; only rows that actually transition may release a slot.
 	rows, err := tx.Query(ctx,
-		`select account_id from invocations where id = any($1::uuid[])`, ids)
-	if err != nil {
-		return 0, fmt.Errorf("state: invocations deadline lookup: %w", err)
-	}
-	var accounts []string
-	for rows.Next() {
-		var a string
-		if err := rows.Scan(&a); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("state: invocations deadline scan account: %w", err)
-		}
-		accounts = append(accounts, a)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	tag, err := tx.Exec(ctx, `
-		update invocations
+		`update invocations
 		   set state = 'dead_letter',
 		       outcome = 'deadline',
 		       last_error = 'deadline_at breached',
 		       completed_at = now(),
 		       received_at = coalesce(received_at, now())
 		 where id = any($1::uuid[])
-		   and state in ('pending', 'dispatching')`, ids)
+		   and state in ('pending', 'dispatching')
+		 returning account_id`, ids)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations deadline force: %w", err)
 	}
+	var accounts []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("state: invocations deadline scan: %w", err)
+		}
+		accounts = append(accounts, a)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
 
 	for _, a := range accounts {
 		if _, err := tx.Exec(ctx, `
@@ -28441,7 +28440,7 @@ func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations deadline commit: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+	return len(accounts), nil
 }
 
 // ----------------------------------------------------------------------------

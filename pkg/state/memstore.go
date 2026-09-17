@@ -10617,6 +10617,9 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 		inv.InstanceID = ""
 		inv.LastError = "dispatch lease expired; requeued"
 		m.invocations[id] = inv
+		// ClaimInvocationWithCap reserves one slot per dispatch. Requeue
+		// releases the same slot for every transitioned row.
+		m.decrementAccountAsyncInflightLocked(inv.AccountID)
 	}
 	return len(ids), nil
 }
@@ -21208,6 +21211,9 @@ func (m *MemStore) CreateMirrorRuleIfUnderQuota(_ context.Context, in CreateMirr
 	if in.SourceDeploymentID == in.MirrorDeploymentID {
 		return MirrorRule{}, ErrMirrorSourceTargetSame
 	}
+	if len(in.RedactHeaders) > 32 {
+		return MirrorRule{}, fmt.Errorf("state: mirror_rules redact_headers has %d entries (cap 32)", len(in.RedactHeaders))
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -21302,6 +21308,9 @@ func (m *MemStore) GetMirrorRuleByID(_ context.Context, id string) (MirrorRule, 
 // discipline as CreateMirrorRuleIfUnderQuota so concurrent writers
 // serialise.
 func (m *MemStore) UpdateMirrorRule(_ context.Context, id string, patch MirrorRulePatch) (MirrorRule, error) {
+	if patch.RedactHeaders != nil && len(*patch.RedactHeaders) > 32 {
+		return MirrorRule{}, fmt.Errorf("state: mirror_rules redact_headers has %d entries (cap 32)", len(*patch.RedactHeaders))
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.mirrorRules[id]
@@ -21557,9 +21566,6 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	row, ok := m.accountAsyncQuota[inv.AccountID]
 	if !ok {
 		row = accountAsyncQuotaRow{MaxInflight: maxInflight}
-		m.accountAsyncQuota[inv.AccountID] = row
-	} else {
-		row.MaxInflight = maxInflight
 		m.accountAsyncQuota[inv.AccountID] = row
 	}
 	if row.CurrentInflight >= row.MaxInflight {

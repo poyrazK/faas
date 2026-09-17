@@ -60,7 +60,6 @@ CheckWebhookReplay
 ClaimAlertFire
 ClaimCliAuthCode
 ClaimDueAppWebhookDeliveries
-ClaimInvocationWithCap
 ClaimNextDueWorkflowRun
 ClaimNextPendingRun
 ClaimNextQueuedBuild
@@ -152,7 +151,6 @@ CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateInstanceWithMode
 CreateJobInstance
-CreateMirrorRuleIfUnderQuota
 CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
@@ -232,7 +230,6 @@ FailSourceDeployment
 FinalizeServiceRollout
 FindGdprRequestByRequestID
 FindMatchingEvent
-ForceDeadlineBreachedInvocations
 GetAPIConsumerByID
 GetAPIKey
 GetAccountAsyncQuota
