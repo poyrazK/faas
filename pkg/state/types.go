@@ -3485,6 +3485,7 @@ func ApplyFailOptions(opts []FailOption) FailOptions {
 //	                  translates this to a nil pointer + omitempty
 //	                  on the JSON wire so dashboards can render
 //	                  "queue is empty" cleanly.
+//
 // DeadLetter is the count of terminal queue rows retained for operator
 // inspection or replay; it is excluded from Depth.
 type QueueStats struct {
