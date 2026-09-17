@@ -65,6 +65,9 @@ export type { AppOpenAPIPolicyApplyResponse } from './AppOpenAPIPolicyApplyRespo
 export type { AppOpenAPIPolicyPreviewResponse } from './AppOpenAPIPolicyPreviewResponse.js';
 export type { AppOpenAPIPolicyPreviewRoute } from './AppOpenAPIPolicyPreviewRoute.js';
 export type { AppOpenAPIPolicyPreviewRule } from './AppOpenAPIPolicyPreviewRule.js';
+export type { AppPrivateNetworkAttachment } from './AppPrivateNetworkAttachment.js';
+export type { AppPrivateNetworkAttachmentRequest } from './AppPrivateNetworkAttachmentRequest.js';
+export type { AppPrivateNetworkAttachmentResponse } from './AppPrivateNetworkAttachmentResponse.js';
 export type { AppRegistryCredentialListResponse } from './AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './AppRegistryCredentialResponse.js';
 export type { AppResponse } from './AppResponse.js';

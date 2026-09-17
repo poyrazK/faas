@@ -202,6 +202,19 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			_, err := c.GetAppsSlugEnv(ctx, "x")
 			return err
 		}},
+		{"GetAppPrivateNetworkAttachment", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.GetAppPrivateNetworkAttachment(ctx, "x")
+			return err
+		}},
+		{"SetAppPrivateNetworkAttachment", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.SetAppPrivateNetworkAttachment(ctx, "x", AppPrivateNetworkAttachmentRequest{
+				NetworkID: "vpc", Region: "fra1", CIDRs: []string{"10.20.0.0/16"},
+			})
+			return err
+		}},
+		{"ClearAppPrivateNetworkAttachment", obj.URL, func(t *testing.T, c *Client) error {
+			return c.ClearAppPrivateNetworkAttachment(ctx, "x")
+		}},
 		{"DeleteAppsSlugEnvKey", obj.URL, func(t *testing.T, c *Client) error {
 			return c.DeleteAppsSlugEnvKey(ctx, "x", "K")
 		}},

@@ -1158,6 +1158,13 @@ const (
 	// as CodeTenantSurfacesNotAllowed.
 	CodeStaticEgressIPNotEnabled = "static_egress_ip_not_enabled"
 
+	// Provider-neutral private-network attachment intent. The API is dark
+	// launched independently of the connector runtime; a plan denial is
+	// distinct from an operator-disabled surface and from request shape.
+	CodePrivateNetworkNotEnabled     = "private_network_not_enabled"
+	CodePlanPrivateNetworkNotAllowed = "plan_private_network_not_allowed"
+	CodePrivateNetworkInvalid        = "private_network_invalid"
+
 	// Issue #470 / ADR-055: per-app two-tier-snapshot flag (warm.snap
 	// on top of init.snap). Pro/Scale opt in by default; Free/Hobby
 	// reject PATCH-true with 403 plan_warm_snapshot_not_allowed so
@@ -1715,6 +1722,7 @@ func StatusForCode(code string) int {
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
+		CodePrivateNetworkInvalid,
 		CodeOpenAPIPolicyConfirmationRequired, CodeRequestBodyReadFailed:
 		return http.StatusBadRequest
 	case CodeRequestUploadTimeout:
@@ -1725,7 +1733,8 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
+		CodePrivateNetworkNotEnabled:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -1910,6 +1919,8 @@ func StatusForCode(code string) int {
 	// pattern so the CLI's "your plan does not unlock X" / "fix
 	// the IP shape" templates render uniformly.
 	case CodePlanStaticEgressIPNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanPrivateNetworkNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanStaticEgressIPQuota:
 		return http.StatusForbidden
@@ -3930,6 +3941,15 @@ func ErrStaticEgressIPNotEnabled() *Problem {
 		WithDocs(docsBase + "/static-egress-ip")
 }
 
+// ErrPrivateNetworkNotEnabled is returned while the provider-neutral private
+// network surface is dark-launched or its connector is not available.
+func ErrPrivateNetworkNotEnabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePrivateNetworkNotEnabled,
+		"Private network attachments are not enabled on this cluster",
+		"the FAAS_PRIVATE_NETWORK_ENABLED env var is not enabled; ask the cluster operator to enable the private-network attachment surface.").
+		WithDocs(docsBase + "/networking")
+}
+
 // ErrTenantSurfaceQuota is returned when
 // CreateTenantSurfaceIfUnderQuota surfaces a *state.TenantSurfaceQuotaError.
 // 403 (not 402) because the plan DOES unlock surfaces — the right copy
@@ -5047,6 +5067,26 @@ func ErrPlanStaticEgressIPNotAllowed(p Plan) *Problem {
 		fmt.Sprintf("plan %q does not unlock static egress IP; upgrade to Scale.", p)).
 		WithLimit(int64(0), int64(0)).
 		WithDocs(docsBase + "/apps#static-egress-ip")
+}
+
+// ErrPlanPrivateNetworkNotAllowed is returned when an account's plan does not
+// include provider-neutral private-network attachments.
+func ErrPlanPrivateNetworkNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanPrivateNetworkNotAllowed,
+		"Plan does not unlock private network attachments",
+		fmt.Sprintf("plan %q does not unlock private network attachments; upgrade to Pro or Scale.", p)).
+		WithLimit(int64(0), int64(0)).
+		WithDocs(docsBase + "/networking")
+}
+
+// ErrPrivateNetworkInvalid is a 400 for invalid network identifiers or CIDR
+// contracts. The field/value are included so CLI and SDK callers can render a
+// useful correction without parsing prose.
+func ErrPrivateNetworkInvalid(field, value, reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodePrivateNetworkInvalid,
+		"Invalid private network attachment",
+		fmt.Sprintf("%s=%q is not accepted: %s.", field, value, reason)).
+		WithDocs(docsBase + "/networking")
 }
 
 // ErrPlanStaticEgressIPQuota (ADR-119) is the 403 returned by

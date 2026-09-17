@@ -1,15 +1,16 @@
 // `gregale app <slug> network {show|doctor}` — the customer-facing view of
 // Gregale's current networking contract.
 //
-// This is intentionally read-only. It composes the existing app, egress
-// allowlist, static-egress-IP, and captured-upstream APIs into one useful
-// surface while the provider-neutral private-network attachment API is still
-// being designed. The doctor reports observed probe telemetry only; it never
-// sends traffic to an upstream and never exposes upstream hostnames.
+// The inspection subcommands are intentionally read-only. This composes the
+// existing app, egress allowlist, static-egress-IP, and captured-upstream APIs
+// into one useful surface. Private-network attach/detach records intent; the
+// doctor reports its asynchronous status alongside observed probe telemetry.
+// It never sends traffic to an upstream and never exposes upstream hostnames.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/netip"
 	"os"
@@ -60,9 +61,15 @@ type appNetworkServiceDiscovery struct {
 }
 
 type appNetworkPrivateNetwork struct {
-	Attached bool   `json:"attached"`
-	Status   string `json:"status"`
-	Detail   string `json:"detail"`
+	Available    bool     `json:"available"`
+	Attached     bool     `json:"attached"`
+	NetworkID    string   `json:"network_id,omitempty"`
+	Region       string   `json:"region,omitempty"`
+	CIDRs        []string `json:"cidrs,omitempty"`
+	Status       string   `json:"status"`
+	Detail       string   `json:"detail"`
+	StatusDetail string   `json:"status_detail,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 type appNetworkUpstreams struct {
@@ -88,14 +95,21 @@ type appNetworkDoctorReport struct {
 	Checks     []appNetworkCheck `json:"checks"`
 }
 
-// cmdAppNetwork dispatches `gregale app <slug> network show|doctor`.
+// cmdAppNetwork dispatches network inspection and private-network attachment
+// intent actions.
 func cmdAppNetwork(slug string, args []string) int {
-	if slug == "" || len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> network {show|doctor}", "apps")
+	if slug == "" || len(args) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}", "apps")
 		return 1
 	}
-	if args[0] != "show" && args[0] != "doctor" {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> network {show|doctor}", "apps")
+	if args[0] == "attach" {
+		return cmdAppNetworkAttach(slug, args[1:])
+	}
+	if args[0] == "detach" {
+		return cmdAppNetworkDetach(slug, args[1:])
+	}
+	if (args[0] != "show" && args[0] != "doctor") || len(args) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}", "apps")
 		return 1
 	}
 
@@ -135,9 +149,10 @@ func loadAppNetworkSnapshot(ctx context.Context, client *Client, slug string) (a
 			Scope:        "same-account, same-region service calls",
 		},
 		PrivateNetwork: appNetworkPrivateNetwork{
-			Attached: false,
-			Status:   "not_configured",
-			Detail:   "Customer-facing private network attachment is not configured yet.",
+			Available: false,
+			Attached:  false,
+			Status:    "unavailable",
+			Detail:    "private network attachment status is unavailable",
 		},
 		Upstreams:  appNetworkUpstreams{Items: []api.DataUpstreamResponse{}},
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
@@ -153,6 +168,26 @@ func loadAppNetworkSnapshot(ctx context.Context, client *Client, slug string) (a
 			PlanCap:     static.PlanCap,
 			PlanAllowed: static.PlanAllowed,
 			Available:   true,
+		}
+	}
+
+	privateNetwork, privateErr := client.GetAppPrivateNetworkAttachment(ctx, slug)
+	if privateErr != nil {
+		snapshot.PrivateNetwork.Error = privateErr.Error()
+		snapshot.PrivateNetwork.Detail = "private network attachment status could not be read"
+	} else {
+		snapshot.PrivateNetwork.Available = true
+		snapshot.PrivateNetwork.Status = "not_configured"
+		snapshot.PrivateNetwork.Detail = "no private network attachment configured"
+		if privateNetwork.Attachment != nil {
+			a := privateNetwork.Attachment
+			snapshot.PrivateNetwork.Attached = true
+			snapshot.PrivateNetwork.NetworkID = a.NetworkID
+			snapshot.PrivateNetwork.Region = a.Region
+			snapshot.PrivateNetwork.CIDRs = append([]string(nil), a.CIDRs...)
+			snapshot.PrivateNetwork.Status = a.Status
+			snapshot.PrivateNetwork.StatusDetail = a.StatusDetail
+			snapshot.PrivateNetwork.Detail = a.StatusDetail
 		}
 	}
 
@@ -176,7 +211,16 @@ func renderAppNetworkSnapshot(snapshot appNetworkSnapshot) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "App network: %s\n", snapshot.App.Slug)
 	_, _ = fmt.Fprintf(osStdout, "  status:              %s\n", snapshot.App.Status)
-	_, _ = fmt.Fprintf(osStdout, "  private network:     %s\n", snapshot.PrivateNetwork.Status)
+	if !snapshot.PrivateNetwork.Available {
+		_, _ = fmt.Fprintf(osStdout, "  private network:     unavailable (%s)\n", snapshot.PrivateNetwork.Error)
+	} else if !snapshot.PrivateNetwork.Attached {
+		_, _ = fmt.Fprintf(osStdout, "  private network:     not configured\n")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "  private network:     %s (%s/%s)\n", snapshot.PrivateNetwork.Status, snapshot.PrivateNetwork.NetworkID, snapshot.PrivateNetwork.Region)
+		if snapshot.PrivateNetwork.StatusDetail != "" {
+			_, _ = fmt.Fprintf(osStdout, "    detail: %s\n", snapshot.PrivateNetwork.StatusDetail)
+		}
+	}
 	_, _ = fmt.Fprintf(osStdout, "  service discovery:   %s (<app-slug>.%s:%d)\n", enabledLabel(snapshot.ServiceDiscovery.Enabled), appNetworkServiceDomain, appNetworkServiceProxyPort)
 	if len(snapshot.EgressAllowlist) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "  egress policy:       unrestricted (no CIDR allowlist)")
@@ -355,13 +399,102 @@ func buildAppNetworkDoctorReport(snapshot appNetworkSnapshot, now time.Time) app
 		}
 	}
 
-	report.Checks = append(report.Checks, appNetworkCheck{
-		Name:        "private-network",
-		Status:      "skipped",
-		Detail:      "no customer-facing private network attachment is configured",
-		Remediation: "Use same-account service discovery today; a provider-neutral private network connector is the next networking slice.",
-	})
+	switch {
+	case !snapshot.PrivateNetwork.Available:
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:        "private-network",
+			Status:      "warn",
+			Detail:      snapshot.PrivateNetwork.Detail,
+			Observed:    snapshot.PrivateNetwork.Error,
+			Remediation: "Enable the private-network attachment surface or retry after the API is available.",
+		})
+	case !snapshot.PrivateNetwork.Attached:
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:   "private-network",
+			Status: "skipped",
+			Detail: "no private network attachment configured",
+		})
+	case snapshot.PrivateNetwork.Status == api.PrivateNetworkAttachmentStatusReady:
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:     "private-network",
+			Status:   "ok",
+			Detail:   "private network attachment is ready",
+			Observed: fmt.Sprintf("%s/%s (%s)", snapshot.PrivateNetwork.NetworkID, snapshot.PrivateNetwork.Region, strings.Join(snapshot.PrivateNetwork.CIDRs, ", ")),
+		})
+	case snapshot.PrivateNetwork.Status == api.PrivateNetworkAttachmentStatusError:
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:        "private-network",
+			Status:      "warn",
+			Detail:      "private network attachment failed",
+			Observed:    snapshot.PrivateNetwork.StatusDetail,
+			Remediation: "Correct the provider attachment and retry `gregale app " + snapshot.App.Slug + " network attach`.",
+		})
+	default:
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:        "private-network",
+			Status:      "warn",
+			Detail:      "private network attachment is pending; traffic remains blocked",
+			Observed:    snapshot.PrivateNetwork.StatusDetail,
+			Remediation: "Wait for the connector to report ready before sending private-network traffic.",
+		})
+	}
 	return report
+}
+
+func cmdAppNetworkAttach(slug string, args []string) int {
+	fs := newFlagSet("app network attach", flag.ContinueOnError)
+	region := fs.String("region", "", "private network region")
+	cidrs := fs.String("cidrs", "", "comma-separated private network CIDRs")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(*region) == "" || strings.TrimSpace(*cidrs) == "" {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> network attach <network-id> --region REGION --cidrs CIDR[,CIDR...]", "apps")
+		return 1
+	}
+	parts := strings.Split(*cidrs, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := client.SetAppPrivateNetworkAttachment(ctx, slug, api.AppPrivateNetworkAttachmentRequest{
+		NetworkID: strings.TrimSpace(fs.Arg(0)), Region: strings.TrimSpace(*region), CIDRs: parts,
+	})
+	if err != nil {
+		return printErr("Private network attachment failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	if out.Attachment == nil {
+		PrintOK(osStdout, "Private network attachment requested for %s.", slug)
+		return 0
+	}
+	PrintOK(osStdout, "Private network attachment requested for %s (status=%s).", slug, out.Attachment.Status)
+	return 0
+}
+
+func cmdAppNetworkDetach(slug string, args []string) int {
+	if len(args) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> network detach", "apps")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := client.ClearAppPrivateNetworkAttachment(ctx, slug); err != nil {
+		return printErr("Private network detach failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"slug": slug, "detached": true}))
+	}
+	PrintOK(osStdout, "Private network attachment detached from %s.", slug)
+	return 0
 }
 
 func appNetworkProbeState(row api.DataUpstreamResponse, now time.Time) (string, string) {

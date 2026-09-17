@@ -306,7 +306,7 @@ Inspect or update the outbound CIDR allowlist
 
 ### app network
 
-Show effective networking and inspect observed connectivity
+Inspect networking or manage private-network attachments
 
 ### app routes
 

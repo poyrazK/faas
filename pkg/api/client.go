@@ -4398,6 +4398,27 @@ func (c *Client) ClearAppStaticEgressIP(ctx context.Context, slug string) error 
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/static-egress-ip", nil, nil)
 }
 
+// GetAppPrivateNetworkAttachment reads the provider-neutral private-network
+// attachment intent for an app. A missing attachment is represented by a
+// successful response with attachment=null.
+func (c *Client) GetAppPrivateNetworkAttachment(ctx context.Context, slug string) (AppPrivateNetworkAttachmentResponse, error) {
+	var out AppPrivateNetworkAttachmentResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/network/private", nil, &out)
+}
+
+// SetAppPrivateNetworkAttachment replaces the app's private-network intent.
+// The API returns pending until a provider connector reconciles the request.
+func (c *Client) SetAppPrivateNetworkAttachment(ctx context.Context, slug string, req AppPrivateNetworkAttachmentRequest) (AppPrivateNetworkAttachmentResponse, error) {
+	var out AppPrivateNetworkAttachmentResponse
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/network/private", req, &out)
+}
+
+// ClearAppPrivateNetworkAttachment removes the app's private-network intent.
+// The operation is idempotent and returns no body.
+func (c *Client) ClearAppPrivateNetworkAttachment(ctx context.Context, slug string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/network/private", nil, nil)
+}
+
 // SetGithubWebhookSecret sets the per-tenant webhook secret for
 // the given installation_id (PR-D / ADR-012 §7 amendment). The
 // server hex-decodes SecretHex and writes the raw bytes to

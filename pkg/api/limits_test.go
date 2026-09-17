@@ -477,6 +477,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxAsyncInvocationDeadlineSeconds: 21600,
 			MaxAsyncResultRetentionSeconds:    2592000,
 			EgressAllowlistAllowed:            true, EgressAllowlistMaxSize: 16,
+			PrivateNetworkAllowed: true, PrivateNetworkCIDRsMax: 16,
 			// Issue #477 / ADR-118: Pro unlocks the per-app ingress
 			// IP allowlist. Same 16-entry cap as the egress
 			// allowlist — symmetric abuse-desk primitives.
@@ -636,6 +637,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			EgressAllowlistAllowed:            true, EgressAllowlistMaxSize: 64,
 			// ADR-119: Scale unlocks static egress IP (per-app quota=1).
 			StaticEgressIPAllowed: true, StaticEgressIPsPerApp: 1,
+			PrivateNetworkAllowed: true, PrivateNetworkCIDRsMax: 64,
 			// Issue #477 / ADR-118: Scale gets a 64-entry cap, 4× Pro
 			// (same ladder as EgressAllowlistMaxSize; SaaS-scale
 			// customers with multi-region deployments enumerate more

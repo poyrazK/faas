@@ -74,6 +74,9 @@ export type { AppOpenAPIPolicyApplyResponse } from './models/AppOpenAPIPolicyApp
 export type { AppOpenAPIPolicyPreviewResponse } from './models/AppOpenAPIPolicyPreviewResponse.js';
 export type { AppOpenAPIPolicyPreviewRoute } from './models/AppOpenAPIPolicyPreviewRoute.js';
 export type { AppOpenAPIPolicyPreviewRule } from './models/AppOpenAPIPolicyPreviewRule.js';
+export type { AppPrivateNetworkAttachment } from './models/AppPrivateNetworkAttachment.js';
+export type { AppPrivateNetworkAttachmentRequest } from './models/AppPrivateNetworkAttachmentRequest.js';
+export type { AppPrivateNetworkAttachmentResponse } from './models/AppPrivateNetworkAttachmentResponse.js';
 export type { AppRegistryCredentialListResponse } from './models/AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './models/AppRegistryCredentialResponse.js';
 export type { AppResponse } from './models/AppResponse.js';
@@ -632,6 +635,7 @@ export { ManagedPostgresService } from './services/ManagedPostgresService.js';
 export { MetaService } from './services/MetaService.js';
 export { MfaService } from './services/MfaService.js';
 export { MirrorService } from './services/MirrorService.js';
+export { NetworkingService } from './services/NetworkingService.js';
 export { ObservabilityService } from './services/ObservabilityService.js';
 export { OpenapiDiscoveryService } from './services/OpenapiDiscoveryService.js';
 export { OpenapiImportService } from './services/OpenapiImportService.js';

@@ -1187,6 +1187,15 @@ type Limits struct {
 	// impact. 0 with Allowed=false (Free/Hobby/Pro).
 	StaticEgressIPsPerApp int
 
+	// PrivateNetworkAllowed gates the provider-neutral private-network
+	// attachment intent. The first slice is deliberately Pro/Scale only;
+	// attachments remain fail-closed while an operator connector moves them
+	// from pending to ready.
+	PrivateNetworkAllowed bool
+	// PrivateNetworkCIDRsMax is the maximum number of destination CIDRs an
+	// attachment may request. Zero means the feature is not available.
+	PrivateNetworkCIDRsMax int
+
 	// PublicAuthIPAllowlistAllowed toggles the per-app ingress IP
 	// allowlist (ADR-118; extends ADR-079's reserved 'ip_allowlist'
 	// enum value). Pro/Scale only — Free/Hobby use edge rules
@@ -2449,6 +2458,8 @@ var planLimits = map[Plan]Limits{
 		// is the typical Pro-tier reachability graph.
 		EgressAllowlistAllowed: true,
 		EgressAllowlistMaxSize: 16,
+		PrivateNetworkAllowed:  true,
+		PrivateNetworkCIDRsMax: 16,
 		// ADR-119: Pro does NOT unlock static egress IP in v1 —
 		// this is a Scale-only feature. The Go zero values
 		// (false/0) apply; no explicit assignment needed. The
@@ -2814,8 +2825,10 @@ var planLimits = map[Plan]Limits{
 		// of 1 in v1 — the column is a single inet, not a child
 		// table. Bumping to N later is a per-plan int change with
 		// no schema impact. IPv4-only in v1.
-		StaticEgressIPAllowed: true,
-		StaticEgressIPsPerApp: 1,
+		StaticEgressIPAllowed:  true,
+		StaticEgressIPsPerApp:  1,
+		PrivateNetworkAllowed:  true,
+		PrivateNetworkCIDRsMax: 64,
 
 		// PublicAuthIPAllowlist: 4× Pro's budget tracks Scale's
 		// 4× DeployedApps (25 → 100). SaaS-scale customers with
@@ -4879,6 +4892,25 @@ func (p Plan) StaticEgressIPAllowed() bool {
 		return false
 	}
 	return l.StaticEgressIPAllowed
+}
+
+// PrivateNetworkAllowed reports whether a plan may request a private-network
+// attachment. Unknown plans fail closed; the connector still has to advance
+// the attachment to ready before any private traffic is admitted.
+func (p Plan) PrivateNetworkAllowed() bool {
+	l, ok := LimitsFor(p)
+	return ok && l.PrivateNetworkAllowed
+}
+
+// PrivateNetworkCIDRsMax returns the per-attachment destination CIDR cap.
+// Unknown and non-entitled plans return zero so callers cannot accidentally
+// treat a missing plan row as an unlocked network.
+func (p Plan) PrivateNetworkCIDRsMax() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.PrivateNetworkCIDRsMax
 }
 
 // StaticEgressIPsPerApp returns the per-plan count cap on pinned

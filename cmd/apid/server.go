@@ -1436,6 +1436,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppStaticEgressIP))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearAppStaticEgressIP))))
 
+	// Provider-neutral private-network attachment intent. The feature flag is
+	// checked inside each handler so the routes can be dark-launched before a
+	// provider connector is deployed. Mutations are MFA-protected and scoped
+	// like the static-egress customer surface.
+	mux.HandleFunc("GET /v1/apps/{slug}/network/private", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppPrivateNetworkAttachment))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/network/private", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppPrivateNetworkAttachment))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/network/private", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearAppPrivateNetworkAttachment))))
+
 	// Issue #879 / ADR-100 PR-C — tenant surfaces (customer-facing
 	// hostname routing primitive). Feature-flagged via
 	// api.TenantSurfacesEnabled(); the flag check runs inside each

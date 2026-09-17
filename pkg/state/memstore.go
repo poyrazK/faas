@@ -117,26 +117,27 @@ type memComputeNodeKey struct {
 }
 
 type MemStore struct {
-	objectBuckets           map[string]ObjectBucket
-	objectUsage             map[string]ObjectBucketUsage
-	objectGrants            map[string]map[string]int64
-	objectReports           []api.ObjectStorageUsageReport
-	objectAuthorizations    map[string]int64
-	objectProviderRequests  map[string]int64
-	objectAccessGrants      map[string]ObjectBucketAccessGrant
-	objectS3Credentials     map[string]ObjectS3Credential
-	objectMultipartUploads  map[string]ObjectMultipartUpload
-	objectUploadRoutes      map[string]ObjectUploadRoute
-	objectUploadCompletions map[string]ObjectUploadCompletion
-	mu                      sync.Mutex
-	accounts                map[string]Account
-	accountDeployRates      map[string]accountDeployRateRow
-	keys                    map[string]APIKey
-	keyByHash               map[string]APIKey
-	deployTokens            map[string]DeployToken
-	deployTokenByHash       map[string]DeployToken
-	apps                    map[string]App
-	appDeletionClaims       map[string]struct{}
+	objectBuckets             map[string]ObjectBucket
+	objectUsage               map[string]ObjectBucketUsage
+	objectGrants              map[string]map[string]int64
+	objectReports             []api.ObjectStorageUsageReport
+	objectAuthorizations      map[string]int64
+	objectProviderRequests    map[string]int64
+	objectAccessGrants        map[string]ObjectBucketAccessGrant
+	objectS3Credentials       map[string]ObjectS3Credential
+	objectMultipartUploads    map[string]ObjectMultipartUpload
+	objectUploadRoutes        map[string]ObjectUploadRoute
+	objectUploadCompletions   map[string]ObjectUploadCompletion
+	mu                        sync.Mutex
+	accounts                  map[string]Account
+	accountDeployRates        map[string]accountDeployRateRow
+	keys                      map[string]APIKey
+	keyByHash                 map[string]APIKey
+	deployTokens              map[string]DeployToken
+	deployTokenByHash         map[string]DeployToken
+	apps                      map[string]App
+	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
+	appDeletionClaims         map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -830,23 +831,24 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		objectAccessGrants:      map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:     map[string]ObjectS3Credential{},
-		objectMultipartUploads:  map[string]ObjectMultipartUpload{},
-		objectUploadRoutes:      map[string]ObjectUploadRoute{},
-		objectUploadCompletions: map[string]ObjectUploadCompletion{},
-		accounts:                map[string]Account{},
-		accountDeployRates:      map[string]accountDeployRateRow{},
-		keys:                    map[string]APIKey{},
-		keyByHash:               map[string]APIKey{},
-		deployTokens:            map[string]DeployToken{},
-		deployTokenByHash:       map[string]DeployToken{},
-		apps:                    map[string]App{},
-		appDeletionClaims:       map[string]struct{}{},
-		githubDeployBranches:    map[string]map[string]string{},
-		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
-		githubBindings:          map[string]GitHubBinding{},
-		githubInstalls:          map[string]GitHubInstall{},
+		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:       map[string]ObjectS3Credential{},
+		objectMultipartUploads:    map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:        map[string]ObjectUploadRoute{},
+		objectUploadCompletions:   map[string]ObjectUploadCompletion{},
+		accounts:                  map[string]Account{},
+		accountDeployRates:        map[string]accountDeployRateRow{},
+		keys:                      map[string]APIKey{},
+		keyByHash:                 map[string]APIKey{},
+		deployTokens:              map[string]DeployToken{},
+		deployTokenByHash:         map[string]DeployToken{},
+		apps:                      map[string]App{},
+		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
+		appDeletionClaims:         map[string]struct{}{},
+		githubDeployBranches:      map[string]map[string]string{},
+		githubDeployPolicies:      map[string]GitHubDeployPolicy{},
+		githubBindings:            map[string]GitHubBinding{},
+		githubInstalls:            map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -5290,6 +5292,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.envs, key)
 		}
 	}
+	delete(m.privateNetworkAttachments, id)
 	for key, v := range m.secrets {
 		if v.AppID == id {
 			delete(m.secrets, key)
