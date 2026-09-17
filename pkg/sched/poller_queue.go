@@ -124,7 +124,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			  from claimed c
 			 where i.id = c.id
 			 returning i.id::text, i.payload::text, i.headers::text,
-			           '{}'::text, i.created_at
+			           '{}'::text as metadata, i.created_at
 		)
 		select id, payload, headers, metadata, created_at
 		  from updated
