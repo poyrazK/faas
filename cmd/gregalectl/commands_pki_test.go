@@ -119,6 +119,43 @@ func TestPKIRenewalUsesRoutableVMMDHostnameAsTransportSAN(t *testing.T) {
 	}
 }
 
+func TestPKIRenewalIncludesUnavailableRegisteredNodes(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
+	if err != nil {
+		t.Fatalf("read pki renewal playbook: %v", err)
+	}
+	text := string(body)
+	start := strings.Index(text, "pki renewal — read the registered compute fleet")
+	end := strings.Index(text, "pki renewal — derive registry and inventory identities")
+	if start < 0 || end < 0 || start >= end {
+		t.Fatalf("renewal registry read is missing: start=%d end=%d", start, end)
+	}
+	registryRead := text[start:end]
+	for _, required := range []string{"compute-nodes", "list", "--break-glass-db", "--json"} {
+		if !strings.Contains(registryRead, required) {
+			t.Errorf("renewal registry read missing %q\n%s", required, registryRead)
+		}
+	}
+	if strings.Contains(registryRead, "--active-only") {
+		t.Fatalf("renewal excludes unavailable nodes needed for certificate recovery\n%s", registryRead)
+	}
+	deriveStart := strings.Index(text, "pki renewal — derive registry and inventory identities")
+	assertStart := strings.Index(text, "pki renewal — refuse an incomplete or stale fleet inventory")
+	if deriveStart < 0 || assertStart < 0 || deriveStart >= assertStart {
+		t.Fatalf("renewal registry projection is missing: derive=%d assert=%d", deriveStart, assertStart)
+	}
+	projection := text[deriveStart:assertStart]
+	if !strings.Contains(projection, "selectattr('role', 'defined')") {
+		t.Fatalf("renewal registry projection does not tolerate legacy rows without role metadata\n%s", projection)
+	}
+	if !strings.Contains(projection, "selectattr('role', 'equalto', 'compute-only')") {
+		t.Fatalf("renewal registry projection does not exclude legacy compatibility rows\n%s", projection)
+	}
+	if !strings.Contains(projection, "selectattr('gateway_target_url', 'defined')") {
+		t.Fatalf("renewal registry projection does not require a deployable split-box endpoint\n%s", projection)
+	}
+}
+
 func TestPKIRenewalOnlyResumesAValidInstalledBundle(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
 	if err != nil {
@@ -134,6 +171,32 @@ func TestPKIRenewalOnlyResumesAValidInstalledBundle(t *testing.T) {
 	resumeDefinition := text[detect:decide]
 	if !strings.Contains(resumeDefinition, "and faas_pki_status.rc == 0") {
 		t.Fatalf("renewal resumes an invalid installed bundle\n%s", resumeDefinition)
+	}
+}
+
+func TestPKIRenewalRecoversEnabledConsumersAfterCertificateRepair(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
+	if err != nil {
+		t.Fatalf("read pki renewal playbook: %v", err)
+	}
+	text := string(body)
+	inspect := strings.Index(text, "pki renewal — inspect affected daemon enablement")
+	reset := strings.Index(text, "pki renewal — clear failed state for affected enabled consumers")
+	start := strings.Index(text, "pki renewal — start affected enabled consumers that were down")
+	verify := strings.Index(text, "pki renewal — verify fleet health after activation")
+	if inspect < 0 || reset < 0 || start < 0 || verify < 0 || !(inspect < reset && reset < start && start < verify) {
+		t.Fatalf("renewal failed-consumer recovery order is unsafe: inspect=%d reset=%d start=%d verify=%d", inspect, reset, start, verify)
+	}
+	recovery := text[reset:verify]
+	for _, required := range []string{
+		"reset-failed",
+		"item.rc != 0",
+		"item.item in (faas_pki_enabled_changed_units | default([]))",
+		"state: started",
+	} {
+		if !strings.Contains(recovery, required) {
+			t.Errorf("renewal failed-consumer recovery missing %q\n%s", required, recovery)
+		}
 	}
 }
 

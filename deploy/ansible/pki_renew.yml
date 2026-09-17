@@ -3,7 +3,7 @@
 # that reads ca.key. Active hosts export trust-only material, the issuer
 # preserves every safe leaf, and each target activates one complete bundle.
 
-- name: Reconcile renewal inventory with the active compute registry
+- name: Reconcile renewal inventory with the registered compute fleet
   hosts: control_plane
   gather_facts: false
   become: true
@@ -14,13 +14,18 @@
         that:
           - groups['control_plane'] | length == 1
 
-    - name: pki renewal — read the active compute registry
+    # Certificate drift is itself allowed to mark every compute node
+    # unavailable. Renewal must still be able to recover those durable
+    # split-box registrations, so select compute rows with the gateway
+    # endpoint required by the current deployment contract rather than the
+    # active=true routing subset. Rows without that endpoint are legacy
+    # single-box/daemon compatibility registrations, not fleet hosts.
+    - name: pki renewal — read the registered compute fleet
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
           - compute-nodes
           - list
-          - --active-only
           - --break-glass-db
           - --json
       register: faas_pki_registry
@@ -30,6 +35,9 @@
       ansible.builtin.set_fact:
         faas_pki_registry_nodes: >-
           {{ (faas_pki_registry.stdout | from_json).nodes
+             | selectattr('role', 'defined')
+             | selectattr('role', 'equalto', 'compute-only')
+             | selectattr('gateway_target_url', 'defined')
              | map(attribute='name') | list | sort }}
         faas_pki_inventory_nodes: >-
           {{ groups['compute_nodes']
@@ -40,7 +48,7 @@
         that:
           - faas_pki_registry_nodes == faas_pki_inventory_nodes
         fail_msg: >-
-          Active compute registry {{ faas_pki_registry_nodes }} differs from
+          Registered compute fleet {{ faas_pki_registry_nodes }} differs from
           renewal inventory {{ faas_pki_inventory_nodes }}. Reconcile the
           generated inventory before rotating any certificate.
 
@@ -405,6 +413,22 @@
           failed_when: false
           when: faas_pki_action_required
 
+        - name: pki renewal — inspect affected daemon enablement  # noqa: command-instead-of-module
+          ansible.builtin.command: "systemctl is-enabled {{ item }}"
+          loop: "{{ faas_pki_changed_units }}"
+          register: faas_pki_enabled_units
+          changed_when: false
+          failed_when: false
+          when: faas_pki_action_required
+
+        - name: pki renewal — derive affected enabled consumers
+          ansible.builtin.set_fact:
+            faas_pki_enabled_changed_units: >-
+              {{ faas_pki_enabled_units.results | default([])
+                 | selectattr('rc', 'equalto', 0)
+                 | map(attribute='item') | list }}
+          when: faas_pki_action_required
+
         - name: pki renewal — signal active hot-reload consumers
           ansible.builtin.command:
             argv:
@@ -433,6 +457,37 @@
             - faas_pki_action_required
             - item.rc == 0
             - item.item not in faas_pki_hup_units
+
+        # A certificate error can exhaust a consumer's start limit before the
+        # repaired bundle lands. Enabled services are part of fleet_verify's
+        # required topology, so recover affected ones that were already down;
+        # disabled services remain untouched.
+        - name: pki renewal — clear failed state for affected enabled consumers
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - reset-failed
+              - "{{ item.item }}"
+          loop: "{{ faas_pki_active_units.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          changed_when: true
+          when:
+            - faas_pki_action_required
+            - item.rc != 0
+            - item.item in (faas_pki_enabled_changed_units | default([]))
+
+        - name: pki renewal — start affected enabled consumers that were down
+          ansible.builtin.systemd:
+            name: "{{ item.item }}"
+            state: started
+          loop: "{{ faas_pki_active_units.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when:
+            - faas_pki_action_required
+            - item.rc != 0
+            - item.item in (faas_pki_enabled_changed_units | default([]))
 
         - name: pki renewal — verify fleet health after activation
           ansible.builtin.include_role:
