@@ -567,6 +567,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go heartbeatRetention.Run(ctx)
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
+	privateNetworkMetrics := privatenetwork.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	// Dashboard gauges (spec §12): schedd owns the snapshots table and the
 	// admission ledger, so the four fcvm_* gauges live here, not in vmmd.
 	// The DashboardMetrics callbacks close over `store` (PG) and `ledger`
@@ -1070,7 +1071,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
 					Logger: log,
 					Observe: func(obs privatenetwork.ReconcileObservation) {
-						log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration)
+						privateNetworkMetrics.Observe(obs)
+						readyNodes, failedNodes := 0, 0
+						for _, node := range obs.Nodes {
+							switch node.Status {
+							case api.PrivateNetworkAttachmentStatusReady:
+								readyNodes++
+							case api.PrivateNetworkAttachmentStatusError:
+								failedNodes++
+							}
+						}
+						log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration, "ready_nodes", readyNodes, "failed_nodes", failedNodes)
 					},
 				})
 				if reconErr != nil {

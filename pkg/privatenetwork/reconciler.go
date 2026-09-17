@@ -43,6 +43,30 @@ type RouteApplier interface {
 	Apply(ctx context.Context, appID string, cidrs []netip.Prefix) error
 }
 
+// RouteNodeObservation describes the result for one compute node. A route
+// applier may return a partial report when one node fails; the reconciler uses
+// it for operator diagnostics while the attachment remains fail-closed.
+type RouteNodeObservation struct {
+	NodeID string
+	Status string
+	Detail string
+}
+
+// RouteApplyReport is the optional node-level result returned by a route
+// applier. Keeping this additive preserves the small RouteApplier interface
+// for existing providers and test doubles.
+type RouteApplyReport struct {
+	Nodes []RouteNodeObservation
+}
+
+// RouteReportingApplier is an optional extension implemented by appliers that
+// can report per-node convergence. The reconciler still accepts a plain
+// RouteApplier and records an empty node report for those implementations.
+type RouteReportingApplier interface {
+	RouteApplier
+	ApplyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix) (RouteApplyReport, error)
+}
+
 type NotifyFunc func(ctx context.Context, attachment state.AppPrivateNetworkAttachment)
 
 type ReconcileObservation struct {
@@ -50,6 +74,7 @@ type ReconcileObservation struct {
 	Status   string
 	Outcome  string
 	Duration time.Duration
+	Nodes    []RouteNodeObservation
 }
 
 type ReconcileSummary struct {
@@ -58,6 +83,8 @@ type ReconcileSummary struct {
 	Pending    int
 	Failed     int
 	Contended  int
+	NodeReady  int
+	NodeFailed int
 }
 
 type ReconcilerOptions struct {
@@ -126,6 +153,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		}
 		started := r.now()
 		outcome := "pending"
+		var routeReport RouteApplyReport
 		check, checkErr := r.connector.Check(ctx, attachment)
 		switch {
 		case checkErr != nil:
@@ -157,13 +185,26 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 				}
 				break
 			}
-			if err := r.applier.Apply(ctx, attachment.AppID, attachment.CIDRs); err != nil {
+			if reporting, ok := r.applier.(RouteReportingApplier); ok {
+				routeReport, checkErr = reporting.ApplyWithReport(ctx, attachment.AppID, attachment.CIDRs)
+			} else {
+				checkErr = r.applier.Apply(ctx, attachment.AppID, attachment.CIDRs)
+			}
+			for _, node := range routeReport.Nodes {
+				switch node.Status {
+				case api.PrivateNetworkAttachmentStatusReady:
+					summary.NodeReady++
+				case api.PrivateNetworkAttachmentStatusError:
+					summary.NodeFailed++
+				}
+			}
+			if checkErr != nil {
 				summary.Failed++
-				detail := boundedDetail(fmt.Sprintf("route activation failed: %v", err))
+				detail := boundedDetail(fmt.Sprintf("route activation failed: %v", checkErr))
 				if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 					sweepErrs = append(sweepErrs, updateErr)
 				} else {
-					sweepErrs = append(sweepErrs, err)
+					sweepErrs = append(sweepErrs, checkErr)
 				}
 				outcome = "error"
 				break
@@ -187,10 +228,22 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 			}
 		}
 		if r.observe != nil {
-			r.observe(ReconcileObservation{AppID: attachment.AppID, Status: attachment.Status, Outcome: outcome, Duration: r.now().Sub(started)})
+			r.observe(ReconcileObservation{
+				AppID: attachment.AppID, Status: attachment.Status, Outcome: outcome,
+				Duration: r.now().Sub(started), Nodes: cloneRouteNodeObservations(routeReport.Nodes),
+			})
 		}
 	}
 	return summary, errors.Join(sweepErrs...)
+}
+
+func cloneRouteNodeObservations(in []RouteNodeObservation) []RouteNodeObservation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]RouteNodeObservation, len(in))
+	copy(out, in)
+	return out
 }
 
 func (r *Reconciler) Run(ctx context.Context) error {
