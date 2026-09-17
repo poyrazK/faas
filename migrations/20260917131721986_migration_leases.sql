@@ -1,3 +1,5 @@
+-- filename: 20260917131721986_migration_leases.sql
+
 -- +goose Up
 -- Durable source-side migration leases (Issue #1184 / ADR-137).
 --

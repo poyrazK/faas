@@ -58,7 +58,7 @@ type execer interface {
 // statement that rolls one window of usage_minutes rows into
 // usage_daily. Mirrors the column set declared in
 // migrations/00067_extend_metering_telemetry.sql plus the job identity
-// widening in migrations/20260918100000001_usage_daily_job_meter_kind.sql.
+// widening in migrations/20260917131722793_usage_daily_job_meter_kind.sql.
 // The on-conflict
 // clause uses OVERWRITE (col = EXCLUDED.col) — re-running for the
 // same window converges to the same day total, which is the right

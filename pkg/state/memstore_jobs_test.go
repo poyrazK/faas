@@ -117,20 +117,20 @@ func TestMemStoreJobs(t *testing.T) {
 		t.Fatalf("JobTaskClaimBatch len = %d, want 2", len(claimed))
 	}
 
-	// 6. JobTaskMarkTerminal transitions task 0 to 'succeeded'.
+	// 6. JobTaskMarkTerminal transitions task 0 to 'failed'.
 	//    Asserting via JobTaskGet (not the slice from step 5) ensures
 	//    the transition was actually persisted, not just returned
 	//    by the claim call.
 	now := time.Now().UTC()
-	if err := ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", now); err != nil {
+	if err := ms.JobTaskMarkTerminal(ctx, run.ID, 0, "failed", 1, "user_error", "boom", now); err != nil {
 		t.Fatalf("JobTaskMarkTerminal: %v", err)
 	}
 	got0, err := ms.JobTaskGet(ctx, run.ID, 0)
 	if err != nil {
 		t.Fatalf("JobTaskGet(0): %v", err)
 	}
-	if got0.Status != "succeeded" {
-		t.Fatalf("JobTaskGet(0).Status = %q, want succeeded", got0.Status)
+	if got0.Status != "failed" {
+		t.Fatalf("JobTaskGet(0).Status = %q, want failed", got0.Status)
 	}
 	if got0.FinishedAt == nil {
 		t.Fatalf("JobTaskGet(0).FinishedAt is nil; MarkTerminal should stamp it")
