@@ -1,19 +1,27 @@
 asyncapi: 3.0.0
 id: urn:gregale:events
 info:
-  title: Gregale outbound app-webhook events
-  version: 1.0.0
+  title: Gregale event contracts
+  version: 1.1.0
   description: |
     Gregale delivers selected app lifecycle and billing events to an app's
-    configured webhook subscriptions. The wire envelope is CloudEvents 1.0
-    structured JSON over HTTP POST. The request is signed with the webhook
-    secret using the X-Faas-Webhook-Signature header; retry metadata is carried
-    in the remaining X-Faas-* headers.
+    configured webhook subscriptions, and accepts external events for durable
+    workflow runs. Outbound webhook messages use CloudEvents 1.0 structured
+    JSON over HTTP POST and are signed with the webhook secret; workflow
+    external events use the public API's authenticated JSON endpoint.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
 defaultContentType: application/cloudevents+json
 servers:
+  api:
+    host: '{api_host}'
+    protocol: https
+    description: Gregale public API.
+    variables:
+      api_host:
+        description: Hostname of the Gregale API.
+        default: api.gregale.dev
   appWebhook:
     host: '{webhook_host}'
     protocol: https
@@ -26,21 +34,40 @@ channels:
   appParked:
     address: app.parked
     description: Emitted after an app is parked and its instances have drained.
+    servers:
+      - $ref: '#/servers/appWebhook'
     messages:
       appParked:
         $ref: '#/components/messages/AppParked'
   appWoken:
     address: app.woken
     description: Emitted after a parked app is activated and a first instance is ready.
+    servers:
+      - $ref: '#/servers/appWebhook'
     messages:
       appWoken:
         $ref: '#/components/messages/AppWoken'
   usageStatementFinalized:
     address: usage_statement.finalized
     description: Emitted when an API consumer usage statement becomes payable.
+    servers:
+      - $ref: '#/servers/appWebhook'
     messages:
       usageStatementFinalized:
         $ref: '#/components/messages/UsageStatementFinalized'
+  workflowExternalEvent:
+    address: /v1/workflows/runs/{id}/events
+    description: Accept an external event for a non-terminal durable workflow run.
+    parameters:
+      id:
+        description: UUID of the workflow run that receives the event.
+        examples:
+          - 00000000-0000-0000-0000-000000000000
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      workflowExternalEvent:
+        $ref: '#/components/messages/WorkflowExternalEvent'
 operations:
   deliverAppParked:
     action: send
@@ -75,7 +102,29 @@ operations:
       http:
         method: POST
         bindingVersion: '0.3.0'
+  receiveWorkflowExternalEvent:
+    action: receive
+    channel:
+      $ref: '#/channels/workflowExternalEvent'
+    summary: Accept an external event for a durable workflow run.
+    description: |
+      Events are recorded for pending, running, or awaiting_event workflow
+      runs. Terminal runs reject the event with workflow_not_running. The
+      endpoint is idempotent when the caller supplies an Idempotency-Key.
+    messages:
+      - $ref: '#/channels/workflowExternalEvent/messages/workflowExternalEvent'
+    security:
+      - bearerAuth: []
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer API key accepted by the public API.
   messages:
     AppParked:
       name: app.parked
@@ -113,7 +162,40 @@ components:
           headers:
             $ref: '#/components/schemas/WebhookHeaders'
           bindingVersion: '0.3.0'
+    WorkflowExternalEvent:
+      name: workflow.external_event
+      title: Workflow external event
+      summary: An external event supplied to resume a durable workflow step.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/WorkflowExternalEventPayload'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WorkflowEventHeaders'
+          bindingVersion: '0.3.0'
   schemas:
+    WorkflowEventHeaders:
+      type: object
+      description: Optional request headers for workflow event delivery.
+      properties:
+        Idempotency-Key:
+          type: string
+          minLength: 1
+          description: Reuses the same recorded event for retries of one request.
+      additionalProperties: true
+    WorkflowExternalEventPayload:
+      type: object
+      description: External event recorded against a workflow run.
+      required:
+        - event_name
+      properties:
+        event_name:
+          type: string
+          minLength: 1
+          description: Application-defined event name matched by the waiting step.
+        payload:
+          description: Caller-defined JSON value delivered to the workflow step.
     WebhookHeaders:
       type: object
       description: Application headers emitted on every app-webhook delivery.
