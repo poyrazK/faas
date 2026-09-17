@@ -464,6 +464,36 @@ func TestMemStoreJobs_JobRunIncrementDeadLetter(t *testing.T) {
 	}
 }
 
+// TestMemStoreJobs_JobRunReopenDeadLetter — happy + ErrNotFound when the
+// run has no dead-letter entries to reopen.
+func TestMemStoreJobs_JobRunReopenDeadLetter(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	_, run, _ := newJobAndRun(t, ms, "acct-DLR", "dlr1")
+
+	if err := ms.JobRunReopenDeadLetter(ctx, run.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("JobRunReopenDeadLetter(empty): err = %v, want ErrNotFound", err)
+	}
+	if err := ms.JobRunIncrementDeadLetter(ctx, run.ID); err != nil {
+		t.Fatalf("JobRunIncrementDeadLetter: %v", err)
+	}
+	if err := ms.JobRunReopenDeadLetter(ctx, run.ID); err != nil {
+		t.Fatalf("JobRunReopenDeadLetter: %v", err)
+	}
+	got, err := ms.JobRunGetByID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("JobRunGetByID: %v", err)
+	}
+	if got.DeadLetterCount != 0 || got.AggregateStatus != "running" || got.FinishedAt != nil {
+		t.Fatalf("reopened run = count=%d status=%q finished=%v, want 0/running/nil",
+			got.DeadLetterCount, got.AggregateStatus, got.FinishedAt)
+	}
+	if err := ms.JobRunReopenDeadLetter(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("JobRunReopenDeadLetter(missing): err = %v, want ErrNotFound", err)
+	}
+}
+
 // TestMemStoreJobs_JobTaskMarkClaimed — happy + ErrNotFound on
 // non-queued task + ErrNotFound on missing runID.
 func TestMemStoreJobs_JobTaskMarkClaimed(t *testing.T) {
