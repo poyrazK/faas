@@ -108,6 +108,61 @@ func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
 	}
 }
 
+func TestMemStoreJobs_ListJobInstancesAndOrphans(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-JL", "job-list")
+
+	// Task 1 deliberately has no claimed task owner, so its instance is
+	// orphaned from the dispatch surface. Task 0 is claimed below and should
+	// be excluded from the orphan report while remaining meter-visible.
+	orphan, err := ms.CreateJobInstance(ctx, "instance-orphan", job.ID, run.ID, 1,
+		"running", 256, "node-1", "wake-orphan")
+	if err != nil {
+		t.Fatalf("CreateJobInstance(orphan): %v", err)
+	}
+	owned, err := ms.CreateJobInstance(ctx, "instance-owned", job.ID, run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-owned")
+	if err != nil {
+		t.Fatalf("CreateJobInstance(owned): %v", err)
+	}
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, owned.ID, "lease-1", time.Now().Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("JobTaskMarkClaimed: %v", err)
+	}
+
+	active, err := ms.ListJobInstances(ctx)
+	if err != nil {
+		t.Fatalf("ListJobInstances: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("ListJobInstances len = %d, want 2", len(active))
+	}
+
+	orphans, err := ms.ListOrphanedJobInstances(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListOrphanedJobInstances: %v", err)
+	}
+	if len(orphans) != 1 || orphans[0].ID != orphan.ID {
+		t.Fatalf("ListOrphanedJobInstances = %+v, want [%s]", orphans, orphan.ID)
+	}
+	limited, err := ms.ListOrphanedJobInstances(ctx, 1)
+	if err != nil || len(limited) != 1 {
+		t.Fatalf("ListOrphanedJobInstances(limit=1) = (%v, %d), want one row", err, len(limited))
+	}
+
+	if err := ms.UpdateInstanceState(ctx, orphan.ID, "parked"); err != nil {
+		t.Fatalf("UpdateInstanceState(orphan): %v", err)
+	}
+	active, err = ms.ListJobInstances(ctx)
+	if err != nil {
+		t.Fatalf("ListJobInstances(after parked): %v", err)
+	}
+	if len(active) != 1 || active[0].ID != owned.ID {
+		t.Fatalf("ListJobInstances(after parked) = %+v, want owned row only", active)
+	}
+}
+
 // TestMemStoreJobs_JobGetByID covers the happy + ErrNotFound paths
 // and the soft-delete invisibility rule.
 func TestMemStoreJobs_JobGetByID(t *testing.T) {
