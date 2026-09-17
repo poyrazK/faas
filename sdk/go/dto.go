@@ -54,6 +54,7 @@ type (
 	DeploymentResponse             = api.DeploymentResponse
 	DeploymentListResponse         = api.DeploymentListResponse
 	LatestDeploymentsByAppResponse = api.LatestDeploymentsByAppResponse
+	PreviewStatusResponse          = api.PreviewStatusResponse
 
 	// Account.
 	RepoResponse            = api.RepoResponse

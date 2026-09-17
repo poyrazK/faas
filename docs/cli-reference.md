@@ -989,6 +989,16 @@ List pull-request and developer previews (defaults to the linked app)
 
 Inspect a preview and its latest deployment
 
+### preview wait
+
+Wait for a preview deployment to become ready
+
+| Flag | Meaning | |
+|---|---|---|
+| `--progress` | print deployment transitions while waiting |  |
+| `--open` | open the preview URL after it becomes ready |  |
+| `--timeout <SECONDS>` | maximum seconds to wait |  |
+
 ### preview destroy
 
 Tear down a preview app (POST /v1/preview/{slug}/destroy)

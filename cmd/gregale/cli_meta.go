@@ -835,6 +835,11 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
 			{Name: "show", Short: "Inspect a preview and its latest deployment"},
+			{Name: "wait", Short: "Wait for a preview deployment to become ready", Flags: []cliFlag{
+				{Name: "progress", Short: "print deployment transitions while waiting"},
+				{Name: "open", Short: "open the preview URL after it becomes ready"},
+				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
+			}},
 			{Name: "destroy", Short: "Tear down a preview app (POST /v1/preview/{slug}/destroy)"},
 		},
 	},

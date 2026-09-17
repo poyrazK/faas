@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,6 +126,95 @@ func TestPreviewShowRejectsProductionAppBeforeDeploymentLookup(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	if code := cmdPreviewShow([]string{"web"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
+	}
+}
+
+func TestPreviewWaitReturnsReadyReceipt(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	oldInterval := previewWaitPollInterval
+	previewWaitPollInterval = time.Millisecond
+	defer func() { previewWaitPollInterval = oldInterval }()
+	expires := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	var latestReads atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/pr-42-web":
+			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", PreviewExpiresAt: &expires, Status: "active", URL: "https://pr-42-web.gregale.dev"})
+		case "/v1/apps/pr-42-web/deployments/latest":
+			status := "pending"
+			if latestReads.Add(1) > 1 {
+				status = statusLive
+			}
+			writeJSONTest(w, api.DeploymentResponse{ID: "deploy-42", AppID: "preview-web", Status: status, CreatedAt: "2026-09-17T08:00:00Z"})
+		case "/v1/deployments/deploy-42":
+			writeJSONTest(w, api.DeploymentResponse{ID: "deploy-42", AppID: "preview-web", Status: statusLive, CreatedAt: "2026-09-17T08:00:00Z"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+	jsonOutput = true
+
+	if code := cmdPreviewWait([]string{"pr-42-web", "--timeout", "1"}); code != 0 {
+		t.Fatalf("cmdPreviewWait exit = %d, want 0", code)
+	}
+	var got previewWaitReceipt
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if !got.Ready || got.Preview.URL != "https://pr-42-web.gregale.dev" {
+		t.Fatalf("receipt = %+v, want ready preview URL", got)
+	}
+	if got.Deployment == nil || got.Deployment.ID != "deploy-42" || got.Deployment.Status != statusLive {
+		t.Fatalf("deployment = %+v, want live deploy-42", got.Deployment)
+	}
+}
+
+func TestPreviewWaitTimeoutKeepsResumeReceipt(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	oldInterval := previewWaitPollInterval
+	previewWaitPollInterval = time.Millisecond
+	defer func() { previewWaitPollInterval = oldInterval }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/pr-42-web":
+			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active", URL: "https://pr-42-web.gregale.dev"})
+		case "/v1/apps/pr-42-web/deployments/latest":
+			writeJSONTest(w, api.DeploymentResponse{ID: "deploy-42", AppID: "preview-web", Status: "pending"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	jsonOutput = true
+
+	if code := cmdPreviewWait([]string{"pr-42-web", "--timeout", "1"}); code != 3 {
+		t.Fatalf("cmdPreviewWait timeout exit = %d, want 3", code)
+	}
+	var got previewWaitReceipt
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode timeout output: %v\n%s", err, stdout.String())
+	}
+	if !got.TimedOut || got.Ready || got.ResumeCommand != "gregale preview wait pr-42-web --timeout 1" {
+		t.Fatalf("timeout receipt = %+v", got)
+	}
+	if got.NextAction != "gregale logs pr-42-web --deployment deploy-42 --follow" {
+		t.Fatalf("next action = %q", got.NextAction)
+	}
+	if !strings.Contains(stderr.String(), "wait deadline") {
+		t.Fatalf("stderr = %q, want wait deadline hint", stderr.String())
 	}
 }
 

@@ -7,6 +7,23 @@ first). No CI configuration required; the integration is
 triggered by the GitHub App the customer installed via
 `gregale connect`.
 
+## CLI workflow
+
+Queue a preview without keeping the terminal attached to the build, then
+resume by preview slug when a later step needs the usable URL:
+
+```bash
+gregale preview create --app checkout --repo acme/checkout \
+  --ref feature/shipping --pr-number 42 --no-wait
+gregale preview wait pr-42-checkout --open
+```
+
+`preview wait` follows the newest deployment for the preview, so a new push
+does not leave the command watching an obsolete deployment. Use `--progress`
+for lifecycle transitions or `--json` for a stable receipt containing the
+preview URL, expiry, deployment status, readiness, timeout resume command,
+and the next diagnostic action.
+
 ## URL shape
 
 ```
