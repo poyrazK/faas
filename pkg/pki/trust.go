@@ -233,8 +233,10 @@ func trustLeafNeedsRenewal(rootDir string, role Role, expectedCN string, caCert 
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
-	_, verifyErr := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}})
-	if verifyErr != nil {
+	// Any verification failure is repairable drift on the renewal path. The
+	// strict export validates the repaired bundle before it can be installed.
+	verifiedChains, _ := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}})
+	if len(verifiedChains) == 0 {
 		return true, nil
 	}
 	return false, nil
