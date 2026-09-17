@@ -137,8 +137,8 @@ func TestScanListeningFile_MatchOwnedInode(t *testing.T) {
 	path := filepath.Join(dir, "net_tcp")
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
-		" 0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345                   ",
-		" 1: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 67890                   ",
+		" 0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0",
+		" 1: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 67890 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
@@ -162,7 +162,7 @@ func TestScanListeningFile_IgnoresUnowned(t *testing.T) {
 	path := filepath.Join(dir, "net_tcp")
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
-		" 0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345                   ",
+		" 0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
@@ -180,7 +180,7 @@ func TestScanListeningFile_IgnoresNonListen(t *testing.T) {
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
 		// state 01 = ESTABLISHED — not LISTEN (0A), should be skipped.
-		" 0: 0100007F:1F90 00000000:0000 01 00000000:00000000 00:00000000 00000000     0        0 12345                   ",
+		" 0: 0100007F:1F90 00000000:0000 01 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
@@ -199,7 +199,7 @@ func TestScanEstablishedFile_MatchOwnedInode(t *testing.T) {
 	path := filepath.Join(dir, "net_tcp")
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
-		" 0: 0100007F:1F90 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 12345                   ",
+		" 0: 0100007F:1F90 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
@@ -217,7 +217,7 @@ func TestScanEstablishedFile_IgnoresListen(t *testing.T) {
 	path := filepath.Join(dir, "net_tcp")
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
-		" 0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345                   ",
+		" 0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
@@ -235,7 +235,7 @@ func TestScanEstablishedFile_IgnoresUnowned(t *testing.T) {
 	path := filepath.Join(dir, "net_tcp")
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
-		" 0: 0100007F:1F90 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 12345                   ",
+		" 0: 0100007F:1F90 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
@@ -252,9 +252,9 @@ func TestScanEstablishedFile_CountsMultiple(t *testing.T) {
 	path := filepath.Join(dir, "net_tcp")
 	content := strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
-		" 0: 0100007F:1F90 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 11111                   ",
-		" 1: 0100007F:1F91 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 22222                   ",
-		" 2: 0100007F:1F92 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 33333                   ",
+		" 0: 0100007F:1F90 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 11111 1 0000000000000000 100 0 0 10 0",
+		" 1: 0100007F:1F91 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 22222 1 0000000000000000 100 0 0 10 0",
+		" 2: 0100007F:1F92 0100007F:0050 01 00000000:00000000 00:00000000 00000000     0        0 33333 1 0000000000000000 100 0 0 10 0",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fake proc/net/tcp: %v", err)
