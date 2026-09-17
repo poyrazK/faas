@@ -3799,7 +3799,7 @@ type Store interface {
 	// (pending|dispatching) whose deadline_at is in the past.
 	ListDeadlineBreachedInvocations(ctx context.Context, now time.Time, limit int) ([]string, error)
 	// ForceDeadlineBreachedInvocations transitions the listed IDs
-	// to dead_letter with outcome='deadline'. Decrements the
+	// to dead_letter with outcome='timeout'. Decrements the
 	// per-account counter for each transitioned row.
 	ForceDeadlineBreachedInvocations(ctx context.Context, ids []string) (int, error)
 	// RetryQueueDeadLetter (ADR-134 PR-C) resets an invocations

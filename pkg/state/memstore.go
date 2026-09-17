@@ -21799,9 +21799,22 @@ func (m *MemStore) ListDeadlineBreachedInvocations(_ context.Context, now time.T
 // dead_letter with outcome='timeout'. Decrements the per-account
 // counter for each transitioned row.
 func (m *MemStore) ForceDeadlineBreachedInvocations(_ context.Context, ids []string) (int, error) {
+	forced, err := m.forceDeadlineBreachedInvocations(ids)
+	return len(forced), err
+}
+
+// ForceDeadlineBreachedInvocationsWithDetails is the scheduler-facing
+// variant of ForceDeadlineBreachedInvocations. It returns only rows that this
+// store transition actually changed so terminal destinations are not emitted
+// for a row won by another reaper tick.
+func (m *MemStore) ForceDeadlineBreachedInvocationsWithDetails(_ context.Context, ids []string) ([]Invocation, error) {
+	return m.forceDeadlineBreachedInvocations(ids)
+}
+
+func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
+	forced := make([]Invocation, 0, len(ids))
 	for _, id := range ids {
 		inv, ok := m.invocations[id]
 		if !ok {
@@ -21823,9 +21836,9 @@ func (m *MemStore) ForceDeadlineBreachedInvocations(_ context.Context, ids []str
 				m.accountAsyncQuota[inv.AccountID] = row
 			}
 		}
-		n++
+		forced = append(forced, inv)
 	}
-	return n, nil
+	return forced, nil
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the MemStore mirror of

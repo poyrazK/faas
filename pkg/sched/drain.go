@@ -13,7 +13,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -254,38 +253,8 @@ func (d *Drain) emitInvocationDestination(ctx context.Context, inv state.Invocat
 	if d == nil || d.store == nil {
 		return
 	}
-	destination := inv.OnSuccessDestinationID
-	status := "succeeded"
-	if outcome != state.OutcomeSuccess {
-		destination = inv.OnFailureDestinationID
-		status = string(outcome)
-		if status == "" {
-			status = "failed"
-		}
-	}
-	if destination == "" {
-		return
-	}
-	finishedAt := d.now().UTC()
-	payload := map[string]any{
-		"job_id":      inv.ID,
-		"run_id":      inv.ID,
-		"app_id":      inv.AppID,
-		"account_id":  inv.AccountID,
-		"source":      string(inv.Source),
-		"status":      status,
-		"outcome":     string(outcome),
-		"finished_at": finishedAt,
-		"attempts":    inv.Attempts,
-	}
-	if len(result) > 0 {
-		payload["result"] = json.RawMessage(result)
-	}
-	if lastError != "" {
-		payload["error"] = lastError
-	}
-	if err := webhook.EmitTo(ctx, d.store, inv.AppID, destination, state.AppWebhookEventJobFinished, payload); err != nil {
-		d.log.Warn("drain: enqueue invocation destination", "inv", inv.ID, "destination", destination, "err", err)
+	if err := enqueueInvocationDestination(ctx, d.store, d.now, inv, outcome, result, lastError); err != nil {
+		d.log.Warn("drain: enqueue invocation destination", "inv", inv.ID, "err", err)
 	}
 }
 

@@ -28979,18 +28979,32 @@ func (s *PgStore) ListDeadlineBreachedInvocations(ctx context.Context, now time.
 // to dead_letter with outcome='timeout'. Decrements the per-account
 // counter for each one so the cap reflects the abandoned work.
 func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []string) (int, error) {
+	forced, err := s.forceDeadlineBreachedInvocations(ctx, ids)
+	return len(forced), err
+}
+
+// ForceDeadlineBreachedInvocationsWithDetails is the scheduler-facing
+// variant of ForceDeadlineBreachedInvocations. It returns only rows that this
+// transaction actually transitioned, allowing the reaper to emit a terminal
+// destination exactly once even when another worker raced the deadline list.
+func (s *PgStore) ForceDeadlineBreachedInvocationsWithDetails(ctx context.Context, ids []string) ([]Invocation, error) {
+	return s.forceDeadlineBreachedInvocations(ctx, ids)
+}
+
+func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []string) ([]Invocation, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("state: invocations deadline begin: %w", err)
+		return nil, fmt.Errorf("state: invocations deadline begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Return account_ids from the state-changing UPDATE itself. A
-	// deadline batch can contain a row that completed after the list
-	// query; only rows that actually transition may release a slot.
+	// Return the transitioned invocation rows from the state-changing UPDATE
+	// itself. A deadline batch can contain a row that completed after the list
+	// query; only rows that actually transition may release a slot or emit a
+	// terminal destination.
 	rows, err := tx.Query(ctx,
 		`update invocations
 		   set state = 'dead_letter',
@@ -29000,39 +29014,30 @@ func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []st
 		       received_at = coalesce(received_at, now())
 		 where id = any($1::uuid[])
 		   and state in ('pending', 'dispatching')
-		 returning account_id`, ids)
+		 returning `+invocationSelectCols, ids)
 	if err != nil {
-		return 0, fmt.Errorf("state: invocations deadline force: %w", err)
+		return nil, fmt.Errorf("state: invocations deadline force: %w", err)
 	}
-	var accounts []string
-	for rows.Next() {
-		var a string
-		if err := rows.Scan(&a); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("state: invocations deadline scan: %w", err)
-		}
-		accounts = append(accounts, a)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
+	forced, err := scanInvocations(rows)
 	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations deadline scan: %w", err)
+	}
 
-	for _, a := range accounts {
+	for _, inv := range forced {
 		if _, err := tx.Exec(ctx, `
 			update account_async_quota
 			   set current_inflight = greatest(current_inflight - 1, 0),
 			       updated_at = now()
-			 where account_id = $1`, a); err != nil {
-			return 0, fmt.Errorf("state: invocations deadline decrement: %w", err)
+			 where account_id = $1`, inv.AccountID); err != nil {
+			return nil, fmt.Errorf("state: invocations deadline decrement: %w", err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("state: invocations deadline commit: %w", err)
+		return nil, fmt.Errorf("state: invocations deadline commit: %w", err)
 	}
-	return len(accounts), nil
+	return forced, nil
 }
 
 // ----------------------------------------------------------------------------

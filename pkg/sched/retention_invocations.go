@@ -22,7 +22,7 @@ import (
 //     history read.
 //   - Deadline-breach sweep: transitions (pending|dispatching)
 //     rows whose deadline_at is in the past to dead_letter with
-//     outcome='deadline'. Decrements the per-account counter so
+//     outcome='timeout'. Decrements the per-account counter so
 //     the cap reflects the abandoned work.
 //
 // Both sweeps are idempotent and tolerate the missing-cap-row
@@ -38,6 +38,14 @@ type InvocationsRetention struct {
 	store state.Store
 	now   func() time.Time
 	log   *slog.Logger
+}
+
+// deadlineBreachDetailsStore is implemented by the production stores. The
+// existing Store method keeps its count-only contract for older callers;
+// this optional seam lets the reaper receive the exact rows changed by its
+// atomic UPDATE and enqueue timeout destinations without duplicate races.
+type deadlineBreachDetailsStore interface {
+	ForceDeadlineBreachedInvocationsWithDetails(context.Context, []string) ([]state.Invocation, error)
 }
 
 // NewInvocationsRetention returns the sweep ready for the Loop
@@ -116,14 +124,41 @@ func (r *InvocationsRetention) SweepDeadlineBreached(ctx context.Context, limit 
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	n, err := r.store.ForceDeadlineBreachedInvocations(ctx, ids)
-	if err != nil {
-		return 0, err
+	var forced []state.Invocation
+	if detailed, ok := r.store.(deadlineBreachDetailsStore); ok {
+		var err error
+		forced, err = detailed.ForceDeadlineBreachedInvocationsWithDetails(ctx, ids)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		n, err := r.store.ForceDeadlineBreachedInvocations(ctx, ids)
+		if err != nil {
+			return 0, err
+		}
+		// Test doubles that only implement the original Store contract still
+		// get destination coverage. The concrete MemStore/PgStore path above
+		// is preferred because it identifies the rows changed atomically.
+		for _, id := range ids {
+			inv, lookupErr := r.store.InvocationByID(ctx, id)
+			if lookupErr != nil || inv.State != state.InvocationDeadLetter || inv.Outcome == nil || *inv.Outcome != state.OutcomeTimeout {
+				continue
+			}
+			forced = append(forced, inv)
+		}
+		if n == 0 {
+			forced = nil
+		}
 	}
-	if n > 0 {
-		r.log.Info("invocations deadline breach", "forced", n, "cutoff", now.Format(time.RFC3339))
+	for _, inv := range forced {
+		if err := enqueueInvocationDestination(ctx, r.store, r.now, inv, state.OutcomeTimeout, nil, inv.LastError); err != nil {
+			r.log.Warn("invocations deadline destination", "inv", inv.ID, "err", err)
+		}
 	}
-	return n, nil
+	if len(forced) > 0 {
+		r.log.Info("invocations deadline breach", "forced", len(forced), "cutoff", now.Format(time.RFC3339))
+	}
+	return len(forced), nil
 }
 
 // SweepOnce runs both sweeps back-to-back. The retention sweep is
