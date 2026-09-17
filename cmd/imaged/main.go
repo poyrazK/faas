@@ -741,8 +741,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,
 		}, func(ctx context.Context, n db.Notification) error {
-			loop.HandleNotification(ctx, n)
-			return nil
+			return loop.HandleNotification(ctx, n)
 		}, log)
 		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			log.Warn("imaged: durable notification replay exited", "err", err)

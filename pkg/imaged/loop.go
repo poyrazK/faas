@@ -231,11 +231,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			l.handler.HandleNotification(ctx, n)
-			if n.OutboxID != 0 {
-				if err := db.AcknowledgeNotification(ctx, l.pool, n); err != nil && ctx.Err() == nil {
-					l.log.Warn("imaged: acknowledge durable notification", "id", n.OutboxID, "channel", n.Channel, "err", err)
-				}
+			if err := l.dispatchNotification(ctx, n); err != nil && ctx.Err() == nil {
+				l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
 			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
@@ -338,11 +335,28 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 }
 
 // HandleNotification exposes the handler to the durable replay worker while
-// keeping the normal LISTEN and replay paths on one dispatch implementation.
-func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) {
-	if l.handler != nil {
-		l.handler.HandleNotification(ctx, n)
+// preserving handler errors for the outbox retry path. The replay worker owns
+// completion of the row, so this method deliberately does not acknowledge it.
+func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) error {
+	if l.handler == nil {
+		return errors.New("imaged: notification handler unavailable")
 	}
+	return l.handler.HandleNotification(ctx, n)
+}
+
+// dispatchNotification is the LISTEN fast path. A durable row is acknowledged
+// only after the handler succeeds; otherwise the outbox worker can reclaim it
+// after the normal lease/retry delay.
+func (l *Loop) dispatchNotification(ctx context.Context, n db.Notification) error {
+	if err := l.HandleNotification(ctx, n); err != nil {
+		return err
+	}
+	if n.OutboxID != 0 {
+		if err := db.AcknowledgeNotification(ctx, l.pool, n); err != nil {
+			return fmt.Errorf("acknowledge durable notification %d: %w", n.OutboxID, err)
+		}
+	}
+	return nil
 }
 
 // runGCTick is the F1 GC body. Always runs the per-app rollback-window

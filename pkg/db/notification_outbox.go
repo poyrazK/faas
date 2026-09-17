@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,10 +34,11 @@ var ErrNotificationOutboxEmpty = errors.New("db: notification outbox empty")
 
 // NotificationOutboxItem is a claimed durable handoff.
 type NotificationOutboxItem struct {
-	ID       int64
-	Channel  string
-	Payload  string
-	Attempts int
+	ID         int64
+	Channel    string
+	Payload    string
+	Attempts   int
+	ClaimToken string
 }
 
 // IsDurableNotificationChannel reports whether a notification is backed by
@@ -94,6 +96,7 @@ func ClaimNotification(ctx context.Context, pool *pgxpool.Pool, consumer string,
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // harmless after commit
 
+	claimToken := consumer + ":" + uuid.NewString()
 	var item NotificationOutboxItem
 	err = tx.QueryRow(ctx, `
 		WITH candidate AS (
@@ -109,15 +112,15 @@ func ClaimNotification(ctx context.Context, pool *pgxpool.Pool, consumer string,
 			 LIMIT 1
 		)
 		UPDATE notification_outbox o
-			   SET state = 'processing',
-			       attempts = o.attempts + 1,
-			       claimed_by = $2,
+		       SET state = 'processing',
+		           attempts = o.attempts + 1,
+		           claimed_by = $2,
 			       claimed_at = now(),
 			       lease_until = $3
 		  FROM candidate
 		 WHERE o.id = candidate.id
-		RETURNING o.id, o.channel, o.payload, o.attempts`,
-		channels, consumer, leaseUntil).Scan(&item.ID, &item.Channel, &item.Payload, &item.Attempts)
+		RETURNING o.id, o.channel, o.payload, o.attempts, o.claimed_by`,
+		channels, claimToken, leaseUntil).Scan(&item.ID, &item.Channel, &item.Payload, &item.Attempts, &item.ClaimToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return NotificationOutboxItem{}, ErrNotificationOutboxEmpty
 	}
@@ -130,23 +133,23 @@ func ClaimNotification(ctx context.Context, pool *pgxpool.Pool, consumer string,
 	return item, nil
 }
 
-// CompleteNotification marks a claimed row delivered. The consumer predicate
-// prevents an old worker from completing a row after its lease was reclaimed.
-// A row already acknowledged by the LISTEN fast path is intentionally a
-// successful no-op.
-func CompleteNotification(ctx context.Context, pool *pgxpool.Pool, id int64, consumer string) error {
+// CompleteNotification marks a claimed row delivered. The claim-token
+// predicate prevents an old worker from completing a row after its lease was
+// reclaimed by another worker. A row already acknowledged by the LISTEN fast
+// path is intentionally a successful no-op.
+func CompleteNotification(ctx context.Context, pool *pgxpool.Pool, id int64, claimToken string) error {
 	if pool == nil {
 		return errors.New("db: complete notification: nil pool")
 	}
-	if id <= 0 || strings.TrimSpace(consumer) == "" {
-		return errors.New("db: complete notification: invalid id or consumer")
+	if id <= 0 || strings.TrimSpace(claimToken) == "" {
+		return errors.New("db: complete notification: invalid id or claim token")
 	}
 	_, err := pool.Exec(ctx, `
 		UPDATE notification_outbox
 		   SET state = 'delivered', delivered_at = now(),
 		       claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
 		       last_error = NULL
-		 WHERE id = $1 AND state = 'processing' AND claimed_by = $2`, id, consumer)
+		 WHERE id = $1 AND state = 'processing' AND claimed_by = $2`, id, claimToken)
 	if err != nil {
 		return fmt.Errorf("db: complete notification %d: %w", id, err)
 	}
@@ -174,13 +177,14 @@ func AcknowledgeNotification(ctx context.Context, pool *pgxpool.Pool, n Notifica
 }
 
 // FailNotification releases a claimed row for retry, or dead-letters it once
-// the bounded attempt budget is exhausted.
-func FailNotification(ctx context.Context, pool *pgxpool.Pool, id int64, consumer string, cause error) error {
+// the bounded attempt budget is exhausted. The claim token ensures an expired
+// worker cannot reset a newer worker's lease.
+func FailNotification(ctx context.Context, pool *pgxpool.Pool, id int64, claimToken string, cause error) error {
 	if pool == nil {
 		return errors.New("db: fail notification: nil pool")
 	}
-	if id <= 0 || strings.TrimSpace(consumer) == "" {
-		return errors.New("db: fail notification: invalid id or consumer")
+	if id <= 0 || strings.TrimSpace(claimToken) == "" {
+		return errors.New("db: fail notification: invalid id or claim token")
 	}
 	message := "notification delivery failed"
 	if cause != nil && strings.TrimSpace(cause.Error()) != "" {
@@ -190,7 +194,7 @@ func FailNotification(ctx context.Context, pool *pgxpool.Pool, id int64, consume
 		message = message[:2048]
 	}
 	var attempts int
-	if err := pool.QueryRow(ctx, `SELECT attempts FROM notification_outbox WHERE id = $1 AND state = 'processing' AND claimed_by = $2`, id, consumer).Scan(&attempts); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT attempts FROM notification_outbox WHERE id = $1 AND state = 'processing' AND claimed_by = $2`, id, claimToken).Scan(&attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // fast path or a newer lease already settled the row
 		}
@@ -204,7 +208,7 @@ func FailNotification(ctx context.Context, pool *pgxpool.Pool, id int64, consume
 		       claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
 		       last_error = $5
 		 WHERE id = $1 AND state = 'processing' AND claimed_by = $2`,
-		id, consumer, NotificationOutboxMaxAttempts, next, message)
+		id, claimToken, NotificationOutboxMaxAttempts, next, message)
 	if err != nil {
 		return fmt.Errorf("db: fail notification %d: %w", id, err)
 	}
@@ -240,7 +244,7 @@ func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consum
 		}
 		if handler != nil {
 			if err := handler(ctx, Notification{Channel: item.Channel, Payload: item.Payload, OutboxID: item.ID}); err != nil {
-				if failErr := FailNotification(ctx, pool, item.ID, consumer, err); failErr != nil {
+				if failErr := FailNotification(ctx, pool, item.ID, item.ClaimToken, err); failErr != nil {
 					return delivered, errors.Join(err, failErr)
 				}
 				if log != nil {
@@ -250,7 +254,7 @@ func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consum
 				continue
 			}
 		}
-		if err := CompleteNotification(ctx, pool, item.ID, consumer); err != nil {
+		if err := CompleteNotification(ctx, pool, item.ID, item.ClaimToken); err != nil {
 			return delivered, err
 		}
 		delivered++

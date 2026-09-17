@@ -1278,23 +1278,24 @@ func isDeploymentIDSafe(id string) bool {
 	return true
 }
 
-// HandleNotification dispatches a single pg_notify payload. The Loop in
-// cmd/imaged forwards every notification here.
-func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
+// HandleNotification dispatches a single pg_notify payload. The returned
+// error lets durable notification consumers leave failed work replayable.
+// Advisory listeners may log and ignore the error, while the durable replay
+// worker passes it through to its retry path.
+func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) error {
 	switch n.Channel {
 	case db.NotifyDeploymentChanged:
 		var p deploymentChangedPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			h.log.Warn("imaged: bad deployment_changed payload", "err", err)
-			return
+			return fmt.Errorf("decode deployment_changed payload: %w", err)
 		}
 		// This event exists only to refresh gateway routing before the public
 		// smoke. Re-entering the image pipeline would create a self-notify loop.
 		if p.Kind == "candidate_route" {
-			return
+			return nil
 		}
 		if err := h.handleDeployment(ctx, p); err != nil {
-			h.log.Warn("imaged: deploy failed", "app", p.AppID, "deployment", p.To, "err", err)
+			return fmt.Errorf("handle deployment %s: %w", p.To, err)
 		}
 		// Retain the superseded deployment's app layer and snapshot material
 		// together. The bounded GC window decides when both can be discarded;
@@ -1304,53 +1305,56 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 			h.log.Debug("imaged: superseded deployment retained for rollback window",
 				"deployment", p.To)
 		}
+		return nil
 	// PR-B: NotifyBuildQueued arm removed (builderd owns the channel now).
 	case db.NotifySnapshotBoot:
 		var p snapshotBootPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			h.log.Warn("imaged: bad snapshot_boot payload", "err", err)
-			return
+			return fmt.Errorf("decode snapshot_boot payload: %w", err)
 		}
 		if !handlesSnapshotBoot(h.nodeName, p.NodeID) {
 			h.log.Debug("imaged: ignoring snapshot_boot for sibling node",
 				"owner_node", p.NodeID, "local_node", h.nodeName,
 				"deployment", p.DeploymentID)
-			return
+			return nil
 		}
 		if err := h.handleSnapshotBoot(ctx, p); err != nil {
-			h.log.Warn("imaged: snapshot boot failed", "deployment", p.DeploymentID, "err", err)
+			return fmt.Errorf("handle snapshot boot %s: %w", p.DeploymentID, err)
 		}
+		return nil
 	case db.NotifySnapshotWritten:
 		var p snapshotWrittenPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			h.log.Warn("imaged: bad snapshot_written payload", "err", err)
-			return
+			return fmt.Errorf("decode snapshot_written payload: %w", err)
 		}
 		if err := h.handleSnapshotWritten(ctx, p); err != nil {
-			h.log.Warn("imaged: record snapshot failed", "deployment", p.DeploymentID, "err", err)
+			return fmt.Errorf("handle snapshot written %s: %w", p.DeploymentID, err)
 		}
+		return nil
 	case db.NotifyDeploymentReady:
 		var p deploymentReadyPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			h.log.Warn("imaged: bad deployment_ready payload", "err", err)
-			return
+			return fmt.Errorf("decode deployment_ready payload: %w", err)
 		}
 		if err := h.handleDeploymentReady(ctx, p); err != nil {
-			h.log.Warn("imaged: activate non-snapshot deployment failed", "deployment", p.DeploymentID, "mode", p.ExecutionMode, "err", err)
+			return fmt.Errorf("handle deployment ready %s: %w", p.DeploymentID, err)
 		}
+		return nil
 	case db.NotifyAppChanged:
 		p, err := db.ParseAppChangedPayload(n.Payload)
 		if err != nil {
-			h.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "imaged")
-			h.log.Warn("imaged: bad app_changed payload", "err", err)
-			return
+			if h.ops != nil {
+				h.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "imaged")
+			}
+			return fmt.Errorf("decode app_changed payload: %w", err)
 		}
 		// F5: app soft-delete triggers the full filesystem scrub.
 		if p.Kind == "deleted" && p.AppID != "" {
 			if err := h.cleanupAppFiles(ctx, p.AppID); err != nil {
-				h.log.Warn("imaged: cleanup app", "app", p.AppID, "err", err)
+				return fmt.Errorf("cleanup app %s: %w", p.AppID, err)
 			}
 		}
+		return nil
 	case "trusted_signer_changed":
 		// Issue #472 / ADR-054: apid emits this on every CRUD op on
 		// app_trusted_signers. We refresh the in-memory cache so a
@@ -1360,15 +1364,18 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		// plan) so we do it inline rather than punting to a
 		// goroutine.
 		if err := h.refreshTrustedPublishers(); err != nil {
-			h.log.Warn("imaged: trusted_signer_changed refresh failed", "err", err)
+			return fmt.Errorf("refresh trusted publishers: %w", err)
 		}
+		return nil
 	case "audit_event":
 		// audit_event is an imaged → apid handoff. New producers
 		// persist it in audit_event_outbox and apid consumes the
 		// notification; this imaged-side subscription is retained
 		// for channel compatibility and intentionally does not
 		// re-process the event.
+		return nil
 	}
+	return nil
 }
 
 // deploymentChangedPayload is the JSON shape apid emits on `deployment_changed`.
