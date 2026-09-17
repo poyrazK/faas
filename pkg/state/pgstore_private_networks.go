@@ -39,12 +39,23 @@ func scanPrivateNetworkAddress(row interface{ Scan(...any) error }) (PrivateNetw
 	if err != nil {
 		return PrivateNetworkAddress{}, mapErr(err)
 	}
-	parsed, err := netip.ParseAddr(addressText)
+	parsed, err := parsePrivateNetworkAddress(addressText)
 	if err != nil {
 		return PrivateNetworkAddress{}, err
 	}
 	address.AccountID, address.NetworkID, address.Address = accountID, networkID, parsed
 	return address, nil
+}
+
+func parsePrivateNetworkAddress(value string) (netip.Addr, error) {
+	if address, err := netip.ParseAddr(value); err == nil {
+		return address, nil
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return prefix.Addr(), nil
 }
 
 func privateNetworkArgs(network PrivateNetwork) (string, pgtype.UUID, string, string, string, string, string) {
@@ -165,7 +176,7 @@ func (s *PgStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, 
 	var existingCreatedAt time.Time
 	existingErr := tx.QueryRow(ctx, `select id, account_id, network_id, owner_type, owner_id, address::text, created_at from private_network_addresses where network_id = $1 and owner_type = $2 and owner_id = $3`, networkID, ownerType, ownerID).Scan(&existingID, &existingAccountID, &existingNetworkID, &existingOwnerType, &existingOwnerID, &existingAddress, &existingCreatedAt)
 	if existingErr == nil {
-		address, parseErr := netip.ParseAddr(existingAddress)
+		address, parseErr := parsePrivateNetworkAddress(existingAddress)
 		if parseErr != nil {
 			return PrivateNetworkAddress{}, parseErr
 		}
@@ -185,7 +196,7 @@ func (s *PgStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, 
 			usedRows.Close()
 			return PrivateNetworkAddress{}, err
 		}
-		address, parseErr := netip.ParseAddr(value)
+		address, parseErr := parsePrivateNetworkAddress(value)
 		if parseErr != nil {
 			usedRows.Close()
 			return PrivateNetworkAddress{}, parseErr

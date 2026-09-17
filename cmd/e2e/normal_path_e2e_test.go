@@ -1105,7 +1105,10 @@ func TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge(t *testing.T) 
 			}
 			return
 		}
-		if current.State != string(state.InvocationPending) {
+		// The scheduler claims due work by moving it through dispatching before
+		// the gateway result is persisted as completed. Both states are valid
+		// while this poll is in flight.
+		if current.State != string(state.InvocationPending) && current.State != string(state.InvocationDispatching) {
 			t.Fatalf("delayed task terminal state=%q, want completed", current.State)
 		}
 		time.Sleep(150 * time.Millisecond)
