@@ -159,6 +159,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './CreateObjectSto
 export type { CreateObjectUploadRouteRequest } from './CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
+export type { CreatePreviewRequest } from './CreatePreviewRequest.js';
 export type { CreatePrivateNetworkRequest } from './CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';

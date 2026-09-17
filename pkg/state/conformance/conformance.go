@@ -83,6 +83,7 @@ func Run(t *testing.T, open Open) {
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
+		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
@@ -345,6 +346,42 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
+	}
+}
+
+func testPRPreviewLease(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	oldExpiry := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	preview, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID:        fx.Account.ID,
+		Slug:             "pr-42-" + uuid.NewString()[:8],
+		Type:             state.AppTypeApp,
+		Runtime:          "node22",
+		RAMMB:            limits.RAMMB,
+		MaxConcurrency:   limits.MaxConcurrency,
+		PreviewOfSlug:    fx.App.Slug,
+		PreviewPrNumber:  42,
+		PreviewPrState:   state.PreviewPrStateClosed,
+		PreviewExpiresAt: &oldExpiry,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(preview): %v", err)
+	}
+
+	newExpiry := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	refreshed, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, newExpiry)
+	if err != nil {
+		t.Fatalf("RefreshPRPreview: %v", err)
+	}
+	if refreshed.PreviewPrState != state.PreviewPrStateOpen {
+		t.Fatalf("PreviewPrState after refresh = %q, want %q", refreshed.PreviewPrState, state.PreviewPrStateOpen)
+	}
+	if refreshed.PreviewExpiresAt == nil || !refreshed.PreviewExpiresAt.Equal(newExpiry) {
+		t.Fatalf("PreviewExpiresAt after refresh = %v, want %v", refreshed.PreviewExpiresAt, newExpiry)
+	}
+
+	if _, err := fx.Store.RefreshPRPreview(fx.Ctx, fx.App.ID, newExpiry); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RefreshPRPreview(production app) = %v, want ErrNotFound", err)
 	}
 }
 

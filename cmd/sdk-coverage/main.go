@@ -276,6 +276,7 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/apps/{slug}":                                         "UpdateApp",
 	"POST /v1/apps/{slug}/rename":                                   "RenameApp",
 	"GET /v1/apps/{slug}":                                           "GetApp",
+	"POST /v1/apps/{slug}/previews":                                 "CreatePreview",
 	"GET /v1/apps/{slug}/instances":                                 "ListInstances",
 	"POST /v1/apps/{slug}/park":                                     "Park",
 	"POST /v1/apps/{slug}/wake":                                     "Wake",
