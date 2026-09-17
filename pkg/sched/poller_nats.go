@@ -346,11 +346,12 @@ func (n *natsPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, reaso
 			continue
 		}
 		var err error
-		if reason == triggerReasonMaxAttempts {
+		switch reason {
+		case triggerReasonMaxAttempts:
 			err = msg.TermWithReason("max_attempts")
-		} else if reason == triggerReasonPoisonRecord {
+		case triggerReasonPoisonRecord:
 			err = msg.TermWithReason("poison")
-		} else {
+		default:
 			err = msg.NakWithDelay(2 * time.Second)
 		}
 		if err != nil && firstErr == nil {
