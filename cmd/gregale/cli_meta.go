@@ -816,6 +816,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "preview",
 		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
 		Subcommands: []cliSub{
+			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Flags: []cliFlag{
+				{Name: "app", Short: "parent app slug", Value: "slug"},
+			}},
+			{Name: "show", Short: "Inspect a preview and its latest deployment"},
 			{Name: "destroy", Short: "Tear down a preview app (POST /v1/preview/{slug}/destroy)"},
 		},
 	},

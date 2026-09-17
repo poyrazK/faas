@@ -690,6 +690,10 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		Status:       string(a.Status), DeletedAt: a.DeletedAt,
 		DeleteGraceUntil: a.DeleteGraceUntil,
 		URL:              appURLForDomain(a.Slug, s.domain),
+		PreviewOfSlug:    a.PreviewOfSlug,
+		PreviewPRNumber:  a.PreviewPrNumber,
+		PreviewPRState:   a.PreviewPrState,
+		PreviewExpiresAt: a.PreviewExpiresAt,
 		Manifest: api.AppManifest{
 			Entrypoint:       a.Manifest.Entrypoint,
 			Env:              a.Manifest.Env,

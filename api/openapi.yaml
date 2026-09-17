@@ -18401,6 +18401,21 @@ components:
         deleted_at: { type: [string, "null"], format: date-time }
         delete_grace_until: { type: [string, "null"], format: date-time }
         url: { type: string, format: uri }
+        preview_of_slug:
+          type: string
+          description: "Parent app slug for a pull-request or developer preview. Absent for production apps."
+        preview_pr_number:
+          type: integer
+          minimum: 0
+          description: "Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps."
+        preview_pr_state:
+          type: string
+          enum: [open, closed, stale, torn_down]
+          description: "Preview lifecycle state. Absent for production apps."
+        preview_expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a

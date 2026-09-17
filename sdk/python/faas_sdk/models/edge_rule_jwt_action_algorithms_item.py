@@ -1,16 +1,11 @@
 from typing import Literal
 
-EdgeRuleJWTActionAlgorithmsItem = Literal[
-    "ES256", "ES384", "ES512", "HS256", "HS384", "HS512", "RS256", "RS384", "RS512"
-]
+EdgeRuleJWTActionAlgorithmsItem = Literal["ES256", "ES384", "ES512", "RS256", "RS384", "RS512"]
 
 EDGE_RULE_JWT_ACTION_ALGORITHMS_ITEM_VALUES: set[EdgeRuleJWTActionAlgorithmsItem] = {
     "ES256",
     "ES384",
     "ES512",
-    "HS256",
-    "HS384",
-    "HS512",
     "RS256",
     "RS384",
     "RS512",

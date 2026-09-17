@@ -954,6 +954,19 @@ Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
 
 `gregale preview [<subcommand>]`
 
+### preview list
+
+List pull-request and developer previews (defaults to the linked app)
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | parent app slug (defaults to the linked app) |  |
+
+
+### preview show
+
+Inspect a preview and its latest deployment
+
 ### preview destroy
 
 Tear down a preview app (POST /v1/preview/{slug}/destroy)

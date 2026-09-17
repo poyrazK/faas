@@ -8,9 +8,7 @@
 // authedClient() helper, 10s timeout, friendly error on
 // non-2xx.
 //
-// cmdPreview is the dispatcher. Currently only "destroy"; future
-// sub-commands (list, inspect) extend this switch rather than
-// living as siblings in main.go.
+// cmdPreview is the dispatcher for preview discovery and lifecycle commands.
 
 package main
 
@@ -22,18 +20,20 @@ import (
 )
 
 // cmdPreview dispatches the `gregale preview` sub-commands.
-// Currently a single verb ("destroy"); future verbs (list,
-// inspect) extend this switch.
 func cmdPreview(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale preview <destroy> [args]", "preview")
+		PrintUsage(os.Stderr, "usage: gregale preview <list|show|destroy> [args]", "preview")
 		return 1
 	}
 	switch args[0] {
+	case "list":
+		return cmdPreviewList(args[1:])
+	case "show":
+		return cmdPreviewShow(args[1:])
 	case "destroy":
 		return cmdPreviewDestroy(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: destroy)\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: list, show, destroy)\n", args[0])
 		return 1
 	}
 }

@@ -448,9 +448,13 @@ type AppResponse struct {
 	IdleTimeoutS int               `json:"idle_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
-	MinInstances int    `json:"min_instances"`
-	Status       string `json:"status"`
-	URL          string `json:"url"`
+	MinInstances     int        `json:"min_instances"`
+	Status           string     `json:"status"`
+	URL              string     `json:"url"`
+	PreviewOfSlug    string     `json:"preview_of_slug,omitempty"`
+	PreviewPRNumber  int        `json:"preview_pr_number,omitempty"`
+	PreviewPRState   string     `json:"preview_pr_state,omitempty"`
+	PreviewExpiresAt *time.Time `json:"preview_expires_at,omitempty"`
 	// Manifest is the runner-scaffold payload (env, healthz path,
 	// entrypoint). Surfaced so the dashboard's app detail page can
 	// show the function handler + env without a separate round-trip.

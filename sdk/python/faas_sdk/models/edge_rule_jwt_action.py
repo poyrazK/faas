@@ -21,7 +21,12 @@ T = TypeVar("T", bound="EdgeRuleJWTAction")
 
 @_attrs_define
 class EdgeRuleJWTAction:
-    """Validates an inbound Bearer JWT against a JWKS endpoint."""
+    """Validates an inbound Bearer JWT against a JWKS endpoint. The
+    algorithm allowlist is asymmetric-only and the selected JWK's
+    `alg` metadata must match the JWT header; a JWK with `use=enc`
+    is rejected (RFC 8725 §3.1, RFC 7517).
+
+    """
 
     issuer: str
     jwks_url: str

@@ -56,6 +56,22 @@ export type AppResponse = {
   deleted_at?: string | null;
   delete_grace_until?: string | null;
   url: string;
+  /**
+   * Parent app slug for a pull-request or developer preview. Absent for production apps.
+   */
+  preview_of_slug?: string;
+  /**
+   * Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps.
+   */
+  preview_pr_number?: number;
+  /**
+   * Preview lifecycle state. Absent for production apps.
+   */
+  preview_pr_state?: 'open' | 'closed' | 'stale' | 'torn_down';
+  /**
+   * Automatic teardown deadline for a preview, when one is configured.
+   */
+  preview_expires_at?: string | null;
   manifest: AppManifest;
   /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.

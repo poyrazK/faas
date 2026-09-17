@@ -12,6 +12,7 @@ from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app
 from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
+from ..models.app_response_preview_pr_state import AppResponsePreviewPrState, check_app_response_preview_pr_state
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_status import AppResponseStatus, check_app_response_status
 from ..models.app_response_type import AppResponseType, check_app_response_type
@@ -94,6 +95,14 @@ class AppResponse:
     idle_timeout_s: int | None | Unset = UNSET
     deleted_at: datetime.datetime | None | Unset = UNSET
     delete_grace_until: datetime.datetime | None | Unset = UNSET
+    preview_of_slug: str | Unset = UNSET
+    """Parent app slug for a pull-request or developer preview. Absent for production apps."""
+    preview_pr_number: int | Unset = UNSET
+    """Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps."""
+    preview_pr_state: AppResponsePreviewPrState | Unset = UNSET
+    """Preview lifecycle state. Absent for production apps."""
+    preview_expires_at: datetime.datetime | None | Unset = UNSET
+    """Automatic teardown deadline for a preview, when one is configured."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -248,6 +257,22 @@ class AppResponse:
         else:
             delete_grace_until = self.delete_grace_until
 
+        preview_of_slug = self.preview_of_slug
+
+        preview_pr_number = self.preview_pr_number
+
+        preview_pr_state: str | Unset = UNSET
+        if not isinstance(self.preview_pr_state, Unset):
+            preview_pr_state = self.preview_pr_state
+
+        preview_expires_at: None | str | Unset
+        if isinstance(self.preview_expires_at, Unset):
+            preview_expires_at = UNSET
+        elif isinstance(self.preview_expires_at, datetime.datetime):
+            preview_expires_at = self.preview_expires_at.isoformat()
+        else:
+            preview_expires_at = self.preview_expires_at
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -390,6 +415,14 @@ class AppResponse:
             field_dict["deleted_at"] = deleted_at
         if delete_grace_until is not UNSET:
             field_dict["delete_grace_until"] = delete_grace_until
+        if preview_of_slug is not UNSET:
+            field_dict["preview_of_slug"] = preview_of_slug
+        if preview_pr_number is not UNSET:
+            field_dict["preview_pr_number"] = preview_pr_number
+        if preview_pr_state is not UNSET:
+            field_dict["preview_pr_state"] = preview_pr_state
+        if preview_expires_at is not UNSET:
+            field_dict["preview_expires_at"] = preview_expires_at
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -556,6 +589,34 @@ class AppResponse:
             return cast(datetime.datetime | None | Unset, data)
 
         delete_grace_until = _parse_delete_grace_until(d.pop("delete_grace_until", UNSET))
+
+        preview_of_slug = d.pop("preview_of_slug", UNSET)
+
+        preview_pr_number = d.pop("preview_pr_number", UNSET)
+
+        _preview_pr_state = d.pop("preview_pr_state", UNSET)
+        preview_pr_state: AppResponsePreviewPrState | Unset
+        if isinstance(_preview_pr_state, Unset):
+            preview_pr_state = UNSET
+        else:
+            preview_pr_state = check_app_response_preview_pr_state(_preview_pr_state)
+
+        def _parse_preview_expires_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                preview_expires_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return preview_expires_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        preview_expires_at = _parse_preview_expires_at(d.pop("preview_expires_at", UNSET))
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -754,6 +815,10 @@ class AppResponse:
             idle_timeout_s=idle_timeout_s,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,
+            preview_of_slug=preview_of_slug,
+            preview_pr_number=preview_pr_number,
+            preview_pr_state=preview_pr_state,
+            preview_expires_at=preview_expires_at,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
