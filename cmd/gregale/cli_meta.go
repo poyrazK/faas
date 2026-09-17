@@ -1237,10 +1237,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "realtime",
 		DocSlug: "realtime",
-		Short:   "Manage realtime endpoints, connections, channels, and auth",
+		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints"},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status"},
+			{Name: "create", Short: "Create a managed realtime endpoint"},
+			{Name: "update", Short: "Update endpoint callback, auth, or connection policy"},
+			{Name: "delete", Short: "Delete a managed realtime endpoint"},
 			{Name: "send", Short: "Send a message to one live connection"},
 			{Name: "close", Short: "Close one live connection"},
 			{Name: "subscribe", Short: "Subscribe one live connection to a channel"},
