@@ -3798,7 +3798,7 @@ paths:
       - name: project
         in: path
         required: true
-        description: Stable local project label used to derive the developer URL.
+        description: Local project label used to locate the developer environment sync endpoint.
         schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
     post:
       tags: [dev]
@@ -3826,7 +3826,7 @@ paths:
       - name: project
         in: path
         required: true
-        description: Stable local project label used to derive the developer URL.
+        description: Local project label used to locate the developer environment history.
         schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
     get:
       tags: [dev]
@@ -18950,7 +18950,7 @@ components:
     DevSyncHistoryResponse:
       description: Bounded newest-first developer sync history.
       type: object
-      required: [project, items, summary]
+      required: [project, items]
       properties:
         project: { type: string }
         workspace_id: { type: string, pattern: '^[a-f0-9]{32}$' }

@@ -11,6 +11,6 @@ export type DevSyncHistoryResponse = {
   project: string;
   workspace_id?: string;
   items: Array<DevSyncHistoryItem>;
-  summary: DevSyncHistorySummary;
+  summary?: DevSyncHistorySummary;
 };
 

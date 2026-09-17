@@ -96,7 +96,7 @@ export class DevService {
     requestBody,
   }: {
     /**
-     * Stable local project label used to derive the developer URL.
+     * Local project label used to locate the developer environment sync endpoint.
      */
     project: string,
     requestBody: RecordDevSyncRequest,
@@ -131,7 +131,7 @@ export class DevService {
     limit = 20,
   }: {
     /**
-     * Stable local project label used to derive the developer URL.
+     * Local project label used to locate the developer environment history.
      */
     project: string,
     /**
