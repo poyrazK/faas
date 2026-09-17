@@ -7,6 +7,6 @@
  */
 export type ManagedRealtimeDrainResult = {
   id: string;
-  status: 'would_close' | 'closed' | 'gone' | 'failed';
+  status: 'pending' | 'would_close' | 'closed' | 'gone' | 'failed';
 };
 

@@ -714,6 +714,15 @@ type ManagedRealtimeDrainOperationStore interface {
 	GetManagedRealtimeDrainOperation(ctx context.Context, accountID, endpointID, id string) (ManagedRealtimeDrainOperation, error)
 }
 
+// ManagedRealtimeDrainOperationWorker persists the claim and retry lifecycle
+// for asynchronous drain execution. It is separate from the public operation
+// store so narrow integrations can keep the read-only drain history seam.
+type ManagedRealtimeDrainOperationWorker interface {
+	ClaimManagedRealtimeDrainOperations(ctx context.Context, limit int, lease time.Duration) ([]ManagedRealtimeDrainOperationClaim, error)
+	RetryManagedRealtimeDrainOperation(ctx context.Context, id, claimToken string, connectionIDs []string, result json.RawMessage, closed, gone, failed int, nextAttemptAt time.Time, lastError string) error
+	FinishManagedRealtimeDrainOperation(ctx context.Context, id, claimToken string, status ManagedRealtimeDrainOperationStatus, result json.RawMessage, closed, gone, failed int) error
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the

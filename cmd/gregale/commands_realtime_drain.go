@@ -58,6 +58,10 @@ func cmdRealtimeDrain(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(response))
 	}
+	if response.Status == "running" {
+		_, _ = fmt.Fprintf(osStdout, "Realtime drain accepted; operation %s is running.\n", response.OperationID)
+		return 0
+	}
 	if response.Partial {
 		PrintWarn(osStderr, fmt.Sprintf("Realtime connection inventory is partial: %d node(s) unavailable.", response.NodesUnavailable))
 	}

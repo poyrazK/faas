@@ -20,27 +20,52 @@ const (
 // bounded connection drain. Result contains the complete API response so the
 // operation can be inspected after the live owner has forgotten the sockets.
 type ManagedRealtimeDrainOperation struct {
-	ID          string
-	AccountID   string
-	AppID       string
-	EndpointID  string
-	Status      ManagedRealtimeDrainOperationStatus
-	Reason      string
-	DryRun      bool
-	Matched     int
-	Closed      int
-	Gone        int
-	Failed      int
-	Result      json.RawMessage
-	CreatedAt   time.Time
-	CompletedAt *time.Time
-}
-
-type ManagedRealtimeDrainOperationInput struct {
+	ID         string
 	AccountID  string
 	AppID      string
 	EndpointID string
+	Status     ManagedRealtimeDrainOperationStatus
 	Reason     string
 	DryRun     bool
 	Matched    int
+	Closed     int
+	Gone       int
+	Failed     int
+	Result     json.RawMessage
+	// ConnectionIDs contains the still-pending selection while an operation
+	// is running. Terminal per-connection results are kept in Result so a
+	// retry only needs to revisit transient owner failures.
+	ConnectionIDs    []string
+	Limit            int
+	Truncated        bool
+	Partial          bool
+	NodesQueried     int
+	NodesUnavailable int
+	Attempts         int
+	NextAttemptAt    time.Time
+	ClaimedAt        *time.Time
+	ClaimToken       string
+	LastError        string
+	CreatedAt        time.Time
+	CompletedAt      *time.Time
+}
+
+type ManagedRealtimeDrainOperationClaim struct {
+	Operation  ManagedRealtimeDrainOperation
+	ClaimToken string
+}
+
+type ManagedRealtimeDrainOperationInput struct {
+	AccountID        string
+	AppID            string
+	EndpointID       string
+	Reason           string
+	DryRun           bool
+	Matched          int
+	ConnectionIDs    []string
+	Limit            int
+	Truncated        bool
+	Partial          bool
+	NodesQueried     int
+	NodesUnavailable int
 }

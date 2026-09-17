@@ -76,7 +76,7 @@ def sync_detailed(
     """Google OAuth 2.0 callback.
 
      Verifies state, exchanges the code, fetches the profile,
-    enforces `email_verified=true`, and signs the user in.
+    enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
     Sub-first lookup against `oauth_links` enforces the §11
     anti-takeover invariant.
 
@@ -113,7 +113,7 @@ def sync(
     """Google OAuth 2.0 callback.
 
      Verifies state, exchanges the code, fetches the profile,
-    enforces `email_verified=true`, and signs the user in.
+    enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
     Sub-first lookup against `oauth_links` enforces the §11
     anti-takeover invariant.
 
@@ -145,7 +145,7 @@ async def asyncio_detailed(
     """Google OAuth 2.0 callback.
 
      Verifies state, exchanges the code, fetches the profile,
-    enforces `email_verified=true`, and signs the user in.
+    enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
     Sub-first lookup against `oauth_links` enforces the §11
     anti-takeover invariant.
 
@@ -180,7 +180,7 @@ async def asyncio(
     """Google OAuth 2.0 callback.
 
      Verifies state, exchanges the code, fetches the profile,
-    enforces `email_verified=true`, and signs the user in.
+    enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
     Sub-first lookup against `oauth_links` enforces the §11
     anti-takeover invariant.
 

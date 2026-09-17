@@ -9,7 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.managed_realtime_drain_request import ManagedRealtimeDrainRequest
 from ...models.managed_realtime_drain_response import ManagedRealtimeDrainResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -17,8 +17,11 @@ def _get_kwargs(
     id: str,
     *,
     body: ManagedRealtimeDrainRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(idempotency_key, Unset):
+        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -39,10 +42,10 @@ def _get_kwargs(
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> ManagedRealtimeDrainResponse | Problem | None:
-    if response.status_code == 200:
-        response_200 = ManagedRealtimeDrainResponse.from_dict(response.json())
+    if response.status_code == 202:
+        response_202 = ManagedRealtimeDrainResponse.from_dict(response.json())
 
-        return response_200
+        return response_202
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -102,6 +105,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeDrainRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedRealtimeDrainResponse | Problem]:
     """Close a bounded, filtered set of live managed realtime connections.
 
@@ -115,6 +119,7 @@ def sync_detailed(
     Args:
         slug (str):
         id (str):
+        idempotency_key (str | Unset):
         body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
             connections.
 
@@ -130,6 +135,7 @@ def sync_detailed(
         slug=slug,
         id=id,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -145,6 +151,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeDrainRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> ManagedRealtimeDrainResponse | Problem | None:
     """Close a bounded, filtered set of live managed realtime connections.
 
@@ -158,6 +165,7 @@ def sync(
     Args:
         slug (str):
         id (str):
+        idempotency_key (str | Unset):
         body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
             connections.
 
@@ -174,6 +182,7 @@ def sync(
         id=id,
         client=client,
         body=body,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -183,6 +192,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeDrainRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedRealtimeDrainResponse | Problem]:
     """Close a bounded, filtered set of live managed realtime connections.
 
@@ -196,6 +206,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         id (str):
+        idempotency_key (str | Unset):
         body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
             connections.
 
@@ -211,6 +222,7 @@ async def asyncio_detailed(
         slug=slug,
         id=id,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -224,6 +236,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeDrainRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> ManagedRealtimeDrainResponse | Problem | None:
     """Close a bounded, filtered set of live managed realtime connections.
 
@@ -237,6 +250,7 @@ async def asyncio(
     Args:
         slug (str):
         id (str):
+        idempotency_key (str | Unset):
         body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
             connections.
 
@@ -254,5 +268,6 @@ async def asyncio(
             id=id,
             client=client,
             body=body,
+            idempotency_key=idempotency_key,
         )
     ).parsed

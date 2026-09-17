@@ -92,7 +92,7 @@ def sync_detailed(
 
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
-    and signs the user in. Sub-first lookup against
+    enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
     `oauth_links` enforces the §11 anti-takeover invariant.
 
     On success, `auth.login` is appended to the events table
@@ -134,7 +134,7 @@ def sync(
 
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
-    and signs the user in. Sub-first lookup against
+    enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
     `oauth_links` enforces the §11 anti-takeover invariant.
 
     On success, `auth.login` is appended to the events table
@@ -171,7 +171,7 @@ async def asyncio_detailed(
 
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
-    and signs the user in. Sub-first lookup against
+    enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
     `oauth_links` enforces the §11 anti-takeover invariant.
 
     On success, `auth.login` is appended to the events table
@@ -211,7 +211,7 @@ async def asyncio(
 
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
-    and signs the user in. Sub-first lookup against
+    enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
     `oauth_links` enforces the §11 anti-takeover invariant.
 
     On success, `auth.login` is appended to the events table

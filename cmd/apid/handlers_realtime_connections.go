@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -213,6 +212,7 @@ const (
 	managedRealtimeDrainStatusClosed     = "closed"
 	managedRealtimeDrainStatusGone       = "gone"
 	managedRealtimeDrainStatusFailed     = "failed"
+	managedRealtimeDrainStatusPending    = "pending"
 )
 
 func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -281,85 +281,26 @@ func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.
 	operation, err := operationStore.CreateManagedRealtimeDrainOperation(r.Context(), state.ManagedRealtimeDrainOperationInput{
 		AccountID: acct.ID, AppID: row.AppID, EndpointID: row.ID, Reason: request.Reason,
 		DryRun: request.DryRun, Matched: len(selected),
+		ConnectionIDs: managedRealtimeDrainCandidateIDs(selected), Limit: request.Limit,
+		Truncated: truncated, Partial: partial, NodesQueried: inventory.NodesQueried,
+		NodesUnavailable: inventory.NodesUnavailable,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not persist managed realtime drain operation"))
 		return
 	}
-	response := api.ManagedRealtimeDrainResponse{
-		OperationID:      operation.ID,
-		Status:           string(operation.Status),
-		CreatedAt:        api.FormatAlertTime(operation.CreatedAt),
-		Results:          make([]api.ManagedRealtimeDrainResult, 0, len(selected)),
-		Matched:          len(selected),
-		Limit:            request.Limit,
-		Truncated:        truncated,
-		DryRun:           request.DryRun,
-		Partial:          partial,
-		NodesQueried:     inventory.NodesQueried,
-		NodesUnavailable: inventory.NodesUnavailable,
-	}
+	response := managedRealtimeDrainResponseFromOperation(operation)
+	response.Results = make([]api.ManagedRealtimeDrainResult, 0, len(selected))
 	for _, connection := range selected {
-		if request.DryRun {
-			response.Results = append(response.Results, api.ManagedRealtimeDrainResult{ID: connection.ID, Status: managedRealtimeDrainStatusWouldClose})
-			continue
-		}
-		err := owner.CloseConnection(r.Context(), row.ID, connection.ID, request.Reason)
-		status := managedRealtimeDrainStatusClosed
-		switch {
-		case err == nil:
-			response.Closed++
-		case managedRealtimeConnectionGone(err):
-			status = managedRealtimeDrainStatusGone
-			response.Gone++
-		default:
-			status = managedRealtimeDrainStatusFailed
-			response.Failed++
-			s.log.WarnContext(r.Context(), "drain managed realtime connection", "endpoint_id", row.ID, "connection_id", connection.ID, "err", err)
-		}
-		response.Results = append(response.Results, api.ManagedRealtimeDrainResult{ID: connection.ID, Status: status})
+		response.Results = append(response.Results, api.ManagedRealtimeDrainResult{ID: connection.ID, Status: managedRealtimeDrainStatusPending})
 	}
-	auditKind := "realtime.connections_drained"
-	if request.DryRun {
-		auditKind = "realtime.connections_drain_previewed"
+	// Detach execution from the request context. The durable worker owns
+	// retries and resumes running rows after an apid restart.
+	s.wakeManagedRealtimeDrainWorker()
+	if worker, ok := s.store.(state.ManagedRealtimeDrainOperationWorker); ok {
+		go s.runManagedRealtimeDrainPass(context.WithoutCancel(r.Context()), worker)
 	}
-	auditData := map[string]any{
-		"endpoint_id": row.ID,
-		"matched":     response.Matched,
-		"closed":      response.Closed,
-		"gone":        response.Gone,
-		"failed":      response.Failed,
-		"dry_run":     request.DryRun,
-		"partial":     response.Partial,
-		"truncated":   response.Truncated,
-		"reason":      request.Reason,
-	}
-	if request.Channel != "" {
-		auditData["channel"] = request.Channel
-	}
-	if request.Principal != "" {
-		auditData["principal"] = request.Principal
-	}
-	if len(connectionIDs) > 0 {
-		auditData["connection_ids"] = len(connectionIDs)
-	}
-	response.Status = string(state.ManagedRealtimeDrainOperationCompleted)
-	if response.Gone > 0 || response.Failed > 0 {
-		response.Status = string(state.ManagedRealtimeDrainOperationPartial)
-	}
-	result, err := json.Marshal(response)
-	if err != nil {
-		s.log.WarnContext(r.Context(), "encode managed realtime drain operation result", "operation_id", operation.ID, "err", err)
-	} else if completed, completeErr := operationStore.CompleteManagedRealtimeDrainOperation(r.Context(), operation.ID, acct.ID, row.ID, state.ManagedRealtimeDrainOperationStatus(response.Status), result, response.Matched, response.Closed, response.Gone, response.Failed); completeErr != nil {
-		s.log.WarnContext(r.Context(), "complete managed realtime drain operation", "operation_id", operation.ID, "err", completeErr)
-	} else if completed.CompletedAt != nil {
-		completedAt := api.FormatAlertTime(*completed.CompletedAt)
-		response.CompletedAt = &completedAt
-	}
-	auditData["operation_id"] = operation.ID
-	auditData["status"] = response.Status
-	s.audit.Emit(r.Context(), auditKind, &acct.ID, auditData)
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 func (s *server) getManagedRealtimeDrainOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -389,18 +330,10 @@ func (s *server) getManagedRealtimeDrainOperation(w http.ResponseWriter, r *http
 }
 
 func managedRealtimeDrainResponseFromOperation(operation state.ManagedRealtimeDrainOperation) api.ManagedRealtimeDrainResponse {
-	var response api.ManagedRealtimeDrainResponse
-	if len(operation.Result) > 0 && string(operation.Result) != "{}" {
-		_ = json.Unmarshal(operation.Result, &response)
-	}
-	response.OperationID = operation.ID
-	response.Status = string(operation.Status)
-	response.CreatedAt = api.FormatAlertTime(operation.CreatedAt)
-	response.Matched = operation.Matched
+	response := managedRealtimeDrainResponseForExecution(operation)
 	response.Closed = operation.Closed
 	response.Gone = operation.Gone
 	response.Failed = operation.Failed
-	response.DryRun = operation.DryRun
 	if response.CompletedAt == nil && operation.CompletedAt != nil {
 		completedAt := api.FormatAlertTime(*operation.CompletedAt)
 		response.CompletedAt = &completedAt
@@ -408,7 +341,18 @@ func managedRealtimeDrainResponseFromOperation(operation state.ManagedRealtimeDr
 	if response.Results == nil {
 		response.Results = []api.ManagedRealtimeDrainResult{}
 	}
+	for _, connectionID := range operation.ConnectionIDs {
+		response.Results = append(response.Results, api.ManagedRealtimeDrainResult{ID: connectionID, Status: managedRealtimeDrainStatusPending})
+	}
 	return response
+}
+
+func managedRealtimeDrainCandidateIDs(connections []realtime.ConnectionInfo) []string {
+	ids := make([]string, 0, len(connections))
+	for _, connection := range connections {
+		ids = append(ids, connection.ID)
+	}
+	return ids
 }
 
 func managedRealtimeDrainConnectionIDs(values []string) (map[string]struct{}, *api.Problem) {

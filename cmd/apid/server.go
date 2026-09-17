@@ -123,6 +123,9 @@ type server struct {
 	// that owns a live socket. Production wires a leased cross-node resolver;
 	// the local Unix client remains the same-box fast path.
 	realtimeOwner realtimeOwner
+	// realtimeDrainWake nudges the durable drain worker after a new operation
+	// is committed; the ticker remains the restart/recovery backstop.
+	realtimeDrainWake chan struct{}
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -1064,7 +1067,8 @@ func newServerWithDeps(
 		// can group by source. Pre-PR-G callers used
 		// store.ApplyProjectPlan directly; post-PR-G every
 		// workload-mutating path goes through Service.Reconcile.
-		reconcileSvc: buildReconcileService(store, aud.pkgAuditor(), log),
+		reconcileSvc:      buildReconcileService(store, aud.pkgAuditor(), log),
+		realtimeDrainWake: make(chan struct{}, 1),
 		// IAM-5 (issue #189): rotation grace-window cache. 60 s
 		// TTL bounds the admin-update propagation latency; the
 		// invalidate-on-write path closes the loop. nil in
@@ -2029,7 +2033,7 @@ func (s *server) handler() http.Handler {
 	// never address a connection or channel outside an app it owns. The same
 	// owner seam serves the local Unix fast path and leased cross-node resolver.
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listManagedRealtimeConnections))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.drainManagedRealtimeConnections))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.drainManagedRealtimeConnections)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeDrainOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimeConnection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))

@@ -57,7 +57,8 @@ def sync_detailed(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/google/callback` and 302s to the Google consent
-    screen. The callback consumes the state cookie, exchanges
+    screen with an RFC 7636 `S256` PKCE challenge. The callback consumes
+    the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
     minting a session (issue #165 PR #2, ADR-032).
@@ -93,7 +94,8 @@ def sync(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/google/callback` and 302s to the Google consent
-    screen. The callback consumes the state cookie, exchanges
+    screen with an RFC 7636 `S256` PKCE challenge. The callback consumes
+    the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
     minting a session (issue #165 PR #2, ADR-032).
@@ -125,7 +127,8 @@ async def asyncio_detailed(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/google/callback` and 302s to the Google consent
-    screen. The callback consumes the state cookie, exchanges
+    screen with an RFC 7636 `S256` PKCE challenge. The callback consumes
+    the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
     minting a session (issue #165 PR #2, ADR-032).
@@ -159,7 +162,8 @@ async def asyncio(
 
      Sets a 16-byte CSRF state cookie scoped to
     `/v1/auth/google/callback` and 302s to the Google consent
-    screen. The callback consumes the state cookie, exchanges
+    screen with an RFC 7636 `S256` PKCE challenge. The callback consumes
+    the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
     minting a session (issue #165 PR #2, ADR-032).

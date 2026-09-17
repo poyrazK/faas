@@ -12777,14 +12777,20 @@ paths:
         `409 conflict` when the inventory is partial unless `allow_partial`
         is true; this prevents an unavailable node from making a drain look
         complete.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Replays the accepted operation for 24 hours when the request is retried.
+          schema: { type: string, minLength: 1, maxLength: 255 }
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/ManagedRealtimeDrainRequest' }
       responses:
-        '200':
-          description: The bounded drain result.
+        '202':
+          description: The durable drain operation was accepted for background execution.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimeDrainResponse' }
@@ -30093,7 +30099,7 @@ components:
         id: { type: string, minLength: 1, maxLength: 256 }
         status:
           type: string
-          enum: [would_close, closed, gone, failed]
+          enum: [pending, would_close, closed, gone, failed]
 
     ManagedRealtimeDrainResponse:
       type: object

@@ -266,13 +266,14 @@ export class RealtimeService {
    * is true; this prevents an unavailable node from making a drain look
    * complete.
    *
-   * @returns ManagedRealtimeDrainResponse The bounded drain result.
+   * @returns ManagedRealtimeDrainResponse The durable drain operation was accepted for background execution.
    * @throws ApiError
    */
   public static drainManagedRealtimeConnections({
     slug,
     id,
     requestBody,
+    idempotencyKey,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -283,6 +284,10 @@ export class RealtimeService {
      */
     id: string,
     requestBody: ManagedRealtimeDrainRequest,
+    /**
+     * Replays the accepted operation for 24 hours when the request is retried.
+     */
+    idempotencyKey?: string,
   }): CancelablePromise<ManagedRealtimeDrainResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -290,6 +295,9 @@ export class RealtimeService {
       path: {
         'slug': slug,
         'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
       },
       body: requestBody,
       mediaType: 'application/json',
