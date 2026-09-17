@@ -65,6 +65,49 @@ func newJobAndRun(t *testing.T, ms *MemStore, accountID, name string) (Job, JobR
 	return created, run, fanned
 }
 
+// TestMemStoreJobs_CreateJobInstance pins the app-less instance shape used by
+// the scheduler's job dispatch path (issue #1184). Besides the happy path,
+// exercise the missing-job and duplicate-id guards so this coverage pin keeps
+// the lifecycle insert contract above the shard gate.
+func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-JI", "job-instance")
+
+	created, err := ms.CreateJobInstance(ctx, "instance-1", job.ID, run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-1")
+	if err != nil {
+		t.Fatalf("CreateJobInstance: %v", err)
+	}
+	if created.ID != "instance-1" || created.Mode != string(InstanceModeJob) {
+		t.Fatalf("CreateJobInstance = %+v, want job instance", created)
+	}
+	if created.Kind != "job_task" || created.JobID != job.ID || created.JobRunID != run.ID || created.JobTaskIndex != 0 {
+		t.Fatalf("CreateJobInstance identity = %+v, want job-task coordinates", created)
+	}
+	if created.WakeID != "wake-1" {
+		t.Fatalf("CreateJobInstance.WakeID = %q, want wake-1", created.WakeID)
+	}
+
+	got, err := ms.InstanceByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("InstanceByID(job): %v", err)
+	}
+	if got.ID != created.ID || got.Kind != "job_task" {
+		t.Fatalf("InstanceByID(job) = %+v, want persisted job instance", got)
+	}
+
+	if _, err := ms.CreateJobInstance(ctx, "instance-1", job.ID, run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-1"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CreateJobInstance duplicate: err = %v, want ErrConflict", err)
+	}
+	if _, err := ms.CreateJobInstance(ctx, "instance-2", "missing-job", run.ID, 0,
+		"cold_booting", 256, "node-1", "wake-2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateJobInstance missing job: err = %v, want ErrNotFound", err)
+	}
+}
+
 // TestMemStoreJobs_JobGetByID covers the happy + ErrNotFound paths
 // and the soft-delete invisibility rule.
 func TestMemStoreJobs_JobGetByID(t *testing.T) {
