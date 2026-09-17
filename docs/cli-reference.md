@@ -60,7 +60,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
-| [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
+| [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
 | [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`realtime`](#realtime) | Manage realtime endpoints, policies, connections, channels, and auth |
@@ -1546,7 +1546,7 @@ Show live instances + state for an app (slug defaults to linked context)
 
 ## queue
 
-Inspect the wake-queue depth (queue tail|send|receive|state|peek|dead-letter|ack)
+Inspect queues and manage first-class queue bindings
 
 `gregale queue [<subcommand>]`
 
@@ -1581,6 +1581,10 @@ Inspect the dead-letter queue
 ### queue ack
 
 Ack a wake
+
+### queue bindings
+
+Manage queue bindings
 
 
 ## dlq
