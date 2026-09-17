@@ -2043,8 +2043,8 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -2074,6 +2074,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if appProtocol == "" {
 		appProtocol = api.AppProtocolHTTP1
 	}
+	visibility := api.NormalizeAppVisibility(app.Visibility)
 	row := s.pool.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
@@ -2114,7 +2115,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// before reaching this path, so the floor is a
 		// last-line defence for internal callers that build an
 		// App by hand.
-		appProtocol, cpuMillicores)
+		appProtocol, cpuMillicores, string(visibility))
 	return scanApp(row)
 }
 
@@ -2292,8 +2293,8 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2318,6 +2319,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	if appProtocol == "" {
 		appProtocol = api.AppProtocolHTTP1
 	}
+	visibility := api.NormalizeAppVisibility(app.Visibility)
 	row := tx.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
@@ -2350,7 +2352,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		// coerced to 'http1' so the schema DEFAULT and the
 		// explicit-write path converge on the same universal
 		// default. Mirrors the binding in CreateApp above.
-		appProtocol, cpuMillicores)
+		appProtocol, cpuMillicores, string(visibility))
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -3565,8 +3567,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   cpu_millicores = coalesce($63, cpu_millicores),
 				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end,
 				   only_declared_routes = case when $66 then $67 else only_declared_routes end,
-				   declared_routes = case when $68 then $69::jsonb else declared_routes end,
-				   workload_class = case when $70 then $71::text else workload_class end
+			   declared_routes = case when $68 then $69::jsonb else declared_routes end,
+			   workload_class = case when $70 then $71::text else workload_class end,
+			   visibility = case when $72 then $73::text else visibility end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3691,7 +3694,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode),
 		p.SetOnlyAllowDeclaredRoutes, boolOrFalse(p.OnlyAllowDeclaredRoutes),
 		p.SetDeclaredRoutes, declaredRoutesBytes,
-		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass))
+		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass),
+		p.SetVisibility, string(api.NormalizeAppVisibility(derefAppVisibility(p.Visibility))))
 	return scanApp(row)
 }
 
@@ -3744,6 +3748,13 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func derefAppVisibility(v *api.AppVisibility) api.AppVisibility {
+	if v == nil {
+		return api.AppVisibilityPublic
+	}
+	return *v
 }
 
 // workloadClassString lifts the optional reconcile update field into the
@@ -21095,6 +21106,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	var corsDefaultEnabled bool
 	var onlyAllowDeclaredRoutes bool
 	var declaredRoutesBytes []byte
+	var visibility string
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
 		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText,
 		&publicAuthIPAllowlistText,
@@ -21203,7 +21215,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// write side.
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
-		&onlyAllowDeclaredRoutes, &declaredRoutesBytes); err != nil {
+		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -21220,6 +21232,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	// three-state lives on the write path only).
 	a.CORSDefaultEnabled = &corsDefaultEnabled
 	a.OnlyAllowDeclaredRoutes = onlyAllowDeclaredRoutes
+	a.Visibility = api.NormalizeAppVisibility(api.AppVisibility(visibility))
 	if len(declaredRoutesBytes) > 0 {
 		_ = json.Unmarshal(declaredRoutesBytes, &a.DeclaredRoutes)
 		// Keep the empty contract canonical across the PG and memory
@@ -21381,7 +21394,9 @@ const appsSelectColumns = `
 	deleted_at, delete_grace_until,
 	-- Only-allow-declared-routes policy. Appended so older positional
 	-- columns remain stable for every existing scan site.
-	only_declared_routes, coalesce(declared_routes, '[]'::jsonb)`
+	only_declared_routes, coalesce(declared_routes, '[]'::jsonb),
+	-- Internal ingress is appended to preserve all existing positional scans.
+	coalesce(visibility, 'public')`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

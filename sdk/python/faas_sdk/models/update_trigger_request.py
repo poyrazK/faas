@@ -22,6 +22,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.filter_criteria import FilterCriteria
+    from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
 
 
@@ -44,6 +45,12 @@ class UpdateTriggerRequest:
     batch_size_max: int | None | Unset = UNSET
     batch_window_ms: int | None | Unset = UNSET
     max_attempts: int | None | Unset = UNSET
+    retry_policy: RetryPolicyDTO | Unset = UNSET
+    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
+    decodes this DTO into a dispatch.RetryPolicy before persisting
+    to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
+    can type the override without importing pkg/dispatch directly.
+    """
     payload_max_bytes: int | None | Unset = UNSET
     broker_poison_strategy: (
         None
@@ -104,6 +111,10 @@ class UpdateTriggerRequest:
         else:
             max_attempts = self.max_attempts
 
+        retry_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry_policy, Unset):
+            retry_policy = self.retry_policy.to_dict()
+
         payload_max_bytes: int | None | Unset
         if isinstance(self.payload_max_bytes, Unset):
             payload_max_bytes = UNSET
@@ -151,6 +162,8 @@ class UpdateTriggerRequest:
             field_dict["batch_window_ms"] = batch_window_ms
         if max_attempts is not UNSET:
             field_dict["max_attempts"] = max_attempts
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
         if payload_max_bytes is not UNSET:
             field_dict["payload_max_bytes"] = payload_max_bytes
         if broker_poison_strategy is not UNSET:
@@ -167,6 +180,7 @@ class UpdateTriggerRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.filter_criteria import FilterCriteria
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
 
         d = dict(src_dict)
@@ -223,6 +237,13 @@ class UpdateTriggerRequest:
             return cast(int | None | Unset, data)
 
         max_attempts = _parse_max_attempts(d.pop("max_attempts", UNSET))
+
+        _retry_policy = d.pop("retry_policy", UNSET)
+        retry_policy: RetryPolicyDTO | Unset
+        if isinstance(_retry_policy, Unset):
+            retry_policy = UNSET
+        else:
+            retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
         def _parse_payload_max_bytes(data: object) -> int | None | Unset:
             if data is None:
@@ -316,6 +337,7 @@ class UpdateTriggerRequest:
             batch_size_max=batch_size_max,
             batch_window_ms=batch_window_ms,
             max_attempts=max_attempts,
+            retry_policy=retry_policy,
             payload_max_bytes=payload_max_bytes,
             broker_poison_strategy=broker_poison_strategy,
             filter_criteria=filter_criteria,

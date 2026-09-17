@@ -139,6 +139,7 @@ from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_status import AppResponseStatus
 from .app_response_type import AppResponseType
+from .app_response_visibility import AppResponseVisibility
 from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
@@ -262,6 +263,7 @@ from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
+from .create_app_request_visibility import CreateAppRequestVisibility
 from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
@@ -1094,6 +1096,9 @@ from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExe
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
+from .update_app_request_visibility_type_1 import UpdateAppRequestVisibilityType1
+from .update_app_request_visibility_type_2_type_1 import UpdateAppRequestVisibilityType2Type1
+from .update_app_request_visibility_type_3_type_1 import UpdateAppRequestVisibilityType3Type1
 from .update_app_webhook_request import UpdateAppWebhookRequest
 from .update_app_webhook_request_delivery_format import UpdateAppWebhookRequestDeliveryFormat
 from .update_app_webhook_request_event_filter_item import UpdateAppWebhookRequestEventFilterItem
@@ -1311,6 +1316,7 @@ __all__ = (
     "AppResponseRuntime",
     "AppResponseStatus",
     "AppResponseType",
+    "AppResponseVisibility",
     "AppResponseWorkloadClass",
     "AppRestartResponse",
     "AppRoutesResponse",
@@ -1430,6 +1436,7 @@ __all__ = (
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
+    "CreateAppRequestVisibility",
     "CreateAppWebhookRequest",
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
@@ -2234,6 +2241,9 @@ __all__ = (
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
+    "UpdateAppRequestVisibilityType1",
+    "UpdateAppRequestVisibilityType2Type1",
+    "UpdateAppRequestVisibilityType3Type1",
     "UpdateAppWebhookRequest",
     "UpdateAppWebhookRequestDeliveryFormat",
     "UpdateAppWebhookRequestEventFilterItem",

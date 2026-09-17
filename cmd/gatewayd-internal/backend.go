@@ -70,6 +70,9 @@ func (r pgRouter) appBySlug(ctx context.Context, slug string) (gateway.App, bool
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
 	return r.toApp(ctx, app)
 }
 
@@ -100,6 +103,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	}
 	if err != nil {
 		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	return r.toApp(ctx, app)
 }
@@ -165,6 +171,9 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 		// same account), but we fail closed rather than route.
 		return gateway.App{}, false, nil
 	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
 	return r.toApp(ctx, app)
 }
 
@@ -224,6 +233,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	return gateway.App{
 		ID:                 app.ID,
 		AccountID:          acct.ID,
+		Visibility:         api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:      string(acct.Status),
 		Type:               gateway.AppType(app.Type),
 		Plan:               acct.Plan,

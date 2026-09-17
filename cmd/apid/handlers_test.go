@@ -32,6 +32,28 @@ func TestCreateApp_DuplicateSlug409(t *testing.T) {
 	assertProblem(t, rec, 409, api.CodeValidation)
 }
 
+func TestCreateApp_InternalVisibilityPlanGateAndRoundTrip(t *testing.T) {
+	free := setup(t, api.PlanFree)
+	rec := free.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-free", Visibility: "internal"}, nil)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("free internal visibility: %d %s", rec.Code, rec.Body)
+	}
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanInternalIngressNotAllowed)
+
+	pro := setup(t, api.PlanPro)
+	rec = pro.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-pro", Visibility: "internal"}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("pro internal visibility: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Visibility != string(api.AppVisibilityInternal) {
+		t.Fatalf("created visibility=%q, want internal", out.Visibility)
+	}
+}
+
 func TestCreateApp_BadJSONBody(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	req := newRawRequest(t, "POST", "/v1/apps", "not json {{{", map[string]string{

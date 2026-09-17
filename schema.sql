@@ -138,6 +138,25 @@ $$;
 
 
 --
+-- Name: apps_visibility_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_visibility_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.visibility IS DISTINCT FROM OLD.visibility THEN
+        PERFORM pg_notify(
+            'app_changed',
+            json_build_object('kind', 'updated', 'app_id', NEW.id::text)::text
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: apps_declared_routes_policy_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1466,12 +1485,14 @@ CREATE TABLE public.apps (
     static_egress_ip_set_at timestamp with time zone,
     preview_destroy_commented_at timestamp with time zone,
     app_protocol text DEFAULT 'http1'::text NOT NULL,
+    visibility text DEFAULT 'public'::text NOT NULL,
     only_declared_routes boolean DEFAULT false NOT NULL,
     declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
     deleted_at timestamp with time zone,
     delete_grace_until timestamp with time zone,
     purge_claimed_at timestamp with time zone,
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
+    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
@@ -5675,6 +5696,13 @@ CREATE UNIQUE INDEX apps_static_egress_ip_key ON public.apps USING btree (static
 
 
 --
+-- Name: apps_public_visibility_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_public_visibility_idx ON public.apps USING btree (status, visibility);
+
+
+--
 -- Name: apps_streaming_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7371,6 +7399,13 @@ CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allo
 --
 
 CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_maintenance_mode_notify();
+
+
+--
+-- Name: apps apps_visibility_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_visibility_notify();
 
 
 --

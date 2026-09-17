@@ -886,9 +886,12 @@ type DeployToken struct {
 // runner-scaffold payload (env, healthz path, entrypoint) the guest-init
 // consumes inside the microVM (spec §4.6, §4.9).
 type App struct {
-	ID             string
-	AccountID      string
-	Slug           string
+	ID        string
+	AccountID string
+	Slug      string
+	// Visibility controls public edge exposure. Public is the default;
+	// internal apps are reachable only through authenticated service routing.
+	Visibility     api.AppVisibility
 	Type           AppType
 	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
 	RAMMB          int
@@ -4673,6 +4676,10 @@ type CreditLedgerEntry struct {
 // lifecycle fields are stored as an app-owned manifest patch alongside the
 // existing resource and scaling settings.
 type UpdateAppParams struct {
+	// Visibility is the app edge exposure policy. SetVisibility distinguishes
+	// an explicit public reset from an omitted field.
+	Visibility     *api.AppVisibility
+	SetVisibility  bool
 	RAMMB          *int
 	CPUMillicores  *int
 	IdleTimeoutS   *int // explicit 0 clears to plan default

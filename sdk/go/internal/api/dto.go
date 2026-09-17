@@ -44,6 +44,7 @@ type AppWakeResponse struct {
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`
+	Visibility      string `json:"visibility,omitempty"`
 	Type            string `json:"type,omitempty"`    // "app" (default) | "function"
 	Runtime         string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
 	RAMMB           int    `json:"ram_mb,omitempty"`  // 0 => plan default
@@ -77,6 +78,7 @@ type CreateAppRequest struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	Visibility      *string `json:"visibility,omitempty"`
 	RAMMB           *int    `json:"ram_mb,omitempty"`
 	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
 	ResourceProfile *string `json:"resource_profile,omitempty"`
@@ -391,6 +393,7 @@ type AppResponse struct {
 	ID              string `json:"id"`
 	Slug            string `json:"slug"`
 	Type            string `json:"type"`
+	Visibility      string `json:"visibility"`
 	Runtime         string `json:"runtime,omitempty"`
 	RAMMB           int    `json:"ram_mb"`
 	VCPU            int    `json:"vcpu"`

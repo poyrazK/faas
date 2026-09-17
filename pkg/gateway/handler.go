@@ -83,6 +83,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// Visibility controls public edge routing. Internal apps are deliberately
+	// omitted by the public hostname resolver; service-proxy resolution uses
+	// the app store directly and remains available to authenticated callers.
+	Visibility api.AppVisibility
 	// AccountStatus is the joined account lifecycle. Empty preserves legacy
 	// test fixtures as active; production always populates it. Suspended and
 	// deleted_pending accounts fail at the gateway before auth, wake, or proxy.

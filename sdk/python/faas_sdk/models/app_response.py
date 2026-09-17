@@ -15,6 +15,7 @@ from ..models.app_response_eviction_priority import AppResponseEvictionPriority,
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_status import AppResponseStatus, check_app_response_status
 from ..models.app_response_type import AppResponseType, check_app_response_type
+from ..models.app_response_visibility import AppResponseVisibility, check_app_response_visibility
 from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..types import UNSET, Unset
@@ -79,6 +80,9 @@ class AppResponse:
     """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
     measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See
     ADR-037."""
+    visibility: AppResponseVisibility | Unset = "public"
+    """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
+    service routing. Internal visibility is Pro/Scale."""
     workload_class: AppResponseWorkloadClass | Unset = UNSET
     """Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
     may replace it. Distinct from type, which selects the app-vs-function execution contract."""
@@ -205,6 +209,10 @@ class AppResponse:
         autoscale_target_rps = self.autoscale_target_rps
 
         autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
+
+        visibility: str | Unset = UNSET
+        if not isinstance(self.visibility, Unset):
+            visibility = self.visibility
 
         workload_class: str | Unset = UNSET
         if not isinstance(self.workload_class, Unset):
@@ -368,6 +376,8 @@ class AppResponse:
                 "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
             }
         )
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
         if workload_class is not UNSET:
             field_dict["workload_class"] = workload_class
         if runtime is not UNSET:
@@ -475,6 +485,13 @@ class AppResponse:
         autoscale_target_rps = d.pop("autoscale_target_rps")
 
         autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
+
+        _visibility = d.pop("visibility", UNSET)
+        visibility: AppResponseVisibility | Unset
+        if isinstance(_visibility, Unset):
+            visibility = UNSET
+        else:
+            visibility = check_app_response_visibility(_visibility)
 
         _workload_class = d.pop("workload_class", UNSET)
         workload_class: AppResponseWorkloadClass | Unset
@@ -730,6 +747,7 @@ class AppResponse:
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            visibility=visibility,
             workload_class=workload_class,
             runtime=runtime,
             resource_profile=resource_profile,

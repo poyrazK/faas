@@ -18,6 +18,10 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
+   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Internal visibility is Pro/Scale.
+   */
+  visibility?: 'public' | 'internal';
+  /**
    * Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot may replace it. Distinct from type, which selects the app-vs-function execution contract.
    */
   workload_class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker';

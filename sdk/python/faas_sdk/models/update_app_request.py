@@ -80,6 +80,18 @@ from ..models.update_app_request_restart_policy_type_3_type_1 import (
     UpdateAppRequestRestartPolicyType3Type1,
     check_update_app_request_restart_policy_type_3_type_1,
 )
+from ..models.update_app_request_visibility_type_1 import (
+    UpdateAppRequestVisibilityType1,
+    check_update_app_request_visibility_type_1,
+)
+from ..models.update_app_request_visibility_type_2_type_1 import (
+    UpdateAppRequestVisibilityType2Type1,
+    check_update_app_request_visibility_type_2_type_1,
+)
+from ..models.update_app_request_visibility_type_3_type_1 import (
+    UpdateAppRequestVisibilityType3Type1,
+    check_update_app_request_visibility_type_3_type_1,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -97,6 +109,14 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    visibility: (
+        None
+        | Unset
+        | UpdateAppRequestVisibilityType1
+        | UpdateAppRequestVisibilityType2Type1
+        | UpdateAppRequestVisibilityType3Type1
+    ) = UNSET
+    """Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."""
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None
@@ -244,6 +264,18 @@ class UpdateAppRequest:
     def to_dict(self) -> dict[str, Any]:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.scaling_policy import ScalingPolicy
+
+        visibility: None | str | Unset
+        if isinstance(self.visibility, Unset):
+            visibility = UNSET
+        elif isinstance(self.visibility, str):
+            visibility = self.visibility
+        elif isinstance(self.visibility, str):
+            visibility = self.visibility
+        elif isinstance(self.visibility, str):
+            visibility = self.visibility
+        else:
+            visibility = self.visibility
 
         ram_mb: int | None | Unset
         if isinstance(self.ram_mb, Unset):
@@ -529,6 +561,8 @@ class UpdateAppRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
@@ -621,6 +655,54 @@ class UpdateAppRequest:
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+
+        def _parse_visibility(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestVisibilityType1
+            | UpdateAppRequestVisibilityType2Type1
+            | UpdateAppRequestVisibilityType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                visibility_type_1 = check_update_app_request_visibility_type_1(data)
+
+                return visibility_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                visibility_type_2_type_1 = check_update_app_request_visibility_type_2_type_1(data)
+
+                return visibility_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                visibility_type_3_type_1 = check_update_app_request_visibility_type_3_type_1(data)
+
+                return visibility_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestVisibilityType1
+                | UpdateAppRequestVisibilityType2Type1
+                | UpdateAppRequestVisibilityType3Type1,
+                data,
+            )
+
+        visibility = _parse_visibility(d.pop("visibility", UNSET))
 
         def _parse_ram_mb(data: object) -> int | None | Unset:
             if data is None:
@@ -1236,6 +1318,7 @@ class UpdateAppRequest:
         cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
 
         update_app_request = cls(
+            visibility=visibility,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,
