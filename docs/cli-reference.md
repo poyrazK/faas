@@ -439,6 +439,24 @@ Bind &lt;slug&gt; to a visible GitHub repository
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
 
+### github setup
+
+Bind GitHub, configure previews, and write an Actions workflow
+
+| Flag | Meaning | |
+|---|---|---|
+| `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
+| `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
+| `--deploy-branches <MAPPINGS>` | comma-separated branch=scope mappings |  |
+| `--workflow <PATH>` | workflow path relative to repository root |  |
+| `--preview` | enable pull-request previews |  |
+| `--no-preview` | disable pull-request previews |  |
+| `--preview-ttl-hours <HOURS>` | preview lease in hours (1-720) |  |
+| `--root-dir <DIR>` | repository-relative source root for the root workload |  |
+| `--ignore <PATHS>` | comma-separated ignored change paths |  |
+| `--dry-run` | show the workflow without writing or changing remote state |  |
+| `--force` | overwrite an existing workflow file |  |
+
 ### github disconnect
 
 Remove the app&#39;s GitHub repository binding

@@ -168,6 +168,18 @@ successful no-op and does not enqueue builds. Compare-API failures still use
 the existing safe full-fan-out fallback, because an unavailable GitHub API
 must not be mistaken for an ignored change set.
 
+## CLI bootstrap
+
+From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
+application, writes `.github/workflows/gregale.yml`, and leaves the existing
+preview defaults in place. Add `--preview`, `--no-preview`,
+`--preview-ttl-hours`, `--root-dir`, or `--ignore` to configure the project
+policy in the same command. Use `--dry-run` to inspect the workflow without
+network or file changes; an existing different workflow is never overwritten
+unless `--force` is supplied. Production pushes and manual dispatches use the
+workflow, while pull-request previews continue to be managed by the connected
+GitHub integration.
+
 ## Related
 
 - ADR-095 (decision + schema + state machine rationale).

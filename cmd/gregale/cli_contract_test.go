@@ -144,7 +144,7 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 		want    string
 		reject  string
 	}{
-		{command: "github", want: "gregale github <status|sync|repos|bind|disconnect> <slug>", reject: "gregale github <slug> <"},
+		{command: "github", want: "gregale github <status|sync|repos|bind|setup|disconnect> <slug>", reject: "gregale github <slug> <"},
 		{command: "debug", want: "gregale debug <requests|coverage|running|regressions|compare|bundle> [flags] <slug> [<request-id>]", reject: "gregale debug <slug> <"},
 		{command: "audit-events", want: "gregale audit-events <list|get> [<id>]", reject: "gregale audit-events <id> <"},
 	} {
