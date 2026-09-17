@@ -8,13 +8,13 @@
       "category": "api-contract",
       "surface": "event, queue, and workflow contracts",
       "status": "partial",
-      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for the currently emitted app.parked, app.woken, and usage_statement.finalized events, plus the authenticated workflow external-event injection channel at POST /v1/workflows/runs/{id}/events.",
-      "limitations": "Queue contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
+      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for the currently emitted app.parked, app.woken, and usage_statement.finalized events, the authenticated workflow external-event injection channel at POST /v1/workflows/runs/{id}/events, and per-app FIFO queue send/receive/ack channels.",
+      "limitations": "Queue introspection/dead-letter/replay endpoints, trigger broker contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
       "docs_url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
       "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go",
       "conformance": [
         {
-          "fixture": "asyncapi-webhook-contract",
+          "fixture": "asyncapi-event-contract",
           "tier": "unit",
           "target": "pkg/productstandards/asyncapi_test.go::TestAsyncAPIContract"
         }

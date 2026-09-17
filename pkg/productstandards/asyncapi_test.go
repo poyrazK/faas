@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.1.0" {
-		t.Fatalf("info.version = %v, want 1.1.0 after workflow channel expansion", got)
+	if got := info["version"]; got != "1.2.0" {
+		t.Fatalf("info.version = %v, want 1.2.0 after queue channel expansion", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -62,6 +62,25 @@ func TestAsyncAPIContract(t *testing.T) {
 	workflowMessages := object(t, workflowChannel, "messages")
 	if len(workflowMessages) != 1 {
 		t.Errorf("channels.workflowExternalEvent has %d messages, want 1", len(workflowMessages))
+	}
+	for channelName, wantAddress := range map[string]string{
+		"queueSend":    "/v1/apps/{slug}/queues/send",
+		"queueReceive": "/v1/apps/{slug}/queues/receive",
+		"queueAck":     "/v1/apps/{slug}/queues/{id}/ack",
+	} {
+		channel := object(t, channels, channelName)
+		if channel["address"] != wantAddress {
+			t.Errorf("channels.%s.address = %v, want %q", channelName, channel["address"], wantAddress)
+		}
+		parameters := object(t, channel, "parameters")
+		_ = object(t, parameters, "slug")
+		if channelName == "queueAck" {
+			_ = object(t, parameters, "id")
+		}
+		channelMessages := object(t, channel, "messages")
+		if len(channelMessages) != 1 {
+			t.Errorf("channels.%s has %d messages, want 1", channelName, len(channelMessages))
+		}
 	}
 
 	for operationName, channelName := range map[string]string{
@@ -107,6 +126,37 @@ func TestAsyncAPIContract(t *testing.T) {
 	if len(workflowRefs) != 1 || workflowRefs[0].(map[string]any)["$ref"] != "#/channels/workflowExternalEvent/messages/workflowExternalEvent" {
 		t.Errorf("operations.receiveWorkflowExternalEvent message ref = %v, want workflow channel message", workflowOperation["messages"])
 	}
+	for operationName, spec := range map[string]struct {
+		channel string
+		action  string
+	}{
+		"receiveQueueSend": {channel: "queueSend", action: "receive"},
+		"sendQueueReceive": {channel: "queueReceive", action: "send"},
+		"receiveQueueAck":  {channel: "queueAck", action: "receive"},
+	} {
+		operation := object(t, operations, operationName)
+		if operation["action"] != spec.action {
+			t.Errorf("operations.%s.action = %v, want %s", operationName, operation["action"], spec.action)
+		}
+		channelRef := operation["channel"].(map[string]any)["$ref"]
+		if channelRef != "#/channels/"+spec.channel {
+			t.Errorf("operations.%s channel ref = %v, want %s", operationName, channelRef, spec.channel)
+		}
+		bindings := object(t, operation, "bindings")
+		httpBinding := object(t, bindings, "http")
+		if httpBinding["method"] != "POST" {
+			t.Errorf("operations.%s HTTP method = %v, want POST", operationName, httpBinding["method"])
+		}
+		security := operation["security"].([]any)
+		if len(security) != 1 || security[0].(map[string]any)["bearerAuth"] == nil {
+			t.Errorf("operations.%s security = %v, want bearerAuth", operationName, security)
+		}
+		refs := operation["messages"].([]any)
+		wantMessageRef := "#/channels/" + spec.channel + "/messages/" + spec.channel
+		if len(refs) != 1 || refs[0].(map[string]any)["$ref"] != wantMessageRef {
+			t.Errorf("operations.%s message ref = %v, want %s", operationName, operation["messages"], wantMessageRef)
+		}
+	}
 
 	for _, messageName := range []string{"AppParked", "AppWoken", "UsageStatementFinalized"} {
 		message := object(t, messages, messageName)
@@ -128,8 +178,19 @@ func TestAsyncAPIContract(t *testing.T) {
 	if workflowMessageHTTPBinding["bindingVersion"] != "0.3.0" {
 		t.Errorf("components.messages.WorkflowExternalEvent HTTP binding version = %v, want 0.3.0", workflowMessageHTTPBinding["bindingVersion"])
 	}
+	for _, messageName := range []string{"QueueSend", "QueueReceive", "QueueAck"} {
+		message := object(t, messages, messageName)
+		if message["contentType"] != "application/json" {
+			t.Errorf("components.messages.%s contentType = %v, want application/json", messageName, message["contentType"])
+		}
+		bindings := object(t, message, "bindings")
+		httpBinding := object(t, bindings, "http")
+		if httpBinding["bindingVersion"] != "0.3.0" {
+			t.Errorf("components.messages.%s HTTP binding version = %v, want 0.3.0", messageName, httpBinding["bindingVersion"])
+		}
+	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "UsageStatementFinalizedData", "WorkflowEventHeaders", "WorkflowExternalEventPayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "UsageStatementFinalizedData", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 }

@@ -2,13 +2,14 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Gregale delivers selected app lifecycle and billing events to an app's
-    configured webhook subscriptions, and accepts external events for durable
-    workflow runs. Outbound webhook messages use CloudEvents 1.0 structured
-    JSON over HTTP POST and are signed with the webhook secret; workflow
-    external events use the public API's authenticated JSON endpoint.
+    configured webhook subscriptions, accepts external events for durable
+    workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
+    messages use CloudEvents 1.0 structured JSON over HTTP POST and are signed
+    with the webhook secret; workflow and queue operations use the public API's
+    authenticated JSON endpoints.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -68,6 +69,49 @@ channels:
     messages:
       workflowExternalEvent:
         $ref: '#/components/messages/WorkflowExternalEvent'
+  queueSend:
+    address: /v1/apps/{slug}/queues/send
+    description: Enqueue a JSON payload on an app's per-app FIFO queue.
+    parameters:
+      slug:
+        description: App slug whose queue receives the payload.
+        examples:
+          - demo-app
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      queueSend:
+        $ref: '#/components/messages/QueueSend'
+  queueReceive:
+    address: /v1/apps/{slug}/queues/receive
+    description: Long-poll for the next completed queue invocation; acknowledgement is informational.
+    parameters:
+      slug:
+        description: App slug whose queue is being polled.
+        examples:
+          - demo-app
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      queueReceive:
+        $ref: '#/components/messages/QueueReceive'
+  queueAck:
+    address: /v1/apps/{slug}/queues/{id}/ack
+    description: Acknowledge a completed queue invocation (idempotent).
+    parameters:
+      slug:
+        description: App slug that owns the queue invocation.
+        examples:
+          - demo-app
+      id:
+        description: 32-character hexadecimal queue invocation identifier.
+        examples:
+          - 0123456789abcdef0123456789abcdef
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      queueAck:
+        $ref: '#/components/messages/QueueAck'
 operations:
   deliverAppParked:
     action: send
@@ -113,6 +157,53 @@ operations:
       endpoint is idempotent when the caller supplies an Idempotency-Key.
     messages:
       - $ref: '#/channels/workflowExternalEvent/messages/workflowExternalEvent'
+    security:
+      - bearerAuth: []
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  receiveQueueSend:
+    action: receive
+    channel:
+      $ref: '#/channels/queueSend'
+    summary: Enqueue a payload on an app's FIFO queue.
+    description: The request returns the newly-created queue invocation identifier.
+    messages:
+      - $ref: '#/channels/queueSend/messages/queueSend'
+    security:
+      - bearerAuth: []
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  sendQueueReceive:
+    action: send
+    channel:
+      $ref: '#/channels/queueReceive'
+    summary: Return the next completed queue invocation.
+    description: |
+      This operation long-polls for up to 30 seconds. A completed message is
+      returned with its id, payload, and optional result; a timeout returns
+      HTTP 204 with no message and the caller should retry. The invocation is
+      already completed when it is returned; callers may acknowledge receipt
+      with the idempotent queue ack operation.
+    messages:
+      - $ref: '#/channels/queueReceive/messages/queueReceive'
+    security:
+      - bearerAuth: []
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  receiveQueueAck:
+    action: receive
+    channel:
+      $ref: '#/channels/queueAck'
+    summary: Accept an idempotent queue invocation acknowledgement.
+    description: The request has no body and returns HTTP 204 on success or re-acknowledgement.
+    messages:
+      - $ref: '#/channels/queueAck/messages/queueAck'
     security:
       - bearerAuth: []
     bindings:
@@ -174,6 +265,39 @@ components:
           headers:
             $ref: '#/components/schemas/WorkflowEventHeaders'
           bindingVersion: '0.3.0'
+    QueueSend:
+      name: queue.send
+      title: Queue send
+      summary: A JSON payload enqueued on an app's FIFO queue.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QueueSendPayload'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/QueueRequestHeaders'
+          bindingVersion: '0.3.0'
+    QueueReceive:
+      name: queue.receive
+      title: Queue receive
+      summary: A completed queue invocation returned by a long-poll.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QueueReceivePayload'
+      bindings:
+        http:
+          bindingVersion: '0.3.0'
+    QueueAck:
+      name: queue.ack
+      title: Queue acknowledgement
+      summary: An idempotent acknowledgement for a completed queue invocation.
+      contentType: application/json
+      description: No request body is required.
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/QueueRequestHeaders'
+          bindingVersion: '0.3.0'
   schemas:
     WorkflowEventHeaders:
       type: object
@@ -196,6 +320,42 @@ components:
           description: Application-defined event name matched by the waiting step.
         payload:
           description: Caller-defined JSON value delivered to the workflow step.
+    QueueRequestHeaders:
+      type: object
+      description: Optional request headers for queue send and acknowledgement calls.
+      properties:
+        Idempotency-Key:
+          type: string
+          minLength: 1
+          description: Deduplication key used when retrying an idempotent request.
+      additionalProperties: true
+    QueueSendPayload:
+      type: object
+      description: Body accepted by the queue send endpoint.
+      properties:
+        payload:
+          type: object
+          additionalProperties: true
+          description: JSON object delivered to the queue invocation.
+    QueueReceivePayload:
+      type: object
+      description: Body returned when the queue receive long-poll finds a completed invocation.
+      required:
+        - id
+        - payload
+      properties:
+        id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          description: Queue invocation identifier used by the acknowledgement endpoint.
+        payload:
+          type: object
+          additionalProperties: true
+          description: Original JSON object enqueued by the caller.
+        result:
+          type: object
+          additionalProperties: true
+          description: Optional result recorded by the app invocation.
     WebhookHeaders:
       type: object
       description: Application headers emitted on every app-webhook delivery.
