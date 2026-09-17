@@ -962,7 +962,6 @@ List pull-request and developer previews (defaults to the linked app)
 |---|---|---|
 | `--app <slug>` | parent app slug |  |
 
-
 ### preview show
 
 Inspect a preview and its latest deployment
