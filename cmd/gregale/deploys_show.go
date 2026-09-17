@@ -99,7 +99,10 @@ const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 //     (`grep` / `xargs` / `$EDITOR` "open" commands). When the
 //     deployment isn't preview-active, prints an empty line so
 //     shell chains can branch on `wc -c`.
-//   - --json (or FAAS_JSON=1)        → indented JSON of stage_state.
+//   - --json (or FAAS_JSON=1)        → indented JSON of stage_state. When
+//     --status is selected, the output is the same status envelope as
+//     `deploys status --json` (deployment fields + typed stage_state +
+//     terminal_at).
 //   - stdout is TTY + no --json      → closed 6-row block via
 //     renderDeploySummary.
 //   - stdout is pipe / NO_COLOR set  → same closed 6-row block
@@ -180,10 +183,6 @@ func cmdDeploysShow(args []string) int {
 		// the raw bytes back to engineering.
 		return printErr("Could not decode stage_state (CLI/server shape drift?)", err)
 	}
-	if jsonOutput {
-		return jsonOut(writeJSON(ss))
-	}
-
 	// Derive the footer inputs. No --status → status="", terminalAt
 	// is zero; renderDeploySummary handles the empty-string short
 	// circuits so this still renders correctly for in-flight
@@ -204,6 +203,12 @@ func cmdDeploysShow(args []string) int {
 			}
 		}
 		terminalAt = deriveTerminalAt(ss, status, createdAt)
+	}
+	if jsonOutput {
+		if !*withStatus || dep == nil {
+			return jsonOut(writeJSON(ss))
+		}
+		return jsonOut(writeJSON(newDeployStatusJSON(*dep, ss, terminalAt)))
 	}
 	if err := renderDeploySummary(osStdout, ss, status, terminalAt); err != nil {
 		// Render failures (closed-set drift, broken pipe) are
@@ -258,9 +263,6 @@ func cmdDeploysStatus(args []string) int {
 	if err := json.Unmarshal(raw, &ss); err != nil {
 		return printErr("Could not decode stage_state (CLI/server shape drift?)", err)
 	}
-	if jsonOutput {
-		return jsonOut(writeJSON(ss))
-	}
 	status := dep.Status
 	var createdAt time.Time
 	// dep.CreatedAt is wire-formatted (RFC3339Nano); parse
@@ -274,11 +276,36 @@ func cmdDeploysStatus(args []string) int {
 		}
 	}
 	terminalAt := deriveTerminalAt(ss, status, createdAt)
+	if jsonOutput {
+		return jsonOut(writeJSON(newDeployStatusJSON(*dep, ss, terminalAt)))
+	}
 	if err := renderDeploySummary(osStdout, ss, status, terminalAt); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "warning: stage summary render failed: %v\n", err)
 	}
 	renderDeployFailureIfPresent(osStdout, *dep)
 	return 0
+}
+
+// deployStatusJSON is the machine-readable status surface for the
+// post-stream deployment commands. Embedding DeploymentResponse keeps the
+// existing deployment fields (status, error guidance, and bounded relevant
+// logs) at the top level while the explicit StageState field replaces the
+// response's raw stage_state bytes with the CLI's typed representation.
+// terminal_at is omitted while the deployment has no derivable terminal
+// anchor (for example, an in-flight deployment).
+type deployStatusJSON struct {
+	api.DeploymentResponse
+	StageState state.StageState `json:"stage_state"`
+	TerminalAt *time.Time       `json:"terminal_at,omitempty"`
+}
+
+func newDeployStatusJSON(dep api.DeploymentResponse, ss state.StageState, terminalAt time.Time) deployStatusJSON {
+	out := deployStatusJSON{DeploymentResponse: dep, StageState: ss}
+	if !terminalAt.IsZero() {
+		at := terminalAt
+		out.TerminalAt = &at
+	}
+	return out
 }
 
 // renderDeployFailureIfPresent appends the persisted, customer-facing failure
