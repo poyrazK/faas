@@ -96,6 +96,17 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 	if err := writeTestRecipient(recipientPath); err != nil {
 		t.Fatalf("write host age recipient: %v", err)
 	}
+	store := state.NewPgStore(pool)
+	runtimeRow, err := store.UpsertRuntimeConfig(context.Background(), state.RuntimeConfigUpdate{
+		Key: "s3_enabled", Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage("true"),
+		ApplyMode: state.RuntimeConfigApplyHot, Reason: "object storage e2e fixture",
+	})
+	if err != nil {
+		t.Fatalf("seed object storage runtime flag: %v", err)
+	}
+	if err := store.MarkRuntimeConfigApplied(context.Background(), runtimeRow.Key, runtimeRow.Scope, runtimeRow.ScopeID, runtimeRow.Version, json.RawMessage("true"), ""); err != nil {
+		t.Fatalf("apply object storage runtime flag: %v", err)
+	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{
 		"FAAS_OBJECT_STORAGE_CONFIG=" + configPath,
 		"FAAS_E2E_S3_ACCESS_KEY=e2e-access",
@@ -104,16 +115,6 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + recipientPath + ".priv",
 	})
 	return objectStorageE2EEnv{pool: pool, h: h, stub: stub, backend: backend}
-}
-
-func enableObjectStorage(t *testing.T, env objectStorageE2EEnv, key string) {
-	t.Helper()
-	raw, status := doReq(t, env.h, key, http.MethodPatch, "/v1/admin/config/s3_enabled", map[string]any{
-		"value": true, "reason": "object storage e2e",
-	})
-	if status != http.StatusOK {
-		t.Fatalf("enable object storage: status=%d body=%s", status, raw)
-	}
 }
 
 func createObjectStorageApp(t *testing.T, env objectStorageE2EEnv, key, slug string) {
@@ -208,7 +209,6 @@ func TestE2E_ObjectStorage_ProviderBackedIsolationAndIdempotency(t *testing.T) {
 	env := startObjectStorageE2E(t, pool)
 	keyA := env.h.SeedAccount(context.Background(), api.PlanPro, "object-storage-a")
 	keyB := env.h.SeedAccount(context.Background(), api.PlanPro, "object-storage-b")
-	enableObjectStorage(t, env, keyA)
 	createObjectStorageApp(t, env, keyA, "object-storage-a")
 
 	bucket := createObjectStorageBucket(t, env, keyA, "object-storage-a", "assets")
@@ -296,7 +296,6 @@ func TestE2E_ObjectStorage_CredentialAndComputeBindingLifecycle(t *testing.T) {
 	}
 	env := startObjectStorageE2E(t, pool)
 	key := env.h.SeedAccount(context.Background(), api.PlanPro, "object-storage-bindings")
-	enableObjectStorage(t, env, key)
 	slug := "object-storage-bindings"
 	createObjectStorageApp(t, env, key, slug)
 	bucket := createObjectStorageBucket(t, env, key, slug, "assets")
@@ -404,7 +403,6 @@ func TestE2E_ObjectStorage_MultipartLifecycleAndDurableRetry(t *testing.T) {
 	}
 	env := startObjectStorageE2E(t, pool)
 	key := env.h.SeedAccount(context.Background(), api.PlanPro, "object-storage-multipart")
-	enableObjectStorage(t, env, key)
 	slug := "object-storage-multipart"
 	createObjectStorageApp(t, env, key, slug)
 	bucket := createObjectStorageBucket(t, env, key, slug, "assets")
