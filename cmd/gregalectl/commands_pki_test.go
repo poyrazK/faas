@@ -96,6 +96,47 @@ func TestPKIRenewalRecreatesSecureExportParentBeforeExport(t *testing.T) {
 	}
 }
 
+func TestPKIRenewalUsesRoutableVMMDHostnameAsTransportSAN(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
+	if err != nil {
+		t.Fatalf("read pki renewal playbook: %v", err)
+	}
+	text := string(body)
+	start := strings.Index(text, "    faas_pki_transport_san: >-")
+	end := strings.Index(text, "    faas_pki_unit_by_directory:")
+	if start < 0 || end < 0 || start >= end {
+		t.Fatalf("renewal transport SAN definition is missing: start=%d end=%d", start, end)
+	}
+	definition := text[start:end]
+	for _, required := range []string{
+		"faas_vmmd_target_url",
+		"ansible.builtin.urlsplit('hostname')",
+		"faas_box_role == 'compute-only'",
+	} {
+		if !strings.Contains(definition, required) {
+			t.Errorf("renewal transport SAN definition missing %q\n%s", required, definition)
+		}
+	}
+}
+
+func TestPKIRenewalOnlyResumesAValidInstalledBundle(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
+	if err != nil {
+		t.Fatalf("read pki renewal playbook: %v", err)
+	}
+	text := string(body)
+	inspect := strings.Index(text, "pki renewal — inspect the active host bundle")
+	detect := strings.Index(text, "pki renewal — detect resumable activation")
+	decide := strings.Index(text, "pki renewal — decide whether activation work is required")
+	if inspect < 0 || detect < 0 || decide < 0 || !(inspect < detect && detect < decide) {
+		t.Fatalf("renewal resume validation order is unsafe: inspect=%d detect=%d decide=%d", inspect, detect, decide)
+	}
+	resumeDefinition := text[detect:decide]
+	if !strings.Contains(resumeDefinition, "and faas_pki_status.rc == 0") {
+		t.Fatalf("renewal resumes an invalid installed bundle\n%s", resumeDefinition)
+	}
+}
+
 func TestRenderPKIMetricsExportsBoundedDaemonExpiryAndRenewalState(t *testing.T) {
 	rootDir := seedPKIRootDir(t)
 	statePath := filepath.Join(t.TempDir(), "status.json")

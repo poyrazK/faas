@@ -59,8 +59,10 @@
     faas_pki_remote_outgoing: "/var/lib/faas/pki-renewal/outgoing/{{ inventory_hostname }}"
     faas_pki_remote_candidate: /var/lib/faas/pki-renewal/candidate
     faas_pki_transport_san: >-
-      {{ faas_private_dns_address
-         | default(faas_private_address | default(ansible_default_ipv4.address, true), true) }}
+      {{ (faas_vmmd_target_url | ansible.builtin.urlsplit('hostname'))
+         if faas_box_role == 'compute-only'
+         else (faas_private_dns_address
+               | default(faas_private_address | default(ansible_default_ipv4.address, true), true)) }}
     faas_pki_unit_by_directory:
       apid: faas-apid.service
       builderd: faas-builderd.service
@@ -119,13 +121,6 @@
               {{ (faas_pki_state_raw.content | b64decode | from_json)
                  if faas_pki_state_stat.stat.exists else {} }}
 
-        - name: pki renewal — detect resumable activation
-          ansible.builtin.set_fact:
-            faas_pki_resume_activation: >-
-              {{ faas_pki_previous_state.phase | default('') == 'activation_pending' }}
-            faas_pki_installed: >-
-              {{ faas_pki_previous_state.phase | default('') == 'activation_pending' }}
-
         - name: pki renewal — inspect the active host bundle
           ansible.builtin.command:
             argv: >-
@@ -136,7 +131,15 @@
           register: faas_pki_status
           changed_when: false
           failed_when: false
-          when: not faas_pki_resume_activation
+
+        - name: pki renewal — detect resumable activation
+          ansible.builtin.set_fact:
+            faas_pki_resume_activation: >-
+              {{ faas_pki_previous_state.phase | default('') == 'activation_pending'
+                 and faas_pki_status.rc == 0 }}
+            faas_pki_installed: >-
+              {{ faas_pki_previous_state.phase | default('') == 'activation_pending'
+                 and faas_pki_status.rc == 0 }}
 
         - name: pki renewal — decide whether activation work is required
           ansible.builtin.set_fact:
