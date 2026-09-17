@@ -192,6 +192,34 @@ func TestCDControlPlaneConvergesKeylessBackupIdentityBeforeActivation(t *testing
 	}
 }
 
+func TestCDControlPlaneConvergesPostgresConnectionMetricsBeforeActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	bundle := strings.Index(workflow, `"${BUNDLE_ROOT}/host-config/faas-postgres-connection-metrics"`)
+	install := strings.Index(workflow, `/usr/local/bin/faas-postgres-connection-metrics`)
+	enable := strings.Index(workflow, `systemctl enable --now faas-postgres-connection-metrics.timer`)
+	verify := strings.Index(workflow, `faas_postgres_ordinary_connection_capacity [1-9][0-9]*`)
+	deploy := strings.Index(workflow, `deployctl deploy ${RELEASE_ID}`)
+	if bundle < 0 || install < 0 || enable < 0 || verify < 0 || deploy < 0 {
+		t.Fatalf("control-plane workflow is missing PostgreSQL connection metrics convergence: bundle=%d install=%d enable=%d verify=%d deploy=%d", bundle, install, enable, verify, deploy)
+	}
+	if !(bundle < install && install < enable && enable < verify && verify < deploy) {
+		t.Fatalf("PostgreSQL connection metrics must converge before activation: bundle=%d install=%d enable=%d verify=%d deploy=%d", bundle, install, enable, verify, deploy)
+	}
+	for _, required := range []string{
+		"faas-postgres-connection-metrics.service",
+		"faas-postgres-connection-metrics.timer",
+		"/var/lib/node_exporter/textfile_collector/faas_postgres_connections.prom",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane workflow is missing PostgreSQL connection metrics contract %q", required)
+		}
+	}
+}
+
 func TestCDControlPlanePromotesDPAArtifactWithRelease(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

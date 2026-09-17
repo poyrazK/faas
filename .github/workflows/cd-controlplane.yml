@@ -282,6 +282,15 @@ jobs:
             "${BUNDLE_ROOT}/host-config/faas-pg-backup-contract-preflight.sh"
           install -m 0755 deploy/scripts/faas-rclone-backup-identity.py \
             "${BUNDLE_ROOT}/host-config/faas-rclone-backup-identity.py"
+          install -m 0755 \
+            deploy/ansible/roles/postgres/files/faas-postgres-connection-metrics \
+            "${BUNDLE_ROOT}/host-config/faas-postgres-connection-metrics"
+          install -m 0644 \
+            deploy/ansible/roles/postgres/files/faas-postgres-connection-metrics.service \
+            "${BUNDLE_ROOT}/host-config/faas-postgres-connection-metrics.service"
+          install -m 0644 \
+            deploy/ansible/roles/postgres/files/faas-postgres-connection-metrics.timer \
+            "${BUNDLE_ROOT}/host-config/faas-postgres-connection-metrics.timer"
           install -m 0644 docs/DPA.md "${BUNDLE_ROOT}/host-config/dpa.md"
           install -m 0644 deploy/statuspage/index.html \
             "${BUNDLE_ROOT}/statuspage/index.html"
@@ -514,7 +523,27 @@ jobs:
           IDENTITY
             chmod 0644 "/etc/systemd/system/${unit}.d/90-gcp-backup-identity.conf"
           done
+          # The standalone controller path does not run the postgres Ansible
+          # role on every release. Converge its textfile collector here so the
+          # PostgreSQL connection saturation alerts have live input.
+          install -d -o postgres -g node_exporter -m 0755 \
+            /var/lib/node_exporter/textfile_collector
+          install -o root -g root -m 0755 \
+            "$release_dir/host-config/faas-postgres-connection-metrics" \
+            /usr/local/bin/faas-postgres-connection-metrics
+          install -o root -g root -m 0644 \
+            "$release_dir/host-config/faas-postgres-connection-metrics.service" \
+            /etc/systemd/system/faas-postgres-connection-metrics.service
+          install -o root -g root -m 0644 \
+            "$release_dir/host-config/faas-postgres-connection-metrics.timer" \
+            /etc/systemd/system/faas-postgres-connection-metrics.timer
           systemctl daemon-reload
+          systemctl enable --now faas-postgres-connection-metrics.timer
+          systemctl start faas-postgres-connection-metrics.service
+          metrics_file=/var/lib/node_exporter/textfile_collector/faas_postgres_connections.prom
+          test -s "$metrics_file"
+          grep -q '^faas_postgres_client_connections [0-9][0-9]*$' "$metrics_file"
+          grep -q '^faas_postgres_ordinary_connection_capacity [1-9][0-9]*$' "$metrics_file"
 
           # PostgreSQL does not inherit the systemd service environment, so
           # archive_command names the wrapper directly. ALTER SYSTEM gives an
