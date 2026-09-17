@@ -302,11 +302,12 @@ last-known-good blob after the registry reports an error.
 
 `/etc/faas/imaged-storage.env` is a separate `root:faas 0440` override that
 contains only `FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`. It is loaded after
-`storage.env` by `faas-imaged` alone, so snapshot publication and garbage
-collection can use a package lifecycle credential without granting delete
-authority to request-serving daemons. `cd-compute` proves the credential by
-writing, reading, and deleting a disposable registry artifact before it
-accepts the rollout.
+`storage.env` by `faas-imaged` and `faas-vmmd`, so image garbage collection and
+VM snapshot publication can use a package lifecycle credential without
+granting delete authority to request-serving daemons. `cd-compute` verifies
+that VMMD has the override wired, then proves the credential by writing,
+reading, and deleting a disposable registry artifact before it accepts the
+rollout.
 
 For production compute joins, the signed release tarball also carries the
 release-pinned `vmlinux`. `node_join.yml` extracts it before importing the

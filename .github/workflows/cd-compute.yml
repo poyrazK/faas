@@ -843,9 +843,16 @@ jobs:
           fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
-      - name: Verify imaged registry lifecycle authorization
+      - name: Verify compute registry lifecycle authorization
         run: |
           set -euo pipefail
+          ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "sudo -n systemctl cat faas-vmmd.service | grep -Fq 'EnvironmentFile=-/etc/faas/imaged-storage.env'"
           ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
             -p "$SSH_PORT" \
             -o BatchMode=yes \

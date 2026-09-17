@@ -23,6 +23,7 @@ CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_kill cap_setgid 
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
+EnvironmentFile=-/etc/faas/imaged-storage.env
 EnvironmentFile=-/etc/faas/runtime-bases.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base

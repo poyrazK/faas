@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -40,5 +41,34 @@ func TestAuthorizedDeploymentSmokeRequiresCachedChallenge(t *testing.T) {
 	b.AuthorizeDeploymentSmoke(app.ID, "dep-1", "token-1", time.Now().Add(time.Minute))
 	if !h.authorizedDeploymentSmoke(req, app) {
 		t.Fatal("authorized platform smoke was rejected")
+	}
+}
+
+func TestAuthorizedDeploymentSmokeBypassesCustomerAuthGates(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil)
+	h := &Handler{backend: b}
+	app := App{
+		ID:           "app-1",
+		RequireAuthn: true,
+		PublicAuth:   PublicAuthConfig{Mode: publicAuthModeBearer},
+	}
+	b.AuthorizeDeploymentSmoke(app.ID, "dep-1", "token-1", time.Now().Add(time.Minute))
+
+	req := httptest.NewRequest(http.MethodGet, "http://demo/healthz", nil)
+	req.Header.Set(apihostingreceipt.PlatformSmokeHeader, "1")
+	req.Header.Set(apihostingreceipt.PlatformSmokeDeploymentHeader, "dep-1")
+	req.Header.Set(apihostingreceipt.PlatformSmokeTokenHeader, "token-1")
+
+	for name, enforce := range map[string]func(http.ResponseWriter, *http.Request, *statusRecorder, App) bool{
+		"require_authn": h.enforceRequireAuthn,
+		"public_auth":   h.enforcePublicAuth,
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			status := &statusRecorder{ResponseWriter: recorder}
+			if !enforce(status, req, status, app) {
+				t.Fatalf("authorized platform smoke was rejected with status %d", recorder.Code)
+			}
+		})
 	}
 }

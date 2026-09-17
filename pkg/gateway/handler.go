@@ -1672,6 +1672,12 @@ func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 // stamp). Best-effort — a failed emit never blocks the deny
 // response (matches the gatewaydAuditor.Emit contract).
 func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
+	// The deployment verifier presents a short-lived, random challenge that is
+	// bound to this app and candidate deployment. It must reach the guest health
+	// endpoint even when the customer enables the ordinary API-key gate.
+	if h.authorizedDeploymentSmoke(r, app) {
+		return true
+	}
 	if !app.RequireAuthn {
 		return true
 	}
@@ -4284,6 +4290,12 @@ func bearerTokenFromHeader(h string) string {
 // failed emit never blocks the deny response (matches
 // emitAuthnAudit's contract).
 func (h *Handler) enforcePublicAuth(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
+	// Platform deployment smoke is independently authenticated by the cached,
+	// app-and-deployment-bound challenge. Requiring customer bearer/basic auth
+	// here would make every protected app impossible to deploy.
+	if h.authorizedDeploymentSmoke(r, app) {
+		return true
+	}
 	// Open (or unknown) → pass-through. Unknown / empty Mode
 	// is treated as 'open' so the pre-#477 customer behaviour
 	// is preserved (a fakeBackend unit test that doesn't
