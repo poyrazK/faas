@@ -132,7 +132,7 @@ func cmdDeployPrepareNode(args []string) int {
 	manifestFile := fs.String("manifest-file", "", "signed production manifest (required)")
 	releaseTag := fs.String("release-tag", "", "signed release tag, for example v0.1.18-rc.15 (required)")
 	releaseRepo := fs.String("release-repo", defaultPrepareReleaseRepo, "GitHub owner/repository containing the release")
-	secretsDir := fs.String("secrets-dir", "", "directory containing compute-ssh-key, compute-db.env, storage.env, signing keys, and pki/ (required)")
+	secretsDir := fs.String("secrets-dir", "", "directory containing compute-ssh-key, compute-db.env, storage.env, imaged-storage.env, signing keys, and pki/ (required)")
 	outputDir := fs.String("output-dir", "", "prepared join artifact directory (required)")
 	cacheDir := fs.String("cache-dir", "", "persistent cache for verified public release assets")
 	cosignBinary := fs.String("cosign-binary", "", "Linux/amd64 cosign binary to verify and stage (default: COSIGN_BINARY or PATH)")
@@ -709,6 +709,7 @@ func stagePrepareSecrets(sourceDir, outputDir string) error {
 		{name: "compute-ssh-key", mode: 0o600},
 		{name: "compute-db.env", mode: 0o600},
 		{name: "storage.env", mode: 0o600},
+		{name: "imaged-storage.env", mode: 0o600},
 		{name: "sign.key", mode: 0o600},
 		{name: "sign-pub.pem", mode: 0o644},
 	}
@@ -730,6 +731,9 @@ func stagePrepareSecrets(sourceDir, outputDir string) error {
 	}
 	if err := validateSharedStorageEnv(filepath.Join(sourceDir, "storage.env")); err != nil {
 		return fmt.Errorf("storage.env: %w", err)
+	}
+	if err := validateImagedStorageEnv(filepath.Join(sourceDir, "imaged-storage.env")); err != nil {
+		return fmt.Errorf("imaged-storage.env: %w", err)
 	}
 
 	pkiSource := filepath.Join(sourceDir, "pki")

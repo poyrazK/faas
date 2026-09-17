@@ -745,6 +745,28 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	}
 }
 
+func TestValidateImagedStorageEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "imaged-storage.env")
+	if err := os.WriteFile(path, []byte("FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImagedStorageEnv(path); err != nil {
+		t.Fatalf("valid lifecycle env rejected: %v", err)
+	}
+	for _, body := range []string{
+		"FAAS_OCI_USERNAME=gregale-bot\n",
+		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\nFAAS_STORAGE_BACKEND=local\n",
+		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=__SET_FROM_SECRET_STORE__\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateImagedStorageEnv(path); err == nil {
+			t.Fatalf("invalid lifecycle env accepted: %q", body)
+		}
+	}
+}
+
 func TestScopeDoctorNodes_IsNodeLocal(t *testing.T) {
 	rows := []releaseinstall.ComputeNodeRow{
 		{Name: "fsn-2.faas"},
@@ -965,6 +987,10 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err := os.WriteFile(storageEnv, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	imagedStorageEnv := filepath.Join(artifactDir, "imaged-storage.env")
+	if err := os.WriteFile(imagedStorageEnv, []byte("FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runtimeBasesEnv := filepath.Join(artifactDir, "runtime-bases.env")
 	if err := os.WriteFile(runtimeBasesEnv, []byte(
 		"FAAS_DEPLOY_BASE_REF_MINIMAL=ghcr.io/example/base-minimal@sha256:0000000000000000000000000000000000000000000000000000000000000000\n"+
@@ -1084,6 +1110,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		VerifyKeySource:         verifyKey,
 		ComputeDBEnvSource:      computeDBEnv,
 		StorageEnvSource:        storageEnv,
+		ImagedStorageEnvSource:  imagedStorageEnv,
 		RuntimeBasesEnvSource:   runtimeBasesEnv,
 		FleetAgeKeySource:       fleetAgeKey,
 		FleetAgeRecipientSource: fleetAgeRecipient,
@@ -1108,6 +1135,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		VerifyKeySource:         verifyKey,
 		ComputeDBEnvSource:      computeDBEnv,
 		StorageEnvSource:        storageEnv,
+		ImagedStorageEnvSource:  imagedStorageEnv,
 		RuntimeBasesEnvSource:   runtimeBasesEnv,
 		FleetAgeKeySource:       fleetAgeKey,
 		FleetAgeRecipientSource: fleetAgeRecipient,

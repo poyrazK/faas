@@ -105,6 +105,47 @@ func TestLoadStorageEnvRejectsDuplicateAssignments(t *testing.T) {
 	}
 }
 
+func TestLoadImagedStorageEnvOverridesOnlyCredentialAndRestores(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
+	t.Setenv("FAAS_OCI_USERNAME", "runtime-reader")
+	t.Setenv("FAAS_OCI_PASSWORD", "read-token")
+	path := filepath.Join(t.TempDir(), "imaged-storage.env")
+	if err := os.WriteFile(path, []byte("FAAS_OCI_USERNAME=lifecycle-bot\nFAAS_OCI_PASSWORD=delete-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup, err := loadImagedStorageEnv(path)
+	if err != nil {
+		t.Fatalf("loadImagedStorageEnv: %v", err)
+	}
+	if got := os.Getenv("FAAS_OCI_USERNAME"); got != "lifecycle-bot" {
+		t.Fatalf("lifecycle username = %q", got)
+	}
+	if got := os.Getenv("FAAS_STORAGE_BACKEND"); got != "oci" {
+		t.Fatalf("storage topology changed to %q", got)
+	}
+	cleanup()
+	if got := os.Getenv("FAAS_OCI_USERNAME"); got != "runtime-reader" {
+		t.Fatalf("runtime username restored as %q", got)
+	}
+	if got := os.Getenv("FAAS_OCI_PASSWORD"); got != "read-token" {
+		t.Fatalf("runtime password was not restored")
+	}
+}
+
+func TestVerifyArtifactLifecycleWritesReadsAndDeletes(t *testing.T) {
+	be := newMemoryArtifactBackend()
+	report, err := verifyArtifactLifecycle(context.Background(), be, "scans/check.scan.json", []byte("probe"))
+	if err != nil {
+		t.Fatalf("verifyArtifactLifecycle: %v", err)
+	}
+	if !report.ReadVerified || !report.Deleted || report.Bytes != 5 {
+		t.Fatalf("report = %+v", report)
+	}
+	if _, err := be.Get(context.Background(), "scans/check.scan.json"); !storage.IsNotFound(err) {
+		t.Fatalf("probe remains after lifecycle check: %v", err)
+	}
+}
+
 func TestPublishArtifactIsImmutableAndIdempotent(t *testing.T) {
 	body := []byte("release kernel")
 	sum := sha256.Sum256(body)

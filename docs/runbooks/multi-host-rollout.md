@@ -152,6 +152,13 @@ it to a non-empty path; an explicitly empty value disables the required
 prepositioning cache. Do not put registry credentials in the manifest,
 inventory, or git.
 
+Prepare a separate `/secure/imaged-storage.env` containing only
+`FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`, and pass it as
+`--imaged-storage-env`. The lifecycle identity needs package read, write, and
+delete authority. The join installs it as `/etc/faas/imaged-storage.env` and
+only `faas-imaged` loads it; vmmd, builderd, and gateways keep the read-only
+credential from `storage.env`.
+
 ```sh
 # 1. Confirm the new node has the daemon fleet provisioned.
 ssh faas-fsn-2 'systemctl is-system-running && \

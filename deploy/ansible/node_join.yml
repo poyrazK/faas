@@ -98,6 +98,7 @@
           test -x /usr/local/bin/gregalectl
           test -s /etc/faas/manifest.yaml
           test -s /etc/faas/storage.env
+          test -s /etc/faas/imaged-storage.env
           test -s /etc/faas/runtime-bases.env
           for service in faas-vmmd faas-schedd faas-gatewayd-internal faas-builderd faas-imaged; do
             systemctl is-enabled --quiet "$service.service"
@@ -189,6 +190,24 @@
           FAAS_STORAGE_LOCAL_PREFIXES for a multi-box compute node.
       no_log: true
 
+    - name: Validate the imaged-only lifecycle credential contract
+      ansible.builtin.assert:
+        that:
+          - >-
+            (lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_OCI_USERNAME=.+$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_OCI_PASSWORD=.+$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_(?!OCI_(USERNAME|PASSWORD)=)')) is none
+        fail_msg: >-
+          imaged-storage.env must contain only non-empty FAAS_OCI_USERNAME and
+          FAAS_OCI_PASSWORD assignments. Registry topology remains owned by
+          the shared read-only storage.env contract.
+      no_log: true
+
     - name: Create the shared daemon group before staging group-readable keys
       ansible.builtin.group:
         name: faas
@@ -229,6 +248,15 @@
         mode: "0440"
       no_log: true
 
+    - name: Stage the imaged-only OCI lifecycle credential
+      ansible.builtin.copy:
+        src: "{{ faas_join_imaged_storage_env_source }}"
+        dest: /etc/faas/imaged-storage.env
+        owner: root
+        group: faas
+        mode: "0440"
+      no_log: true
+
     - name: Stage the release-bound runtime base contract
       ansible.builtin.copy:
         src: "{{ faas_join_runtime_bases_env_source }}"
@@ -239,8 +267,8 @@
       no_log: true
 
     # These files were used by the pre-release/live-e2e rollout path. The
-    # signed runtime-bases.env and storage.env are now the only sources of
-    # truth; leaving the legacy files in place would clear or override the
+    # signed runtime-bases.env, storage.env, and imaged-storage.env are now
+    # the only sources of truth; leaving the legacy files in place would clear or override the
     # release EnvironmentFiles, make builderd and imaged resolve different
     # bases, and retain obsolete registry credentials on the host.
     - name: Remove legacy imaged runtime EnvironmentFile override
@@ -704,6 +732,7 @@
           ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/imaged --config /etc/faas/imaged.toml
           EnvironmentFile=-/etc/faas/compute-db.env
           EnvironmentFile=-/etc/faas/storage.env
+          EnvironmentFile=-/etc/faas/imaged-storage.env
           EnvironmentFile=-/etc/faas/runtime-bases.env
           EnvironmentFile=-/etc/faas/otel.env
           Environment=FAAS_IMAGED_PRESTAGE_ONLY=1

@@ -450,7 +450,7 @@ func relocateRenderedMetricsAddr(t *testing.T, configPath, addr string) {
 
 func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath, fleetAgePath string) []string {
 	t.Helper()
-	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env"
+	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
 		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
 	}

@@ -11,7 +11,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -70,17 +72,20 @@ func cmdArtifactDispatch(args []string) int {
 		return cmdArtifactPublish(args[1:])
 	case "verify":
 		return cmdArtifactVerify(args[1:])
+	case "lifecycle-check":
+		return cmdArtifactLifecycleCheck(args[1:])
 	case flagHelpShort, flagHelpLong:
 		printArtifactUsage(os.Stderr)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl artifact: unknown subcommand %q (expected: publish, verify)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl artifact: unknown subcommand %q (expected: publish, verify, lifecycle-check)\n", args[0])
 		return 1
 	}
 }
 
 func printArtifactUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `usage: gregalectl artifact <publish|verify> --env-file PATH --manifest-file PATH [flags]
+       gregalectl artifact lifecycle-check --env-file PATH --lifecycle-env-file PATH [flags]
 
 Publish copies the release-pinned kernel from --file into the shared storage
 backend at kernel/<release.firecracker_version>. Existing content is accepted
@@ -96,7 +101,8 @@ Flags:
 
 Examples:
   gregalectl artifact publish --env-file=/etc/faas/storage.env --manifest-file=/etc/faas/manifest.yaml --file=/var/lib/faas/bootstrap/vmlinux
-  gregalectl artifact verify --env-file=/etc/faas/storage.env --manifest-file=/etc/faas/manifest.yaml`)
+  gregalectl artifact verify --env-file=/etc/faas/storage.env --manifest-file=/etc/faas/manifest.yaml
+  gregalectl artifact lifecycle-check --env-file=/etc/faas/storage.env --lifecycle-env-file=/etc/faas/imaged-storage.env`)
 }
 
 type artifactOptions struct {
@@ -241,6 +247,113 @@ func cmdArtifactVerify(args []string) int {
 		fmt.Printf("artifact verify: key=%s sha256=%s bytes=%d\n", report.Key, report.SHA256, report.Bytes)
 	}
 	return 0
+}
+
+type artifactLifecycleReport struct {
+	Operation    string `json:"operation"`
+	Key          string `json:"key"`
+	Backend      string `json:"backend"`
+	Bytes        int    `json:"bytes"`
+	ReadVerified bool   `json:"read_verified"`
+	Deleted      bool   `json:"deleted"`
+}
+
+func cmdArtifactLifecycleCheck(args []string) int {
+	fs := flag.NewFlagSet("gregalectl artifact lifecycle-check", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	envFile := fs.String("env-file", "", "shared read-only storage.env path (required)")
+	lifecycleEnvFile := fs.String("lifecycle-env-file", "", "imaged-only lifecycle credential path (required)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 || *envFile == "" || *lifecycleEnvFile == "" {
+		fmt.Fprintln(os.Stderr, "gregalectl artifact lifecycle-check: --env-file and --lifecycle-env-file are required")
+		return 2
+	}
+	cleanupStorage, err := loadStorageEnv(*envFile)
+	if err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	}
+	defer cleanupStorage()
+	cleanupLifecycle, err := loadImagedStorageEnv(*lifecycleEnvFile)
+	if err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	}
+	defer cleanupLifecycle()
+	if err := validateArtifactStorageContract(); err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	}
+	// The probe must reach the registry on every operation. A node-local cache
+	// could otherwise turn a missing write or delete grant into a false pass.
+	if err := os.Setenv("FAAS_STORAGE_CACHE_DIR", ""); err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	}
+	be, err := storage.BackendFromEnv()
+	if err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	}
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		return printErr("gregalectl artifact lifecycle-check", fmt.Errorf("generate probe: %w", err))
+	}
+	key := "scans/gregale-lifecycle-check-" + hex.EncodeToString(random[:8]) + ".scan.json"
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	report, err := verifyArtifactLifecycle(ctx, be, key, random)
+	if err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	}
+	if jsonEnabled() {
+		jsonEmit(os.Stdout, report)
+	} else {
+		fmt.Printf("artifact lifecycle-check: read_verified=%t deleted=%t bytes=%d\n", report.ReadVerified, report.Deleted, report.Bytes)
+	}
+	return 0
+}
+
+func verifyArtifactLifecycle(ctx context.Context, be storage.StorageBackend, key string, payload []byte) (artifactLifecycleReport, error) {
+	report := artifactLifecycleReport{Operation: "lifecycle-check", Key: key, Backend: "oci", Bytes: len(payload)}
+	if err := be.Put(ctx, key, bytes.NewReader(payload)); err != nil {
+		return report, fmt.Errorf("write probe: %w", err)
+	}
+	reader, err := be.Get(ctx, key)
+	if err != nil {
+		return report, fmt.Errorf("read probe: %w", err)
+	}
+	got, readErr := io.ReadAll(io.LimitReader(reader, int64(len(payload)+1)))
+	closeErr := reader.Close()
+	if readErr != nil {
+		return report, fmt.Errorf("read probe body: %w", readErr)
+	}
+	if closeErr != nil {
+		return report, fmt.Errorf("close probe body: %w", closeErr)
+	}
+	if !bytes.Equal(got, payload) {
+		return report, fmt.Errorf("read probe content mismatch")
+	}
+	report.ReadVerified = true
+
+	// GHCR's Packages listing can lag the successful manifest PUT. Retry the
+	// idempotent delete until a direct registry read confirms disappearance.
+	for {
+		if err := be.Delete(ctx, key); err != nil {
+			return report, fmt.Errorf("delete probe: %w", err)
+		}
+		reader, err = be.Get(ctx, key)
+		if storage.IsNotFound(err) {
+			report.Deleted = true
+			return report, nil
+		}
+		if err != nil {
+			return report, fmt.Errorf("verify probe deletion: %w", err)
+		}
+		_ = reader.Close()
+		select {
+		case <-ctx.Done():
+			return report, fmt.Errorf("verify probe deletion: %w", ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 type artifactContract struct {
@@ -495,6 +608,53 @@ func loadStorageEnv(path string) (func(), error) {
 	if err := scanner.Err(); err != nil {
 		restore()
 		return func() {}, fmt.Errorf("scan storage env: %w", err)
+	}
+	return restore, nil
+}
+
+// loadImagedStorageEnv overlays only the OCI identity. The shared file stays
+// authoritative for registry location and routing, while imaged gains the
+// narrower write/delete authority needed for artifact lifecycle work.
+func loadImagedStorageEnv(path string) (func(), error) {
+	if err := validateImagedStorageEnv(path); err != nil {
+		return func() {}, fmt.Errorf("read lifecycle env: %w", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return func() {}, fmt.Errorf("read lifecycle env: %w", err)
+	}
+	previous := make(map[string]*string, 2)
+	for _, name := range []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"} {
+		if value, ok := os.LookupEnv(name); ok {
+			valueCopy := value
+			previous[name] = &valueCopy
+		}
+	}
+	restore := func() {
+		for _, name := range []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"} {
+			if value, ok := previous[name]; ok {
+				_ = os.Setenv(name, *value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		}
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		name, value, _ := strings.Cut(line, "=")
+		name = strings.TrimSpace(name)
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
+			value = value[1 : len(value)-1]
+		}
+		if err := os.Setenv(name, value); err != nil {
+			restore()
+			return func() {}, fmt.Errorf("set %s: %w", name, err)
+		}
 	}
 	return restore, nil
 }

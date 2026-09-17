@@ -175,6 +175,7 @@ jobs:
       COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       COMPUTE_DATABASE_URL: ${{ secrets.COMPUTE_DATABASE_URL }}
       COMPUTE_STORAGE_ENV: ${{ secrets.COMPUTE_STORAGE_ENV }}
+      COMPUTE_IMAGED_STORAGE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       COMPUTE_PKI_TARBALL_B64: ${{ secrets.COMPUTE_PKI_TARBALL_B64 }}
       COMPUTE_SIGN_KEY: ${{ secrets.COMPUTE_SIGN_KEY }}
       COMPUTE_VERIFY_KEY: ${{ secrets.COMPUTE_VERIFY_KEY }}
@@ -402,7 +403,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
+          for name in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV \
             COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::production secret $name is not configured" >&2
@@ -495,6 +496,7 @@ jobs:
       # The join play writes it to the adopted host separately.
       FAAS_PG_DSN: ${{ secrets.COMPUTE_DATABASE_URL }}
       COMPUTE_STORAGE_ENV: ${{ secrets.COMPUTE_STORAGE_ENV }}
+      COMPUTE_IMAGED_STORAGE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       COMPUTE_PKI_TARBALL_B64: ${{ secrets.COMPUTE_PKI_TARBALL_B64 }}
       COMPUTE_SIGN_KEY: ${{ secrets.COMPUTE_SIGN_KEY }}
       COMPUTE_VERIFY_KEY: ${{ secrets.COMPUTE_VERIFY_KEY }}
@@ -626,7 +628,7 @@ jobs:
       - name: Assemble the standard join artifact directory
         run: |
           set -euo pipefail
-          for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
+          for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV \
             COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY \
             FLEET_AGE_KEY FLEET_AGE_RECIPIENT; do
             [[ -n "${!required:-}" ]] || {
@@ -666,6 +668,7 @@ jobs:
           # pass the CLI preflight and then fail closed during vmmd startup.
           printf '%s\n' "FAAS_VMMD_DBURL=$COMPUTE_DATABASE_URL" >> "$ARTIFACT_DIR/compute-db.env"
           printf '%s\n' "$COMPUTE_STORAGE_ENV" > "$ARTIFACT_DIR/storage.env"
+          printf '%s\n' "$COMPUTE_IMAGED_STORAGE_ENV" > "$ARTIFACT_DIR/imaged-storage.env"
           printf '%s\n' "$COMPUTE_SIGN_KEY" > "$ARTIFACT_DIR/sign.key"
           printf '%s\n' "$COMPUTE_VERIFY_KEY" > "$ARTIFACT_DIR/sign-pub.pem"
           # Keep the age identity byte-exact: the strict fleet-seal parser
@@ -839,6 +842,17 @@ jobs:
             JOIN_ARGS+=(--ansible-vars-file "$ARTIFACT_DIR/ansible-vars.yml")
           fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
+
+      - name: Verify imaged registry lifecycle authorization
+        run: |
+          set -euo pipefail
+          ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "sudo -n -u faas-imaged /usr/local/bin/gregalectl artifact lifecycle-check --env-file /etc/faas/storage.env --lifecycle-env-file /etc/faas/imaged-storage.env --json"
 
       - name: Verify compute OCI cache uses fast storage after activation
         run: |
