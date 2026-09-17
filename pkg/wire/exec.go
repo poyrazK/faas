@@ -72,3 +72,10 @@ func (ExecRunner) Output(ctx context.Context, argv []string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// RunCapture is the stdout-aware command runner used by vmmd when it needs to
+// inspect kernel-assigned nft handles after an in-place ruleset update. It is
+// kept additive to Output so existing callers and test doubles remain valid.
+func (r ExecRunner) RunCapture(ctx context.Context, argv []string) ([]byte, error) {
+	return r.Output(ctx, argv)
+}

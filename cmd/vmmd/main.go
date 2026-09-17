@@ -860,6 +860,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
+		WithCaptureRunner(wire.ExecRunner{}).
 		WithDiskMetrics(dsm).
 		SetWakePhaseMetrics(wpm).
 		// Configure the owner RPC after loading scheduler TLS, before serving.

@@ -446,6 +446,11 @@ type Instance struct {
 	// unit suite stubs it out.
 	AllowlistHandleV4 uint64
 	AllowlistHandleV6 uint64
+	// PrivateNetworkHandleV4 / V6 identify the explicit private-network
+	// accept rules. They are maintained separately from the public-egress
+	// allowlist because a VPC attachment is additive.
+	PrivateNetworkHandleV4 uint64
+	PrivateNetworkHandleV6 uint64
 
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Stored on the Instance so Destroy (pkg/fcvm/vmm.go) can compute
@@ -3962,6 +3967,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	inst.AllowlistHandleV4 = hV4
 	inst.AllowlistHandleV6 = hV6
+	var phV4, phV6 uint64
+	if !req.ExecutionOnly {
+		phV4, phV6, _ = m.capturePrivateNetworkHandlesForWake(ctx, nc.Netns, nc.PrivateNetworkCIDRs)
+	}
+	inst.PrivateNetworkHandleV4 = phV4
+	inst.PrivateNetworkHandleV6 = phV6
 	m.mu.Lock()
 	if exitCode, exited := m.pendingProcessExits[req.Instance]; exited {
 		delete(m.pendingProcessExits, req.Instance)
@@ -5328,6 +5339,161 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	return nil
 }
 
+// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
+// live instance of an app. The update is additive to public egress: only the
+// explicit private accept rule and its bridge routes are changed. An empty
+// slice removes private connectivity while leaving the netns intact.
+func (m *Manager) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {
+	if appID == "" {
+		return fmt.Errorf("fcvm: UpdatePrivateNetwork: empty app_id")
+	}
+	if len(cidrs) > 0 {
+		raw := make([]string, 0, len(cidrs))
+		for _, p := range cidrs {
+			raw = append(raw, p.String())
+		}
+		validated, err := api.ValidatePrivateNetworkCIDRs(raw, api.PrivateNetworkAttachmentMaxCIDRs)
+		if err != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s: %w", appID, err)
+		}
+		cidrs = validated
+	}
+
+	type target struct {
+		id, netns string
+		net       netns.Config
+		prior     []netip.Prefix
+		h4, h6    uint64
+	}
+	var targets []target
+	m.mu.Lock()
+	for id, inst := range m.live {
+		if inst.AppID != appID {
+			continue
+		}
+		prior := append([]netip.Prefix(nil), inst.Net.PrivateNetworkCIDRs...)
+		targets = append(targets, target{id: id, netns: inst.Net.Netns, net: inst.Net, prior: prior, h4: inst.PrivateNetworkHandleV4, h6: inst.PrivateNetworkHandleV6})
+	}
+	m.mu.Unlock()
+	if len(targets) == 0 {
+		return nil
+	}
+
+	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
+	for _, t := range targets {
+		if samePrefixSet(t.prior, cidrs) {
+			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
+			continue
+		}
+		nc := t.net
+		nc.PrivateNetworkCIDRs = cidrs
+		nx := func(parts ...string) []string {
+			return append([]string{"ip", "netns", "exec", t.netns, "nft"}, parts...)
+		}
+		// Add routes first. The accept rule is still absent, so a partial
+		// update cannot expose a newly requested destination.
+		if err := m.runCommands(ctx, nc.PrivateNetworkRouteCommands()); err != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s routes: %w", appID, t.netns, err)
+		}
+		h4, h6 := t.h4, t.h6
+		if h4 == 0 && hasFamily(t.prior, true) && m.captureRunner != nil {
+			h4, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip", t.prior)
+		}
+		if h6 == 0 && hasFamily(t.prior, false) && m.captureRunner != nil {
+			h6, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip6", t.prior)
+		}
+		if h4 > 0 {
+			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip", "faas", "forward", "handle", strconv.FormatUint(h4, 10))}); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s delete v4 rule: %w", appID, t.netns, err)
+			}
+		}
+		if h6 > 0 {
+			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip6", "faas", "forward", "handle", strconv.FormatUint(h6, 10))}); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s delete v6 rule: %w", appID, t.netns, err)
+			}
+		}
+		v4 := nc.ForwardPrivateNetworkRule(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
+		v6 := nc.ForwardPrivateNetworkRule6(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
+		// The boot renderer emits private accepts before lateral-movement
+		// denies. Preserve that ordering for a live patch by inserting at the
+		// chain head; appending would leave RFC1918 traffic matched by the
+		// deny rules first.
+		v4 = insertNftRule(v4)
+		v6 = insertNftRule(v6)
+		if v4 != nil {
+			if err := m.runCommands(ctx, [][]string{v4}); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s add v4 rule: %w", appID, t.netns, err)
+			}
+		}
+		if v6 != nil {
+			if err := m.runCommands(ctx, [][]string{v6}); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s add v6 rule: %w", appID, t.netns, err)
+			}
+		}
+		// Remove routes no longer requested only after the new accept rules
+		// are installed, preserving fail-closed behavior during transitions.
+		for _, old := range t.prior {
+			if containsPrefix(cidrs, old) {
+				continue
+			}
+			if err := m.run.Run(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+				m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
+			}
+		}
+		if m.captureRunner != nil {
+			if v4 != nil {
+				h4, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip", cidrs)
+			} else {
+				h4 = 0
+			}
+			if v6 != nil {
+				h6, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip6", cidrs)
+			} else {
+				h6 = 0
+			}
+		}
+		newHandles[t.id] = struct{ h4, h6 uint64 }{h4, h6}
+	}
+	m.mu.Lock()
+	for id, inst := range m.live {
+		nh, ok := newHandles[id]
+		if !ok {
+			continue
+		}
+		inst.Net.PrivateNetworkCIDRs = append([]netip.Prefix(nil), cidrs...)
+		inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = nh.h4, nh.h6
+	}
+	m.mu.Unlock()
+	return nil
+}
+
+func insertNftRule(argv []string) []string {
+	if len(argv) < 7 || argv[5] != "add" || argv[6] != "rule" {
+		return argv
+	}
+	out := append([]string(nil), argv...)
+	out[5] = "insert"
+	return out
+}
+
+func hasFamily(prefixes []netip.Prefix, v4 bool) bool {
+	for _, p := range prefixes {
+		if p.Addr().Is4() == v4 {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPrefix(prefixes []netip.Prefix, want netip.Prefix) bool {
+	for _, p := range prefixes {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
 // UpdateStaticEgressIP (ADR-119 redesign) is the gRPC handler
 // invoked by schedd's pg_notify egress-drift subscriber when an
 // app's `static_egress_ip` column changes. The per-VM patch path
@@ -5775,6 +5941,21 @@ func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName 
 	return hV4, hV6, nil
 }
 
+func (m *Manager) capturePrivateNetworkHandlesForWake(ctx context.Context, netnsName string, cidrs []netip.Prefix) (uint64, uint64, error) {
+	if m.captureRunner == nil || len(cidrs) == 0 {
+		return 0, 0, nil
+	}
+	h4, err := listPrivateNetworkHandle(ctx, m.captureRunner, netnsName, "ip", cidrs)
+	if err != nil {
+		return 0, 0, err
+	}
+	h6, err := listPrivateNetworkHandle(ctx, m.captureRunner, netnsName, "ip6", cidrs)
+	if err != nil {
+		return 0, 0, err
+	}
+	return h4, h6, nil
+}
+
 // listChainHandles runs `ip netns exec <ns> nft -a list chain
 // <family> faas forward` and returns the handle of the rule that
 // matches the allowlist-renderer invariant
@@ -5802,6 +5983,7 @@ func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family,
 	//    iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
 	//   }
 	needleAllow := `iifname "tap0" ` + family + ` daddr`
+	var matched uint64
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -5822,7 +6004,64 @@ func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family,
 		if perr != nil {
 			continue
 		}
-		return h, nil
+		matched = h
+	}
+	// Private-network rules are emitted before public allowlists at boot,
+	// while a live allowlist patch is appended after them. Returning the last
+	// matching rule selects the public rule in both cases.
+	return matched, nil
+}
+
+// listPrivateNetworkHandle resolves the handle for a private-network accept
+// rule by matching its family and every rendered CIDR. The public allowlist
+// v4 rule contains a TCP-port expression, so excluding that shape prevents a
+// private update from deleting the wrong rule.
+func listPrivateNetworkHandle(ctx context.Context, cap CaptureRunner, netnsName, family string, prefixes []netip.Prefix) (uint64, error) {
+	if cap == nil || len(prefixes) == 0 {
+		return 0, nil
+	}
+	out, err := cap.RunCapture(ctx, []string{"ip", "netns", "exec", netnsName, "nft", "-a", "list", "chain", family, "faas", "forward"})
+	if err != nil {
+		return 0, err
+	}
+	needle := `iifname "tap0" ` + family + ` daddr`
+	familyPrefixes := make([]netip.Prefix, 0, len(prefixes))
+	for _, p := range prefixes {
+		if p.Addr().Is4() == (family == "ip") {
+			familyPrefixes = append(familyPrefixes, p)
+		}
+	}
+	if len(familyPrefixes) == 0 {
+		return 0, nil
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, needle) || strings.Contains(line, "tcp dport") {
+			continue
+		}
+		matches := true
+		for _, p := range familyPrefixes {
+			if !strings.Contains(line, p.String()) {
+				matches = false
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		idx := strings.LastIndex(line, "# handle ")
+		if idx < 0 {
+			continue
+		}
+		tail := strings.TrimSpace(line[idx+len("# handle "):])
+		if i := strings.IndexAny(tail, " }"); i >= 0 {
+			tail = tail[:i]
+		}
+		h, parseErr := strconv.ParseUint(tail, 10, 64)
+		if parseErr == nil {
+			return h, nil
+		}
 	}
 	return 0, nil
 }

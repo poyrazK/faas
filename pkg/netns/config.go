@@ -257,6 +257,13 @@ func privateNetworkRouteCommands(c Config) [][]string {
 	return cmds
 }
 
+// PrivateNetworkRouteCommands returns the explicit per-CIDR routes used for
+// provider-verified private destinations. It is exported for the live-update
+// path in fcvm; setup still uses the same helper so both paths share argv.
+func (c Config) PrivateNetworkRouteCommands() [][]string {
+	return privateNetworkRouteCommands(c)
+}
+
 // TeardownCommands returns the argv list to remove everything Setup created.
 //
 // Order matters and is the opposite of what an intuitive "delete-from-outside-in"

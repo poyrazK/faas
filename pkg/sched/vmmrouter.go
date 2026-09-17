@@ -666,6 +666,24 @@ func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID str
 	return cli.UpdateEgressAllowlist(ctx, appID, allowlist)
 }
 
+// UpdatePrivateNetwork routes a provider-verified private-network update to
+// the vmmd owning the live instance. Kept outside RoutedVMM for compatibility
+// with existing scheduler fakes; callers opt into this additive capability via
+// the narrow PrivateNetworkRouter interface.
+func (r *VMMRouter) UpdatePrivateNetwork(ctx context.Context, nodeID, appID string, cidrs []netip.Prefix) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdatePrivateNetwork(context.Context, string, []netip.Prefix) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network update unsupported by node %q", nodeID)
+	}
+	return updater.UpdatePrivateNetwork(ctx, appID, cidrs)
+}
+
 // UpdateStaticEgressIP (ADR-119) routes the patch to the
 // vmmd that owns the live instance. The egress_drift
 // subscriber hands us a single (appID, ip) pair; we

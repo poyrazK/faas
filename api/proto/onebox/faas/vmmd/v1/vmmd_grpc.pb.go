@@ -41,6 +41,7 @@ const (
 	Vmmd_Heartbeat_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
 	Vmmd_UpdateStaticEgressIP_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
+	Vmmd_UpdatePrivateNetwork_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
 	Vmmd_SeccompStatus_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
 	Vmmd_Logs_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/Logs"
 	Vmmd_ForwardHTTPStream_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
@@ -223,6 +224,11 @@ type VmmdClient interface {
 	// re-pushed identical IP is a no-op. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error)
+	// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
+	// live instance of an app without tearing down its network namespace. An
+	// empty list removes private-network connectivity. Public egress policy is
+	// unchanged; the CIDRs are an additive, explicit accept-and-route set.
+	UpdatePrivateNetwork(ctx context.Context, in *UpdatePrivateNetworkRequest, opts ...grpc.CallOption) (*UpdatePrivateNetworkAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -610,6 +616,16 @@ func (c *vmmdClient) UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticE
 	return out, nil
 }
 
+func (c *vmmdClient) UpdatePrivateNetwork(ctx context.Context, in *UpdatePrivateNetworkRequest, opts ...grpc.CallOption) (*UpdatePrivateNetworkAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdatePrivateNetworkAck)
+	err := c.cc.Invoke(ctx, Vmmd_UpdatePrivateNetwork_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest, opts ...grpc.CallOption) (*SeccompStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SeccompStatusResponse)
@@ -922,6 +938,11 @@ type VmmdServer interface {
 	// re-pushed identical IP is a no-op. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error)
+	// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
+	// live instance of an app without tearing down its network namespace. An
+	// empty list removes private-network connectivity. Public egress policy is
+	// unchanged; the CIDRs are an additive, explicit accept-and-route set.
+	UpdatePrivateNetwork(context.Context, *UpdatePrivateNetworkRequest) (*UpdatePrivateNetworkAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -1166,6 +1187,9 @@ func (UnimplementedVmmdServer) UpdateEgressAllowlist(context.Context, *UpdateEgr
 }
 func (UnimplementedVmmdServer) UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateStaticEgressIP not implemented")
+}
+func (UnimplementedVmmdServer) UpdatePrivateNetwork(context.Context, *UpdatePrivateNetworkRequest) (*UpdatePrivateNetworkAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdatePrivateNetwork not implemented")
 }
 func (UnimplementedVmmdServer) SeccompStatus(context.Context, *SeccompStatusRequest) (*SeccompStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SeccompStatus not implemented")
@@ -1562,6 +1586,24 @@ func _Vmmd_UpdateStaticEgressIP_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_UpdatePrivateNetwork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdatePrivateNetworkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).UpdatePrivateNetwork(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_UpdatePrivateNetwork_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).UpdatePrivateNetwork(ctx, req.(*UpdatePrivateNetworkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_SeccompStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SeccompStatusRequest)
 	if err := dec(in); err != nil {
@@ -1845,6 +1887,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateStaticEgressIP",
 			Handler:    _Vmmd_UpdateStaticEgressIP_Handler,
+		},
+		{
+			MethodName: "UpdatePrivateNetwork",
+			Handler:    _Vmmd_UpdatePrivateNetwork_Handler,
 		},
 		{
 			MethodName: "SeccompStatus",

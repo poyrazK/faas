@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -138,6 +139,10 @@ type runDeps struct {
 	// existing app_changed consumer stays as the logging-only
 	// fallback. Tests inject a fake channel.
 	subscribeEgressDrift func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
+	// subscribePrivateNetwork is the app_changed feed used to clear live
+	// private routes immediately after a detach. Readiness transitions are
+	// handled by the poll-based provider reconciler.
+	subscribePrivateNetwork func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeAppDelete (ADR-098) is the producer-side seam for
 	// the app_delete consumer that evicts any in-flight wake for
 	// a deleted app via Engine.wakeCoord.Forget. nil = the
@@ -232,6 +237,9 @@ func defaultDeps() runDeps {
 		// filters to kind="updated" internally — wider-list
 		// callers are safe.
 		subscribeEgressDrift: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
+		},
+		subscribePrivateNetwork: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
 		},
 		// Phase 2 / Gate A: subscribe to NotifyAppChanged and let
@@ -1025,6 +1033,48 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.subscribeEgressDrift != nil {
 		driftSub := sched.NewEgressDriftSubscriber(engine, vmmRouter, log)
 		go subscribeWithReconnect(ctx, "egress drift", log, deps.subscribeEgressDrift, pool, driftSub.Run)
+	}
+
+	// Private-network runtime integration (provider-neutral first slice). The
+	// durable attachment reconciler remains disabled unless explicitly enabled;
+	// when enabled, configured networks come from an operator-managed JSON
+	// registry and ready CIDRs are pushed to every live vmmd without a cold wake.
+	if api.PrivateNetworkEnabled() {
+		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
+		if !ok {
+			log.Warn("schedd: private network reconciler unavailable; state store lacks reconcile extension")
+		} else {
+			networks, parseErr := privatenetwork.ConfiguredNetworksFromJSON(os.Getenv("FAAS_PRIVATE_NETWORKS"))
+			if parseErr != nil {
+				return parseErr
+			}
+			connector, connErr := privatenetwork.NewConfiguredConnector(networks)
+			if connErr != nil {
+				return connErr
+			}
+			applier := sched.NewPrivateNetworkRouteApplier(store, vmmRouter, log)
+			reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
+				Logger: log,
+				Observe: func(obs privatenetwork.ReconcileObservation) {
+					log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration)
+				},
+			})
+			if reconErr != nil {
+				return reconErr
+			}
+			go func() {
+				if err := reconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("schedd: private network reconciler stopped", "err", err)
+				}
+			}()
+			if deps.subscribePrivateNetwork != nil {
+				detachSub := sched.NewPrivateNetworkAttachmentSubscriber(applier, log)
+				go subscribeWithReconnect(ctx, "private network", log, deps.subscribePrivateNetwork, pool, detachSub.Run)
+			}
+			log.Info("schedd: private network reconciler enabled", "configured_networks", len(networks))
+		}
+	} else {
+		log.Info("schedd: private network reconciler disabled", "env", "FAAS_PRIVATE_NETWORK_ENABLED")
 	}
 
 	// Phase 2 / Gate A (migration 00084): placement claim

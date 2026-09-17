@@ -50,10 +50,9 @@ func StaticEgressIPEnabled() bool {
 }
 
 // PrivateNetworkEnabled reports whether the provider-neutral private-network
-// attachment API is live. It is intentionally default-off: this PR stores and
-// exposes attachment intent, while a later connector slice is responsible for
-// provisioning routes. Operators can dark-launch the API with
-// FAAS_PRIVATE_NETWORK_ENABLED without changing the schema.
+// attachment API and schedd's provider-neutral runtime reconciler are live. It
+// is intentionally default-off so operators can stage the configured network
+// registry before enabling route activation.
 func PrivateNetworkEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_PRIVATE_NETWORK_ENABLED")))
 	switch v {

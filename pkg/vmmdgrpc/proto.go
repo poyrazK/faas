@@ -732,3 +732,14 @@ func toEgressAllowlist(ss []string) ([]netip.Prefix, error) {
 	}
 	return out, nil
 }
+
+func toPrivateNetworkCIDRs(ss []string) ([]netip.Prefix, error) {
+	if len(ss) == 0 {
+		return nil, nil
+	}
+	parsed, err := api.ValidatePrivateNetworkCIDRs(ss, api.PrivateNetworkAttachmentMaxCIDRs)
+	if err != nil {
+		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private_network_cidrs", err.Error())
+	}
+	return parsed, nil
+}

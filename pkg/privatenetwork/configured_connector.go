@@ -2,6 +2,7 @@ package privatenetwork
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -9,15 +10,30 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ConfiguredNetworksFromJSON decodes the operator-managed network registry
+// used by the first runtime integration. Keeping this format provider-neutral
+// lets a cloud connector replace it later without changing attachment state or
+// the reconciler contract.
+func ConfiguredNetworksFromJSON(raw string) ([]ConfiguredNetwork, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var networks []ConfiguredNetwork
+	if err := json.Unmarshal([]byte(raw), &networks); err != nil {
+		return nil, fmt.Errorf("privatenetwork: decode configured networks: %w", err)
+	}
+	return networks, nil
+}
+
 // ConfiguredNetwork describes a provider attachment that an operator has
 // already created. It is useful for a first deployment and for local/CI
 // environments; a cloud adapter can implement Connector without changing the
 // reconciler or API contract.
 type ConfiguredNetwork struct {
-	ID     string
-	Region string
-	Ready  bool
-	Detail string
+	ID     string `json:"id"`
+	Region string `json:"region"`
+	Ready  bool   `json:"ready"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // ConfiguredConnector is a deterministic connector backed by operator state.

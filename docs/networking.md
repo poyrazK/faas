@@ -35,6 +35,13 @@ Route activation is idempotent, and any connector or host-route failure leaves
 the row in `error` with traffic blocked. Until a connector is configured, the
 API remains an intent surface and every attachment stays `pending`.
 
+The first connector is operator-managed and is enabled in schedd with
+`FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,
+for example `[{"id":"corp-vpc","region":"fra1","ready":true}]`. This
+keeps cloud credentials out of the control plane while the provider adapter is
+rolled out; a future connector can replace the registry without changing the
+customer-facing attachment contract.
+
 ## Internal-only ingress
 
 Pro and Scale apps can be hidden from the public edge while remaining reachable

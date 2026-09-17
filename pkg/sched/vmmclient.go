@@ -930,6 +930,21 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	return nil
 }
 
+// UpdatePrivateNetwork applies the provider-verified private destination set
+// to all live instances of an app on this vmmd.
+func (c *VMMClient) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {
+	ss := make([]string, 0, len(cidrs))
+	for _, p := range cidrs {
+		ss = append(ss, p.String())
+	}
+	if _, err := c.cli.UpdatePrivateNetwork(ctx, &vmmdpb.UpdatePrivateNetworkRequest{
+		AppId: appID, PrivateNetworkCidrs: ss,
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
 // UpdateStaticEgressIP implements VMM (ADR-119). The wire is
 // the customer-supplied IPv4 (dotted-quad); empty string is
 // valid (clears the per-app pin on vmmd's side, removes the

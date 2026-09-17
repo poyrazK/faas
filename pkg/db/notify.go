@@ -56,6 +56,7 @@ type AppChangedPayload struct {
 	Slug             string `json:"slug,omitempty"`
 	WakeID           string `json:"wake_id,omitempty"`
 	IP               string `json:"ip,omitempty"`
+	Status           string `json:"status,omitempty"`
 	LifecycleChanged bool   `json:"lifecycle_changed,omitempty"`
 	Legacy           bool   `json:"-"`
 }

@@ -1317,6 +1317,29 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 
+func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePrivateNetworkRequest) (*vmmdpb.UpdatePrivateNetworkAck, error) {
+	const op = "UpdatePrivateNetwork"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	if req.GetAppId() == "" {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Missing app_id", "app_id is required").WithDocs(wire.DocsBaseURL + "/vmmd#update-private-network")))
+	}
+	updater, ok := s.vmm.(interface {
+		UpdatePrivateNetwork(context.Context, string, []netip.Prefix) error
+	})
+	if !ok {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_unavailable", "Private network updates unavailable", "vmmd private-network live update is not wired")))
+	}
+	cidrs, err := toPrivateNetworkCIDRs(req.GetPrivateNetworkCidrs())
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if err := updater.UpdatePrivateNetwork(ctx, req.GetAppId(), cidrs); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.UpdatePrivateNetworkAck{}, nil
+}
+
 // SeccompStatus (M8 §11) reports the kernel seccomp state of the
 // jailer child backing instance. Sequence:
 //  1. Resolve the running jailer PID via VmmdAPI.InstancePID.

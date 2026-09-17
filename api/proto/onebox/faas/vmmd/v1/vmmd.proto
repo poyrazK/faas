@@ -209,6 +209,12 @@ service Vmmd {
   // pkg/api/limits.go::Plan.StaticEgressIPAllowed.
   rpc UpdateStaticEgressIP(UpdateStaticEgressIPRequest) returns (UpdateStaticEgressIPAck);
 
+  // UpdatePrivateNetwork applies provider-verified destination CIDRs to every
+  // live instance of an app without tearing down its network namespace. An
+  // empty list removes private-network connectivity. Public egress policy is
+  // unchanged; the CIDRs are an additive, explicit accept-and-route set.
+  rpc UpdatePrivateNetwork(UpdatePrivateNetworkRequest) returns (UpdatePrivateNetworkAck);
+
   // SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
   // Linux kernel seccomp state of the jailer child process backing
   // this instance. Spec §11: "Firecracker's default seccomp filter
@@ -1179,6 +1185,17 @@ message UpdateStaticEgressIPRequest {
 // ColdBoot the affected instances, which the schedd watchdog
 // does on its next tick). Mirrors UpdateEgressAllowlistAck.
 message UpdateStaticEgressIPAck {}
+
+// UpdatePrivateNetworkRequest carries the provider-verified destination ranges
+// for one app. The caller validates the attachment before sending this hot-path
+// update; vmmd validates again at the trust boundary.
+message UpdatePrivateNetworkRequest {
+  string app_id = 1;
+  repeated string private_network_cidrs = 2;
+}
+
+// UpdatePrivateNetworkAck is the empty success response.
+message UpdatePrivateNetworkAck {}
 
 // SeccompStatusRequest is the input to SeccompStatus. Instance is
 // the compute_node-relative instance id (instances.id). vmmd
