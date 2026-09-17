@@ -412,6 +412,10 @@ export class DeploymentsService {
    * Audit kind: `deploy.local_tarball` (distinct from
    * `deploy.source_ref`).
    *
+   * Every response carries the RFC 9745 `Deprecation` date,
+   * RFC 8594 `Sunset` date, and RFC 8288 `Link` relations. Clients
+   * should migrate to `POST /v1/uploads` before the sunset date.
+   *
    * @returns DeploymentResponse The local-tarball deployment whose build has been accepted and queued.
    * @throws ApiError
    */

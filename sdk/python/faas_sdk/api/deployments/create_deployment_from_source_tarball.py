@@ -142,6 +142,10 @@ def sync_detailed(
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
 
+    Every response carries the RFC 9745 `Deprecation` date,
+    RFC 8594 `Sunset` date, and RFC 8288 `Link` relations. Clients
+    should migrate to `POST /v1/uploads` before the sunset date.
+
     Args:
         slug (str):
         idempotency_key (str | Unset):
@@ -218,6 +222,10 @@ def sync(
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
 
+    Every response carries the RFC 9745 `Deprecation` date,
+    RFC 8594 `Sunset` date, and RFC 8288 `Link` relations. Clients
+    should migrate to `POST /v1/uploads` before the sunset date.
+
     Args:
         slug (str):
         idempotency_key (str | Unset):
@@ -288,6 +296,10 @@ async def asyncio_detailed(
 
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
+
+    Every response carries the RFC 9745 `Deprecation` date,
+    RFC 8594 `Sunset` date, and RFC 8288 `Link` relations. Clients
+    should migrate to `POST /v1/uploads` before the sunset date.
 
     Args:
         slug (str):
@@ -362,6 +374,10 @@ async def asyncio(
 
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
+
+    Every response carries the RFC 9745 `Deprecation` date,
+    RFC 8594 `Sunset` date, and RFC 8288 `Link` relations. Clients
+    should migrate to `POST /v1/uploads` before the sunset date.
 
     Args:
         slug (str):
