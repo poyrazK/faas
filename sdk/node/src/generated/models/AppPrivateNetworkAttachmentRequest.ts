@@ -7,7 +7,10 @@
  */
 export type AppPrivateNetworkAttachmentRequest = {
   network_id: string;
-  region: string;
-  cidrs: Array<string>;
+  /**
+   * Optional when attaching a Gregale-owned network; it must match the network region.
+   */
+  region?: string;
+  cidrs?: Array<string>;
 };
 

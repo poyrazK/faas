@@ -4444,6 +4444,31 @@ func (c *Client) ClearAppPrivateNetworkAttachment(ctx context.Context, slug stri
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/network/private", nil, nil)
 }
 
+// ListPrivateNetworks returns the caller's Gregale-owned private networks.
+func (c *Client) ListPrivateNetworks(ctx context.Context) (PrivateNetworkListResponse, error) {
+	var out PrivateNetworkListResponse
+	return out, c.do(ctx, "GET", "/v1/networks", nil, &out)
+}
+
+// CreatePrivateNetwork creates a Gregale-owned private address space. The
+// network is ready as a control-plane definition; app attachments converge
+// asynchronously on the host fabric.
+func (c *Client) CreatePrivateNetwork(ctx context.Context, req CreatePrivateNetworkRequest) (PrivateNetwork, error) {
+	var out PrivateNetwork
+	return out, c.do(ctx, "POST", "/v1/networks", req, &out)
+}
+
+// GetPrivateNetwork reads one of the caller's Gregale-owned networks.
+func (c *Client) GetPrivateNetwork(ctx context.Context, id string) (PrivateNetwork, error) {
+	var out PrivateNetwork
+	return out, c.do(ctx, "GET", "/v1/networks/"+id, nil, &out)
+}
+
+// DeletePrivateNetwork removes a network with no active app attachments.
+func (c *Client) DeletePrivateNetwork(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/networks/"+id, nil, nil)
+}
+
 // SetGithubWebhookSecret sets the per-tenant webhook secret for
 // the given installation_id (PR-D / ADR-012 §7 amendment). The
 // server hex-decodes SecretHex and writes the raw bytes to

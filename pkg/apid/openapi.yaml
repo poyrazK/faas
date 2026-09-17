@@ -7378,10 +7378,115 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
 
-  # Provider-neutral private-network attachment intent. The request is
+  # Gregale-owned private-network fabric and provider-neutral attachment.
+  # The request is
   # persisted as pending and remains fail-closed until a connector reports
   # ready. CIDRs are IPv4 RFC1918 ranges and cannot overlap Gregale's own
   # tenant/guest ranges.
+  /v1/networks:
+    get:
+      tags: [networking]
+      operationId: listPrivateNetworks
+      summary: List Gregale-owned private networks.
+      description: |
+        Returns the caller's private-network definitions. This surface is
+        dark-launched with FAAS_PRIVATE_NETWORK_FABRIC_ENABLED and is
+        independent of DigitalOcean or any other provider API.
+      responses:
+        '200':
+          description: Account-scoped private networks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetworkListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Gregale-owned network fabric is disabled for this account-scoped listing.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [networking]
+      operationId: createPrivateNetwork
+      summary: Create a Gregale-owned private network.
+      description: |
+        Creates an IPv4 RFC1918 /16-/28 address space owned by Gregale.
+        The region is a Gregale placement label, not a DigitalOcean region
+        identifier. Host bridge/overlay activation remains asynchronous and
+        app attachments stay fail-closed until ready.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePrivateNetworkRequest' }
+      responses:
+        '201':
+          description: Network definition created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetwork' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The account plan does not include private networking.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Name or regional CIDR conflicts with an existing network.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Gregale-owned network fabric is disabled for network creation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/networks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable Gregale network identifier returned at creation.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+    get:
+      tags: [networking]
+      operationId: getPrivateNetwork
+      summary: Read a Gregale-owned private network.
+      responses:
+        '200':
+          description: Private network definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetwork' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled for this network read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [networking]
+      operationId: deletePrivateNetwork
+      summary: Delete a private network with no app attachments.
+      responses:
+        '204': { description: Network deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Network still has an app attachment.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Gregale-owned network fabric is disabled for this network deletion.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/network/private:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -28890,10 +28995,59 @@ components:
             - $ref: '#/components/schemas/AppPrivateNetworkAttachment'
             - type: 'null'
 
+    PrivateNetwork:
+      description: Gregale-owned private-network definition.
+      type: object
+      required: [id, name, region, cidr, status]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        region:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        cidr:
+          type: string
+          format: ipv4-cidr
+          description: Canonical IPv4 RFC1918 range, /16 through /28.
+        status:
+          type: string
+          enum: [ready, error]
+        status_detail: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PrivateNetworkListResponse:
+      description: Account-scoped collection of Gregale-owned private networks.
+      type: object
+      required: [networks]
+      properties:
+        networks:
+          type: array
+          items: { $ref: '#/components/schemas/PrivateNetwork' }
+
+    CreatePrivateNetworkRequest:
+      description: POST /v1/networks body for a Gregale-owned network.
+      type: object
+      required: [name, region, cidr]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        region:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        cidr:
+          type: string
+          format: ipv4-cidr
+
     AppPrivateNetworkAttachmentRequest:
       description: PUT body for /v1/apps/{slug}/network/private.
       type: object
-      required: [network_id, region, cidrs]
+      required: [network_id]
       properties:
         network_id:
           type: string
@@ -28901,9 +29055,10 @@ components:
         region:
           type: string
           pattern: '^[a-z][a-z0-9-]{0,62}$'
+          description: Optional when attaching a Gregale-owned network; it must match the network region.
         cidrs:
           type: array
-          minItems: 1
+          minItems: 0
           maxItems: 64
           items:
             type: string

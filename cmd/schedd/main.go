@@ -1036,42 +1036,63 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Private-network runtime integration (provider-neutral first slice). The
-	// durable attachment reconciler remains disabled unless explicitly enabled;
-	// when enabled, configured networks come from an operator-managed JSON
-	// registry and ready CIDRs are pushed to every live vmmd without a cold wake.
+	// durable attachment reconciler remains disabled unless explicitly enabled.
+	// Gregale-owned networks use the durable network store directly; the legacy
+	// operator registry remains available for external/provider attachments.
 	if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
 			log.Warn("schedd: private network reconciler unavailable; state store lacks reconcile extension")
 		} else {
-			networks, parseErr := privatenetwork.ConfiguredNetworksFromJSON(os.Getenv("FAAS_PRIVATE_NETWORKS"))
-			if parseErr != nil {
-				return parseErr
-			}
-			connector, connErr := privatenetwork.NewConfiguredConnector(networks)
-			if connErr != nil {
-				return connErr
-			}
-			applier := sched.NewPrivateNetworkRouteApplier(store, vmmRouter, log)
-			reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
-				Logger: log,
-				Observe: func(obs privatenetwork.ReconcileObservation) {
-					log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration)
-				},
-			})
-			if reconErr != nil {
-				return reconErr
-			}
-			go func() {
-				if err := reconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					log.Warn("schedd: private network reconciler stopped", "err", err)
+			var connector privatenetwork.Connector
+			configuredCount := 0
+			if api.PrivateNetworkFabricEnabled() {
+				fabricStore, storeOK := any(store).(state.PrivateNetworkStore)
+				if !storeOK {
+					log.Warn("schedd: Gregale network fabric unavailable; state store lacks private network extension")
+				} else {
+					storeConnector, connErr := privatenetwork.NewStoreConnector(fabricStore)
+					if connErr != nil {
+						return connErr
+					}
+					connector = storeConnector
 				}
-			}()
-			if deps.subscribePrivateNetwork != nil {
-				detachSub := sched.NewPrivateNetworkAttachmentSubscriber(applier, log)
-				go subscribeWithReconnect(ctx, "private network", log, deps.subscribePrivateNetwork, pool, detachSub.Run)
+			} else {
+				networks, parseErr := privatenetwork.ConfiguredNetworksFromJSON(os.Getenv("FAAS_PRIVATE_NETWORKS"))
+				if parseErr != nil {
+					return parseErr
+				}
+				configuredConnector, connErr := privatenetwork.NewConfiguredConnector(networks)
+				if connErr != nil {
+					return connErr
+				}
+				connector = configuredConnector
+				configuredCount = len(networks)
 			}
-			log.Info("schedd: private network reconciler enabled", "configured_networks", len(networks))
+			if connector == nil {
+				log.Warn("schedd: private network reconciler skipped; connector unavailable")
+			} else {
+				applier := sched.NewPrivateNetworkRouteApplier(store, vmmRouter, log)
+				reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
+					Logger: log,
+					Observe: func(obs privatenetwork.ReconcileObservation) {
+						log.Debug("private network reconciliation", "app", obs.AppID, "status", obs.Status, "outcome", obs.Outcome, "duration", obs.Duration)
+					},
+				})
+				if reconErr != nil {
+					return reconErr
+				}
+				go func() {
+					if err := reconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+						log.Warn("schedd: private network reconciler stopped", "err", err)
+					}
+				}()
+				if deps.subscribePrivateNetwork != nil {
+					detachSub := sched.NewPrivateNetworkAttachmentSubscriber(applier, log)
+					go subscribeWithReconnect(ctx, "private network", log, deps.subscribePrivateNetwork, pool, detachSub.Run)
+				}
+				log.Info("schedd: private network reconciler enabled", "configured_networks", configuredCount, "gregale_fabric", api.PrivateNetworkFabricEnabled())
+			}
 		}
 	} else {
 		log.Info("schedd: private network reconciler disabled", "env", "FAAS_PRIVATE_NETWORK_ENABLED")

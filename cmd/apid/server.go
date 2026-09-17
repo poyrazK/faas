@@ -1232,6 +1232,14 @@ func (s *server) handler() http.Handler {
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/seat_usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSeatUsage)))))
+
+	// Gregale-owned private-network fabric (dark-launched). These account-
+	// scoped resources define address space and stable membership allocation;
+	// host bridge/overlay activation remains asynchronous and fail-closed.
+	mux.HandleFunc("GET /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworks))))
+	mux.HandleFunc("POST /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetwork)))))
+	mux.HandleFunc("GET /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetwork))))
+	mux.HandleFunc("DELETE /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deletePrivateNetwork))))
 	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.changePlan)))))))
 	// Billing identity is customer-owned legal metadata used on future
 	// invoices. Keep the mutation behind the same admin + MFA + recent

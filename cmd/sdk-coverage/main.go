@@ -953,6 +953,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/network/private":    "GetAppPrivateNetworkAttachment",
 	"PUT /v1/apps/{slug}/network/private":    "SetAppPrivateNetworkAttachment",
 	"DELETE /v1/apps/{slug}/network/private": "ClearAppPrivateNetworkAttachment",
+	"GET /v1/networks":                       "ListPrivateNetworks",
+	"POST /v1/networks":                      "CreatePrivateNetwork",
+	"GET /v1/networks/{id}":                  "GetPrivateNetwork",
+	"DELETE /v1/networks/{id}":               "DeletePrivateNetwork",
 
 	// Issue #961 / Mega-A PR-A — zero-config deploy + domains surface.
 	// The auto-derivation produces names with literal hyphens for the

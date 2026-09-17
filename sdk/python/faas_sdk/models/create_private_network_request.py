@@ -1,66 +1,59 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="AppPrivateNetworkAttachmentRequest")
+T = TypeVar("T", bound="CreatePrivateNetworkRequest")
 
 
 @_attrs_define
-class AppPrivateNetworkAttachmentRequest:
-    """PUT body for /v1/apps/{slug}/network/private."""
+class CreatePrivateNetworkRequest:
+    """POST /v1/networks body for a Gregale-owned network."""
 
-    network_id: str
-    region: str | Unset = UNSET
-    """Optional when attaching a Gregale-owned network; it must match the network region."""
-    cidrs: list[str] | Unset = UNSET
+    name: str
+    region: str
+    cidr: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        network_id = self.network_id
+        name = self.name
 
         region = self.region
 
-        cidrs: list[str] | Unset = UNSET
-        if not isinstance(self.cidrs, Unset):
-            cidrs = self.cidrs
+        cidr = self.cidr
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "network_id": network_id,
+                "name": name,
+                "region": region,
+                "cidr": cidr,
             }
         )
-        if region is not UNSET:
-            field_dict["region"] = region
-        if cidrs is not UNSET:
-            field_dict["cidrs"] = cidrs
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        network_id = d.pop("network_id")
+        name = d.pop("name")
 
-        region = d.pop("region", UNSET)
+        region = d.pop("region")
 
-        cidrs = cast(list[str], d.pop("cidrs", UNSET))
+        cidr = d.pop("cidr")
 
-        app_private_network_attachment_request = cls(
-            network_id=network_id,
+        create_private_network_request = cls(
+            name=name,
             region=region,
-            cidrs=cidrs,
+            cidr=cidr,
         )
 
-        app_private_network_attachment_request.additional_properties = d
-        return app_private_network_attachment_request
+        create_private_network_request.additional_properties = d
+        return create_private_network_request
 
     @property
     def additional_keys(self) -> list[str]:

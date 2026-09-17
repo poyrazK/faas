@@ -164,6 +164,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './models/CreateOb
 export type { CreateObjectUploadRouteRequest } from './models/CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
+export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
@@ -439,6 +440,8 @@ export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhookPayload.js';
 export type { PrewarmIntentResponse } from './models/PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './models/PrewarmRequest.js';
+export type { PrivateNetwork } from './models/PrivateNetwork.js';
+export type { PrivateNetworkListResponse } from './models/PrivateNetworkListResponse.js';
 export type { Problem } from './models/Problem.js';
 export type { ProgrammaticAPIKey } from './models/ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse.js';

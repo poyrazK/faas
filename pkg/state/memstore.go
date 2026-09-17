@@ -137,6 +137,8 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
+	privateNetworks           map[string]PrivateNetwork
+	privateNetworkAddresses   map[string]PrivateNetworkAddress
 	appDeletionClaims         map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
@@ -848,6 +850,8 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},
 		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
+		privateNetworks:           map[string]PrivateNetwork{},
+		privateNetworkAddresses:   map[string]PrivateNetworkAddress{},
 		appDeletionClaims:         map[string]struct{}{},
 		githubDeployBranches:      map[string]map[string]string{},
 		githubDeployPolicies:      map[string]GitHubDeployPolicy{},

@@ -5457,8 +5457,8 @@ type AppPrivateNetworkAttachmentResponse struct {
 // /v1/apps/{slug}/network/private. A PUT replaces the app's attachment intent.
 type AppPrivateNetworkAttachmentRequest struct {
 	NetworkID string   `json:"network_id"`
-	Region    string   `json:"region"`
-	CIDRs     []string `json:"cidrs"`
+	Region    string   `json:"region,omitempty"`
+	CIDRs     []string `json:"cidrs,omitempty"`
 }
 
 // AdminSetGithubWebhookSecretRequest is the body shape for
