@@ -599,6 +599,7 @@ func (b *PGBackend) WithWarmHint(fn WarmHintFunc) *PGBackend {
 func (b *PGBackend) WithMetrics(metrics *Metrics) *PGBackend {
 	if b != nil {
 		b.metrics = metrics
+		b.refreshResponseCacheMetrics()
 	}
 	return b
 }
@@ -1743,7 +1744,20 @@ func (b *PGBackend) WithPublicAuthCache(cache *PublicAuthCache) *PGBackend {
 // every other PGBackend.With*).
 func (b *PGBackend) WithResponseCache(cache *ResponseCache) *PGBackend {
 	b.responseCache = cache
+	b.refreshResponseCacheMetrics()
 	return b
+}
+
+// refreshResponseCacheMetrics keeps the occupancy gauges aligned with the
+// cache after a control-plane invalidation. Request-side writes already
+// refresh these gauges in Handler; invalidations bypass that path, so the
+// backend must publish the post-purge snapshot itself.
+func (b *PGBackend) refreshResponseCacheMetrics() {
+	if b == nil || b.metrics == nil || b.responseCache == nil {
+		return
+	}
+	b.metrics.responseCacheBytes.Set(float64(b.responseCache.Bytes()))
+	b.metrics.responseCacheEntries.Set(float64(b.responseCache.Len()))
 }
 
 // WithEdgeRules (ADR-089 / issue #561 PR 3) arms the
@@ -1875,6 +1889,7 @@ func (b *PGBackend) InvalidateResponseCacheByApp(appID string) {
 		return
 	}
 	b.responseCache.InvalidateByApp(appID)
+	b.refreshResponseCacheMetrics()
 }
 
 // InvalidateResponseCacheByPath drops the matching cached paths for one app.
@@ -1883,7 +1898,11 @@ func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error 
 	if b == nil || b.responseCache == nil {
 		return nil
 	}
-	return b.responseCache.InvalidateByAppPath(appID, pathGlob)
+	err := b.responseCache.InvalidateByAppPath(appID, pathGlob)
+	if err == nil {
+		b.refreshResponseCacheMetrics()
+	}
+	return err
 }
 
 // InvalidateResponseCacheAll (ADR-122 §Decision) drops every
@@ -1901,6 +1920,7 @@ func (b *PGBackend) InvalidateResponseCacheAll() {
 		return
 	}
 	b.responseCache.InvalidateAll()
+	b.refreshResponseCacheMetrics()
 }
 
 // RequestCertForSurface (ADR-100 / issue #879) delegates to the
