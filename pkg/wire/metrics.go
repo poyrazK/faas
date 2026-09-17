@@ -1848,7 +1848,17 @@ type OpsMetrics struct {
 	// source vocabulary and the bounded shard label used by the dispatcher.
 	esmConsumerLagMessages   *prometheus.GaugeVec
 	esmConsumerLagAgeSeconds *prometheus.GaugeVec
-	queue                    *queueMetrics
+	// dlqEventsTotal counts durable DLQ routing decisions by bounded app
+	// label and failure class. The app admission set keeps customer-facing
+	// labels from creating an unbounded Prometheus series set.
+	dlqEventsTotal *prometheus.CounterVec
+	// dlqReplayedTotal counts operator replay outcomes. Status is a closed
+	// vocabulary so failed API calls remain observable without exposing error
+	// text as a label.
+	dlqReplayedTotal *prometheus.CounterVec
+	// dlqPurgedTotal counts operator acknowledgement/purge outcomes.
+	dlqPurgedTotal *prometheus.CounterVec
+	queue          *queueMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -4162,6 +4172,31 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		esmLagSeconds.WithLabelValues(source, "_agg")
 	}
 	commonCollectors = append(commonCollectors, esmPollsTotal, esmRecordsConsumedTotal, esmLagSeconds, esmRecordsOutcomeTotal, esmRecordProcessingSeconds, esmConsumerLagMessages, esmConsumerLagAgeSeconds)
+	// EPIC #1278: unified dead-letter observability. Keep app labels
+	// admission-bounded and failure/status labels closed so a malformed
+	// broker error or arbitrary API error cannot create unbounded series.
+	dlqEventsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "faas_dlq_events_total",
+		Help: "Count of durable dead-letter routing decisions, labelled by bounded app and error_kind.",
+	}, []string{"app", "error_kind"})
+	dlqReplayedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "faas_dlq_replayed_total",
+		Help: "Count of dead-letter replay attempts, labelled by bounded app and closed status.",
+	}, []string{"app", "status"})
+	dlqPurgedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "faas_dlq_purged_total",
+		Help: "Count of dead-letter purge attempts, labelled by bounded app and closed status.",
+	}, []string{"app", "status"})
+	for _, app := range []string{labelAppUnknown, otherAppLabel} {
+		for _, kind := range []string{"dead_letter", "poison_record", "max_attempts", "broker_error", "rate_limited", "timeout", "failed", "other"} {
+			dlqEventsTotal.WithLabelValues(app, kind)
+		}
+		for _, status := range []string{"success", "error", "not_found", "other"} {
+			dlqReplayedTotal.WithLabelValues(app, status)
+			dlqPurgedTotal.WithLabelValues(app, status)
+		}
+	}
+	commonCollectors = append(commonCollectors, dlqEventsTotal, dlqReplayedTotal, dlqPurgedTotal)
 
 	// PR-#TBD / C5 — operator-action observability layer
 	// (PR #1106 P2d follow-on). Four new series feed the
@@ -4981,6 +5016,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		esmRecordProcessingSeconds:                            esmRecordProcessingSeconds,
 		esmConsumerLagMessages:                                esmConsumerLagMessages,
 		esmConsumerLagAgeSeconds:                              esmConsumerLagAgeSeconds,
+		dlqEventsTotal:                                        dlqEventsTotal,
+		dlqReplayedTotal:                                      dlqReplayedTotal,
+		dlqPurgedTotal:                                        dlqPurgedTotal,
 		queue:                                                 queue,
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
@@ -9668,6 +9706,52 @@ func (m *OpsMetrics) ObserveESMConsumerLag(source, shard string, messages int64,
 	m.esmConsumerLagMessages.WithLabelValues(source, shard).Set(float64(messages))
 	if m.esmConsumerLagAgeSeconds != nil {
 		m.esmConsumerLagAgeSeconds.WithLabelValues(source, shard).Set(ageSeconds)
+	}
+}
+
+// ObserveDLQEvent records one durable dead-letter routing decision.
+// errorKind is normalized to the closed ledger vocabulary before it reaches
+// Prometheus, keeping arbitrary gateway detail out of the label set.
+func (m *OpsMetrics) ObserveDLQEvent(app, errorKind string) {
+	if m == nil || m.dlqEventsTotal == nil {
+		return
+	}
+	m.dlqEventsTotal.WithLabelValues(m.appLabel(app), dlqErrorKindLabel(errorKind)).Inc()
+}
+
+// ObserveDLQReplay records one operator replay result. status is one of
+// success, error, not_found, or other; unknown values collapse to other.
+func (m *OpsMetrics) ObserveDLQReplay(app, status string) {
+	if m == nil || m.dlqReplayedTotal == nil {
+		return
+	}
+	m.dlqReplayedTotal.WithLabelValues(m.appLabel(app), dlqOperationStatusLabel(status)).Inc()
+}
+
+// ObserveDLQPurge records one operator purge result. status is one of
+// success, error, not_found, or other; unknown values collapse to other.
+func (m *OpsMetrics) ObserveDLQPurge(app, status string) {
+	if m == nil || m.dlqPurgedTotal == nil {
+		return
+	}
+	m.dlqPurgedTotal.WithLabelValues(m.appLabel(app), dlqOperationStatusLabel(status)).Inc()
+}
+
+func dlqErrorKindLabel(kind string) string {
+	switch kind {
+	case "dead_letter", "poison_record", "max_attempts", "broker_error", "rate_limited", "timeout", "failed":
+		return kind
+	default:
+		return "other"
+	}
+}
+
+func dlqOperationStatusLabel(status string) string {
+	switch status {
+	case "success", "error", "not_found":
+		return status
+	default:
+		return "other"
 	}
 }
 

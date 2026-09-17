@@ -86,12 +86,18 @@ func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 	ev, err := s.store.ReplayDeadLetterEvent(r.Context(), acct.ID, app.ID, r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
+			s.ops.ObserveDLQReplay(app.Slug, "not_found")
 			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
 			return
 		}
+		s.ops.ObserveDLQReplay(app.Slug, "error")
 		api.WriteProblem(w, api.ErrInternal("dead-letter replay"))
 		return
 	}
+	s.ops.ObserveDLQReplay(app.Slug, "success")
+	s.audit.Emit(r.Context(), "app.dlq.event_replayed", &acct.ID, map[string]any{
+		"app_id": app.ID, "event_id": ev.ID, "source": ev.Source, "source_id": ev.SourceID,
+	})
 	writeJSON(w, http.StatusAccepted, deadLetterEventResponse(ev))
 }
 
@@ -112,8 +118,17 @@ func (s *server) replayAllDeadLetterEvents(w http.ResponseWriter, r *http.Reques
 	}
 	replayed, err := s.store.ReplayDeadLetterEvents(r.Context(), acct.ID, app.ID, limit)
 	if err != nil {
+		s.ops.ObserveDLQReplay(app.Slug, "error")
 		api.WriteProblem(w, api.ErrInternal("dead-letter replay"))
 		return
+	}
+	for i := 0; i < replayed; i++ {
+		s.ops.ObserveDLQReplay(app.Slug, "success")
+	}
+	if replayed > 0 {
+		s.audit.Emit(r.Context(), "app.dlq.event_replayed", &acct.ID, map[string]any{
+			"app_id": app.ID, "count": replayed, "operation": "batch",
+		})
 	}
 	writeJSON(w, http.StatusAccepted, api.DeadLetterReplayAllResponse{AppSlug: app.Slug, Replayed: replayed})
 }
@@ -125,12 +140,18 @@ func (s *server) deleteDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 	}
 	if err := s.store.DeleteDeadLetterEvent(r.Context(), acct.ID, app.ID, r.PathValue("id")); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
+			s.ops.ObserveDLQPurge(app.Slug, "not_found")
 			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
 			return
 		}
+		s.ops.ObserveDLQPurge(app.Slug, "error")
 		api.WriteProblem(w, api.ErrInternal("dead-letter purge"))
 		return
 	}
+	s.ops.ObserveDLQPurge(app.Slug, "success")
+	s.audit.Emit(r.Context(), "app.dlq.purged", &acct.ID, map[string]any{
+		"app_id": app.ID, "event_id": r.PathValue("id"), "count": 1,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -151,8 +172,17 @@ func (s *server) purgeDeadLetterEvents(w http.ResponseWriter, r *http.Request, a
 	}
 	purged, err := s.store.DeleteDeadLetterEvents(r.Context(), acct.ID, app.ID, limit)
 	if err != nil {
+		s.ops.ObserveDLQPurge(app.Slug, "error")
 		api.WriteProblem(w, api.ErrInternal("dead-letter purge"))
 		return
+	}
+	for i := 0; i < purged; i++ {
+		s.ops.ObserveDLQPurge(app.Slug, "success")
+	}
+	if purged > 0 {
+		s.audit.Emit(r.Context(), "app.dlq.purged", &acct.ID, map[string]any{
+			"app_id": app.ID, "count": purged, "operation": "batch",
+		})
 	}
 	writeJSON(w, http.StatusOK, api.DeadLetterPurgeResponse{AppSlug: app.Slug, Purged: purged})
 }

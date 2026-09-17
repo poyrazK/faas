@@ -11,6 +11,15 @@ Kafka bindings also publish `schedd_esm_consumer_lag_messages` and
 `schedd_esm_consumer_lag_age_seconds` by bounded source shard. These are
 broker-native lag snapshots, distinct from the dispatch latency histogram.
 
+The unified EPIC #1278 ledger exposes cross-source operator signals:
+
+- `faas_dlq_events_total{app,error_kind}` counts durable routing decisions.
+- `faas_dlq_replayed_total{app,status}` counts replay attempts.
+- `faas_dlq_purged_total{app,status}` counts ledger purges.
+
+The corresponding audit kinds are `app.dlq.event_routed`,
+`app.dlq.event_replayed`, and `app.dlq.purged`.
+
 `FaasDurableQueueStalled` means work is present but the oldest pending item
 has been waiting for more than five minutes. Check queue-depth scaling,
 worker admission capacity, and the schedd lease-recovery log. A non-zero

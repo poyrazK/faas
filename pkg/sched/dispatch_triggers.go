@@ -563,7 +563,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		}
 		if len(exhaustedItems) > 0 {
 			items := claimedItemIDs(exhaustedItems)
-			l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store)
+			l.deadLetterAllForApp(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store)
 			_ = poller.Nack(ctx, t, items, triggerReasonMaxAttempts)
 		}
 		return nil
@@ -591,9 +591,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				l.log.Warn("sched trigger tick: finalize malformed queue response", "trigger_id", t.ID.String(), "err", err)
 				return nil
 			}
-			l.deadLetterAllWithMark(ctx, t.ID.String(), items, triggerReasonPoisonRecord, "gateway response malformed", store, false)
+			l.deadLetterAllWithMark(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonPoisonRecord, "gateway response malformed", store, false)
 		} else {
-			l.deadLetterAll(ctx, t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
+			l.deadLetterAllForApp(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), ids, triggerReasonPoisonRecord, "gateway response malformed", store)
 			_ = poller.Nack(ctx, t, items, triggerReasonPoisonRecord)
 		}
 		return nil
@@ -1019,10 +1019,10 @@ func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource,
 				"err", err)
 			return
 		}
-		l.deadLetterAllWithMark(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store, false)
+		l.deadLetterAllWithMark(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store, false)
 		return
 	}
-	l.deadLetterAll(ctx, t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
+	l.deadLetterAllForApp(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
 	if terminal, ok := poller.(terminalNacker); ok {
 		// Queue rows have not yet produced trigger_records, so Ack would
 		// incorrectly mark the invocation successful. Move them directly
@@ -1034,14 +1034,21 @@ func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource,
 	_ = poller.Ack(ctx, t, items)
 }
 
+// deadLetterAll retains the narrow test seam used by the trigger unit tests.
+// Production call sites use deadLetterAllForApp so observability carries the
+// authoritative app/account identity into the audit and metric payload.
 func (l *Loop) deadLetterAll(ctx context.Context, triggerID string, ids []string, reason, detail string, store storeLike) {
-	l.deadLetterAllWithMark(ctx, triggerID, ids, reason, detail, store, true)
+	l.deadLetterAllWithMark(ctx, "", "", triggerID, ids, reason, detail, store, true)
+}
+
+func (l *Loop) deadLetterAllForApp(ctx context.Context, appID, accountID, triggerID string, ids []string, reason, detail string, store storeLike) {
+	l.deadLetterAllWithMark(ctx, appID, accountID, triggerID, ids, reason, detail, store, true)
 }
 
 // deadLetterAllWithMark writes the durable DLQ rows and optionally performs
 // the trigger-record transition. Queue pollers set mark=false because they
 // transition trigger_records and invocations together in one SQL statement.
-func (l *Loop) deadLetterAllWithMark(ctx context.Context, triggerID string, ids []string, reason, detail string, store storeLike, mark bool) {
+func (l *Loop) deadLetterAllWithMark(ctx context.Context, appID, accountID, triggerID string, ids []string, reason, detail string, store storeLike, mark bool) {
 	if store == nil || len(ids) == 0 {
 		return
 	}
@@ -1072,6 +1079,19 @@ func (l *Loop) deadLetterAllWithMark(ctx context.Context, triggerID string, ids 
 			if err := store.MarkTriggerRecordDeadLetter(ctx, uuid, reason); err != nil {
 				l.log.Warn("sched trigger tick: mark dlq", "id", uuid, "err", err)
 			}
+		}
+		if l.ops != nil {
+			l.ops.ObserveDLQEvent(appID, reason)
+		}
+		if l.audit != nil {
+			var subject *string
+			if accountID != "" {
+				subject = &accountID
+			}
+			l.audit.Emit(ctx, "app.dlq.event_routed", subject, map[string]any{
+				"app_id": appID, "trigger_id": triggerID, "source_id": uuid,
+				"source": "trigger_record", "error_kind": reason,
+			})
 		}
 	}
 }

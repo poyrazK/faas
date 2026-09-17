@@ -2047,6 +2047,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				sched.WithDrainGatewaySynth(synth),
 				sched.WithDrainNotifier(engine.Notifier()),
 				sched.WithDrainLogger(log),
+				sched.WithDrainAudit(schedulerAuditor),
+				sched.WithDrainOpsMetrics(ops),
 				sched.WithDrainDispatchConcurrency(drainDispatchConcurrency))
 			notifC, subErr := db.SubscribeWithReconnect(ctx, pool,
 				[]string{db.NotifyInvocationDue}, log)

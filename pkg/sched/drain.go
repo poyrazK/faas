@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Compile-time guarantee the unified invocations drain depends on
@@ -99,6 +101,8 @@ type Drain struct {
 	log       *slog.Logger
 	now       func() time.Time
 	batchSize int
+	audit     *audit.Auditor
+	ops       *wire.OpsMetrics
 	// wakeLeaseSeconds is the lease a claimed invocation holds. The
 	// drain races claim → wake → invoke → complete inside this window.
 	// 60s is generous (the Wake+Invoke flow normally completes in well
@@ -184,6 +188,10 @@ func WithDrainNow(now func() time.Time) DrainOption    { return func(d *Drain) {
 func WithDrainLogger(l *slog.Logger) DrainOption       { return func(d *Drain) { d.log = l } }
 func WithDrainGatewaySynth(g GatewaySynth) DrainOption { return func(d *Drain) { d.gateway = g } }
 func WithDrainNotifier(n Notifier) DrainOption         { return func(d *Drain) { d.notifier = n } }
+func WithDrainAudit(a *audit.Auditor) DrainOption      { return func(d *Drain) { d.audit = a } }
+func WithDrainOpsMetrics(m *wire.OpsMetrics) DrainOption {
+	return func(d *Drain) { d.ops = m }
+}
 
 // NewDrain wires the dependencies. Defaults are conservative: 64-batch
 // per tick, 60s wake lease, 5s retry-after, real clock.
@@ -205,6 +213,29 @@ func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 	// (tests use WithDrainNow to exercise TTL boundaries). Move 2.
 	d.accts = newAcctCache(d.now)
 	return d
+}
+
+// emitDeadLetter records the cross-daemon DLQ routing contract after the
+// source invocation has been durably moved to dead_letter. The store trigger
+// owns the ledger projection; this helper owns only best-effort observability.
+func (d *Drain) emitDeadLetter(ctx context.Context, inv state.Invocation, reason string) {
+	if d == nil {
+		return
+	}
+	if d.ops != nil {
+		d.ops.ObserveDLQEvent(inv.AppID, reason)
+	}
+	if d.audit != nil {
+		accountID := inv.AccountID
+		var subject *string
+		if accountID != "" {
+			subject = &accountID
+		}
+		d.audit.Emit(ctx, "app.dlq.event_routed", subject, map[string]any{
+			"app_id": inv.AppID, "source_id": inv.ID, "source": "invocation",
+			"origin": string(inv.Source), "error_kind": reason,
+		})
+	}
 }
 
 // Run blocks until ctx is cancelled. It listens on notif for
@@ -468,9 +499,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
-			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+			budget := d.queueAttemptBudget(ctx, inv)
+			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err))
 			if failErr == nil && retryAfter == 0 {
 				d.emitDone(ctx, inv, state.InvocationFailed)
+			}
+			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+				d.emitDeadLetter(ctx, inv, "dead_letter")
 			}
 			d.log.Warn("drain: debug replay", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 			return
@@ -509,7 +544,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if errors.Is(err, ErrPermanentWake) {
 			retryAfter = 0
 		}
-		_ = d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+		budget := d.queueAttemptBudget(ctx, inv)
+		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
+		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+			d.emitDeadLetter(ctx, inv, "dead_letter")
+		}
 		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
@@ -549,9 +588,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
-		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+		budget := d.queueAttemptBudget(ctx, inv)
+		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
+		}
+		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
+			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
 		return
