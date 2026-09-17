@@ -220,12 +220,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_OCI_PASSWORD` | shared | `envfile` |  |  | `` | read-only runtime credential in /etc/faas/storage.env; imaged lifecycle override in /etc/faas/imaged-storage.env |
+| `FAAS_OCI_PASSWORD` | shared | `envfile` |  |  | `` | read-only runtime credential in /etc/faas/storage.env; imaged and vmmd lifecycle override in /etc/faas/imaged-storage.env |
 | `FAAS_OCI_PULL_TIMEOUT_SECONDS` | imaged | `default` |  |  | `` |  |
 | `FAAS_OCI_REGISTRY` | imaged, vmmd, shared | `envfile` |  |  | `` |  |
 | `FAAS_OCI_REPO_PREFIX` | shared | `envfile` |  |  | `` |  |
 | `FAAS_OCI_TIMEOUT_SECONDS` | shared | `envfile` |  |  | `` |  |
-| `FAAS_OCI_USERNAME` | shared | `envfile` |  |  | `` | read-only runtime identity in /etc/faas/storage.env; imaged lifecycle override in /etc/faas/imaged-storage.env |
+| `FAAS_OCI_USERNAME` | shared | `envfile` |  |  | `` | read-only runtime identity in /etc/faas/storage.env; imaged and vmmd lifecycle override in /etc/faas/imaged-storage.env |
 | `FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG` | postgres | `script` |  |  | `` | LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role |
 | `FAAS_OTEL_FLUSH_INTERVAL` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-public | `default` |  |  | `` |  |

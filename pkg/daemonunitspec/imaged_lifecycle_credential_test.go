@@ -5,14 +5,15 @@ import (
 	"testing"
 )
 
-func TestImagedAloneLoadsLifecycleCredential(t *testing.T) {
+func TestSnapshotLifecycleDaemonsLoadLifecycleCredential(t *testing.T) {
 	const lifecycleFile = "/etc/faas/imaged-storage.env"
+	lifecycleDaemons := map[string]bool{"imaged": true, "vmmd": true}
 	for _, entry := range UnitEntries() {
 		hasLifecycleCredential := strings.Contains(entry.Unit().EnvironmentFile, lifecycleFile)
-		if entry.Name == "imaged" && !hasLifecycleCredential {
-			t.Fatalf("imaged does not load %s", lifecycleFile)
+		if lifecycleDaemons[entry.Name] && !hasLifecycleCredential {
+			t.Errorf("%s does not load %s", entry.Name, lifecycleFile)
 		}
-		if entry.Name != "imaged" && hasLifecycleCredential {
+		if !lifecycleDaemons[entry.Name] && hasLifecycleCredential {
 			t.Errorf("%s unexpectedly receives package deletion authority", entry.Name)
 		}
 	}
