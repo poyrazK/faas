@@ -136,6 +136,13 @@ func realtimeAuthMode(row state.ManagedRealtimeEndpoint) string {
 	return api.RealtimeAuthModeNone
 }
 
+func valueOrZeroTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
 // realtimeAuthPolicyAuditData intentionally contains only policy shape and
 // configuration booleans. Sealed credential bytes and trust URLs never cross
 // the audit boundary.
@@ -181,6 +188,10 @@ func (s *server) syncManagedRealtimeEndpoint(ctx context.Context, row state.Mana
 	if err != nil {
 		return err
 	}
+	authTokenPrevious, err := unsealRealtimeCredential(ctx, row.AuthTokenPreviousSealed)
+	if err != nil {
+		return err
+	}
 	authMode := row.AuthMode
 	if authMode == "" {
 		if len(authToken) > 0 {
@@ -194,6 +205,8 @@ func (s *server) syncManagedRealtimeEndpoint(ctx context.Context, row state.Mana
 		CallbackURL: row.CallbackURL, ConnectPath: row.ConnectPath,
 		MessagePath: row.MessagePath, DisconnectPath: row.DisconnectPath,
 		CallbackAuthToken: string(callbackAuth), AuthToken: string(authToken),
+		AuthTokenPrevious:          string(authTokenPrevious),
+		AuthTokenPreviousExpiresAt: valueOrZeroTime(row.AuthTokenPreviousExpiresAt),
 		ClientAuth: realtime.AuthPolicy{
 			Mode: realtime.AuthMode(authMode), Issuer: row.AuthIssuer, JWKSURL: row.AuthJWKSURL,
 			Audience:       append([]string(nil), row.AuthAudience...),
@@ -478,6 +491,9 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		}
 		params.AuthTokenSealed = &sealed
 		authTokenConfigured = *req.AuthToken != ""
+		empty := []byte{}
+		params.AuthTokenPreviousSealed = &empty
+		params.ClearAuthTokenPreviousExpiresAt = true
 	}
 	if req.AuthMode != nil {
 		mode, err := api.NormalizeRealtimeAuthMode(*req.AuthMode, authTokenConfigured)
@@ -508,6 +524,8 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 	if req.AuthMode != nil && authMode != api.RealtimeAuthModeStaticBearer && req.AuthToken == nil {
 		empty := []byte{}
 		params.AuthTokenSealed = &empty
+		params.AuthTokenPreviousSealed = &empty
+		params.ClearAuthTokenPreviousExpiresAt = true
 		authTokenConfigured = false
 	}
 	if req.AuthMode != nil && authMode != api.RealtimeAuthModeOIDCJWT {
@@ -579,6 +597,117 @@ func (s *server) updateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Re
 		s.audit.Emit(r.Context(), "realtime.auth_policy_updated", &acct.ID, data)
 	}
 	writeJSON(w, http.StatusOK, realtimeEndpointResponse(row))
+}
+
+func (s *server) rotateManagedRealtimeAuth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req api.RotateManagedRealtimeAuthRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
+	if !ok {
+		return
+	}
+	if realtimeAuthMode(row) != api.RealtimeAuthModeStaticBearer || len(row.AuthTokenSealed) == 0 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("auth token rotation requires static_bearer authentication"))
+		return
+	}
+	if prob := validateRealtimeToken(req.NewAuthToken, "new_auth_token", true); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	grace := api.RealtimeAuthRotationDefaultGraceSeconds
+	if req.GracePeriodSeconds != nil {
+		grace = *req.GracePeriodSeconds
+	}
+	if grace < 0 || grace > api.RealtimeAuthRotationMaxGraceSeconds {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("grace_period_seconds must be between 0 and %d", api.RealtimeAuthRotationMaxGraceSeconds)))
+		return
+	}
+	sealed, prob := sealRealtimeToken(req.NewAuthToken, "REALTIME_AUTH")
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	deadline := time.Now().UTC().Add(time.Duration(grace) * time.Second)
+	previous := append([]byte(nil), row.AuthTokenSealed...)
+	previousExpiry := &deadline
+	params := state.UpdateManagedRealtimeEndpointParams{
+		AuthTokenSealed:            &sealed,
+		AuthTokenPreviousSealed:    &previous,
+		AuthTokenPreviousExpiresAt: previousExpiry,
+	}
+	authMode := api.RealtimeAuthModeStaticBearer
+	params.AuthMode = &authMode
+	store, ok := realtimeEndpointStore(s)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime endpoint store unavailable"))
+		return
+	}
+	updatedRow, err := store.UpdateManagedRealtimeEndpoint(r.Context(), row.ID, params)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "managed realtime endpoint not found")
+			return
+		}
+		s.log.WarnContext(r.Context(), "rotate managed realtime auth token", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not rotate managed realtime auth token"))
+		return
+	}
+	if err := s.syncManagedRealtimeEndpoint(r.Context(), updatedRow); err != nil {
+		s.log.WarnContext(r.Context(), "sync rotated managed realtime endpoint", "endpoint_id", updatedRow.ID, "err", err)
+	}
+	data := realtimeAuthPolicyAuditData(updatedRow)
+	data["grace_period_seconds"] = grace
+	data["previous_token_expires_at"] = deadline.Format(time.RFC3339)
+	s.audit.Emit(r.Context(), "realtime.auth_token_rotated", &acct.ID, data)
+	expiresAt := deadline.Format(time.RFC3339)
+	writeJSON(w, http.StatusOK, api.RotateManagedRealtimeAuthResponse{
+		EndpointID: updatedRow.ID, AuthMode: realtimeAuthMode(updatedRow),
+		PreviousTokenExpiresAt: &expiresAt,
+	})
+}
+
+func (s *server) finalizeManagedRealtimeAuth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
+	if !ok {
+		return
+	}
+	if realtimeAuthMode(row) != api.RealtimeAuthModeStaticBearer || len(row.AuthTokenSealed) == 0 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("auth token rotation requires static_bearer authentication"))
+		return
+	}
+	wasPending := len(row.AuthTokenPreviousSealed) > 0
+	empty := []byte{}
+	params := state.UpdateManagedRealtimeEndpointParams{
+		AuthTokenPreviousSealed:         &empty,
+		ClearAuthTokenPreviousExpiresAt: true,
+	}
+	store, ok := realtimeEndpointStore(s)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime endpoint store unavailable"))
+		return
+	}
+	updatedRow, err := store.UpdateManagedRealtimeEndpoint(r.Context(), row.ID, params)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "managed realtime endpoint not found")
+			return
+		}
+		s.log.WarnContext(r.Context(), "finalize managed realtime auth token rotation", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not finalize managed realtime auth token rotation"))
+		return
+	}
+	if err := s.syncManagedRealtimeEndpoint(r.Context(), updatedRow); err != nil {
+		s.log.WarnContext(r.Context(), "sync finalized managed realtime endpoint", "endpoint_id", updatedRow.ID, "err", err)
+	}
+	if wasPending {
+		s.audit.Emit(r.Context(), "realtime.auth_token_rotation_finalized", &acct.ID, realtimeAuthPolicyAuditData(updatedRow))
+	}
+	writeJSON(w, http.StatusOK, api.FinalizeManagedRealtimeAuthResponse{
+		EndpointID: updatedRow.ID, AuthMode: realtimeAuthMode(updatedRow),
+	})
 }
 
 func (s *server) deleteManagedRealtimeEndpoint(w http.ResponseWriter, r *http.Request, acct state.Account) {

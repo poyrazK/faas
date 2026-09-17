@@ -114,6 +114,11 @@ type Endpoint struct {
 	// backed by the app's configured auth provider; this token is never emitted
 	// in events or registry snapshots.
 	AuthToken string
+	// AuthTokenPrevious is accepted only until AuthTokenPreviousExpiresAt. It
+	// supports zero-downtime static bearer rotation and is never emitted in
+	// events or registry snapshots.
+	AuthTokenPrevious          string
+	AuthTokenPreviousExpiresAt time.Time
 	// ClientAuth is the explicit per-endpoint client authentication policy.
 	// Empty mode preserves the legacy inference from AuthToken.
 	ClientAuth AuthPolicy
@@ -320,6 +325,14 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	if err != nil {
 		return err
 	}
+	if e.AuthTokenPrevious != "" {
+		if auth.Mode != AuthModeStaticBearer {
+			return fmt.Errorf("realtime: previous auth token requires static_bearer mode")
+		}
+		if e.AuthTokenPreviousExpiresAt.IsZero() {
+			return fmt.Errorf("realtime: previous auth token requires an expiry")
+		}
+	}
 	e.ClientAuth = auth
 	for name, path := range map[string]string{
 		"connect_path":    e.ConnectPath,
@@ -423,7 +436,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch endpoint.ClientAuth.Mode {
 	case AuthModeStaticBearer:
 		token, ok := bearerToken(r)
-		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) != 1 {
+		valid := ok && subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) == 1
+		if !valid && ok && endpoint.AuthTokenPrevious != "" &&
+			(endpoint.AuthTokenPreviousExpiresAt.IsZero() || time.Now().Before(endpoint.AuthTokenPreviousExpiresAt)) {
+			valid = subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthTokenPrevious)) == 1
+		}
+		if !valid {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

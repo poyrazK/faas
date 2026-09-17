@@ -47,6 +47,8 @@ func (m *MemStore) CreateManagedRealtimeEndpointIfUnderQuota(_ context.Context, 
 	in.UpdatedAt = in.CreatedAt
 	in.CallbackAuthTokenSealed = append([]byte(nil), in.CallbackAuthTokenSealed...)
 	in.AuthTokenSealed = append([]byte(nil), in.AuthTokenSealed...)
+	in.AuthTokenPreviousSealed = append([]byte(nil), in.AuthTokenPreviousSealed...)
+	in.AuthTokenPreviousExpiresAt = cloneManagedRealtimeTime(in.AuthTokenPreviousExpiresAt)
 	in.AuthAudience = append([]string(nil), in.AuthAudience...)
 	in.AuthAlgorithms = append([]string(nil), in.AuthAlgorithms...)
 	in.AuthRequiredClaims = cloneManagedRealtimeClaims(in.AuthRequiredClaims)
@@ -64,6 +66,8 @@ func (m *MemStore) ManagedRealtimeEndpointByID(_ context.Context, id string) (Ma
 	}
 	e.CallbackAuthTokenSealed = append([]byte(nil), e.CallbackAuthTokenSealed...)
 	e.AuthTokenSealed = append([]byte(nil), e.AuthTokenSealed...)
+	e.AuthTokenPreviousSealed = append([]byte(nil), e.AuthTokenPreviousSealed...)
+	e.AuthTokenPreviousExpiresAt = cloneManagedRealtimeTime(e.AuthTokenPreviousExpiresAt)
 	e.AuthAudience = append([]string(nil), e.AuthAudience...)
 	e.AuthAlgorithms = append([]string(nil), e.AuthAlgorithms...)
 	e.AuthRequiredClaims = cloneManagedRealtimeClaims(e.AuthRequiredClaims)
@@ -95,6 +99,15 @@ func (m *MemStore) UpdateManagedRealtimeEndpoint(_ context.Context, id string, p
 	}
 	if p.AuthTokenSealed != nil {
 		e.AuthTokenSealed = append([]byte(nil), (*p.AuthTokenSealed)...)
+	}
+	if p.AuthTokenPreviousSealed != nil {
+		e.AuthTokenPreviousSealed = append([]byte(nil), (*p.AuthTokenPreviousSealed)...)
+	}
+	if p.AuthTokenPreviousExpiresAt != nil {
+		e.AuthTokenPreviousExpiresAt = cloneManagedRealtimeTime(p.AuthTokenPreviousExpiresAt)
+	}
+	if p.ClearAuthTokenPreviousExpiresAt {
+		e.AuthTokenPreviousExpiresAt = nil
 	}
 	if p.AuthMode != nil {
 		e.AuthMode = *p.AuthMode
@@ -168,6 +181,8 @@ func listManagedRealtimeEndpoints(rows map[string]ManagedRealtimeEndpoint, keep 
 		if keep(e) {
 			e.CallbackAuthTokenSealed = append([]byte(nil), e.CallbackAuthTokenSealed...)
 			e.AuthTokenSealed = append([]byte(nil), e.AuthTokenSealed...)
+			e.AuthTokenPreviousSealed = append([]byte(nil), e.AuthTokenPreviousSealed...)
+			e.AuthTokenPreviousExpiresAt = cloneManagedRealtimeTime(e.AuthTokenPreviousExpiresAt)
 			e.AuthAudience = append([]string(nil), e.AuthAudience...)
 			e.AuthAlgorithms = append([]string(nil), e.AuthAlgorithms...)
 			e.AuthRequiredClaims = cloneManagedRealtimeClaims(e.AuthRequiredClaims)
@@ -177,6 +192,14 @@ func listManagedRealtimeEndpoints(rows map[string]ManagedRealtimeEndpoint, keep 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out
+}
+
+func cloneManagedRealtimeTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func cloneManagedRealtimeClaims(values map[string]string) map[string]string {

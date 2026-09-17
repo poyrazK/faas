@@ -72,18 +72,21 @@ func (s *PgStore) CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context,
 		insert into managed_realtime_endpoints
 			(id, app_id, account_id, callback_url, connect_path, message_path,
 			 disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+			 auth_token_previous_sealed, auth_token_previous_expires_at,
 			 auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 			 auth_algorithms, auth_required_claims, allowed_origins, max_connections, max_message_bytes,
 			 max_connection_age_seconds, enabled)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		returning id, app_id, account_id, callback_url, connect_path, message_path,
 		          disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		          auth_token_previous_sealed, auth_token_previous_expires_at,
 		          auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		          auth_algorithms, auth_required_claims, allowed_origins,
 		          max_connections, max_message_bytes, max_connection_age_seconds,
 		          enabled, created_at, updated_at
 	`, in.ID, in.AppID, in.AccountID, in.CallbackURL, in.ConnectPath, in.MessagePath,
 		in.DisconnectPath, in.CallbackAuthTokenSealed, in.AuthTokenSealed,
+		in.AuthTokenPreviousSealed, in.AuthTokenPreviousExpiresAt,
 		in.AuthMode, in.AuthIssuer, in.AuthJWKSURL, in.AuthAudience,
 		in.AuthAlgorithms, authClaims, in.AllowedOrigins, in.MaxConnections,
 		in.MaxMessageBytes, in.MaxConnectionAgeSeconds, in.Enabled)
@@ -104,6 +107,7 @@ func (s *PgStore) ManagedRealtimeEndpointByID(ctx context.Context, id string) (M
 	row := s.pool.QueryRow(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		       auth_token_previous_sealed, auth_token_previous_expires_at,
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
@@ -143,6 +147,15 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 	if p.AuthTokenSealed != nil {
 		current.AuthTokenSealed = append([]byte(nil), (*p.AuthTokenSealed)...)
 	}
+	if p.AuthTokenPreviousSealed != nil {
+		current.AuthTokenPreviousSealed = append([]byte(nil), (*p.AuthTokenPreviousSealed)...)
+	}
+	if p.AuthTokenPreviousExpiresAt != nil {
+		current.AuthTokenPreviousExpiresAt = cloneManagedRealtimeTime(p.AuthTokenPreviousExpiresAt)
+	}
+	if p.ClearAuthTokenPreviousExpiresAt {
+		current.AuthTokenPreviousExpiresAt = nil
+	}
 	if p.AuthMode != nil {
 		current.AuthMode = *p.AuthMode
 	}
@@ -180,20 +193,23 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 		update managed_realtime_endpoints set
 			callback_url = $2, connect_path = $3, message_path = $4,
 			disconnect_path = $5, callback_auth_token_sealed = $6,
-			auth_token_sealed = $7, auth_mode = $8, auth_issuer = $9,
-			auth_jwks_url = $10, auth_audience = $11, auth_algorithms = $12,
-			auth_required_claims = $13, allowed_origins = $14,
-			max_connections = $15, max_message_bytes = $16,
-			max_connection_age_seconds = $17, enabled = $18, updated_at = now()
+			auth_token_sealed = $7, auth_token_previous_sealed = $8,
+			auth_token_previous_expires_at = $9, auth_mode = $10, auth_issuer = $11,
+			auth_jwks_url = $12, auth_audience = $13, auth_algorithms = $14,
+			auth_required_claims = $15, allowed_origins = $16,
+			max_connections = $17, max_message_bytes = $18,
+			max_connection_age_seconds = $19, enabled = $20, updated_at = now()
 		where id = $1
 		returning id, app_id, account_id, callback_url, connect_path, message_path,
 		          disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		          auth_token_previous_sealed, auth_token_previous_expires_at,
 		          auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		          auth_algorithms, auth_required_claims, allowed_origins,
 		          max_connections, max_message_bytes, max_connection_age_seconds,
 		          enabled, created_at, updated_at
 	`, id, current.CallbackURL, current.ConnectPath, current.MessagePath,
 		current.DisconnectPath, current.CallbackAuthTokenSealed, current.AuthTokenSealed,
+		current.AuthTokenPreviousSealed, current.AuthTokenPreviousExpiresAt,
 		current.AuthMode, current.AuthIssuer, current.AuthJWKSURL, current.AuthAudience,
 		current.AuthAlgorithms, mustMarshalManagedRealtimeClaims(current.AuthRequiredClaims),
 		current.AllowedOrigins, current.MaxConnections, current.MaxMessageBytes,
@@ -223,6 +239,7 @@ func (s *PgStore) ListManagedRealtimeEndpointsForApp(ctx context.Context, appID 
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		       auth_token_previous_sealed, auth_token_previous_expires_at,
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
@@ -240,6 +257,7 @@ func (s *PgStore) ListManagedRealtimeEndpointsForAccount(ctx context.Context, ac
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		       auth_token_previous_sealed, auth_token_previous_expires_at,
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
@@ -257,6 +275,7 @@ func (s *PgStore) ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRe
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, callback_url, connect_path, message_path,
 		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		       auth_token_previous_sealed, auth_token_previous_expires_at,
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
@@ -277,6 +296,7 @@ func scanManagedRealtimeEndpoint(s managedRealtimeEndpointScanner) (ManagedRealt
 	var authClaims []byte
 	if err := s.Scan(&e.ID, &e.AppID, &e.AccountID, &e.CallbackURL, &e.ConnectPath, &e.MessagePath,
 		&e.DisconnectPath, &e.CallbackAuthTokenSealed, &e.AuthTokenSealed,
+		&e.AuthTokenPreviousSealed, &e.AuthTokenPreviousExpiresAt,
 		&e.AuthMode, &e.AuthIssuer, &e.AuthJWKSURL, &e.AuthAudience,
 		&e.AuthAlgorithms, &authClaims, &e.AllowedOrigins, &e.MaxConnections,
 		&e.MaxMessageBytes, &e.MaxConnectionAgeSeconds,

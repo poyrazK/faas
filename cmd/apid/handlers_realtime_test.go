@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -127,6 +128,87 @@ func TestManagedRealtimeAuthPolicyUpdateIsAuditedWithoutSecrets(t *testing.T) {
 		return
 	}
 	t.Fatalf("realtime.auth_policy_updated audit event missing: %+v", events)
+}
+
+func TestManagedRealtimeAuthRotationKeepsPreviousCredentialDuringGrace(t *testing.T) {
+	teardown := withTestRecipient(t)
+	t.Cleanup(teardown)
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "rt-auth-rotate")
+	created := e.do(t, http.MethodPost, "/v1/apps/rt-auth-rotate/realtime/endpoints", api.CreateManagedRealtimeEndpointRequest{
+		CallbackURL:       "https://example.com/callback",
+		CallbackAuthToken: "callback-secret",
+		AuthToken:         "old-client-secret",
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status %d: %s", created.Code, created.Body)
+	}
+	var endpoint api.ManagedRealtimeEndpointResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	grace := int64(3600)
+	rotated := e.do(t, http.MethodPost, "/v1/apps/rt-auth-rotate/realtime/endpoints/"+endpoint.ID+"/auth/rotate", api.RotateManagedRealtimeAuthRequest{
+		NewAuthToken: "new-client-secret", GracePeriodSeconds: &grace,
+	}, nil)
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("rotate status %d: %s", rotated.Code, rotated.Body)
+	}
+	var response api.RotateManagedRealtimeAuthResponse
+	if err := json.Unmarshal(rotated.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.EndpointID != endpoint.ID || response.AuthMode != api.RealtimeAuthModeStaticBearer || response.PreviousTokenExpiresAt == nil || *response.PreviousTokenExpiresAt == "" {
+		t.Fatalf("unexpected rotation response: %+v", response)
+	}
+	if strings.Contains(rotated.Body.String(), "old-client-secret") || strings.Contains(rotated.Body.String(), "new-client-secret") {
+		t.Fatalf("rotation response leaked credential material: %s", rotated.Body)
+	}
+	row, err := e.store.ManagedRealtimeEndpointByID(context.Background(), endpoint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.AuthTokenPreviousSealed) == 0 || row.AuthTokenPreviousExpiresAt == nil || !row.AuthTokenPreviousExpiresAt.After(time.Now()) {
+		t.Fatalf("rotation state missing active predecessor: %+v", row)
+	}
+	finalized := e.do(t, http.MethodPost, "/v1/apps/rt-auth-rotate/realtime/endpoints/"+endpoint.ID+"/auth/rotate/finalize", nil, nil)
+	if finalized.Code != http.StatusOK {
+		t.Fatalf("finalize status %d: %s", finalized.Code, finalized.Body)
+	}
+	var finalizeResponse api.FinalizeManagedRealtimeAuthResponse
+	if err := json.Unmarshal(finalized.Body.Bytes(), &finalizeResponse); err != nil {
+		t.Fatal(err)
+	}
+	if finalizeResponse.EndpointID != endpoint.ID || finalizeResponse.PreviousTokenExpiresAt != nil {
+		t.Fatalf("unexpected finalize response: %+v", finalizeResponse)
+	}
+	row, err = e.store.ManagedRealtimeEndpointByID(context.Background(), endpoint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.AuthTokenPreviousSealed) != 0 || row.AuthTokenPreviousExpiresAt != nil {
+		t.Fatalf("finalize did not clear predecessor: %+v", row)
+	}
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Kind != "realtime.auth_token_rotated" {
+			continue
+		}
+		if strings.Contains(string(event.Data), "old-client-secret") || strings.Contains(string(event.Data), "new-client-secret") {
+			t.Fatalf("rotation audit leaked credential material: %s", event.Data)
+		}
+	}
+	var rotatedAudit, finalizedAudit bool
+	for _, event := range events {
+		rotatedAudit = rotatedAudit || event.Kind == "realtime.auth_token_rotated"
+		finalizedAudit = finalizedAudit || event.Kind == "realtime.auth_token_rotation_finalized"
+	}
+	if !rotatedAudit || !finalizedAudit {
+		t.Fatalf("rotation audit events missing: %+v", events)
+	}
 }
 
 func TestManagedRealtimeEndpointPlanGate(t *testing.T) {

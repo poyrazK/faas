@@ -41,8 +41,10 @@ const (
 	// public connection-management API. The daemon enforces its own limit too;
 	// keeping the API bound explicit prevents oversized requests from reaching
 	// an owner node.
-	RealtimeMessageMaxBytes = 1 << 20
-	RealtimeSecretMasked    = "***"
+	RealtimeMessageMaxBytes                       = 1 << 20
+	RealtimeSecretMasked                          = "***"
+	RealtimeAuthRotationDefaultGraceSeconds int64 = 300
+	RealtimeAuthRotationMaxGraceSeconds     int64 = 24 * 60 * 60
 )
 
 const (
@@ -95,6 +97,27 @@ type UpdateManagedRealtimeEndpointRequest struct {
 	MaxMessageBytes         *int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds *int64             `json:"max_connection_age_seconds,omitempty"`
 	Enabled                 *bool              `json:"enabled,omitempty"`
+}
+
+// RotateManagedRealtimeAuthRequest starts a bounded overlap window for a new
+// static bearer credential. The caller supplies the new credential so it can
+// stage clients before the predecessor expires; neither credential is ever
+// returned by the API.
+type RotateManagedRealtimeAuthRequest struct {
+	NewAuthToken       string `json:"new_auth_token"`
+	GracePeriodSeconds *int64 `json:"grace_period_seconds,omitempty"`
+}
+
+type RotateManagedRealtimeAuthResponse struct {
+	EndpointID             string  `json:"endpoint_id"`
+	AuthMode               string  `json:"auth_mode"`
+	PreviousTokenExpiresAt *string `json:"previous_token_expires_at"`
+}
+
+type FinalizeManagedRealtimeAuthResponse struct {
+	EndpointID             string  `json:"endpoint_id"`
+	AuthMode               string  `json:"auth_mode"`
+	PreviousTokenExpiresAt *string `json:"previous_token_expires_at"`
 }
 
 // ManagedRealtimeMessageRequest is a binary-safe message sent to one live

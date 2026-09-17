@@ -4743,6 +4743,20 @@ func (c *Client) UpdateManagedRealtimeEndpoint(ctx context.Context, slug, id str
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/realtime/endpoints/"+id, req, &out)
 }
 
+// RotateManagedRealtimeAuth starts a bounded overlap window for a replacement
+// static bearer credential. The plaintext credential is write-only.
+func (c *Client) RotateManagedRealtimeAuth(ctx context.Context, slug, id string, req RotateManagedRealtimeAuthRequest) (RotateManagedRealtimeAuthResponse, error) {
+	var out RotateManagedRealtimeAuthResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+id+"/auth/rotate", req, &out)
+}
+
+// FinalizeManagedRealtimeAuth immediately revokes the predecessor credential
+// instead of waiting for its grace deadline.
+func (c *Client) FinalizeManagedRealtimeAuth(ctx context.Context, slug, id string) (FinalizeManagedRealtimeAuthResponse, error) {
+	var out FinalizeManagedRealtimeAuthResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+id+"/auth/rotate/finalize", nil, &out)
+}
+
 func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, nil)
 }

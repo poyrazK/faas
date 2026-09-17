@@ -2000,6 +2000,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createManagedRealtimeEndpoint)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeEndpoint))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateManagedRealtimeEndpoint))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rotateManagedRealtimeAuth)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizeManagedRealtimeAuth)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteManagedRealtimeEndpoint))))
 	// Live managed realtime operations are endpoint-scoped so an API key can
 	// never address a connection or channel outside an app it owns. The owner

@@ -12509,6 +12509,55 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: rotateManagedRealtimeAuth
+      summary: Rotate a static bearer credential with a bounded overlap window.
+      description: |
+        Promotes the supplied credential to current and accepts the previous
+        credential until previous_token_expires_at. Credentials are sealed at
+        rest and never returned in plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateManagedRealtimeAuthRequest' }
+      responses:
+        '200':
+          description: Static bearer credential rotation started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateManagedRealtimeAuthResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: finalizeManagedRealtimeAuth
+      summary: Revoke the predecessor static bearer credential immediately.
+      responses:
+        '200':
+          description: Static bearer credential rotation finalized.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinalizeManagedRealtimeAuthResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29388,6 +29437,32 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
+
+    RotateManagedRealtimeAuthRequest:
+      type: object
+      description: Start a bounded overlap window for a replacement static bearer credential.
+      required: [new_auth_token]
+      properties:
+        new_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
+        grace_period_seconds: { type: integer, minimum: 0, maximum: 86400, default: 300 }
+
+    RotateManagedRealtimeAuthResponse:
+      type: object
+      description: Metadata for an in-progress static bearer credential rotation.
+      required: [endpoint_id, auth_mode, previous_token_expires_at]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        auth_mode: { type: string, enum: [static_bearer] }
+        previous_token_expires_at: { type: string, format: date-time }
+
+    FinalizeManagedRealtimeAuthResponse:
+      type: object
+      description: Metadata after the predecessor static bearer credential is revoked.
+      required: [endpoint_id, auth_mode, previous_token_expires_at]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        auth_mode: { type: string, enum: [static_bearer] }
+        previous_token_expires_at: { type: string, format: date-time, nullable: true }
 
     ManagedRealtimeMessageRequest:
       type: object

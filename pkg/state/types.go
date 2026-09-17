@@ -3045,48 +3045,53 @@ type AppWebhook struct {
 // apid owns this row and synchronizes it to the daemon. Credentials are age
 // sealed and are never returned by the API.
 type ManagedRealtimeEndpoint struct {
-	ID                      string
-	AppID                   string
-	AccountID               string
-	CallbackURL             string
-	ConnectPath             string
-	MessagePath             string
-	DisconnectPath          string
-	CallbackAuthTokenSealed []byte
-	AuthTokenSealed         []byte
-	AuthMode                string
-	AuthIssuer              string
-	AuthJWKSURL             string
-	AuthAudience            []string
-	AuthAlgorithms          []string
-	AuthRequiredClaims      map[string]string
-	AllowedOrigins          []string
-	MaxConnections          int
-	MaxMessageBytes         int64
-	MaxConnectionAgeSeconds int64
-	Enabled                 bool
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	ID                         string
+	AppID                      string
+	AccountID                  string
+	CallbackURL                string
+	ConnectPath                string
+	MessagePath                string
+	DisconnectPath             string
+	CallbackAuthTokenSealed    []byte
+	AuthTokenSealed            []byte
+	AuthTokenPreviousSealed    []byte
+	AuthTokenPreviousExpiresAt *time.Time
+	AuthMode                   string
+	AuthIssuer                 string
+	AuthJWKSURL                string
+	AuthAudience               []string
+	AuthAlgorithms             []string
+	AuthRequiredClaims         map[string]string
+	AllowedOrigins             []string
+	MaxConnections             int
+	MaxMessageBytes            int64
+	MaxConnectionAgeSeconds    int64
+	Enabled                    bool
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
-	CallbackURL             *string
-	ConnectPath             *string
-	MessagePath             *string
-	DisconnectPath          *string
-	CallbackAuthTokenSealed *[]byte
-	AuthTokenSealed         *[]byte
-	AuthMode                *string
-	AuthIssuer              *string
-	AuthJWKSURL             *string
-	AuthAudience            *[]string
-	AuthAlgorithms          *[]string
-	AuthRequiredClaims      *map[string]string
-	AllowedOrigins          *[]string
-	MaxConnections          *int
-	MaxMessageBytes         *int64
-	MaxConnectionAgeSeconds *int64
-	Enabled                 *bool
+	CallbackURL                     *string
+	ConnectPath                     *string
+	MessagePath                     *string
+	DisconnectPath                  *string
+	CallbackAuthTokenSealed         *[]byte
+	AuthTokenSealed                 *[]byte
+	AuthTokenPreviousSealed         *[]byte
+	AuthTokenPreviousExpiresAt      *time.Time
+	ClearAuthTokenPreviousExpiresAt bool
+	AuthMode                        *string
+	AuthIssuer                      *string
+	AuthJWKSURL                     *string
+	AuthAudience                    *[]string
+	AuthAlgorithms                  *[]string
+	AuthRequiredClaims              *map[string]string
+	AllowedOrigins                  *[]string
+	MaxConnections                  *int
+	MaxMessageBytes                 *int64
+	MaxConnectionAgeSeconds         *int64
+	Enabled                         *bool
 }
 
 type ManagedRealtimeEndpointQuotaScope string

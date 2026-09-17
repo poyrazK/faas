@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -92,5 +93,54 @@ func TestManagerJWTAuthorizationUsesBearerAndPrincipal(t *testing.T) {
 	}
 	if authorizer.token != "jwt-token" {
 		t.Fatalf("token = %q, want jwt-token", authorizer.token)
+	}
+}
+
+func TestManagerAcceptsPreviousStaticBearerDuringGraceWindow(t *testing.T) {
+	m := NewManager(Config{}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{
+		ID:                         "rotating",
+		AuthToken:                  "new-token",
+		AuthTokenPrevious:          "old-token",
+		AuthTokenPreviousExpiresAt: time.Now().Add(time.Minute),
+		ClientAuth:                 AuthPolicy{Mode: AuthModeStaticBearer},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	url := "ws" + server.URL[len("http"):]
+
+	for _, token := range []string{"new-token", "old-token"} {
+		client, response, err := websocket.DefaultDialer.Dial(url+ManagedPathPrefix+"rotating", map[string][]string{
+			"Authorization": {"Bearer " + token},
+		})
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if err != nil {
+			t.Fatalf("dial with %s: %v", token, err)
+		}
+		_ = client.Close()
+	}
+
+	if err := m.RegisterEndpoint(Endpoint{
+		ID:                         "expired",
+		AuthToken:                  "new-token",
+		AuthTokenPrevious:          "old-token",
+		AuthTokenPreviousExpiresAt: time.Now().Add(-time.Second),
+		ClientAuth:                 AuthPolicy{Mode: AuthModeStaticBearer},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, response, err := websocket.DefaultDialer.Dial(url+ManagedPathPrefix+"expired", map[string][]string{
+		"Authorization": {"Bearer old-token"},
+	})
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expired previous token dial = (%v, %v), want HTTP 401", err, response)
 	}
 }
