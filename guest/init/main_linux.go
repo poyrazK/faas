@@ -2233,6 +2233,11 @@ func pivotInto(root string) error {
 	if err := os.MkdirAll(root+"/oldroot", 0o755); err != nil {
 		return err
 	}
+	// The image is not obliged to ship /dev, /proc or /sys (scratch-based
+	// images do not); the mounts below need the directories to exist.
+	if err := ensureMountpoints(root, "/dev", "/proc", "/sys"); err != nil {
+		return fmt.Errorf("pivot: %w", err)
+	}
 	if err := syscall.PivotRoot(root, root+"/oldroot"); err != nil {
 		return err
 	}
@@ -2249,7 +2254,14 @@ func pivotInto(root string) error {
 	// /dev/urandom, /dev/zero, etc. and the resume hook's reseed step
 	// fails on ENOENT.
 	if err := syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, ""); err != nil {
-		slog.Default().Warn("post-pivot devtmpfs mount failed", "err", err)
+		// Only tolerable if the image brought its own device nodes; a guest
+		// without /dev/null cannot exec anything and used to crash-loop into
+		// a kernel panic three restarts later, with this line as the sole
+		// warning. Fail the stage here, with the reason, instead.
+		if _, statErr := os.Stat("/dev/null"); statErr != nil {
+			return fmt.Errorf("post-pivot devtmpfs mount: %w (and no /dev/null in the image)", err)
+		}
+		slog.Default().Warn("post-pivot devtmpfs mount failed; using the image's own /dev", "err", err)
 	}
 	// Same story for /proc, /sys, /tmp — mountBasics attached them to the
 	// OLD root, so they're gone after pivot. Without /proc the resume hook
