@@ -1,3 +1,4 @@
+// adr: 118
 // dispatch_triggers_pure_test.go — fill pkg/sched/dispatch_triggers.go
 // coverage of the pure helper surface. Targets the 0%-covered
 // pure helpers: closeBatch, buildDispatchEnvelope, batchItemIDs,

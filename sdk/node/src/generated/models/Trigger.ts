@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FilterCriteria } from './FilterCriteria.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { TriggerKind } from './TriggerKind.js';
 /**
  * Read shape returned by GET / POST / PATCH on /v1/triggers.
@@ -44,6 +45,10 @@ export type Trigger = {
    * Omitted create values use min(5, the account plan cap).
    */
   max_attempts: number;
+  /**
+   * Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap.
+   */
+  retry_policy?: RetryPolicyDTO;
   /**
    * Per-record broker payload byte cap (migration 00274).
    * Records above this size are DLQ'd at insert time with
