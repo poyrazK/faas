@@ -80,7 +80,6 @@ CloseDeploymentStage
 ColdWakeRatePctSince
 CompleteBuild
 CompleteGdprRequest
-CompleteInvocation
 ComputeNodeByID
 ComputeNodeByName
 ComputeNodeUsedMB
@@ -220,7 +219,6 @@ DomainByName
 DropTriggerRecordByOperator
 EditPublicStatusEventTitle
 EditPublicStatusUpdateMessage
-EnsureAccountAsyncQuota
 ExpireOrgInvitations
 ExpireUploadSession
 FailBuild
@@ -232,7 +230,6 @@ FindGdprRequestByRequestID
 FindMatchingEvent
 GetAPIConsumerByID
 GetAPIKey
-GetAccountAsyncQuota
 GetAccountEgressAllowlistExtra
 GetAccountKeyGraceWindow
 GetAppErrorSample
@@ -253,7 +250,6 @@ GetGithubWebhookSecret
 GetIdempotent
 GetInstanceTailCount
 GetMFADisableRequest
-GetMirrorRuleByID
 GetOIDCExchangedTokenByHash
 GetOIDCTrustPolicy
 GetOperatorIntent
@@ -296,7 +292,6 @@ InsertTriggerRecord
 InsertWorkflowEvent
 InstallationIDForRepo
 InstanceListByNodeForRecovery
-InvocationByID
 IsMailSuppressed
 IssueCliAuthCode
 IssueEmailVerificationToken
@@ -679,7 +674,6 @@ UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule
 UpdateInstanceStateToTerminal
-UpdateMirrorRule
 UpdateOrgMemberRole
 UpdateOrgName
 UpdateOrgPlan

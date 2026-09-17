@@ -35,10 +35,13 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	if _, _, err := m.EnsureAccountAsyncQuota(ctx, acct.ID, 10); err != nil {
 		t.Errorf("Ensure(overwrite): %v", err)
 	}
+	if max, cur, err := m.EnsureAccountAsyncQuota(ctx, acct.ID, 2); err != nil || max != 2 || cur != 0 {
+		t.Errorf("Ensure(claim cap) = (%d,%d,%v), want (2,0,nil)", max, cur, err)
+	}
 
 	// GetAccountAsyncQuota happy path + ErrNotFound.
-	if mx, cur, err := m.GetAccountAsyncQuota(ctx, acct.ID); err != nil || mx != 10 || cur != 0 {
-		t.Errorf("Get(acct) = (%d,%d,%v), want (10,0,nil)", mx, cur, err)
+	if mx, cur, err := m.GetAccountAsyncQuota(ctx, acct.ID); err != nil || mx != 2 || cur != 0 {
+		t.Errorf("Get(acct) = (%d,%d,%v), want (2,0,nil)", mx, cur, err)
 	}
 	if _, _, err := m.GetAccountAsyncQuota(ctx, "missing-acct"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get(missing) = %v, want ErrNotFound", err)

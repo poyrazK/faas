@@ -28384,7 +28384,7 @@ func (s *PgStore) ListDeadlineBreachedInvocations(ctx context.Context, now time.
 }
 
 // ForceDeadlineBreachedInvocations transitions the listed invocations
-// to dead_letter with outcome='deadline'. Decrements the per-account
+// to dead_letter with outcome='timeout'. Decrements the per-account
 // counter for each one so the cap reflects the abandoned work.
 func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []string) (int, error) {
 	if len(ids) == 0 {
@@ -28402,7 +28402,7 @@ func (s *PgStore) ForceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	rows, err := tx.Query(ctx,
 		`update invocations
 		   set state = 'dead_letter',
-		       outcome = 'deadline',
+		       outcome = 'timeout',
 		       last_error = 'deadline_at breached',
 		       completed_at = now(),
 		       received_at = coalesce(received_at, now())

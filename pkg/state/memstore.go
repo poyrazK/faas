@@ -21672,7 +21672,7 @@ func (m *MemStore) ListDeadlineBreachedInvocations(_ context.Context, now time.T
 }
 
 // ForceDeadlineBreachedInvocations transitions the listed IDs to
-// dead_letter with outcome='deadline'. Decrements the per-account
+// dead_letter with outcome='timeout'. Decrements the per-account
 // counter for each transitioned row.
 func (m *MemStore) ForceDeadlineBreachedInvocations(_ context.Context, ids []string) (int, error) {
 	m.mu.Lock()
