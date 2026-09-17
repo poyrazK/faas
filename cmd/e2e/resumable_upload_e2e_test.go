@@ -120,7 +120,7 @@ func TestE2E_ResumableUpload_RestartAndCommitReplay(t *testing.T) {
 			SourceURL:  "https://github.com/example/resumable",
 			CommitSHA:  commitSHA,
 			Reason:     "resumable e2e",
-			Tag:        "resumable",
+			Tag:        "scheduled_maintenance",
 			DeployedBy: "e2e",
 		},
 	}
@@ -198,7 +198,7 @@ func TestE2E_ResumableUpload_RestartAndCommitReplay(t *testing.T) {
 	if committed.ID == "" || committed.BuildID == "" || committed.Kind != string(state.DeploymentKindTarball) || committed.Status != string(state.DeployPending) {
 		t.Fatalf("committed deployment = %+v", committed)
 	}
-	if committed.SourceURL != "https://github.com/example/resumable" || committed.CommitSHA != commitSHA || committed.Tag != "resumable" {
+	if committed.SourceURL != "https://github.com/example/resumable" || committed.CommitSHA != commitSHA || committed.Tag != "scheduled_maintenance" {
 		t.Fatalf("committed provenance = source_url:%q commit_sha:%q tag:%q", committed.SourceURL, committed.CommitSHA, committed.Tag)
 	}
 
