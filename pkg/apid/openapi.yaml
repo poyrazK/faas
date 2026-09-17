@@ -12801,6 +12801,7 @@ paths:
       - name: drain_id
         in: path
         required: true
+        description: Durable identifier returned by the drain request.
         schema: { type: string, format: uuid }
     get:
       tags: [realtime]
