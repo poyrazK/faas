@@ -1,5 +1,6 @@
 // Tests for CloudflareRecordProvider (Tier A8 / ADR-083 /
 // code-review fix #3 + #7).
+// adr: 083
 
 package gateway
 
