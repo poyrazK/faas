@@ -235,7 +235,8 @@ type VmmdClient interface {
 	// ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
 	// Gregale-owned private network exists before attachment routes are
 	// published. The operation is idempotent and does not contact a cloud
-	// provider; cross-node transport is layered on after this local seam.
+	// provider. When transport_peers_managed is true, the peer list is also
+	// reconciled as the authoritative regional VXLAN topology.
 	ReconcilePrivateNetworkFabric(ctx context.Context, in *ReconcilePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkFabricAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
@@ -966,7 +967,8 @@ type VmmdServer interface {
 	// ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
 	// Gregale-owned private network exists before attachment routes are
 	// published. The operation is idempotent and does not contact a cloud
-	// provider; cross-node transport is layered on after this local seam.
+	// provider. When transport_peers_managed is true, the peer list is also
+	// reconciled as the authoritative regional VXLAN topology.
 	ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing

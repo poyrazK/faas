@@ -989,8 +989,12 @@ type Manager struct {
 	// privateNetworkTransport records the node-local VXLAN links that have
 	// been reconciled for each account/network. It is only an idempotency
 	// cache; ReconcilePrivateNetworkFabric probes the kernel after restart.
-	privateNetworkTransport    map[string]bool
-	privateNetworkTransportCfg PrivateNetworkTransportConfig
+	privateNetworkTransport map[string]bool
+	// privateNetworkTransportPeers records the last peer roster applied to
+	// each transport link. It avoids flushing/reinstalling unchanged FDBs on
+	// every attachment sweep while still forcing one sync after vmmd restart.
+	privateNetworkTransportPeers map[string]string
+	privateNetworkTransportCfg   PrivateNetworkTransportConfig
 	// hostRenderer is the seam for vmmd's egress watcher to
 	// push fresh StaticEgressRules into the host renderer.
 	// Set by NewManager via the wire-up path in cmd/vmmd/main.go;
@@ -1054,13 +1058,14 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		// perAppStaticIP map (per-app pin) stays; perVMHostIP
 		// (per-VM host IP) is the new map that drives the host
 		// renderer.
-		perAppStaticIP:          make(map[string]*netip.Addr),
-		perVMHostIP:             make(map[string]netip.Addr),
-		privateNetworkFabric:    make(map[string]netip.Prefix),
-		privateNetworkTransport: make(map[string]bool),
-		metrics:                 metrics,
-		conntrackCap:            api.ConntrackCapProbe(),
-		characterizationWait:    api.CharacterizationHostDeadline,
+		perAppStaticIP:               make(map[string]*netip.Addr),
+		perVMHostIP:                  make(map[string]netip.Addr),
+		privateNetworkFabric:         make(map[string]netip.Prefix),
+		privateNetworkTransport:      make(map[string]bool),
+		privateNetworkTransportPeers: make(map[string]string),
+		metrics:                      metrics,
+		conntrackCap:                 api.ConntrackCapProbe(),
+		characterizationWait:         api.CharacterizationHostDeadline,
 	}
 }
 

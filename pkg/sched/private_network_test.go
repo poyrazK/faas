@@ -41,6 +41,21 @@ type privateNetworkFabricRouterFake struct {
 	calls []privateNetworkFabricCall
 }
 
+type privateNetworkFabricTransportCall struct {
+	nodeID    string
+	accountID string
+	networkID string
+	region    string
+	cidr      netip.Prefix
+	peers     []netip.Addr
+}
+
+type privateNetworkFabricTransportRouterFake struct {
+	privateNetworkFabricRouterFake
+	muTransport sync.Mutex
+	transport   []privateNetworkFabricTransportCall
+}
+
 func (f *privateNetworkFabricRouterFake) ReconcilePrivateNetworkFabric(_ context.Context, nodeID, accountID, networkID, region string, cidr netip.Prefix) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -56,6 +71,24 @@ func (f *privateNetworkFabricRouterFake) callsSnapshot() []privateNetworkFabricC
 	defer f.mu.Unlock()
 	out := make([]privateNetworkFabricCall, len(f.calls))
 	copy(out, f.calls)
+	return out
+}
+
+func (f *privateNetworkFabricTransportRouterFake) ReconcilePrivateNetworkFabricWithPeers(_ context.Context, nodeID, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr) error {
+	f.muTransport.Lock()
+	defer f.muTransport.Unlock()
+	f.transport = append(f.transport, privateNetworkFabricTransportCall{
+		nodeID: nodeID, accountID: accountID, networkID: networkID,
+		region: region, cidr: cidr, peers: append([]netip.Addr(nil), peers...),
+	})
+	return nil
+}
+
+func (f *privateNetworkFabricTransportRouterFake) transportCallsSnapshot() []privateNetworkFabricTransportCall {
+	f.muTransport.Lock()
+	defer f.muTransport.Unlock()
+	out := make([]privateNetworkFabricTransportCall, len(f.transport))
+	copy(out, f.transport)
 	return out
 }
 
@@ -220,6 +253,67 @@ func TestPrivateNetworkFabricApplierPreparesActiveRegionalNodesWithoutLiveInstan
 	// rollout; node-hel and the single-box local node are excluded by region.
 	if want := []string{"node-fra", "node-legacy"}; !equalStrings(got, want) {
 		t.Fatalf("fabric nodes = %v, want %v", got, want)
+	}
+}
+
+func TestRegionalTransportPeersRequiresCompleteRegionalRoster(t *testing.T) {
+	region := "fra1"
+	other := "hel1"
+	addrA := netip.MustParseAddr("100.64.0.10")
+	addrB := netip.MustParseAddr("100.64.0.11")
+	nodes := []state.ComputeNode{
+		{ID: "node-a", Active: true, Region: &region, OverlayIP: &addrA},
+		{ID: "node-b", Active: true, Region: &region, OverlayIP: &addrB},
+		{ID: "node-hel", Active: true, Region: &other},
+	}
+	peers, ready := regionalTransportPeers(nodes, nodes[0], region)
+	if !ready || len(peers) != 1 || peers[0] != addrB {
+		t.Fatalf("regional peers = %v, ready=%v; want [%s], true", peers, ready, addrB)
+	}
+	nodes[1].OverlayIP = nil
+	if _, ready := regionalTransportPeers(nodes, nodes[0], region); ready {
+		t.Fatal("incomplete regional roster reported ready")
+	}
+}
+
+func TestPrivateNetworkFabricApplierUsesAuthoritativeTransportRoster(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	region := "fra1"
+	addrA := netip.MustParseAddr("100.64.0.10")
+	addrB := netip.MustParseAddr("100.64.0.11")
+	for _, node := range []state.ComputeNode{
+		{ID: "node-a", Name: "node-a", TargetURL: "tcp://100.64.0.10:50051", VPCPUs: 8, MemMB: 8192, MaxConcurrency: 4, AdmissionCeilingMB: 4096, Active: true, Region: &region, OverlayIP: &addrA},
+		{ID: "node-b", Name: "node-b", TargetURL: "tcp://100.64.0.11:50051", VPCPUs: 8, MemMB: 8192, MaxConcurrency: 4, AdmissionCeilingMB: 4096, Active: true, Region: &region, OverlayIP: &addrB},
+	} {
+		if _, err := store.CreateComputeNode(ctx, node); err != nil {
+			t.Fatalf("CreateComputeNode(%s): %v", node.Name, err)
+		}
+	}
+	router := &privateNetworkFabricTransportRouterFake{}
+	applier := NewPrivateNetworkFabricApplier(store, router, nil)
+	cidr := netip.MustParsePrefix("10.42.0.0/16")
+	if _, err := applier.ApplyWithReport(ctx, state.AppPrivateNetworkAttachment{
+		AccountID: "acct-private", AppID: "app-private", NetworkID: "net-private",
+		Region: region, CIDRs: []netip.Prefix{cidr}, Status: api.PrivateNetworkAttachmentStatusReady,
+	}); err != nil {
+		t.Fatalf("ApplyWithReport: %v", err)
+	}
+	calls := router.transportCallsSnapshot()
+	if len(calls) != 2 {
+		t.Fatalf("transport calls = %d, want 2: %+v", len(calls), calls)
+	}
+	for _, call := range calls {
+		if len(call.peers) != 1 {
+			t.Fatalf("transport call = %+v, want one peer", call)
+		}
+		want := addrB
+		if call.nodeID == "node-b" {
+			want = addrA
+		}
+		if call.peers[0] != want {
+			t.Errorf("node %s peers = %v, want [%s]", call.nodeID, call.peers, want)
+		}
 	}
 }
 

@@ -319,6 +319,9 @@ func TestRegisterComputeNode_TargetURLFromConfig(t *testing.T) {
 	if got.TargetURL != "tcp://100.64.0.1:50051" {
 		t.Errorf("target_url = %q, want tcp://100.64.0.1:50051", got.TargetURL)
 	}
+	if got.OverlayIP == nil || got.OverlayIP.String() != "100.64.0.1" {
+		t.Errorf("overlay_ip = %v, want 100.64.0.1", got.OverlayIP)
+	}
 }
 
 // TestRegisterComputeNode_AppendsFaasSuffix pins the issue #900

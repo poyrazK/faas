@@ -76,9 +76,13 @@ overlay_ip = "100.64.0.10"
 `FAAS_PRIVATE_NETWORK_TRANSPORT_*` environment variables provide the same
 overrides. vmmd derives a stable `gpx-*` link and VNI per account/network,
 installs static peer FDB entries, and removes the link before deleting the
-bridge. Every node in a region must use the same encrypted overlay and peer
-list; leave the flag off until the control-plane mTLS and underlay policy are
-validated.
+bridge. Once every active node has registered an overlay address, schedd
+authoritatively refreshes each node's regional peer set and vmmd flushes stale
+FDB entries before replacing the current set. During a rolling upgrade, an
+incomplete roster falls back to the startup-configured peer list; a node join
+or drain converges on the next fabric reconciliation. Every node in a region
+must use the same encrypted overlay; leave the flag off until the control-plane
+mTLS and underlay policy are validated.
 
 Legacy external-network attachments still use the operator-managed connector
 and are enabled in schedd with

@@ -718,6 +718,23 @@ func (r *VMMRouter) ReconcilePrivateNetworkFabric(ctx context.Context, nodeID, a
 	return fabricator.ReconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr)
 }
 
+// ReconcilePrivateNetworkFabricWithPeers routes the authoritative regional
+// transport roster to one vmmd. It is optional so older node clients and test
+// doubles can continue serving the node-local bridge path.
+func (r *VMMRouter) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, nodeID, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	fabricator, ok := cli.(interface {
+		ReconcilePrivateNetworkFabricWithPeers(context.Context, string, string, string, netip.Prefix, []netip.Addr) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network transport convergence unsupported by node %q", nodeID)
+	}
+	return fabricator.ReconcilePrivateNetworkFabricWithPeers(ctx, accountID, networkID, region, cidr, peers)
+}
+
 // UpdateStaticEgressIP (ADR-119) routes the patch to the
 // vmmd that owns the live instance. The egress_drift
 // subscriber hands us a single (appID, ip) pair; we

@@ -41,6 +41,10 @@ type FabricTransportPlan struct {
 	LinkName string
 	VNI      uint32
 	Setup    [][]string
+	// PeerSync is safe to run on every reconciliation. Flushing the link's
+	// static FDB first prevents a drained node from remaining reachable after
+	// the regional peer roster changes or vmmd restarts.
+	PeerSync [][]string
 	Teardown [][]string
 }
 
@@ -116,11 +120,16 @@ func BuildFabricTransportPlan(spec FabricTransportSpec) (FabricTransportPlan, er
 	for _, peer := range canonicalPeers {
 		setup = append(setup, []string{"bridge", "fdb", "replace", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
 	}
+	peerSync := [][]string{{"bridge", "fdb", "flush", "dev", linkName}}
+	for _, peer := range canonicalPeers {
+		peerSync = append(peerSync, []string{"bridge", "fdb", "replace", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
+	}
 	return FabricTransportPlan{
 		Spec:     validated,
 		LinkName: linkName,
 		VNI:      vni,
 		Setup:    setup,
+		PeerSync: peerSync,
 		Teardown: [][]string{{"ip", "link", "del", "dev", linkName}},
 	}, nil
 }

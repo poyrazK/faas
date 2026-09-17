@@ -38,6 +38,18 @@ func (m *Manager) WithPrivateNetworkTransport(cfg PrivateNetworkTransportConfig)
 // during steady state. When configured, the same reconciliation also attaches
 // a deterministic VXLAN link to the bridge for regional cross-node traffic.
 func (m *Manager) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	return m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, nil, false)
+}
+
+// ReconcilePrivateNetworkFabricWithPeers applies an authoritative regional
+// peer roster to the transport link as part of fabric reconciliation. The
+// roster is supplied by schedd from active compute-node registrations, so a
+// node join or drain converges without editing every vmmd config file.
+func (m *Manager) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr) error {
+	return m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true)
+}
+
+func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, managedPeers []netip.Addr, peersManaged bool) error {
 	spec, err := privatenetwork.NewFabricSpecFromValues(accountID, networkID, region, cidr.String())
 	if err != nil {
 		return err
@@ -49,11 +61,15 @@ func (m *Manager) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 	transportCfg := m.privateNetworkTransportCfg
 	var transportPlan privatenetwork.FabricTransportPlan
 	if transportCfg.Enabled {
+		peerAddresses := transportCfg.PeerAddresses
+		if peersManaged {
+			peerAddresses = managedPeers
+		}
 		transportPlan, err = privatenetwork.BuildFabricTransportPlan(privatenetwork.FabricTransportSpec{
 			Fabric:           spec,
 			OverlayInterface: transportCfg.OverlayInterface,
 			LocalAddress:     transportCfg.LocalAddress,
-			PeerAddresses:    transportCfg.PeerAddresses,
+			PeerAddresses:    peerAddresses,
 		})
 		if err != nil {
 			return err
@@ -94,6 +110,10 @@ func (m *Manager) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 	}
 	if transportCfg.Enabled {
 		transportKnown := m.privateNetworkTransport[key]
+		peerSetKey := transportPeerSetKey(transportPlan.Spec.PeerAddresses)
+		priorPeerSetKey, peerSetKnown := m.privateNetworkTransportPeers[key]
+		peerSetKnown = peerSetKnown && priorPeerSetKey == peerSetKey
+		transportCreated := false
 		if !transportKnown && m.captureRunner != nil {
 			_, probeErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName})
 			transportKnown = probeErr == nil
@@ -104,7 +124,19 @@ func (m *Manager) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 					return fmt.Errorf("fcvm: reconcile private network transport %s: %w", transportPlan.LinkName, err)
 				}
 			}
+			transportKnown = true
+			transportCreated = true
 		}
+		if !transportCreated && !peerSetKnown {
+			for _, argv := range transportPlan.PeerSync {
+				if err := m.run.Run(ctx, argv); err != nil {
+					return fmt.Errorf("fcvm: reconcile private network transport peers %s: %w", transportPlan.LinkName, err)
+				}
+			}
+		}
+		// A newly created link already received the canonical FDB entries as
+		// part of Setup. Existing links need the flush-and-replace sync above.
+		m.privateNetworkTransportPeers[key] = peerSetKey
 		m.privateNetworkTransport[key] = true
 	}
 	m.privateNetworkFabric[key] = spec.CIDR
@@ -174,5 +206,14 @@ func (m *Manager) RemovePrivateNetworkFabric(ctx context.Context, accountID, net
 	}
 	delete(m.privateNetworkFabric, key)
 	delete(m.privateNetworkTransport, key)
+	delete(m.privateNetworkTransportPeers, key)
 	return nil
+}
+
+func transportPeerSetKey(peers []netip.Addr) string {
+	parts := make([]string, 0, len(peers))
+	for _, peer := range peers {
+		parts = append(parts, peer.String())
+	}
+	return strings.Join(parts, ",")
 }

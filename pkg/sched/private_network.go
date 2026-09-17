@@ -37,6 +37,14 @@ type PrivateNetworkFabricRouter interface {
 	ReconcilePrivateNetworkFabric(context.Context, string, string, string, string, netip.Prefix) error
 }
 
+// PrivateNetworkFabricTransportRouter is the optional extension used once
+// every active node in a region has registered an overlay address. Keeping it
+// additive lets older vmmds continue the node-local bridge path during a
+// rolling upgrade.
+type PrivateNetworkFabricTransportRouter interface {
+	ReconcilePrivateNetworkFabricWithPeers(context.Context, string, string, string, string, netip.Prefix, []netip.Addr) error
+}
+
 // PrivateNetworkRouteApplier fans one app-level CIDR set out to the vmmds that
 // own its live instances. vmmd itself fans that update out to all of its local
 // instances, so schedd only sends one update per node.
@@ -164,16 +172,67 @@ func (a *PrivateNetworkFabricApplier) ApplyWithReport(ctx context.Context, attac
 	sort.Strings(nodes)
 	report := privatenetwork.FabricApplyReport{Nodes: make([]privatenetwork.RouteNodeObservation, 0, len(nodes))}
 	var errs []error
+	dynamicRouter, dynamicTransport := a.router.(PrivateNetworkFabricTransportRouter)
 	for _, nodeID := range nodes {
-		if err := a.router.ReconcilePrivateNetworkFabric(ctx, nodeID, attachment.AccountID, attachment.NetworkID, attachment.Region, firstCIDR(attachment.CIDRs)); err != nil {
-			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
-			a.log.Warn("schedd: private network fabric update failed", "app", attachment.AppID, "network", attachment.NetworkID, "node", nodeID, "err", err)
-			report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusError, Detail: err.Error()})
+		var reconcileErr error
+		usedDynamic := false
+		if dynamicTransport {
+			if node, ok := findComputeNode(rows, nodeID); ok {
+				if peers, ready := regionalTransportPeers(rows, node, attachment.Region); ready {
+					usedDynamic = true
+					reconcileErr = dynamicRouter.ReconcilePrivateNetworkFabricWithPeers(ctx, nodeID, attachment.AccountID, attachment.NetworkID, attachment.Region, firstCIDR(attachment.CIDRs), peers)
+				}
+			}
+		}
+		if !usedDynamic && reconcileErr == nil {
+			// Do not apply a partial roster during a rolling upgrade; the
+			// existing vmmd transport configuration remains authoritative until
+			// every node has registered its overlay address.
+			reconcileErr = a.router.ReconcilePrivateNetworkFabric(ctx, nodeID, attachment.AccountID, attachment.NetworkID, attachment.Region, firstCIDR(attachment.CIDRs))
+		}
+		if reconcileErr != nil {
+			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, reconcileErr))
+			a.log.Warn("schedd: private network fabric update failed", "app", attachment.AppID, "network", attachment.NetworkID, "node", nodeID, "err", reconcileErr)
+			report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusError, Detail: reconcileErr.Error()})
 			continue
 		}
 		report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusReady, Detail: "fabric bridge ready"})
 	}
 	return report, errors.Join(errs...)
+}
+
+func findComputeNode(nodes []state.ComputeNode, id string) (state.ComputeNode, bool) {
+	for _, node := range nodes {
+		if node.ID == id {
+			return node, true
+		}
+	}
+	return state.ComputeNode{}, false
+}
+
+// regionalTransportPeers returns the peer overlay addresses for one target
+// node only when every active node in the network region has a valid address.
+// During a rolling upgrade an incomplete roster deliberately falls back to
+// the legacy startup-configured transport instead of applying a partial mesh.
+func regionalTransportPeers(nodes []state.ComputeNode, target state.ComputeNode, region string) ([]netip.Addr, bool) {
+	if target.OverlayIP == nil || !target.OverlayIP.IsValid() || !target.OverlayIP.Is4() {
+		return nil, false
+	}
+	peers := make([]netip.Addr, 0, len(nodes))
+	for _, node := range nodes {
+		if !node.Active || !fabricNodeInRegion(node, region) {
+			continue
+		}
+		if node.ID == target.ID {
+			continue
+		}
+		if node.OverlayIP == nil || !node.OverlayIP.IsValid() || !node.OverlayIP.Is4() {
+			return nil, false
+		}
+		peers = append(peers, *node.OverlayIP)
+	}
+	sort.Slice(peers, func(i, j int) bool { return peers[i].String() < peers[j].String() })
+	return peers, true
 }
 
 // fabricNodeInRegion keeps a region-scoped network off unrelated compute

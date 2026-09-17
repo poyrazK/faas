@@ -6088,13 +6088,19 @@ func (x *RestoreExecutionResponse) GetRequestedMethod() WakeMethod {
 // ReconcilePrivateNetworkFabricRequest carries the account-scoped identity
 // and immutable address space of one Gregale-owned network.
 type ReconcilePrivateNetworkFabricRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	NetworkId     string                 `protobuf:"bytes,2,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
-	Region        string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
-	Cidr          string                 `protobuf:"bytes,4,opt,name=cidr,proto3" json:"cidr,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	AccountId string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	NetworkId string                 `protobuf:"bytes,2,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
+	Region    string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
+	Cidr      string                 `protobuf:"bytes,4,opt,name=cidr,proto3" json:"cidr,omitempty"`
+	// When true, this peer list is the authoritative regional topology for
+	// the node and vmmd must remove stale FDB entries before applying it. An
+	// unset/false value preserves the startup-configured peer list for legacy
+	// callers during the rollout.
+	TransportPeerAddresses []string `protobuf:"bytes,5,rep,name=transport_peer_addresses,json=transportPeerAddresses,proto3" json:"transport_peer_addresses,omitempty"`
+	TransportPeersManaged  bool     `protobuf:"varint,6,opt,name=transport_peers_managed,json=transportPeersManaged,proto3" json:"transport_peers_managed,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ReconcilePrivateNetworkFabricRequest) Reset() {
@@ -6153,6 +6159,20 @@ func (x *ReconcilePrivateNetworkFabricRequest) GetCidr() string {
 		return x.Cidr
 	}
 	return ""
+}
+
+func (x *ReconcilePrivateNetworkFabricRequest) GetTransportPeerAddresses() []string {
+	if x != nil {
+		return x.TransportPeerAddresses
+	}
+	return nil
+}
+
+func (x *ReconcilePrivateNetworkFabricRequest) GetTransportPeersManaged() bool {
+	if x != nil {
+		return x.TransportPeersManaged
+	}
+	return false
 }
 
 // ReconcilePrivateNetworkFabricAck is the empty success response.
@@ -6632,14 +6652,16 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x127\n" +
 	"\x06method\x18\x03 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\x12J\n" +
-	"\x10requested_method\x18\x04 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x0frequestedMethod\"\x90\x01\n" +
+	"\x10requested_method\x18\x04 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x0frequestedMethod\"\x82\x02\n" +
 	"$ReconcilePrivateNetworkFabricRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1d\n" +
 	"\n" +
 	"network_id\x18\x02 \x01(\tR\tnetworkId\x12\x16\n" +
 	"\x06region\x18\x03 \x01(\tR\x06region\x12\x12\n" +
-	"\x04cidr\x18\x04 \x01(\tR\x04cidr\"\"\n" +
+	"\x04cidr\x18\x04 \x01(\tR\x04cidr\x128\n" +
+	"\x18transport_peer_addresses\x18\x05 \x03(\tR\x16transportPeerAddresses\x126\n" +
+	"\x17transport_peers_managed\x18\x06 \x01(\bR\x15transportPeersManaged\"\"\n" +
 	" ReconcilePrivateNetworkFabricAck*2\n" +
 	"\n" +
 	"WakeMethod\x12\x12\n" +

@@ -205,6 +205,15 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		Active:             true,
 		CertFingerprint:    certFP,
 	}
+	if parsedOverlayIP, parseErr := netip.ParseAddr(strings.TrimSpace(overlayIP)); parseErr == nil && parsedOverlayIP.Is4() {
+		row.OverlayIP = &parsedOverlayIP
+	} else if strings.TrimSpace(overlayIP) != "" {
+		// Overlay discovery is best-effort for legacy/single-box startup,
+		// but never persist a malformed value that sched could mistake for a
+		// usable regional peer address. Transport-enabled startup already
+		// validates this value fail-closed before registration reaches here.
+		log.Warn("vmmd: overlay IP is not a persistable IPv4 address", "overlay_ip", overlayIP, "err", parseErr)
+	}
 	if len(scheddTargets) > 0 && strings.TrimSpace(scheddTargets[0]) != "" {
 		scheddTarget := strings.TrimSpace(scheddTargets[0])
 		row.ScheddTargetURL = &scheddTarget
@@ -226,10 +235,10 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 	log.Info("vmmd: compute_node registered",
 		"name", got.Name, "id", got.ID,
 		"target_url", got.TargetURL,
+		"overlay_ip", got.OverlayIP,
 		"vpcpus", got.VPCPUs, "mem_mb", got.MemMB,
 		"admission_ceiling_mb", got.AdmissionCeilingMB,
 		"vcpu_budget", got.VCPUBudget)
-	_ = overlayIP // reserved: pkg/state.ComputeNode will get OverlayIP in the migration-00026 follow-up.
 	return got, nil
 }
 

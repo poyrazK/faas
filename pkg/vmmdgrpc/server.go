@@ -1381,15 +1381,35 @@ func (s *Server) ReconcilePrivateNetworkFabric(ctx context.Context, req *vmmdpb.
 	if req.GetAccountId() == "" || req.GetNetworkId() == "" {
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Missing network identity", "account_id and network_id are required").WithDocs(wire.DocsBaseURL + "/vmmd#reconcile-private-network-fabric")))
 	}
+	prefix, err := api.ValidatePrivateNetworkCIDR(req.GetCidr())
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if req.GetTransportPeersManaged() {
+		fabricator, ok := s.vmm.(interface {
+			ReconcilePrivateNetworkFabricWithPeers(context.Context, string, string, string, netip.Prefix, []netip.Addr) error
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_transport_unavailable", "Private network transport unavailable", "vmmd private-network transport convergence is not wired")))
+		}
+		peers := make([]netip.Addr, 0, len(req.GetTransportPeerAddresses()))
+		for _, raw := range req.GetTransportPeerAddresses() {
+			peer, parseErr := netip.ParseAddr(strings.TrimSpace(raw))
+			if parseErr != nil || !peer.Is4() {
+				return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid transport peer", "transport_peer_addresses must contain IPv4 addresses")))
+			}
+			peers = append(peers, peer)
+		}
+		if err := fabricator.ReconcilePrivateNetworkFabricWithPeers(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix, peers); err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+		return &vmmdpb.ReconcilePrivateNetworkFabricAck{}, nil
+	}
 	fabricator, ok := s.vmm.(interface {
 		ReconcilePrivateNetworkFabric(context.Context, string, string, string, netip.Prefix) error
 	})
 	if !ok {
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_fabric_unavailable", "Private network fabric unavailable", "vmmd private-network fabric is not wired")))
-	}
-	prefix, err := api.ValidatePrivateNetworkCIDR(req.GetCidr())
-	if err != nil {
-		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	if err := fabricator.ReconcilePrivateNetworkFabric(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix); err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))

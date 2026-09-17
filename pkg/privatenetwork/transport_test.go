@@ -38,7 +38,7 @@ func TestBuildFabricTransportPlanIsDeterministicAndSortsPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildFabricTransportPlan (reordered): %v", err)
 	}
-	if first.LinkName != second.LinkName || first.VNI != second.VNI || !reflect.DeepEqual(first.Setup, second.Setup) {
+	if first.LinkName != second.LinkName || first.VNI != second.VNI || !reflect.DeepEqual(first.Setup, second.Setup) || !reflect.DeepEqual(first.PeerSync, second.PeerSync) {
 		t.Fatalf("transport plan changed with peer order: first=%+v second=%+v", first, second)
 	}
 	if first.LinkName == BridgeName("acct-a", "net-prod") {
@@ -47,10 +47,13 @@ func TestBuildFabricTransportPlanIsDeterministicAndSortsPeers(t *testing.T) {
 	if len(first.Setup) != 5 {
 		t.Fatalf("setup commands = %d, want create + master + up + 2 FDB entries", len(first.Setup))
 	}
-	if got := first.Setup[3][len(first.Setup[3])-1]; got != "100.64.0.11" {
+	if len(first.PeerSync) != 3 {
+		t.Fatalf("peer sync commands = %d, want flush + 2 FDB entries", len(first.PeerSync))
+	}
+	if got := first.PeerSync[1][len(first.PeerSync[1])-1]; got != "100.64.0.11" {
 		t.Fatalf("first FDB peer = %q, want 100.64.0.11", got)
 	}
-	if got := first.Setup[4][len(first.Setup[4])-1]; got != "100.64.0.12" {
+	if got := first.PeerSync[2][len(first.PeerSync[2])-1]; got != "100.64.0.12" {
 		t.Fatalf("second FDB peer = %q, want 100.64.0.12", got)
 	}
 	if got := first.Setup[0]; got[len(got)-1] != "nolearning" {

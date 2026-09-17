@@ -582,6 +582,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if parseErr != nil || !localAddress.Is4() {
 			return fmt.Errorf("vmmd: private network transport overlay_ip %q must be an IPv4 address", transportIP)
 		}
+		// Reuse the validated address during self-registration so the control
+		// plane persists exactly the endpoint used by the VXLAN underlay. This
+		// also avoids running an injected/slow detector a second time.
+		cfg.ComputeNode.OverlayIP = localAddress.String()
 		transportInterface := strings.TrimSpace(cfg.ComputeNode.PrivateNetworkTransportInterface)
 		if transportInterface == "" {
 			transportInterface = strings.TrimSpace(cfg.ComputeNode.OverlayInterface)

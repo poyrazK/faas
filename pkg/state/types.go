@@ -3987,6 +3987,11 @@ type MirrorSummary struct {
 // in the migration so the single-box deploy has a deterministic
 // ordering.
 //
+// OverlayIP is the vmmd-registered IPv4 address on the operator-managed
+// regional overlay. It is nullable for legacy or single-box rows and is
+// populated during vmmd self-registration so schedd can derive regional
+// private-network peers without a hand-maintained list.
+//
 // PublicIp / PublicIpSetAt were added by migration 00174 (PR A8
 // multi-IP work) to the SQL schema but historically not surfaced
 // on this Go struct — sqlc-generated models.go carries them. PR-3a
@@ -4005,6 +4010,10 @@ type ComputeNode struct {
 	ID        string
 	Name      string
 	TargetURL string // wire.ParseTarget-compatible — the vmmd dial target (Firecracker + jailer)
+	// OverlayIP is the stable IPv4 address vmmd advertises for cross-node
+	// control-plane and private-network transport traffic. nil means the
+	// node has not reported an overlay address yet.
+	OverlayIP *netip.Addr
 	// GatewayTargetURL is the private HTTP endpoint for this node's
 	// gatewayd-internal listener. It is separate from TargetURL because the
 	// latter is the vmmd gRPC endpoint and the two services may use different

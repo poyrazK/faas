@@ -220,7 +220,8 @@ service Vmmd {
   // ReconcilePrivateNetworkFabric ensures the node-local bridge backing one
   // Gregale-owned private network exists before attachment routes are
   // published. The operation is idempotent and does not contact a cloud
-  // provider; cross-node transport is layered on after this local seam.
+  // provider. When transport_peers_managed is true, the peer list is also
+  // reconciled as the authoritative regional VXLAN topology.
   rpc ReconcilePrivateNetworkFabric(ReconcilePrivateNetworkFabricRequest) returns (ReconcilePrivateNetworkFabricAck);
 
   // SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
@@ -1842,6 +1843,12 @@ message ReconcilePrivateNetworkFabricRequest {
   string network_id = 2;
   string region = 3;
   string cidr = 4;
+  // When true, this peer list is the authoritative regional topology for
+  // the node and vmmd must remove stale FDB entries before applying it. An
+  // unset/false value preserves the startup-configured peer list for legacy
+  // callers during the rollout.
+  repeated string transport_peer_addresses = 5;
+  bool transport_peers_managed = 6;
 }
 
 // ReconcilePrivateNetworkFabricAck is the empty success response.

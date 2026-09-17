@@ -15779,7 +15779,7 @@ type SnapshotSize struct {
 // is safe: pkg/api has no outbound dependency on pkg/state, so no cycle.
 
 // scanComputeNode reads a single compute_nodes row, projecting the
-// canonical 24-column layout (matches the SELECT / RETURNING lists
+// canonical 25-column layout (matches the SELECT / RETURNING lists
 // in ActiveComputeNodes, ListAllComputeNodes, ComputeNodeByID,
 // ComputeNodeByName, ListComputeNodes, CreateComputeNode,
 // UpsertComputeNode, UpsertComputeNodeFromOperator,
@@ -15787,7 +15787,7 @@ type SnapshotSize struct {
 //
 // Column order (must stay locked against the SQL projections):
 //
-//	id, name, target_url, vpcpus, mem_mb, max_concurrency,
+//	id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 //	admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 //	region, zone, schedd_target_url, gateway_target_url,
 //	public_ip, public_ip_set_at,
@@ -15806,7 +15806,9 @@ type SnapshotSize struct {
 //
 // PR-3a (issue #911 / ADR-110) widened the projection from 14 to 22;
 // migration 00468 adds gateway_target_url for a 23-column projection;
-// migration 00579 adds lifecycle for a 24-column projection. The
+// migration 00579 adds lifecycle for a 24-column projection; the
+// timestamped private-network topology migration adds overlay_ip as the
+// 25th field. The
 // earlier 22-column additions were public_ip / public_ip_set_at
 // (migration 00174 closure) + release_id / manifest_hash /
 // host_certificate / cert_fingerprint /
@@ -15816,7 +15818,7 @@ type SnapshotSize struct {
 // above (5 SELECTs + 4 INSERT/UPSERTs).
 func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 	var n ComputeNode
-	if err := row.Scan(&n.ID, &n.Name, &n.TargetURL, &n.VPCPUs, &n.MemMB,
+	if err := row.Scan(&n.ID, &n.Name, &n.TargetURL, &n.OverlayIP, &n.VPCPUs, &n.MemMB,
 		&n.MaxConcurrency, &n.AdmissionCeilingMB, &n.VCPUBudget, &n.Active,
 		&n.LastHeartbeatAt, &n.CreatedAt, &n.Region, &n.Zone,
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
@@ -15829,7 +15831,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 
 func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
@@ -15861,7 +15863,7 @@ func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
 // single-digit for v1.0, so the missing partial index is fine.
 func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
@@ -15887,7 +15889,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 
 func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
@@ -15905,7 +15907,7 @@ func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, 
 
 func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNode, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
@@ -16430,7 +16432,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 	// (release_id, manifest_hash, host_certificate, cert_fingerprint,
 	// role, generation) are also nullable on INSERT — operator-added
 	// pre-PR-3a rows accept the schema without a backfill. RETURNING
-	// projects all 23 columns to match scanComputeNode's scan width.
+	// projects all 25 columns to match scanComputeNode's scan width.
 	lifecycle := node.Lifecycle
 	if lifecycle == "" {
 		if node.Active {
@@ -16441,21 +16443,21 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 	}
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
+		    (name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, $8,
-		        $9, $10, $11,
-		        $12, $13,
-		        $14, $15, $16, $17, $18, $19)
-		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+		        $10, $11, $12,
+		        $13, $14,
+		        $15, $16, $17, $18, $19, $20)
+		returning id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle
-	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
+	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
@@ -16481,7 +16483,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 // rows to api.VCPUSlots (160); pre-migration rows see the same
 // default via the column DEFAULT clause.
 func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (ComputeNode, error) {
-	// region/zone are projected to match scanComputeNode's 23-column
+	// region/zone are projected to match scanComputeNode's 25-column
 	// scan. On conflict the existing region/zone values are preserved
 	// (operator-driven locality label, not a vmmd-side knob); see
 	// migrations/00069_compute_nodes_region_zone.sql for the
@@ -16494,17 +16496,17 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 	// use COALESCE to preserve any value PR-X wrote first; generation
 	// is doctor-driven and uses COALESCE so the doctor's bump is
 	// monotonic (a later UPSERT with nil generation must not lower the
-	// counter). RETURNING projects all 23 columns.
+	// counter). RETURNING projects all 25 columns.
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
+		    (name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
-		        $8, $9, $10,
-		        $11, $12,
-		        $13, $14, $15, $16, $17, $18)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, 'active'::compute_node_lifecycle,
+		        $9, $10, $11,
+		        $12, $13,
+		        $14, $15, $16, $17, $18, $19)
 		on conflict (name) do update
 		  set target_url          = excluded.target_url,
 		      vpcpus              = excluded.vpcpus,
@@ -16512,6 +16514,7 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
+		      overlay_ip          = coalesce(excluded.overlay_ip, compute_nodes.overlay_ip),
 		      lifecycle           = case
 		                                when compute_nodes.lifecycle = 'retired' then compute_nodes.lifecycle
 		                                else 'active'::compute_node_lifecycle
@@ -16526,13 +16529,13 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      host_certificate    = coalesce(compute_nodes.host_certificate, excluded.host_certificate),
 		      cert_fingerprint    = coalesce(compute_nodes.cert_fingerprint, excluded.cert_fingerprint),
 		      generation          = coalesce(compute_nodes.generation, excluded.generation)
-		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		returning id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle
-	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
+	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
@@ -16604,7 +16607,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		      role                = excluded.role,
 		      generation          = coalesce(compute_nodes.generation, excluded.generation)
 		where compute_nodes.lifecycle <> 'retired'
-		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		returning id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
@@ -16699,14 +16702,14 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 	// COALESCE so the doctor's monotonic counter survives.
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
+		    (name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, schedd_target_url, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
-		        $8, $9, $10,
-		        $11, $12,
-		        $13, $14, $15, $16, $17, $18, $19)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, 'active'::compute_node_lifecycle,
+		        $9, $10, $11,
+		        $12, $13,
+		        $14, $15, $16, $17, $18, $19, $20)
 		on conflict (name) do update
 		  set vpcpus              = excluded.vpcpus,
 		      mem_mb              = excluded.mem_mb,
@@ -16714,6 +16717,7 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
 		      target_url          = coalesce(compute_nodes.target_url, excluded.target_url),
+		      overlay_ip          = coalesce(excluded.overlay_ip, compute_nodes.overlay_ip),
 		      region              = coalesce(compute_nodes.region, excluded.region),
 		      zone                = coalesce(compute_nodes.zone, excluded.zone),
 		      schedd_target_url   = coalesce(compute_nodes.schedd_target_url, excluded.schedd_target_url),
@@ -16726,13 +16730,13 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		      cert_fingerprint    = coalesce(compute_nodes.cert_fingerprint, excluded.cert_fingerprint),
 		      role                = coalesce(compute_nodes.role, excluded.role),
 		      generation          = coalesce(compute_nodes.generation, excluded.generation)
-		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		returning id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle
-	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
+	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
@@ -16977,16 +16981,17 @@ func validateRoleForState(role string) error {
 // index on active=true used by placement; this method is admin-only
 // and so pays the full-table scan cost only on operator dashboards).
 func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([]ComputeNode, error) {
-	// Column order is locked to scanComputeNode's 22-arg projection
+	// Column order is locked to scanComputeNode's 25-arg projection
 	// (pgstore.go:8346). PR-3a (issue #911 / ADR-110) widened it
 	// from 14 to 22 by adding public_ip / public_ip_set_at (migration
 	// 00174 closure) + release_id / manifest_hash / host_certificate
-	// / cert_fingerprint / role / generation (migration 00266).
+	// / cert_fingerprint / role / generation (migration 00266); the
+	// topology migration adds overlay_ip as the 25th field.
 	// Drift here surfaces as pgx's "number of field descriptions
-	// must equal number of destinations, got 14 and 22" — the same
+	// must equal number of destinations" — the same
 	// class of failure TestPg_CoverageInstanceLists pins.
 	q := `
-		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
@@ -17022,7 +17027,7 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		return []ComputeNode{}, nil
 	}
 	q := `
-		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,

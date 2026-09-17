@@ -966,11 +966,28 @@ func (c *VMMClient) updatePrivateNetwork(ctx context.Context, appID, networkID s
 // bridge. The vmmd owns the privileged host mutation; schedd only forwards
 // the validated, provider-neutral identity.
 func (c *VMMClient) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	return c.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, nil, false)
+}
+
+// ReconcilePrivateNetworkFabricWithPeers applies the authoritative regional
+// peer roster supplied by schedd. The legacy method above leaves this field
+// unset so older callers continue using vmmd's startup-configured peers.
+func (c *VMMClient) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr) error {
+	return c.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true)
+}
+
+func (c *VMMClient) reconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr, managed bool) error {
+	peerStrings := make([]string, 0, len(peers))
+	for _, peer := range peers {
+		peerStrings = append(peerStrings, peer.String())
+	}
 	if _, err := c.cli.ReconcilePrivateNetworkFabric(ctx, &vmmdpb.ReconcilePrivateNetworkFabricRequest{
-		AccountId: accountID,
-		NetworkId: networkID,
-		Region:    region,
-		Cidr:      cidr.String(),
+		AccountId:              accountID,
+		NetworkId:              networkID,
+		Region:                 region,
+		Cidr:                   cidr.String(),
+		TransportPeerAddresses: peerStrings,
+		TransportPeersManaged:  managed,
 	}); err != nil {
 		return liftErr(err)
 	}
