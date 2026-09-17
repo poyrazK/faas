@@ -919,15 +919,13 @@ show developer-environment quota usage
 
 ### dev history
 
-show recent edit-to-live timings, SLO compliance, and regression guidance
-
-`gregale dev history [--path <DIR>] [--name <PROJECT>] [--limit <N>]`
+show edit-to-live timings and SLO guidance
 
 | Flag | Meaning | |
 |---|---|---|
-| `--path <DIR>` | source directory used to identify the developer workspace |  |
+| `--path <DIR>` | source directory |  |
 | `--name <PROJECT>` | developer-session project name |  |
-| `--limit <N>` | number of recent syncs to show (1–100, default 20) |  |
+| `--limit <N>` | number of recent syncs to show |  |
 
 
 ## preview

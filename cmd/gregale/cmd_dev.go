@@ -688,9 +688,9 @@ func cmdDevHistory(args []string) int {
 		PrintProgress(osStdout, "Guidance: %s", summary.Guidance)
 	}
 	for _, item := range history.Items {
-		mark := "✓"
+		mark := "ok"
 		if !item.WithinSLO {
-			mark = "!"
+			mark = "slow"
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID)
 	}
