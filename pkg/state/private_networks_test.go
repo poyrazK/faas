@@ -5,9 +5,81 @@ import (
 	"errors"
 	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+type privateNetworkScanRowStub struct {
+	values []any
+	err    error
+}
+
+func (r privateNetworkScanRowStub) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) != len(r.values) {
+		return errors.New("unexpected scan destination count")
+	}
+	for i, value := range r.values {
+		switch target := dest[i].(type) {
+		case *string:
+			*target = value.(string)
+		case *time.Time:
+			*target = value.(time.Time)
+		default:
+			return errors.New("unexpected scan destination type")
+		}
+	}
+	return nil
+}
+
+func TestPrivateNetworkScannersAcceptPostgresInetText(t *testing.T) {
+	created := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	network, err := scanPrivateNetwork(privateNetworkScanRowStub{values: []any{
+		"network-id", "account-id", "prod", "fra1", "10.55.0.0/28", "ready", "", created, created,
+	}})
+	if err != nil {
+		t.Fatalf("scanPrivateNetwork: %v", err)
+	}
+	if network.ID != "network-id" || network.AccountID != "account-id" || network.CIDR.String() != "10.55.0.0/28" {
+		t.Fatalf("scanned network = %+v", network)
+	}
+
+	for _, tc := range []struct {
+		text string
+		want string
+	}{
+		{text: "10.55.0.2/32", want: "10.55.0.2"},
+		{text: "10.55.0.3", want: "10.55.0.3"},
+	} {
+		address, err := scanPrivateNetworkAddress(privateNetworkScanRowStub{values: []any{
+			"address-id", "account-id", "network-id", "app", "app-id", tc.text, created,
+		}})
+		if err != nil {
+			t.Fatalf("scanPrivateNetworkAddress(%q): %v", tc.text, err)
+		}
+		if address.Address.String() != tc.want {
+			t.Fatalf("scanned address = %+v", address)
+		}
+	}
+
+	if _, err := scanPrivateNetwork(privateNetworkScanRowStub{values: []any{
+		"network-id", "account-id", "prod", "fra1", "not-a-cidr", "ready", "", created, created,
+	}}); err == nil {
+		t.Fatal("invalid network CIDR unexpectedly scanned")
+	}
+	if _, err := scanPrivateNetworkAddress(privateNetworkScanRowStub{values: []any{
+		"address-id", "account-id", "network-id", "app", "app-id", "not-an-address", created,
+	}}); err == nil {
+		t.Fatal("invalid network address unexpectedly scanned")
+	}
+	scanErr := errors.New("scan failed")
+	if _, err := scanPrivateNetwork(privateNetworkScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
+		t.Fatalf("scanPrivateNetwork error = %v, want %v", err, scanErr)
+	}
+}
 
 func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	ctx := context.Background()

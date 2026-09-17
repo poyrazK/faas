@@ -41,7 +41,14 @@ func scanPrivateNetworkAddress(row interface{ Scan(...any) error }) (PrivateNetw
 	}
 	parsed, err := netip.ParseAddr(addressText)
 	if err != nil {
-		return PrivateNetworkAddress{}, err
+		// PostgreSQL renders an inet column with a host prefix (for example,
+		// "10.55.0.2/32"). Accept that representation as well as the bare
+		// address returned by drivers/configurations that strip the prefix.
+		prefix, prefixErr := netip.ParsePrefix(addressText)
+		if prefixErr != nil {
+			return PrivateNetworkAddress{}, err
+		}
+		parsed = prefix.Addr()
 	}
 	address.AccountID, address.NetworkID, address.Address = accountID, networkID, parsed
 	return address, nil
