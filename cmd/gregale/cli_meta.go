@@ -1310,6 +1310,12 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum connections to select (1-1000)", Value: "N"},
 				{Name: "dry-run", Short: "preview without closing connections"},
 				{Name: "allow-partial", Short: "allow the reachable subset when nodes are unavailable"},
+				{Name: "wait", Short: "wait for the drain to reach a terminal state"},
+				{Name: "timeout", Short: "maximum time to wait with --wait", Value: "DURATION"},
+			}},
+			{Name: "drain-status", Short: "Show or wait for a durable realtime drain", Flags: []cliFlag{
+				{Name: "wait", Short: "wait for the drain to reach a terminal state"},
+				{Name: "timeout", Short: "maximum time to wait with --wait", Value: "DURATION"},
 			}},
 			{Name: "send", Short: "Send a message to one live connection"},
 			{Name: "close", Short: "Close one live connection"},

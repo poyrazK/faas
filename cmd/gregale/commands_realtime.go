@@ -18,7 +18,7 @@ import (
 
 func cmdRealtime(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale realtime <list|get|create|update|delete|connections|drain|send|close|subscribe|unsubscribe|publish|auth>", "realtime")
+		PrintUsage(os.Stderr, "usage: gregale realtime <list|get|create|update|delete|connections|drain|drain-status|send|close|subscribe|unsubscribe|publish|auth>", "realtime")
 		return 1
 	}
 	switch args[0] {
@@ -36,6 +36,8 @@ func cmdRealtime(args []string) int {
 		return cmdRealtimeConnections(args[1:])
 	case "drain":
 		return cmdRealtimeDrain(args[1:])
+	case "drain-status", "drain_status":
+		return cmdRealtimeDrainStatus(args[1:])
 	case "send":
 		return cmdRealtimeSend(args[1:])
 	case "close":
