@@ -1123,6 +1123,37 @@ func TestGetApp_HappyPath(t *testing.T) {
 	if out.WorkloadClass != string(state.WorkloadClassHTTP) {
 		t.Errorf("workload_class = %q, want http", out.WorkloadClass)
 	}
+	if out.Status != api.AppStatusUndeployed {
+		t.Errorf("status = %q, want %q before first deployment", out.Status, api.AppStatusUndeployed)
+	}
+}
+
+func TestListApps_ProjectsUndeployedWithoutMaskingDeployedApps(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "never-deployed-list")
+	deployment := mustSeedDeployment(t, e, "runnable-list")
+	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list apps: %d %s", rec.Code, rec.Body)
+	}
+	var apps []api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apps); err != nil {
+		t.Fatalf("decode apps: %v", err)
+	}
+	statuses := make(map[string]string, len(apps))
+	for _, app := range apps {
+		statuses[app.Slug] = app.Status
+	}
+	if statuses["never-deployed-list"] != api.AppStatusUndeployed {
+		t.Errorf("undeployed status = %q, want %q", statuses["never-deployed-list"], api.AppStatusUndeployed)
+	}
+	if statuses["runnable-list"] != string(state.AppActive) {
+		t.Errorf("deployed status = %q, want active", statuses["runnable-list"])
+	}
 }
 
 // TestGetApp_UnknownReturns404 confirms loadApp's 404 path.
@@ -2080,7 +2111,7 @@ func TestWakeApp_RejectsAppWithoutLiveDeployment(t *testing.T) {
 	mustSeedApp(t, e, "never-deployed")
 
 	rec := e.do(t, "POST", "/v1/apps/never-deployed/wake", nil, nil)
-	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	assertProblem(t, rec, http.StatusConflict, api.CodeNoLiveDeployment)
 	if !strings.Contains(rec.Body.String(), "deploy the app") {
 		t.Fatalf("response lacks deploy guidance: %s", rec.Body.String())
 	}

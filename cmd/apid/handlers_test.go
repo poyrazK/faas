@@ -177,6 +177,9 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	if out.CPUMillicores != api.DefaultAppCPUMillicores || out.ConfiguredResources.CPUMillicores != api.DefaultAppCPUMillicores {
 		t.Errorf("CPU default/configured resources = %+v, want %dm", out, api.DefaultAppCPUMillicores)
 	}
+	if out.Status != api.AppStatusUndeployed {
+		t.Errorf("new app status = %q, want %q", out.Status, api.AppStatusUndeployed)
+	}
 }
 
 func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {

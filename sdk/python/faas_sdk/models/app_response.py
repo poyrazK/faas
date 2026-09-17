@@ -13,6 +13,7 @@ from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
+from ..models.app_response_status import AppResponseStatus, check_app_response_status
 from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
 from ..models.resource_profile import ResourceProfile, check_resource_profile
@@ -54,7 +55,9 @@ class AppResponse:
     """The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the
     app configuration and current plan; they describe enforcement rather than guest hardware alone."""
     min_instances: int
-    status: str
+    status: AppResponseStatus
+    """Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted
+    lifecycle remains active until the first deploy."""
     build_cache_hit_rate_pct: float
     """Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
     decision was recorded in the window."""
@@ -191,7 +194,7 @@ class AppResponse:
 
         min_instances = self.min_instances
 
-        status = self.status
+        status: str = self.status
 
         build_cache_hit_rate_pct = self.build_cache_hit_rate_pct
 
@@ -461,7 +464,7 @@ class AppResponse:
 
         min_instances = d.pop("min_instances")
 
-        status = d.pop("status")
+        status = check_app_response_status(d.pop("status"))
 
         build_cache_hit_rate_pct = d.pop("build_cache_hit_rate_pct")
 

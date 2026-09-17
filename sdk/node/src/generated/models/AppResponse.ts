@@ -41,7 +41,10 @@ export type AppResponse = {
   effective_limits: AppEffectiveLimits;
   idle_timeout_s?: number | null;
   min_instances: number;
-  status: string;
+  /**
+   * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.
+   */
+  status: 'active' | 'evicted_cold' | 'deleted' | 'undeployed';
   /**
    * Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window.
    */

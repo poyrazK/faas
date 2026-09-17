@@ -585,6 +585,7 @@ const (
 	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
 	CodeValidation                     = "validation_failed"
 	CodeConflict                       = "conflict"
+	CodeNoLiveDeployment               = "no_live_deployment"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")

@@ -499,6 +499,9 @@ func TestAppListItem_DefaultBadge(t *testing.T) {
 	if item.LastDeployed != "" {
 		t.Errorf("LastDeployed = %q, want empty for zero time", item.LastDeployed)
 	}
+	if item.Status != api.AppStatusUndeployed {
+		t.Errorf("Status = %q, want %q before first deployment", item.Status, api.AppStatusUndeployed)
+	}
 }
 
 // TestRenderProblem_PureUnit exercises the standalone helper. Already

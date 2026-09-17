@@ -18084,7 +18084,11 @@ components:
         effective_limits: { $ref: '#/components/schemas/AppEffectiveLimits' }
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
-        status: { type: string , example: "active"}
+        status:
+          type: string
+          enum: [active, evicted_cold, deleted, undeployed]
+          description: "Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy."
+          example: "active"
         build_cache_hit_rate_pct:
           type: number
           format: double

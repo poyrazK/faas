@@ -83,9 +83,18 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return
 	}
+	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
+		return
+	}
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
 		resp := s.appResponse(a, acct.Plan)
+		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
+			resp.Status = api.AppStatusUndeployed
+		}
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -164,6 +173,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponse(created, acct.Plan)
+	resp.Status = api.AppStatusUndeployed
 	writeJSON(w, http.StatusCreated, s.withParkedDeploymentRef(r.Context(), resp, created))
 }
 

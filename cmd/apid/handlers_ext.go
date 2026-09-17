@@ -52,6 +52,12 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	resp := s.appResponse(app, acct.Plan)
+	if _, err := s.store.LatestDeployment(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
+		resp.Status = api.AppStatusUndeployed
+	} else if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
+		return
+	}
 	if reader, ok := s.store.(interface {
 		BuildCacheStatsForApp(context.Context, string, time.Time) (state.BuildCacheStats, error)
 	}); ok {
@@ -2014,7 +2020,7 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
 	if _, err := s.store.LiveDeployment(ctx, app.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			return api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
 				"App has no live deployment", "deploy the app before requesting a wake")
 		}
 		return api.ErrCapacity("could not resolve the app's live deployment")

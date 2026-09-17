@@ -431,6 +431,9 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 		// the shape.
 		IsPreview: app.PreviewOfSlug != "",
 	}
+	if lastDeployed.IsZero() && item.Status == string(state.AppActive) {
+		item.Status = api.AppStatusUndeployed
+	}
 	if app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 {
 		item.Scope = fmt.Sprintf("pr-%d-%s", app.PreviewPrNumber, app.PreviewOfSlug)
 		item.URL = appURLForDomain(item.Scope, s.domain)

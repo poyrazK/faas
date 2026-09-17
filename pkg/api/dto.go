@@ -868,6 +868,11 @@ type AppConfiguredResources struct {
 	CPUMillicores int `json:"cpu_millicores"`
 }
 
+// AppStatusUndeployed is a read-model state for an app that has never had a
+// deployment. The persisted app lifecycle remains active so scheduler state
+// transitions keep their existing closed vocabulary.
+const AppStatusUndeployed = "undeployed"
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID   string `json:"id"`

@@ -103,18 +103,26 @@ type inspectDataSummary struct {
 }
 
 type inspectReleaseSummary struct {
-	Available              bool   `json:"available"`
-	DeploymentID           string `json:"deployment_id,omitempty"`
-	Status                 string `json:"status,omitempty"`
-	Scope                  string `json:"scope,omitempty"`
-	TrafficPercent         int    `json:"traffic_percent,omitempty"`
-	CanaryPreset           string `json:"canary_preset,omitempty"`
-	CanaryStep             int    `json:"canary_step,omitempty"`
-	CanaryTotalSteps       int    `json:"canary_total_steps,omitempty"`
-	RolloutState           string `json:"rollout_state,omitempty"`
-	HealthSignalsAvailable bool   `json:"health_signals_available"`
-	HealthGateRules        int    `json:"health_gate_rules"`
-	FiringHealthGates      int    `json:"firing_health_gates"`
+	Available              bool                            `json:"available"`
+	DeploymentID           string                          `json:"deployment_id,omitempty"`
+	Status                 string                          `json:"status,omitempty"`
+	Scope                  string                          `json:"scope,omitempty"`
+	TrafficPercent         int                             `json:"traffic_percent,omitempty"`
+	CanaryPreset           string                          `json:"canary_preset,omitempty"`
+	CanaryStep             int                             `json:"canary_step,omitempty"`
+	CanaryTotalSteps       int                             `json:"canary_total_steps,omitempty"`
+	RolloutState           string                          `json:"rollout_state,omitempty"`
+	HealthSignalsAvailable bool                            `json:"health_signals_available"`
+	HealthGateRules        int                             `json:"health_gate_rules"`
+	FiringHealthGates      int                             `json:"firing_health_gates"`
+	NewerFailedCandidate   *inspectReleaseCandidateSummary `json:"newer_failed_candidate,omitempty"`
+}
+
+type inspectReleaseCandidateSummary struct {
+	DeploymentID   string `json:"deployment_id"`
+	Status         string `json:"status"`
+	TrafficPercent int    `json:"traffic_percent"`
+	RolloutState   string `json:"rollout_state,omitempty"`
 }
 
 type inspectRecommendation struct {
@@ -125,16 +133,17 @@ type inspectRecommendation struct {
 }
 
 type inspectSummaryInputs struct {
-	Deployment    *api.DeploymentResponse
-	DeploymentErr error
-	OpenAPIRaw    []byte
-	OpenAPIErr    error
-	Upstreams     []api.DataUpstreamResponse
-	UpstreamCount int
-	UpstreamQuota int
-	UpstreamsErr  error
-	Alerts        []api.AlertRuleResponse
-	AlertsErr     error
+	Deployment           *api.DeploymentResponse
+	NewerFailedCandidate *api.DeploymentResponse
+	DeploymentErr        error
+	OpenAPIRaw           []byte
+	OpenAPIErr           error
+	Upstreams            []api.DataUpstreamResponse
+	UpstreamCount        int
+	UpstreamQuota        int
+	UpstreamsErr         error
+	Alerts               []api.AlertRuleResponse
+	AlertsErr            error
 }
 
 func cmdInspectSummary(slug string) int {
@@ -162,7 +171,7 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		deployment, err := client.GetLatestAppDeployment(ctx, app.Slug)
+		deployments, err := client.ListAppDeploymentsAll(ctx, app.Slug)
 		if isNotFound(err) {
 			return
 		}
@@ -170,7 +179,7 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 			out.DeploymentErr = err
 			return
 		}
-		out.Deployment = &deployment
+		out.Deployment, out.NewerFailedCandidate = selectInspectDeployments(deployments)
 	}()
 	go func() {
 		defer wg.Done()
@@ -198,7 +207,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 		Resources:   inspectResources(app),
 		API:         inspectOpenAPI(in.OpenAPIRaw),
 		Data:        inspectData(in),
-		Release:     inspectRelease(app.ID, in.Deployment, in.Alerts, in.AlertsErr == nil),
+		Release:     inspectRelease(app.ID, in.Deployment, in.NewerFailedCandidate, in.Alerts, in.AlertsErr == nil),
 		Unavailable: inspectUnavailable(in),
 	}
 	summary.Runtime = inspectRuntime(app, in.Deployment, &summary.Unavailable)
@@ -363,7 +372,32 @@ func inspectData(in inspectSummaryInputs) inspectDataSummary {
 	return out
 }
 
-func inspectRelease(appID string, dep *api.DeploymentResponse, alerts []api.AlertRuleResponse, alertsAvailable bool) inspectReleaseSummary {
+// selectInspectDeployments keeps the default inspect view anchored to the
+// release that serves customer traffic. Deployment history is newest-first.
+// A newer failed zero-traffic candidate remains visible without replacing the
+// serving release's runtime receipt or health state.
+func selectInspectDeployments(deployments []api.DeploymentResponse) (current, newerFailedCandidate *api.DeploymentResponse) {
+	if len(deployments) == 0 {
+		return nil, nil
+	}
+	current = &deployments[0]
+	for i := range deployments {
+		deployment := &deployments[i]
+		if deployment.Status != "live" || deployment.TrafficPercent <= 0 {
+			continue
+		}
+		if current.Status != "live" || current.TrafficPercent <= 0 || deployment.TrafficPercent > current.TrafficPercent {
+			current = deployment
+		}
+	}
+	latest := &deployments[0]
+	if current.ID != latest.ID && latest.Status == "failed" && latest.TrafficPercent == 0 {
+		newerFailedCandidate = latest
+	}
+	return current, newerFailedCandidate
+}
+
+func inspectRelease(appID string, dep, newerFailedCandidate *api.DeploymentResponse, alerts []api.AlertRuleResponse, alertsAvailable bool) inspectReleaseSummary {
 	out := inspectReleaseSummary{HealthSignalsAvailable: alertsAvailable}
 	if dep != nil {
 		out.Available = true
@@ -373,6 +407,12 @@ func inspectRelease(appID string, dep *api.DeploymentResponse, alerts []api.Aler
 		out.RolloutState = dep.RolloutState
 		if out.CanaryPreset == "" {
 			out.CanaryPreset = "none"
+		}
+	}
+	if newerFailedCandidate != nil {
+		out.NewerFailedCandidate = &inspectReleaseCandidateSummary{
+			DeploymentID: newerFailedCandidate.ID, Status: newerFailedCandidate.Status,
+			TrafficPercent: newerFailedCandidate.TrafficPercent, RolloutState: newerFailedCandidate.RolloutState,
 		}
 	}
 	for _, rule := range alerts {
@@ -417,6 +457,12 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		} else {
 			add("health_unverified", "warning", "The live deployment has no verified health receipt.", "Configure a health endpoint and redeploy.")
 		}
+	}
+	if summary.Release.NewerFailedCandidate != nil {
+		candidate := summary.Release.NewerFailedCandidate
+		add("newer_candidate_failed", "warning",
+			"A newer zero-traffic deployment candidate failed; the serving release remains active.",
+			"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
 	}
 	if summary.App.Type == "app" && (summary.Runtime.Framework == "" || summary.Runtime.Framework == "unknown") {
 		add("framework_unknown", "warning", "Gregale could not identify the application framework.", "Set an explicit start command or Dockerfile.")
@@ -552,6 +598,14 @@ func renderInspectRelease(w io.Writer, release inspectReleaseSummary, unavailabl
 	_, _ = fmt.Fprintf(w, "  release:   %s · %s · %s · %d%% traffic\n", release.DeploymentID, fallback(release.Status), fallback(release.Scope), release.TrafficPercent)
 	if release.CanaryPreset != "none" {
 		_, _ = fmt.Fprintf(w, "  safety:    %s canary · step %d/%d · %d health gates (%d firing)\n", release.CanaryPreset, release.CanaryStep, release.CanaryTotalSteps, release.HealthGateRules, release.FiringHealthGates)
+	}
+	if release.NewerFailedCandidate != nil {
+		candidate := release.NewerFailedCandidate
+		_, _ = fmt.Fprintf(w, "  candidate: %s · %s · %d%% traffic", candidate.DeploymentID, candidate.Status, candidate.TrafficPercent)
+		if candidate.RolloutState != "" {
+			_, _ = fmt.Fprintf(w, " · rollout %s", candidate.RolloutState)
+		}
+		_, _ = fmt.Fprintln(w)
 	}
 }
 

@@ -97,6 +97,55 @@ func TestCmdInspectSummary_JSON(t *testing.T) {
 	}
 }
 
+func TestCmdInspectSummary_UsesServingReleaseWhenNewerCandidateFailed(t *testing.T) {
+	app, serving := inspectSummaryFixtures(t)
+	failed := api.DeploymentResponse{
+		ID: "failed-candidate", AppID: app.ID, Status: "failed", Scope: "production",
+		TrafficPercent: 0, RolloutState: "aborted",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/" + inspectSlug:
+			writeInspectSummaryJSON(t, w, app)
+		case "/v1/apps/" + inspectSlug + "/deployments":
+			writeInspectSummaryJSON(t, w, api.DeploymentListResponse{Items: []api.DeploymentResponse{failed, serving}})
+		case "/v1/apps/" + inspectSlug + "/openapi":
+			_, _ = w.Write([]byte(`{"openapi":"3.1.0","paths":{}}`))
+		case "/v1/apps/" + inspectSlug + "/upstreams":
+			writeInspectSummaryJSON(t, w, api.DataUpstreamListResponse{})
+		case "/v1/apps/" + inspectSlug + "/alerts":
+			writeInspectSummaryJSON(t, w, []api.AlertRuleResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	configureInspectSummaryTest(t, srv.URL)
+	jsonOutput = true
+	t.Cleanup(resetJSONOutput)
+
+	stdout, readStderr, restore := swapIO(t)
+	defer restore()
+	if code := cmdInspect([]string{inspectSlug}); code != 0 {
+		t.Fatalf("inspect summary = %d, want 0 (stderr=%s)", code, readStderr())
+	}
+	var got inspectSummary
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if got.Release.DeploymentID != serving.ID || got.Release.Status != "live" || got.Runtime.Health == nil || got.Runtime.Health.Status != apihostingreceipt.SmokeVerified {
+		t.Fatalf("default inspect did not preserve serving release/runtime: release=%+v runtime=%+v", got.Release, got.Runtime)
+	}
+	if got.Release.NewerFailedCandidate == nil || got.Release.NewerFailedCandidate.DeploymentID != failed.ID {
+		t.Fatalf("newer failed candidate missing or mislabeled: %+v", got.Release.NewerFailedCandidate)
+	}
+	for _, recommendation := range got.Recommendations {
+		if recommendation.Code == "deployment_failed" {
+			t.Fatalf("serving app received latest-deployment failure recommendation: %+v", got.Recommendations)
+		}
+	}
+}
+
 func TestInspectResources_ReportsLegacyAutoscaleTargets(t *testing.T) {
 	rpsAndCPU := inspectResources(api.AppResponse{
 		RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 8,
@@ -206,8 +255,8 @@ func newInspectSummaryServer(t *testing.T, failOptional bool) *httptest.Server {
 			return
 		}
 		switch r.URL.Path {
-		case "/v1/apps/" + inspectSlug + "/deployments/latest":
-			writeInspectSummaryJSON(t, w, dep)
+		case "/v1/apps/" + inspectSlug + "/deployments":
+			writeInspectSummaryJSON(t, w, api.DeploymentListResponse{Items: []api.DeploymentResponse{dep}})
 		case "/v1/apps/" + inspectSlug + "/openapi":
 			if r.URL.Query().Get("source") != "auto" {
 				t.Errorf("openapi source = %q, want auto", r.URL.Query().Get("source"))

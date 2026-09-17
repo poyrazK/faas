@@ -133,6 +133,7 @@ from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
+from .app_response_status import AppResponseStatus
 from .app_response_type import AppResponseType
 from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
@@ -1297,6 +1298,7 @@ __all__ = (
     "AppResponseCpuMillicores",
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
+    "AppResponseStatus",
     "AppResponseType",
     "AppResponseWorkloadClass",
     "AppRestartResponse",
