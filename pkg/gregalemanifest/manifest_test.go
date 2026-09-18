@@ -206,17 +206,55 @@ func TestLoad_YMLFallback(t *testing.T) {
 	}
 }
 
-func TestLoad_TOMLRejectedExplicitly(t *testing.T) {
+func TestLoad_TOMLEventSubscriptions(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte("[triggers]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte(`[[triggers.event]]
+source = "billing.*"
+type = "invoice.paid"
+filter = '{ "data": { "amount": { "$gt": 100 } } }'
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || len(m.EventTriggers) != 1 {
+		t.Fatalf("manifest = %+v, want one event trigger", m)
+	}
+	trigger := m.EventTriggers[0]
+	if trigger.Source != "billing.*" || trigger.Type != "invoice.paid" || trigger.App != "" {
+		t.Fatalf("event trigger = %+v", trigger)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	subscription, err := trigger.AsSubscription("00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatalf("AsSubscription: %v", err)
+	}
+	if subscription.Source != trigger.Source || string(subscription.Filter) != trigger.Filter {
+		t.Fatalf("subscription = %+v, want source/filter from declaration", subscription)
+	}
+}
+
+func TestLoad_TOMLRejectsUnsupportedField(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte("[hosting]\nstart = \"go run ./cmd/api\"\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	_, _, err := Load(dir)
-	if err == nil {
-		t.Fatal("err = nil, want explicit TOML rejection")
+	if err == nil || !strings.Contains(err.Error(), "unsupported TOML field") {
+		t.Fatalf("err = %v, want unsupported TOML field error", err)
 	}
-	if !strings.Contains(err.Error(), "TOML manifests are not supported") {
-		t.Errorf("err = %q, want TOML rejection copy", err)
+}
+
+func TestValidate_EventTriggerRejectsMalformedFilter(t *testing.T) {
+	m := &Manifest{EventTriggers: []EventTrigger{{
+		Source: "billing.*", Type: "invoice.paid", Filter: `{"data":{"amount":{"$wat":100}}}`,
+	}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "unsupported operator") {
+		t.Fatalf("Validate = %v, want unsupported operator error", err)
 	}
 }
 

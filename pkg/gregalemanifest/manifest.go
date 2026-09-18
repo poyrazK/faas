@@ -1,6 +1,7 @@
 // Package gregalemanifest — loader for the `gregale.yaml` /
 // `gregale.yml` declarative manifest (issue #791 PR-C / ADR-090,
-// extended by issue #757 / ADR-0NN).
+// extended by issue #757 / ADR-0NN) and the event-only `gregale.toml`
+// subscription surface (ADR-182).
 //
 // Scope (ADR-0NN widens PR-C): the `triggers:` key now recognises six
 // kinds — cron (the existing synthetic-wake path, unchanged from
@@ -12,10 +13,9 @@
 // discriminator without a YAML schema bump.
 //
 // File discovery: the loader takes a project dir and looks for
-// `gregale.yaml` first, then `gregale.yml`. A TOML file
-// (`gregale.toml`) is rejected with an explicit error per ADR-090
-// §"YAML vs TOML" — silent ignoring would let customers think their
-// manifest was applied when it wasn't.
+// `gregale.yaml` first, then `gregale.yml`, and finally an event-only
+// `gregale.toml`. YAML remains the full deployment manifest; TOML is strict
+// and currently accepts only [[triggers.event]] declarations.
 //
 // Why a shared package, not `cmd/gregale/manifest.go`: the long-term
 // plan (per the plan's "loader location" section) is to also validate
@@ -37,9 +37,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
 )
@@ -83,6 +85,65 @@ const (
 	// Config schema: QueueConfig{Mode}.
 	TriggerKindQueue TriggerKind = "queue"
 )
+
+// EventTrigger is a content-based internal event subscription declaration.
+// The app is optional while parsing because a single-app deploy can bind the
+// declaration to its target slug; project reconciliation must supply it before
+// persistence. Filter is a JSON object encoded as a TOML string so the same
+// matcher contract is shared by YAML-adjacent tooling and the event router.
+type EventTrigger struct {
+	App    string `yaml:"app,omitempty" toml:"app"`
+	Source string `yaml:"source" toml:"source"`
+	Type   string `yaml:"type" toml:"type"`
+	Filter string `yaml:"filter,omitempty" toml:"filter"`
+}
+
+// Validate checks the event pattern and content filter without requiring an
+// account ID. Account ownership is assigned by the authenticated apply path.
+func (t EventTrigger) Validate(idx int) error {
+	if err := events.ValidatePattern(t.Source); err != nil {
+		return fmt.Errorf("triggers.event[%d].source: %w", idx, err)
+	}
+	if err := events.ValidatePattern(t.Type); err != nil {
+		return fmt.Errorf("triggers.event[%d].type: %w", idx, err)
+	}
+	if err := events.ValidateFilter(json.RawMessage(t.Filter)); err != nil {
+		return fmt.Errorf("triggers.event[%d].filter: %w", idx, err)
+	}
+	return nil
+}
+
+// FilterJSON returns the filter in the representation accepted by
+// events.Subscription. Empty TOML filters intentionally become nil, which
+// means match-anything.
+func (t EventTrigger) FilterJSON() json.RawMessage {
+	if strings.TrimSpace(t.Filter) == "" {
+		return nil
+	}
+	return json.RawMessage(t.Filter)
+}
+
+// AsSubscription converts a validated manifest declaration into the canonical
+// matcher input once the authenticated apply path has resolved account
+// ownership.
+func (t EventTrigger) AsSubscription(accountID string) (events.Subscription, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return events.Subscription{}, errors.New("event trigger account_id is required")
+	}
+	if err := t.Validate(0); err != nil {
+		return events.Subscription{}, err
+	}
+	subscription := events.Subscription{
+		AccountID: accountID,
+		Source:    t.Source,
+		Type:      t.Type,
+		Filter:    t.FilterJSON(),
+	}
+	if err := subscription.Validate(); err != nil {
+		return events.Subscription{}, err
+	}
+	return subscription, nil
+}
 
 // Trigger is one entry under `triggers:`. PR-C ships cron-only fields;
 // ADR-0NN adds the broker-pulled EventSourceMapping shape (Slug +
@@ -601,7 +662,7 @@ func (d BucketDependency) EffectiveLabel() string {
 	return d.Label
 }
 
-// Manifest is the parsed `gregale.yaml` root. The supported top-level
+// Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root. The supported top-level
 // declarations are `schema_version`, `hosting`, `function`, `scaling`,
 // `triggers`, `workflows`, `databases`, and `buckets`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
@@ -615,9 +676,13 @@ type Manifest struct {
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
 	Triggers      []Trigger             `yaml:"triggers"`
-	Workflows     []api.WorkflowSpec    `yaml:"workflows,omitempty"`
-	Databases     []DatabaseDependency  `yaml:"databases,omitempty"`
-	Buckets       []BucketDependency    `yaml:"buckets,omitempty"`
+	// EventTriggers is populated from [[triggers.event]] in gregale.toml.
+	// YAML trigger entries remain in Triggers for backward compatibility; the
+	// separate slice keeps the TOML event table from changing that wire shape.
+	EventTriggers []EventTrigger       `yaml:"-"`
+	Workflows     []api.WorkflowSpec   `yaml:"workflows,omitempty"`
+	Databases     []DatabaseDependency `yaml:"databases,omitempty"`
+	Buckets       []BucketDependency   `yaml:"buckets,omitempty"`
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -629,7 +694,8 @@ type FunctionConfig struct {
 	Handler string `yaml:"handler"`
 }
 
-// Load reads `gregale.yaml` or `gregale.yml` from dir. Returns
+// Load reads `gregale.yaml`, `gregale.yml`, or the event-only `gregale.toml`
+// from dir. Returns
 // (nil, false, nil) when no manifest is present — callers treat this
 // as "no work to do" without special-casing the error. On parse
 // failure returns a wrapped error with the file path so a
@@ -650,12 +716,17 @@ func Load(dir string) (*Manifest, bool, error) {
 		}
 		return m, true, nil
 	}
-	// Explicit rejection: a TOML manifest is left untouched by Load
-	// (caller sees no-op) but the presence of `gregale.toml` is a
-	// hard error. This catches the "I wrote toml but Load silently
-	// ignored it" footgun.
-	if _, err := os.Stat(filepath.Join(dir, "gregale.toml")); err == nil {
-		return nil, false, errors.New("gregalemanifest: gregale.toml is present but TOML manifests are not supported yet (rename to gregale.yaml)")
+	tomlPath := filepath.Join(dir, "gregale.toml")
+	b, err := os.ReadFile(tomlPath)
+	if err == nil {
+		m, parseErr := parseTOMLManifest(b)
+		if parseErr != nil {
+			return nil, false, fmt.Errorf("gregalemanifest: parse %s: %w", tomlPath, parseErr)
+		}
+		return m, true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, fmt.Errorf("gregalemanifest: read %s: %w", tomlPath, err)
 	}
 	return nil, false, nil
 }
@@ -692,6 +763,31 @@ func parseManifest(b []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return m, nil
+}
+
+type tomlManifest struct {
+	SchemaVersion int          `toml:"schema_version"`
+	Triggers      tomlTriggers `toml:"triggers"`
+}
+
+type tomlTriggers struct {
+	Event []EventTrigger `toml:"event"`
+}
+
+func parseTOMLManifest(b []byte) (*Manifest, error) {
+	var raw tomlManifest
+	metadata, err := toml.Decode(string(b), &raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, key := range undecoded {
+			keys = append(keys, key.String())
+		}
+		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
+	}
+	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event}, nil
 }
 
 // Validate runs schema checks against the decoded manifest. It retains the
@@ -838,6 +934,20 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 				i, t.App, t.Kind, t.Slug)
 		}
 		seen[k] = struct{}{}
+	}
+	seenEvents := make(map[string]struct{}, len(m.EventTriggers))
+	for i, trigger := range m.EventTriggers {
+		if trigger.App != "" && !isDNSSafeSlug(trigger.App) {
+			return fmt.Errorf("triggers.event[%d].app %q must match [a-z0-9-]+", i, trigger.App)
+		}
+		if err := trigger.Validate(i); err != nil {
+			return err
+		}
+		key := strings.Join([]string{trigger.App, trigger.Source, trigger.Type, strings.TrimSpace(trigger.Filter)}, "\x00")
+		if _, duplicate := seenEvents[key]; duplicate {
+			return fmt.Errorf("triggers.event[%d]: duplicate (app, source, type, filter)", i)
+		}
+		seenEvents[key] = struct{}{}
 	}
 
 	seenDatabases := make(map[string]struct{}, len(m.Databases))
