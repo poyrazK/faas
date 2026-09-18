@@ -265,3 +265,57 @@ func TestClientCronLifecycleUsesPublicContract(t *testing.T) {
 		t.Fatalf("deleteCron: %v", err)
 	}
 }
+
+func TestClientSecretLifecycleUsesWriteOnlyValueAndScopedMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/orders/secrets/API_TOKEN":
+			if r.URL.Query().Get("scope") != "production" {
+				t.Fatalf("secret write scope = %q, want production", r.URL.Query().Get("scope"))
+			}
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("secret write request did not include an idempotency key")
+			}
+			var request secretRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode secret write request: %v", err)
+			}
+			if request.Value != "super-secret" {
+				t.Fatalf("secret write value = %q", request.Value)
+			}
+			_, _ = w.Write([]byte(`{"key":"API_TOKEN"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/orders/secrets":
+			if r.URL.Query().Get("scope") != "production" {
+				t.Fatalf("secret read scope = %q, want production", r.URL.Query().Get("scope"))
+			}
+			_, _ = w.Write([]byte(`{"secrets":[{"key":"API_TOKEN","scope":"production","created_at":"2026-09-18T10:00:00Z","updated_at":"2026-09-18T10:05:00Z","kid":"age-1","value_hash":"hash-1"}],"quota_max":25,"count":1}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/orders/secrets/API_TOKEN":
+			if r.URL.Query().Get("scope") != "production" {
+				t.Fatalf("secret delete scope = %q, want production", r.URL.Query().Get("scope"))
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	if err := client.setSecret(context.Background(), "orders", "production", "API_TOKEN", "super-secret"); err != nil {
+		t.Fatalf("setSecret: %v", err)
+	}
+	metadata, found, err := client.getSecret(context.Background(), "orders", "production", "API_TOKEN")
+	if err != nil {
+		t.Fatalf("getSecret: %v", err)
+	}
+	if !found || metadata.Scope != "production" || metadata.ValueHash != "hash-1" {
+		t.Fatalf("metadata = %+v, found = %v", metadata, found)
+	}
+	if err := client.deleteSecret(context.Background(), "orders", "production", "API_TOKEN"); err != nil {
+		t.Fatalf("deleteSecret: %v", err)
+	}
+}

@@ -198,6 +198,25 @@ type cronResponse struct {
 	LastFiredAt     string `json:"last_fired_at,omitempty"`
 }
 
+type secretRequest struct {
+	Value string `json:"value"`
+}
+
+type secretMetadata struct {
+	Key       string `json:"key"`
+	Scope     string `json:"scope"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	Kid       string `json:"kid,omitempty"`
+	ValueHash string `json:"value_hash,omitempty"`
+}
+
+type secretListResponse struct {
+	Secrets []secretMetadata `json:"secrets"`
+	Quota   int              `json:"quota_max"`
+	Count   int              `json:"count"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -371,4 +390,46 @@ func (c *client) updateCron(ctx context.Context, cronID string, patch cronPatch)
 
 func (c *client) deleteCron(ctx context.Context, cronID string) error {
 	return c.request(ctx, http.MethodDelete, "/v1/crons/"+escapePath(cronID), nil, nil, false)
+}
+
+func (c *client) setSecret(ctx context.Context, appSlug, scope, key, value string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/secrets/" + escapePath(key)
+	path = withSecretScope(path, scope)
+	return c.request(ctx, http.MethodPut, path, secretRequest{Value: value}, nil, true)
+}
+
+func (c *client) getSecret(ctx context.Context, appSlug, scope, key string) (secretMetadata, bool, error) {
+	path := withSecretScope("/v1/apps/"+escapePath(appSlug)+"/secrets", scope)
+	var out secretListResponse
+	if err := c.request(ctx, http.MethodGet, path, nil, &out, false); err != nil {
+		return secretMetadata{}, false, err
+	}
+	for _, secret := range out.Secrets {
+		if secret.Key != key {
+			continue
+		}
+		if secret.Scope == "" {
+			secret.Scope = defaultSecretScope
+		}
+		wantedScope := scope
+		if wantedScope == "" {
+			wantedScope = defaultSecretScope
+		}
+		if secret.Scope == wantedScope {
+			return secret, true, nil
+		}
+	}
+	return secretMetadata{}, false, nil
+}
+
+func (c *client) deleteSecret(ctx context.Context, appSlug, scope, key string) error {
+	path := withSecretScope("/v1/apps/"+escapePath(appSlug)+"/secrets/"+escapePath(key), scope)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func withSecretScope(path, scope string) string {
+	if scope == "" || scope == defaultSecretScope {
+		return path
+	}
+	return path + "?scope=" + url.QueryEscape(scope)
 }

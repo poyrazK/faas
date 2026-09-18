@@ -10,6 +10,7 @@ The initial surface is intentionally small:
 - `gregale_domain` manages a custom hostname binding and exposes DNS/TLS state.
 - `gregale_alert` manages an app alert rule and exposes evaluation state.
 - `gregale_cron` manages a scheduled app invocation and exposes scheduler state.
+- `gregale_secret` manages scoped app secrets without storing plaintext in state.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -35,8 +36,8 @@ provider "gregale" {
 }
 ```
 
-Alert resources use Terraform's write-only attribute support for webhook
-secrets and therefore require Terraform 1.11 or later.
+Alert and secret resources use Terraform's write-only attribute support and
+therefore require Terraform 1.11 or later.
 
 ## App example
 
@@ -99,6 +100,22 @@ The schedule uses the standard five-field cron format. Gregale evaluates it
 in the configured IANA timezone and reports `last_fired_at` and any
 `suspended_reason` during refresh.
 
+## App secret
+
+```hcl
+resource "gregale_secret" "database_url" {
+  app_slug = gregale_app.api.slug
+  key      = "DATABASE_URL"
+  value    = var.database_url
+  scope    = "production"
+}
+```
+
+The value is sent only to the secret write endpoint and is never returned by
+Gregale or stored in the Terraform plan/state. Refresh reads only timestamps,
+the sealing key identity, and an opaque value fingerprint. Omitting `scope`
+uses Gregale's `default` scope.
+
 Creating the resource returns the DNS challenge immediately. Gregale verifies
 DNS and provisions TLS asynchronously; refresh the resource to observe
 `verification_status`, `cert_status`, and certificate expiry without making
@@ -118,6 +135,6 @@ output "production_environment_id" {
 ```
 
 The provider uses the same public REST contract as the CLI and sends
-idempotency keys for app, domain, alert, and cron creation. Application secret
-values, alert webhook secrets, and bearer tokens are not returned by the
-managed resources or recorded in state.
+idempotency keys for app, domain, alert, cron, and secret writes. Application
+secret values, alert webhook secrets, managed secret values, and bearer tokens
+are not returned by the managed resources or recorded in state.
