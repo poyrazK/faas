@@ -23,7 +23,8 @@ node-local private veth side-link into the `gpn-*` bridge, with the stable
 network member address allocated at attach time. Private ingress is DNATed to
 the guest's fixed `10.0.0.2:8080` contract and guest-originated private traffic
 is SNATed back to that member address; the existing `br-tenants` veth remains
-the public-egress path. Cross-node transport is still a separate follow-up.
+the public-egress path. Cross-node transport is converged separately by the
+regional `gpx-*` VXLAN link described below.
 Set
 `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the resource API; app
 attachment remains separately gated by
@@ -82,7 +83,12 @@ FDB entries before replacing the current set. During a rolling upgrade, an
 incomplete roster falls back to the startup-configured peer list; a node join
 or drain converges on the next fabric reconciliation. Every node in a region
 must use the same encrypted overlay; leave the flag off until the control-plane
-mTLS and underlay policy are validated.
+mTLS and underlay policy are validated. When the capture-capable host runner is
+available, vmmd also verifies the bridge, VXLAN link, bridge membership, and
+exact FDB peer set after each reconcile. Any missing or stale peer is reported
+as transport drift and schedd keeps the attachment fail-closed until the next
+reconcile repairs it; older vmmds without the probe remain compatible during
+the rolling upgrade.
 
 Legacy external-network attachments still use the operator-managed connector
 and are enabled in schedd with

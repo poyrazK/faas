@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -167,6 +168,60 @@ func TestRemovePrivateNetworkFabricIsReplaySafeWithCaptureRunner(t *testing.T) {
 	}
 }
 
+func TestCheckPrivateNetworkFabricReportsReadyTransport(t *testing.T) {
+	cidr := netip.MustParsePrefix("10.42.0.0/16")
+	peers := []netip.Addr{netip.MustParseAddr("100.64.0.11"), netip.MustParseAddr("100.64.0.12")}
+	link := privatenetwork.FabricTransportLinkName("acct-a", "prod")
+	bridge := privatenetwork.BridgeName("acct-a", "prod")
+	cap := &fabricReadinessCaptureRunner{outputs: map[string][]byte{
+		"ip link show dev " + bridge:   nil,
+		"ip link show dev " + link:     nil,
+		"bridge link show dev " + link: []byte("6: " + link + ": <BROADCAST> master " + bridge + " state forwarding\n"),
+		"bridge fdb show dev " + link: []byte("00:00:00:00:00:00 dst 100.64.0.12 dev " + link + "\n" +
+			"00:00:00:00:00:00 dst 100.64.0.11 dev " + link + "\n"),
+	}}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap).WithPrivateNetworkTransport(PrivateNetworkTransportConfig{
+		Enabled:          true,
+		OverlayInterface: "tailscale0",
+		LocalAddress:     netip.MustParseAddr("100.64.0.10"),
+	})
+	readiness, err := m.CheckPrivateNetworkFabric(context.Background(), "acct-a", "prod", "fra1", cidr, peers, true)
+	if err != nil {
+		t.Fatalf("check readiness: %v", err)
+	}
+	if !readiness.Supported || !readiness.Ready {
+		t.Fatalf("readiness = %+v, want supported and ready", readiness)
+	}
+	if readiness.Detail != "fabric transport ready" {
+		t.Fatalf("detail = %q, want ready detail", readiness.Detail)
+	}
+}
+
+func TestCheckPrivateNetworkFabricReportsFDBDrift(t *testing.T) {
+	cidr := netip.MustParsePrefix("10.42.0.0/16")
+	peer := netip.MustParseAddr("100.64.0.11")
+	link := privatenetwork.FabricTransportLinkName("acct-a", "prod")
+	bridge := privatenetwork.BridgeName("acct-a", "prod")
+	cap := &fabricReadinessCaptureRunner{outputs: map[string][]byte{
+		"ip link show dev " + bridge:   nil,
+		"ip link show dev " + link:     nil,
+		"bridge link show dev " + link: []byte("6: " + link + ": <BROADCAST> master " + bridge + " state forwarding\n"),
+		"bridge fdb show dev " + link:  []byte("00:00:00:00:00:00 dst 100.64.0.12 dev " + link + "\n"),
+	}}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap).WithPrivateNetworkTransport(PrivateNetworkTransportConfig{
+		Enabled:          true,
+		OverlayInterface: "tailscale0",
+		LocalAddress:     netip.MustParseAddr("100.64.0.10"),
+	})
+	readiness, err := m.CheckPrivateNetworkFabric(context.Background(), "acct-a", "prod", "fra1", cidr, []netip.Addr{peer}, true)
+	if err != nil {
+		t.Fatalf("check readiness: %v", err)
+	}
+	if !readiness.Supported || readiness.Ready || !strings.Contains(readiness.Detail, "FDB drift") {
+		t.Fatalf("readiness = %+v, want supported, not ready, FDB drift", readiness)
+	}
+}
+
 type fabricMissingCaptureRunner struct{}
 
 func (*fabricMissingCaptureRunner) RunCapture(context.Context, []string) ([]byte, error) {
@@ -177,4 +232,15 @@ type fabricPresentCaptureRunner struct{}
 
 func (*fabricPresentCaptureRunner) RunCapture(context.Context, []string) ([]byte, error) {
 	return nil, nil
+}
+
+type fabricReadinessCaptureRunner struct {
+	outputs map[string][]byte
+}
+
+func (f *fabricReadinessCaptureRunner) RunCapture(_ context.Context, argv []string) ([]byte, error) {
+	if output, ok := f.outputs[strings.Join(argv, " ")]; ok {
+		return output, nil
+	}
+	return nil, fmt.Errorf("unexpected capture command %q", strings.Join(argv, " "))
 }

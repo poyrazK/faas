@@ -49,6 +49,88 @@ func (m *Manager) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, ac
 	return m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true)
 }
 
+// CheckPrivateNetworkFabric inspects the host state after reconciliation. It
+// deliberately uses read-only iproute2 commands so a scheduler retry can
+// distinguish an acknowledged mutation from a dataplane that is still
+// missing a link, bridge membership, or regional FDB peer.
+func (m *Manager) CheckPrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, managedPeers []netip.Addr, peersManaged bool) (privatenetwork.FabricReadiness, error) {
+	if m.captureRunner == nil {
+		return privatenetwork.FabricReadiness{Detail: "fabric readiness probe unavailable"}, nil
+	}
+	spec, err := privatenetwork.NewFabricSpecFromValues(accountID, networkID, region, cidr.String())
+	if err != nil {
+		return privatenetwork.FabricReadiness{}, err
+	}
+	plan, err := privatenetwork.BuildFabricPlan(spec)
+	if err != nil {
+		return privatenetwork.FabricReadiness{}, err
+	}
+	readiness := privatenetwork.FabricReadiness{Supported: true}
+	if _, err := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", plan.BridgeName}); err != nil {
+		readiness.Detail = fmt.Sprintf("bridge %s is unavailable: %v", plan.BridgeName, err)
+		return readiness, nil
+	}
+	transportCfg := m.privateNetworkTransportCfg
+	if !transportCfg.Enabled {
+		readiness.Ready = true
+		readiness.Detail = "fabric bridge ready"
+		return readiness, nil
+	}
+	peerAddresses := transportCfg.PeerAddresses
+	if peersManaged {
+		peerAddresses = managedPeers
+	}
+	transportPlan, err := privatenetwork.BuildFabricTransportPlan(privatenetwork.FabricTransportSpec{
+		Fabric:           spec,
+		OverlayInterface: transportCfg.OverlayInterface,
+		LocalAddress:     transportCfg.LocalAddress,
+		PeerAddresses:    peerAddresses,
+	})
+	if err != nil {
+		return privatenetwork.FabricReadiness{}, err
+	}
+	readiness.ExpectedPeerAddresses = append([]netip.Addr(nil), transportPlan.Spec.PeerAddresses...)
+	if _, err := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName}); err != nil {
+		readiness.Detail = fmt.Sprintf("transport link %s is unavailable: %v", transportPlan.LinkName, err)
+		return readiness, nil
+	}
+	bridgeOutput, err := m.captureRunner.RunCapture(ctx, []string{"bridge", "link", "show", "dev", transportPlan.LinkName})
+	if err != nil {
+		readiness.Detail = fmt.Sprintf("transport link %s bridge membership unavailable: %v", transportPlan.LinkName, err)
+		return readiness, nil
+	}
+	bridgeMarker := "master " + plan.BridgeName
+	if !strings.Contains(string(bridgeOutput), bridgeMarker) {
+		readiness.Detail = fmt.Sprintf("transport link %s is not attached to %s", transportPlan.LinkName, plan.BridgeName)
+		return readiness, nil
+	}
+	fdbOutput, err := m.captureRunner.RunCapture(ctx, []string{"bridge", "fdb", "show", "dev", transportPlan.LinkName})
+	if err != nil {
+		readiness.Detail = fmt.Sprintf("transport link %s FDB unavailable: %v", transportPlan.LinkName, err)
+		return readiness, nil
+	}
+	readiness.ObservedPeerAddresses = privatenetwork.ParseFabricTransportPeers(fdbOutput)
+	missing, stale := privatenetwork.FabricPeerDrift(readiness.ExpectedPeerAddresses, readiness.ObservedPeerAddresses)
+	if len(missing) != 0 || len(stale) != 0 {
+		readiness.Detail = fmt.Sprintf("transport FDB drift (missing=%s stale=%s)", formatFabricPeers(missing), formatFabricPeers(stale))
+		return readiness, nil
+	}
+	readiness.Ready = true
+	readiness.Detail = "fabric transport ready"
+	return readiness, nil
+}
+
+func formatFabricPeers(peers []netip.Addr) string {
+	if len(peers) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(peers))
+	for _, peer := range peers {
+		parts = append(parts, peer.String())
+	}
+	return strings.Join(parts, ",")
+}
+
 func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, managedPeers []netip.Addr, peersManaged bool) error {
 	spec, err := privatenetwork.NewFabricSpecFromValues(accountID, networkID, region, cidr.String())
 	if err != nil {

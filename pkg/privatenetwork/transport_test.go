@@ -87,3 +87,21 @@ func TestBuildFabricTransportPlanRejectsUnsafeTopology(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFabricTransportPeersAndDetectsDrift(t *testing.T) {
+	observed := ParseFabricTransportPeers([]byte("00:00:00:00:00:00 dev gpx-abcd dst 100.64.0.12 self permanent\n" +
+		"00:00:00:00:00:00 dst 100.64.0.11 dev gpx-abcd\n" +
+		"00:00:00:00:00:00 dst not-an-ip dev gpx-abcd\n"))
+	wantObserved := []netip.Addr{netip.MustParseAddr("100.64.0.11"), netip.MustParseAddr("100.64.0.12")}
+	if !reflect.DeepEqual(observed, wantObserved) {
+		t.Fatalf("observed peers = %v, want %v", observed, wantObserved)
+	}
+
+	missing, stale := FabricPeerDrift([]netip.Addr{netip.MustParseAddr("100.64.0.11"), netip.MustParseAddr("100.64.0.13")}, observed)
+	if want := []netip.Addr{netip.MustParseAddr("100.64.0.13")}; !reflect.DeepEqual(missing, want) {
+		t.Fatalf("missing peers = %v, want %v", missing, want)
+	}
+	if want := []netip.Addr{netip.MustParseAddr("100.64.0.12")}; !reflect.DeepEqual(stale, want) {
+		t.Fatalf("stale peers = %v, want %v", stale, want)
+	}
+}

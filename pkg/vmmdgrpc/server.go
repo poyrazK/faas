@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -1403,7 +1404,7 @@ func (s *Server) ReconcilePrivateNetworkFabric(ctx context.Context, req *vmmdpb.
 		if err := fabricator.ReconcilePrivateNetworkFabricWithPeers(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix, peers); err != nil {
 			return nil, grpcerr.ToStatus(toProblem(err))
 		}
-		return &vmmdpb.ReconcilePrivateNetworkFabricAck{}, nil
+		return s.privateNetworkFabricAck(ctx, req, peers, true)
 	}
 	fabricator, ok := s.vmm.(interface {
 		ReconcilePrivateNetworkFabric(context.Context, string, string, string, netip.Prefix) error
@@ -1414,7 +1415,35 @@ func (s *Server) ReconcilePrivateNetworkFabric(ctx context.Context, req *vmmdpb.
 	if err := fabricator.ReconcilePrivateNetworkFabric(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix); err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	return &vmmdpb.ReconcilePrivateNetworkFabricAck{}, nil
+	return s.privateNetworkFabricAck(ctx, req, nil, false)
+}
+
+func (s *Server) privateNetworkFabricAck(ctx context.Context, req *vmmdpb.ReconcilePrivateNetworkFabricRequest, peers []netip.Addr, peersManaged bool) (*vmmdpb.ReconcilePrivateNetworkFabricAck, error) {
+	ack := &vmmdpb.ReconcilePrivateNetworkFabricAck{}
+	checker, ok := s.vmm.(interface {
+		CheckPrivateNetworkFabric(context.Context, string, string, string, netip.Prefix, []netip.Addr, bool) (privatenetwork.FabricReadiness, error)
+	})
+	if !ok {
+		return ack, nil
+	}
+	prefix, err := api.ValidatePrivateNetworkCIDR(req.GetCidr())
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	readiness, err := checker.CheckPrivateNetworkFabric(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix, peers, peersManaged)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	ack.ReadinessSupported = readiness.Supported
+	ack.Ready = readiness.Ready
+	ack.Detail = readiness.Detail
+	for _, peer := range readiness.ExpectedPeerAddresses {
+		ack.ExpectedPeerAddresses = append(ack.ExpectedPeerAddresses, peer.String())
+	}
+	for _, peer := range readiness.ObservedPeerAddresses {
+		ack.ObservedPeerAddresses = append(ack.ObservedPeerAddresses, peer.String())
+	}
+	return ack, nil
 }
 
 // SeccompStatus (M8 §11) reports the kernel seccomp state of the

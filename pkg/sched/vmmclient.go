@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"strings"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -981,15 +982,23 @@ func (c *VMMClient) reconcilePrivateNetworkFabric(ctx context.Context, accountID
 	for _, peer := range peers {
 		peerStrings = append(peerStrings, peer.String())
 	}
-	if _, err := c.cli.ReconcilePrivateNetworkFabric(ctx, &vmmdpb.ReconcilePrivateNetworkFabricRequest{
+	ack, err := c.cli.ReconcilePrivateNetworkFabric(ctx, &vmmdpb.ReconcilePrivateNetworkFabricRequest{
 		AccountId:              accountID,
 		NetworkId:              networkID,
 		Region:                 region,
 		Cidr:                   cidr.String(),
 		TransportPeerAddresses: peerStrings,
 		TransportPeersManaged:  managed,
-	}); err != nil {
+	})
+	if err != nil {
 		return liftErr(err)
+	}
+	if ack.GetReadinessSupported() && !ack.GetReady() {
+		detail := strings.TrimSpace(ack.GetDetail())
+		if detail == "" {
+			detail = "vmmd fabric readiness probe reported not ready"
+		}
+		return fmt.Errorf("private network fabric not ready: %s", detail)
 	}
 	return nil
 }

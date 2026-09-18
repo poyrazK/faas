@@ -1851,5 +1851,15 @@ message ReconcilePrivateNetworkFabricRequest {
   bool transport_peers_managed = 6;
 }
 
-// ReconcilePrivateNetworkFabricAck is the empty success response.
-message ReconcilePrivateNetworkFabricAck {}
+// ReconcilePrivateNetworkFabricAck confirms the mutation and, when the
+// vmmd has a capture-capable host runner, reports read-only dataplane health.
+message ReconcilePrivateNetworkFabricAck {
+  // False means this vmmd predates the readiness probe; callers may continue
+  // the additive rolling upgrade without treating the empty observation as a
+  // failed fabric.
+  bool readiness_supported = 1;
+  bool ready = 2;
+  string detail = 3;
+  repeated string expected_peer_addresses = 4;
+  repeated string observed_peer_addresses = 5;
+}

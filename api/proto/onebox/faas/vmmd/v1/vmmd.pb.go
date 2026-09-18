@@ -6175,11 +6175,20 @@ func (x *ReconcilePrivateNetworkFabricRequest) GetTransportPeersManaged() bool {
 	return false
 }
 
-// ReconcilePrivateNetworkFabricAck is the empty success response.
+// ReconcilePrivateNetworkFabricAck confirms the mutation and, when the
+// vmmd has a capture-capable host runner, reports read-only dataplane health.
 type ReconcilePrivateNetworkFabricAck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// False means this vmmd predates the readiness probe; callers may continue
+	// the additive rolling upgrade without treating the empty observation as a
+	// failed fabric.
+	ReadinessSupported    bool     `protobuf:"varint,1,opt,name=readiness_supported,json=readinessSupported,proto3" json:"readiness_supported,omitempty"`
+	Ready                 bool     `protobuf:"varint,2,opt,name=ready,proto3" json:"ready,omitempty"`
+	Detail                string   `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
+	ExpectedPeerAddresses []string `protobuf:"bytes,4,rep,name=expected_peer_addresses,json=expectedPeerAddresses,proto3" json:"expected_peer_addresses,omitempty"`
+	ObservedPeerAddresses []string `protobuf:"bytes,5,rep,name=observed_peer_addresses,json=observedPeerAddresses,proto3" json:"observed_peer_addresses,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ReconcilePrivateNetworkFabricAck) Reset() {
@@ -6210,6 +6219,41 @@ func (x *ReconcilePrivateNetworkFabricAck) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ReconcilePrivateNetworkFabricAck.ProtoReflect.Descriptor instead.
 func (*ReconcilePrivateNetworkFabricAck) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *ReconcilePrivateNetworkFabricAck) GetReadinessSupported() bool {
+	if x != nil {
+		return x.ReadinessSupported
+	}
+	return false
+}
+
+func (x *ReconcilePrivateNetworkFabricAck) GetReady() bool {
+	if x != nil {
+		return x.Ready
+	}
+	return false
+}
+
+func (x *ReconcilePrivateNetworkFabricAck) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *ReconcilePrivateNetworkFabricAck) GetExpectedPeerAddresses() []string {
+	if x != nil {
+		return x.ExpectedPeerAddresses
+	}
+	return nil
+}
+
+func (x *ReconcilePrivateNetworkFabricAck) GetObservedPeerAddresses() []string {
+	if x != nil {
+		return x.ObservedPeerAddresses
+	}
+	return nil
 }
 
 var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
@@ -6661,8 +6705,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06region\x18\x03 \x01(\tR\x06region\x12\x12\n" +
 	"\x04cidr\x18\x04 \x01(\tR\x04cidr\x128\n" +
 	"\x18transport_peer_addresses\x18\x05 \x03(\tR\x16transportPeerAddresses\x126\n" +
-	"\x17transport_peers_managed\x18\x06 \x01(\bR\x15transportPeersManaged\"\"\n" +
-	" ReconcilePrivateNetworkFabricAck*2\n" +
+	"\x17transport_peers_managed\x18\x06 \x01(\bR\x15transportPeersManaged\"\xf1\x01\n" +
+	" ReconcilePrivateNetworkFabricAck\x12/\n" +
+	"\x13readiness_supported\x18\x01 \x01(\bR\x12readinessSupported\x12\x14\n" +
+	"\x05ready\x18\x02 \x01(\bR\x05ready\x12\x16\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\x126\n" +
+	"\x17expected_peer_addresses\x18\x04 \x03(\tR\x15expectedPeerAddresses\x126\n" +
+	"\x17observed_peer_addresses\x18\x05 \x03(\tR\x15observedPeerAddresses*2\n" +
 	"\n" +
 	"WakeMethod\x12\x12\n" +
 	"\x0eWAKE_COLD_BOOT\x10\x00\x12\x10\n" +

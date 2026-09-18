@@ -48,6 +48,74 @@ type FabricTransportPlan struct {
 	Teardown [][]string
 }
 
+// FabricReadiness is the node-local observation returned after a fabric
+// reconciliation. Supported is intentionally separate from Ready so a
+// rolling upgrade can talk to an older vmmd without treating its empty ack
+// as a dataplane failure.
+type FabricReadiness struct {
+	Supported             bool
+	Ready                 bool
+	Detail                string
+	ExpectedPeerAddresses []netip.Addr
+	ObservedPeerAddresses []netip.Addr
+}
+
+// ParseFabricTransportPeers extracts IPv4 VXLAN destinations from the output
+// of `bridge fdb show dev <link>`. iproute2 may add flags in any order, so we
+// only rely on the stable `dst <address>` pair and ignore malformed rows.
+func ParseFabricTransportPeers(output []byte) []netip.Addr {
+	seen := make(map[netip.Addr]struct{})
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "dst" {
+				continue
+			}
+			addr, err := netip.ParseAddr(fields[i+1])
+			if err != nil || !addr.Is4() {
+				continue
+			}
+			seen[addr] = struct{}{}
+		}
+	}
+	peers := make([]netip.Addr, 0, len(seen))
+	for peer := range seen {
+		peers = append(peers, peer)
+	}
+	sort.Slice(peers, func(i, j int) bool { return peers[i].String() < peers[j].String() })
+	return peers
+}
+
+// FabricPeerDrift returns the expected peers missing from the kernel FDB and
+// the unexpected peers still present after reconciliation.
+func FabricPeerDrift(expected, observed []netip.Addr) (missing, stale []netip.Addr) {
+	expectedSet := make(map[netip.Addr]struct{}, len(expected))
+	observedSet := make(map[netip.Addr]struct{}, len(observed))
+	for _, peer := range expected {
+		if peer.IsValid() {
+			expectedSet[peer] = struct{}{}
+		}
+	}
+	for _, peer := range observed {
+		if peer.IsValid() {
+			observedSet[peer] = struct{}{}
+		}
+	}
+	for peer := range expectedSet {
+		if _, ok := observedSet[peer]; !ok {
+			missing = append(missing, peer)
+		}
+	}
+	for peer := range observedSet {
+		if _, ok := expectedSet[peer]; !ok {
+			stale = append(stale, peer)
+		}
+	}
+	sort.Slice(missing, func(i, j int) bool { return missing[i].String() < missing[j].String() })
+	sort.Slice(stale, func(i, j int) bool { return stale[i].String() < stale[j].String() })
+	return missing, stale
+}
+
 // BuildFabricTransportPlan validates a transport spec and returns idempotent
 // iproute2 commands. L2 VXLAN is intentional: all members already share the
 // same private-network CIDR, so a routed L3 overlay would create overlapping
