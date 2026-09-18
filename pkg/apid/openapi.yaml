@@ -12099,7 +12099,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: Unified failed-event identifier.
+        description: Unified failed-event identifier to replay.
         schema:
           type: string
           minLength: 1
@@ -12119,9 +12119,9 @@ paths:
               properties:
                 csrf_token: { type: string }
       responses:
-        '303': { description: Redirect to the Failed Events inbox. }
+        '303': { description: Redirect to the Failed Events inbox after replay. }
         '400':
-          description: Invalid dashboard CSRF token.
+          description: Invalid dashboard CSRF token for replay.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -12133,7 +12133,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: Unified failed-event identifier.
+        description: Unified failed-event identifier to discard.
         schema:
           type: string
           minLength: 1
@@ -12153,9 +12153,9 @@ paths:
               properties:
                 csrf_token: { type: string }
       responses:
-        '303': { description: Redirect to the Failed Events inbox. }
+        '303': { description: Redirect to the Failed Events inbox after discard. }
         '400':
-          description: Invalid dashboard CSRF token.
+          description: Invalid dashboard CSRF token for discard.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
