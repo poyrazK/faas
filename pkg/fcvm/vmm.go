@@ -1620,6 +1620,11 @@ const resumeHookDialStep = 20 * time.Millisecond
 // depending on it produced EOF-mid-ack in the V6 metal test.
 const resumeHookMsgResume uint32 = 1
 
+// resumeHookMsgPreSnapshot asks guest-init to flush optional extension state
+// before Firecracker is paused for snapshot capture. It shares the resume
+// stream so older guests can NACK it without breaking snapshots.
+const resumeHookMsgPreSnapshot uint32 = 2
+
 // resumeHookGuestPort is the AF_VSOCK port the guest-init resume
 // listener binds. Must match guest/init/listen_resume_linux.go's
 // VsockResumePort.
@@ -1643,6 +1648,9 @@ const resumeHookEntropyBytes = 256
 // territory. The guest's VsockResumeMaxEntropyBytes is the matching cap
 // on the receiving side. CodeQL go/allocation-size-overflow guards.
 const resumeHookMaxBodyBytes = 8 * 1024
+
+// preSnapshotHookDeadline bounds optional extension work on the snapshot path.
+const preSnapshotHookDeadline = 300 * time.Millisecond
 
 // readConnectAck consumes the "OK <hostside_port>\n" reply from
 // Firecracker. Returns the first whitespace-delimited token. Reads
@@ -1840,6 +1848,80 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	return nil
 }
 
+// TriggerPreSnapshotHook gives guest extensions a bounded opportunity to
+// flush volatile state before Firecracker is paused. It is best-effort: a
+// missing or older guest listener must never make snapshotting fail.
+func (v *JailerVMM) TriggerPreSnapshotHook(ctx context.Context, l Lease) error {
+	if v == nil {
+		return fmt.Errorf("vmm: TriggerPreSnapshotHook: nil receiver")
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: TriggerPreSnapshotHook: empty instance")
+	}
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: TriggerPreSnapshotHook: chrootBase not configured")
+	}
+	sock := v.vsockUDSSock(l.Instance)
+	if _, err := os.Stat(sock); err != nil {
+		return fmt.Errorf("vmm: pre-snapshot extension socket: %w", err)
+	}
+	hookCtx, cancel := context.WithTimeout(ctx, preSnapshotHookDeadline)
+	defer cancel()
+	deadline := time.Now().Add(preSnapshotHookDeadline)
+	var conn net.Conn
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if hookCtx.Err() != nil {
+			return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, hookCtx.Err())
+		}
+		c, err := net.DialTimeout("unix", sock, 20*time.Millisecond)
+		if err == nil {
+			_ = c.SetDeadline(time.Now().Add(preSnapshotHookDeadline))
+			if _, err = c.Write([]byte(fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort))); err == nil {
+				var connectAck string
+				connectAck, err = readConnectAck(c)
+				if err == nil {
+					if connectAck == "OK" {
+						conn = c
+						break
+					}
+					err = fmt.Errorf("unexpected CONNECT reply %q", connectAck)
+				}
+			}
+			_ = c.Close()
+		}
+		lastErr = err
+		select {
+		case <-hookCtx.Done():
+			return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, hookCtx.Err())
+		case <-time.After(resumeHookDialStep / 2):
+		}
+	}
+	if conn == nil {
+		return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, lastErr)
+	}
+	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(hookCtx, func() { _ = conn.Close() })
+	defer stop()
+	if hookDeadline, ok := hookCtx.Deadline(); ok {
+		_ = conn.SetDeadline(hookDeadline)
+	}
+	var msg [8]byte
+	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgPreSnapshot)
+	// A zero-length body is intentional: the phase itself is the contract.
+	if _, err := conn.Write(msg[:]); err != nil {
+		return fmt.Errorf("vmm: write pre-snapshot request: %w", err)
+	}
+	ack := make([]byte, 1)
+	if _, err := io.ReadFull(conn, ack); err != nil {
+		return fmt.Errorf("vmm: read pre-snapshot ack: %w", err)
+	}
+	if ack[0] != 0 {
+		return fmt.Errorf("vmm: pre-snapshot hook failed (ack=%d)", ack[0])
+	}
+	return nil
+}
+
 // SendStatelessAdvisory is the host-side receiver for one batch
 // guest-init stateless_advisory_linux.go shipped over AF_VSOCK
 // DGRAM (port 1025, msg_type 2). The wire receiver goroutine in
@@ -1943,6 +2025,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			v.cleanupFailedSnapshotCapture(ctx, spec)
 		}
 	}()
+	// Extension hooks are optional observability/control callbacks. Give a
+	// live guest a bounded pre-snapshot flush opportunity before pausing it;
+	// old guests and missing listeners are deliberately non-fatal.
+	if v != nil && v.chrootBase != "" {
+		if err := v.TriggerPreSnapshotHook(ctx, l); err != nil {
+			slog.Default().Debug("vmm: pre-snapshot extension hook unavailable", "instance", l.Instance, "err", err)
+		}
+	}
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)

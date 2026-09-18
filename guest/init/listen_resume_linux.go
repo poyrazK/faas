@@ -34,6 +34,10 @@ const (
 	// VsockResumeMsgType is the wire-format discriminator the guest accepts.
 	// Matches pkg/fcvm/vmm.go::resumeHookMsgResume.
 	VsockResumeMsgType uint32 = 1
+	// VsockPreSnapshotMsgType asks the guest to flush extension state before
+	// the host pauses Firecracker for snapshot capture. It shares the resume
+	// stream so the host does not need another vsock device or listener.
+	VsockPreSnapshotMsgType uint32 = 2
 	// VsockResumeAckOK / AckNack are the single-byte ack values written back
 	// after the resume hook returns. 0 = ok, anything else = nack.
 	VsockResumeAckOK   = 0
@@ -110,7 +114,20 @@ const VsockResumeBindCID = 0xffffffff
 // Idempotency: acceptResumeConns retries interrupted and aborted accepts. A
 // terminal error closes the listener and is logged. The boot() caller does not
 // wait on this goroutine.
+type resumeHookCallbacks struct {
+	onResume      func()
+	onPreSnapshot func()
+}
+
 func listenResumeHook(log *slog.Logger, onResume ...func()) error {
+	var callback func()
+	if len(onResume) > 0 {
+		callback = onResume[0]
+	}
+	return listenResumeHookWithCallbacks(log, resumeHookCallbacks{onResume: callback})
+}
+
+func listenResumeHookWithCallbacks(log *slog.Logger, callbacks resumeHookCallbacks) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -124,7 +141,7 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	go acceptResumeConns(fd, log, onResume...)
+	go acceptResumeConnsWithCallbacks(fd, log, unix.Accept4, callbacks)
 	return nil
 }
 
@@ -132,12 +149,24 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 // goroutine running handleResumeConn. Sequential accepts; each handle runs in
 // its own goroutine so a slow hook does not back up the listener.
 func acceptResumeConns(fd int, log *slog.Logger, onResume ...func()) {
-	acceptResumeConnsWith(fd, log, unix.Accept4, onResume...)
+	var callback func()
+	if len(onResume) > 0 {
+		callback = onResume[0]
+	}
+	acceptResumeConnsWithCallbacks(fd, log, unix.Accept4, resumeHookCallbacks{onResume: callback})
 }
 
 // Own the listening descriptor for the lifetime of the accept loop. A terminal
 // error must not leave a listening socket with no goroutine to service it.
 func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume ...func()) {
+	var callback func()
+	if len(onResume) > 0 {
+		callback = onResume[0]
+	}
+	acceptResumeConnsWithCallbacks(fd, log, accept, resumeHookCallbacks{onResume: callback})
+}
+
+func acceptResumeConnsWithCallbacks(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), callbacks resumeHookCallbacks) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -149,7 +178,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")
-		go handleResumeConn(f, log, onResume...)
+		go handleResumeConnWithCallbacks(f, log, callbacks)
 	}
 }
 
@@ -161,6 +190,14 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 // keeps the guest off EOF-watching — some AF_VSOCK proxies don't propagate
 // CloseWrite promptly through to the guest side.
 func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
+	var callback func()
+	if len(onResume) > 0 {
+		callback = onResume[0]
+	}
+	handleResumeConnWithCallbacks(f, log, resumeHookCallbacks{onResume: callback})
+}
+
+func handleResumeConnWithCallbacks(f *os.File, log *slog.Logger, callbacks resumeHookCallbacks) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -170,13 +207,33 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 		return
 	}
 	msgType := binary.BigEndian.Uint32(hdr[:4])
+	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+	if msgType == VsockPreSnapshotMsgType {
+		if bodyLen > uint32(VsockResumeMaxBodyBytes) {
+			log.Warn("vsock pre-snapshot body length out of range", "len", bodyLen, "max", VsockResumeMaxBodyBytes)
+			_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+			return
+		}
+		if bodyLen > 0 {
+			body := make([]byte, bodyLen)
+			if _, err := io.ReadFull(f, body); err != nil {
+				log.Warn("vsock pre-snapshot body read", "err", err)
+				_, _ = f.Write([]byte{VsockResumeAckBodyRead})
+				return
+			}
+		}
+		if callbacks.onPreSnapshot != nil {
+			callbacks.onPreSnapshot()
+		}
+		_, _ = f.Write([]byte{VsockResumeAckOK})
+		return
+	}
 	if msgType != VsockResumeMsgType {
 		log.Warn("vsock unknown msg type", "type", msgType)
 		resumeDiag(fmt.Sprintf("resume: unknown message type=%d", msgType))
 		_, _ = f.Write([]byte{VsockResumeAckMessageType})
 		return
 	}
-	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
 	// Guard against a malicious peer pinning the guest on a giant body.
 	// The cap mirrors vmmd's 8 KiB resumeHookMaxBodyBytes and is deliberately
 	// independent of the entropy cap because the JSON envelope carries host
@@ -253,10 +310,7 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
 	}
-	for _, callback := range onResume {
-		if callback != nil {
-			callback()
-			break
-		}
+	if callbacks.onResume != nil {
+		callbacks.onResume()
 	}
 }

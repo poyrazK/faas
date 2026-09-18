@@ -103,7 +103,7 @@ func boot() error {
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
 	var extensionHooks *extensionLifecycle
-	if mode == modeApp {
+	if mode == modeApp || mode == modeExecution {
 		// Extension hooks are optional observability/control callbacks. Keep
 		// them outside the workload supervisor so a missing or slow extension
 		// cannot change the app's boot or shutdown result.
@@ -117,7 +117,7 @@ func boot() error {
 	// powers the VM off on every path.
 	if mode == modeExecution {
 		guestStage("before-execution")
-		return runExecutionGuest(slog.Default())
+		return runExecutionGuest(slog.Default(), extensionHooks)
 	}
 	if mode == modeApp {
 		// Disk usage is an app-runtime signal. Jobs and builder VMs are
@@ -194,7 +194,10 @@ func boot() error {
 	// resume hook. On restore, vmmd's TriggerResumeHook will then time out
 	// dial-resume and fail closed (per spec §11 V6).
 	if extensionHooks != nil {
-		if err := listenResumeHook(slog.Default(), func() { extensionHooks.emit(extension.PhasePostRestore) }); err != nil {
+		if err := listenResumeHookWithCallbacks(slog.Default(), resumeHookCallbacks{
+			onResume:      func() { extensionHooks.emit(extension.PhasePostRestore) },
+			onPreSnapshot: func() { extensionHooks.emit(extension.PhasePreSnapshot) },
+		}); err != nil {
 			slog.Default().Warn("vsock resume listener unavailable", "err", err)
 		}
 	} else if err := listenResumeHook(slog.Default()); err != nil {

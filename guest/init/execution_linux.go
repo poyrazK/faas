@@ -14,7 +14,9 @@ import (
 	"os"
 
 	"github.com/onebox-faas/faas/guest/executor"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/extension"
 	"golang.org/x/sys/unix"
 )
 
@@ -83,7 +85,7 @@ var poweroffExecution = func() error {
 // runExecutionGuest is intentionally total: even malformed requests,
 // interpreter failures, and host disconnects lead to a VM poweroff. A
 // disposable execution guest must not fall back into an app or idle state.
-func runExecutionGuest(log *slog.Logger) error {
+func runExecutionGuest(log *slog.Logger, lifecycle ...*extensionLifecycle) error {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -93,7 +95,12 @@ func runExecutionGuest(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	serveErr := serveExecutionOnce(context.Background(), ln, executor.New().Handle)
+	executorHandler := executor.New().Handle
+	handler := executorHandler
+	if len(lifecycle) > 0 {
+		handler = withInvokeLifecycle(executorHandler, lifecycle[0])
+	}
+	serveErr := serveExecutionOnce(context.Background(), ln, handler)
 	if serveErr != nil {
 		log.Warn("execution guest exchange failed", "err", serveErr)
 	}
@@ -104,6 +111,32 @@ func runExecutionGuest(log *slog.Logger) error {
 		return fmt.Errorf("execution guest poweroff: %w", powerErr)
 	}
 	return serveErr
+}
+
+func withInvokeLifecycle(handler executionproto.Handler, hooks *extensionLifecycle) executionproto.Handler {
+	if handler == nil || hooks == nil {
+		return handler
+	}
+	return func(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter) (result executionproto.Result, err error) {
+		hooks.emitMetadata(extension.PhaseInvoke, map[string]string{
+			"state":        "start",
+			"execution_id": req.ExecutionID,
+			"runtime":      string(req.Runtime),
+		})
+		defer func() {
+			status := string(result.Status)
+			if err != nil {
+				status = string(api.ExecutionStatusFailed)
+			}
+			hooks.emitMetadata(extension.PhaseInvoke, map[string]string{
+				"state":        "end",
+				"execution_id": req.ExecutionID,
+				"runtime":      string(req.Runtime),
+				"status":       status,
+			})
+		}()
+		return handler(ctx, req, stdout, stderr)
+	}
 }
 
 // validateExecutionManifest is kept separate from decideMode for focused
