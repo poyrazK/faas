@@ -1593,7 +1593,18 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 		"app_id": restored.ID,
 		"slug":   restored.Slug,
 	})
-	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), s.appResponse(restored, acct.Plan), restored))
+	resp := s.appResponse(restored, acct.Plan)
+	// RestoreApp persists the storage state as active, but the customer-facing
+	// read model calls an app with no deployments "undeployed". Keep this
+	// mutation response consistent with GET /v1/apps/{slug} and listApps so
+	// automation does not observe active and undeployed for the same row.
+	if _, latestErr := s.store.LatestDeployment(r.Context(), restored.ID); errors.Is(latestErr, state.ErrNotFound) && resp.Status == string(state.AppActive) {
+		resp.Status = api.AppStatusUndeployed
+	} else if latestErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve restored app deployment state"))
+		return
+	}
+	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, restored))
 }
 
 // --- deployments -----------------------------------------------------------
@@ -5325,6 +5336,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	if err != nil {
 		return api.UsageSummaryResponse{}, err
 	}
+	dailyRows = usageDailyRowsForMonth(dailyRows, month)
 	var apps []state.App
 	if len(dailyRows) > 0 {
 		apps, err = s.store.ListApps(ctx, acct.ID)

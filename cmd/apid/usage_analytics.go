@@ -2,11 +2,31 @@ package main
 
 import (
 	"sort"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// usageDailyRowsForMonth limits the trailing daily rollup returned by the
+// store to the UTC calendar month requested by the usage summary endpoint.
+// Without this boundary filter, an early-month summary includes rows from the
+// previous month even though its totals and Month field describe only the
+// requested month.
+func usageDailyRowsForMonth(rows []state.DailyUsage, month time.Time) []state.DailyUsage {
+	month = month.UTC()
+	start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	out := make([]state.DailyUsage, 0, len(rows))
+	for _, row := range rows {
+		day := row.Day.UTC()
+		if !day.Before(start) && day.Before(end) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
 
 // usageDailyPoints folds per-app daily rollup rows into the account-level
 // series exposed by GET /v1/usage/summary. The sort is deliberately done here

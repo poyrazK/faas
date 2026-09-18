@@ -44,3 +44,17 @@ func TestUsageDailyPointsAggregatesTopAppAndSorts(t *testing.T) {
 		t.Fatalf("day two = %+v", got[1])
 	}
 }
+
+func TestUsageDailyRowsForMonthExcludesAdjacentMonths(t *testing.T) {
+	rows := []state.DailyUsage{
+		{AppID: "august", Day: time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)},
+		{AppID: "september-start", Day: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
+		{AppID: "september-end", Day: time.Date(2026, 9, 30, 23, 59, 59, 0, time.FixedZone("UTC+3", 3*60*60))},
+		{AppID: "october", Day: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
+	}
+
+	got := usageDailyRowsForMonth(rows, time.Date(2026, 9, 18, 12, 0, 0, 0, time.FixedZone("UTC+3", 3*60*60)))
+	if len(got) != 2 || got[0].AppID != "september-start" || got[1].AppID != "september-end" {
+		t.Fatalf("got %+v, want only September UTC rows", got)
+	}
+}

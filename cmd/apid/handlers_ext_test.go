@@ -1378,6 +1378,38 @@ func TestDeleteApp_HappyPath(t *testing.T) {
 	assertProblem(t, rec2, 404, api.CodeNotFound)
 }
 
+func TestRestoreApp_UndeployedStatusMatchesGet(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "restore-undeployed")
+	if rec := e.do(t, http.MethodDelete, "/v1/apps/restore-undeployed", nil, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status %d: %s", rec.Code, rec.Body)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/restore-undeployed/restore", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore status %d: %s", rec.Code, rec.Body)
+	}
+	var restored api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &restored); err != nil {
+		t.Fatalf("decode restore response: %v", err)
+	}
+	if restored.Status != api.AppStatusUndeployed {
+		t.Fatalf("restore status = %q, want %q", restored.Status, api.AppStatusUndeployed)
+	}
+
+	got := e.do(t, http.MethodGet, "/v1/apps/restore-undeployed", nil, nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("get status %d: %s", got.Code, got.Body)
+	}
+	var current api.AppResponse
+	if err := json.Unmarshal(got.Body.Bytes(), &current); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if current.Status != restored.Status {
+		t.Fatalf("get status = %q, restore status = %q", current.Status, restored.Status)
+	}
+}
+
 // TestGetDeployment_HappyPath covers the standard "deploy by id" lookup.
 func TestGetDeployment_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)

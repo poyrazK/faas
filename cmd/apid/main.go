@@ -677,7 +677,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	} else {
 		log.Info("apid: legacy single-box (cfg.NodeName empty)")
 	}
-	deps.notif = func() Notifier { return pgNotifier{pool: pool} }
+	deps.notif = func() Notifier { return pgNotifier{pool: pool, log: log} }
 	// ADR-094: hand runWithDeps the same closePool helper so the
 	// post-bind defer (installed just before srv.Serve) and every
 	// pre-bind early-return close the pool consistently. Tests that
@@ -2302,19 +2302,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 }
 
-// pgNotifier is the production Notifier — it just delegates to db.Notify.
+// pgNotifier is the production notification adapter. Writes delegate to
+// db.Notify; subscriptions use the reconnecting LISTEN wrapper.
 type pgNotifier struct {
 	pool *pgxpool.Pool
+	log  *slog.Logger
 }
 
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
 }
 
-// Subscribe hands the SSE handler a live channel stream from the
-// Postgres pool. Returns immediately if no channels are requested.
+// Subscribe hands long-lived SSE handlers a reconnecting LISTEN stream. A
+// transient Postgres connection reset must not turn `gregale tail` into a
+// successful, silent exit; the request context remains the lifecycle owner.
 func (p pgNotifier) Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error) {
-	return db.Subscribe(ctx, p.pool, channels)
+	subCtx, cancel := context.WithCancel(ctx)
+	ch, err := db.SubscribeWithReconnect(subCtx, p.pool, channels, p.log)
+	if err != nil {
+		cancel()
+		return nil, func() {}, err
+	}
+	return ch, cancel, nil
 }
 
 // WaitFor is the Move 2 long-poll sibling: per-request LISTEN + predicate
