@@ -20,7 +20,7 @@ func TestMemStoreCoverageQueueIntrospection(t *testing.T) {
 	}
 	// Enqueue three queue-source rows: two pending, one dispatching with a
 	// live lease, one dispatching with an expired lease.
-	p1, err := m.EnqueueInvocation(ctx, Invocation{AccountID: account.ID, AppID: app.ID, Source: InvocationQueue, State: InvocationPending, DueAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour)})
+	p1, err := m.EnqueueInvocation(ctx, Invocation{AccountID: account.ID, AppID: app.ID, Source: InvocationQueue, QueueName: "orders", State: InvocationPending, DueAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +59,10 @@ func TestMemStoreCoverageQueueIntrospection(t *testing.T) {
 	}
 	if stats.OldestPendingAt.IsZero() || !stats.OldestPendingAt.Equal(now.Add(-time.Hour)) {
 		t.Fatalf("oldest pending = %v", stats.OldestPendingAt)
+	}
+	bindingStats, err := m.QueueStateForQueue(ctx, app.ID, "orders")
+	if err != nil || bindingStats.Depth != 1 || bindingStats.InFlight != 0 {
+		t.Fatalf("binding queue state = %+v, %v; want one orders row", bindingStats, err)
 	}
 
 	// QueuePeek — oldest-first, limit clamp, cursor.

@@ -122,6 +122,14 @@ type QueueStatsReader interface {
 	QueueState(ctx context.Context, appID string) (state.QueueStats, error)
 }
 
+// QueueBindingStatsReader is the optional binding-aware queue signal. The
+// target trigger still scales an app-level worker fleet, so it aggregates
+// enabled bindings for the decision while emitting each binding's own gauges.
+type QueueBindingStatsReader interface {
+	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]state.QueueBinding, error)
+	QueueStateForQueue(ctx context.Context, appID, queueName string) (state.QueueStats, error)
+}
+
 // Stats is the snapshot of inputs the pure decide() function reads.
 // Splitting this out keeps decide() trivially testable — no mocks,
 // no goroutines, no engine. The trigger's Tick assembles one Stats
@@ -290,14 +298,15 @@ func decideQueueDepth(s QueueDepthStats) Decision {
 // and every dep so schedd can wire the trigger before every
 // downstream dependency is fully online.
 type Trigger struct {
-	appStore   AppStore
-	instats    InstatsReader
-	queueStats QueueStatsReader
-	engine     Engine
-	ledger     Ledger
-	metrics    *wire.OpsMetrics
-	log        *slog.Logger
-	interval   time.Duration
+	appStore      AppStore
+	instats       InstatsReader
+	queueStats    QueueStatsReader
+	queueBindings QueueBindingStatsReader
+	engine        Engine
+	ledger        Ledger
+	metrics       *wire.OpsMetrics
+	log           *slog.Logger
+	interval      time.Duration
 
 	// ownerNodeID is the durable shard key this schedd scales. Empty
 	// preserves the central/legacy posture and reads all apps.
@@ -332,6 +341,10 @@ type Options struct {
 	// It is optional so existing RPS/concurrency-only deployments retain
 	// their current behavior.
 	QueueStatsReader QueueStatsReader
+	// QueueBindingStatsReader enables per-binding queue gauges and aggregates
+	// enabled binding backlogs for queue_depth targets. It is optional so
+	// legacy app-wide queues continue to use QueueStatsReader.
+	QueueBindingStatsReader QueueBindingStatsReader
 }
 
 // New constructs the trigger. instats is REQUIRED (unlike the
@@ -350,6 +363,7 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 		appStore:         appStore,
 		instats:          instats,
 		queueStats:       opts.QueueStatsReader,
+		queueBindings:    opts.QueueBindingStatsReader,
 		engine:           engine,
 		ledger:           ledger,
 		metrics:          opts.Metrics,
@@ -358,6 +372,46 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 		ring:             NewRingBuffer(5, time.Second, opts.Interval),
 		admissionBackoff: make(map[string]admissionBackoffState),
 	}
+}
+
+// readQueueState returns the app-level signal used by the existing scaler.
+// When bindings exist, only enabled binding queues contribute to the signal;
+// this prevents a disabled or unrelated queue from causing scale-out. An app
+// with no bindings falls back to the legacy app-wide queue projection.
+func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time) (state.QueueStats, bool, error) {
+	if t.queueBindings != nil {
+		bindings, err := t.queueBindings.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
+		if err != nil {
+			return state.QueueStats{}, false, err
+		}
+		if len(bindings) > 0 {
+			var aggregate state.QueueStats
+			for _, binding := range bindings {
+				var queue state.QueueStats
+				if binding.Enabled {
+					queue, err = t.queueBindings.QueueStateForQueue(ctx, app.ID, binding.QueueName)
+					if err != nil {
+						return state.QueueStats{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
+					}
+					aggregate.Depth += queue.Depth
+					aggregate.InFlight += queue.InFlight
+					aggregate.DeadLetter += queue.DeadLetter
+					if !queue.OldestPendingAt.IsZero() && (aggregate.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(aggregate.OldestPendingAt)) {
+						aggregate.OldestPendingAt = queue.OldestPendingAt
+					}
+				}
+				if t.metrics != nil {
+					t.metrics.SetQueueBindingState(app.ID, binding.QueueName, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+				}
+			}
+			return aggregate, true, nil
+		}
+	}
+	if t.queueStats == nil {
+		return state.QueueStats{}, false, nil
+	}
+	queue, err := t.queueStats.QueueState(ctx, app.ID)
+	return queue, true, err
 }
 
 // Interval returns the tick rate. schedd's loop uses this when
@@ -410,7 +464,7 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // only side effect is the Engine.AdmitInstance call on the admit
 // branch and the metric observations.
 func (t *Trigger) Tick(ctx context.Context) error {
-	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil) {
+	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil) {
 		return nil
 	}
 	now := time.Now()
@@ -469,7 +523,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				Now:                 now,
 			})
 		case "queue_depth":
-			if t.queueStats == nil {
+			if t.queueStats == nil && t.queueBindings == nil {
 				// The target is valid but the local schedd has no queue
 				// reader yet. Treat it as no-signal until the dependency
 				// is wired; never admit blindly on a missing backlog.
@@ -478,9 +532,15 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 				continue
 			}
-			queue, err := t.queueStats.QueueState(ctx, app.ID)
+			queue, ok, err := t.readQueueState(ctx, app, now)
 			if err != nil {
 				t.log.Warn("targets: queue state failed", "app_id", app.ID, "err", err)
+				if t.metrics != nil {
+					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
+				}
+				continue
+			}
+			if !ok {
 				if t.metrics != nil {
 					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
 				}

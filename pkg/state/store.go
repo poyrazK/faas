@@ -3912,6 +3912,10 @@ type Store interface {
 	// Used by the queueStats handler. OldestPendingAt is the zero-time
 	// when the app has no pending rows; callers translate to nil.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)
+	// QueueStateForQueue returns the same live counters scoped to one named
+	// queue binding. Queue names are exact matches; the empty queue name is
+	// reserved for the legacy app-wide queue returned by QueueState.
+	QueueStateForQueue(ctx context.Context, appID, queueName string) (QueueStats, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
 	// `before` (a queue row id, uuid) — same cursor convention as

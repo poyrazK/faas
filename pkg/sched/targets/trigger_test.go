@@ -122,6 +122,19 @@ func (q *fakeQueueStats) QueueState(_ context.Context, appID string) (state.Queu
 	return q.byApp[appID], nil
 }
 
+type fakeQueueBindings struct {
+	byApp   map[string][]state.QueueBinding
+	byQueue map[string]state.QueueStats
+}
+
+func (q *fakeQueueBindings) ListQueueBindingsForApp(_ context.Context, _, appID string) ([]state.QueueBinding, error) {
+	return q.byApp[appID], nil
+}
+
+func (q *fakeQueueBindings) QueueStateForQueue(_ context.Context, _, queueName string) (state.QueueStats, error) {
+	return q.byQueue[queueName], nil
+}
+
 func (i *fakeInstats) MaxInflightForApp(appID string) (int64, bool) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -401,6 +414,33 @@ func TestTrigger_AdmitOnQueueDepthTarget(t *testing.T) {
 	}
 	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "worker-1" {
 		t.Fatalf("engine.admitCalls = %v, want [worker-1]", engine.admitCalls)
+	}
+}
+
+func TestTrigger_QueueDepthAggregatesEnabledBindings(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID: "worker-bindings", AccountID: "acct-1", WorkloadClass: state.WorkloadClassWorker,
+		MaxConcurrency: 5,
+		ScalingPolicy:  &state.ScalingPolicy{Target: &state.ScalingTarget{Metric: "queue_depth", Value: 10}},
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"worker-bindings": 1}}
+	engine := &fakeEngine{}
+	bindings := &fakeQueueBindings{
+		byApp: map[string][]state.QueueBinding{"worker-bindings": {
+			{ID: "orders-binding", QueueName: "orders", Enabled: true},
+			{ID: "disabled-binding", QueueName: "disabled", Enabled: false},
+		}},
+		byQueue: map[string]state.QueueStats{
+			"orders":   {Depth: 25},
+			"disabled": {Depth: 1000},
+		},
+	}
+	tr := New(store, nil, engine, ledger, Options{Metrics: wire.NewOpsMetrics("schedd"), QueueBindingStatsReader: bindings})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "worker-bindings" {
+		t.Fatalf("engine.admitCalls = %v, want one enabled-binding scale-out", engine.admitCalls)
 	}
 }
 

@@ -348,6 +348,9 @@ type OpsMetrics struct {
 	// primitive and is held only across the lookup/insert path.
 	// Prometheus increments happen outside the critical section.
 	appLabels *appLabelSet
+	// queueLabels bounds customer-controlled queue-binding labels independently
+	// from app labels, preventing queue churn from expanding the TSDB series set.
+	queueLabels *appLabelSet
 	// guestTailSeconds (issue #667 / ADR-078) — histogram of the
 	// per-tail-task wall-clock duration from registration (a
 	// waitUntil(promise) call inside the handler) to terminal
@@ -3485,6 +3488,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
+		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
@@ -4828,6 +4832,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
 		appLabels:                                  newAppLabelSet(maxAppLabelValues),
+		queueLabels:                                newAppLabelSet(maxAppLabelValues),
 		guestTailSeconds:                           guestTailSeconds,
 		guestTailFailedTotal:                       guestTailFailedTotal,
 		planGateRescuedByExclude:                   planGateRescuedByExclude,

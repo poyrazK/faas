@@ -14141,6 +14141,45 @@ func (s *PgStore) QueueState(ctx context.Context, appID string) (QueueStats, err
 	return stats, nil
 }
 
+// QueueStateForQueue is the binding-scoped variant of QueueState. Keeping
+// the queue_name predicate in both aggregate queries prevents a busy binding
+// from masking a stalled sibling when queue telemetry is consumed by the
+// target scaler.
+func (s *PgStore) QueueStateForQueue(ctx context.Context, appID, queueName string) (QueueStats, error) {
+	var stats QueueStats
+	var oldest *time.Time
+	err := s.pool.QueryRow(ctx, `
+		select
+		  count(*)                                                              as depth,
+		  count(*) filter (where state = 'dispatching'
+		                    and lease_expires_at is not null
+		                    and lease_expires_at > now())                        as in_flight,
+		  min(created_at) filter (where state = 'pending')                      as oldest_pending_at
+		from invocations
+		where app_id = $1
+		  and queue_name = $2
+		  and source = 'queue'
+		  and state in ('pending','dispatching')
+	`, appID, queueName).Scan(&stats.Depth, &stats.InFlight, &oldest)
+	if err != nil {
+		return QueueStats{}, err
+	}
+	if oldest != nil {
+		stats.OldestPendingAt = *oldest
+	}
+	if err := s.pool.QueryRow(ctx, `
+		select count(*)
+		  from invocations
+		 where app_id = $1
+		   and queue_name = $2
+		   and source = 'queue'
+		   and state = 'dead_letter'
+	`, appID, queueName).Scan(&stats.DeadLetter); err != nil {
+		return QueueStats{}, err
+	}
+	return stats, nil
+}
+
 // QueuePeek (issue #394) lists the oldest pending queue messages for
 // an app without acquiring a lease. Read-only — no FOR UPDATE, no
 // FOR SHARE, no advisory lock. Cursor convention mirrors

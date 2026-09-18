@@ -11081,6 +11081,35 @@ func (m *MemStore) QueueState(_ context.Context, appID string) (QueueStats, erro
 	return s, nil
 }
 
+// QueueStateForQueue is QueueState filtered to one named queue binding.
+// An empty queue name intentionally does not broaden the match; legacy
+// app-wide callers should continue using QueueState.
+func (m *MemStore) QueueStateForQueue(_ context.Context, appID, queueName string) (QueueStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var s QueueStats
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.QueueName != queueName || inv.Source != InvocationQueue {
+			continue
+		}
+		switch inv.State {
+		case InvocationPending:
+			s.Depth++
+			if s.OldestPendingAt.IsZero() || inv.CreatedAt.Before(s.OldestPendingAt) {
+				s.OldestPendingAt = inv.CreatedAt
+			}
+		case InvocationDispatching:
+			s.Depth++
+			if inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(time.Now()) {
+				s.InFlight++
+			}
+		case InvocationDeadLetter:
+			s.DeadLetter++
+		}
+	}
+	return s, nil
+}
+
 // QueuePeek (issue #394) returns the oldest pending queue messages
 // for an app without acquiring a lease. Read-only; the in-memory
 // iteration copies snapshots into `out` so a concurrent writer cannot

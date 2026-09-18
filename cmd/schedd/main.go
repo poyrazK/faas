@@ -1664,10 +1664,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		schedTargetsEngine{engine: engine},
 		schedTargetsLedger{ledger: engine.Ledger()},
 		targets.Options{
-			Logger:           log,
-			Metrics:          ops,
-			Interval:         cfg.ScaleUpInterval,
-			QueueStatsReader: store,
+			Logger:                  log,
+			Metrics:                 ops,
+			Interval:                cfg.ScaleUpInterval,
+			QueueStatsReader:        store,
+			QueueBindingStatsReader: store,
 		},
 	)
 	targetsTrigger.WithOwnerNodeID(ownerNodeID)
