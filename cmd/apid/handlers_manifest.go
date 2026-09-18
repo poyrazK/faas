@@ -119,7 +119,7 @@ func validateManifestAgainstPlan(m *gregalemanifest.Manifest, acctPlan api.Plan)
 	if prob := validateWorkflowDefinitionsAgainstPlan(m.Workflows, acctPlan); prob != nil {
 		return prob
 	}
-	if len(m.Triggers) > 0 && !acctPlan.TriggersAllowed() {
+	if (len(m.Triggers) > 0 || len(m.EventTriggers) > 0) && !acctPlan.TriggersAllowed() {
 		// The CLI is per-machine, so the CLI doesn't see this gate;
 		// the apid is per-account, so a Free customer posting a
 		// manifest with any trigger gets the upsell here rather

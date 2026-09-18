@@ -8,8 +8,10 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +34,7 @@ type sourceRefManifestStaged struct {
 	appID                 string
 	cronIDs               []string
 	triggerIDs            []string
+	eventSubscriptionIDs  []string
 	bindingIDs            []string
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
@@ -42,24 +45,35 @@ type sourceRefManifestStaged struct {
 // source archive. A workload-local manifest is preferred for monorepos, with
 // the repository root as a fallback for the common single-manifest layout.
 func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gregalemanifest.Manifest, *api.Problem) {
-	b, found, err := readSourceRefManifestBytes(sourcePath, app.RootDir)
+	b, name, found, err := readSourceRefManifestBytes(sourcePath, app.RootDir)
 	if err != nil {
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
 	if !found {
 		return nil, nil
 	}
-	m, prob := validateManifestBytes(b, plan)
-	if prob != nil {
+	var m *gregalemanifest.Manifest
+	if strings.HasSuffix(name, "gregale.toml") {
+		m, err = gregalemanifest.ParseTOMLBytes(b)
+	} else {
+		m, err = gregalemanifest.ParseBytes(b)
+	}
+	if err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+	}
+	if prob := validateManifestAgainstPlan(m, plan); prob != nil {
 		return nil, prob
+	}
+	if err := m.ValidateForPlan(plan); err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
 	return m, nil
 }
 
-func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, bool, error) {
+func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, string, bool, error) {
 	candidates, err := sourceRefManifestCandidates(sourcePath, sourceRoot)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	wanted := make(map[string]int, len(candidates))
 	for i, candidate := range candidates {
@@ -67,22 +81,23 @@ func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, bool, er
 		if candidate != "" {
 			prefix = candidate + "/"
 		}
-		wanted[prefix+"gregale.yaml"] = i*2 + 1
-		wanted[prefix+"gregale.yml"] = i*2 + 2
-		wanted[prefix+"gregale.toml"] = i*2 + 3
+		wanted[prefix+"gregale.yaml"] = i*3 + 1
+		wanted[prefix+"gregale.yml"] = i*3 + 2
+		wanted[prefix+"gregale.toml"] = i*3 + 3
 	}
 	f, err := openSpoolFile(sourcePath)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return nil, false, fmt.Errorf("open source archive: %w", err)
+		return nil, "", false, fmt.Errorf("open source archive: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	var best []byte
+	var bestName string
 	bestRank := 0
 	for {
 		hdr, nextErr := tr.Next()
@@ -90,7 +105,7 @@ func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, bool, er
 			break
 		}
 		if nextErr != nil {
-			return nil, false, fmt.Errorf("read source archive: %w", nextErr)
+			return nil, "", false, fmt.Errorf("read source archive: %w", nextErr)
 		}
 		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
 		rank, ok := wanted[name]
@@ -98,23 +113,20 @@ func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, bool, er
 			continue
 		}
 		if hdr.Size > sourceRefManifestMaxBytes {
-			return nil, false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
+			return nil, "", false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
 		}
 		contents, readErr := io.ReadAll(io.LimitReader(tr, sourceRefManifestMaxBytes+1))
 		if readErr != nil {
-			return nil, false, fmt.Errorf("read manifest %q: %w", name, readErr)
+			return nil, "", false, fmt.Errorf("read manifest %q: %w", name, readErr)
 		}
 		if len(contents) > sourceRefManifestMaxBytes {
-			return nil, false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
-		}
-		if strings.HasSuffix(name, "gregale.toml") {
-			return nil, false, errors.New("gregalemanifest: gregale.toml is present but TOML manifests are not supported yet (rename to gregale.yaml)")
+			return nil, "", false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
 		}
 		if best == nil || rank < bestRank {
-			best, bestRank = contents, rank
+			best, bestName, bestRank = contents, name, rank
 		}
 	}
-	return best, best != nil, nil
+	return best, bestName, best != nil, nil
 }
 
 func sourceRefManifestCandidates(sourcePath, sourceRoot string) ([]string, error) {
@@ -196,7 +208,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
 		}
 	}
-	if !applyTriggers || len(m.Triggers) == 0 {
+	if !applyTriggers || (len(m.Triggers) == 0 && len(m.EventTriggers) == 0) {
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -285,7 +297,78 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			"enabled": declaration.IsEnabled(), "source": "deploy.source_ref",
 		})
 	}
+	if len(m.EventTriggers) > 0 {
+		eventStore, ok := s.store.(state.EventSubscriptionStore)
+		if !ok {
+			return staged, api.ErrCapacity("event subscriptions are unavailable")
+		}
+		subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
+		if err != nil {
+			return staged, api.ErrCapacity("could not list app event subscriptions")
+		}
+		subscriptionKeys := make(map[string]struct{}, len(subscriptions))
+		for _, subscription := range subscriptions {
+			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
+			if keyErr == nil {
+				subscriptionKeys[key] = struct{}{}
+			}
+		}
+		for _, declaration := range m.EventTriggers {
+			if declaration.App != "" && declaration.App != app.Slug {
+				continue
+			}
+			subscription, convertErr := declaration.AsSubscription(acct.ID)
+			if convertErr != nil {
+				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
+			}
+			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
+			if keyErr != nil {
+				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
+			}
+			if _, exists := subscriptionKeys[key]; exists {
+				continue
+			}
+			row, inserted, upsertErr := eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			if upsertErr != nil {
+				return staged, sourceRefEventSubscriptionProblem(upsertErr)
+			}
+			subscriptionKeys[key] = struct{}{}
+			if !inserted {
+				continue
+			}
+			staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
+			_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+				fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
+			s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
+				"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
+				"type": subscription.Type, "source_ref": true,
+			})
+		}
+	}
 	return staged, nil
+}
+
+func eventSubscriptionManifestKey(source, typ string, filter json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(filter)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		trimmed = []byte("{}")
+	}
+	var value any
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return "", err
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join([]string{source, typ, string(canonical)}, "\x00"), nil
+}
+
+func sourceRefEventSubscriptionProblem(err error) *api.Problem {
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
+	return api.ErrCapacity("could not apply manifest event subscription")
 }
 
 func sourceRefScalingStoreProblem(err error) *api.Problem {
@@ -376,6 +459,22 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			continue
 		}
 		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", staged.appID, staged.triggerIDs[i]))
+	}
+	if len(staged.eventSubscriptionIDs) > 0 {
+		eventStore, ok := s.store.(state.EventSubscriptionStore)
+		if !ok {
+			errs = append(errs, errors.New("event subscriptions are unavailable during rollback"))
+		} else {
+			for i := len(staged.eventSubscriptionIDs) - 1; i >= 0; i-- {
+				id := staged.eventSubscriptionIDs[i]
+				if err := eventStore.DeleteEventSubscription(ctx, id, staged.accountID, staged.appID); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+					fmt.Sprintf(`{"kind":"deleted","app_id":"%s","subscription_id":"%s"}`, staged.appID, id))
+			}
+		}
 	}
 	for i := len(staged.cronIDs) - 1; i >= 0; i-- {
 		if err := s.store.DeleteCron(ctx, staged.cronIDs[i], staged.appID); err != nil {

@@ -794,6 +794,16 @@ func ParseBytes(b []byte) (*Manifest, error) {
 	return parseManifest(b)
 }
 
+// ParseTOMLBytes decodes an event-only gregale.toml manifest from bytes.
+// Source-ref deployments use this alongside ParseBytes so the server applies
+// the same strict parser as the local CLI without staging the archive entry.
+func ParseTOMLBytes(b []byte) (*Manifest, error) {
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil
+	}
+	return parseTOMLManifest(b)
+}
+
 // parseManifest decodes the bytes with strict unknown-field rejection.
 // Without KnownFields(true), a typo'd `trigger:` (singular) would
 // silently drop every entry — the customer's deploy would ship a

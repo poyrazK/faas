@@ -980,6 +980,18 @@ type Event struct {
 	TraceID        pgtype.Text
 }
 
+type EventSubscription struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Source    string
+	Type      string
+	Filter    []byte
+	Enabled   bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Execution struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID

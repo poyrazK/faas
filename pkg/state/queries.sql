@@ -253,6 +253,32 @@ values ($1, $2, $3, $4);
 select id, at, actor, kind, subject, data
 from events where subject = $1 order by at desc limit $2;
 
+-- EPIC #1278 / Workstream B — durable internal event subscriptions.
+-- A subscription is app-owned but keeps account_id denormalized so scheduler
+-- fan-out can enforce tenant isolation without joining apps.
+
+-- name: ListEventSubscriptionsForApp :many
+select id, account_id, app_id, source, type, filter, enabled,
+       created_at, updated_at
+from event_subscriptions
+where app_id = $1
+order by created_at asc, id asc;
+
+-- name: UpsertEventSubscription :one
+-- (xmax = 0) distinguishes a declaration first installed by this deploy from
+-- an idempotent replay of the same manifest row.
+insert into event_subscriptions (account_id, app_id, source, type, filter)
+values ($1, $2, $3, $4, $5::jsonb)
+on conflict (app_id, source, type, filter) do update
+set enabled = true,
+    updated_at = now()
+returning id, account_id, app_id, source, type, filter, enabled,
+          created_at, updated_at, (xmax = 0) as inserted;
+
+-- name: DeleteEventSubscription :exec
+delete from event_subscriptions
+where id = $1 and account_id = $2 and app_id = $3;
+
 -- name: ListEventsByWakeID :many
 -- issue #517 / PR-C / ADR-064 — wake-timeline read-side query.
 -- Filters on the jsonb expression index events_wake_id_idx

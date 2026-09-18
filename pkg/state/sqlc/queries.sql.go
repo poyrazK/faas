@@ -1711,6 +1711,22 @@ func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype
 	return err
 }
 
+const deleteEventSubscription = `-- name: DeleteEventSubscription :exec
+delete from event_subscriptions
+where id = $1 and account_id = $2 and app_id = $3
+`
+
+type DeleteEventSubscriptionParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error {
+	_, err := db.Exec(ctx, deleteEventSubscription, arg.ID, arg.AccountID, arg.AppID)
+	return err
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -5584,6 +5600,48 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.PayloadMaxBytes,
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
+
+select id, account_id, app_id, source, type, filter, enabled,
+       created_at, updated_at
+from event_subscriptions
+where app_id = $1
+order by created_at asc, id asc
+`
+
+// EPIC #1278 / Workstream B — durable internal event subscriptions.
+// A subscription is app-owned but keeps account_id denormalized so scheduler
+// fan-out can enforce tenant isolation without joining apps.
+func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]EventSubscription, error) {
+	rows, err := db.Query(ctx, listEventSubscriptionsForApp, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscription{}
+	for rows.Next() {
+		var i EventSubscription
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Source,
+			&i.Type,
+			&i.Filter,
+			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -11966,6 +12024,63 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		&i.FilterCriteria,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertEventSubscription = `-- name: UpsertEventSubscription :one
+insert into event_subscriptions (account_id, app_id, source, type, filter)
+values ($1, $2, $3, $4, $5::jsonb)
+on conflict (app_id, source, type, filter) do update
+set enabled = true,
+    updated_at = now()
+returning id, account_id, app_id, source, type, filter, enabled,
+          created_at, updated_at, (xmax = 0) as inserted
+`
+
+type UpsertEventSubscriptionParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Source    string
+	Type      string
+	Column5   []byte
+}
+
+type UpsertEventSubscriptionRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Source    string
+	Type      string
+	Filter    []byte
+	Enabled   bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	Inserted  bool
+}
+
+// (xmax = 0) distinguishes a declaration first installed by this deploy from
+// an idempotent replay of the same manifest row.
+func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error) {
+	row := db.QueryRow(ctx, upsertEventSubscription,
+		arg.AccountID,
+		arg.AppID,
+		arg.Source,
+		arg.Type,
+		arg.Column5,
+	)
+	var i UpsertEventSubscriptionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Source,
+		&i.Type,
+		&i.Filter,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Inserted,
 	)
 	return i, err
 }

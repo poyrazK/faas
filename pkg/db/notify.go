@@ -429,6 +429,9 @@ const (
 	NotifyDomainChanged           = "domain_changed"
 	NotifyCronChanged             = "cron_changed"
 	NotifyTriggerChanged          = "trigger_changed"
+	// NotifyEventSubscriptionChanged wakes event-routing workers after a
+	// manifest deploy creates or compensates a durable subscription row.
+	NotifyEventSubscriptionChanged = "event_subscription_changed"
 	// NotifyJobChanged fires when a row is inserted/updated/deleted
 	// in public.jobs (issue #1184 Workstream A / ADR-099). Listeners:
 	//   - schedd dispatchJobsTick: wakes the 1s tick to claim any

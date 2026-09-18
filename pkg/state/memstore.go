@@ -220,9 +220,10 @@ type MemStore struct {
 	// prewarmIntents mirrors the durable scheduled-capacity queue. The
 	// process-wide mutex provides the same claim serialization as
 	// SELECT ... FOR UPDATE SKIP LOCKED in PgStore.
-	prewarmIntents map[string]PrewarmIntent
-	triggers       map[string]sqlc.Trigger
-	records        map[string]sqlc.TriggerRecord
+	prewarmIntents     map[string]PrewarmIntent
+	triggers           map[string]sqlc.Trigger
+	eventSubscriptions map[string]EventSubscription
+	records            map[string]sqlc.TriggerRecord
 	// triggerDeadLetters mirrors trigger_dead_letter rows. The production
 	// table is append-only; MemStore keeps insertion order for deterministic
 	// dashboard and handler tests.
@@ -911,6 +912,7 @@ func NewMemStore() *MemStore {
 		doctorObs:           map[string]DomainDoctorObservation{},
 		crons:               map[string]Cron{},
 		prewarmIntents:      map[string]PrewarmIntent{},
+		eventSubscriptions:  map[string]EventSubscription{},
 		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
 		deadLetterSnapshots: map[string]DeadLetterEvent{},
 		deadLetterPurged:    map[string]struct{}{},

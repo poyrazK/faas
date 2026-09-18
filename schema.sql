@@ -1324,6 +1324,26 @@ CREATE TABLE public.app_webhooks (
 
 
 --
+-- Name: event_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_subscriptions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    type text NOT NULL,
+    filter jsonb DEFAULT '{}'::jsonb NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
+    CONSTRAINT event_subscriptions_source_len_chk CHECK ((char_length(source) >= 1) AND (char_length(source) <= 256)),
+    CONSTRAINT event_subscriptions_type_len_chk CHECK ((char_length(type) >= 1) AND (char_length(type) <= 256))
+);
+
+
+--
 -- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4348,6 +4368,14 @@ ALTER TABLE ONLY public.app_webhooks
 
 
 --
+-- Name: event_subscriptions event_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscriptions
+    ADD CONSTRAINT event_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: apps apps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5544,6 +5572,20 @@ CREATE INDEX app_webhooks_account_idx ON public.app_webhooks USING btree (accoun
 
 
 --
+-- Name: event_subscriptions_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_subscriptions_account_idx ON public.event_subscriptions USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: event_subscriptions_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_subscriptions_enabled_idx ON public.event_subscriptions USING btree (app_id, source, type) WHERE enabled;
+
+
+--
 -- Name: app_log_drains_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5576,6 +5618,13 @@ CREATE UNIQUE INDEX app_log_drains_app_target_uniq ON public.app_log_drains USIN
 --
 
 CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON public.app_webhooks USING btree (app_id, target_url);
+
+
+--
+-- Name: event_subscriptions_identity_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_subscriptions_identity_uniq ON public.event_subscriptions USING btree (app_id, source, type, filter);
 
 
 --
@@ -7911,6 +7960,22 @@ ALTER TABLE ONLY public.app_webhooks
 
 ALTER TABLE ONLY public.app_webhooks
     ADD CONSTRAINT app_webhooks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscriptions event_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscriptions
+    ADD CONSTRAINT event_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscriptions event_subscriptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscriptions
+    ADD CONSTRAINT event_subscriptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
