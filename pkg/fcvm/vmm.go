@@ -1624,7 +1624,7 @@ const resumeHookMsgResume uint32 = 1
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
 // It shares the resume listener's CONNECT handshake and is consumed by the
 // guest extension bridge (guest/init/listen_resume_linux.go).
-const extensionHookMsgEvent uint32 = 2
+const extensionHookMsgEvent uint32 = 3
 
 const extensionHookDialDeadline = extension.DefaultTimeout
 

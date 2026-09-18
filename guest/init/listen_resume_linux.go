@@ -62,7 +62,7 @@ const (
 	// VsockExtensionMsgType is the host-initiated lifecycle notification
 	// discriminator. It shares the resume listener and CONNECT handshake but
 	// carries a bounded phase/metadata envelope instead of resume state.
-	VsockExtensionMsgType uint32 = 2
+	VsockExtensionMsgType uint32 = 3
 	// VsockExtensionMaxBodyBytes mirrors extension.MaxEventBytes.
 	VsockExtensionMaxBodyBytes = 16 * 1024
 )
@@ -147,7 +147,11 @@ func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtensio
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension)
+	if onExtension == nil {
+		go acceptResumeConns(fd, log, onResume)
+	} else {
+		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension)
+	}
 	return nil
 }
 
@@ -161,14 +165,19 @@ func acceptResumeConns(fd int, log *slog.Logger, onResume ...func()) {
 // Own the listening descriptor for the lifetime of the accept loop. A terminal
 // error must not leave a listening socket with no goroutine to service it.
 func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume ...func()) {
-	acceptResumeConnsWithExtension(fd, log, accept, func() {
-		for _, callback := range onResume {
-			if callback != nil {
-				callback()
-				break
-			}
+	defer func() { _ = unix.Close(fd) }()
+	for {
+		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
+		if errors.Is(err, unix.EINTR) || errors.Is(err, unix.ECONNABORTED) {
+			continue
 		}
-	}, nil)
+		if err != nil {
+			log.Warn("vsock accept ended", "err", err)
+			return
+		}
+		f := os.NewFile(uintptr(raw), "vsock")
+		go handleResumeConn(f, log, onResume...)
+	}
 }
 
 func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest)) {
