@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,6 +51,33 @@ func TestNodeTelemetryCacheReplacesAsOneBatchAndExpires(t *testing.T) {
 	}
 	if _, ok := cache.LookupOpenConns("vm-1", base.Add(TelemetryFreshness+time.Nanosecond)); ok {
 		t.Fatal("stale open-conns lookup unexpectedly hit")
+	}
+}
+
+// adr: 127 — persistent node telemetry must retain flow details without
+// exposing the cache's backing slice to callers.
+func TestNodeTelemetryCacheCopiesFlowSummaries(t *testing.T) {
+	cache := NewNodeTelemetryCache()
+	now := time.Unix(150, 0)
+	rows := []NodeTelemetry{{
+		InstanceID: "vm-1",
+		FlowSummaries: []flowcount.FlowSummary{{
+			InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: 443, Count: 1,
+		}},
+	}}
+	cache.Replace("node-a", now, now, rows)
+	rows[0].FlowSummaries[0].RemoteIP = "mutated"
+
+	snapshot := cache.Snapshot(now)
+	if len(snapshot) != 1 || len(snapshot[0].Telemetry.FlowSummaries) != 1 {
+		t.Fatalf("snapshot = %#v, want one flow summary", snapshot)
+	}
+	if got := snapshot[0].Telemetry.FlowSummaries[0].RemoteIP; got != "203.0.113.10" {
+		t.Fatalf("cached remote IP = %q, want original value", got)
+	}
+	snapshot[0].Telemetry.FlowSummaries[0].RemoteIP = "mutated-again"
+	if got := cache.Snapshot(now)[0].Telemetry.FlowSummaries[0].RemoteIP; got != "203.0.113.10" {
+		t.Fatalf("cache-backed remote IP = %q after snapshot mutation, want original value", got)
 	}
 }
 

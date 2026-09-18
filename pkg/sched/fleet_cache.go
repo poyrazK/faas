@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -87,6 +88,7 @@ type NodeTelemetry struct {
 	NetTxBytes          *int64
 	NetRxBytes          *int64
 	OpenConns           int64
+	FlowSummaries       []flowcount.FlowSummary
 }
 
 // NodeTelemetryCache holds the most recent batched report from each node.
@@ -121,7 +123,7 @@ func (c *NodeTelemetryCache) Replace(nodeID string, sampledAt, receivedAt time.T
 	if c == nil || nodeID == "" {
 		return
 	}
-	copyRows := append([]NodeTelemetry(nil), rows...)
+	copyRows := cloneNodeTelemetryRows(rows)
 	c.mu.Lock()
 	if c.nodes == nil {
 		c.nodes = make(map[string]telemetryEntry)
@@ -144,10 +146,26 @@ func (c *NodeTelemetryCache) Snapshot(now time.Time) []NodeTelemetryWithNode {
 			continue
 		}
 		for _, row := range entry.rows {
-			out = append(out, NodeTelemetryWithNode{NodeID: nodeID, SampledAt: entry.sampledAt, Telemetry: row})
+			out = append(out, NodeTelemetryWithNode{NodeID: nodeID, SampledAt: entry.sampledAt, Telemetry: cloneNodeTelemetry(row)})
 		}
 	}
 	return out
+}
+
+func cloneNodeTelemetryRows(rows []NodeTelemetry) []NodeTelemetry {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]NodeTelemetry, len(rows))
+	for i, row := range rows {
+		out[i] = cloneNodeTelemetry(row)
+	}
+	return out
+}
+
+func cloneNodeTelemetry(row NodeTelemetry) NodeTelemetry {
+	row.FlowSummaries = append([]flowcount.FlowSummary(nil), row.FlowSummaries...)
+	return row
 }
 
 // LookupOpenConns returns the freshest compute-side conntrack count for an

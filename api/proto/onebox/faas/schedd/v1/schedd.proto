@@ -989,6 +989,9 @@ message InstanceTelemetry {
   // absent means the node predates disk telemetry or has no sample yet.
   google.protobuf.Int64Value disk_used_bytes = 12;
   google.protobuf.Int64Value disk_capacity_bytes = 13;
+  // Bounded conntrack endpoint summaries transported with the persistent
+  // capacity stream. Empty on older nodes or when unavailable.
+  repeated FlowSummary flow_summaries = 14;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -1063,3 +1066,14 @@ message EnsureWakeResponse {
 
 message FrameworkReadyReport { string instance_id = 1; }
 message FrameworkReadyAck {}
+
+// FlowSummary is one bounded endpoint aggregate observed in conntrack for an
+// instance. It is an endpoint snapshot, not packet byte or latency accounting.
+message FlowSummary {
+  string protocol = 1;
+  string remote_ip = 2;
+  uint32 remote_port = 3;
+  string state = 4;
+  string direction = 5;
+  int64 count = 6;
+}
