@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// adr: 022
 func TestTriggerPreSnapshotHookUsesLifecycleMessage(t *testing.T) {
 	base := shortChrootBase(t, "presnapshot")
 	instance := "pre-snapshot"
