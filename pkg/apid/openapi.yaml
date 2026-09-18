@@ -9978,7 +9978,7 @@ paths:
           description: Registry host to delete, URL-encoded.
           schema: { type: string, maxLength: 253 }
       responses:
-        '204': { description: No body. The credential row was removed. }
+        '204': { description: The job credential row was removed. }
         '400':
           description: Invalid registry host or no credential exists for the host.
           content:

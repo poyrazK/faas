@@ -128,11 +128,7 @@ type PutJobRegistryCredentialRequest struct {
 }
 
 func (r PutJobRegistryCredentialRequest) Validate() *Problem {
-	return PutAppRegistryCredentialRequest{
-		Registry: r.Registry,
-		Username: r.Username,
-		Password: r.Password,
-	}.Validate()
+	return PutAppRegistryCredentialRequest(r).Validate()
 }
 
 // JobRegistryCredentialResponse never contains the sealed or plaintext
