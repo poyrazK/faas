@@ -12,13 +12,14 @@ order is the canonical reference.
 
 ## Job image artifact key
 
-The customer-facing `jobs.image_ref` remains an OCI reference. Once the
-image-materialization worker is wired, it publishes the immutable ext4 rootfs
-that vmmd boots at the canonical storage key `jobs/<job-id>.ext4` (the helper is
-`pkg/sched.JobLayerKey`). This keeps the source reference separate from the
-storage key and gives schedd, imaged, and vmmd one round-trippable artifact
-contract. The pull/publish worker and persistence of the resolved key are a
-follow-up slice; this supplement does not claim that pipeline is complete.
+The customer-facing `jobs.image_ref` remains an OCI reference. The
+image-materialization worker resolves that reference, builds the immutable ext4
+rootfs, and persists the resolved artifact at the canonical storage key
+`jobs/<job-id>.ext4` (the helper is `pkg/sched.JobLayerKey`). This keeps the
+source reference separate from the storage key and gives schedd, imaged, and
+vmmd one round-trippable artifact contract. Materialization is lease-claimed,
+retry-safe, and gated before task dispatch; account-scoped private-registry
+credentials are sealed at rest and exposed through the Jobs API.
 
 ## Locked deviations
 

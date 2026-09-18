@@ -15,11 +15,11 @@ import (
 // ErrJobVMMNotWired is returned by FailOpenJobVMMClient.JobColdBoot. Stable sentinel
 // for errors.Is checks in cmd/apid/handlers_jobs.go + the
 // WakeJob error-classification branch in pkg/sched/jobs.go.
-var ErrJobVMMNotWired = errors.New("sched: job vmm gRPC surface not wired (Mega-1 follow-up)")
+var ErrJobVMMNotWired = errors.New("sched: job vmm gRPC surface not wired")
 
 // ErrJobLeaserNil is returned by Engine.WakeJob when a job leaser is absent.
 // Stable sentinel — the compatibility path fails closed rather than panics.
-var ErrJobLeaserNil = errors.New("sched: job leaser not wired (Mega-1 follow-up)")
+var ErrJobLeaserNil = errors.New("sched: job leaser not wired")
 
 // FailOpenJobVMMClient is the no-op jobVmmClient compatibility adapter.
 // Every call returns (zero-value, ErrJobVMMNotWired). The engine

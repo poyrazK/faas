@@ -7,6 +7,11 @@ the reference and publishes its immutable ext4 rootfs. Tasks remain queued
 until that artifact is `ready`; pull/build failures are exposed as
 `image_materialization_status=failed` plus an actionable error.
 
+Image pulls may use account-owned private-registry credentials configured with
+`gregale jobs registry`; passwords are sealed at rest and never returned by
+the API. Materialization is retry-safe across imaged workers, and schedd does
+not dispatch a task until the job's ext4 artifact is ready.
+
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3

@@ -178,11 +178,11 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	ttl += 90 * time.Second
 	leaseExpires := time.Now().Add(ttl)
 	if e.jobLeaser == nil {
-		// Mega-1 leaser deferred to follow-up commit (see
-		// cmd/schedd/main.go jobs-wiring block). Returning the
-		// sentinel lets dispatchJobsTick classify the run as
-		// failed → retryable; a customer who hits this sees
-		// CodeJobLeaserUnavailable, not a nil-deref panic.
+		// Keep the compatibility path fail-closed if a test or degraded
+		// deployment intentionally omits the production leaser. Returning
+		// the sentinel lets dispatchJobsTick classify the run as failed →
+		// retryable; callers see CodeJobLeaserUnavailable rather than a
+		// nil-deref panic.
 		e.ledger.Release(instanceID)
 		return JobWakeResult{}, ErrJobLeaserNil
 	}
