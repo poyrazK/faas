@@ -3403,28 +3403,63 @@ type DeadLetterEvent struct {
 // pkg/dispatch import, which would otherwise invert the layer cake
 // (pkg/state is below pkg/sched which is below pkg/dispatch).
 func (inv Invocation) RetryPolicy() dispatch.RetryPolicy {
-	if len(inv.RetryPolicyJSON) == 0 {
-		return dispatch.RetryPolicy{}
-	}
-	var p dispatch.RetryPolicy
-	if err := json.Unmarshal(inv.RetryPolicyJSON, &p); err != nil {
-		return dispatch.RetryPolicy{}
-	}
-	return p
+	return decodeRetryPolicy(inv.RetryPolicyJSON)
 }
 
 // RetryPolicy unmarshals the app-level retry default. Malformed or empty
 // values intentionally resolve to the zero policy so callers can fall back
 // to the producer/plan default without making a bad app row fatal.
 func (app App) RetryPolicy() dispatch.RetryPolicy {
-	if len(app.RetryPolicyJSON) == 0 {
+	return decodeRetryPolicy(app.RetryPolicyJSON)
+}
+
+// decodeRetryPolicy accepts the current snake_case wire shape and the
+// historical Go-field-name shape used by rows written before the durable
+// policy contract was formalized. Keeping the compatibility decode here
+// lets old invocation rows continue to honor their retry budget while all
+// new writes use dispatch.RetryPolicy's tagged representation.
+func decodeRetryPolicy(raw []byte) dispatch.RetryPolicy {
+	if len(raw) == 0 {
 		return dispatch.RetryPolicy{}
 	}
-	var p dispatch.RetryPolicy
-	if err := json.Unmarshal(app.RetryPolicyJSON, &p); err != nil {
+	type wire struct {
+		MaxAttempts   *int     `json:"max_attempts"`
+		BaseSeconds   *float64 `json:"base_seconds"`
+		MaxSeconds    *float64 `json:"max_seconds"`
+		JitterSeconds *float64 `json:"jitter_seconds"`
+		LegacyMax     *int     `json:"MaxAttempts"`
+		LegacyBase    *float64 `json:"BaseSeconds"`
+		LegacyCap     *float64 `json:"MaxSeconds"`
+		LegacyJitter  *float64 `json:"JitterSeconds"`
+	}
+	var w wire
+	if err := json.Unmarshal(raw, &w); err != nil {
 		return dispatch.RetryPolicy{}
 	}
-	return p
+	chooseInt := func(current, legacy *int) int {
+		if current != nil {
+			return *current
+		}
+		if legacy != nil {
+			return *legacy
+		}
+		return 0
+	}
+	chooseFloat := func(current, legacy *float64) float64 {
+		if current != nil {
+			return *current
+		}
+		if legacy != nil {
+			return *legacy
+		}
+		return 0
+	}
+	return dispatch.RetryPolicy{
+		MaxAttempts:   chooseInt(w.MaxAttempts, w.LegacyMax),
+		BaseSeconds:   chooseFloat(w.BaseSeconds, w.LegacyBase),
+		MaxSeconds:    chooseFloat(w.MaxSeconds, w.LegacyCap),
+		JitterSeconds: chooseFloat(w.JitterSeconds, w.LegacyJitter),
+	}
 }
 
 // Deadline returns the effective dispatch.DeadlinePolicy for this
