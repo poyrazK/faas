@@ -362,6 +362,18 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SYFT_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_TAIL_PIPE_PATH` | guest | `guest` |  |  | `` |  |
 | `FAAS_TAIL_WAIT_SEC` | guest | `guest` |  |  | `` |  |
+| `FAAS_TCPD_BIND_HOST` | gatewayd-public | `default` |  |  | `` | raw TCP ingress bind host; used only when FAAS_TCPD_ENABLED is true |
+| `FAAS_TCPD_ENABLED` | gatewayd-public | `default` |  |  | `` | opt-in raw TCP ingress runtime; disabled until firewall/systemd exposure is deployed |
+| `FAAS_TCPD_MAX_BYTES` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_MAX_CONNECTIONS` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_REFRESH_INTERVAL` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_SCHEDD_TARGET` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_SCHEDD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_SCHEDD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_SCHEDD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TENANT_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_TENANT_SURFACES_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_TEST_BUILDER_BASE_PATH` | shared | `dev-only` |  |  | `` | must never be set on a production host |

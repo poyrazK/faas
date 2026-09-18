@@ -191,6 +191,33 @@ func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]T
 	return listeners, nil
 }
 
+// ListEnabledTCPListeners returns the listener identities that the raw TCP
+// edge should currently bind. It is intentionally separate from
+// TCPListenerStore so existing narrow store adapters do not need to grow a
+// fleet-wide listing method just to adopt tcpd.
+func (s *PgStore) ListEnabledTCPListeners(ctx context.Context) ([]TCPListener, error) {
+	rows, err := s.pool.Query(ctx, `
+		select `+tcpListenerColumns+` from app_tcp_listeners
+		 where enabled order by public_port asc
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list enabled TCP listeners: %w", err)
+	}
+	defer rows.Close()
+	listeners := make([]TCPListener, 0)
+	for rows.Next() {
+		listener, err := scanTCPListener(rows)
+		if err != nil {
+			return nil, fmt.Errorf("state: scan enabled TCP listener: %w", err)
+		}
+		listeners = append(listeners, listener)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate enabled TCP listeners: %w", err)
+	}
+	return listeners, nil
+}
+
 func (s *PgStore) SetTCPListenerEnabled(ctx context.Context, id string, enabled bool) (TCPListener, error) {
 	row := s.pool.QueryRow(ctx, `
 		update app_tcp_listeners set enabled = $2, updated_at = now()

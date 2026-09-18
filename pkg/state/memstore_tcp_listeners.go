@@ -94,6 +94,23 @@ func (m *MemStore) ListTCPListenersForApp(_ context.Context, appID string) ([]TC
 	return listeners, nil
 }
 
+// ListEnabledTCPListeners implements the fleet-wide source used by tcpd's
+// listener supervisor.
+func (m *MemStore) ListEnabledTCPListeners(_ context.Context) ([]TCPListener, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	listeners := make([]TCPListener, 0)
+	for _, listener := range m.tcpListeners {
+		if listener.Enabled {
+			listeners = append(listeners, listener)
+		}
+	}
+	sort.Slice(listeners, func(i, j int) bool {
+		return listeners[i].PublicPort < listeners[j].PublicPort
+	})
+	return listeners, nil
+}
+
 func (m *MemStore) SetTCPListenerEnabled(_ context.Context, id string, enabled bool) (TCPListener, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
