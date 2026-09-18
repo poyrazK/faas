@@ -196,6 +196,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_EXECUTION_", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1"},
 	{Name: "FAAS_EXECUTION_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes"},
 	{Name: "FAAS_EXECUTION_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired"},
+	{Name: "FAAS_EXTENSION_SOCKET", Owners: []string{"guest"}, Source: EnvSourceGuest, Default: "/run/guest/extension.sock", Note: "optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment"},
 	{Name: "FAAS_FLEET_AGE_IDENTITY_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_FLEET_AGE_RECIPIENT_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
