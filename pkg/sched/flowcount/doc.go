@@ -8,6 +8,11 @@
 // runReaper to fill InstanceInfo.OpenConns. The G7 rule says an instance with
 // at least one open flow is considered active regardless of last_request_at
 // staleness (otherwise a parked WebSocket would be reaped mid-frame).
+// Reader also implements the optional Snapshotter interface. Snapshot returns
+// a bounded per-instance aggregate of original-direction protocol, remote
+// endpoint, port, state, and direction. This is a safe first telemetry slice;
+// packet bytes, latency, and lifecycle events remain the responsibility of a
+// future eBPF-backed implementation.
 //
 // Failure semantics: fail open. Any exec / parse / context error returns
 // (0, err) to the reaper, which logs and falls back to the LastRequest-only
@@ -22,5 +27,6 @@
 //     tick for ≤100 instances. The local Runner interface is the swap seam
 //     if profiling later shows the cost — replace the body with a
 //     libnetfilter_conntrack-backed implementation, the FlowCounter contract
-//     stays unchanged.
+//     stays unchanged. Snapshot consumers should treat summaries as
+//     best-effort and bounded by DefaultMaxSummaries per instance.
 package flowcount

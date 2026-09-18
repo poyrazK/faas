@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +29,34 @@ const DefaultTTL = 10 * time.Second
 // conntrack-tools package. Override via the WithBinPath option.
 const DefaultBinPath = "/usr/sbin/conntrack"
 
+// DefaultMaxSummaries bounds the number of endpoint summaries retained for
+// each instance. The conntrack table itself may be large and untrusted input
+// must not turn a telemetry snapshot into an unbounded allocation.
+const DefaultMaxSummaries = 32
+
+// FlowSummary is a bounded aggregate of conntrack entries observed for one
+// instance. Count is the number of original-direction entries represented by
+// the summary; reply-direction tuples are deliberately not counted again.
+//
+// This is an endpoint-level snapshot, not packet accounting. It intentionally
+// leaves byte counts and latency to a later eBPF-backed adapter.
+type FlowSummary struct {
+	InstanceID string
+	Protocol   string
+	RemoteIP   string
+	RemotePort uint16
+	State      string
+	Direction  string
+	Count      int64
+}
+
+// Snapshotter is the optional flow-detail surface alongside FlowCounter.
+// Implementations return a defensive copy so callers can enrich telemetry
+// without coupling it to the reader's cache.
+type Snapshotter interface {
+	Snapshot(context.Context, string) ([]FlowSummary, error)
+}
+
 // Option configures a Reader at construction time.
 type Option func(*Reader)
 
@@ -38,6 +70,16 @@ func WithBinPath(p string) Option {
 // the refresh path without sleeping.
 func WithTTL(d time.Duration) Option {
 	return func(r *Reader) { r.ttl = d }
+}
+
+// WithMaxSummaries limits the number of distinct endpoint summaries retained
+// per instance. Values less than one restore DefaultMaxSummaries.
+func WithMaxSummaries(max int) Option {
+	return func(r *Reader) {
+		if max > 0 {
+			r.maxSummaries = max
+		}
+	}
 }
 
 // Reader is the production pkg/sched.FlowCounter. It shells out to conntrack
@@ -54,16 +96,18 @@ func WithTTL(d time.Duration) Option {
 // the cost of re-parsing the cached `out` would just trade complexity for
 // nothing at our scale.
 type Reader struct {
-	runner  Runner
-	binPath string
-	ttl     time.Duration
+	runner       Runner
+	binPath      string
+	ttl          time.Duration
+	maxSummaries int
 
 	mu        sync.Mutex
-	hostIndex map[string]string // IP -> instance.ID, rebuilt on each Warm
-	counts    map[string]int64  // instance.ID -> open-flow count
-	cacheAt   time.Time         // when the cache was last successfully filled
-	cachedOut []byte            // last successful conntrack output, reused on cache-fresh Warm
-	failed    bool              // latch: true after a failed Warm, cleared on next successful Warm
+	hostIndex map[string]string        // IP -> instance.ID, rebuilt on each Warm
+	counts    map[string]int64         // instance.ID -> open-flow count
+	summaries map[string][]FlowSummary // instance.ID -> bounded endpoint summaries
+	cacheAt   time.Time                // when the cache was last successfully filled
+	cachedOut []byte                   // last successful conntrack output, reused on cache-fresh Warm
+	failed    bool                     // latch: true after a failed Warm, cleared on next successful Warm
 }
 
 // NewReader constructs a Reader with sensible defaults (DefaultBinPath,
@@ -73,9 +117,10 @@ func NewReader(runner Runner, opts ...Option) *Reader {
 		panic("flowcount: nil runner")
 	}
 	r := &Reader{
-		runner:  runner,
-		binPath: DefaultBinPath,
-		ttl:     DefaultTTL,
+		runner:       runner,
+		binPath:      DefaultBinPath,
+		ttl:          DefaultTTL,
+		maxSummaries: DefaultMaxSummaries,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -107,6 +152,7 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 		r.mu.Lock()
 		r.hostIndex = map[string]string{}
 		r.counts = map[string]int64{}
+		r.summaries = map[string][]FlowSummary{}
 		r.cacheAt = time.Time{}
 		r.cachedOut = nil
 		r.failed = false
@@ -142,10 +188,12 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 
 	hostIndex := buildHostIndex(instances)
 	counts := parseConntrack(out, hostIndex)
+	summaries := parseFlowSummaries(out, hostIndex, r.maxSummaries)
 
 	r.mu.Lock()
 	r.hostIndex = hostIndex
 	r.counts = counts
+	r.summaries = summaries
 	r.cacheAt = time.Now()
 	r.cachedOut = out
 	r.failed = false
@@ -168,6 +216,18 @@ func (r *Reader) Open(_ context.Context, instanceID string) (int64, error) {
 		return 0, nil
 	}
 	return r.counts[instanceID], nil
+}
+
+// Snapshot returns the bounded endpoint summary for instanceID. It shares
+// Warm's fail-open latch with Open so a caller never mistakes stale detail for
+// a fresh snapshot after a conntrack failure.
+func (r *Reader) Snapshot(_ context.Context, instanceID string) ([]FlowSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failed {
+		return nil, fmt.Errorf("flowcount: cache poisoned by prior Warm failure (fail-open)")
+	}
+	return append([]FlowSummary(nil), r.summaries[instanceID]...), nil
 }
 
 // buildHostIndex maps the per-instance host-side IP (10.100.x.y, see
@@ -235,6 +295,144 @@ func parseConntrack(data []byte, hostIndex map[string]string) map[string]int64 {
 		}
 	}
 	return counts
+}
+
+type flowSummaryKey struct {
+	protocol   string
+	remoteIP   string
+	remotePort uint16
+	state      string
+	direction  string
+}
+
+// parseFlowSummaries keeps at most maxPerInstance distinct keys per instance.
+// It only inspects the original-direction tuple before conntrack's reply
+// marker, so a bidirectional flow produces one outbound or inbound summary,
+// not two mirrored entries.
+func parseFlowSummaries(data []byte, hostIndex map[string]string, maxPerInstance int) map[string][]FlowSummary {
+	result := make(map[string][]FlowSummary, len(hostIndex))
+	if len(hostIndex) == 0 || len(data) == 0 || maxPerInstance <= 0 {
+		return result
+	}
+
+	buckets := make(map[string]map[flowSummaryKey]int64, len(hostIndex))
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		flow, ok := parseOriginalTuple(line)
+		if !ok {
+			continue
+		}
+
+		candidates := []struct {
+			localIP    string
+			remoteIP   string
+			remotePort uint16
+			direction  string
+		}{
+			{localIP: flow.src, remoteIP: flow.dst, remotePort: flow.dport, direction: "outbound"},
+			{localIP: flow.dst, remoteIP: flow.src, remotePort: flow.sport, direction: "inbound"},
+		}
+		for _, candidate := range candidates {
+			instanceID, known := hostIndex[candidate.localIP]
+			if !known {
+				continue
+			}
+			key := flowSummaryKey{
+				protocol:   flow.protocol,
+				remoteIP:   candidate.remoteIP,
+				remotePort: candidate.remotePort,
+				state:      flow.state,
+				direction:  candidate.direction,
+			}
+			bucket := buckets[instanceID]
+			if bucket == nil {
+				bucket = make(map[flowSummaryKey]int64, maxPerInstance)
+				buckets[instanceID] = bucket
+			}
+			if _, exists := bucket[key]; !exists && len(bucket) >= maxPerInstance {
+				continue
+			}
+			bucket[key]++
+		}
+	}
+
+	for instanceID, bucket := range buckets {
+		rows := make([]FlowSummary, 0, len(bucket))
+		for key, count := range bucket {
+			rows = append(rows, FlowSummary{
+				InstanceID: instanceID,
+				Protocol:   key.protocol,
+				RemoteIP:   key.remoteIP,
+				RemotePort: key.remotePort,
+				State:      key.state,
+				Direction:  key.direction,
+				Count:      count,
+			})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].RemoteIP != rows[j].RemoteIP {
+				return rows[i].RemoteIP < rows[j].RemoteIP
+			}
+			if rows[i].RemotePort != rows[j].RemotePort {
+				return rows[i].RemotePort < rows[j].RemotePort
+			}
+			if rows[i].Direction != rows[j].Direction {
+				return rows[i].Direction < rows[j].Direction
+			}
+			if rows[i].Protocol != rows[j].Protocol {
+				return rows[i].Protocol < rows[j].Protocol
+			}
+			return rows[i].State < rows[j].State
+		})
+		result[instanceID] = rows
+	}
+	return result
+}
+
+type originalTuple struct {
+	protocol string
+	state    string
+	src      string
+	dst      string
+	sport    uint16
+	dport    uint16
+}
+
+func parseOriginalTuple(line []byte) (originalTuple, bool) {
+	var tuple originalTuple
+	if marker := bytes.IndexByte(line, '['); marker >= 0 {
+		line = line[:marker]
+	}
+	fields := strings.Fields(string(line))
+	if len(fields) < 4 {
+		return tuple, false
+	}
+	tuple.protocol = fields[0]
+	tuple.state = fields[3]
+	var haveSrc, haveDst, haveSport, haveDport bool
+	for _, field := range fields[4:] {
+		switch {
+		case strings.HasPrefix(field, "src=") && !haveSrc:
+			tuple.src, haveSrc = strings.TrimPrefix(field, "src="), true
+		case strings.HasPrefix(field, "dst=") && !haveDst:
+			tuple.dst, haveDst = strings.TrimPrefix(field, "dst="), true
+		case strings.HasPrefix(field, "sport=") && !haveSport:
+			tuple.sport, haveSport = parsePort(strings.TrimPrefix(field, "sport="))
+		case strings.HasPrefix(field, "dport=") && !haveDport:
+			tuple.dport, haveDport = parsePort(strings.TrimPrefix(field, "dport="))
+		}
+	}
+	if !haveSrc || !haveDst || !haveSport || !haveDport || net.ParseIP(tuple.src) == nil || net.ParseIP(tuple.dst) == nil {
+		return originalTuple{}, false
+	}
+	return tuple, true
+}
+
+func parsePort(value string) (uint16, bool) {
+	parsed, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
+		return 0, false
+	}
+	return uint16(parsed), true
 }
 
 // extractAllAddrs returns every value following the marker (e.g. "src=") on

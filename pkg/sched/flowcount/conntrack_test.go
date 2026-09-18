@@ -109,6 +109,58 @@ func TestParseConntrack_TolerantOfUnknownLines(t *testing.T) {
 	}
 }
 
+// adr: 127 — bounded flow summaries provide the next stable seam for async
+// endpoint-to-infrastructure observability without changing the G7 counter.
+func TestParseFlowSummaries_AttributesOriginalDirection(t *testing.T) {
+	idx := map[string]string{
+		"10.100.0.5": "inst-A",
+		"10.100.0.7": "inst-B",
+		"10.100.0.6": "inst-C",
+	}
+	data := []byte(cannedConntrack + "tcp 6 431999 ESTABLISHED src=10.100.0.5 dst=93.184.216.34 sport=42303 dport=443 [ASSURED] src=93.184.216.34 dst=10.100.0.5 sport=443 dport=42303\n")
+	got := parseFlowSummaries(data, idx, DefaultMaxSummaries)
+
+	want := map[string][]FlowSummary{
+		"inst-A": {
+			{InstanceID: "inst-A", Protocol: "tcp", RemoteIP: "10.100.0.6", RemotePort: 7000, State: "ESTABLISHED", Direction: "outbound", Count: 1},
+			{InstanceID: "inst-A", Protocol: "tcp", RemoteIP: "93.184.216.34", RemotePort: 80, State: "TIME_WAIT", Direction: "outbound", Count: 1},
+			{InstanceID: "inst-A", Protocol: "tcp", RemoteIP: "93.184.216.34", RemotePort: 443, State: "ESTABLISHED", Direction: "outbound", Count: 2},
+		},
+		"inst-B": {
+			{InstanceID: "inst-B", Protocol: "tcp", RemoteIP: "8.8.8.8", RemotePort: 53, State: "ESTABLISHED", Direction: "outbound", Count: 1},
+		},
+		"inst-C": {
+			{InstanceID: "inst-C", Protocol: "tcp", RemoteIP: "10.100.0.5", RemotePort: 6000, State: "ESTABLISHED", Direction: "inbound", Count: 1},
+		},
+	}
+	for instanceID, wantRows := range want {
+		if gotRows := got[instanceID]; !equalFlowSummarySlice(gotRows, wantRows) {
+			t.Errorf("summaries[%q] = %#v, want %#v", instanceID, gotRows, wantRows)
+		}
+	}
+}
+
+func TestParseFlowSummaries_BoundsDistinctEndpoints(t *testing.T) {
+	idx := map[string]string{"10.100.0.5": "inst-A"}
+	data := []byte(cannedConntrack)
+	got := parseFlowSummaries(data, idx, 2)
+	if len(got["inst-A"]) != 2 {
+		t.Fatalf("summaries[inst-A] length = %d, want 2: %#v", len(got["inst-A"]), got["inst-A"])
+	}
+}
+
+func equalFlowSummarySlice(a, b []FlowSummary) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestExtractAllAddrs(t *testing.T) {
 	tests := []struct {
 		line, marker string
@@ -164,6 +216,32 @@ func TestReader_OpenReturnsCountAfterWarm(t *testing.T) {
 	}
 	if calls := runner.calls.Load(); calls != 1 {
 		t.Errorf("runner calls = %d, want 1", calls)
+	}
+}
+
+// adr: 127 — Snapshot is the optional adapter surface that will feed richer
+// per-instance observability without coupling callers to Reader's cache.
+func TestReader_SnapshotReturnsBoundedDefensiveCopy(t *testing.T) {
+	runner := &fakeRunner{out: []byte(cannedConntrack)}
+	r := NewReader(runner, WithTTL(time.Hour), WithMaxSummaries(2))
+	if err := r.Warm(context.Background(), makeInstances([2]string{"10.100.0.5", "inst-A"})); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+
+	first, err := r.Snapshot(context.Background(), "inst-A")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("Snapshot length = %d, want 2", len(first))
+	}
+	first[0].RemoteIP = "mutated"
+	second, err := r.Snapshot(context.Background(), "inst-A")
+	if err != nil {
+		t.Fatalf("Snapshot after mutation: %v", err)
+	}
+	if second[0].RemoteIP == "mutated" {
+		t.Fatal("Snapshot returned a cache-backed slice")
 	}
 }
 
