@@ -455,7 +455,10 @@ func (p *GCS) PutObjectTags(ctx context.Context, bucket, key string, tags map[st
 		return err
 	}
 	if encoded == "" {
-		delete(metadata, ReservedObjectTagsMetadataKey)
+		// The GCS JSON API merges metadata maps; omitting an existing key does
+		// not clear it. An explicit empty value is normalized to no logical tags
+		// by gcsTagsFromMetadata while preserving the other metadata entries.
+		metadata[ReservedObjectTagsMetadataKey] = ""
 	} else {
 		metadata[ReservedObjectTagsMetadataKey] = encoded
 	}

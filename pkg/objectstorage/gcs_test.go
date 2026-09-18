@@ -211,8 +211,9 @@ func TestGCSTagsUseReservedMetadata(t *testing.T) {
 	if err := tagger.DeleteObjectTags(context.Background(), "gregale-test", "file.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := store.object.Metadata[ReservedObjectTagsMetadataKey]; exists {
-		t.Fatalf("reserved metadata not deleted: %+v", store.object.Metadata)
+	tags, err = tagger.GetObjectTags(context.Background(), "gregale-test", "file.txt")
+	if err != nil || len(tags) != 0 {
+		t.Fatalf("tags after delete = %v err=%v", tags, err)
 	}
 }
 

@@ -87,7 +87,10 @@ func TestLiveProviderQualification(t *testing.T) {
 	singleMetadata := SignRequest{
 		Method: http.MethodPut, Key: singleKey, SizeBytes: &singleSize, ContentType: "text/plain",
 		CacheControl: "max-age=60", ContentDisposition: `attachment; filename="qualification.txt"`,
-		ContentEncoding: "gzip", ContentLanguage: "en-US",
+		// The fixture body is intentionally plain text. "identity" keeps the
+		// metadata assertion provider-neutral; declaring gzip would require a
+		// compressed payload and causes GCS to transparently gunzip on GET.
+		ContentEncoding: "identity", ContentLanguage: "en-US",
 		Metadata:  map[string]string{"owner": "qualification"},
 		Tags:      map[string]string{"env": "test", "purpose": "qualification"},
 		ExpiresIn: 300,
@@ -179,7 +182,7 @@ func TestLiveProviderQualification(t *testing.T) {
 	replacement := SignRequest{
 		Method: http.MethodPut, Key: replacedCopyKey, SizeBytes: &singleSize, ContentType: "application/json",
 		CacheControl: "no-store", ContentDisposition: `inline; filename="replacement.json"`,
-		ContentEncoding: "gzip", ContentLanguage: "fr-FR",
+		ContentEncoding: "identity", ContentLanguage: "fr-FR",
 		Metadata: map[string]string{"owner": "replacement"},
 		Tags:     map[string]string{"env": "prod", "purpose": "replacement"},
 	}
@@ -389,7 +392,13 @@ func assertObjectMetadata(t *testing.T, headers http.Header, expected SignReques
 		"Content-Encoding":    expected.ContentEncoding,
 		"Content-Language":    expected.ContentLanguage,
 	} {
-		if got := headers.Get(name); got != want {
+		got := headers.Get(name)
+		// GCS normalizes the HTTP identity content coding away on HEAD while
+		// S3-compatible providers may echo it. Both represent the same bytes.
+		if name == "Content-Encoding" && want == "identity" && got == "" {
+			continue
+		}
+		if got != want {
 			t.Fatalf("HEAD %s = %q, want %q", name, got, want)
 		}
 	}
