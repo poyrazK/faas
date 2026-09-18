@@ -110,7 +110,7 @@ const VsockResumeBindCID = 0xffffffff
 // Idempotency: acceptResumeConns retries interrupted and aborted accepts. A
 // terminal error closes the listener and is logged. The boot() caller does not
 // wait on this goroutine.
-func listenResumeHook(log *slog.Logger) error {
+func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -124,20 +124,20 @@ func listenResumeHook(log *slog.Logger) error {
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	go acceptResumeConns(fd, log)
+	go acceptResumeConns(fd, log, onResume...)
 	return nil
 }
 
 // acceptResumeConns accepts connections on fd and dispatches each to a
 // goroutine running handleResumeConn. Sequential accepts; each handle runs in
 // its own goroutine so a slow hook does not back up the listener.
-func acceptResumeConns(fd int, log *slog.Logger) {
-	acceptResumeConnsWith(fd, log, unix.Accept4)
+func acceptResumeConns(fd int, log *slog.Logger, onResume ...func()) {
+	acceptResumeConnsWith(fd, log, unix.Accept4, onResume...)
 }
 
 // Own the listening descriptor for the lifetime of the accept loop. A terminal
 // error must not leave a listening socket with no goroutine to service it.
-func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error)) {
+func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume ...func()) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -149,7 +149,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")
-		go handleResumeConn(f, log)
+		go handleResumeConn(f, log, onResume...)
 	}
 }
 
@@ -160,7 +160,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 // length + JSON body {"hostTimeUnixNano": N} + 1-byte ack. The length prefix
 // keeps the guest off EOF-watching — some AF_VSOCK proxies don't propagate
 // CloseWrite promptly through to the guest side.
-func handleResumeConn(f *os.File, log *slog.Logger) {
+func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -252,5 +252,11 @@ func handleResumeConn(f *os.File, log *slog.Logger) {
 	_, _ = f.Write([]byte{VsockResumeAckOK})
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
+	}
+	for _, callback := range onResume {
+		if callback != nil {
+			callback()
+			break
+		}
 	}
 }

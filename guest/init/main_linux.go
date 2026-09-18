@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/extension"
 	"golang.org/x/sys/unix"
 )
 
@@ -101,6 +102,15 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	var extensionHooks *extensionLifecycle
+	if mode == modeApp {
+		// Extension hooks are optional observability/control callbacks. Keep
+		// them outside the workload supervisor so a missing or slow extension
+		// cannot change the app's boot or shutdown result.
+		extensionHooks = newExtensionLifecycle(slog.Default())
+		extensionHooks.emit(extension.PhaseInit)
+		defer extensionHooks.emit(extension.PhaseShutdown)
+	}
 	// Execution guests are disposable one-shot runtimes. They do not start
 	// the app supervisor, health probes, telemetry, or a restart loop: the
 	// execution listener accepts one protocol stream, returns one result, and
@@ -176,7 +186,11 @@ func boot() error {
 	// the guest kernel) on cold boot — fresh kernel entropy doesn't need a
 	// resume hook. On restore, vmmd's TriggerResumeHook will then time out
 	// dial-resume and fail closed (per spec §11 V6).
-	if err := listenResumeHook(slog.Default()); err != nil {
+	if extensionHooks != nil {
+		if err := listenResumeHook(slog.Default(), func() { extensionHooks.emit(extension.PhasePostRestore) }); err != nil {
+			slog.Default().Warn("vsock resume listener unavailable", "err", err)
+		}
+	} else if err := listenResumeHook(slog.Default()); err != nil {
 		slog.Default().Warn("vsock resume listener unavailable", "err", err)
 	}
 
