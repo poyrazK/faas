@@ -1,4 +1,5 @@
 // vmm_signal_kill_test.go — portable (no KVM) tests for the M-2 /
+// adr: 138
 // ADR-138 graceful stop sequence. The tests exercise the inner
 // signal-grace-SIGKILL sequence (signalAndKillRace, exported
 // as a package-level helper in vmm.go) against controlled
