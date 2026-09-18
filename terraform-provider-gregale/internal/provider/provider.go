@@ -105,6 +105,7 @@ func (p *gregaleProvider) Resources(_ context.Context) []func() resource.Resourc
 func (p *gregaleProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		newAppDataSource,
+		newDeploymentDataSource,
 		newProjectEnvironmentDataSource,
 	}
 }

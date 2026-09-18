@@ -14,6 +14,7 @@ The initial surface is intentionally small:
 - `gregale_secret` manages scoped app secrets without storing plaintext in state.
 - `gregale_deployment` deploys a GitHub source ref and exposes lifecycle and preview metadata.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
+- `data.gregale_deployment` reads an existing deployment for status and preview composition.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -72,6 +73,23 @@ resource "gregale_domain" "api" {
 
 output "app_url" {
   value = data.gregale_app.api.url
+}
+```
+
+## Existing deployment lookup
+
+Use the deployment data source when a deployment was created by the CLI,
+dashboard, CI, or another Terraform stack. It is read-only and exposes current
+status, resolved commit metadata, structured failure details, and the preview
+URL.
+
+```hcl
+data "gregale_deployment" "release" {
+  deployment_id = var.deployment_id
+}
+
+output "preview_url" {
+  value = data.gregale_deployment.release.preview_url
 }
 ```
 
