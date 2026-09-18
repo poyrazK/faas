@@ -4413,7 +4413,8 @@ type QueueDeadLetterResponse struct {
 }
 
 // DeadLetterEvent is the unified app-level DLQ contract. Payload and headers
-// are JSON values preserved from the source queue or broker record.
+// are JSON values preserved from the source queue, broker record, or webhook
+// delivery.
 type DeadLetterEvent struct {
 	ID            string          `json:"id"`
 	Source        string          `json:"source"`

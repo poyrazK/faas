@@ -574,6 +574,36 @@ type JobsQueuesData struct {
 	ErrorMessage string
 }
 
+// FailedEventsData backs the account-level Failed Events inbox. The source
+// ledger is currently app-scoped, so the handler aggregates bounded pages from
+// each app and sorts them newest-first before rendering.
+type FailedEventsData struct {
+	Events       []FailedEventPageItem
+	Apps         []AppListItem
+	SelectedApp  string
+	ActionCSRF   string
+	Action       string
+	ErrorMessage string
+}
+
+// FailedEventPageItem is deliberately a display projection. Raw payload and
+// error detail are bounded by the handler before reaching the template.
+type FailedEventPageItem struct {
+	ID          string
+	AppSlug     string
+	Source      string
+	Origin      string
+	ErrorKind   string
+	Payload     string
+	Headers     string
+	ErrorDetail string
+	RetryCount  int
+	FirstFailed string
+	LastFailed  string
+	ReplayedAt  string
+	Status      string
+}
+
 // AppWebhooksData is the customer-facing projection for the per-app
 // outbound-webhook page (issue #1397 / G8). Secrets are never projected;
 // the page only carries the masked marker returned by the API contract.
