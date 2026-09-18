@@ -167,13 +167,15 @@ type ManagedRealtimeConnectionListResponse struct {
 }
 
 // ManagedRealtimeDrainRequest selects a bounded set of live connections to
-// close. A non-dry-run request must acknowledge a partial fleet snapshot with
+// close, or every match up to the server safety cap when All is true. A
+// non-dry-run request must acknowledge a partial fleet snapshot with
 // AllowPartial before the control plane will mutate the known subset.
 type ManagedRealtimeDrainRequest struct {
 	Channel       string   `json:"channel,omitempty"`
 	Principal     string   `json:"principal,omitempty"`
 	ConnectionIDs []string `json:"connection_ids,omitempty"`
 	Limit         int      `json:"limit,omitempty"`
+	All           bool     `json:"all,omitempty"`
 	Reason        string   `json:"reason"`
 	DryRun        bool     `json:"dry_run,omitempty"`
 	AllowPartial  bool     `json:"allow_partial,omitempty"`
@@ -186,9 +188,10 @@ type ManagedRealtimeDrainResult struct {
 	Status string `json:"status"`
 }
 
-// ManagedRealtimeDrainResponse reports a bounded, auditable connection drain.
-// Matched is the number selected after the limit was applied; Truncated means
-// more eligible connections existed in the point-in-time inventory.
+// ManagedRealtimeDrainResponse reports a bounded or all-matching, auditable
+// connection drain. Matched is the number selected after the limit or all-mode
+// safety cap was applied; Truncated means more eligible connections existed in
+// the point-in-time inventory.
 type ManagedRealtimeDrainResponse struct {
 	OperationID      string                       `json:"operation_id"`
 	Status           string                       `json:"status"`
@@ -200,6 +203,7 @@ type ManagedRealtimeDrainResponse struct {
 	Gone             int                          `json:"gone"`
 	Failed           int                          `json:"failed"`
 	Limit            int                          `json:"limit"`
+	All              bool                         `json:"all"`
 	Truncated        bool                         `json:"truncated"`
 	DryRun           bool                         `json:"dry_run"`
 	Partial          bool                         `json:"partial"`

@@ -272,13 +272,16 @@ export class RealtimeService {
     });
   }
   /**
-   * Close a bounded, filtered set of live managed realtime connections.
+   * Close a bounded or explicitly all-matching set of live managed realtime connections.
    * Selects connections from a point-in-time fleet inventory by channel,
    * principal, or explicit connection IDs. `dry_run` returns the selected
    * connections without closing them. A non-dry-run request fails with
    * `409 conflict` when the inventory is partial unless `allow_partial`
    * is true; this prevents an unavailable node from making a drain look
-   * complete.
+   * complete. Set `all` to select every matching connection, up to the
+   * server safety cap of 10,000; `all` cannot be combined with
+   * `connection_ids`; any supplied `limit` is ignored in all mode, and
+   * the request returns `409 conflict` when the cap would be exceeded.
    *
    * @returns ManagedRealtimeDrainResponse The durable drain operation was accepted for background execution.
    * @throws ApiError

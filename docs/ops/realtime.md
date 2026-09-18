@@ -51,6 +51,19 @@ gregale realtime update my-app ENDPOINT_ID --max-connections 500 --enable
 gregale realtime delete my-app ENDPOINT_ID --yes
 ```
 
+To safely drain every matching connection, use explicit all mode. It is capped
+at 10,000 connections, cannot be combined with `--limit` or `--connection-id`,
+and refuses to start when the inventory exceeds the cap. The existing partial
+fleet guard still applies:
+
+```sh
+gregale realtime drain my-app ENDPOINT_ID \
+  --principal user-123 \
+  --all \
+  --reason "user session migration" \
+  --dry-run
+```
+
 Use `--auth-token-stdin` when configuring `static_bearer`. For an update,
 `--auth-mode none` removes the existing client credential and OIDC policy;
 `--clear-allowed-origins` removes the browser-origin restriction. Repeated

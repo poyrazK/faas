@@ -40,6 +40,31 @@ func TestCmdRealtimeDrainSendsBoundedSelection(t *testing.T) {
 	}
 }
 
+func TestCmdRealtimeDrainSendsAllSelection(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"operation_id":"drain-all","status":"running","results":[],"matched":2,"closed":0,"gone":0,"failed":0,"limit":10000,"all":true,"truncated":false,"dry_run":false,"partial":false,"nodes_queried":1,"nodes_unavailable":0}`, http.StatusAccepted)
+	oldOut, oldErr := osStdout, osStderr
+	var out, stderr bytes.Buffer
+	osStdout, osStderr = &out, &stderr
+	t.Cleanup(func() {
+		osStdout, osStderr = oldOut, oldErr
+	})
+
+	if code := cmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "maintenance", "--principal", "user-a", "--all"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	var request api.ManagedRealtimeDrainRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatal(err)
+	}
+	if !request.All || request.Limit != 0 || request.Reason != "maintenance" || request.Principal != "user-a" {
+		t.Fatalf("request = %+v", request)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Realtime drain accepted; operation drain-all is running.")) || stderr.Len() != 0 {
+		t.Fatalf("output = %q stderr = %q", out.String(), stderr.String())
+	}
+}
+
 func TestCmdRealtimeDrainStatusWaitsForTerminalOperation(t *testing.T) {
 	resetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())

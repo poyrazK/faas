@@ -13,7 +13,7 @@ T = TypeVar("T", bound="ManagedRealtimeDrainRequest")
 
 @_attrs_define
 class ManagedRealtimeDrainRequest:
-    """Bounded and auditable selection for closing live connections."""
+    """Bounded or explicitly all-matching auditable selection for closing live connections."""
 
     reason: str
     """Required reason recorded in the audit event and close request."""
@@ -25,6 +25,9 @@ class ManagedRealtimeDrainRequest:
     """Explicit connection IDs to select in addition to the filters."""
     limit: int | Unset = 100
     """Maximum number of connections to select."""
+    all_: bool | Unset = False
+    """Select every matching connection up to the server safety cap of 10,000; cannot be combined with
+    connection_ids. Any supplied limit is ignored."""
     dry_run: bool | Unset = False
     """Return the selection without closing any connection."""
     allow_partial: bool | Unset = False
@@ -43,6 +46,8 @@ class ManagedRealtimeDrainRequest:
             connection_ids = self.connection_ids
 
         limit = self.limit
+
+        all_ = self.all_
 
         dry_run = self.dry_run
 
@@ -63,6 +68,8 @@ class ManagedRealtimeDrainRequest:
             field_dict["connection_ids"] = connection_ids
         if limit is not UNSET:
             field_dict["limit"] = limit
+        if all_ is not UNSET:
+            field_dict["all"] = all_
         if dry_run is not UNSET:
             field_dict["dry_run"] = dry_run
         if allow_partial is not UNSET:
@@ -83,6 +90,8 @@ class ManagedRealtimeDrainRequest:
 
         limit = d.pop("limit", UNSET)
 
+        all_ = d.pop("all", UNSET)
+
         dry_run = d.pop("dry_run", UNSET)
 
         allow_partial = d.pop("allow_partial", UNSET)
@@ -93,6 +102,7 @@ class ManagedRealtimeDrainRequest:
             principal=principal,
             connection_ids=connection_ids,
             limit=limit,
+            all_=all_,
             dry_run=dry_run,
             allow_partial=allow_partial,
         )

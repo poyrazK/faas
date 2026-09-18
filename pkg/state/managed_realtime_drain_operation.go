@@ -17,8 +17,9 @@ const (
 )
 
 // ManagedRealtimeDrainOperation is the durable control-plane handle for one
-// bounded connection drain. Result contains the complete API response so the
-// operation can be inspected after the live owner has forgotten the sockets.
+// bounded or all-matching connection drain. Result contains the complete API
+// response so the operation can be inspected after the live owner has
+// forgotten the sockets.
 type ManagedRealtimeDrainOperation struct {
 	ID         string
 	AccountID  string
@@ -37,6 +38,7 @@ type ManagedRealtimeDrainOperation struct {
 	// retry only needs to revisit transient owner failures.
 	ConnectionIDs    []string
 	Limit            int
+	All              bool
 	Truncated        bool
 	Partial          bool
 	NodesQueried     int
@@ -64,6 +66,7 @@ type ManagedRealtimeDrainOperationInput struct {
 	Matched          int
 	ConnectionIDs    []string
 	Limit            int
+	All              bool
 	Truncated        bool
 	Partial          bool
 	NodesQueried     int

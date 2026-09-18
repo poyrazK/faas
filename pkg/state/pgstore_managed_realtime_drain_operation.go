@@ -13,7 +13,7 @@ import (
 
 const managedRealtimeDrainOperationColumns = `
 	id, account_id, app_id, endpoint_id, status, reason, dry_run,
-	matched, closed, gone, failed, result, connection_ids, drain_limit,
+	matched, closed, gone, failed, result, connection_ids, drain_limit, select_all,
 	truncated, partial, nodes_queried, nodes_unavailable, attempts,
 	next_attempt_at, claimed_at, claim_token, last_error, created_at, completed_at`
 
@@ -22,11 +22,11 @@ func (s *PgStore) CreateManagedRealtimeDrainOperation(ctx context.Context, input
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO managed_realtime_drain_operations
 			(id, account_id, app_id, endpoint_id, status, reason, dry_run, matched,
-			 connection_ids, drain_limit, truncated, partial, nodes_queried, nodes_unavailable)
-		VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13)
+			 connection_ids, drain_limit, select_all, truncated, partial, nodes_queried, nodes_unavailable)
+		VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14)
 		RETURNING `+managedRealtimeDrainOperationColumns,
 		id, input.AccountID, input.AppID, input.EndpointID, input.Reason, input.DryRun, input.Matched,
-		managedRealtimeDrainConnectionIDsJSON(input.ConnectionIDs), input.Limit, input.Truncated,
+		managedRealtimeDrainConnectionIDsJSON(input.ConnectionIDs), input.Limit, input.All, input.Truncated,
 		input.Partial, input.NodesQueried, input.NodesUnavailable)
 	return scanManagedRealtimeDrainOperation(row)
 }
@@ -146,7 +146,7 @@ func scanManagedRealtimeDrainOperationWithClaim(row managedRealtimeDrainOperatio
 	)
 	err := row.Scan(&op.ID, &op.AccountID, &op.AppID, &op.EndpointID, &status, &op.Reason,
 		&op.DryRun, &op.Matched, &op.Closed, &op.Gone, &op.Failed, &result, &connectionIDs,
-		&op.Limit, &op.Truncated, &op.Partial, &op.NodesQueried, &op.NodesUnavailable,
+		&op.Limit, &op.All, &op.Truncated, &op.Partial, &op.NodesQueried, &op.NodesUnavailable,
 		&op.Attempts, &op.NextAttemptAt, &op.ClaimedAt, &claimTokenValue, &op.LastError, &op.CreatedAt, &op.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ManagedRealtimeDrainOperation{}, "", ErrManagedRealtimeDrainOperationNotFound

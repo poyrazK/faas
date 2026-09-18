@@ -23,7 +23,7 @@ T = TypeVar("T", bound="ManagedRealtimeDrainResponse")
 
 @_attrs_define
 class ManagedRealtimeDrainResponse:
-    """Bounded, auditable result of a realtime connection drain."""
+    """Bounded or all-matching, auditable result of a realtime connection drain."""
 
     operation_id: UUID
     """Durable identifier for this drain operation."""
@@ -32,12 +32,14 @@ class ManagedRealtimeDrainResponse:
     created_at: datetime.datetime
     results: list[ManagedRealtimeDrainResult]
     matched: int
-    """Number selected after applying the limit."""
+    """Number selected after applying the limit or all-mode safety cap."""
     closed: int
     gone: int
     """Selected connections that disappeared before close."""
     failed: int
     limit: int
+    all_: bool
+    """True when the operation explicitly selected all matching connections."""
     truncated: bool
     """True when more eligible connections existed than the limit."""
     dry_run: bool
@@ -70,6 +72,8 @@ class ManagedRealtimeDrainResponse:
 
         limit = self.limit
 
+        all_ = self.all_
+
         truncated = self.truncated
 
         dry_run = self.dry_run
@@ -101,6 +105,7 @@ class ManagedRealtimeDrainResponse:
                 "gone": gone,
                 "failed": failed,
                 "limit": limit,
+                "all": all_,
                 "truncated": truncated,
                 "dry_run": dry_run,
                 "partial": partial,
@@ -141,6 +146,8 @@ class ManagedRealtimeDrainResponse:
 
         limit = d.pop("limit")
 
+        all_ = d.pop("all")
+
         truncated = d.pop("truncated")
 
         dry_run = d.pop("dry_run")
@@ -178,6 +185,7 @@ class ManagedRealtimeDrainResponse:
             gone=gone,
             failed=failed,
             limit=limit,
+            all_=all_,
             truncated=truncated,
             dry_run=dry_run,
             partial=partial,

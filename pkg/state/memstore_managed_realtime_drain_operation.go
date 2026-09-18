@@ -17,7 +17,7 @@ func (m *MemStore) CreateManagedRealtimeDrainOperation(_ context.Context, input 
 		EndpointID: input.EndpointID, Status: ManagedRealtimeDrainOperationRunning,
 		Reason: input.Reason, DryRun: input.DryRun, Matched: input.Matched,
 		ConnectionIDs: append([]string(nil), input.ConnectionIDs...), Limit: input.Limit,
-		Truncated: input.Truncated, Partial: input.Partial, NodesQueried: input.NodesQueried,
+		All: input.All, Truncated: input.Truncated, Partial: input.Partial, NodesQueried: input.NodesQueried,
 		NodesUnavailable: input.NodesUnavailable, NextAttemptAt: now, CreatedAt: now,
 		Result: json.RawMessage(`{}`),
 	}

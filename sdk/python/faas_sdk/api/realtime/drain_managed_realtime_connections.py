@@ -107,21 +107,24 @@ def sync_detailed(
     body: ManagedRealtimeDrainRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedRealtimeDrainResponse | Problem]:
-    """Close a bounded, filtered set of live managed realtime connections.
+    """Close a bounded or explicitly all-matching set of live managed realtime connections.
 
      Selects connections from a point-in-time fleet inventory by channel,
     principal, or explicit connection IDs. `dry_run` returns the selected
     connections without closing them. A non-dry-run request fails with
     `409 conflict` when the inventory is partial unless `allow_partial`
     is true; this prevents an unavailable node from making a drain look
-    complete.
+    complete. Set `all` to select every matching connection, up to the
+    server safety cap of 10,000; `all` cannot be combined with
+    `connection_ids`; any supplied `limit` is ignored in all mode, and
+    the request returns `409 conflict` when the cap would be exceeded.
 
     Args:
         slug (str):
         id (str):
         idempotency_key (str | Unset):
-        body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
-            connections.
+        body (ManagedRealtimeDrainRequest): Bounded or explicitly all-matching auditable selection
+            for closing live connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,21 +156,24 @@ def sync(
     body: ManagedRealtimeDrainRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedRealtimeDrainResponse | Problem | None:
-    """Close a bounded, filtered set of live managed realtime connections.
+    """Close a bounded or explicitly all-matching set of live managed realtime connections.
 
      Selects connections from a point-in-time fleet inventory by channel,
     principal, or explicit connection IDs. `dry_run` returns the selected
     connections without closing them. A non-dry-run request fails with
     `409 conflict` when the inventory is partial unless `allow_partial`
     is true; this prevents an unavailable node from making a drain look
-    complete.
+    complete. Set `all` to select every matching connection, up to the
+    server safety cap of 10,000; `all` cannot be combined with
+    `connection_ids`; any supplied `limit` is ignored in all mode, and
+    the request returns `409 conflict` when the cap would be exceeded.
 
     Args:
         slug (str):
         id (str):
         idempotency_key (str | Unset):
-        body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
-            connections.
+        body (ManagedRealtimeDrainRequest): Bounded or explicitly all-matching auditable selection
+            for closing live connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,21 +200,24 @@ async def asyncio_detailed(
     body: ManagedRealtimeDrainRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedRealtimeDrainResponse | Problem]:
-    """Close a bounded, filtered set of live managed realtime connections.
+    """Close a bounded or explicitly all-matching set of live managed realtime connections.
 
      Selects connections from a point-in-time fleet inventory by channel,
     principal, or explicit connection IDs. `dry_run` returns the selected
     connections without closing them. A non-dry-run request fails with
     `409 conflict` when the inventory is partial unless `allow_partial`
     is true; this prevents an unavailable node from making a drain look
-    complete.
+    complete. Set `all` to select every matching connection, up to the
+    server safety cap of 10,000; `all` cannot be combined with
+    `connection_ids`; any supplied `limit` is ignored in all mode, and
+    the request returns `409 conflict` when the cap would be exceeded.
 
     Args:
         slug (str):
         id (str):
         idempotency_key (str | Unset):
-        body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
-            connections.
+        body (ManagedRealtimeDrainRequest): Bounded or explicitly all-matching auditable selection
+            for closing live connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,21 +247,24 @@ async def asyncio(
     body: ManagedRealtimeDrainRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedRealtimeDrainResponse | Problem | None:
-    """Close a bounded, filtered set of live managed realtime connections.
+    """Close a bounded or explicitly all-matching set of live managed realtime connections.
 
      Selects connections from a point-in-time fleet inventory by channel,
     principal, or explicit connection IDs. `dry_run` returns the selected
     connections without closing them. A non-dry-run request fails with
     `409 conflict` when the inventory is partial unless `allow_partial`
     is true; this prevents an unavailable node from making a drain look
-    complete.
+    complete. Set `all` to select every matching connection, up to the
+    server safety cap of 10,000; `all` cannot be combined with
+    `connection_ids`; any supplied `limit` is ignored in all mode, and
+    the request returns `409 conflict` when the cap would be exceeded.
 
     Args:
         slug (str):
         id (str):
         idempotency_key (str | Unset):
-        body (ManagedRealtimeDrainRequest): Bounded and auditable selection for closing live
-            connections.
+        body (ManagedRealtimeDrainRequest): Bounded or explicitly all-matching auditable selection
+            for closing live connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

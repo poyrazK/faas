@@ -35,6 +35,7 @@ const (
 	managedRealtimeConnectionsLimitDefault = 100
 	managedRealtimeConnectionsLimitMax     = 1000
 	managedRealtimeDrainConnectionIDsMax   = 100
+	managedRealtimeDrainAllMax             = 10000
 )
 
 type managedRealtimeConnectionCursor struct {
@@ -311,10 +312,16 @@ func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if request.Limit == 0 {
+	if request.All {
+		if len(request.ConnectionIDs) > 0 {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("all cannot be combined with connection_ids"))
+			return
+		}
+		request.Limit = managedRealtimeDrainAllMax
+	} else if request.Limit == 0 {
 		request.Limit = managedRealtimeConnectionsLimitDefault
 	}
-	if request.Limit < 1 || request.Limit > managedRealtimeConnectionsLimitMax {
+	if !request.All && (request.Limit < 1 || request.Limit > managedRealtimeConnectionsLimitMax) {
 		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("limit must be between 1 and %d", managedRealtimeConnectionsLimitMax)))
 		return
 	}
@@ -334,6 +341,10 @@ func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.
 		return
 	}
 	selected, truncated := managedRealtimeDrainCandidates(inventory.Connections, row, acct, request, connectionIDs)
+	if request.All && truncated {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Realtime drain selection exceeds the safety cap", fmt.Sprintf("all mode is limited to %d connections; narrow the channel or principal filter", managedRealtimeDrainAllMax)))
+		return
+	}
 	operationStore, ok := s.store.(state.ManagedRealtimeDrainOperationStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("managed realtime drain operation store unavailable"))
@@ -342,7 +353,7 @@ func (s *server) drainManagedRealtimeConnections(w http.ResponseWriter, r *http.
 	operation, err := operationStore.CreateManagedRealtimeDrainOperation(r.Context(), state.ManagedRealtimeDrainOperationInput{
 		AccountID: acct.ID, AppID: row.AppID, EndpointID: row.ID, Reason: request.Reason,
 		DryRun: request.DryRun, Matched: len(selected),
-		ConnectionIDs: managedRealtimeDrainCandidateIDs(selected), Limit: request.Limit,
+		ConnectionIDs: managedRealtimeDrainCandidateIDs(selected), Limit: request.Limit, All: request.All,
 		Truncated: truncated, Partial: partial, NodesQueried: inventory.NodesQueried,
 		NodesUnavailable: inventory.NodesUnavailable,
 	})
@@ -395,6 +406,7 @@ func managedRealtimeDrainResponseFromOperation(operation state.ManagedRealtimeDr
 	response.Closed = operation.Closed
 	response.Gone = operation.Gone
 	response.Failed = operation.Failed
+	response.All = operation.All
 	if response.CompletedAt == nil && operation.CompletedAt != nil {
 		completedAt := api.FormatAlertTime(*operation.CompletedAt)
 		response.CompletedAt = &completedAt
@@ -443,7 +455,7 @@ func managedRealtimeDrainConnectionIDs(values []string) (map[string]struct{}, *a
 func managedRealtimeDrainCandidates(connections []realtime.ConnectionInfo, row state.ManagedRealtimeEndpoint, acct state.Account, request api.ManagedRealtimeDrainRequest, connectionIDs map[string]struct{}) ([]realtime.ConnectionInfo, bool) {
 	connections = append([]realtime.ConnectionInfo(nil), connections...)
 	sort.Slice(connections, func(i, j int) bool { return connections[i].ID < connections[j].ID })
-	selected := make([]realtime.ConnectionInfo, 0, min(managedRealtimeConnectionsLimitMax, len(connections)))
+	selected := make([]realtime.ConnectionInfo, 0, min(request.Limit, len(connections)))
 	seen := make(map[string]struct{}, len(connections))
 	truncated := false
 	for _, connection := range connections {

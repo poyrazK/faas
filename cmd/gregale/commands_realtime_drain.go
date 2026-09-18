@@ -14,11 +14,19 @@ const realtimeDrainConnectionIDsMax = 100
 
 func cmdRealtimeDrain(args []string) int {
 	args = normalizeRealtimeDrainArgs(args)
+	limitSpecified := false
+	for _, arg := range args {
+		if arg == "--limit" || strings.HasPrefix(arg, "--limit=") {
+			limitSpecified = true
+			break
+		}
+	}
 	fs := newFlagSet("realtime drain", flag.ContinueOnError)
 	reason := fs.String("reason", "", "reason recorded in the audit event")
 	channel := fs.String("channel", "", "only connections subscribed to this channel")
 	principal := fs.String("principal", "", "only connections for this principal")
 	limit := fs.Int("limit", 100, "maximum connections to select (1-1000)")
+	all := fs.Bool("all", false, "select all matching connections (maximum 10000; cannot be combined with --limit or --connection-id)")
 	dryRun := fs.Bool("dry-run", false, "preview the selected connections without closing them")
 	allowPartial := fs.Bool("allow-partial", false, "allow closing the reachable subset when some nodes are unavailable")
 	wait := fs.Bool("wait", false, "wait for the drain to reach a terminal state")
@@ -26,14 +34,17 @@ func cmdRealtimeDrain(args []string) int {
 	var connectionIDs realtimeStringList
 	fs.Var(&connectionIDs, "connection-id", "select a specific connection; may be repeated (max 100)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" {
-		PrintUsage(osStderr, "usage: gregale realtime drain APP_SLUG ENDPOINT_ID --reason TEXT [--channel CHANNEL] [--principal PRINCIPAL] [--connection-id ID ...] [--limit N] [--dry-run] [--allow-partial] [--wait] [--timeout DURATION]", "realtime")
+		PrintUsage(osStderr, "usage: gregale realtime drain APP_SLUG ENDPOINT_ID --reason TEXT [--channel CHANNEL] [--principal PRINCIPAL] [--connection-id ID ... | --all] [--limit N] [--dry-run] [--allow-partial] [--wait] [--timeout DURATION]", "realtime")
 		return 1
 	}
 	if strings.TrimSpace(*reason) == "" {
 		return printErr("Invalid drain reason", fmt.Errorf("--reason is required"))
 	}
-	if *limit < 1 || *limit > realtimeConnectionsCLILimitMax {
+	if !*all && (*limit < 1 || *limit > realtimeConnectionsCLILimitMax) {
 		return printErr("Invalid connection limit", fmt.Errorf("must be between 1 and %d", realtimeConnectionsCLILimitMax))
+	}
+	if *all && (len(connectionIDs) > 0 || limitSpecified) {
+		return printErr("Invalid all selection", fmt.Errorf("--all cannot be combined with --limit or --connection-id"))
 	}
 	if *timeout <= 0 {
 		return printErr("Invalid wait timeout", fmt.Errorf("must be positive"))
@@ -44,6 +55,10 @@ func cmdRealtimeDrain(args []string) int {
 	if len(connectionIDs) > realtimeDrainConnectionIDsMax {
 		return printErr("Too many connection IDs", fmt.Errorf("provide at most %d --connection-id values", realtimeDrainConnectionIDsMax))
 	}
+	drainLimit := *limit
+	if *all {
+		drainLimit = 0
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -52,7 +67,8 @@ func cmdRealtimeDrain(args []string) int {
 		Channel:       *channel,
 		Principal:     *principal,
 		ConnectionIDs: append([]string(nil), connectionIDs...),
-		Limit:         *limit,
+		Limit:         drainLimit,
+		All:           *all,
 		Reason:        strings.TrimSpace(*reason),
 		DryRun:        *dryRun,
 		AllowPartial:  *allowPartial,
@@ -98,11 +114,14 @@ func cmdRealtimeDrain(args []string) int {
 	if response.Truncated {
 		_, _ = fmt.Fprintf(osStdout, "Selection truncated at %d connection(s); increase --limit to select more.\n", response.Limit)
 	}
+	if response.All {
+		_, _ = fmt.Fprintf(osStdout, "Selected all %d matching realtime connection(s).\n", response.Matched)
+	}
 	return 0
 }
 
 func normalizeRealtimeDrainArgs(args []string) []string {
 	return normalizeRealtimeValueArgs(args,
 		map[string]bool{"--reason": true, "--channel": true, "--principal": true, "--connection-id": true, "--limit": true, "--timeout": true},
-		map[string]bool{"--dry-run": true, "--allow-partial": true, "--wait": true})
+		map[string]bool{"--dry-run": true, "--allow-partial": true, "--wait": true, "--all": true})
 }

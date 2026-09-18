@@ -154,6 +154,7 @@ func (s *server) executeManagedRealtimeDrainOperation(ctx context.Context, worke
 		"failed":       response.Failed,
 		"dry_run":      op.DryRun,
 		"partial":      op.Partial,
+		"all":          op.All,
 		"truncated":    op.Truncated,
 		"reason":       op.Reason,
 		"status":       response.Status,
@@ -170,6 +171,7 @@ func managedRealtimeDrainResponseForExecution(operation state.ManagedRealtimeDra
 	response.CreatedAt = api.FormatAlertTime(operation.CreatedAt)
 	response.Matched = operation.Matched
 	response.Limit = operation.Limit
+	response.All = operation.All
 	response.Truncated = operation.Truncated
 	response.DryRun = operation.DryRun
 	response.Partial = operation.Partial

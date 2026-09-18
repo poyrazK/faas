@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Bounded and auditable selection for closing live connections.
+ * Bounded or explicitly all-matching auditable selection for closing live connections.
  */
 export type ManagedRealtimeDrainRequest = {
   /**
@@ -22,6 +22,10 @@ export type ManagedRealtimeDrainRequest = {
    * Maximum number of connections to select.
    */
   limit?: number;
+  /**
+   * Select every matching connection up to the server safety cap of 10,000; cannot be combined with connection_ids. Any supplied limit is ignored.
+   */
+  all?: boolean;
   /**
    * Required reason recorded in the audit event and close request.
    */

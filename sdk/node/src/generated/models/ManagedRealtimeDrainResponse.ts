@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ManagedRealtimeDrainResult } from './ManagedRealtimeDrainResult.js';
 /**
- * Bounded, auditable result of a realtime connection drain.
+ * Bounded or all-matching, auditable result of a realtime connection drain.
  */
 export type ManagedRealtimeDrainResponse = {
   /**
@@ -19,7 +19,7 @@ export type ManagedRealtimeDrainResponse = {
   completed_at?: string | null;
   results: Array<ManagedRealtimeDrainResult>;
   /**
-   * Number selected after applying the limit.
+   * Number selected after applying the limit or all-mode safety cap.
    */
   matched: number;
   closed: number;
@@ -29,6 +29,10 @@ export type ManagedRealtimeDrainResponse = {
   gone: number;
   failed: number;
   limit: number;
+  /**
+   * True when the operation explicitly selected all matching connections.
+   */
+  all: boolean;
   /**
    * True when more eligible connections existed than the limit.
    */

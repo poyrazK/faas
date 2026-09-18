@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -191,6 +192,66 @@ func TestManagedRealtimeConnectionDrainFiltersAndSupportsDryRun(t *testing.T) {
 	stored := waitForManagedRealtimeDrainOperation(t, e, statusPath)
 	if stored.OperationID != response.OperationID || stored.Results[0].Status != "would_close" || stored.Status != "completed" {
 		t.Fatalf("stored drain operation: %+v", stored)
+	}
+}
+
+func TestManagedRealtimeConnectionDrainAllSelectsEveryMatchingConnection(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	app, err := e.store.AppBySlug(context.Background(), "rt-actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	owner := &recordingRealtimeOwner{connections: []realtime.ConnectionInfo{
+		{ID: "conn-b", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-a", Connected: connected, Channels: []string{"room-a"}},
+		{ID: "conn-a", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-a", Connected: connected, Channels: []string{"room-a"}},
+		{ID: "conn-c", EndpointID: endpointID, AppID: app.ID, AccountID: e.acct.ID, Principal: "user-b", Connected: connected, Channels: []string{"room-a"}},
+	}}
+	e.s.WithRealtimeOwner(owner)
+	rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", api.ManagedRealtimeDrainRequest{
+		Channel: "room-a", Principal: "user-a", All: true, Reason: "user migration",
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("all drain: %d %s", rec.Code, rec.Body)
+	}
+	var response api.ManagedRealtimeDrainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.All || response.Limit != managedRealtimeDrainAllMax || response.Matched != 2 || response.Truncated || len(response.Results) != 2 {
+		t.Fatalf("all drain response: %+v", response)
+	}
+	waitForManagedRealtimeDrainOperation(t, e, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain/"+response.OperationID)
+	if len(owner.closed) != 2 || owner.closed[0] != "conn-a:user migration" || owner.closed[1] != "conn-b:user migration" {
+		t.Fatalf("closed connections: %+v", owner.closed)
+	}
+}
+
+func TestManagedRealtimeConnectionDrainAllRejectsSafetyCap(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	app, err := e.store.AppBySlug(context.Background(), "rt-actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := make([]realtime.ConnectionInfo, managedRealtimeDrainAllMax+1)
+	for i := range connections {
+		connections[i] = realtime.ConnectionInfo{
+			ID: fmt.Sprintf("conn-%05d", i), EndpointID: endpointID, AppID: app.ID,
+			AccountID: e.acct.ID, Principal: "user-a", Channels: []string{"room-a"},
+		}
+	}
+	owner := &recordingRealtimeOwner{connections: connections}
+	e.s.WithRealtimeOwner(owner)
+	rec := e.do(t, http.MethodPost, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain", api.ManagedRealtimeDrainRequest{
+		All: true, Reason: "maintenance",
+	}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("all drain over cap: %d %s", rec.Code, rec.Body)
+	}
+	if len(owner.closed) != 0 {
+		t.Fatalf("over-cap drain closed connections: %+v", owner.closed)
 	}
 }
 
