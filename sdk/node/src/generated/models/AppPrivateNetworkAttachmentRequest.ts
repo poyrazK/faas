@@ -12,5 +12,9 @@ export type AppPrivateNetworkAttachmentRequest = {
    */
   region?: string;
   cidrs?: Array<string>;
+  /**
+   * Optional private-network policy ranges. Each range must be contained by the attached network CIDR.
+   */
+  allowed_cidrs?: Array<string>;
 };
 

@@ -14,6 +14,10 @@ export type AppPrivateNetworkAttachment = {
   region: string;
   cidrs: Array<string>;
   /**
+   * Optional private-network policy. Empty preserves allow-all behavior; populated ranges are admitted symmetrically for private egress and ingress.
+   */
+  allowed_cidrs?: Array<string>;
+  /**
    * Stable Gregale member address for this app when the fabric is enabled.
    */
   address?: string;
