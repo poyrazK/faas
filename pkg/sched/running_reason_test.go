@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -97,6 +98,40 @@ func TestExplainRunningMarksDegradedFlowObservation(t *testing.T) {
 	}
 	if got.Causes[0].Code != api.DebugRunningReasonNoBlockerObserved {
 		t.Fatalf("causes = %+v, want no_blocker_observed", got.Causes)
+	}
+}
+
+// adr: 127 — the customer debugger receives bounded endpoint topology while
+// retaining an explicit degraded bit when optional detail is unavailable.
+func TestExplainRunningIncludesBoundedFlowTopology(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	rows := make([]flowcount.FlowSummary, 0, debugRunningFlowTopologyMax+4)
+	for i := 0; i < debugRunningFlowTopologyMax+4; i++ {
+		rows = append(rows, flowcount.FlowSummary{
+			InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: uint16(1000 + i), Count: int64(i),
+		})
+	}
+	got := explainRunning(now, []InstanceInfo{{
+		Instance:            "vm-1",
+		AppID:               "app",
+		Plan:                api.PlanPro,
+		State:               state.StateRunning,
+		LastRequest:         now.Add(-10 * time.Minute),
+		Started:             now.Add(-10 * time.Minute),
+		IdleTimeoutS:        60,
+		OpenConns:           28,
+		FlowSummaries:       rows,
+		FlowSummaryDegraded: true,
+	}})["app"]
+	if len(got.Causes) == 0 || got.Causes[0].Code != api.DebugRunningReasonOpenConnection {
+		t.Fatalf("causes = %+v, want open_connection first", got.Causes)
+	}
+	flowCause := got.Causes[0]
+	if len(flowCause.FlowTopology) != debugRunningFlowTopologyMax {
+		t.Fatalf("flow topology length = %d, want %d", len(flowCause.FlowTopology), debugRunningFlowTopologyMax)
+	}
+	if flowCause.FlowTopology[0].Count != debugRunningFlowTopologyMax+3 || !flowCause.FlowTopologyDegraded {
+		t.Fatalf("flow topology = %+v degraded=%v, want top count and degraded=true", flowCause.FlowTopology[0], flowCause.FlowTopologyDegraded)
 	}
 }
 

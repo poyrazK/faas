@@ -56,9 +56,12 @@ func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.DebugRunningResponse{
 			AppID: "app-1", Since: "6h", WindowStart: "2026-09-12T00:00:00Z", WindowEnd: "2026-09-12T06:00:00Z",
 			CurrentObservedAt: "2026-09-12T05:59:00Z",
-			Current:           []api.DebugRunningCause{{Code: api.DebugRunningReasonOpenConnection, Summary: "an active SSE connection is keeping the instance warm", InstanceCount: 1, OpenConnections: 1}},
-			Config:            api.DebugRunningConfig{IdleTimeoutSeconds: 60, ConfiguredMinInstances: 0, EffectiveMinInstances: 0},
-			History:           []api.DebugRunningObservation{{ObservedAt: "2026-09-12T05:59:00Z", Causes: []api.DebugRunningCause{{Code: api.DebugRunningReasonOpenConnection}}}},
+			Current: []api.DebugRunningCause{{
+				Code: api.DebugRunningReasonOpenConnection, Summary: "an active SSE connection is keeping the instance warm", InstanceCount: 1, OpenConnections: 1,
+				FlowTopology: []api.DebugRunningFlowSummary{{InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: 443, State: "ESTABLISHED", Direction: "outbound", Count: 1}},
+			}},
+			Config:  api.DebugRunningConfig{IdleTimeoutSeconds: 60, ConfiguredMinInstances: 0, EffectiveMinInstances: 0},
+			History: []api.DebugRunningObservation{{ObservedAt: "2026-09-12T05:59:00Z", Causes: []api.DebugRunningCause{{Code: api.DebugRunningReasonOpenConnection}}}},
 		})
 	}))
 	defer srv.Close()
@@ -77,7 +80,7 @@ func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
 	if got.URL.Path != "/v1/apps/my-app/debug/running" || got.URL.Query().Get("since") != "6h" || got.URL.Query().Get("limit") != "5" {
 		t.Fatalf("request = %s?%s, want running with since=6h and limit=5", got.URL.Path, got.URL.RawQuery)
 	}
-	for _, want := range []string{"Why is my-app running?", "open_connection", "active SSE connection", "idle timeout 60s"} {
+	for _, want := range []string{"Why is my-app running?", "open_connection", "active SSE connection", "idle timeout 60s", "flow: instance=vm-1 tcp 203.0.113.10:443"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("running output missing %q:\n%s", want, stdout.String())
 		}

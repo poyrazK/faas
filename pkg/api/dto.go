@@ -8090,11 +8090,25 @@ type DebugRunningRequestAttribution struct {
 	MatchDeltaMS int64   `json:"match_delta_ms"`
 }
 
+// DebugRunningFlowSummary is a bounded, endpoint-only connection summary
+// attached to an open-connection running cause. It intentionally excludes
+// payloads, URLs, headers, and byte accounting.
+type DebugRunningFlowSummary struct {
+	InstanceID string `json:"instance_id"`
+	Protocol   string `json:"protocol"`
+	RemoteIP   string `json:"remote_ip"`
+	RemotePort uint16 `json:"remote_port"`
+	State      string `json:"state"`
+	Direction  string `json:"direction"`
+	Count      int64  `json:"count"`
+}
+
 // DebugRunningCause is one observed reason an application remained resident
 // during an idle-reaper observation. Reasons are deliberately evidence-shaped:
 // the debugger reports what the scheduler saw, rather than predicting a
 // saving or inferring a protocol that was not instrumented. Request activity
-// may carry a bounded attribution to the nearest retained telemetry row.
+// may carry a bounded attribution to the nearest retained telemetry row, and
+// open connections may carry bounded endpoint summaries.
 type DebugRunningCause struct {
 	Code            string                          `json:"code"`
 	Summary         string                          `json:"summary"`
@@ -8106,12 +8120,17 @@ type DebugRunningCause struct {
 	LastActivityAt  string                          `json:"last_activity_at,omitempty"`
 	IdleDeadline    string                          `json:"idle_deadline,omitempty"`
 	Request         *DebugRunningRequestAttribution `json:"request,omitempty"`
+	FlowTopology    []DebugRunningFlowSummary       `json:"flow_topology,omitempty"`
+	// FlowTopologyDegraded means the scheduler could not obtain optional
+	// endpoint detail for this observation. OpenConnections and the lifecycle
+	// decision remain valid under the existing fail-open contract.
+	FlowTopologyDegraded bool `json:"flow_topology_degraded,omitempty"`
 }
 
 // DebugRunningObservation is the durable scheduler observation used by the
 // "why is this app running?" debugger. The observation is a bounded snapshot;
-// it is not a billing estimate and it never contains request bodies or raw
-// connection data.
+// it is not a billing estimate and it never contains request bodies, headers,
+// payloads, or unbounded connection data.
 type DebugRunningObservation struct {
 	EventID                string              `json:"event_id,omitempty"`
 	ObservedAt             string              `json:"observed_at"`

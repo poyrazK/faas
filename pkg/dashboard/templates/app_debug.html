@@ -98,6 +98,18 @@
                   <article class="running-cause">
                     <p><strong>{{.Label}}</strong> <span class="badge">{{.Code}}</span></p>
                     <p>{{.Summary}}</p>
+                    {{if .FlowTopologyDegraded}}<small class="muted">Endpoint detail was unavailable for this observation.</small>{{end}}
+                    {{if .FlowTopology}}
+                      <small class="muted">Bounded flow topology</small>
+                      <table class="running-table" aria-label="Bounded flow topology">
+                        <thead><tr><th>Instance</th><th>Protocol</th><th>Remote endpoint</th><th>State</th><th>Direction</th><th>Count</th></tr></thead>
+                        <tbody>
+                          {{range .FlowTopology}}
+                            <tr><td><code>{{.InstanceID}}</code></td><td>{{.Protocol}}</td><td><code>{{.RemoteIP}}:{{.RemotePort}}</code></td><td>{{.State}}</td><td>{{.Direction}}</td><td>{{.Count}}</td></tr>
+                          {{end}}
+                        </tbody>
+                      </table>
+                    {{end}}
                     {{if .LastActivityAt}}<small class="muted">Last activity {{.LastActivityAt}}{{if .IdleDeadline}} · idle deadline {{.IdleDeadline}}{{end}}</small>{{end}}
                     {{if .Mode}}<small class="muted">Mode {{.Mode}}{{if .WorkloadClass}} · workload {{.WorkloadClass}}{{end}}</small>{{end}}
                     {{if .Request}}

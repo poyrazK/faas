@@ -52,6 +52,9 @@ func TestNodeTelemetryCacheReplacesAsOneBatchAndExpires(t *testing.T) {
 	if _, ok := cache.LookupOpenConns("vm-1", base.Add(TelemetryFreshness+time.Nanosecond)); ok {
 		t.Fatal("stale open-conns lookup unexpectedly hit")
 	}
+	if summaries, ok := cache.LookupFlowSummaries("vm-1", base.Add(time.Second)); !ok || summaries != nil {
+		t.Fatalf("fresh empty flow lookup = (%v, %v), want (nil, true)", summaries, ok)
+	}
 }
 
 // adr: 127 — persistent node telemetry must retain flow details without
@@ -78,6 +81,14 @@ func TestNodeTelemetryCacheCopiesFlowSummaries(t *testing.T) {
 	snapshot[0].Telemetry.FlowSummaries[0].RemoteIP = "mutated-again"
 	if got := cache.Snapshot(now)[0].Telemetry.FlowSummaries[0].RemoteIP; got != "203.0.113.10" {
 		t.Fatalf("cache-backed remote IP = %q after snapshot mutation, want original value", got)
+	}
+	flowRows, ok := cache.LookupFlowSummaries("vm-1", now)
+	if !ok || len(flowRows) != 1 || flowRows[0].RemoteIP != "203.0.113.10" {
+		t.Fatalf("flow lookup = (%+v, %v), want one defensive summary", flowRows, ok)
+	}
+	flowRows[0].RemoteIP = "mutated-by-lookup"
+	if got := cache.Snapshot(now)[0].Telemetry.FlowSummaries[0].RemoteIP; got != "203.0.113.10" {
+		t.Fatalf("cache-backed remote IP = %q after lookup mutation, want original value", got)
 	}
 }
 

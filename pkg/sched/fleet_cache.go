@@ -190,6 +190,28 @@ func (c *NodeTelemetryCache) LookupOpenConns(instanceID string, now time.Time) (
 	return 0, false
 }
 
+// LookupFlowSummaries returns the freshest bounded endpoint summaries for an
+// instance. A fresh report with no summaries is a successful empty result;
+// callers should use the boolean to distinguish it from a stale/missing row.
+func (c *NodeTelemetryCache) LookupFlowSummaries(instanceID string, now time.Time) ([]flowcount.FlowSummary, bool) {
+	if c == nil || instanceID == "" {
+		return nil, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, entry := range c.nodes {
+		if now.Sub(entry.lastSeen) > TelemetryFreshness {
+			continue
+		}
+		for _, row := range entry.rows {
+			if row.InstanceID == instanceID {
+				return append([]flowcount.FlowSummary(nil), row.FlowSummaries...), true
+			}
+		}
+	}
+	return nil, false
+}
+
 // NodeTelemetryWithNode is the flattened cache view used by the stats
 // projection; keeping node identity here avoids duplicating it per wire row.
 type NodeTelemetryWithNode struct {

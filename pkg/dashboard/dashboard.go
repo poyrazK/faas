@@ -1855,17 +1855,31 @@ type DebugRunningObservationView struct {
 // DebugRunningCauseView is a human-readable projection of one observed
 // running-state cause. The code remains visible for CLI/API correlation.
 type DebugRunningCauseView struct {
-	Code            string
-	Label           string
-	Summary         string
-	InstanceCount   int
-	OpenConnections int64
-	TailTasks       int
-	Mode            string
-	WorkloadClass   string
-	LastActivityAt  string
-	IdleDeadline    string
-	Request         *DebugRunningRequestView
+	Code                 string
+	Label                string
+	Summary              string
+	InstanceCount        int
+	OpenConnections      int64
+	TailTasks            int
+	Mode                 string
+	WorkloadClass        string
+	LastActivityAt       string
+	IdleDeadline         string
+	Request              *DebugRunningRequestView
+	FlowTopology         []DebugRunningFlowView
+	FlowTopologyDegraded bool
+}
+
+// DebugRunningFlowView is the dashboard-safe projection of one bounded,
+// endpoint-only flow summary attached to an open-connection cause.
+type DebugRunningFlowView struct {
+	InstanceID string
+	Protocol   string
+	RemoteIP   string
+	RemotePort uint16
+	State      string
+	Direction  string
+	Count      int64
 }
 
 // DebugRunningRequestView is the dashboard-safe projection of the nearest

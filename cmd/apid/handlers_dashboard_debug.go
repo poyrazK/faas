@@ -479,16 +479,31 @@ func dashboardDebugRunningCauseViews(causes []api.DebugRunningCause, slug, since
 	views := make([]dashboard.DebugRunningCauseView, 0, len(causes))
 	for _, cause := range causes {
 		view := dashboard.DebugRunningCauseView{
-			Code:            cause.Code,
-			Label:           dashboardDebugRunningCauseLabel(cause.Code),
-			Summary:         cause.Summary,
-			InstanceCount:   cause.InstanceCount,
-			OpenConnections: cause.OpenConnections,
-			TailTasks:       cause.TailTasks,
-			Mode:            cause.Mode,
-			WorkloadClass:   cause.WorkloadClass,
-			LastActivityAt:  cause.LastActivityAt,
-			IdleDeadline:    cause.IdleDeadline,
+			Code:                 cause.Code,
+			Label:                dashboardDebugRunningCauseLabel(cause.Code),
+			Summary:              cause.Summary,
+			InstanceCount:        cause.InstanceCount,
+			OpenConnections:      cause.OpenConnections,
+			TailTasks:            cause.TailTasks,
+			Mode:                 cause.Mode,
+			WorkloadClass:        cause.WorkloadClass,
+			LastActivityAt:       cause.LastActivityAt,
+			IdleDeadline:         cause.IdleDeadline,
+			FlowTopologyDegraded: cause.FlowTopologyDegraded,
+		}
+		if len(cause.FlowTopology) > 0 {
+			view.FlowTopology = make([]dashboard.DebugRunningFlowView, 0, len(cause.FlowTopology))
+			for _, flow := range cause.FlowTopology {
+				view.FlowTopology = append(view.FlowTopology, dashboard.DebugRunningFlowView{
+					InstanceID: flow.InstanceID,
+					Protocol:   flow.Protocol,
+					RemoteIP:   flow.RemoteIP,
+					RemotePort: flow.RemotePort,
+					State:      flow.State,
+					Direction:  flow.Direction,
+					Count:      flow.Count,
+				})
+			}
 		}
 		if cause.Request != nil {
 			request := cause.Request

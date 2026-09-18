@@ -58,6 +58,14 @@ func renderDebugRunning(w io.Writer, slug string, resp api.DebugRunningResponse)
 			_, _ = fmt.Fprintln(w, "Current observed causes:")
 			for _, cause := range resp.Current {
 				_, _ = fmt.Fprintf(w, "  - %s: %s\n", cause.Code, cause.Summary)
+				if cause.FlowTopologyDegraded {
+					_, _ = fmt.Fprintln(w, "    flow topology: degraded (endpoint detail unavailable for this observation)")
+				}
+				for _, flow := range cause.FlowTopology {
+					_, _ = fmt.Fprintf(w, "    flow: instance=%s %s %s:%d state=%s direction=%s count=%d\n",
+						flow.InstanceID, flow.Protocol, flow.RemoteIP, flow.RemotePort,
+						flow.State, flow.Direction, flow.Count)
+				}
 				if cause.Request != nil {
 					request := cause.Request
 					_, _ = fmt.Fprintf(w, "    representative telemetry: %s %s %s (matched within %dms; count=%d)\n",
