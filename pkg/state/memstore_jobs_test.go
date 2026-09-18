@@ -215,3 +215,67 @@ func TestMemStoreJobs(t *testing.T) {
 		t.Fatalf("JobGetByID on soft-deleted row: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestMemStoreJobMaterializationClaimLeaseAndRetry(t *testing.T) {
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, err := ms.JobCreate(ctx, "acct", "materialization-retry", "app", "ghcr.io/acme/worker:latest", nil, 256, 60, 1, 0, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+
+	claimed, err := ms.JobClaimPendingImageMaterialization(ctx, 1, "node-a", time.Minute)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ImageMaterializationAttempts != 1 {
+		t.Fatalf("first claim = %+v, want one attempt-1 claim", claimed)
+	}
+	if other, err := ms.JobClaimPendingImageMaterialization(ctx, 1, "node-b", time.Minute); err != nil {
+		t.Fatalf("second claim: %v", err)
+	} else if len(other) != 0 {
+		t.Fatalf("second claim = %+v, want live lease to exclude row", other)
+	}
+
+	future := time.Now().UTC().Add(time.Hour)
+	if _, err := ms.JobRecordImageMaterializationFailure(ctx, job.ID, job.ImageRef, "node-b", "stale worker", future, 3); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale worker failure = %v, want ErrConflict", err)
+	}
+	updated, err := ms.JobRecordImageMaterializationFailure(ctx, job.ID, job.ImageRef, "node-a", "registry timeout", future, 3)
+	if err != nil {
+		t.Fatalf("record retryable failure: %v", err)
+	}
+	if updated.ImageMaterializationStatus != "pending" || updated.ImageMaterializationNextAttemptAt == nil {
+		t.Fatalf("retry state = %+v, want pending with next attempt", updated)
+	}
+	if pending, err := ms.JobClaimPendingImageMaterialization(ctx, 1, "node-b", time.Minute); err != nil {
+		t.Fatalf("claim during backoff: %v", err)
+	} else if len(pending) != 0 {
+		t.Fatalf("claim during backoff = %+v, want none", pending)
+	}
+
+	// Use the public update path to reset only the image reference and make
+	// the row immediately eligible without reaching into MemStore internals.
+	if _, err := ms.JobUpdate(ctx, job.ID, nil, &job.ImageRef, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("reset image ref: %v", err)
+	}
+	claimed, err = ms.JobClaimPendingImageMaterialization(ctx, 1, "node-b", time.Minute)
+	if err != nil {
+		t.Fatalf("second eligible claim: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ImageMaterializationAttempts != 1 {
+		t.Fatalf("reset claim = %+v, want fresh attempt-1 claim", claimed)
+	}
+
+	// Exhaust the budget on the same source to pin terminal failure.
+	if _, err := ms.JobRecordImageMaterializationFailure(ctx, job.ID, job.ImageRef, "node-b", "registry down", time.Now().UTC(), 1); err != nil {
+		t.Fatalf("terminal failure: %v", err)
+	}
+	final, err := ms.JobGetByID(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("JobGetByID: %v", err)
+	}
+	if final.ImageMaterializationStatus != "failed" {
+		t.Fatalf("final status = %q, want failed", final.ImageMaterializationStatus)
+	}
+}

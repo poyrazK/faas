@@ -153,6 +153,9 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 		j.ImageMaterializationStatus = "pending"
 		j.ImageMaterializationError = ""
 		j.ImageMaterializedAt = nil
+		j.ImageMaterializationAttempts = 0
+		j.ImageMaterializationNextAttemptAt = nil
+		delete(m.jobMaterializationClaims, id)
 	}
 	if ramMB != nil {
 		j.RAMMB = *ramMB
@@ -183,7 +186,11 @@ func (m *MemStore) JobListPendingImageMaterialization(_ context.Context, limit i
 	defer m.mu.Unlock()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status != "deleted" && j.ImageMaterializationStatus == "pending" {
+		if j.Status != "deleted" && j.ImageMaterializationStatus == "pending" &&
+			(j.ImageMaterializationNextAttemptAt == nil || !j.ImageMaterializationNextAttemptAt.After(time.Now())) {
+			if claim, ok := m.jobMaterializationClaims[j.ID]; ok && claim.leaseUntil.After(time.Now()) {
+				continue
+			}
 			out = append(out, j)
 		}
 	}
@@ -199,6 +206,80 @@ func (m *MemStore) JobListPendingImageMaterialization(_ context.Context, limit i
 	if len(out) > limit {
 		out = out[:limit]
 	}
+	return out, nil
+}
+
+// JobClaimImageMaterialization claims one requested job without accidentally
+// substituting a different pending row when a direct notification arrives.
+func (m *MemStore) JobClaimImageMaterialization(_ context.Context, id, owner string, lease time.Duration) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if owner == "" {
+		owner = "imaged"
+	}
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	now := time.Now().UTC()
+	j, ok := m.jobs[id]
+	if !ok || j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+		return Job{}, ErrNotFound
+	}
+	if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
+		return Job{}, ErrNotFound
+	}
+	if claim, ok := m.jobMaterializationClaims[id]; ok && claim.leaseUntil.After(now) {
+		return Job{}, ErrNotFound
+	}
+	j.ImageMaterializationAttempts++
+	j.UpdatedAt = now
+	m.jobs[id] = j
+	m.jobMaterializationClaims[id] = jobMaterializationClaim{owner: owner, leaseUntil: now.Add(lease)}
+	return j, nil
+}
+
+// JobClaimPendingImageMaterialization mirrors the PostgreSQL SKIP LOCKED
+// claim in memory. Expired claims are reclaimable, while a live claim keeps a
+// second imaged worker from duplicating the pull/build work.
+func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit int, owner string, lease time.Duration) ([]Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 64
+	}
+	if owner == "" {
+		owner = "imaged"
+	}
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	now := time.Now().UTC()
+	var out []Job
+	for _, j := range m.jobs {
+		if j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+			continue
+		}
+		if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
+			continue
+		}
+		if claim, ok := m.jobMaterializationClaims[j.ID]; ok && claim.leaseUntil.After(now) {
+			continue
+		}
+		j.ImageMaterializationAttempts++
+		j.UpdatedAt = now
+		m.jobs[j.ID] = j
+		m.jobMaterializationClaims[j.ID] = jobMaterializationClaim{owner: owner, leaseUntil: now.Add(lease)}
+		out = append(out, j)
+		if len(out) == limit {
+			break
+		}
+	}
+	sort.Slice(out, func(i, k int) bool {
+		if out[i].UpdatedAt.Equal(out[k].UpdatedAt) {
+			return out[i].ID < out[k].ID
+		}
+		return out[i].UpdatedAt.Before(out[k].UpdatedAt)
+	})
 	return out, nil
 }
 
@@ -224,11 +305,50 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	j.ImageStorageKey = storageKey
 	j.ImageMaterializationError = failure
 	j.ImageMaterializedAt = nil
+	j.ImageMaterializationNextAttemptAt = nil
+	delete(m.jobMaterializationClaims, id)
 	if status == "ready" {
 		now := time.Now().UTC()
 		j.ImageMaterializedAt = &now
 	}
 	j.UpdatedAt = time.Now().UTC()
+	m.jobs[id] = j
+	return j, nil
+}
+
+// JobRecordImageMaterializationFailure mirrors the durable retry transition.
+// Attempts are incremented by JobClaimPendingImageMaterialization; once the
+// bounded budget is exhausted the row becomes terminally failed.
+func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	j, ok := m.jobs[id]
+	if !ok || j.Status == "deleted" {
+		return Job{}, ErrNotFound
+	}
+	if j.ImageRef != sourceRef {
+		return Job{}, ErrConflict
+	}
+	claim, ok := m.jobMaterializationClaims[id]
+	if !ok || claim.owner != owner {
+		return Job{}, ErrConflict
+	}
+	terminal := j.ImageMaterializationAttempts >= maxAttempts
+	if terminal {
+		j.ImageMaterializationStatus = "failed"
+		j.ImageMaterializationNextAttemptAt = nil
+	} else {
+		j.ImageMaterializationStatus = "pending"
+		next := retryAt.UTC()
+		j.ImageMaterializationNextAttemptAt = &next
+	}
+	j.ImageMaterializationError = reason
+	j.ImageMaterializedAt = nil
+	j.UpdatedAt = time.Now().UTC()
+	delete(m.jobMaterializationClaims, id)
 	m.jobs[id] = j
 	return j, nil
 }

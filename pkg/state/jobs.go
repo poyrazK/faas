@@ -70,6 +70,12 @@ type Job struct {
 	ImageMaterializationStatus string
 	ImageMaterializationError  string
 	ImageMaterializedAt        *time.Time
+	// ImageMaterializationAttempts and ImageMaterializationNextAttemptAt
+	// are worker-internal retry state. They are intentionally not exposed
+	// through the Jobs API; the status/error fields remain the customer
+	// contract while transient failures are retried durably.
+	ImageMaterializationAttempts      int
+	ImageMaterializationNextAttemptAt *time.Time
 }
 
 // JobRun is one row of public.job_runs (migrations/00255 + 00574 for
@@ -207,6 +213,17 @@ type JobQuotaCreator interface {
 type JobImageMaterializationStore interface {
 	JobListPendingImageMaterialization(ctx context.Context, limit int) ([]Job, error)
 	JobSetImageMaterialization(ctx context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (Job, error)
+}
+
+// JobImageMaterializationClaimer is the optional durable worker queue seam.
+// Implementations claim pending rows with a lease so multiple imaged nodes do
+// not build the same artifact concurrently, and record failures with a
+// bounded retry schedule. It is separate from JobImageMaterializationStore
+// so narrow test doubles can keep the original publication-only surface.
+type JobImageMaterializationClaimer interface {
+	JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error)
+	JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
+	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
 }
 
 // newUUIDString is a thin shim over uuid.NewString so the memstore

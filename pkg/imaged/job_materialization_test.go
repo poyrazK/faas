@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -84,6 +85,18 @@ func TestMaterializeJobPublishesResolvedArtifact(t *testing.T) {
 	defer rc.Close()
 	if body, _ := io.ReadAll(rc); string(body) != "fake ext4 full-rootfs" {
 		t.Fatalf("published artifact = %q, want fake builder output", body)
+	}
+}
+
+func TestJobMaterializationRetryDelayIsBounded(t *testing.T) {
+	if got := jobMaterializationRetryDelay(1); got != 5*time.Second {
+		t.Fatalf("attempt 1 delay = %s, want 5s", got)
+	}
+	if got := jobMaterializationRetryDelay(2); got != 10*time.Second {
+		t.Fatalf("attempt 2 delay = %s, want 10s", got)
+	}
+	if got := jobMaterializationRetryDelay(20); got != jobMaterializationRetryMax {
+		t.Fatalf("large attempt delay = %s, want cap %s", got, jobMaterializationRetryMax)
 	}
 }
 

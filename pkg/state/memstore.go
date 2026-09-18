@@ -116,6 +116,11 @@ type memComputeNodeKey struct {
 	validUntil   time.Time
 }
 
+type jobMaterializationClaim struct {
+	owner      string
+	leaseUntil time.Time
+}
+
 type MemStore struct {
 	objectBuckets             map[string]ObjectBucket
 	objectUsage               map[string]ObjectBucketUsage
@@ -233,9 +238,10 @@ type MemStore struct {
 	// JobCreate / JobRunCreate, mirroring the pgstore FOR UPDATE
 	// discipline (no TOCTOU window between the cap check and the
 	// insert).
-	jobs     map[string]Job
-	jobRuns  map[string]JobRun
-	jobTasks map[string]map[int]JobTask // run_id → task_index → task
+	jobs                     map[string]Job
+	jobRuns                  map[string]JobRun
+	jobTasks                 map[string]map[int]JobTask // run_id → task_index → task
+	jobMaterializationClaims map[string]jobMaterializationClaim
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
@@ -914,6 +920,7 @@ func NewMemStore() *MemStore {
 		jobs:                           map[string]Job{},
 		jobRuns:                        map[string]JobRun{},
 		jobTasks:                       map[string]map[int]JobTask{},
+		jobMaterializationClaims:       map[string]jobMaterializationClaim{},
 		migrationLeases:                map[string]MigrationLease{},
 		workflowRuns:                   map[string]WorkflowRun{},
 		workflowSteps:                  map[string]map[string]WorkflowStep{},

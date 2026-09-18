@@ -2,8 +2,10 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -11,7 +13,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const jobMaterializationBatchSize = 32
+const (
+	jobMaterializationBatchSize   = 32
+	jobMaterializationLease       = 15 * time.Minute
+	jobMaterializationMaxAttempts = 3
+	jobMaterializationRetryBase   = 5 * time.Second
+	jobMaterializationRetryMax    = 5 * time.Minute
+)
 
 // MaterializeJob resolves a job's source OCI reference, builds a complete
 // ext4 rootfs, and publishes it under sched.JobLayerKey. The source reference
@@ -29,6 +37,37 @@ func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 	if job.ImageMaterializationStatus == "ready" && job.ImageStorageKey != "" {
 		return nil
 	}
+	if job.ImageMaterializationStatus == "failed" {
+		return fmt.Errorf("imaged: job %s image materialization is terminally failed", jobID)
+	}
+	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
+		claimed, claimErr := claimer.JobClaimImageMaterialization(ctx, jobID, h.jobMaterializationOwner(), jobMaterializationLease)
+		if claimErr != nil {
+			if errors.Is(claimErr, state.ErrNotFound) {
+				return nil // another worker owns the live lease, or backoff is active
+			}
+			return fmt.Errorf("imaged: claim job %s materialization: %w", jobID, claimErr)
+		}
+		job = claimed
+	}
+	return h.materializeClaimedJob(ctx, images, job)
+}
+
+func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobImageMaterializationStore, job state.Job) (err error) {
+	started := time.Now()
+	outcome := "error"
+	defer func() {
+		if h.ops != nil {
+			if err == nil {
+				outcome = "ready"
+			} else if job.ImageMaterializationAttempts >= jobMaterializationMaxAttempts {
+				outcome = "failed"
+			} else {
+				outcome = "retry"
+			}
+			h.ops.ObserveCode("job_materialization", outcome, time.Since(started))
+		}
+	}()
 	if job.ImageRef == "" {
 		return h.failJobMaterialization(ctx, images, job, "image_ref is empty")
 	}
@@ -112,20 +151,30 @@ func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// MaterializePendingJobs drains the bounded pending queue. A failed job is
-// left failed for customer/operator visibility; changing image_ref resets it
-// to pending and emits the next job_changed event.
+// MaterializePendingJobs drains the bounded pending queue. Transient failures
+// remain pending with a durable backoff; after the bounded attempt budget the
+// row becomes failed for customer/operator visibility.
 func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 	images, ok := h.store.(state.JobImageMaterializationStore)
 	if !ok {
 		return fmt.Errorf("imaged: job image materialization store unavailable")
 	}
-	jobs, err := images.JobListPendingImageMaterialization(ctx, jobMaterializationBatchSize)
-	if err != nil {
-		return err
+	var jobs []state.Job
+	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
+		var err error
+		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, h.jobMaterializationOwner(), jobMaterializationLease)
+		if err != nil {
+			return err
+		}
+	} else {
+		var err error
+		jobs, err = images.JobListPendingImageMaterialization(ctx, jobMaterializationBatchSize)
+		if err != nil {
+			return err
+		}
 	}
 	for _, job := range jobs {
-		if err := h.MaterializeJob(ctx, job.ID); err != nil {
+		if err := h.materializeClaimedJob(ctx, images, job); err != nil {
 			h.log.Warn("imaged: pending job image materialization failed", "job", job.ID, "err", err)
 		}
 	}
@@ -133,8 +182,43 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 }
 
 func (h *Handler) failJobMaterialization(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, reason string) error {
+	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
+		delay := jobMaterializationRetryDelay(job.ImageMaterializationAttempts)
+		updated, err := claimer.JobRecordImageMaterializationFailure(ctx, job.ID, job.ImageRef, h.jobMaterializationOwner(), reason, time.Now().Add(delay), jobMaterializationMaxAttempts)
+		if err != nil {
+			return fmt.Errorf("imaged: job %s materialization failed (%s), recording retry: %w", job.ID, reason, err)
+		}
+		if updated.ImageMaterializationStatus == "failed" {
+			return fmt.Errorf("imaged: job %s materialization failed after %d attempts: %s", job.ID, updated.ImageMaterializationAttempts, reason)
+		}
+		return fmt.Errorf("imaged: job %s materialization attempt %d failed; retry scheduled: %s", job.ID, updated.ImageMaterializationAttempts, reason)
+	}
 	if _, err := images.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "failed", "", "", reason); err != nil {
 		return fmt.Errorf("imaged: job %s materialization failed (%s), recording failure: %w", job.ID, reason, err)
 	}
 	return fmt.Errorf("imaged: job %s materialization failed: %s", job.ID, reason)
+}
+
+func (h *Handler) jobMaterializationOwner() string {
+	if h.nodeName != "" {
+		return h.nodeName
+	}
+	return "imaged"
+}
+
+func jobMaterializationRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := jobMaterializationRetryBase
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= jobMaterializationRetryMax {
+			return jobMaterializationRetryMax
+		}
+	}
+	if delay > jobMaterializationRetryMax {
+		return jobMaterializationRetryMax
+	}
+	return delay
 }

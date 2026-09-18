@@ -38,7 +38,8 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
        updated_at, command, coalesce(image_resolved_digest, ''),
        coalesce(image_storage_key, ''), image_materialization_status,
        coalesce(image_materialization_error, ''),
-       image_materialized_at`
+       image_materialized_at, image_materialization_attempts,
+       image_materialization_next_attempt_at`
 
 // jobRunSelectCols is the canonical column order for job_runs.
 // Includes dead_letter_count (00574). ORDER BY id keeps the contract
@@ -78,7 +79,8 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 		&j.TaskTimeoutS, &j.MaxParallelism, &j.RetryMax, &envOverrides, &j.Status,
 		&j.CreatedAt, &j.UpdatedAt, &j.Command, &j.ImageResolvedDigest,
 		&j.ImageStorageKey, &j.ImageMaterializationStatus,
-		&j.ImageMaterializationError, &j.ImageMaterializedAt); err != nil {
+		&j.ImageMaterializationError, &j.ImageMaterializedAt,
+		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt); err != nil {
 		return Job{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -289,6 +291,10 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		   image_materialization_status = case when $3 is null then image_materialization_status else 'pending' end,
 		   image_materialization_error = case when $3 is null then image_materialization_error else null end,
 		   image_materialized_at = case when $3 is null then image_materialized_at else null end,
+		   image_materialization_attempts = case when $3 is null then image_materialization_attempts else 0 end,
+		   image_materialization_next_attempt_at = case when $3 is null then image_materialization_next_attempt_at else null end,
+		   image_materialization_lease_owner = case when $3 is null then image_materialization_lease_owner else null end,
+		   image_materialization_lease_until = case when $3 is null then image_materialization_lease_until else null end,
 		   ram_mb          = coalesce($4,          ram_mb),
 		   task_timeout_s  = coalesce($5,          task_timeout_s),
 		   max_parallelism = coalesce($6,          max_parallelism),
@@ -314,10 +320,78 @@ func (s *PgStore) JobListPendingImageMaterialization(ctx context.Context, limit 
 		`select `+jobSelectCols+` from jobs
 		  where status <> 'deleted'
 		    and image_materialization_status = 'pending'
+		    and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
+		    and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
 		  order by updated_at asc, id asc
 		  limit $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("state: list pending job image materializations: %w", err)
+	}
+	defer rows.Close()
+	return scanJobs(rows)
+}
+
+// JobClaimImageMaterialization atomically claims one requested pending job.
+// A direct notification must never claim a different row from the queue.
+func (s *PgStore) JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error) {
+	if owner == "" {
+		owner = "imaged"
+	}
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	row := s.pool.QueryRow(ctx,
+		`update jobs set
+		   image_materialization_attempts = image_materialization_attempts + 1,
+		   image_materialization_lease_owner = $2,
+		   image_materialization_lease_until = now() + $3::interval,
+		   updated_at = now()
+		 where id = $1::uuid
+		   and status <> 'deleted'
+		   and image_materialization_status = 'pending'
+		   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
+		   and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
+		 returning `+jobSelectCols,
+		id, owner, lease.String())
+	return scanJob(row)
+}
+
+// JobClaimPendingImageMaterialization atomically claims up to limit pending
+// jobs with a lease. FOR UPDATE SKIP LOCKED keeps multiple imaged nodes from
+// pulling/building the same OCI image while allowing an expired lease to be
+// reclaimed after a worker crash.
+func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	if owner == "" {
+		owner = "imaged"
+	}
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	rows, err := s.pool.Query(ctx,
+		`with candidates as (
+			select id from jobs
+			 where status <> 'deleted'
+			   and image_materialization_status = 'pending'
+			   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
+			   and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
+			 order by updated_at asc, id asc
+			 limit $1
+			 for update skip locked
+		)
+		 update jobs j
+		    set image_materialization_attempts = j.image_materialization_attempts + 1,
+		        image_materialization_lease_owner = $2,
+		        image_materialization_lease_until = now() + $3::interval,
+		        updated_at = now()
+		   from candidates c
+		  where j.id = c.id
+		 returning `+jobSelectCols,
+		limit, owner, lease.String())
+	if err != nil {
+		return nil, fmt.Errorf("state: claim pending job image materializations: %w", err)
 	}
 	defer rows.Close()
 	return scanJobs(rows)
@@ -340,10 +414,37 @@ func (s *PgStore) JobSetImageMaterialization(ctx context.Context, id, sourceRef,
 		   image_storage_key = nullif($5, ''),
 		   image_materialization_error = nullif($6, ''),
 		   image_materialized_at = case when $3 = 'ready' then now() else null end,
+		   image_materialization_next_attempt_at = null,
+		   image_materialization_lease_owner = null,
+		   image_materialization_lease_until = null,
 		   updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
 		 returning `+jobSelectCols,
 		id, sourceRef, status, resolvedDigest, storageKey, failure)
+	return scanJob(row)
+}
+
+// JobRecordImageMaterializationFailure records a failed attempt and keeps the
+// row pending until maxAttempts is reached. The lease is always released so a
+// later worker can retry after retryAt; terminal failures remain visible to
+// customers through image_materialization_status=failed.
+func (s *PgStore) JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error) {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	row := s.pool.QueryRow(ctx,
+		`update jobs set
+		   image_materialization_status = case when image_materialization_attempts >= $6 then 'failed' else 'pending' end,
+		   image_materialization_error = nullif($4, ''),
+		   image_materialization_next_attempt_at = case when image_materialization_attempts >= $6 then null else $5 end,
+		   image_materialization_lease_owner = null,
+		   image_materialization_lease_until = null,
+		   image_materialized_at = null,
+		   updated_at = now()
+		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_materialization_lease_owner = $3
+		 returning `+jobSelectCols,
+		id, sourceRef, owner, reason, retryAt.UTC(), maxAttempts)
 	return scanJob(row)
 }
 
