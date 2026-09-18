@@ -126,6 +126,15 @@
       ]
     },
     {
+      "id": "worker-pool-readiness",
+      "name": "Worker pool readiness",
+      "category": "reliability",
+      "description": "A worker deployment validates its long-lived execution mode and restart defaults before it is admitted.",
+      "capabilities": ["worker-pools"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [{"kind": "test", "locator": "pkg/api/appmanifest_test.go::TestAppManifestWorkerMode"}]
+    },
+    {
       "id": "workflow-reliability",
       "name": "Asynchronous work reliability",
       "category": "reliability",
