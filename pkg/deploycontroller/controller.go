@@ -91,7 +91,7 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 			if currentErr != nil {
 				fallback, fallbackErr := newestVerifiedRollback(c.config.ReleasesRoot, releaseRoot, previous)
 				if fallbackErr != nil {
-					return fmt.Errorf("deploycontroller: current release is not rollback-capable: %w; no verified retained fallback: %v", currentErr, fallbackErr)
+					return fmt.Errorf("deploycontroller: current release is not rollback-capable and no verified retained fallback exists: %w", errors.Join(currentErr, fallbackErr))
 				}
 				rollbackTarget = fallback
 			}
