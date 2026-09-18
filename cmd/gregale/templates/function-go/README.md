@@ -1,6 +1,6 @@
 # function-go
 
-A minimal Go 1.24 function handler.
+A minimal Go function handler built with Gregale's patched Go 1.25.13 starter toolchain.
 
 Functions differ from apps in two ways:
 

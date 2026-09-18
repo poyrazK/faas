@@ -37,6 +37,12 @@ import (
 //go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
 var FS embed.FS
 
+// GoToolchainVersion is the patched toolchain selected by Gregale's built-in
+// Go starters. Keep this aligned with the repository toolchain pin: unlike a
+// customer-owned go.mod, these generated modules are platform-owned defaults
+// and must not knowingly create images with HIGH stdlib findings.
+const GoToolchainVersion = "1.25.13"
+
 // Names is the canonical template list, kept here so the CLI can
 // validate --template before touching the embed FS. The seven
 // "hello/function" scaffolds ship with `gregale deploy`; the six
@@ -105,7 +111,7 @@ func Materialize(name, dest string) error {
 	if name == "hello-go" {
 		modPath := filepath.Join(dest, "go.mod")
 		if _, err := os.Stat(modPath); os.IsNotExist(err) {
-			_ = os.WriteFile(modPath, []byte("module "+name+"\n\ngo 1.24\n"), 0o644)
+			_ = os.WriteFile(modPath, []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)), 0o644)
 		}
 	}
 	return nil
@@ -170,7 +176,7 @@ func TarGz(name, dest string) error {
 		}
 	}
 	if name == "hello-go" || name == "function-go" {
-		modContent := []byte("module " + name + "\n\ngo 1.24\n")
+		modContent := []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion))
 		hdr := &tar.Header{
 			Name:     name + "/go.mod",
 			Mode:     0o644,

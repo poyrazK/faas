@@ -2,7 +2,7 @@
 
 A minimal stdlib-only HTTP handler for gregale.
 
-Gregale supplies a minimal `go.mod` for this template with `go 1.24`.
+Gregale supplies a minimal `go.mod` for this template with `go 1.25.13`.
 `gregale init` writes it into your working copy; a direct template deploy
 includes the same module in the upload archive.
 
@@ -12,7 +12,7 @@ includes the same module in the upload archive.
 gregale deploy --template hello-go --name <slug>
 ```
 
-The CLI detects `main.go` and selects the Go 1.24 builder.
+The CLI detects `main.go` and selects the Go 1.25.13 builder.
 
 ## Try it
 

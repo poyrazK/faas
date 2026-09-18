@@ -364,6 +364,9 @@ func TestFunctionGoTemplateIsDetectedAsFunctionAfterInit(t *testing.T) {
 	if entries := tarEntries(t, directArchive); !entries["function-go/go.mod"] {
 		t.Fatalf("direct function-go template archive missing build go.mod; entries: %v", entries)
 	}
+	if got := string(tarEntryBody(t, directArchive, "function-go/go.mod")); !strings.Contains(got, "go "+templates.GoToolchainVersion+"\n") {
+		t.Fatalf("direct function-go template go.mod = %q, want patched Go %s directive", got, templates.GoToolchainVersion)
+	}
 }
 
 func TestFunctionNode24TemplateRetainsInitMetadata(t *testing.T) {

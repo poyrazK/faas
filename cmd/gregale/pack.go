@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/secretscan"
@@ -1408,7 +1409,7 @@ func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride
 	return path, detectFramework(detectDir), n, nil
 }
 
-const functionGoBuildModule = "module gregale-function\n\ngo 1.24\n"
+const functionGoBuildModule = "module gregale-function\n\ngo " + templates.GoToolchainVersion + "\n"
 
 // functionGoBuildOnlyFiles returns the framework marker required by the remote
 // Go builder when detectDir is a marker-free Go function. The path is relative

@@ -50,10 +50,11 @@ func TestTemplateReadmesMatchMaterializationAndCLIContract(t *testing.T) {
 				if err != nil {
 					t.Fatalf("hello-go materialization missing go.mod: %v", err)
 				}
-				if !strings.Contains(string(mod), "go 1.24\n") {
-					t.Errorf("hello-go go.mod missing Go 1.24 directive: %q", mod)
+				goDirective := "go " + templates.GoToolchainVersion
+				if !strings.Contains(string(mod), goDirective+"\n") {
+					t.Errorf("hello-go go.mod missing patched %s directive: %q", goDirective, mod)
 				}
-				for _, want := range []string{"go.mod", "go 1.24"} {
+				for _, want := range []string{"go.mod", goDirective} {
 					if !strings.Contains(readme, want) {
 						t.Errorf("hello-go README missing %q", want)
 					}
