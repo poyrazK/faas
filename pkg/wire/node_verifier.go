@@ -68,6 +68,18 @@ type NodeVerifier interface {
 	LookupCN(cn string) error
 }
 
+// NodeIdentityResolver maps an authenticated leaf Common Name to the
+// durable compute_nodes.id it represents. Handlers use this second, explicit
+// binding after the TLS handshake to ensure a peer cannot present a valid
+// certificate and then claim a different node in an application payload.
+//
+// PGNodeVerifier implements this interface for production multi-node
+// deployments. It is intentionally separate from NodeVerifier so existing
+// handshake-only callers keep the narrow LookupCN contract.
+type NodeIdentityResolver interface {
+	NodeIDByCN(cn string) (string, error)
+}
+
 // VerifyCNClosure builds a tls.Config.VerifyPeerCertificate callback
 // that consults v.LookupCN on the verified leaf certificate. The
 // callback is invoked by crypto/tls AFTER the stdlib verifier has

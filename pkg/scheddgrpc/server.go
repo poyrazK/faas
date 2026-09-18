@@ -338,6 +338,11 @@ type Server struct {
 	// wiring bug surfaces as 500 rather than a silent
 	// FailedPrecondition.
 	resolver AppResolver
+	// peerNodes resolves the authenticated mTLS leaf CN to a durable
+	// compute_nodes.id for node-scoped streams. It is nil for the
+	// legacy single-box posture, where unix sockets use DAC auth and
+	// capacity reports retain their pre-mTLS behavior.
+	peerNodes wire.NodeIdentityResolver
 }
 
 // New wires the server. ops may be nil (a throwaway registry used by
@@ -382,6 +387,20 @@ func (s *Server) WithOwner(owner OwnerNodeID, resolver AppResolver) *Server {
 	}
 	s.owner = owner
 	s.resolver = resolver
+	return s
+}
+
+// WithPeerNodeResolver enables handler-layer identity binding for RPCs that
+// carry a compute-node identity in their payload. The TLS handshake already
+// checks chain, SAN, EKU, and active-node membership; this resolver closes the
+// remaining confused-deputy gap by binding the authenticated CN to the
+// payload's durable node ID. Passing nil preserves the legacy single-box
+// posture.
+func (s *Server) WithPeerNodeResolver(resolver wire.NodeIdentityResolver) *Server {
+	if s == nil {
+		return s
+	}
+	s.peerNodes = resolver
 	return s
 }
 
@@ -1222,6 +1241,25 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 		<-stream.Context().Done()
 		return nil
 	}
+	// ADR-052 handler-layer binding. Resolve the peer once per stream — the
+	// TLS identity is stable for the lifetime of the connection — then compare
+	// every report's claimed node_id with that authenticated identity before
+	// touching the capacity or telemetry sinks.
+	var peerNodeID string
+	if s.peerNodes != nil {
+		cn, err := wire.PeerCN(stream.Context())
+		if err != nil {
+			sendErr = status.Errorf(codes.Unauthenticated,
+				"capacity peer identity unavailable: %v", err)
+			return sendErr
+		}
+		peerNodeID, err = s.peerNodes.NodeIDByCN(cn)
+		if err != nil {
+			sendErr = status.Errorf(codes.Unauthenticated,
+				"capacity peer identity rejected: %v", err)
+			return sendErr
+		}
+	}
 	// Slice-3 signature verification. A nil registry means
 	// pre-slice-3 schedd — skip verification (back-compat).
 	// A non-nil registry means slice-3 strict: every report
@@ -1243,6 +1281,13 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 		// logs + reconnects instead of silently dropping.
 		if msg.GetNodeId() == "" {
 			sendErr = status.Error(codes.InvalidArgument, "capacity report missing node_id")
+			return sendErr
+		}
+		if peerNodeID != "" && msg.GetNodeId() != peerNodeID {
+			sendErr = status.Errorf(codes.Unauthenticated,
+				"capacity peer node mismatch: peer=%q report=%q", peerNodeID, msg.GetNodeId())
+			s.log.Warn("schedd: capacity peer identity mismatch; closing stream",
+				"peer_node_id", peerNodeID, "report_node_id", msg.GetNodeId())
 			return sendErr
 		}
 		report := sched.CapacityReport{

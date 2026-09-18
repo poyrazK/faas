@@ -76,8 +76,14 @@ func TestPGNodeVerifier_RefreshReplacesSnapshot(t *testing.T) {
 	if err := v.LookupCN("schedd"); err != nil {
 		t.Errorf("LookupCN(schedd)=%v; want nil", err)
 	}
+	if got, err := v.NodeIDByCN("vmmd"); err != nil || got != "uuid-1" {
+		t.Errorf("NodeIDByCN(vmmd)=(%q, %v); want (uuid-1, nil)", got, err)
+	}
 	if err := v.LookupCN("unknown"); !errors.Is(err, ErrNodeVerifierCNMismatch) {
 		t.Errorf("LookupCN(unknown)=%v; want ErrNodeVerifierCNMismatch", err)
+	}
+	if _, err := v.NodeIDByCN("unknown"); !errors.Is(err, ErrNodeVerifierCNMismatch) {
+		t.Errorf("NodeIDByCN(unknown)=%v; want ErrNodeVerifierCNMismatch", err)
 	}
 }
 

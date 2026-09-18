@@ -1450,6 +1450,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// poller's 200 ms cadence; a meterd call before the first stream frame
 	// returns an empty list.
 	scheddgrpc.NewWithStats(engine, reader, ops, log).
+		WithPeerNodeResolver(nodeVerifier).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
 		Register(gsrv)
 

@@ -134,6 +134,27 @@ func (v *PGNodeVerifier) LookupCN(cn string) error {
 	return nil
 }
 
+// NodeIDByCN returns the durable compute_nodes.id associated with an
+// authenticated leaf CN. It is the handler-layer half of ADR-052: the TLS
+// verifier establishes that the CN is active, then a service compares this
+// resolved ID with the resource identity carried by the RPC payload.
+//
+// A nil receiver, unknown CN, or malformed registry row fails closed with
+// ErrNodeVerifierCNMismatch. The read is lock-protected and does not perform
+// a database round-trip.
+func (v *PGNodeVerifier) NodeIDByCN(cn string) (string, error) {
+	if v == nil {
+		return "", nodeVerifierWithCN(ErrNodeVerifierCNMismatch, cn)
+	}
+	v.mu.RLock()
+	id, ok := v.snap[cn]
+	v.mu.RUnlock()
+	if !ok || id == "" {
+		return "", nodeVerifierWithCN(ErrNodeVerifierCNMismatch, cn)
+	}
+	return id, nil
+}
+
 // CertFingerprintByCN returns the registered sha256:<64hex> leaf-cert
 // fingerprint for the given CN (== compute_nodes.name). Used by the
 // doctor (PR-4) to validate the running TLS leaf matches the
