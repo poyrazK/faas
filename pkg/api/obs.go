@@ -178,29 +178,48 @@ type ObsTenant360Response struct {
 }
 
 type ObsTenantUsage struct {
-	Month           string              `json:"month"`
-	UsedGBHours     float64             `json:"used_gb_hours"`
-	IncludedGBHours int64               `json:"included_gb_hours"`
-	OverageGBHours  float64             `json:"overage_gb_hours"`
-	OverageCents    int64               `json:"overage_cents"`
-	UsedCPUHours    float64             `json:"used_cpu_hours"`
-	UsedEgressGB    float64             `json:"used_egress_gb"`
-	UsedIngressGB   float64             `json:"used_ingress_gb"`
-	ColdBootTotal   int64               `json:"cold_boots"`
-	Requests        int64               `json:"requests"`
-	Apps            []ObsTenantUsageApp `json:"apps"`
+	Month           string                  `json:"month"`
+	UsedGBHours     float64                 `json:"used_gb_hours"`
+	IncludedGBHours int64                   `json:"included_gb_hours"`
+	OverageGBHours  float64                 `json:"overage_gb_hours"`
+	OverageCents    int64                   `json:"overage_cents"`
+	UsedCPUHours    float64                 `json:"used_cpu_hours"`
+	UsedEgressGB    float64                 `json:"used_egress_gb"`
+	UsedIngressGB   float64                 `json:"used_ingress_gb"`
+	ColdBootTotal   int64                   `json:"cold_boots"`
+	Requests        int64                   `json:"requests"`
+	Apps            []ObsTenantUsageApp     `json:"apps"`
+	Profiles        []ObsTenantUsageProfile `json:"profiles"`
 }
 
 type ObsTenantUsageApp struct {
-	AppID      string `json:"app_id"`
-	AppSlug    string `json:"app_slug,omitempty"`
-	MBSeconds  int64  `json:"mb_seconds"`
-	CPUUsec    int64  `json:"cpu_usec"`
-	Requests   int64  `json:"requests"`
-	TXBytes    int64  `json:"tx_bytes"`
-	NetTxBytes int64  `json:"net_tx_bytes"`
-	NetRxBytes int64  `json:"net_rx_bytes"`
-	ColdBoots  int64  `json:"cold_boots"`
+	AppID           string `json:"app_id"`
+	AppSlug         string `json:"app_slug,omitempty"`
+	ResourceProfile string `json:"resource_profile,omitempty"`
+	MemoryMB        int    `json:"memory_mb,omitempty"`
+	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
+	MBSeconds       int64  `json:"mb_seconds"`
+	CPUUsec         int64  `json:"cpu_usec"`
+	Requests        int64  `json:"requests"`
+	TXBytes         int64  `json:"tx_bytes"`
+	NetTxBytes      int64  `json:"net_tx_bytes"`
+	NetRxBytes      int64  `json:"net_rx_bytes"`
+	ColdBoots       int64  `json:"cold_boots"`
+}
+
+// ObsTenantUsageProfile is the bounded usage roll-up by effective app shape.
+// Named profiles are grouped by their closed-set name; custom shapes are
+// grouped together so an operator view cannot grow with customer-defined
+// RAM/CPU combinations.
+type ObsTenantUsageProfile struct {
+	ResourceProfile string  `json:"resource_profile"`
+	MemoryMB        int     `json:"memory_mb,omitempty"`
+	CPUMillicores   int     `json:"cpu_millicores,omitempty"`
+	Apps            int64   `json:"apps"`
+	UsedGBHours     float64 `json:"used_gb_hours"`
+	UsedCPUHours    float64 `json:"used_cpu_hours"`
+	Requests        int64   `json:"requests"`
+	ColdBoots       int64   `json:"cold_boots"`
 }
 
 type ObsTenantBilling struct {
@@ -232,22 +251,36 @@ type ObsCapacityResponse struct {
 }
 
 type ObsCapacitySummary struct {
-	TotalNodes              int   `json:"total_nodes"`
-	ActiveNodes             int   `json:"active_nodes"`
-	InactiveNodes           int   `json:"inactive_nodes"`
-	TotalVCPUs              int64 `json:"total_vcpus"`
-	TotalVCPUBudget         int64 `json:"total_vcpu_budget"`
-	TotalMemMB              int64 `json:"total_mem_mb"`
-	TotalAdmissionCeilingMB int64 `json:"total_admission_ceiling_mb"`
-	RAMUsedMB               int64 `json:"ram_used_mb"`
-	AdmissionMarginMB       int64 `json:"admission_margin_mb"`
-	InstancesLive           int64 `json:"instances_live"`
-	InstancesRunning        int64 `json:"instances_running"`
-	InstancesWaking         int64 `json:"instances_waking"`
-	InstancesColdBooting    int64 `json:"instances_cold_booting"`
-	AppsTotal               int64 `json:"apps_total"`
-	TenantsTotal            int64 `json:"tenants_total"`
-	UnplacedApps            int64 `json:"unplaced_apps"`
+	TotalNodes              int                  `json:"total_nodes"`
+	ActiveNodes             int                  `json:"active_nodes"`
+	InactiveNodes           int                  `json:"inactive_nodes"`
+	TotalVCPUs              int64                `json:"total_vcpus"`
+	TotalVCPUBudget         int64                `json:"total_vcpu_budget"`
+	TotalMemMB              int64                `json:"total_mem_mb"`
+	TotalAdmissionCeilingMB int64                `json:"total_admission_ceiling_mb"`
+	RAMUsedMB               int64                `json:"ram_used_mb"`
+	AdmissionMarginMB       int64                `json:"admission_margin_mb"`
+	InstancesLive           int64                `json:"instances_live"`
+	InstancesRunning        int64                `json:"instances_running"`
+	InstancesWaking         int64                `json:"instances_waking"`
+	InstancesColdBooting    int64                `json:"instances_cold_booting"`
+	AppsTotal               int64                `json:"apps_total"`
+	TenantsTotal            int64                `json:"tenants_total"`
+	UnplacedApps            int64                `json:"unplaced_apps"`
+	ResourceProfiles        []ObsCapacityProfile `json:"resource_profiles"`
+}
+
+// ObsCapacityProfile is the bounded fleet capacity roll-up by effective app
+// shape. Reserved totals are derived from app configuration; live instances
+// counts come from the scheduler-owned instance projection.
+type ObsCapacityProfile struct {
+	ResourceProfile       string `json:"resource_profile"`
+	MemoryMB              int    `json:"memory_mb,omitempty"`
+	CPUMillicores         int    `json:"cpu_millicores,omitempty"`
+	Apps                  int64  `json:"apps"`
+	LiveInstances         int64  `json:"live_instances"`
+	ReservedMemoryMB      int64  `json:"reserved_memory_mb"`
+	ReservedCPUMillicores int64  `json:"reserved_cpu_millicores"`
 }
 
 type ObsCapacityNode struct {

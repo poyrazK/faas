@@ -413,6 +413,7 @@ var dtoExclude = map[string]bool{
 	// snapshot shapes — same admin-only posture as the other
 	// Obs* DTOs above; not registered in api/openapi.yaml.
 	"ObsCapacityNode":     true,
+	"ObsCapacityProfile":  true,
 	"ObsCapacityResponse": true,
 	"ObsCapacitySummary":  true,
 	"ObsDeploymentRow":    true,
@@ -433,6 +434,7 @@ var dtoExclude = map[string]bool{
 	"ObsTenantBilling":          true,
 	"ObsTenantUsage":            true,
 	"ObsTenantUsageApp":         true,
+	"ObsTenantUsageProfile":     true,
 	// Operator job-run incident projections are intentionally absent from the
 	// public customer OpenAPI and generated SDKs.
 	"OperatorJobRun":                     true,
