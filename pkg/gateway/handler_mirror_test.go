@@ -1,4 +1,5 @@
 // handler_mirror_test.go — issue #72 / ADR-124 / ADR-125 PR-A3
+// adr: 133
 //
 // Whitebox trait tests for the handler fan-out of the mirror
 // dispatch goroutine. The trait contracts:

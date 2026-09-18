@@ -1,4 +1,5 @@
 // handler_wakefanout_test.go — PR-C (issue #556) end-to-end pinned
+// adr: 084
 // test for wake-fan-out. The plan's contract:
 //
 //   - Picker returns ColdBucket=dep-B (the deployment the operator's traffic
