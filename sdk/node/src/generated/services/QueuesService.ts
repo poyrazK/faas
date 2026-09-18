@@ -36,7 +36,7 @@ export class QueuesService {
      */
     slug: string,
     /**
-     * Unified failed-event identifier.
+     * Unified failed-event identifier to replay.
      */
     id: string,
     formData: {
@@ -53,8 +53,8 @@ export class QueuesService {
       formData: formData,
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
-        303: `Redirect to the Failed Events inbox.`,
-        400: `Invalid dashboard CSRF token.`,
+        303: `Redirect to the Failed Events inbox after replay.`,
+        400: `Invalid dashboard CSRF token for replay.`,
         404: `code: not_found`,
       },
     });
@@ -75,7 +75,7 @@ export class QueuesService {
      */
     slug: string,
     /**
-     * Unified failed-event identifier.
+     * Unified failed-event identifier to discard.
      */
     id: string,
     formData: {
@@ -92,8 +92,8 @@ export class QueuesService {
       formData: formData,
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
-        303: `Redirect to the Failed Events inbox.`,
-        400: `Invalid dashboard CSRF token.`,
+        303: `Redirect to the Failed Events inbox after discard.`,
+        400: `Invalid dashboard CSRF token for discard.`,
         404: `code: not_found`,
       },
     });
