@@ -684,6 +684,20 @@ func (r *VMMRouter) UpdatePrivateNetwork(ctx context.Context, nodeID, appID stri
 	return updater.UpdatePrivateNetwork(ctx, appID, cidrs)
 }
 
+func (r *VMMRouter) UpdatePrivateNetworkWithPolicy(ctx context.Context, nodeID, appID string, cidrs, allowedCIDRs []netip.Prefix) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdatePrivateNetworkWithPolicy(context.Context, string, []netip.Prefix, []netip.Prefix) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network policy update unsupported by node %q", nodeID)
+	}
+	return updater.UpdatePrivateNetworkWithPolicy(ctx, appID, cidrs, allowedCIDRs)
+}
+
 // UpdatePrivateNetworkAttachment is the Gregale-owned live dataplane update.
 // It carries the network/member identity needed to add or remove the private
 // side-link without recycling the guest.
@@ -699,6 +713,23 @@ func (r *VMMRouter) UpdatePrivateNetworkAttachment(ctx context.Context, nodeID, 
 		return fmt.Errorf("vmm router: private network attachment update unsupported by node %q", nodeID)
 	}
 	return updater.UpdatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs)
+}
+
+// UpdatePrivateNetworkAttachmentWithPolicy is the additive policy-aware
+// sibling. Nodes that have not rolled out the extension are rejected by the
+// caller rather than silently widening a requested policy.
+func (r *VMMRouter) UpdatePrivateNetworkAttachmentWithPolicy(ctx context.Context, nodeID, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdatePrivateNetworkAttachmentWithPolicy(context.Context, string, string, netip.Addr, []netip.Prefix, []netip.Prefix) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network policy update unsupported by node %q", nodeID)
+	}
+	return updater.UpdatePrivateNetworkAttachmentWithPolicy(ctx, appID, networkID, address, cidrs, allowedCIDRs)
 }
 
 // ReconcilePrivateNetworkFabric routes the node-local Gregale bridge

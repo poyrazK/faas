@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 func TestValidatePrivateNetworkIdentifier(t *testing.T) {
 	for _, value := range []string{"prod-vpc", "vpc1", "a"} {
@@ -39,5 +42,19 @@ func TestValidatePrivateNetworkCIDRsCanonicalizesAndRejectsOverlap(t *testing.T)
 func TestValidatePrivateNetworkCIDRsEnforcesMax(t *testing.T) {
 	if _, err := ValidatePrivateNetworkCIDRs([]string{"10.20.0.0/16", "10.30.0.0/16"}, 1); err == nil {
 		t.Fatal("CIDR cap not enforced")
+	}
+}
+
+func TestValidatePrivateNetworkPolicyCIDRsIsContainedAndOptional(t *testing.T) {
+	destinations := []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}
+	if got, err := ValidatePrivateNetworkPolicyCIDRs(nil, destinations); err != nil || got != nil {
+		t.Fatalf("empty policy = %v, %v; want nil, nil", got, err)
+	}
+	got, err := ValidatePrivateNetworkPolicyCIDRs([]string{"10.42.8.0/24"}, destinations)
+	if err != nil || len(got) != 1 || got[0].String() != "10.42.8.0/24" {
+		t.Fatalf("contained policy = %v, %v", got, err)
+	}
+	if _, err := ValidatePrivateNetworkPolicyCIDRs([]string{"10.43.0.0/16"}, destinations); err == nil {
+		t.Fatal("policy outside attached network unexpectedly accepted")
 	}
 }

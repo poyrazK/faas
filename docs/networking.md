@@ -56,6 +56,24 @@ Route activation is idempotent, and any connector or host-route failure leaves
 the row in `error` with traffic blocked. Until a connector is configured, the
 API remains an intent surface and every attachment stays `pending`.
 
+Private-network security policy is opt-in per attachment. Include
+`allowed_cidrs` in the PUT body to restrict both private egress destinations
+and private ingress sources; every range must be contained by the attached
+network CIDR. Omitting it (or sending an empty list) preserves the existing
+allow-all behavior, while a pending/error attachment remains fail-closed:
+
+```json
+{
+  "network_id": "prod-vpc",
+  "allowed_cidrs": ["10.42.8.0/24"]
+}
+```
+
+The policy is persisted with the attachment and sent to each vmmd as part of
+the same live update as the stable member address. vmmd installs the nft
+accept/drop rules before publishing the new cached state; a failed update is
+reported as reconciliation error and never widens access.
+
 Schedd applies a ready attachment once per live compute node and records a
 per-node convergence observation in its reconciliation logs. A partial node
 failure keeps the attachment in `error` and is retried by the next sweep;

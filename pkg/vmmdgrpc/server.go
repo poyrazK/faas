@@ -1350,6 +1350,26 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	if req.GetPrivateNetworkId() != "" || req.GetPrivateNetworkAddress() != "" {
+		allowedCIDRs, policyErr := toPrivateNetworkCIDRs(req.GetPrivateNetworkAllowedCidrs())
+		if policyErr != nil {
+			return nil, grpcerr.ToStatus(toProblem(policyErr))
+		}
+		if len(allowedCIDRs) > 0 {
+			policyUpdater, ok := s.vmm.(interface {
+				UpdatePrivateNetworkAttachmentWithPolicy(context.Context, string, string, netip.Addr, []netip.Prefix, []netip.Prefix) error
+			})
+			if !ok {
+				return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_unavailable", "Private network policy updates unavailable", "vmmd private-network policy live update is not wired")))
+			}
+			address, parseErr := netip.ParseAddr(req.GetPrivateNetworkAddress())
+			if parseErr != nil || !address.Is4() {
+				return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network address", "private_network_address must be an IPv4 address")))
+			}
+			if err := policyUpdater.UpdatePrivateNetworkAttachmentWithPolicy(ctx, req.GetAppId(), req.GetPrivateNetworkId(), address, cidrs, allowedCIDRs); err != nil {
+				return nil, grpcerr.ToStatus(toProblem(err))
+			}
+			return &vmmdpb.UpdatePrivateNetworkAck{}, nil
+		}
 		attachmentUpdater, ok := s.vmm.(interface {
 			UpdatePrivateNetworkAttachment(context.Context, string, string, netip.Addr, []netip.Prefix) error
 		})
@@ -1361,6 +1381,22 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network address", "private_network_address must be an IPv4 address")))
 		}
 		if err := attachmentUpdater.UpdatePrivateNetworkAttachment(ctx, req.GetAppId(), req.GetPrivateNetworkId(), address, cidrs); err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+		return &vmmdpb.UpdatePrivateNetworkAck{}, nil
+	}
+	allowedCIDRs, policyErr := toPrivateNetworkCIDRs(req.GetPrivateNetworkAllowedCidrs())
+	if policyErr != nil {
+		return nil, grpcerr.ToStatus(toProblem(policyErr))
+	}
+	if len(allowedCIDRs) > 0 {
+		policyUpdater, ok := s.vmm.(interface {
+			UpdatePrivateNetworkWithPolicy(context.Context, string, []netip.Prefix, []netip.Prefix) error
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_unavailable", "Private network policy updates unavailable", "vmmd private-network policy live update is not wired")))
+		}
+		if err := policyUpdater.UpdatePrivateNetworkWithPolicy(ctx, req.GetAppId(), cidrs, allowedCIDRs); err != nil {
 			return nil, grpcerr.ToStatus(toProblem(err))
 		}
 		return &vmmdpb.UpdatePrivateNetworkAck{}, nil

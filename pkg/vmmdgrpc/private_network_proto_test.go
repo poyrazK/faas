@@ -13,7 +13,7 @@ func TestToColdBootRequestPrivateNetworkCIDRs(t *testing.T) {
 		Instance: "i-private",
 		App: &vmmdpb.AppSpec{
 			BaseKey: "/base", LayerKey: "/layer",
-			PrivateNetworkCidrs: []string{"10.42.0.0/16"}, PrivateNetworkId: "net-1", PrivateNetworkAddress: "10.42.0.2",
+			PrivateNetworkCidrs: []string{"10.42.0.0/16"}, PrivateNetworkAllowedCidrs: []string{"10.42.8.0/24"}, PrivateNetworkId: "net-1", PrivateNetworkAddress: "10.42.0.2",
 		},
 	})
 	if err != nil {
@@ -24,5 +24,8 @@ func TestToColdBootRequestPrivateNetworkCIDRs(t *testing.T) {
 	}
 	if request.PrivateNetworkID != "net-1" || request.PrivateNetworkAddress != "10.42.0.2" {
 		t.Fatalf("private network identity did not cross vmmd adapter: id=%q address=%q", request.PrivateNetworkID, request.PrivateNetworkAddress)
+	}
+	if len(request.PrivateNetworkAllowedCIDRs) != 1 || request.PrivateNetworkAllowedCIDRs[0] != "10.42.8.0/24" {
+		t.Fatalf("private network policy did not cross vmmd adapter: %v", request.PrivateNetworkAllowedCIDRs)
 	}
 }

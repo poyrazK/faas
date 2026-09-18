@@ -244,8 +244,11 @@ type AppSpec struct {
 	// apid. vmmd validates that it belongs to the first private CIDR before
 	// attaching the workload side-link.
 	PrivateNetworkAddress string `protobuf:"bytes,21,opt,name=private_network_address,json=privateNetworkAddress,proto3" json:"private_network_address,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Optional private-network security policy. Empty preserves allow-all
+	// behavior; populated CIDRs are enforced for private egress and ingress.
+	PrivateNetworkAllowedCidrs []string `protobuf:"bytes,22,rep,name=private_network_allowed_cidrs,json=privateNetworkAllowedCidrs,proto3" json:"private_network_allowed_cidrs,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -423,6 +426,13 @@ func (x *AppSpec) GetPrivateNetworkAddress() string {
 		return x.PrivateNetworkAddress
 	}
 	return ""
+}
+
+func (x *AppSpec) GetPrivateNetworkAllowedCidrs() []string {
+	if x != nil {
+		return x.PrivateNetworkAllowedCidrs
+	}
+	return nil
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -3035,8 +3045,11 @@ type UpdatePrivateNetworkRequest struct {
 	// the legacy provider route-only update shape.
 	PrivateNetworkId      string `protobuf:"bytes,3,opt,name=private_network_id,json=privateNetworkId,proto3" json:"private_network_id,omitempty"`
 	PrivateNetworkAddress string `protobuf:"bytes,4,opt,name=private_network_address,json=privateNetworkAddress,proto3" json:"private_network_address,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Optional private-network security policy. Empty preserves allow-all
+	// behavior; populated CIDRs are enforced atomically with the attachment.
+	PrivateNetworkAllowedCidrs []string `protobuf:"bytes,5,rep,name=private_network_allowed_cidrs,json=privateNetworkAllowedCidrs,proto3" json:"private_network_allowed_cidrs,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *UpdatePrivateNetworkRequest) Reset() {
@@ -3095,6 +3108,13 @@ func (x *UpdatePrivateNetworkRequest) GetPrivateNetworkAddress() string {
 		return x.PrivateNetworkAddress
 	}
 	return ""
+}
+
+func (x *UpdatePrivateNetworkRequest) GetPrivateNetworkAllowedCidrs() []string {
+	if x != nil {
+		return x.PrivateNetworkAllowedCidrs
+	}
+	return nil
 }
 
 // UpdatePrivateNetworkAck is the empty success response.
@@ -6540,7 +6560,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xdc\x06\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x9f\a\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -6567,7 +6587,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\x122\n" +
 	"\x15private_network_cidrs\x18\x13 \x03(\tR\x13privateNetworkCidrs\x12,\n" +
 	"\x12private_network_id\x18\x14 \x01(\tR\x10privateNetworkId\x126\n" +
-	"\x17private_network_address\x18\x15 \x01(\tR\x15privateNetworkAddress\"\xcc\x03\n" +
+	"\x17private_network_address\x18\x15 \x01(\tR\x15privateNetworkAddress\x12A\n" +
+	"\x1dprivate_network_allowed_cidrs\x18\x16 \x03(\tR\x1aprivateNetworkAllowedCidrs\"\xcc\x03\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
@@ -6764,12 +6785,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1bUpdateStaticEgressIPRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12(\n" +
 	"\x10static_egress_ip\x18\x02 \x01(\tR\x0estaticEgressIp\"\x19\n" +
-	"\x17UpdateStaticEgressIPAck\"\xce\x01\n" +
+	"\x17UpdateStaticEgressIPAck\"\x91\x02\n" +
 	"\x1bUpdatePrivateNetworkRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x122\n" +
 	"\x15private_network_cidrs\x18\x02 \x03(\tR\x13privateNetworkCidrs\x12,\n" +
 	"\x12private_network_id\x18\x03 \x01(\tR\x10privateNetworkId\x126\n" +
-	"\x17private_network_address\x18\x04 \x01(\tR\x15privateNetworkAddress\"\x19\n" +
+	"\x17private_network_address\x18\x04 \x01(\tR\x15privateNetworkAddress\x12A\n" +
+	"\x1dprivate_network_allowed_cidrs\x18\x05 \x03(\tR\x1aprivateNetworkAllowedCidrs\"\x19\n" +
 	"\x17UpdatePrivateNetworkAck\"2\n" +
 	"\x14SeccompStatusRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\"\x8e\x01\n" +

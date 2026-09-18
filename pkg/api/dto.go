@@ -5549,6 +5549,7 @@ type AppPrivateNetworkAttachment struct {
 	NetworkID    string     `json:"network_id"`
 	Region       string     `json:"region"`
 	CIDRs        []string   `json:"cidrs"`
+	AllowedCIDRs []string   `json:"allowed_cidrs,omitempty"`
 	Address      string     `json:"address,omitempty"`
 	Status       string     `json:"status"`
 	StatusDetail string     `json:"status_detail,omitempty"`
@@ -5572,6 +5573,10 @@ type AppPrivateNetworkAttachmentRequest struct {
 	NetworkID string   `json:"network_id"`
 	Region    string   `json:"region,omitempty"`
 	CIDRs     []string `json:"cidrs,omitempty"`
+	// AllowedCIDRs enables the opt-in private-network policy. Empty keeps
+	// legacy allow-all semantics; populated ranges are enforced symmetrically
+	// for private egress and ingress.
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
 }
 
 // AdminSetGithubWebhookSecretRequest is the body shape for

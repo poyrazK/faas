@@ -97,6 +97,29 @@ func TestNftCommandsPrivateSideLinkPublishesStableAddress(t *testing.T) {
 	}
 }
 
+func TestNftCommandsPrivatePolicyRestrictsIngressAndEgress(t *testing.T) {
+	c := NewConfig("app", "fc-app", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.2"))
+	c.PrivateNetworkCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}
+	c.PrivateNetworkAllowedCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.8.0/24")}
+	c.PrivateNetworkBridge = "gpn-abc123"
+	c.PrivateVethHost = "gpn-h00001"
+	c.PrivateVethPeer = "gpn-p00001"
+	c.PrivateNetworkAddress = netip.MustParseAddr("10.42.0.2")
+	joined := make([]string, 0)
+	for _, cmd := range c.NftCommands() {
+		joined = append(joined, strings.Join(cmd, " "))
+	}
+	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } accept") {
+		t.Fatalf("policy egress rule missing: %v", joined)
+	}
+	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 tcp dport 8080 accept") {
+		t.Fatalf("policy ingress source restriction missing: %v", joined)
+	}
+	if !containsCommand(joined, "iifname gpn-p00001 drop") {
+		t.Fatalf("policy ingress terminal drop missing: %v", joined)
+	}
+}
+
 // adr: 009
 func TestPrivateNetworkNftCommandsAreAdditive(t *testing.T) {
 	c := NewConfig("app", "fc-app", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.2"))

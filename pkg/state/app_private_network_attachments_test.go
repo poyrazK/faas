@@ -12,7 +12,8 @@ func TestMemStorePrivateNetworkAttachmentLifecycle(t *testing.T) {
 	ctx := context.Background()
 	in := AppPrivateNetworkAttachment{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: "prod-vpc", Region: "fra1",
-		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}, Status: "pending",
+		CIDRs:        []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")},
+		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("10.20.8.0/24")}, Status: "pending",
 	}
 	got, err := m.UpsertAppPrivateNetworkAttachment(ctx, in)
 	if err != nil {
@@ -28,6 +29,9 @@ func TestMemStorePrivateNetworkAttachmentLifecycle(t *testing.T) {
 	}
 	if read.CIDRs[0].String() != "10.20.0.0/16" {
 		t.Fatalf("store aliased CIDRs: %v", read.CIDRs)
+	}
+	if len(read.AllowedCIDRs) != 1 || read.AllowedCIDRs[0].String() != "10.20.8.0/24" {
+		t.Fatalf("allowed CIDRs did not round-trip: %v", read.AllowedCIDRs)
 	}
 	updated, err := m.UpsertAppPrivateNetworkAttachment(ctx, AppPrivateNetworkAttachment{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: "prod-vpc-2", Region: "ams1",

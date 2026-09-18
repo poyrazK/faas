@@ -16,12 +16,16 @@ import (
 // intent for one app. A connector may advance Status from pending to ready in
 // a later runtime slice; callers must treat pending as fail-closed.
 type AppPrivateNetworkAttachment struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	NetworkID    string
-	Region       string
-	CIDRs        []netip.Prefix
+	ID        string
+	AccountID string
+	AppID     string
+	NetworkID string
+	Region    string
+	CIDRs     []netip.Prefix
+	// AllowedCIDRs is an optional private-network policy. When non-empty,
+	// only these destinations (and matching private ingress sources) are
+	// admitted; an empty list preserves the historical network-wide allow.
+	AllowedCIDRs []netip.Prefix
 	Status       string
 	StatusDetail string
 	CreatedAt    time.Time
@@ -78,6 +82,9 @@ func (m *MemStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attach
 	if len(attachment.CIDRs) > 64 {
 		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
 	}
+	if len(attachment.AllowedCIDRs) > 64 {
+		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.privateNetworkAttachments == nil {
@@ -98,6 +105,7 @@ func (m *MemStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attach
 	}
 	attachment.UpdatedAt = time.Now().UTC()
 	attachment.CIDRs = append([]netip.Prefix(nil), attachment.CIDRs...)
+	attachment.AllowedCIDRs = append([]netip.Prefix(nil), attachment.AllowedCIDRs...)
 	m.privateNetworkAttachments[attachment.AppID] = attachment
 	return clonePrivateNetworkAttachment(attachment), nil
 }
@@ -176,7 +184,7 @@ func (m *MemStore) UpdateAppPrivateNetworkAttachmentStatus(ctx context.Context, 
 func (s *PgStore) GetAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) (AppPrivateNetworkAttachment, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, app_id, network_id, region,
-		       coalesce(cidrs::text, '{}'), status, status_detail,
+		       coalesce(cidrs::text, '{}'), coalesce(allowed_cidrs::text, '{}'), status, status_detail,
 		       created_at, updated_at
 		  from app_private_network_attachments
 		 where account_id = $1 and app_id = $2`, accountID, appID)
@@ -193,6 +201,9 @@ func (s *PgStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attachm
 	if len(attachment.CIDRs) > 64 {
 		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
 	}
+	if len(attachment.AllowedCIDRs) > 64 {
+		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
+	}
 	if attachment.Status == "" {
 		attachment.Status = "pending"
 	}
@@ -203,23 +214,28 @@ func (s *PgStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attachm
 	for _, prefix := range attachment.CIDRs {
 		cidrs = append(cidrs, prefix.String())
 	}
+	allowedCIDRs := make([]string, 0, len(attachment.AllowedCIDRs))
+	for _, prefix := range attachment.AllowedCIDRs {
+		allowedCIDRs = append(allowedCIDRs, prefix.String())
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into app_private_network_attachments
-		       (account_id, app_id, network_id, region, cidrs, status, status_detail)
-		values ($1, $2, $3, $4, $5::cidr[], $6, $7)
+		       (account_id, app_id, network_id, region, cidrs, allowed_cidrs, status, status_detail)
+		values ($1, $2, $3, $4, $5::cidr[], $6::cidr[], $7, $8)
 		on conflict (app_id) do update set
 		       network_id = excluded.network_id,
 		       region = excluded.region,
 		       cidrs = excluded.cidrs,
+		       allowed_cidrs = excluded.allowed_cidrs,
 		       status = excluded.status,
 		       status_detail = excluded.status_detail,
 		       updated_at = now()
 		 where app_private_network_attachments.account_id = excluded.account_id
 		returning id, account_id, app_id, network_id, region,
-		          coalesce(cidrs::text, '{}'), status, status_detail,
+		          coalesce(cidrs::text, '{}'), coalesce(allowed_cidrs::text, '{}'), status, status_detail,
 		          created_at, updated_at`,
 		attachment.AccountID, attachment.AppID, attachment.NetworkID, attachment.Region,
-		cidrs, attachment.Status, attachment.StatusDetail)
+		cidrs, allowedCIDRs, attachment.Status, attachment.StatusDetail)
 	return scanAppPrivateNetworkAttachment(row)
 }
 
@@ -246,7 +262,7 @@ func (s *PgStore) ListAppPrivateNetworkAttachments(ctx context.Context, statuses
 	}
 	rows, err := s.pool.Query(ctx, `
 		select id, account_id, app_id, network_id, region,
-		       coalesce(cidrs::text, '{}'), status, status_detail,
+		       coalesce(cidrs::text, '{}'), coalesce(allowed_cidrs::text, '{}'), status, status_detail,
 		       created_at, updated_at
 		  from app_private_network_attachments
 		 where ($1::text[] is null or status = any($1::text[]))
@@ -279,7 +295,7 @@ func (s *PgStore) UpdateAppPrivateNetworkAttachmentStatus(ctx context.Context, a
 		   set status = $3, status_detail = $4, updated_at = now()
 		 where account_id = $1 and app_id = $2
 		returning id, account_id, app_id, network_id, region,
-		          coalesce(cidrs::text, '{}'), status, status_detail,
+		          coalesce(cidrs::text, '{}'), coalesce(allowed_cidrs::text, '{}'), status, status_detail,
 		          created_at, updated_at`, accountID, appID, status, detail)
 	return scanAppPrivateNetworkAttachment(row)
 }
@@ -291,19 +307,22 @@ type privateNetworkAttachmentScanner interface {
 func scanAppPrivateNetworkAttachment(row privateNetworkAttachmentScanner) (AppPrivateNetworkAttachment, error) {
 	var out AppPrivateNetworkAttachment
 	var cidrText string
+	var allowedCIDRText string
 	if err := row.Scan(&out.ID, &out.AccountID, &out.AppID, &out.NetworkID, &out.Region,
-		&cidrText, &out.Status, &out.StatusDetail, &out.CreatedAt, &out.UpdatedAt); err != nil {
+		&cidrText, &allowedCIDRText, &out.Status, &out.StatusDetail, &out.CreatedAt, &out.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return AppPrivateNetworkAttachment{}, ErrNotFound
 		}
 		return AppPrivateNetworkAttachment{}, mapErr(err)
 	}
 	out.CIDRs = cidrTextToPrefixes(cidrText)
+	out.AllowedCIDRs = cidrTextToPrefixes(allowedCIDRText)
 	return out, nil
 }
 
 func clonePrivateNetworkAttachment(in AppPrivateNetworkAttachment) AppPrivateNetworkAttachment {
 	in.CIDRs = append([]netip.Prefix(nil), in.CIDRs...)
+	in.AllowedCIDRs = append([]netip.Prefix(nil), in.AllowedCIDRs...)
 	return in
 }
 

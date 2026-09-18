@@ -126,6 +126,11 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("cidrs", strings.Join(req.CIDRs, ","), err.Error()))
 		return
 	}
+	allowedCIDRs, err := api.ValidatePrivateNetworkPolicyCIDRs(req.AllowedCIDRs, cidrs)
+	if err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", strings.Join(req.AllowedCIDRs, ","), err.Error()))
+		return
+	}
 	var previous state.AppPrivateNetworkAttachment
 	if fabric != nil {
 		previous, _ = store.GetAppPrivateNetworkAttachment(r.Context(), acct.ID, app.ID)
@@ -147,6 +152,7 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		NetworkID:    req.NetworkID,
 		Region:       req.Region,
 		CIDRs:        cidrs,
+		AllowedCIDRs: allowedCIDRs,
 		Status:       api.PrivateNetworkAttachmentStatusPending,
 		StatusDetail: privateNetworkPendingDetail,
 	})
@@ -169,7 +175,7 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		app.ID, acct.ID, attachment.NetworkID, attachment.Region, attachment.Status))
 	s.audit.Emit(r.Context(), "app.private_network_attachment_requested", &acct.ID, map[string]any{
 		"app_id": app.ID, "network_id": attachment.NetworkID, "region": attachment.Region,
-		"cidrs": prefixesToStrings(attachment.CIDRs), "status": attachment.Status,
+		"cidrs": prefixesToStrings(attachment.CIDRs), "allowed_cidrs": prefixesToStrings(attachment.AllowedCIDRs), "status": attachment.Status,
 	})
 	converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID))
 	writeJSON(w, http.StatusAccepted, api.AppPrivateNetworkAttachmentResponse{
@@ -224,6 +230,7 @@ func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment, addr
 		NetworkID:    in.NetworkID,
 		Region:       in.Region,
 		CIDRs:        prefixesToStrings(in.CIDRs),
+		AllowedCIDRs: prefixesToStrings(in.AllowedCIDRs),
 		Address:      address,
 		Status:       in.Status,
 		StatusDetail: in.StatusDetail,

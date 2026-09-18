@@ -585,6 +585,9 @@ message AppSpec {
   // apid. vmmd validates that it belongs to the first private CIDR before
   // attaching the workload side-link.
   string private_network_address = 21;
+  // Optional private-network security policy. Empty preserves allow-all
+  // behavior; populated CIDRs are enforced for private egress and ingress.
+  repeated string private_network_allowed_cidrs = 22;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1220,6 +1223,9 @@ message UpdatePrivateNetworkRequest {
   // the legacy provider route-only update shape.
   string private_network_id = 3;
   string private_network_address = 4;
+  // Optional private-network security policy. Empty preserves allow-all
+  // behavior; populated CIDRs are enforced atomically with the attachment.
+  repeated string private_network_allowed_cidrs = 5;
 }
 
 // UpdatePrivateNetworkAck is the empty success response.

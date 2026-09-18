@@ -138,6 +138,10 @@ type Config struct {
 	// they do not change the default public-egress policy: attaching a VPC
 	// augments connectivity rather than silently removing internet access.
 	PrivateNetworkCIDRs []netip.Prefix
+	// PrivateNetworkAllowedCIDRs is an opt-in security policy for the
+	// Gregale-owned side-link. Empty means legacy allow-all within the
+	// attached network CIDRs; populated ranges are admitted symmetrically.
+	PrivateNetworkAllowedCIDRs []netip.Prefix
 	// OperatorExceptions (PR scale-out tier-1 residual Gap #4):
 	// per-netns accept-before-deny list. Each entry is emitted
 	// as `iifname "tap0" ip saddr <ex> accept` in the per-netns
@@ -488,8 +492,15 @@ func (c Config) NftCommands() [][]string {
 	if c.privateNetworkEnabled() {
 		// DNAT'd private ingress is now addressed to the guest tap IP;
 		// admit only the published application port on the private side.
-		add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer,
-			"ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
+		args := []string{"add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
+		if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+			args = append(args, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
+		}
+		args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
+		add(args...)
+		if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")
+		}
 	}
 	// Spec §7 cap (only when ConntrackCap > 0): drop new forward flows whose
 	// origin conntrack table already holds > N entries, so one misbehaving
@@ -629,15 +640,23 @@ func (c Config) PrivateNetworkNftCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
 	port := strconv.Itoa(c.guestAppPort())
-	return [][]string{
+	forward := []string{"insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
+	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+		forward = append(forward, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
+	}
+	forward = append(forward, "ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(AppPort), "accept")
+	cmds := [][]string{
 		nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
 			"dnat", "to", fmt.Sprintf("%s:%s", GuestIP, port)),
 		nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.PrivateVethPeer,
 			"ip", "saddr", GuestIP, "snat", "to", c.PrivateNetworkAddress.String()),
-		nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer,
-			"ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(AppPort), "accept"),
+		nft(forward...),
 	}
+	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+		cmds = append(cmds, nft("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop"))
+	}
+	return cmds
 }
 
 // denySet returns the DenySet to render against. Falls back to
@@ -807,7 +826,7 @@ func (c Config) ForwardAllowlistRule6(nft func(...string) []string) []string {
 // attaching a VPC must not flip public egress to an allowlist-only policy.
 func (c Config) ForwardPrivateNetworkRule(nft func(...string) []string) []string {
 	var v4 []string
-	for _, p := range c.PrivateNetworkCIDRs {
+	for _, p := range c.privateNetworkPolicyDestinations() {
 		if p.Addr().Is4() {
 			v4 = append(v4, p.String())
 		}
@@ -825,7 +844,7 @@ func (c Config) ForwardPrivateNetworkRule(nft func(...string) []string) []string
 // a future dual-stack connector and mirrors the existing allowlist helpers.
 func (c Config) ForwardPrivateNetworkRule6(nft func(...string) []string) []string {
 	var v6 []string
-	for _, p := range c.PrivateNetworkCIDRs {
+	for _, p := range c.privateNetworkPolicyDestinations() {
 		if !p.Addr().Is4() {
 			v6 = append(v6, p.String())
 		}
@@ -835,6 +854,21 @@ func (c Config) ForwardPrivateNetworkRule6(nft func(...string) []string) []strin
 	}
 	return nft("add", "rule", "ip6", "faas", "forward",
 		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "accept")
+}
+
+func (c Config) privateNetworkPolicyDestinations() []netip.Prefix {
+	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+		return c.PrivateNetworkAllowedCIDRs
+	}
+	return c.PrivateNetworkCIDRs
+}
+
+func prefixStrings(prefixes []netip.Prefix) []string {
+	out := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		out = append(out, prefix.String())
+	}
+	return out
 }
 
 // NftResetCommands returns the best-effort argv list that brings the

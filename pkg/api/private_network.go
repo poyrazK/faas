@@ -13,6 +13,7 @@ const (
 	PrivateNetworkAttachmentStatusReady   = "ready"
 	PrivateNetworkAttachmentStatusError   = "error"
 	PrivateNetworkAttachmentMaxCIDRs      = 64
+	PrivateNetworkPolicyMaxCIDRs          = 64
 	PrivateNetworkStatusReady             = "ready"
 	PrivateNetworkStatusError             = "error"
 	PrivateNetworkMinPrefixBits           = 16
@@ -122,6 +123,50 @@ func ValidatePrivateNetworkCIDR(value string) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("prefix length must be between /%d and /%d", PrivateNetworkMinPrefixBits, PrivateNetworkMaxPrefixBits)
 	}
 	return prefix, nil
+}
+
+// ValidatePrivateNetworkPolicyCIDRs canonicalizes an optional allowlist and
+// requires every entry to be contained by an attached private destination.
+// An empty input disables the policy and preserves legacy allow-all behavior.
+func ValidatePrivateNetworkPolicyCIDRs(raw []string, destinations []netip.Prefix) ([]netip.Prefix, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > PrivateNetworkPolicyMaxCIDRs {
+		return nil, fmt.Errorf("contains %d CIDRs; maximum is %d", len(raw), PrivateNetworkPolicyMaxCIDRs)
+	}
+	if len(destinations) == 0 {
+		return nil, fmt.Errorf("requires at least one private network destination")
+	}
+	seen := make([]netip.Prefix, 0, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a valid CIDR: %w", value, err)
+		}
+		prefix = prefix.Masked()
+		if !prefix.Addr().Is4() || prefix.Bits() == 0 {
+			return nil, fmt.Errorf("%q must be a non-default IPv4 CIDR", value)
+		}
+		contained := false
+		for _, destination := range destinations {
+			if destination.Contains(prefix.Addr()) && destination.Bits() <= prefix.Bits() {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			return nil, fmt.Errorf("%q is outside the attached private network", value)
+		}
+		for _, existing := range seen {
+			if prefixesOverlap(prefix, existing) {
+				return nil, fmt.Errorf("%q overlaps %s", value, existing)
+			}
+		}
+		seen = append(seen, prefix)
+	}
+	return seen, nil
 }
 
 func prefixesOverlap(a, b netip.Prefix) bool {

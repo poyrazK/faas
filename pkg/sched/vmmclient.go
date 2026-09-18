@@ -431,6 +431,9 @@ type AppSpec struct {
 	// the account+network pair and uses the stable address for private NAT.
 	PrivateNetworkID      string
 	PrivateNetworkAddress string
+	// PrivateNetworkAllowedCIDRs is the optional private-network security
+	// policy. Empty preserves the legacy allow-all attachment behavior.
+	PrivateNetworkAllowedCIDRs []string
 	// Sidecars carries the deployment's immutable sidecar layer handles and
 	// per-workload policy. Image defaults and command metadata are baked into
 	// each sidecar layer; sealed deployment env overrides travel separately in
@@ -939,20 +942,34 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 // UpdatePrivateNetwork applies the provider-verified private destination set
 // to all live instances of an app on this vmmd.
 func (c *VMMClient) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {
-	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs)
+	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, nil)
+}
+
+func (c *VMMClient) UpdatePrivateNetworkWithPolicy(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix) error {
+	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, allowedCIDRs)
 }
 
 func (c *VMMClient) UpdatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs []netip.Prefix) error {
-	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs)
+	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, nil)
 }
 
-func (c *VMMClient) updatePrivateNetwork(ctx context.Context, appID, networkID string, address netip.Addr, cidrs []netip.Prefix) error {
+// UpdatePrivateNetworkAttachmentWithPolicy applies the private side-link and
+// its optional allowlist in one vmmd request. The additive method keeps older
+// scheduler fakes and rolling vmmd clients source-compatible.
+func (c *VMMClient) UpdatePrivateNetworkAttachmentWithPolicy(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
+	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, allowedCIDRs)
+}
+
+func (c *VMMClient) updatePrivateNetwork(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
 	ss := make([]string, 0, len(cidrs))
 	for _, p := range cidrs {
 		ss = append(ss, p.String())
 	}
 	req := &vmmdpb.UpdatePrivateNetworkRequest{
 		AppId: appID, PrivateNetworkCidrs: ss, PrivateNetworkId: networkID,
+	}
+	for _, p := range allowedCIDRs {
+		req.PrivateNetworkAllowedCidrs = append(req.PrivateNetworkAllowedCidrs, p.String())
 	}
 	if address.IsValid() {
 		req.PrivateNetworkAddress = address.String()
@@ -1367,12 +1384,13 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// so the per-netns renderer emits a sibling
 		// SNAT rule in the postrouting chain AFTER
 		// the default MASQUERADE.
-		StaticEgressIp:        a.StaticEgressIP,
-		StartupDeadlineS:      a.StartupDeadlineS,
-		ExecutionMode:         a.ExecutionMode,
-		PrivateNetworkCidrs:   a.PrivateNetworkCIDRs,
-		PrivateNetworkId:      a.PrivateNetworkID,
-		PrivateNetworkAddress: a.PrivateNetworkAddress,
+		StaticEgressIp:             a.StaticEgressIP,
+		StartupDeadlineS:           a.StartupDeadlineS,
+		ExecutionMode:              a.ExecutionMode,
+		PrivateNetworkCidrs:        a.PrivateNetworkCIDRs,
+		PrivateNetworkId:           a.PrivateNetworkID,
+		PrivateNetworkAddress:      a.PrivateNetworkAddress,
+		PrivateNetworkAllowedCidrs: a.PrivateNetworkAllowedCIDRs,
 	}
 }
 

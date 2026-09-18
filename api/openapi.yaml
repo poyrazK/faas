@@ -29728,6 +29728,13 @@ components:
             type: string
             format: ipv4-cidr
           example: [10.20.0.0/16, 10.30.0.0/16]
+        allowed_cidrs:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            format: ipv4-cidr
+          description: Optional private-network policy. Empty preserves allow-all behavior; populated ranges are admitted symmetrically for private egress and ingress.
         address:
           type: string
           format: ipv4
@@ -29824,6 +29831,13 @@ components:
           items:
             type: string
             format: ipv4-cidr
+        allowed_cidrs:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            format: ipv4-cidr
+          description: Optional private-network policy ranges. Each range must be contained by the attached network CIDR.
 
 
     # ─── Organizations (issue #190 / IAM-6 / ADR-061, PR 5) ───────────────
