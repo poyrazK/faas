@@ -187,13 +187,13 @@ time.sleep(60)`)
 // signal=0 (the API-level default the schedd's
 // Engine.StopInstance uses when manifest.StopSignal is empty).
 func TestSignalAndKillRace_ZeroSignalDefaultsToSIGTERM(t *testing.T) {
-	cmd := spawnPy3(t, `
+	cmd := spawnPy3Ready(t, `
 import signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
+print("ready", flush=True)
 time.sleep(60)`)
 	done := make(chan struct{})
 	watchChild(cmd, done)
-	time.Sleep(readyDelay) // let child set up signal handler
 
 	killed, _, err := signalAndKillRace(cmd, done, 0, 300*time.Millisecond, 2*time.Second)
 	if err != nil {
@@ -210,14 +210,14 @@ time.sleep(60)`)
 // SIGTERM by default; can be overridden via the AppManifest
 // field; guest-init forwards the signal to the workload".
 func TestSignalAndKillRace_CustomStopSignalUSR1(t *testing.T) {
-	cmd := spawnPy3(t, `
+	cmd := spawnPy3Ready(t, `
 import signal, os, time
 def h(s, f): os._exit(42)
 signal.signal(signal.SIGUSR1, h)
+print("ready", flush=True)
 time.sleep(60)`)
 	done := make(chan struct{})
 	watchChild(cmd, done)
-	time.Sleep(readyDelay) // let child set up signal handler
 
 	killed, code, err := signalAndKillRace(cmd, done, syscall.SIGUSR1, 3*time.Second, 2*time.Second)
 	if err != nil {
@@ -321,13 +321,13 @@ func TestSignalAndKillRace_DestroyWaitBoundsPostKillWait(t *testing.T) {
 	grace := 100 * time.Millisecond
 	destroyWait := 1 * time.Second
 
-	cmd := spawnPy3(t, `
+	cmd := spawnPy3Ready(t, `
 import signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
+print("ready", flush=True)
 time.sleep(60)`)
 	done := make(chan struct{})
 	watchChild(cmd, done)
-	time.Sleep(readyDelay) // let child set up signal handler
 
 	start := time.Now()
 	killed, _, err := signalAndKillRace(cmd, done, syscall.SIGTERM, grace, destroyWait)
