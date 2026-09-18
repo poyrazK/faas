@@ -153,7 +153,9 @@ func TestPg_Jobs_ClaimPendingImageMaterialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	job, err := s.JobCreate(ctx, acct.ID, "materialization-claim", "batch",
-		"oci://registry.example/worker:latest", nil, 256, 60, 1, 3, json.RawMessage(`{}`))
+		"oci://registry.example/worker:latest",
+		[]string{"/bin/sh", "-c", "echo materialization"}, 256, 60, 1, 3,
+		json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("JobCreate: %v", err)
 	}
