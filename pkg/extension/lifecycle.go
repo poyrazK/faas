@@ -208,7 +208,7 @@ func (d *Dispatcher) dispatchEvent(ctx context.Context, event Event) error {
 		return err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("context is required")
 	}
 	timeout := d.Timeout
 	if timeout <= 0 {
@@ -224,7 +224,7 @@ func (d *Dispatcher) dispatchEvent(ctx context.Context, event Event) error {
 	}
 	conn, err := dial(callCtx, "unix", d.SocketPath)
 	if err != nil {
-		return fmt.Errorf("%w: dial %s: %v", ErrUnavailable, d.SocketPath, err)
+		return fmt.Errorf("%w: dial %s: %w", ErrUnavailable, d.SocketPath, err)
 	}
 	defer func() { _ = conn.Close() }()
 	deadline, _ := callCtx.Deadline()
