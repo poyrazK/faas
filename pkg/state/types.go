@@ -3135,6 +3135,22 @@ func (e *ManagedRealtimeEndpointQuotaError) Error() string {
 	return fmt.Sprintf("state: managed realtime endpoint quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
 }
 
+// TCPListener is the durable identity of one app-owned raw TCP listener
+// (ADR-183). PublicPort remains stable while instances park, wake, or migrate;
+// GuestPort is the port selected inside the workload network namespace.
+type TCPListener struct {
+	ID           string
+	AppID        string
+	AccountID     string
+	ListenerName string
+	GuestPort    int
+	PublicPort   int
+	Protocol     string
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 // AppWebhookDelivery is one (event × target) ledger row. The
 // dispatcher mutates the row in place on every attempt until
 // status='succeeded' or status='dead'. Payload is the wire body the

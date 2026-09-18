@@ -724,6 +724,19 @@ type ManagedRealtimeDrainOperationWorker interface {
 	FinishManagedRealtimeDrainOperation(ctx context.Context, id, claimToken string, status ManagedRealtimeDrainOperationStatus, result json.RawMessage, closed, gone, failed int) error
 }
 
+// TCPListenerStore is the durable control-plane surface for app-owned raw TCP
+// listener identities (ADR-183). It is optional so narrow integrations can
+// adopt the listener resource without widening every Store test double.
+type TCPListenerStore interface {
+	CreateTCPListener(ctx context.Context, listener TCPListener) (TCPListener, error)
+	TCPListenerByID(ctx context.Context, id string) (TCPListener, error)
+	TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (TCPListener, error)
+	TCPListenerByPublicPort(ctx context.Context, publicPort int) (TCPListener, error)
+	ListTCPListenersForApp(ctx context.Context, appID string) ([]TCPListener, error)
+	SetTCPListenerEnabled(ctx context.Context, id string, enabled bool) (TCPListener, error)
+	DeleteTCPListener(ctx context.Context, id string) error
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the

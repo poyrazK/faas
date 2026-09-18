@@ -296,6 +296,7 @@ type MemStore struct {
 	appWebhookDeliveries           map[string]AppWebhookDelivery
 	queueBindings                  map[string]QueueBinding
 	managedRealtimeEndpoints       map[string]ManagedRealtimeEndpoint
+	tcpListeners                   map[string]TCPListener
 	managedRealtimeDrainOperations map[string]ManagedRealtimeDrainOperation
 	managedRealtimeOwners          map[string]ManagedRealtimeConnectionOwner
 	appLogDrains                   map[string]AppLogDrain
@@ -945,6 +946,7 @@ func NewMemStore() *MemStore {
 		appWebhookDeliveries:           map[string]AppWebhookDelivery{},
 		queueBindings:                  map[string]QueueBinding{},
 		managedRealtimeEndpoints:       map[string]ManagedRealtimeEndpoint{},
+		tcpListeners:                   map[string]TCPListener{},
 		managedRealtimeOwners:          map[string]ManagedRealtimeConnectionOwner{},
 		managedRealtimeDrainOperations: map[string]ManagedRealtimeDrainOperation{},
 		appLogDrains:                   map[string]AppLogDrain{},
