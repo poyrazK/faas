@@ -1227,6 +1227,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer identityRecv.Close()
 	}
+	// Workstream E: serve live, non-sensitive app configuration through the
+	// instance-bound guest metadata endpoint. The receiver only returns rows
+	// for the app/account attached to the accepted Firecracker stream.
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, store, jailer)
+	if runtimeConfigErr != nil {
+		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
+	} else {
+		defer runtimeConfigRecv.Close()
+	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
 		"host_key_path", keyPath, "recipient_path", pubPath,

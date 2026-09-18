@@ -1357,6 +1357,10 @@ type guestVsockListenerKey struct {
 const (
 	VsockGuestEventHostPort       uint32 = 1027
 	VsockWorkloadIdentityHostPort uint32 = 1030
+	// VsockRuntimeConfigHostPort carries read-only, live app configuration
+	// requests from the guest metadata endpoint. The listener is bound per
+	// instance, so the stream itself supplies the app/account identity.
+	VsockRuntimeConfigHostPort uint32 = 1031
 )
 
 // GuestVsockStreamHandler handles one guest-initiated stream. The instance is
