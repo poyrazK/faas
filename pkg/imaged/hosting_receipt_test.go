@@ -40,7 +40,7 @@ func TestHostingAppURLEmptySlug(t *testing.T) {
 
 func TestHostingReceiptProfileDirectOCIUsesTCPReadiness(t *testing.T) {
 	profile := hostingReceiptProfile(
-		state.App{Manifest: api.AppManifest{Healthz: defaultHealthzPath}},
+		state.App{Manifest: state.AppManifest{Healthz: defaultHealthzPath}},
 		state.Deployment{Kind: state.DeploymentKindImage},
 	)
 	if profile.HealthPath != "" {
@@ -53,7 +53,7 @@ func TestHostingReceiptProfileDirectOCIUsesTCPReadiness(t *testing.T) {
 
 func TestHostingReceiptProfileDirectOCINonDefaultManifestHealthWins(t *testing.T) {
 	profile := hostingReceiptProfile(
-		state.App{Manifest: api.AppManifest{Healthz: "/ready"}},
+		state.App{Manifest: state.AppManifest{Healthz: "/ready"}},
 		state.Deployment{Kind: state.DeploymentKindImage},
 	)
 	if profile.HealthPath != "/ready" {
@@ -63,7 +63,7 @@ func TestHostingReceiptProfileDirectOCINonDefaultManifestHealthWins(t *testing.T
 
 func TestHostingReceiptProfileFunctionImageKeepsHTTPReadiness(t *testing.T) {
 	profile := hostingReceiptProfile(
-		state.App{Type: state.AppTypeFunction, Manifest: api.AppManifest{Healthz: defaultHealthzPath}},
+		state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Healthz: defaultHealthzPath}},
 		state.Deployment{Kind: state.DeploymentKindImage},
 	)
 	if profile.HealthPath != defaultHealthzPath {
