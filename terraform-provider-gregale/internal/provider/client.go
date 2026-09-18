@@ -305,6 +305,33 @@ type staticEgressIPResponse struct {
 	PlanAllowed bool    `json:"plan_allowed"`
 }
 
+type privateNetworkAttachmentRequest struct {
+	NetworkID    string   `json:"network_id"`
+	Region       string   `json:"region,omitempty"`
+	CIDRs        []string `json:"cidrs,omitempty"`
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+}
+
+type privateNetworkAttachment struct {
+	ID           string   `json:"id"`
+	NetworkID    string   `json:"network_id"`
+	Region       string   `json:"region"`
+	CIDRs        []string `json:"cidrs"`
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	Address      string   `json:"address,omitempty"`
+	Status       string   `json:"status"`
+	StatusDetail string   `json:"status_detail,omitempty"`
+	CreatedAt    *string  `json:"created_at,omitempty"`
+	UpdatedAt    *string  `json:"updated_at,omitempty"`
+}
+
+type privateNetworkAttachmentResponse struct {
+	FeatureEnabled bool                      `json:"feature_enabled"`
+	PlanAllowed    bool                      `json:"plan_allowed"`
+	MaxCIDRs       int                       `json:"max_cidrs"`
+	Attachment     *privateNetworkAttachment `json:"attachment"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -652,5 +679,24 @@ func (c *client) setStaticEgressIP(ctx context.Context, appSlug, ip string) (sta
 
 func (c *client) clearStaticEgressIP(ctx context.Context, appSlug string) error {
 	path := "/v1/apps/" + escapePath(appSlug) + "/static-egress-ip"
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func (c *client) getPrivateNetworkAttachment(ctx context.Context, appSlug string) (privateNetworkAttachmentResponse, error) {
+	var out privateNetworkAttachmentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/network/private"
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) setPrivateNetworkAttachment(ctx context.Context, appSlug string, req privateNetworkAttachmentRequest) (privateNetworkAttachmentResponse, error) {
+	var out privateNetworkAttachmentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/network/private"
+	err := c.request(ctx, http.MethodPut, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) clearPrivateNetworkAttachment(ctx context.Context, appSlug string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/network/private"
 	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
 }

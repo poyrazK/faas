@@ -659,3 +659,63 @@ func TestClientStaticEgressIPLifecycleUsesPublicContract(t *testing.T) {
 		t.Fatalf("clearStaticEgressIP: %v", err)
 	}
 }
+
+func TestClientPrivateNetworkAttachmentLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/orders/network/private":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("private-network attachment lookup included an idempotency key")
+			}
+			_, _ = w.Write([]byte(`{"feature_enabled":true,"plan_allowed":true,"max_cidrs":16,"attachment":{"id":"attachment-1","network_id":"prod-vpc","region":"fra1","cidrs":["10.30.0.0/16"],"allowed_cidrs":["10.30.0.0/24"],"address":"10.30.0.10","status":"ready","status_detail":"connected","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/orders/network/private":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("private-network attachment set request did not include an idempotency key")
+			}
+			var request privateNetworkAttachmentRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode private-network attachment request: %v", err)
+			}
+			if request.NetworkID != "prod-vpc" || request.Region != "fra1" || len(request.CIDRs) != 1 || request.CIDRs[0] != "10.30.0.0/16" || len(request.AllowedCIDRs) != 1 || request.AllowedCIDRs[0] != "10.30.0.0/24" {
+				t.Fatalf("private-network attachment request = %+v", request)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"feature_enabled":true,"plan_allowed":true,"max_cidrs":16,"attachment":{"id":"attachment-1","network_id":"prod-vpc","region":"fra1","cidrs":["10.30.0.0/16"],"allowed_cidrs":["10.30.0.0/24"],"address":"10.30.0.10","status":"pending","status_detail":"waiting for connector","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/orders/network/private":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("private-network attachment clear request included an idempotency key")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	created, err := client.setPrivateNetworkAttachment(context.Background(), "orders", privateNetworkAttachmentRequest{
+		NetworkID: "prod-vpc", Region: "fra1", CIDRs: []string{"10.30.0.0/16"}, AllowedCIDRs: []string{"10.30.0.0/24"},
+	})
+	if err != nil {
+		t.Fatalf("setPrivateNetworkAttachment: %v", err)
+	}
+	if created.Attachment == nil || created.Attachment.Status != "pending" || created.Attachment.NetworkID != "prod-vpc" {
+		t.Fatalf("created attachment = %+v", created)
+	}
+
+	read, err := client.getPrivateNetworkAttachment(context.Background(), "orders")
+	if err != nil {
+		t.Fatalf("getPrivateNetworkAttachment: %v", err)
+	}
+	if read.Attachment == nil || read.Attachment.Status != "ready" || read.Attachment.Address != "10.30.0.10" || !read.PlanAllowed {
+		t.Fatalf("read attachment = %+v", read)
+	}
+
+	if err := client.clearPrivateNetworkAttachment(context.Background(), "orders"); err != nil {
+		t.Fatalf("clearPrivateNetworkAttachment: %v", err)
+	}
+}
