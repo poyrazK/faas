@@ -131,6 +131,38 @@ func TestMaterializeJobPublishesResolvedArtifact(t *testing.T) {
 	}
 }
 
+func TestReconcileDeletedJobArtifactsWithoutNotification(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "job-artifact-reconcile@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	job, err := store.JobCreate(ctx, acct.ID, "orphaned-artifact", "batch",
+		"registry.example/worker:latest", []string{"/bin/worker"},
+		256, 60, 2, 1, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	root := t.TempDir()
+	h := New(store, &fakeNotifier{}, nil, nil, "", root, silentLogger()).
+		WithStorage(mustLocalStorage(t, root))
+	key := sched.JobLayerKey(job.ID)
+	if err := h.storage.Put(ctx, key, strings.NewReader("orphaned job image")); err != nil {
+		t.Fatalf("Put job artifact: %v", err)
+	}
+	deleted, hasLive, err := store.JobSoftDelete(ctx, job.ID)
+	if err != nil || !deleted || hasLive {
+		t.Fatalf("JobSoftDelete = deleted:%v live:%v err:%v, want deleted without live tasks", deleted, hasLive, err)
+	}
+	if err := h.ReconcileDeletedJobArtifacts(ctx); err != nil {
+		t.Fatalf("ReconcileDeletedJobArtifacts: %v", err)
+	}
+	if _, err := h.storage.Get(ctx, key); !storage.IsNotFound(err) {
+		t.Fatalf("reconciled job artifact error = %v, want storage not found", err)
+	}
+}
+
 func TestMaterializeJobUsesJobRegistryCredential(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
