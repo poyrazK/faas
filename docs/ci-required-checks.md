@@ -41,6 +41,7 @@ was red on `unit tests (pg shard 2)`).
 | `daemonunit-check (generated drift)`                        | `pkg/daemonunitspec/*.go` drift           | `ci.yml:~600`     |
 | `sqlc-check (generated drift)`                              | sqlc query drift                          | `ci.yml:~440`     |
 | `sdk-go build + test`                                       | sdk/go compilation + tests                | `ci.yml:~520`     |
+| `terraform provider build and test`                        | terraform-provider-gregale compilation + unit tests | `ci.yml:~525`     |
 | `sdk-node (gen-check + smoke + unit)`                       | sdk/node drift                            | `ci.yml:~540`     |
 | `sdk-python (gen-check + smoke + unit)`                     | sdk/python drift                          | `ci.yml:~580`     |
 | `proto-check`                                               | checked-in `*.pb.go` matches protoc       | `ci.yml:200-208`  |

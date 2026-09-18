@@ -1007,6 +1007,11 @@ jobs:
       - name: go test
         working-directory: sdk/go
         run: go test -count=1 ./...
+      # The provider is a nested module so it is not included in the root
+      # module's ./... traversal. Keep its contract beside the SDK gates.
+      - name: terraform provider build and test
+        working-directory: terraform-provider-gregale
+        run: go test -count=1 ./...
       # ---- former job `packer-validate`: Packer syntax gate (ADR-111) ----
       - name: install-packer (pinned)
         run: scripts/install-packer.sh

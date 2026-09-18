@@ -1186,6 +1186,11 @@ sdk-smoke-node: ## Build fakeapid fixture + run Node SDK smoke test
 	@cd sdk/fakeapid && go build -o bin/fakeapid .
 	@cd sdk/node && npm ci && npm run test:smoke
 
+.PHONY: terraform-provider-check
+terraform-provider-check: ## Build and test the Terraform/OpenTofu provider module
+	@cd terraform-provider-gregale && go test ./...
+	@echo "terraform-provider-check: OK"
+
 .PHONY: sdk-unit-node
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
