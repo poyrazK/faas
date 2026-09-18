@@ -8,6 +8,7 @@ The initial surface is intentionally small:
 
 - `gregale_app` manages an API app through the public app lifecycle API.
 - `gregale_domain` manages a custom hostname binding and exposes DNS/TLS state.
+- `gregale_alert` manages an app alert rule and exposes evaluation state.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -32,6 +33,9 @@ provider "gregale" {
   base_url = "https://api.gregale.dev"
 }
 ```
+
+Alert resources use Terraform's write-only attribute support for webhook
+secrets and therefore require Terraform 1.11 or later.
 
 ## App example
 
@@ -59,6 +63,25 @@ output "domain_txt_record" {
 }
 ```
 
+## Alert rule
+
+```hcl
+resource "gregale_alert" "latency" {
+  app_slug       = gregale_app.api.slug
+  name           = "p95-latency"
+  metric         = "latency_p95_ms"
+  comparison     = "gt"
+  threshold      = 500
+  window_spec    = "5m"
+  webhook_url    = var.alert_webhook_url
+  webhook_secret = var.alert_webhook_secret
+}
+```
+
+The webhook secret is sent on create/update but is never written to the plan
+or state. Gregale returns only `webhook_secret_masked`; Terraform refreshes
+the rule's `state`, firing timestamps, and delivery configuration.
+
 Creating the resource returns the DNS challenge immediately. Gregale verifies
 DNS and provisions TLS asynchronously; refresh the resource to observe
 `verification_status`, `cert_status`, and certificate expiry without making
@@ -78,5 +101,6 @@ output "production_environment_id" {
 ```
 
 The provider uses the same public REST contract as the CLI and sends
-idempotency keys for app and domain creation. Application secret values and
-bearer tokens are not returned by the managed resources or recorded in state.
+idempotency keys for app, domain, and alert creation. Application secret
+values, alert webhook secrets, and bearer tokens are not returned by the
+managed resources or recorded in state.

@@ -110,3 +110,82 @@ func TestClientCreateDomainUsesPublicContractAndIdempotency(t *testing.T) {
 		t.Fatalf("response = %+v", got)
 	}
 }
+
+func TestClientAlertRuleLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/orders/alerts":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("alert create request did not include an idempotency key")
+			}
+			var request alertRuleRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			if request.Name != "latency" || request.Metric != "latency_p95_ms" || request.WebhookSecret != "secret-value" {
+				t.Fatalf("create request = %+v", request)
+			}
+			_, _ = w.Write([]byte(`{"id":"alert-1","app_id":"app-1","name":"latency","enabled":true,"metric":"latency_p95_ms","comparison":"gt","threshold":500,"window_spec":"5m","action":"webhook","webhook_url":"https://hooks.example.test/gregale","webhook_secret_sealed_masked":"***","cooldown_minutes":15,"state":"ok"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/orders/alerts/alert-1":
+			_, _ = w.Write([]byte(`{"id":"alert-1","app_id":"app-1","name":"latency","enabled":true,"metric":"latency_p95_ms","comparison":"gt","threshold":500,"window_spec":"5m","action":"webhook","webhook_url":"https://hooks.example.test/gregale","webhook_secret_sealed_masked":"***","cooldown_minutes":15,"state":"firing"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/orders/alerts/alert-1":
+			var patch alertRulePatch
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+				t.Fatalf("decode update request: %v", err)
+			}
+			if patch.Name == nil || *patch.Name != "latency-critical" {
+				t.Fatalf("update request = %+v", patch)
+			}
+			_, _ = w.Write([]byte(`{"id":"alert-1","app_id":"app-1","name":"latency-critical","enabled":true,"metric":"latency_p95_ms","comparison":"gt","threshold":500,"window_spec":"5m","action":"webhook","webhook_url":"https://hooks.example.test/gregale","webhook_secret_sealed_masked":"***","cooldown_minutes":15,"state":"firing"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/orders/alerts/alert-1":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	created, err := client.createAlertRule(context.Background(), "orders", alertRuleRequest{
+		Name:          "latency",
+		Metric:        "latency_p95_ms",
+		Comparison:    "gt",
+		Threshold:     500,
+		WindowSpec:    "5m",
+		WebhookURL:    "https://hooks.example.test/gregale",
+		WebhookSecret: "secret-value",
+	})
+	if err != nil {
+		t.Fatalf("createAlertRule: %v", err)
+	}
+	if created.ID != "alert-1" || created.WebhookSecretSealedMasked != "***" {
+		t.Fatalf("create response = %+v", created)
+	}
+
+	read, err := client.getAlertRule(context.Background(), "orders", "alert-1")
+	if err != nil {
+		t.Fatalf("getAlertRule: %v", err)
+	}
+	if read.State != "firing" {
+		t.Fatalf("read response = %+v", read)
+	}
+
+	updatedName := "latency-critical"
+	updated, err := client.updateAlertRule(context.Background(), "orders", "alert-1", alertRulePatch{
+		Name: &updatedName,
+	})
+	if err != nil {
+		t.Fatalf("updateAlertRule: %v", err)
+	}
+	if updated.Name != "latency-critical" {
+		t.Fatalf("update response = %+v", updated)
+	}
+
+	if err := client.deleteAlertRule(context.Background(), "orders", "alert-1"); err != nil {
+		t.Fatalf("deleteAlertRule: %v", err)
+	}
+}

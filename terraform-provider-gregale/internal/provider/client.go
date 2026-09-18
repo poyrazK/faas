@@ -120,6 +120,54 @@ type domainResponse struct {
 	CertStatus       string   `json:"cert_status,omitempty"`
 }
 
+type alertRuleRequest struct {
+	Name            string  `json:"name"`
+	Enabled         *bool   `json:"enabled,omitempty"`
+	Metric          string  `json:"metric"`
+	Comparison      string  `json:"comparison"`
+	Threshold       float64 `json:"threshold"`
+	WindowSpec      string  `json:"window_spec"`
+	FailureSource   string  `json:"failure_source,omitempty"`
+	Action          *string `json:"action,omitempty"`
+	WebhookURL      string  `json:"webhook_url"`
+	WebhookSecret   string  `json:"webhook_secret"`
+	CooldownMinutes *int    `json:"cooldown_minutes,omitempty"`
+}
+
+type alertRulePatch struct {
+	Name            *string  `json:"name,omitempty"`
+	Enabled         *bool    `json:"enabled,omitempty"`
+	Metric          *string  `json:"metric,omitempty"`
+	Comparison      *string  `json:"comparison,omitempty"`
+	Threshold       *float64 `json:"threshold,omitempty"`
+	WindowSpec      *string  `json:"window_spec,omitempty"`
+	Action          *string  `json:"action,omitempty"`
+	WebhookURL      *string  `json:"webhook_url,omitempty"`
+	WebhookSecret   *string  `json:"webhook_secret,omitempty"`
+	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
+}
+
+type alertRuleResponse struct {
+	ID                        string  `json:"id"`
+	AppID                     string  `json:"app_id"`
+	Name                      string  `json:"name"`
+	Enabled                   bool    `json:"enabled"`
+	Metric                    string  `json:"metric"`
+	Comparison                string  `json:"comparison"`
+	Threshold                 float64 `json:"threshold"`
+	WindowSpec                string  `json:"window_spec"`
+	FailureSource             string  `json:"failure_source,omitempty"`
+	Action                    string  `json:"action"`
+	WebhookURL                string  `json:"webhook_url"`
+	WebhookSecretSealedMasked string  `json:"webhook_secret_sealed_masked"`
+	CooldownMinutes           int     `json:"cooldown_minutes"`
+	State                     string  `json:"state"`
+	LastFiredAt               string  `json:"last_fired_at,omitempty"`
+	LastEvaluatedAt           string  `json:"last_evaluated_at,omitempty"`
+	CreatedAt                 string  `json:"created_at"`
+	UpdatedAt                 string  `json:"updated_at"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -245,4 +293,30 @@ func (c *client) getDomain(ctx context.Context, domain string) (domainResponse, 
 
 func (c *client) deleteDomain(ctx context.Context, domain string) error {
 	return c.request(ctx, http.MethodDelete, "/v1/domains/"+escapePath(domain), nil, nil, false)
+}
+
+func (c *client) createAlertRule(ctx context.Context, appSlug string, req alertRuleRequest) (alertRuleResponse, error) {
+	var out alertRuleResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/alerts"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) getAlertRule(ctx context.Context, appSlug, alertID string) (alertRuleResponse, error) {
+	var out alertRuleResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/alerts/" + escapePath(alertID)
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) updateAlertRule(ctx context.Context, appSlug, alertID string, patch alertRulePatch) (alertRuleResponse, error) {
+	var out alertRuleResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/alerts/" + escapePath(alertID)
+	err := c.request(ctx, http.MethodPatch, path, patch, &out, false)
+	return out, err
+}
+
+func (c *client) deleteAlertRule(ctx context.Context, appSlug, alertID string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/alerts/" + escapePath(alertID)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
 }
