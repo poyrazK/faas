@@ -45,6 +45,32 @@ func TestClientCreateAppUsesPublicContractAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestClientGetAppUsesSlugLookupContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/orders-api" {
+			t.Fatalf("request = %s %s, want GET /v1/apps/orders-api", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Idempotency-Key") != "" {
+			t.Fatal("app lookup unexpectedly included an idempotency key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"app-1","slug":"orders-api","type":"app","visibility":"private","runtime":"node24","resource_profile":"small","ram_mb":512,"max_concurrency":8,"idle_timeout_s":60,"health_path":"/healthz","health_path_wakes":true,"status":"active","url":"https://orders-api.gregale.dev"}`))
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	got, err := client.getApp(context.Background(), "orders-api")
+	if err != nil {
+		t.Fatalf("getApp: %v", err)
+	}
+	if got.ID != "app-1" || got.Slug != "orders-api" || got.Runtime != "node24" || got.RAMMB == nil || *got.RAMMB != 512 || got.URL == "" {
+		t.Fatalf("response = %+v", got)
+	}
+}
+
 func TestClientProblemErrorIsActionableWithoutEchoingBearer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")

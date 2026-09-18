@@ -13,6 +13,7 @@ The initial surface is intentionally small:
 - `gregale_env` manages scoped app environment variables without storing values in state.
 - `gregale_secret` manages scoped app secrets without storing plaintext in state.
 - `gregale_deployment` deploys a GitHub source ref and exposes lifecycle and preview metadata.
+- `data.gregale_app` reads an existing app for adoption and resource composition.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -50,6 +51,27 @@ resource "gregale_app" "api" {
   max_concurrency  = 8
   idle_timeout_s   = 60
   health_path      = "/healthz"
+}
+```
+
+## Existing app lookup
+
+Use the app data source when the app already exists or is managed outside
+Terraform. It is read-only and can supply stable IDs and current runtime
+metadata to other resources.
+
+```hcl
+data "gregale_app" "api" {
+  slug = "orders-api"
+}
+
+resource "gregale_domain" "api" {
+  domain = "api.example.com"
+  app_id = data.gregale_app.api.id
+}
+
+output "app_url" {
+  value = data.gregale_app.api.url
 }
 ```
 

@@ -49,8 +49,8 @@ func (p *gregaleProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				MarkdownDescription: "Gregale API base URL. Defaults to `GREGALE_BASE_URL` or `https://api.gregale.dev`.",
 			},
 		},
-		Description:         "Manage Gregale applications, deployments, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect project environments.",
-		MarkdownDescription: "Manage Gregale applications, deployments, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect project environments.",
+		Description:         "Manage Gregale applications, deployments, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect existing apps and project environments.",
+		MarkdownDescription: "Manage Gregale applications, deployments, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect existing apps and project environments.",
 	}
 }
 
@@ -104,6 +104,7 @@ func (p *gregaleProvider) Resources(_ context.Context) []func() resource.Resourc
 
 func (p *gregaleProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		newAppDataSource,
 		newProjectEnvironmentDataSource,
 	}
 }
