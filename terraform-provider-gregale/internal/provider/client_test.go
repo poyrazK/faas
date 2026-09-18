@@ -319,3 +319,57 @@ func TestClientSecretLifecycleUsesWriteOnlyValueAndScopedMetadata(t *testing.T) 
 		t.Fatalf("deleteSecret: %v", err)
 	}
 }
+
+func TestClientEnvLifecycleUsesWriteOnlyValueAndScopedMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/orders/env/LOG_LEVEL":
+			if r.URL.Query().Get("scope") != "production" {
+				t.Fatalf("env write scope = %q, want production", r.URL.Query().Get("scope"))
+			}
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("env write request did not include an idempotency key")
+			}
+			var request envRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode env write request: %v", err)
+			}
+			if request.Value != "debug" {
+				t.Fatalf("env write value = %q", request.Value)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/orders/env":
+			if r.URL.Query().Get("scope") != "production" {
+				t.Fatalf("env read scope = %q, want production", r.URL.Query().Get("scope"))
+			}
+			_, _ = w.Write([]byte(`{"env":[{"key":"LOG_LEVEL","created_at":"2026-09-18T10:00:00Z","updated_at":"2026-09-18T10:05:00Z"}],"quota_max":50,"count":1}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/orders/env/LOG_LEVEL":
+			if r.URL.Query().Get("scope") != "production" {
+				t.Fatalf("env delete scope = %q, want production", r.URL.Query().Get("scope"))
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	if err := client.setEnv(context.Background(), "orders", "production", "LOG_LEVEL", "debug"); err != nil {
+		t.Fatalf("setEnv: %v", err)
+	}
+	metadata, found, err := client.getEnv(context.Background(), "orders", "production", "LOG_LEVEL")
+	if err != nil {
+		t.Fatalf("getEnv: %v", err)
+	}
+	if !found || metadata.Scope != "production" || metadata.UpdatedAt != "2026-09-18T10:05:00Z" {
+		t.Fatalf("metadata = %+v, found = %v", metadata, found)
+	}
+	if err := client.deleteEnv(context.Background(), "orders", "production", "LOG_LEVEL"); err != nil {
+		t.Fatalf("deleteEnv: %v", err)
+	}
+}

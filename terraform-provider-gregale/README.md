@@ -10,11 +10,12 @@ The initial surface is intentionally small:
 - `gregale_domain` manages a custom hostname binding and exposes DNS/TLS state.
 - `gregale_alert` manages an app alert rule and exposes evaluation state.
 - `gregale_cron` manages a scheduled app invocation and exposes scheduler state.
+- `gregale_env` manages scoped app environment variables without storing values in state.
 - `gregale_secret` manages scoped app secrets without storing plaintext in state.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
-Environment creation and deletion are not exposed as a Terraform resource yet:
+Project-environment creation and deletion are not exposed as a Terraform resource yet:
 the Gregale API currently has no safe delete operation for environments. This
 keeps Terraform destroy from silently leaving unmanaged remote state.
 
@@ -36,7 +37,7 @@ provider "gregale" {
 }
 ```
 
-Alert and secret resources use Terraform's write-only attribute support and
+Alert, environment variable, and secret resources use Terraform's write-only attribute support and
 therefore require Terraform 1.11 or later.
 
 ## App example
@@ -116,6 +117,22 @@ Gregale or stored in the Terraform plan/state. Refresh reads only timestamps,
 the sealing key identity, and an opaque value fingerprint. Omitting `scope`
 uses Gregale's `default` scope.
 
+## App environment variable
+
+```hcl
+resource "gregale_env" "log_level" {
+  app_slug = gregale_app.api.slug
+  key      = "LOG_LEVEL"
+  value    = "info"
+  scope    = "production"
+}
+```
+
+The value is sent only to the env write endpoint and is never returned by
+Gregale or stored in the Terraform plan/state. Use `gregale_secret` for
+credentials; `gregale_env` is intended for non-sensitive runtime
+configuration. Omitting `scope` uses Gregale's `default` scope.
+
 Creating the resource returns the DNS challenge immediately. Gregale verifies
 DNS and provisions TLS asynchronously; refresh the resource to observe
 `verification_status`, `cert_status`, and certificate expiry without making
@@ -135,6 +152,6 @@ output "production_environment_id" {
 ```
 
 The provider uses the same public REST contract as the CLI and sends
-idempotency keys for app, domain, alert, cron, and secret writes. Application
-secret values, alert webhook secrets, managed secret values, and bearer tokens
+idempotency keys for app, domain, alert, cron, environment variable, and secret writes. Application
+environment values, secret values, alert webhook secrets, managed secret values, and bearer tokens
 are not returned by the managed resources or recorded in state.

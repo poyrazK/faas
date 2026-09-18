@@ -217,6 +217,23 @@ type secretListResponse struct {
 	Count   int              `json:"count"`
 }
 
+type envRequest struct {
+	Value string `json:"value"`
+}
+
+type envMetadata struct {
+	Key       string `json:"key"`
+	Scope     string `json:"scope,omitempty"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type envListResponse struct {
+	Env   []envMetadata `json:"env"`
+	Quota int           `json:"quota_max"`
+	Count int           `json:"count"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -429,6 +446,49 @@ func (c *client) deleteSecret(ctx context.Context, appSlug, scope, key string) e
 
 func withSecretScope(path, scope string) string {
 	if scope == "" || scope == defaultSecretScope {
+		return path
+	}
+	return path + "?scope=" + url.QueryEscape(scope)
+}
+
+func (c *client) setEnv(ctx context.Context, appSlug, scope, key, value string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/env/" + escapePath(key)
+	path = withEnvScope(path, scope)
+	return c.request(ctx, http.MethodPut, path, envRequest{Value: value}, nil, true)
+}
+
+func (c *client) getEnv(ctx context.Context, appSlug, scope, key string) (envMetadata, bool, error) {
+	path := withEnvScope("/v1/apps/"+escapePath(appSlug)+"/env", scope)
+	var out envListResponse
+	if err := c.request(ctx, http.MethodGet, path, nil, &out, false); err != nil {
+		return envMetadata{}, false, err
+	}
+	wantedScope := scope
+	if wantedScope == "" {
+		wantedScope = defaultEnvScope
+	}
+	for _, env := range out.Env {
+		if env.Key != key {
+			continue
+		}
+		if env.Scope == "" {
+			env.Scope = wantedScope
+		}
+		if env.Scope == wantedScope {
+			return env, true, nil
+		}
+	}
+	return envMetadata{}, false, nil
+}
+
+func (c *client) deleteEnv(ctx context.Context, appSlug, scope, key string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/env/" + escapePath(key)
+	path = withEnvScope(path, scope)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func withEnvScope(path, scope string) string {
+	if scope == "" || scope == defaultEnvScope {
 		return path
 	}
 	return path + "?scope=" + url.QueryEscape(scope)
