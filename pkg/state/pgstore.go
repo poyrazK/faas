@@ -13465,6 +13465,16 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        on_failure_destination_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
+	// Preserve caller-supplied IDs for idempotent producers (event fanout). An
+	// empty ID keeps the historical database-generated UUID behavior.
+	var invocationID any
+	if inv.ID != "" {
+		parsedID, err := uuid.Parse(inv.ID)
+		if err != nil {
+			return Invocation{}, fmt.Errorf("state: invocation id: %w", err)
+		}
+		invocationID = parsedID
+	}
 	payload, err := jsonOrEmpty(inv.Payload)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: invocations payload: %w", err)
@@ -13504,18 +13514,19 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	}
 	row := s.pool.QueryRow(ctx, `
 		insert into invocations
-			(app_id, account_id, source, queue_name, state, method, path,
+			(id, app_id, account_id, source, queue_name, state, method, path,
 			 payload, headers, due_at, scheduled_at, cron_id,
 			 ack_url, lease_expires_at,
 			 deadline_at, retry_policy, result_retention_until,
 			 on_success_destination_id, on_failure_destination_id)
 		values
-			($1, $2, $3, $4, coalesce(nullif($5,''),'pending'), $6, $7,
-			 $8, $9, $10, $11, $12,
-			 nullif($13,''), $14,
-			 $15, $16, $17, $18, $19)
+			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
+			 coalesce(nullif($6,''),'pending'), $7, $8,
+			 $9, $10, $11, $12, $13,
+			 nullif($14,''), $15,
+			 $16, $17, $18, $19, $20)
 		returning `+invocationSelectCols,
-		inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
+		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
 		scheduledAt, cronID, inv.AckURL, leaseExpires,
 		deadlineAt, retryPolicy, retentionUntil,

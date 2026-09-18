@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -107,6 +108,31 @@ func TestPg_InvocationRoundTrip(t *testing.T) {
 	}
 	if final.LastError != "" {
 		t.Errorf("post-complete last_error = %q, want cleared", final.LastError)
+	}
+}
+
+// TestPg_EnqueueInvocationPreservesProvidedID pins the idempotency contract
+// used by deterministic event fanout. A caller-supplied ID must survive the
+// INSERT and a repeated enqueue must surface ErrConflict instead of creating
+// a second invocation.
+func TestPg_EnqueueInvocationPreservesProvidedID(t *testing.T) {
+	s, ctx, appID, acctID := seedInvocationPg(t)
+	requestedID := uuid.NewString()
+	inv, err := s.EnqueueInvocation(ctx, state.Invocation{
+		ID: requestedID, AppID: appID, AccountID: acctID, Source: state.InvocationAsyncInvoke,
+		Method: "POST", Path: "/", Payload: json.RawMessage(`{"event":"once"}`), DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+	if inv.ID != requestedID {
+		t.Fatalf("invocation id=%q, want requested id %q", inv.ID, requestedID)
+	}
+	if _, err := s.EnqueueInvocation(ctx, state.Invocation{
+		ID: requestedID, AppID: appID, AccountID: acctID, Source: state.InvocationAsyncInvoke,
+		Method: "POST", Path: "/", Payload: json.RawMessage(`{"event":"once"}`), DueAt: time.Now().UTC(),
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate enqueue error=%v, want ErrConflict", err)
 	}
 }
 
