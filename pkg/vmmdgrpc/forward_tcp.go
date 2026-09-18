@@ -186,7 +186,7 @@ func tcpBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest,
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer stdinW.Close()
+		defer func() { _ = stdinW.Close() }()
 		var total int64
 		for {
 			frame, err := stream.Recv()

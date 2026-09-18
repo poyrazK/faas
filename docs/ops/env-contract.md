@@ -393,6 +393,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_STREAM_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_TARGET_URL` | vmmd | `dropin` |  |  | `` |  |
+| `FAAS_VMMD_TCP_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMM_SOCK` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_CA_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |  | `` |  |

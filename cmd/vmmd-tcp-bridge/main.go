@@ -37,11 +37,11 @@ func main() {
 	conn, err := (&net.Dialer{Timeout: dialTimeout}).Dial(
 		"tcp", net.JoinHostPort(os.Args[1], strconv.FormatUint(port, 10)))
 	if err != nil {
-		writeReady("ERR " + err.Error() + "\n")
+		_ = writeReady("ERR " + err.Error() + "\n")
 		fmt.Fprintf(os.Stderr, "dial guest %s:%d: %v\n", os.Args[1], port, err)
 		os.Exit(3)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := writeReady("OK\n"); err != nil {
 		fmt.Fprintf(os.Stderr, "write readiness: %v\n", err)
 		os.Exit(4)
@@ -58,7 +58,7 @@ func writeReady(message string) error {
 	if f == nil {
 		return errors.New("readiness fd is unavailable")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err := io.WriteString(f, message)
 	return err
 }
@@ -86,7 +86,7 @@ func bridge(conn net.Conn, input io.Reader, output io.Writer) error {
 
 	firstRead, firstWrite := false, false
 	var readErr, writeErr error
-	for !(firstRead && firstWrite) {
+	for !firstRead || !firstWrite {
 		select {
 		case readErr = <-readDone:
 			firstRead = true

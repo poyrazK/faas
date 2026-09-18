@@ -43,14 +43,14 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	if target.Port < 0 || target.Port > 65535 {
 		return status.Error(codes.InvalidArgument, "guest TCP port must be 0 or between 1 and 65535")
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	cli, closer, ok := f.Nodes.ClientFor(ctx, target.NodeID)
 	if !ok || cli == nil {
 		return status.Errorf(codes.Unavailable, "compute node %q is unavailable", target.NodeID)
 	}
 	if closer != nil {
-		defer closer.Close()
+		defer func() { _ = closer.Close() }()
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
