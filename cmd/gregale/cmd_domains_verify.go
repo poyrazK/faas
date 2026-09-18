@@ -7,11 +7,9 @@
 // `verify` handler additionally surfaces the cert NotAfter / SANs
 // from the live cert dial the apid performs server-side.
 //
-// set-default is deliberately out of scope here — it requires a
-// per-app default_domain column, which is a wider change tracked
-// separately. The CustomDomainResponse.Default field has been
-// added to the wire shape so a follow-up PR can light it up
-// without a wire-scale change.
+// set-default is dispatched from commands2.go because it shares the legacy
+// list/add/rm domain command surface; its durable state lives in the
+// app_default_domains table.
 
 package main
 

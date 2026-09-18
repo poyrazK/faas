@@ -139,6 +139,19 @@ func TestDomainsDispatch_VerifyAndShowRegistered(t *testing.T) {
 	}
 }
 
+// TestDomainsDispatch_SetDefaultRegistered pins the new default-domain route
+// at the CLI dispatch surface.
+func TestDomainsDispatch_SetDefaultRegistered(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"domain":"app.example.com","app_id":"y","verified":true,"default":true}`, http.StatusOK)
+	if code := cmdDomains([]string{"set-default", "app.example.com"}); code != 0 {
+		t.Fatalf("cmdDomains set-default exit = %d, want 0", code)
+	}
+	if f.sawMethod != "POST" || f.sawPath != "/v1/domains/app.example.com/default" {
+		t.Errorf("set-default request = %s %s, want POST /v1/domains/app.example.com/default", f.sawMethod, f.sawPath)
+	}
+}
+
 // TestDomainsDispatch_DoctorRegistered: the cmdDomains dispatch
 // switch (commands2.go:cmdDomains) must route "doctor" to
 // cmdDomainsDoctor (ADR-120). Without this guard, a typo like

@@ -1770,6 +1770,7 @@ func (s *server) handler() http.Handler {
 	// the existing custom-domains auth gates (write for verify, read for
 	// show).
 	mux.HandleFunc("POST /v1/domains/{domain}/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.verifyDomain)))))
+	mux.HandleFunc("POST /v1/domains/{domain}/default", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.setDefaultDomain)))))
 	mux.HandleFunc("POST /v1/domains/{domain}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.retryDomainVerification)))))
 	mux.HandleFunc("GET /v1/domains/{domain}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomain))))
 	// ADR-120: per-domain doctor surface for `gregale domains doctor`.

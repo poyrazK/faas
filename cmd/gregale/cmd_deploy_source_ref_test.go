@@ -55,13 +55,21 @@ type sourceRefSink struct {
 	createCalls   int
 	getAppCalls   int
 	existingApp   bool
+	scanStatus    int
+	scanBody      api.PlanResponse
+	scanCalls     int
+	scanRequest   api.ProjectSourceRefScanRequest
 }
 
-// ServeHTTP is the single dispatch arm — the sink only knows the
-// source-ref path. Any other path returns 404 with a useful message
+// ServeHTTP is the single dispatch arm — the sink knows the source-ref
+// deploy and preview paths. Any other path returns 404 with a useful message
 // so a regression that drives the wrong wire URL fails loud.
 func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/projects/scan/source-ref":
+		s.scanCalls++
+		_ = json.NewDecoder(r.Body).Decode(&s.scanRequest)
+		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 		s.createCalls++
 		if s.existingApp {
@@ -354,6 +362,7 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 		wantExit        int
 		wantStderrHas   string
 		wantNoServerHit bool // true: sink must show 0 calls (the guard fires before any HTTP)
+		wantScan        bool
 	}{
 		{
 			name: "missing_ref",
@@ -383,11 +392,10 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			wantNoServerHit: true,
 		},
 		{
-			name:            "diff_repo_is_read_only",
-			args:            []string{"--repo", "onebox-faas/hello", "--ref", "main", "--diff"},
-			wantExit:        1,
-			wantStderrHas:   "source-ref preview is not supported",
-			wantNoServerHit: true,
+			name:     "diff_repo_is_read_only",
+			args:     []string{"--repo", "onebox-faas/hello", "--ref", "main", "--diff"},
+			wantExit: 0,
+			wantScan: true,
 		},
 		{
 			name:            "repo_cannot_hide_image",
@@ -410,7 +418,9 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			// Stand up a sink so a regression that reaches the wire
 			// is caught (wantNoServerHit asserts the guard fires
 			// before any HTTP call).
-			sink := &sourceRefSink{}
+			sink := &sourceRefSink{scanStatus: http.StatusOK, scanBody: api.PlanResponse{
+				ProjectSlug: "hello", ScanSource: "source-ref", CanApply: true,
+			}}
 			srv := httptest.NewServer(sink)
 			t.Cleanup(srv.Close)
 			t.Setenv("FAAS_API", srv.URL)
@@ -425,11 +435,22 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			if code != tc.wantExit {
 				t.Errorf("exit = %d, want %d", code, tc.wantExit)
 			}
-			if !strings.Contains(stderr.String(), tc.wantStderrHas) {
+			if tc.wantStderrHas != "" && !strings.Contains(stderr.String(), tc.wantStderrHas) {
 				t.Errorf("expected %q in stderr, got %q", tc.wantStderrHas, stderr.String())
 			}
-			if tc.wantNoServerHit && sink.capturedCalls != 0 {
-				t.Errorf("rejected call still reached the server: calls=%d", sink.capturedCalls)
+			if tc.wantNoServerHit && (sink.capturedCalls != 0 || sink.scanCalls != 0) {
+				t.Errorf("rejected call still reached the server: deploy_calls=%d scan_calls=%d", sink.capturedCalls, sink.scanCalls)
+			}
+			if tc.wantScan && sink.scanCalls != 1 {
+				t.Errorf("source-ref preview scan calls = %d, want 1", sink.scanCalls)
+			}
+			if tc.wantScan && sink.capturedCalls != 0 {
+				t.Errorf("source-ref preview reached deploy endpoint: calls=%d", sink.capturedCalls)
+			}
+			if tc.wantScan {
+				if sink.scanRequest.Repo != "onebox-faas/hello" || sink.scanRequest.Ref != "main" || sink.scanRequest.ProjectSlug != "hello" {
+					t.Errorf("source-ref preview request = %#v", sink.scanRequest)
+				}
 			}
 		})
 	}

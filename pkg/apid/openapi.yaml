@@ -9419,6 +9419,39 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/domains/{domain}/default:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9.\-]+$' }
+        description: The verified custom domain to make the app's canonical host.
+    post:
+      tags: [domains]
+      operationId: setDefaultDomain
+      summary: Set a verified custom domain as the app default.
+      description: |
+        Atomically replaces the app's previous default custom domain.
+        The domain must be verified and belong to the authenticated account.
+        Used by `gregale domains set-default <domain>`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The selected domain binding with `default=true`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The domain is not verified and cannot be selected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/domains/{domain}/retry:
     parameters:
       - name: domain
