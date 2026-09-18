@@ -868,6 +868,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/registry-credentials":    "ListAppRegistryCredentials",
 	"PUT /v1/apps/{slug}/registry-credentials":    "SetAppRegistryCredential",
 	"DELETE /v1/apps/{slug}/registry-credentials": "DeleteAppRegistryCredential",
+	// Per-job private-registry Basic Auth mirrors the app-scoped surface.
+	"GET /v1/jobs/{name}/registry-credentials":    "ListJobRegistryCredentials",
+	"PUT /v1/jobs/{name}/registry-credentials":    "SetJobRegistryCredential",
+	"DELETE /v1/jobs/{name}/registry-credentials": "DeleteJobRegistryCredential",
 
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — /v1/orgs/{slug}/... customer
 	// surface. The auto-derivation would produce names with the

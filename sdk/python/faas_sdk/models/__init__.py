@@ -647,6 +647,8 @@ from .issue_account_credit_body import IssueAccountCreditBody
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
+from .job_registry_credential_list_response import JobRegistryCredentialListResponse
+from .job_registry_credential_response import JobRegistryCredentialResponse
 from .job_response import JobResponse
 from .job_response_env_overrides import JobResponseEnvOverrides
 from .job_response_image_materialization_status import JobResponseImageMaterializationStatus
@@ -989,6 +991,7 @@ from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
+from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1891,6 +1894,8 @@ __all__ = (
     "IssueBrowserCSRFTokenAction",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
+    "JobRegistryCredentialListResponse",
+    "JobRegistryCredentialResponse",
     "JobResponse",
     "JobResponseEnvOverrides",
     "JobResponseImageMaterializationStatus",
@@ -2211,6 +2216,7 @@ __all__ = (
     "PutAppSecretRequest",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
+    "PutJobRegistryCredentialRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",

@@ -674,6 +674,10 @@ Tail logs for one task
 |---|---|---|
 | `--max-bytes <N>` | maximum log payload size (1..1048576) |  |
 
+### jobs registry
+
+Manage private registry credentials for one job
+
 
 ## workflows
 

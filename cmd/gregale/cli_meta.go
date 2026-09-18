@@ -581,6 +581,7 @@ var cliCommands = []cliCommand{
 			{Name: "logs", Short: "Tail logs for one task", Flags: []cliFlag{
 				{Name: "max-bytes", Short: "maximum log payload size (1..1048576)", Value: "N"},
 			}},
+			{Name: "registry", Short: "Manage private registry credentials for one job"},
 		},
 	},
 	{

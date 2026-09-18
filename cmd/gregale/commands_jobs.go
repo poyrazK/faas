@@ -62,7 +62,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|retry|logs> [args]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|retry|logs|registry> [args]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -88,6 +88,8 @@ func cmdJobs(args []string) int {
 		return cmdJobsRetry(args[1:])
 	case "logs":
 		return cmdJobsLogs(args[1:])
+	case "registry":
+		return cmdJobsRegistry(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown jobs subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)

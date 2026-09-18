@@ -947,10 +947,13 @@ const (
 	// returned to the customer. Codes are surfaced for the dashboard
 	// to render plan-tier upsell vs. quota guidance without parsing
 	// prose.
-	CodePlanRegistryCredentialNotAllowed = "plan_registry_credentials_not_allowed" // 403, Free
-	CodePlanRegistryCredentialQuota      = "plan_registry_credential_quota"        // 413, per-app cap reached
-	CodeInvalidRegistryHost              = "invalid_registry_host"                 // 400, normalized-host gate
-	CodeRegistryCredentialNotFound       = "registry_credential_not_found"         // 404, DELETE absent
+	CodePlanRegistryCredentialNotAllowed    = "plan_registry_credentials_not_allowed"     // 403, Free
+	CodePlanRegistryCredentialQuota         = "plan_registry_credential_quota"            // 413, per-app cap reached
+	CodeInvalidRegistryHost                 = "invalid_registry_host"                     // 400, normalized-host gate
+	CodeRegistryCredentialNotFound          = "registry_credential_not_found"             // 404, DELETE absent
+	CodePlanJobRegistryCredentialNotAllowed = "plan_job_registry_credentials_not_allowed" // 403, Free
+	CodePlanJobRegistryCredentialQuota      = "plan_job_registry_credential_quota"        // 413, per-job cap reached
+	CodeJobRegistryCredentialNotFound       = "job_registry_credential_not_found"         // 400, DELETE absent
 
 	// Plan-tier feature gates (M8 §6.5). Distinct from CodePlanLimit*
 	// because the failure mode is "your plan doesn't unlock this knob
@@ -1931,6 +1934,12 @@ func StatusForCode(code string) int {
 	case CodePlanRegistryCredentialQuota:
 		return http.StatusRequestEntityTooLarge
 	case CodeInvalidRegistryHost, CodeRegistryCredentialNotFound:
+		return http.StatusBadRequest
+	case CodePlanJobRegistryCredentialNotAllowed:
+		return http.StatusForbidden
+	case CodePlanJobRegistryCredentialQuota:
+		return http.StatusRequestEntityTooLarge
+	case CodeJobRegistryCredentialNotFound:
 		return http.StatusBadRequest
 	// ADR-098: data-placement hints (issue #395 mirror + Free gate).
 	// CodePlanDataUpstreamsNotAllowed = 402 (plan doesn't unlock the
@@ -4499,6 +4508,34 @@ func ErrRegistryCredentialNotFound(host string) *Problem {
 		"Registry credential not set",
 		fmt.Sprintf("no credential stored for registry %q on this app.", host)).
 		WithDocs(docsBase + "/registry-credentials")
+}
+
+// ErrPlanJobRegistryCredentialsNotAllowed is the job-scoped counterpart to
+// ErrPlanRegistryCredentialsNotAllowed. Jobs are account-owned, so the
+// credential cap is applied per job rather than per app.
+func ErrPlanJobRegistryCredentialsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanJobRegistryCredentialNotAllowed,
+		"Plan doesn't allow private-registry credentials for jobs",
+		fmt.Sprintf("the %s plan cannot store private-registry credentials for jobs; upgrade to Hobby or higher.", p)).
+		WithDocs(docsBase + "/jobs#registry-credentials")
+}
+
+// ErrPlanJobRegistryCredentialQuota reports the per-job credential cap.
+func ErrPlanJobRegistryCredentialQuota(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodePlanJobRegistryCredentialQuota,
+		"Per-job registry credential quota reached",
+		fmt.Sprintf("the %s plan caps private-registry credentials at %d per job; got %d. Delete one before adding another.", l.Plan, l.RegistryCredentialMax, observed)).
+		WithLimit(int64(l.RegistryCredentialMax), int64(observed)).
+		WithDocs(docsBase + "/jobs#registry-credentials")
+}
+
+// ErrJobRegistryCredentialNotFound is returned when a job credential delete
+// targets a host that is not configured on the owned job.
+func ErrJobRegistryCredentialNotFound(host, job string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeJobRegistryCredentialNotFound,
+		"Job registry credential not set",
+		fmt.Sprintf("no credential stored for registry %q on job %q.", host, job)).
+		WithDocs(docsBase + "/jobs#registry-credentials")
 }
 
 // ErrPlanMinInstancesNotAllowed is returned when a Free account tries

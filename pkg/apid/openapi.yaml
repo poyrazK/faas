@@ -9917,6 +9917,77 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/registry-credentials:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+        description: The job slug.
+    get:
+      tags: [jobs]
+      operationId: listJobRegistryCredentials
+      summary: List sealed private-registry credentials on a job.
+      description: |
+        Returns registry, username, and timestamps only. Plaintext
+        passwords are never returned. Quota metadata is included for CLI
+        and dashboard rendering.
+      responses:
+        '200':
+          description: Job registry credential metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobRegistryCredentialListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [jobs]
+      operationId: setJobRegistryCredential
+      summary: Set or replace a sealed private-registry credential for a job.
+      description: |
+        Seals the plaintext password under namespace `registry_creds` and
+        stores it against the job and registry host. Replacements do not
+        consume another per-job quota slot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutJobRegistryCredentialRequest' }
+      responses:
+        '200':
+          description: The stored credential metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobRegistryCredentialResponse' }
+        '400': { $ref: '#/components/responses/InvalidRegistryHost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanJobRegistryCredentialsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PlanJobRegistryCredentialQuota' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [jobs]
+      operationId: deleteJobRegistryCredential
+      summary: Delete a sealed private-registry credential from a job.
+      parameters:
+        - name: registry
+          in: query
+          required: true
+          description: Registry host to delete, URL-encoded.
+          schema: { type: string, maxLength: 253 }
+      responses:
+        '204': { description: No body. The credential row was removed. }
+        '400':
+          description: Invalid registry host or no credential exists for the host.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/jobs/{name}/runs:
     parameters:
       - name: name
@@ -22795,6 +22866,37 @@ components:
         name: { type: string }
         deleted_at: { type: string, format: date-time }
 
+    PutJobRegistryCredentialRequest:
+      description: "Job private-registry credential payload. Password is sealed at rest and never returned."
+      type: object
+      required: [registry, username, password]
+      properties:
+        registry: { type: string, description: "HTTPS registry host, optionally with port." }
+        username: { type: string, maxLength: 256 }
+        password: { type: string, format: password, maxLength: 4096 }
+
+    JobRegistryCredentialResponse:
+      description: "Metadata-only job private-registry credential envelope."
+      type: object
+      required: [registry, username, created_at, updated_at]
+      properties:
+        registry: { type: string }
+        username: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+
+    JobRegistryCredentialListResponse:
+      description: "Job registry credential metadata plus the per-job quota."
+      type: object
+      required: [credentials, quota_max, count]
+      properties:
+        credentials:
+          type: array
+          items: { $ref: '#/components/schemas/JobRegistryCredentialResponse' }
+        quota_max: { type: integer }
+        count: { type: integer }
+
     # ─── Triggers (issue #757 / ADR-100) ────────────────────────────────
     # Unified event-source-mapping primitive. One Trigger row covers
     # cron, kafka, nats, redis_streams, sqs_compat, and in-platform
@@ -31502,6 +31604,18 @@ components:
 
     RegistryCredentialNotFound:
       description: 'code: registry_credential_not_found — DELETE on a host that has no sealed credential.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanJobRegistryCredentialsNotAllowed:
+      description: 'code: plan_job_registry_credentials_not_allowed — Free plan cannot store job private-registry credentials.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanJobRegistryCredentialQuota:
+      description: 'code: plan_job_registry_credential_quota — per-job registry credential cap reached.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

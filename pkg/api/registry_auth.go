@@ -117,3 +117,36 @@ type AppRegistryCredentialListResponse struct {
 	QuotaMax    int                             `json:"quota_max"`
 	Count       int                             `json:"count"`
 }
+
+// PutJobRegistryCredentialRequest is the job-scoped equivalent of
+// PutAppRegistryCredentialRequest. It intentionally has a distinct schema so
+// generated SDKs expose the job resource without coupling it to app routes.
+type PutJobRegistryCredentialRequest struct {
+	Registry string `json:"registry"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (r PutJobRegistryCredentialRequest) Validate() *Problem {
+	return PutAppRegistryCredentialRequest{
+		Registry: r.Registry,
+		Username: r.Username,
+		Password: r.Password,
+	}.Validate()
+}
+
+// JobRegistryCredentialResponse never contains the sealed or plaintext
+// password; it is metadata only.
+type JobRegistryCredentialResponse struct {
+	Registry   string `json:"registry"`
+	Username   string `json:"username"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+}
+
+type JobRegistryCredentialListResponse struct {
+	Credentials []JobRegistryCredentialResponse `json:"credentials"`
+	QuotaMax    int                             `json:"quota_max"`
+	Count       int                             `json:"count"`
+}

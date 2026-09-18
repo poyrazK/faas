@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { CreateJobRequest } from '../models/CreateJobRequest.js';
 import type { CreateJobRunRequest } from '../models/CreateJobRunRequest.js';
+import type { JobRegistryCredentialListResponse } from '../models/JobRegistryCredentialListResponse.js';
+import type { JobRegistryCredentialResponse } from '../models/JobRegistryCredentialResponse.js';
 import type { JobResponse } from '../models/JobResponse.js';
 import type { JobRunCancelledResponse } from '../models/JobRunCancelledResponse.js';
 import type { JobRunResponse } from '../models/JobRunResponse.js';
@@ -12,6 +14,7 @@ import type { JobTaskRetryResponse } from '../models/JobTaskRetryResponse.js';
 import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
 import type { ListJobTasksResponse } from '../models/ListJobTasksResponse.js';
+import type { PutJobRegistryCredentialRequest } from '../models/PutJobRegistryCredentialRequest.js';
 import type { UpdateJobRequest } from '../models/UpdateJobRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -192,6 +195,121 @@ export class JobsService {
         402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
         409: `Job has live instances.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List sealed private-registry credentials on a job.
+   * Returns registry, username, and timestamps only. Plaintext
+   * passwords are never returned. Quota metadata is included for CLI
+   * and dashboard rendering.
+   *
+   * @returns JobRegistryCredentialListResponse Job registry credential metadata.
+   * @throws ApiError
+   */
+  public static listJobRegistryCredentials({
+    name,
+  }: {
+    /**
+     * The job slug.
+     */
+    name: string,
+  }): CancelablePromise<JobRegistryCredentialListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/registry-credentials',
+      path: {
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Set or replace a sealed private-registry credential for a job.
+   * Seals the plaintext password under namespace `registry_creds` and
+   * stores it against the job and registry host. Replacements do not
+   * consume another per-job quota slot.
+   *
+   * @returns JobRegistryCredentialResponse The stored credential metadata.
+   * @throws ApiError
+   */
+  public static setJobRegistryCredential({
+    name,
+    requestBody,
+  }: {
+    /**
+     * The job slug.
+     */
+    name: string,
+    requestBody: PutJobRegistryCredentialRequest,
+  }): CancelablePromise<JobRegistryCredentialResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/jobs/{name}/registry-credentials',
+      path: {
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: invalid_registry_host — host missing scheme/path, uppercase, port out of range, or field-length cap exceeded.`,
+        401: `code: unauthorized`,
+        403: `code: plan_job_registry_credentials_not_allowed — Free plan cannot store job private-registry credentials.`,
+        404: `code: not_found`,
+        413: `code: plan_job_registry_credential_quota — per-job registry credential cap reached.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a sealed private-registry credential from a job.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteJobRegistryCredential({
+    name,
+    registry,
+  }: {
+    /**
+     * The job slug.
+     */
+    name: string,
+    /**
+     * Registry host to delete, URL-encoded.
+     */
+    registry: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/jobs/{name}/registry-credentials',
+      path: {
+        'name': name,
+      },
+      query: {
+        'registry': registry,
+      },
+      errors: {
+        400: `Invalid registry host or no credential exists for the host.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

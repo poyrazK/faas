@@ -2310,6 +2310,26 @@ func (c *Client) GetJob(ctx context.Context, name string) (JobResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name, nil, &out)
 }
 
+// ListJobRegistryCredentials returns the metadata-only credential list for a
+// job. Passwords are never returned by the API.
+func (c *Client) ListJobRegistryCredentials(ctx context.Context, name string) (JobRegistryCredentialListResponse, error) {
+	var out JobRegistryCredentialListResponse
+	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/registry-credentials", nil, &out)
+}
+
+// SetJobRegistryCredential seals and stores a private-registry credential for
+// a job. The plaintext password is sent only in the TLS request body.
+func (c *Client) SetJobRegistryCredential(ctx context.Context, name, registry, username, password string) (JobRegistryCredentialResponse, error) {
+	var out JobRegistryCredentialResponse
+	return out, c.do(ctx, "PUT", "/v1/jobs/"+name+"/registry-credentials",
+		PutJobRegistryCredentialRequest{Registry: registry, Username: username, Password: password}, &out)
+}
+
+// DeleteJobRegistryCredential removes one job registry credential.
+func (c *Client) DeleteJobRegistryCredential(ctx context.Context, name, registry string) error {
+	return c.do(ctx, "DELETE", "/v1/jobs/"+name+"/registry-credentials?registry="+url.QueryEscape(registry), nil, nil)
+}
+
 // UpdateJob patches a job's image_ref / command / env_overrides /
 // ram_mb / task_timeout_sec / max_parallelism / retry_max / status.
 // Pointer-based fields let the caller distinguish "unset" from

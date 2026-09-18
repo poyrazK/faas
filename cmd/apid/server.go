@@ -1831,6 +1831,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))
+	// Per-job private-registry Basic Auth. Jobs are account-scoped, so the
+	// credential row is keyed by job + registry rather than app + registry.
+	mux.HandleFunc("GET /v1/jobs/{name}/registry-credentials",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesRegistryCredentialsReadSurface...)(s.listJobRegistryCredentials))))
+	mux.HandleFunc("PUT /v1/jobs/{name}/registry-credentials",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesRegistryCredentialsWriteSurface...)(s.setJobRegistryCredential))))
+	mux.HandleFunc("DELETE /v1/jobs/{name}/registry-credentials",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesRegistryCredentialsWriteSurface...)(s.deleteJobRegistryCredential))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJobRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRuns))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRun))))

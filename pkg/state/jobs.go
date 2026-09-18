@@ -248,6 +248,9 @@ type JobImageMaterializationClaimer interface {
 type JobRegistryCredentialStore interface {
 	UpsertJobRegistryCredential(ctx context.Context, accountID, jobID, registry, username string, passwordEncrypted []byte) error
 	GetJobRegistryCredential(ctx context.Context, accountID, jobID, registry string) (JobRegistryCredential, error)
+	ListJobRegistryCredentials(ctx context.Context, accountID, jobID string) ([]JobRegistryCredential, error)
+	DeleteJobRegistryCredential(ctx context.Context, accountID, jobID, registry string) error
+	JobRegistryCredentialQuotaCheck(ctx context.Context, accountID, jobID, registry string) (count int, exists bool, err error)
 	MarkJobRegistryCredentialUsed(ctx context.Context, accountID, jobID, registry string) error
 }
 

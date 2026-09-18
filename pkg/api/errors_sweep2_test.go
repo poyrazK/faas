@@ -1,6 +1,6 @@
 package api
 
-// errors_sweep2_test.go: covers the remaining 68 zero-coverage sentinel
+// errors_sweep2_test.go: covers the remaining zero-coverage sentinels
 // constructors in pkg/api/errors.go that pkg/api/errors_test.go did not
 // reach. These are pure constructors; the test asserts each returns a
 // non-nil *Problem with a non-empty code (RFC 7807 contract: every
@@ -100,6 +100,9 @@ func TestErrSentinels_AllConstructors(t *testing.T) {
 		{"ErrPlanRegistryCredentialsNotAllowed", ErrPlanRegistryCredentialsNotAllowed(PlanFree)},
 		{"ErrPlanRegistryCredentialQuota", ErrPlanRegistryCredentialQuota(freeLims, 1)},
 		{"ErrRegistryCredentialNotFound", ErrRegistryCredentialNotFound("ghcr.io")},
+		{"ErrPlanJobRegistryCredentialsNotAllowed", ErrPlanJobRegistryCredentialsNotAllowed(PlanFree)},
+		{"ErrPlanJobRegistryCredentialQuota", ErrPlanJobRegistryCredentialQuota(freeLims, 1)},
+		{"ErrJobRegistryCredentialNotFound", ErrJobRegistryCredentialNotFound("ghcr.io", "batch-job")},
 
 		// api keys
 		{"ErrAPIKeyExpired", ErrAPIKeyExpired()},
@@ -144,8 +147,8 @@ func TestErrSentinels_AllConstructors(t *testing.T) {
 		{"ErrOrgPersonalImmutable", ErrOrgPersonalImmutable()},
 		{"ErrOrgAPIKeyRequiresOrg", ErrOrgAPIKeyRequiresOrg()},
 	}
-	if len(cases) != 68 {
-		t.Fatalf("sentinel sweep covers %d cases, want 68", len(cases))
+	if len(cases) != 71 {
+		t.Fatalf("sentinel sweep covers %d cases, want 71", len(cases))
 	}
 
 	for _, tc := range cases {
@@ -208,6 +211,7 @@ func TestErrSentinels_LimitsVariants(t *testing.T) {
 				ErrSecretValueTooLarge(l, 1),
 				ErrAPIKeyLimitExceeded(l, 1),
 				ErrPlanRegistryCredentialQuota(l, 1),
+				ErrPlanJobRegistryCredentialQuota(l, 1),
 			}
 			for _, pr := range problems {
 				if pr == nil || pr.Code == "" {
@@ -233,6 +237,7 @@ func TestErrSentinels_PlanOnlyVariants(t *testing.T) {
 				ErrPlanPublicAuthBasicNotAllowed(p),
 				ErrPlanWebhooksNotAllowed(p),
 				ErrPlanRegistryCredentialsNotAllowed(p),
+				ErrPlanJobRegistryCredentialsNotAllowed(p),
 				ErrPlanMinInstancesNotAllowed(p),
 				ErrPlanMaxInstancesNotAllowed(p),
 				ErrPlanEgressAllowlistNotAllowed(p),
