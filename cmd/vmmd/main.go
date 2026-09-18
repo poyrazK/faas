@@ -1234,6 +1234,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
+		StartRuntimeConfigInvalidationWatcher(ctx, pool, runtimeConfigRecv, log)
 		defer runtimeConfigRecv.Close()
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,

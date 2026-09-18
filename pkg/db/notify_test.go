@@ -22,6 +22,53 @@ func TestSubscribeWithReconnect_NilPoolErrors(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeConfigChangedPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    RuntimeConfigChangedPayload
+		wantErr bool
+	}{
+		{
+			name:    "canonical",
+			payload: `{"kind":"updated","app_id":"app-1","account_id":"acct-1","scope":"default","key":"FEATURE_X"}`,
+			want:    RuntimeConfigChangedPayload{Kind: "updated", AppID: "app-1", AccountID: "acct-1", Scope: "default", Key: "FEATURE_X"},
+		},
+		{
+			name:    "legacy app id",
+			payload: "app-1",
+			want:    RuntimeConfigChangedPayload{AppID: "app-1"},
+		},
+		{
+			name:    "missing app id",
+			payload: `{"kind":"updated"}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty",
+			payload: " ",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseRuntimeConfigChangedPayload(tt.payload)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %+v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("payload = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSubscribeWithReconnect_ClosesOnCtxCancel ensures the wrapper's outer
 // channel shuts down cleanly when the caller's context is cancelled (the
 // one path the wrapper exposes its own close on).

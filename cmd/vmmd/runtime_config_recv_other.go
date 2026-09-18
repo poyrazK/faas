@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -21,3 +23,6 @@ func StartRuntimeConfigReceiver(context.Context, *slog.Logger, *fcvm.Manager, ru
 }
 
 func (*runtimeConfigReceiver) Close() {}
+
+func StartRuntimeConfigInvalidationWatcher(context.Context, *pgxpool.Pool, *runtimeConfigReceiver, *slog.Logger) {
+}

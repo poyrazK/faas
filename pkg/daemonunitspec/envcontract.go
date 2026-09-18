@@ -293,6 +293,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify and, when configured, apid's authoritative staging provisioning gate; reload requires an apid restart"},
 	{Name: "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days"},
 	{Name: "FAAS_MANIFEST_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
+	{Name: "FAAS_METADATA_ENV_ENDPOINT", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Default: "http://169.254.169.254/v1/metadata/env", Note: "guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests"},
 	{Name: "FAAS_METERD_ROLE", Owners: []string{"meterd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_MFA_RECOVERY_HMAC_KEY", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
 	{Name: "FAAS_MIGRATE_LIVE_LEASE_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},

@@ -11,13 +11,20 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const runtimeConfigMaxFrame = 32 << 10
+
+const runtimeConfigCacheTTL = 5 * time.Second
 
 const VsockRuntimeConfigHostPort uint32 = fcvm.VsockRuntimeConfigHostPort
 
@@ -40,6 +47,84 @@ type runtimeConfigReceiver struct {
 	log   *slog.Logger
 	mgr   *fcvm.Manager
 	store runtimeConfigStore
+	cache *runtimeConfigCache
+}
+
+type runtimeConfigCacheEntry struct {
+	response runtimeConfigResponse
+	loadedAt time.Time
+}
+
+type runtimeConfigCache struct {
+	mu      sync.Mutex
+	entries map[string]runtimeConfigCacheEntry
+}
+
+func newRuntimeConfigCache() *runtimeConfigCache {
+	return &runtimeConfigCache{entries: make(map[string]runtimeConfigCacheEntry)}
+}
+
+func (c *runtimeConfigCache) get(accountID, appID string, now time.Time) (runtimeConfigResponse, bool) {
+	if c == nil {
+		return runtimeConfigResponse{}, false
+	}
+	key := runtimeConfigCacheKey(accountID, appID)
+	c.mu.Lock()
+	entry, ok := c.entries[key]
+	if ok && now.Sub(entry.loadedAt) >= runtimeConfigCacheTTL {
+		delete(c.entries, key)
+		ok = false
+	}
+	c.mu.Unlock()
+	if !ok {
+		return runtimeConfigResponse{}, false
+	}
+	return cloneRuntimeConfigResponse(entry.response), true
+}
+
+func (c *runtimeConfigCache) put(accountID, appID string, response runtimeConfigResponse, now time.Time) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.entries[runtimeConfigCacheKey(accountID, appID)] = runtimeConfigCacheEntry{
+		response: cloneRuntimeConfigResponse(response),
+		loadedAt: now,
+	}
+	c.mu.Unlock()
+}
+
+func (c *runtimeConfigCache) invalidate(accountID, appID string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if accountID == "" {
+		for key := range c.entries {
+			if strings.HasSuffix(key, "\x00"+appID) {
+				delete(c.entries, key)
+			}
+		}
+	} else {
+		delete(c.entries, runtimeConfigCacheKey(accountID, appID))
+	}
+	c.mu.Unlock()
+}
+
+func runtimeConfigCacheKey(accountID, appID string) string {
+	return accountID + "\x00" + appID
+}
+
+func cloneRuntimeConfigResponse(response runtimeConfigResponse) runtimeConfigResponse {
+	clone := runtimeConfigResponse{
+		Revision: response.Revision,
+		Error:    response.Error,
+		Env:      make(map[string]string, len(response.Env)),
+	}
+	for key, value := range response.Env {
+		clone.Env[key] = value
+	}
+	return clone
 }
 
 // StartRuntimeConfigReceiver registers the instance-bound host side of the
@@ -56,12 +141,39 @@ func StartRuntimeConfigReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm
 	if log == nil {
 		log = slog.Default()
 	}
-	r := &runtimeConfigReceiver{ctx: ctx, log: log, mgr: mgr, store: store}
+	r := &runtimeConfigReceiver{ctx: ctx, log: log, mgr: mgr, store: store, cache: newRuntimeConfigCache()}
 	if err := jailer.RegisterGuestVsockStreamHandler(VsockRuntimeConfigHostPort, r.handleGuestStream); err != nil {
 		return nil, fmt.Errorf("runtime config receiver register port %d: %w", VsockRuntimeConfigHostPort, err)
 	}
 	log.Info("runtime config receiver registered", "vsock_host_port", VsockRuntimeConfigHostPort, "transport", "firecracker_uds", "enabled", store != nil)
 	return r, nil
+}
+
+// StartRuntimeConfigInvalidationWatcher connects vmmd's cache to the
+// control-plane mutation channels. Notification payloads carry identity only;
+// the next guest request re-reads the authoritative rows from state.Store.
+func StartRuntimeConfigInvalidationWatcher(ctx context.Context, pool *pgxpool.Pool, receiver *runtimeConfigReceiver, log *slog.Logger) {
+	if ctx == nil || pool == nil || receiver == nil {
+		return
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	go func() {
+		notifications, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyAppEnvChanged, db.NotifySecretRotated}, log)
+		if err != nil {
+			log.Warn("runtime config invalidation subscriber unavailable", "err", err)
+			return
+		}
+		for notification := range notifications {
+			payload, parseErr := db.ParseRuntimeConfigChangedPayload(notification.Payload)
+			if parseErr != nil {
+				log.Warn("runtime config invalidation payload rejected", "channel", notification.Channel, "err", parseErr)
+				continue
+			}
+			receiver.cache.invalidate(payload.AccountID, payload.AppID)
+		}
+	}()
 }
 
 func (*runtimeConfigReceiver) Close() {}
@@ -89,7 +201,13 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 	}
 	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()
-	response, err := loadRuntimeConfig(requestCtx, r.store, accountID, appID)
+	response, ok := r.cache.get(accountID, appID, time.Now())
+	if !ok {
+		response, err = loadRuntimeConfig(requestCtx, r.store, accountID, appID)
+		if err == nil {
+			r.cache.put(accountID, appID, response, time.Now())
+		}
+	}
 	if err != nil {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "config_unavailable"})
 	}
