@@ -51,6 +51,7 @@ type vmConcurrencyGate struct {
 	limit    int
 	inflight int
 	waiters  int
+	refs     int
 	notify   chan struct{}
 }
 
@@ -72,10 +73,33 @@ func (m *vmConcurrencyManager) gate(instanceID string, limit int) *vmConcurrency
 	if g == nil {
 		g = newVMConcurrencyGate(limit)
 		m.gates[instanceID] = g
-		return g
+	} else {
+		g.setLimit(limit)
 	}
-	g.setLimit(limit)
+	// Hold a manager reference from pointer lookup through the gate
+	// operation. Without this, removeIfIdle can delete the gate after
+	// m.gate returns but before acquire/tryAcquire takes g.mu; a racing
+	// caller can then create a second gate for the same instance and
+	// temporarily exceed the per-instance limit.
+	g.refs++
 	return g
+}
+
+func (m *vmConcurrencyManager) releaseGateRef(instanceID string, g *vmConcurrencyGate) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.gates[instanceID] != g {
+		return
+	}
+	g.mu.Lock()
+	if g.refs > 0 {
+		g.refs--
+	}
+	idle := g.refs == 0 && g.inflight == 0 && g.waiters == 0
+	g.mu.Unlock()
+	if idle {
+		delete(m.gates, instanceID)
+	}
 }
 
 func (g *vmConcurrencyGate) setLimit(limit int) {
@@ -150,7 +174,7 @@ func (m *vmConcurrencyManager) removeIfIdle(instanceID string, g *vmConcurrencyG
 		return
 	}
 	g.mu.Lock()
-	idle := g.inflight == 0 && g.waiters == 0
+	idle := g.refs == 0 && g.inflight == 0 && g.waiters == 0
 	g.mu.Unlock()
 	if idle {
 		delete(m.gates, instanceID)
@@ -168,7 +192,9 @@ func (m *vmConcurrencyManager) tryAcquire(instanceID, plan string, limit int) (f
 		return nil, false
 	}
 	g := m.gate(instanceID, limit)
-	if !g.tryAcquire() {
+	ok := g.tryAcquire()
+	m.releaseGateRef(instanceID, g)
+	if !ok {
 		return nil, false
 	}
 	m.record(plan, 1)
@@ -188,8 +214,8 @@ func (m *vmConcurrencyManager) acquire(ctx context.Context, instanceID, plan str
 	}
 	g := m.gate(instanceID, limit)
 	waited, err := g.acquire(ctx)
+	m.releaseGateRef(instanceID, g)
 	if err != nil {
-		m.removeIfIdle(instanceID, g)
 		return nil, waited, err
 	}
 	m.record(plan, 1)
