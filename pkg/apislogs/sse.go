@@ -63,6 +63,9 @@ func RenderAppLogEvent(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc
 		"line":       f.Line,
 		"written_at": f.WrittenAt.UTC().Format(time.RFC3339Nano),
 	}
+	if f.DeploymentID != "" {
+		payloadMap["deployment_id"] = f.DeploymentID
+	}
 	if f.Level != "" {
 		payloadMap["level"] = f.Level
 	}
@@ -86,6 +89,9 @@ func RenderAppLogEvent(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc
 func LogAppLogFrame(log *slog.Logger, f scheddgrpc.LogFrame, accountID, appID, deploymentID string) {
 	if log == nil {
 		return
+	}
+	if deploymentID == "" {
+		deploymentID = f.DeploymentID
 	}
 	attrs := []any{
 		"account_id", logsanitize.Field(accountID),
@@ -190,11 +196,15 @@ func RenderAppLogGap(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc.L
 		// gets a meaningful, non-empty reason.
 		reason = "seq_below_retained"
 	}
-	payload, _ := json.Marshal(map[string]any{
+	payloadMap := map[string]any{
 		"reason":            reason,
 		"gap_to_written_at": f.GapToWrittenAt.UTC().Format(time.RFC3339Nano),
 		"replay_advised":    true,
-	})
+	}
+	if f.DeploymentID != "" {
+		payloadMap["deployment_id"] = f.DeploymentID
+	}
+	payload, _ := json.Marshal(payloadMap)
 	_, _ = fmt.Fprintf(w, "event: gap\ndata: %s\n\n", payload)
 	if flusher != nil {
 		flusher.Flush()

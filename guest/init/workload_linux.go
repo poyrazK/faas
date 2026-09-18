@@ -590,6 +590,9 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	} else if !isNotExist(envErr) {
 		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
 	}
+	// Sidecars keep their own customer env boundary, but share the platform
+	// identity with the main workload for log/error correlation.
+	env = StampPlatformIdentityEnv(env, apiEnv)
 	// The scheduler-selected/listen port is authoritative, so stamp it after
 	// deployment env overrides rather than allowing a PORT override to change
 	// the port advertised to the host bridge.

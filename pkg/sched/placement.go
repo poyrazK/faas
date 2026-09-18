@@ -46,6 +46,9 @@ type Placement struct {
 	NodeID    string
 	Name      string
 	TargetURL string // wire.ParseTarget-compatible (unix://|tcp://|dns://)
+	// Region is copied from compute_nodes at placement time so the wake
+	// identity can describe the locality that actually hosted the VM.
+	Region string
 	// CeilingMB is the per-node RAM admission ceiling
 	// (compute_node.admission_ceiling_mb). The chooser already verified
 	// the request fits; downstream code reads this to log context.
@@ -183,6 +186,7 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 			NodeID:     warmFit.ID,
 			Name:       warmFit.Name,
 			TargetURL:  warmFit.TargetURL,
+			Region:     stringValue(warmFit.Region),
 			CeilingMB:  warmFit.AdmissionCeilingMB,
 			VCPUBudget: warmFit.VCPUBudget,
 			UsedMB:     usedMB[warmFit.ID],
@@ -204,6 +208,7 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 			NodeID:     best.ID,
 			Name:       best.Name,
 			TargetURL:  best.TargetURL,
+			Region:     stringValue(best.Region),
 			CeilingMB:  best.AdmissionCeilingMB,
 			VCPUBudget: best.VCPUBudget,
 			UsedMB:     usedMB[best.ID],
@@ -223,6 +228,7 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 			NodeID:     n.ID,
 			Name:       n.Name,
 			TargetURL:  n.TargetURL,
+			Region:     stringValue(n.Region),
 			CeilingMB:  n.AdmissionCeilingMB,
 			VCPUBudget: n.VCPUBudget,
 			UsedMB:     usedMB[n.ID],
@@ -252,10 +258,18 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 		NodeID:     best.ID,
 		Name:       best.Name,
 		TargetURL:  best.TargetURL,
+		Region:     stringValue(best.Region),
 		CeilingMB:  best.AdmissionCeilingMB,
 		VCPUBudget: best.VCPUBudget,
 		UsedMB:     usedMB[best.ID],
 	}, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func containsNodeID(ids []string, want string) bool {

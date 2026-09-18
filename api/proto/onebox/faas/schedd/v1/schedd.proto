@@ -846,6 +846,10 @@ message StreamAppLogsResponse {
   // ("info", "warn", or "error"). Empty means the line was plain text or
   // did not contain a recognised level. Additive per ADR-016.
   string level = 9;
+  // deployment_id identifies the deployment that owns the instance emitting
+  // this frame. Empty only for legacy instance rows without deployment
+  // correlation. Additive per ADR-016.
+  string deployment_id = 10;
 }
 
 // StreamWarmHintsRequest kicks off the sticky-warm affinity stream.

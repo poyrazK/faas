@@ -59,6 +59,8 @@ func BuildEnv(base []string, m api.AppManifest) []string {
 // manifest" matches the issue's plaintext rationale: a runtime tweak via
 // PUT /v1/apps/{slug}/env/{key} overrides the image's default env but
 // cannot accidentally clobber a credential set via the secret surface.
+// Reserved FAAS_* platform identity keys are the exception: they remain
+// authoritative above the customer secret layer.
 func BuildEnvWithSecrets(base []string, m api.AppManifest, secrets, apiEnv map[string]string) []string {
 	merged := make(map[string]string, len(base)+len(m.Env)+len(secrets)+len(apiEnv))
 	for _, kv := range base {
@@ -80,10 +82,12 @@ func BuildEnvWithSecrets(base []string, m api.AppManifest, secrets, apiEnv map[s
 			merged[k] = v
 		}
 	}
-	// Secrets layer stays LAST: a customer credential always wins
-	// over any default, manifest env, or plaintext api_env row.
+	// Secrets layer stays LAST for customer-owned keys. Platform identity is
+	// deliberately excluded here: those values are injected by schedd into
+	// the same JSON channel but remain authoritative even if an image or a
+	// customer secret attempts to shadow them.
 	for k, v := range secrets {
-		if validEnvKey(k) {
+		if validEnvKey(k) && !api.IsPlatformIdentityEnvKey(k) {
 			merged[k] = v
 		}
 	}
@@ -146,6 +150,25 @@ func cut(kv string) (string, string, bool) {
 // precedence directly without launching the customer's process.
 func StampOverridePortEnv(env []string, port int) []string {
 	return append(env, "PORT="+strconv.Itoa(port))
+}
+
+// StampPlatformIdentityEnv copies only Gregale-owned identity keys from the
+// shared app env map onto a workload's environment. Sidecars intentionally do
+// not inherit customer secrets or the main workload's arbitrary env, but they
+// should still be able to label their logs with the same deployment identity.
+// Values are appended last so a sidecar image or override cannot shadow them.
+func StampPlatformIdentityEnv(env []string, apiEnv map[string]string) []string {
+	keys := make([]string, 0, len(apiEnv))
+	for key := range apiEnv {
+		if api.IsPlatformIdentityEnvKey(key) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		env = append(env, key+"="+apiEnv[key])
+	}
+	return env
 }
 
 // StampTraceparentEnv appends TRACEPARENT=<tp> to env when tp is

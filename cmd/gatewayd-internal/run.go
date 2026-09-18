@@ -670,6 +670,11 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	// headers so a queued envelope cannot spoof its invocation identity.
 	req.Header.Set("x-faas-invocation-id", inv.ID)
 	req.Header.Set("x-faas-app-id", inv.AppID)
+	req.Header.Set(api.RequestIDHeader, inv.ID)
+	req.Header.Set(api.AppIDHeader, inv.AppID)
+	req.Header.Set(api.DeploymentIDHeader, target.DeploymentID)
+	req.Header.Set(api.InstanceIDHeader, target.InstanceID)
+	req.Header.Set(api.NodeIDHeader, target.NodeID)
 	req.Header.Set("x-faas-invocation-source", string(inv.Source))
 	req.Header.Set("x-faas-instance", target.InstanceID)
 	req.Header.Set("x-faas-node", target.NodeID)

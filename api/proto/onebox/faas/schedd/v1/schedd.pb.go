@@ -1798,7 +1798,11 @@ type StreamAppLogsResponse struct {
 	// level is the canonical severity parsed from a structured JSON log line
 	// ("info", "warn", or "error"). Empty means the line was plain text or
 	// did not contain a recognised level. Additive per ADR-016.
-	Level         string `protobuf:"bytes,9,opt,name=level,proto3" json:"level,omitempty"`
+	Level string `protobuf:"bytes,9,opt,name=level,proto3" json:"level,omitempty"`
+	// deployment_id identifies the deployment that owns the instance emitting
+	// this frame. Empty only for legacy instance rows without deployment
+	// correlation. Additive per ADR-016.
+	DeploymentId  string `protobuf:"bytes,10,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1892,6 +1896,13 @@ func (x *StreamAppLogsResponse) GetGapReason() string {
 func (x *StreamAppLogsResponse) GetLevel() string {
 	if x != nil {
 		return x.Level
+	}
+	return ""
+}
+
+func (x *StreamAppLogsResponse) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
 	}
 	return ""
 }
@@ -2784,7 +2795,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05level\x18\x05 \x01(\tR\x05level\x12\x12\n" +
 	"\x04grep\x18\x06 \x01(\tR\x04grep\x12\x1b\n" +
 	"\x06follow\x18\a \x01(\bH\x00R\x06follow\x88\x01\x01B\t\n" +
-	"\a_follow\"\xc4\x02\n" +
+	"\a_follow\"\xe9\x02\n" +
 	"\x15StreamAppLogsResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x10\n" +
@@ -2797,7 +2808,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x11gap_to_written_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\x0egapToWrittenAt\x12\x1d\n" +
 	"\n" +
 	"gap_reason\x18\b \x01(\tR\tgapReason\x12\x14\n" +
-	"\x05level\x18\t \x01(\tR\x05level\"\x18\n" +
+	"\x05level\x18\t \x01(\tR\x05level\x12#\n" +
+	"\rdeployment_id\x18\n" +
+	" \x01(\tR\fdeploymentId\"\x18\n" +
 	"\x16StreamWarmHintsRequest\"\x84\x01\n" +
 	"\x17StreamWarmHintsResponse\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x17\n" +

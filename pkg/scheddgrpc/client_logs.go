@@ -125,13 +125,14 @@ func (a *logStreamAdapter) Recv() (LogFrame, error) {
 		return LogFrame{}, err
 	}
 	frame := LogFrame{
-		InstanceID: resp.GetInstanceId(),
-		Seq:        resp.GetSeq(),
-		Stream:     resp.GetStream(),
-		Line:       resp.GetLine(),
-		Level:      resp.GetLevel(),
-		IsGap:      resp.GetIsGap(),
-		GapReason:  resp.GetGapReason(),
+		InstanceID:   resp.GetInstanceId(),
+		DeploymentID: resp.GetDeploymentId(),
+		Seq:          resp.GetSeq(),
+		Stream:       resp.GetStream(),
+		Line:         resp.GetLine(),
+		Level:        resp.GetLevel(),
+		IsGap:        resp.GetIsGap(),
+		GapReason:    resp.GetGapReason(),
 	}
 	if t := resp.GetWrittenAt(); t != nil {
 		frame.WrittenAt = t.AsTime()

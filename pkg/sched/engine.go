@@ -2916,7 +2916,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+		APIEnv: appendPlatformIdentity(
+			e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
+		),
 		// ADR-031: surface the per-app egress allowlist on the
 		// wake wire. vmmd translates the CIDRs into the per-netns
 		// forward chain. Empty slice = no allowlist rule (current
@@ -4593,7 +4596,15 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// overlayfs upper layers carry the same precedence
 		// rules as Wake time and the customer's runtime config
 		// (most of it) lives in sealedEnv + manifest_env.
-		APIEnv: e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
+		APIEnv: appendPlatformIdentity(
+			e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
+			app, dep, acct, ins.NodeID, ins.ID, func() string {
+				if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
+					return stringValue(node.Region)
+				}
+				return ""
+			}(),
+		),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
 		EgressAllowlist:       prefixesToCIDRStrings(app.EgressAllowlist),
@@ -5274,7 +5285,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+		APIEnv: appendPlatformIdentity(
+			e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
+		),
 		// ADR-031: see the Wake builder above. Prime is the
 		// deploy-pipeline first boot — same wire shape, same
 		// per-netns ruleset; a freshly-deployed app starts under

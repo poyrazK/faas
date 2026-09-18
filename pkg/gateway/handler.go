@@ -6071,6 +6071,15 @@ haveApp:
 	// arbitrary instance by setting the header (issue #168 trust model).
 	r.Header.Set("x-faas-instance", target.InstanceID)
 	r.Header.Set("x-faas-app", app.ID)
+	// Request identity is platform-authored at the final target boundary.
+	// These headers are reserved and the forwarder allowlists them for the
+	// guest, so application middleware can correlate a request without
+	// trusting customer-supplied x-faas-* values.
+	r.Header.Set(api.AppIDHeader, app.ID)
+	r.Header.Set(api.DeploymentIDHeader, target.DeploymentID)
+	r.Header.Set(api.TenantIDHeader, app.AccountID)
+	r.Header.Set(api.InstanceIDHeader, target.InstanceID)
+	r.Header.Set(api.NodeIDHeader, target.NodeID)
 	// Customer workloads get one unambiguous client address. The inbound
 	// x-faas-client-ip value is never trusted; stampTrustedClientIP derives
 	// it from the already-sanitized public-to-internal X-Forwarded-For hop.

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -313,7 +315,24 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
 	request.Header.Del(ServiceProxyCallerAppHeader)
+	// The service hop does not have the full deployment record, so clear all
+	// inbound identity claims before adding the target identity it does know.
+	// Preserve the request id for end-to-end correlation; it is already part of
+	// the platform's accepted inbound correlation contract.
+	requestID := request.Header.Get(api.RequestIDHeader)
+	for _, header := range []string{
+		api.AppIDHeader, api.DeploymentIDHeader, api.TenantIDHeader,
+		api.InstanceIDHeader, api.NodeIDHeader, api.RegionHeader,
+		api.CommitSHAHeader, api.DeploymentTagHeader,
+		api.DeploymentCreatedAtHeader,
+	} {
+		request.Header.Del(header)
+	}
+	if requestID != "" {
+		request.Header.Set(api.RequestIDHeader, requestID)
+	}
 	request.Header.Set("X-Faas-App", appID)
+	request.Header.Set(api.AppIDHeader, appID)
 	for attempt := 0; attempt < ServiceProxyMaxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok {
@@ -321,6 +340,8 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			return
 		}
 		request.Header.Set("X-Faas-Instance", endpoint.InstanceID)
+		request.Header.Set(api.InstanceIDHeader, endpoint.InstanceID)
+		request.Header.Set(api.NodeIDHeader, endpoint.NodeID)
 		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request

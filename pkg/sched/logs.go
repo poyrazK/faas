@@ -58,6 +58,7 @@ type LogFrameSink func(LogFrame) error
 // the gap; meaningful only when IsGap is true.
 type LogFrame struct {
 	InstanceID     string
+	DeploymentID   string
 	Seq            int64
 	Stream         string
 	Line           string
@@ -179,8 +180,9 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 					return
 				}
 				frame := LogFrame{
-					InstanceID: ins.ID, Seq: line.Seq, Stream: line.Stream,
-					Line: line.Line, Level: line.Level, WrittenAt: line.WrittenAt,
+					InstanceID: ins.ID, DeploymentID: ins.DeploymentID,
+					Seq: line.Seq, Stream: line.Stream, Line: line.Line,
+					Level: line.Level, WrittenAt: line.WrittenAt,
 					IsGap: line.IsGap, GapToWrittenAt: line.GapToWrittenAt, GapReason: line.GapReason,
 				}
 				if line.IsGap {

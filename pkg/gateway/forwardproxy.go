@@ -357,10 +357,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
-			!strings.EqualFold(name, api.InvocationIDHeader) {
-			// The guest receives only the platform-authored client IP and
-			// invocation correlation headers. Handler.ServeHTTP overwrites
-			// both immediately before dispatch; every other x-faas-* header
+			!strings.EqualFold(name, api.InvocationIDHeader) &&
+			!api.IsGuestIdentityHeader(name) {
+			// The guest receives only platform-authored identity, client IP,
+			// and invocation headers. Handler.ServeHTTP overwrites identity
+			// values immediately before dispatch; every other x-faas-* header
 			// remains internal metadata.
 			if !strings.EqualFold(name, wire.ClientIPHeader) {
 				continue
@@ -985,6 +986,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	for name := range headers {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
+			!api.IsGuestIdentityHeader(name) &&
 			!strings.EqualFold(name, wire.ClientIPHeader) {
 			headers.Del(name)
 		}

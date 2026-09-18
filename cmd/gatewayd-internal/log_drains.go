@@ -318,7 +318,8 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 						continue
 					}
 					if !sender.Enqueue(logdrain.Record{
-						AppID: spec.AppID, AccountID: spec.AccountID, InstanceID: frame.InstanceID,
+						AppID: spec.AppID, AccountID: spec.AccountID,
+						DeploymentID: frame.DeploymentID, InstanceID: frame.InstanceID,
 						Sequence: uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
 					}) {
 						// Keep the source cursor unchanged and reconnect rather than

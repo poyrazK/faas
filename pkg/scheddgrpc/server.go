@@ -1059,9 +1059,10 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 		}
 		if f.IsGap {
 			resp := &scheddpb.StreamAppLogsResponse{
-				InstanceId: f.InstanceID,
-				IsGap:      true,
-				GapReason:  f.GapReason,
+				InstanceId:   f.InstanceID,
+				DeploymentId: f.DeploymentID,
+				IsGap:        true,
+				GapReason:    f.GapReason,
 			}
 			if !f.GapToWrittenAt.IsZero() {
 				resp.GapToWrittenAt = timestamppb.New(f.GapToWrittenAt)
@@ -1069,11 +1070,12 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 			return stream.Send(resp)
 		}
 		resp := &scheddpb.StreamAppLogsResponse{
-			InstanceId: f.InstanceID,
-			Seq:        f.Seq,
-			Stream:     f.Stream,
-			Line:       f.Line,
-			Level:      f.Level,
+			InstanceId:   f.InstanceID,
+			Seq:          f.Seq,
+			Stream:       f.Stream,
+			Line:         f.Line,
+			Level:        f.Level,
+			DeploymentId: f.DeploymentID,
 		}
 		if !f.WrittenAt.IsZero() {
 			resp.WrittenAt = timestamppb.New(f.WrittenAt)
