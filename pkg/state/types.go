@@ -3141,7 +3141,7 @@ func (e *ManagedRealtimeEndpointQuotaError) Error() string {
 type TCPListener struct {
 	ID           string
 	AppID        string
-	AccountID     string
+	AccountID    string
 	ListenerName string
 	GuestPort    int
 	PublicPort   int
