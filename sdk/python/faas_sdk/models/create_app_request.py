@@ -34,6 +34,7 @@ from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_replicas import ServiceReplicas
     from ..models.workload_port import WorkloadPort
 
@@ -73,6 +74,12 @@ class CreateAppRequest:
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     max_retries: int | Unset = UNSET
     """Maximum consecutive restart attempts. 0 uses the plan default."""
+    retry_policy: RetryPolicyDTO | Unset = UNSET
+    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
+    decodes this DTO into a dispatch.RetryPolicy before persisting
+    to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
+    can type the override without importing pkg/dispatch directly.
+    """
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -174,6 +181,10 @@ class CreateAppRequest:
 
         max_retries = self.max_retries
 
+        retry_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry_policy, Unset):
+            retry_policy = self.retry_policy.to_dict()
+
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
@@ -266,6 +277,8 @@ class CreateAppRequest:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if ports is not UNSET:
@@ -309,6 +322,7 @@ class CreateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_replicas import ServiceReplicas
         from ..models.workload_port import WorkloadPort
 
@@ -375,6 +389,13 @@ class CreateAppRequest:
         startup_deadline_s = d.pop("startup_deadline_s", UNSET)
 
         max_retries = d.pop("max_retries", UNSET)
+
+        _retry_policy = d.pop("retry_policy", UNSET)
+        retry_policy: RetryPolicyDTO | Unset
+        if isinstance(_retry_policy, Unset):
+            retry_policy = UNSET
+        else:
+            retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
@@ -470,6 +491,7 @@ class CreateAppRequest:
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
+            retry_policy=retry_policy,
             service_replicas=service_replicas,
             ports=ports,
             favicon=favicon,

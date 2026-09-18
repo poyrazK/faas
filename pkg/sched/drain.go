@@ -515,7 +515,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if isDebugMirrorReplay(inv) {
 		if d.gateway == nil {
 			err := errors.New("sched: debug replay gateway is not configured")
-			retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+			retryAfter := d.retryAfterFor(inv)
 			budget := d.queueAttemptBudget(ctx, inv)
 			failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err))
 			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
@@ -525,7 +525,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
 		if err != nil {
-			retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+			retryAfter := d.retryAfterFor(inv)
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
@@ -568,7 +568,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		err = errors.New("sched: ensure wake returned no instance")
 	}
 	if err != nil {
-		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+		retryAfter := d.retryAfterFor(inv)
 		// Permanent wake errors short-circuit to state='failed' — a
 		// missing app, a deleted account, or a PARKED app will not
 		// recover by waiting 5s. The engine
@@ -623,7 +623,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// Permanent invoke errors (4xx) terminal-fail; transient
 		// (network / 5xx) retry. The gateway is the source of
 		// truth — it knows whether the failure is recoverable.
-		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+		retryAfter := d.retryAfterFor(inv)
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
@@ -752,12 +752,11 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 	return acct.Active()
 }
 
-// queueAttemptBudget (issue #394) returns the per-plan retry budget
-// for an invocation, resolved from the parent account's plan. Returns
-// 0 for non-queue sources (delayed_task, async_invoke, cron) and for
-// any lookup error — Store.FailInvocation treats budget==0 as
-// "infinite retry", which is the correct behaviour for those paths
-// and a safe degrade for lookups.
+// queueAttemptBudget (issue #394) returns the row policy's explicit retry
+// budget when present, otherwise the per-plan queue budget resolved from the
+// parent account. It returns 0 for non-queue sources without a policy and for
+// lookup errors — Store.FailInvocation treats budget==0 as "infinite retry",
+// which is the legacy behaviour and a safe degrade for lookups.
 //
 // Plan caps rarely change (no churn from a healthy customer), so we
 // don't cache the value here. The AccountByID round-trip is one extra
@@ -772,6 +771,9 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 // gate fall back. Without this, a sustained Postgres blip would
 // silently mask the dead-letter safety net issue #394 introduces.
 func (d *Drain) queueAttemptBudget(ctx context.Context, inv state.Invocation) int {
+	if policy := inv.RetryPolicy(); policy.MaxAttempts > 0 {
+		return policy.MaxAttempts
+	}
 	if inv.Source != state.InvocationQueue {
 		return 0
 	}
@@ -788,6 +790,16 @@ func (d *Drain) queueAttemptBudget(ctx context.Context, inv state.Invocation) in
 		return 0
 	}
 	return api.MustLimitsFor(acct.Plan).MaxQueueAttempts
+}
+
+// retryAfterFor selects the row policy's exponential delay when present and
+// preserves the drain's legacy fixed delay for rows without a policy.
+func (d *Drain) retryAfterFor(inv state.Invocation) time.Duration {
+	policy := inv.RetryPolicy()
+	if !policy.Zero() {
+		return policy.Backoff(inv.Attempts)
+	}
+	return time.Duration(d.retryAfterSeconds) * time.Second
 }
 
 // accountAsyncCap (ADR-134 PR-B) returns the per-plan cap on

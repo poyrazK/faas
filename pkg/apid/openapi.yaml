@@ -19100,6 +19100,11 @@ components:
           oneOf:
             - type: "null"
             - $ref: '#/components/schemas/ScalingPolicy'
+        retry_policy:
+          description: "App-level default for invocation retries. Queue binding and per-invocation policies override this value."
+          oneOf:
+            - type: "null"
+            - $ref: '#/components/schemas/RetryPolicyDTO'
         # Issue #462 / ADR-058: per-app cooldown bookkeeping.
         # schedd stamps last_scale_out_at on the wake-gate
         # admit branch (same Tx as the instances row insert);
@@ -19545,6 +19550,9 @@ components:
           minimum: 0
           description: "Maximum consecutive restart attempts. 0 uses the plan default."
           example: 5
+        retry_policy:
+          $ref: '#/components/schemas/RetryPolicyDTO'
+          description: "App-level default for invocation retries. Queue binding and per-invocation policies override this value."
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
         ports:
@@ -19848,6 +19856,11 @@ components:
           minimum: 0
           description: "Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."
           example: 5
+        retry_policy:
+          oneOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+            - type: "null"
+          description: "Replace the app-level invocation retry default. Omit for no change; an empty object clears it."
         service_replicas:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'

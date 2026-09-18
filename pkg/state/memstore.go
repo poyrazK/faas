@@ -3391,6 +3391,11 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
 	}
+	if len(app.RetryPolicyJSON) == 0 {
+		app.RetryPolicyJSON = json.RawMessage(`{}`)
+	} else {
+		app.RetryPolicyJSON = append(json.RawMessage(nil), app.RetryPolicyJSON...)
+	}
 	// workload_class is NOT NULL with a closed CHECK in PostgreSQL;
 	// mirror the PgStore's HTTP fallback for hand-built callers that
 	// leave the Go zero value unset.
@@ -3473,6 +3478,11 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	}
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
+	}
+	if len(app.RetryPolicyJSON) == 0 {
+		app.RetryPolicyJSON = json.RawMessage(`{}`)
+	} else {
+		app.RetryPolicyJSON = append(json.RawMessage(nil), app.RetryPolicyJSON...)
 	}
 	// Keep the quota-aware path in parity with CreateApp and PgStore:
 	// an omitted workload class is the canonical HTTP default.
@@ -4989,6 +4999,13 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		// consistent.
 		if p.ScalingPolicy.MinInstances != 0 {
 			a.MinInstances = p.ScalingPolicy.MinInstances
+		}
+	}
+	if p.SetRetryPolicy {
+		if p.RetryPolicyJSON == nil || len(*p.RetryPolicyJSON) == 0 {
+			a.RetryPolicyJSON = json.RawMessage(`{}`)
+		} else {
+			a.RetryPolicyJSON = append(json.RawMessage(nil), (*p.RetryPolicyJSON)...)
 		}
 	}
 	// Issue #472 / ADR-054: per-app cosign signature-enforcement flag.

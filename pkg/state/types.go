@@ -1100,6 +1100,10 @@ type App struct {
 	// zero, the pre-#462 contract. See apid's appResponse for
 	// the projection logic.
 	ScalingPolicy *ScalingPolicy
+	// RetryPolicyJSON is the app-level default for invocation retries.
+	// Invocation rows inherit this policy when no request override is
+	// provided; binding and per-invocation policies remain authoritative.
+	RetryPolicyJSON json.RawMessage
 	// LastScaleOutAt is the wall-clock time of the most recent
 	// scale-out event schedd admitted for this app (issue #462 /
 	// ADR-058). Used by the wake-gate cooldown helper
@@ -3409,6 +3413,20 @@ func (inv Invocation) RetryPolicy() dispatch.RetryPolicy {
 	return p
 }
 
+// RetryPolicy unmarshals the app-level retry default. Malformed or empty
+// values intentionally resolve to the zero policy so callers can fall back
+// to the producer/plan default without making a bad app row fatal.
+func (app App) RetryPolicy() dispatch.RetryPolicy {
+	if len(app.RetryPolicyJSON) == 0 {
+		return dispatch.RetryPolicy{}
+	}
+	var p dispatch.RetryPolicy
+	if err := json.Unmarshal(app.RetryPolicyJSON, &p); err != nil {
+		return dispatch.RetryPolicy{}
+	}
+	return p
+}
+
 // Deadline returns the effective dispatch.DeadlinePolicy for this
 // invocation. Today only DeadlineAt is honoured (StartToCloseTimeout
 // is a future extension; the wire DTO does not yet expose it). When
@@ -5064,6 +5082,10 @@ type UpdateAppParams struct {
 	// legacy readers don't see a stale floor).
 	ScalingPolicy    *ScalingPolicy
 	SetScalingPolicy bool
+	// RetryPolicyJSON is the app-level retry default. SetRetryPolicy
+	// distinguishes an omitted PATCH field from an explicit `{}` clear.
+	RetryPolicyJSON *[]byte
+	SetRetryPolicy  bool
 	// OverflowNode (issue Tier A10 / ADR-088) is the customer's
 	// per-app preferred spill target (compute_node UUID). Apid
 	// has already resolved the wire name → UUID server-side

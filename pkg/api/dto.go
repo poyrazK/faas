@@ -87,11 +87,14 @@ type CreateAppRequest struct {
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
 	// an omitted max_concurrency defaults to the requested desired replicas.
-	ExecutionMode    string           `json:"execution_mode,omitempty"`
-	RestartPolicy    string           `json:"restart_policy,omitempty"`
-	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int              `json:"max_retries,omitempty"`
-	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	ExecutionMode    string `json:"execution_mode,omitempty"`
+	RestartPolicy    string `json:"restart_policy,omitempty"`
+	StartupDeadlineS int    `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int    `json:"max_retries,omitempty"`
+	// RetryPolicy is the app-level default for invocation retries. Binding
+	// and per-invocation overrides take precedence over this policy.
+	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
+	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
 	// Ports declares additional workload listeners. Named TCP entries may be
 	// selected at the public edge with the `--port-<name>` hostname form;
 	// UDP entries remain guest-only discovery endpoints.
@@ -267,11 +270,14 @@ type UpdateAppRequest struct {
 	// zero. desired must fit the app's max_concurrency; include both fields
 	// when raising the target. Switching away from service clears the old
 	// replica policy and drains live service replicas.
-	ExecutionMode    *string          `json:"execution_mode,omitempty"`
-	RestartPolicy    *string          `json:"restart_policy,omitempty"`
-	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int             `json:"max_retries,omitempty"`
-	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	ExecutionMode    *string `json:"execution_mode,omitempty"`
+	RestartPolicy    *string `json:"restart_policy,omitempty"`
+	StartupDeadlineS *int    `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int    `json:"max_retries,omitempty"`
+	// RetryPolicy replaces the app-level invocation retry default. An
+	// explicit empty object clears the default; nil leaves it unchanged.
+	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
+	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
 	// Ports replaces the app-owned listener declaration. An empty slice clears
 	// the declaration; nil leaves it unchanged.
 	Ports *[]WorkloadPort `json:"ports,omitempty"`
@@ -1086,6 +1092,9 @@ type AppResponse struct {
 	// `scaling_target_incompatible_with_workload_class` (PR-D
 	// carve-out).
 	ScalingPolicy *ScalingPolicy `json:"scaling_policy,omitempty"`
+	// RetryPolicy is the app-level invocation retry default. It is omitted
+	// when unset; binding and per-invocation overrides supersede it.
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	// LastScaleOutAt / LastScaleInAt are the wall-clock timestamps
 	// schedd stamps on the wake-gate admit / reaper park branches
 	// (issue #462 / ADR-058). Used by the cooldown helper to

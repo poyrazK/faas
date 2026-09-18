@@ -41,6 +41,14 @@ type AppWakeResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+// RetryPolicyDTO configures exponential retry behavior for invocations.
+type RetryPolicyDTO struct {
+	MaxAttempts   int     `json:"max_attempts,omitempty"`
+	BaseSeconds   float64 `json:"base_seconds,omitempty"`
+	MaxSeconds    float64 `json:"max_seconds,omitempty"`
+	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`
@@ -59,6 +67,7 @@ type CreateAppRequest struct {
 	RestartPolicy    string           `json:"restart_policy,omitempty"`
 	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int              `json:"max_retries,omitempty"`
+	RetryPolicy      *RetryPolicyDTO  `json:"retry_policy,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	HealthPath       string           `json:"health_path,omitempty"`
 	HealthPathWakes  bool             `json:"health_path_wakes,omitempty"`
@@ -90,6 +99,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string          `json:"restart_policy,omitempty"`
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
+	RetryPolicy      *RetryPolicyDTO  `json:"retry_policy,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	HealthPath       *string          `json:"health_path,omitempty"`
 	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
@@ -448,13 +458,14 @@ type AppResponse struct {
 	IdleTimeoutS int               `json:"idle_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
-	MinInstances     int        `json:"min_instances"`
-	Status           string     `json:"status"`
-	URL              string     `json:"url"`
-	PreviewOfSlug    string     `json:"preview_of_slug,omitempty"`
-	PreviewPRNumber  int        `json:"preview_pr_number,omitempty"`
-	PreviewPRState   string     `json:"preview_pr_state,omitempty"`
-	PreviewExpiresAt *time.Time `json:"preview_expires_at,omitempty"`
+	MinInstances     int             `json:"min_instances"`
+	Status           string          `json:"status"`
+	URL              string          `json:"url"`
+	PreviewOfSlug    string          `json:"preview_of_slug,omitempty"`
+	PreviewPRNumber  int             `json:"preview_pr_number,omitempty"`
+	PreviewPRState   string          `json:"preview_pr_state,omitempty"`
+	PreviewExpiresAt *time.Time      `json:"preview_expires_at,omitempty"`
+	RetryPolicy      *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	// Manifest is the runner-scaffold payload (env, healthz path,
 	// entrypoint). Surfaced so the dashboard's app detail page can
 	// show the function handler + env without a separate round-trip.

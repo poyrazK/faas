@@ -39,6 +39,9 @@ type sourceRefManifestStaged struct {
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
 	appliedScalingPolicy  *state.ScalingPolicy
+	retryPolicyChanged    bool
+	previousRetryPolicy   json.RawMessage
+	appliedRetryPolicy    json.RawMessage
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -180,6 +183,30 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		return staged, problem
 	}
 	staged.bindingIDs = bindingIDs
+	if m.RetryPolicy != nil {
+		desiredDTO := retryPolicyDTOFromManifest(m.RetryPolicy)
+		desired, retryProblem := marshalAppRetryPolicy(desiredDTO)
+		if retryProblem != nil {
+			return staged, retryProblem
+		}
+		if !retryPoliciesEqual(app.RetryPolicyJSON, desired) {
+			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
+				RetryPolicyJSON: &desired,
+				SetRetryPolicy:  true,
+			})
+			if err != nil {
+				return staged, sourceRefRetryPolicyStoreProblem(err)
+			}
+			staged.retryPolicyChanged = true
+			staged.previousRetryPolicy = cloneRetryPolicyJSON(app.RetryPolicyJSON)
+			staged.appliedRetryPolicy = cloneRetryPolicyJSON(updated.RetryPolicyJSON)
+			if len(staged.appliedRetryPolicy) == 0 {
+				staged.appliedRetryPolicy = cloneRetryPolicyJSON(desired)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
+		}
+	}
 	if m.Scaling != nil {
 		limits, ok := api.LimitsFor(acct.Plan)
 		if !ok {
@@ -378,6 +405,32 @@ func sourceRefScalingStoreProblem(err error) *api.Problem {
 	return api.ErrCapacity("could not apply manifest scaling policy")
 }
 
+func sourceRefRetryPolicyStoreProblem(err error) *api.Problem {
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
+	return api.ErrCapacity("could not apply manifest retry policy")
+}
+
+func cloneRetryPolicyJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	return append(json.RawMessage(nil), raw...)
+}
+
+func retryPoliciesEqual(left, right json.RawMessage) bool {
+	left = bytes.TrimSpace(left)
+	right = bytes.TrimSpace(right)
+	if len(left) == 0 {
+		left = []byte(`{}`)
+	}
+	if len(right) == 0 {
+		right = []byte(`{}`)
+	}
+	return bytes.Equal(left, right)
+}
+
 func cloneScalingPolicy(policy *state.ScalingPolicy) *state.ScalingPolicy {
 	if policy == nil {
 		return nil
@@ -442,6 +495,22 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		} else {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
+		}
+	}
+	if staged.retryPolicyChanged {
+		restore := cloneRetryPolicyJSON(staged.previousRetryPolicy)
+		if len(restore) == 0 {
+			restore = json.RawMessage(`{}`)
+		}
+		restoreBytes := []byte(restore)
+		if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{
+			RetryPolicyJSON: &restoreBytes,
+			SetRetryPolicy:  true,
+		}); err != nil {
+			errs = append(errs, err)
+		} else {
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","app_id":"%s","retry_policy_changed":true}`, staged.appID))
 		}
 	}
 	for i := len(staged.bindingIDs) - 1; i >= 0; i-- {

@@ -5,6 +5,7 @@
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 /**
@@ -42,6 +43,10 @@ export type UpdateAppRequest = {
    * Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default.
    */
   max_retries?: number | null;
+  /**
+   * Replace the app-level invocation retry default. Omit for no change; an empty object clears it.
+   */
+  retry_policy?: (RetryPolicyDTO | null);
   /**
    * Full replacement of the service replica policy. Omit for no change.
    */

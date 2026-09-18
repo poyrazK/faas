@@ -9,6 +9,7 @@ import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
 import type { PublicAuthStatus } from './PublicAuthStatus.js';
 import type { ResourceProfile } from './ResourceProfile.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
@@ -113,6 +114,10 @@ export type AppResponse = {
    * Per-app scaling policy (issue #462 / ADR-058). null = legacy row, project the empty-policy shape from min_instances / max_concurrency. Non-null = customer-authored policy persisted to the jsonb column `apps.scaling_policy`.
    */
   scaling_policy?: (null | ScalingPolicy);
+  /**
+   * App-level default for invocation retries. Queue binding and per-invocation policies override this value.
+   */
+  retry_policy?: (null | RetryPolicyDTO);
   /**
    * RFC 3339 timestamp of the most recent scale-out event schedd admitted for this app, or null if the app has never scaled out.
    */

@@ -753,7 +753,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			attempts := retryAttempts[i]
 			// Review finding #9: exponential backoff + ±20%
 			// jitter replaces the prior hardcoded 2s.
-			backoff := computeTriggerRetryBackoff(t, attempts)
+			backoff := l.computeTriggerRetryBackoff(ctx, t, attempts)
 			nextFireAt := time.Now().Add(backoff)
 			if err := store.MarkTriggerRecordRetry(ctx, id, "", nextFireAt); err != nil {
 				l.log.Warn("sched trigger tick: mark retry",
@@ -1156,7 +1156,7 @@ func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.
 		// bindings project their policy into this trigger config, so a
 		// gateway/network failure follows the same curve as a per-record
 		// retry result instead of the old fixed two-second delay.
-		nextFireAt := time.Now().Add(computeTransportRetryBackoff(t, c.Attempts+1))
+		nextFireAt := time.Now().Add(l.computeTransportRetryBackoff(ctx, t, c.Attempts+1))
 		if err := store.MarkTriggerRecordRetry(ctx, c.ID.String(), errMsg, nextFireAt); err != nil {
 			l.log.Warn("sched trigger tick: mark retry", "id", c.ID.String(), "err", err)
 		}
@@ -1179,6 +1179,20 @@ func computeTransportRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration 
 	}
 	if len(t.Config) > 0 && json.Unmarshal(t.Config, &envelope) == nil && len(envelope.RetryPolicy) > 0 && string(envelope.RetryPolicy) != "null" {
 		return computeTriggerRetryBackoff(t, attempts)
+	}
+	return 2 * time.Second
+}
+
+func (l *Loop) computeTransportRetryBackoff(ctx context.Context, t sqlc.Trigger, attempts int32) time.Duration {
+	if policy, ok := configuredTriggerRetryPolicy(t); ok {
+		return policy.Backoff(int(attempts))
+	}
+	if l.engine != nil {
+		if app, err := l.engine.Store().AppByID(ctx, t.AppID.String()); err == nil {
+			if policy := app.RetryPolicy(); !policy.Zero() {
+				return policy.Backoff(int(attempts))
+			}
+		}
 	}
 	return 2 * time.Second
 }
@@ -1328,8 +1342,15 @@ func computeRetryBackoff(attempts int32) time.Duration {
 // retry_policy was introduced. The policy lives in the trigger config JSONB
 // so this path remains compatible with existing sqlc models and migrations.
 func computeTriggerRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration {
+	if policy, ok := configuredTriggerRetryPolicy(t); ok {
+		return policy.Backoff(int(attempts))
+	}
+	return computeRetryBackoff(attempts)
+}
+
+func configuredTriggerRetryPolicy(t sqlc.Trigger) (dispatch.RetryPolicy, bool) {
 	var envelope struct {
-		RetryPolicy struct {
+		RetryPolicy *struct {
 			MaxAttempts   int     `json:"max_attempts"`
 			BaseSeconds   float64 `json:"base_seconds"`
 			MaxSeconds    float64 `json:"max_seconds"`
@@ -1337,6 +1358,9 @@ func computeTriggerRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration {
 		} `json:"retry_policy"`
 	}
 	if len(t.Config) > 0 && json.Unmarshal(t.Config, &envelope) == nil {
+		if envelope.RetryPolicy == nil {
+			return dispatch.RetryPolicy{}, false
+		}
 		policy := dispatch.RetryPolicy{
 			MaxAttempts:   envelope.RetryPolicy.MaxAttempts,
 			BaseSeconds:   envelope.RetryPolicy.BaseSeconds,
@@ -1344,7 +1368,21 @@ func computeTriggerRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration {
 			JitterSeconds: envelope.RetryPolicy.JitterSeconds,
 		}
 		if !policy.Zero() {
-			return policy.Backoff(int(attempts))
+			return policy, true
+		}
+	}
+	return dispatch.RetryPolicy{}, false
+}
+
+func (l *Loop) computeTriggerRetryBackoff(ctx context.Context, t sqlc.Trigger, attempts int32) time.Duration {
+	if policy, ok := configuredTriggerRetryPolicy(t); ok {
+		return policy.Backoff(int(attempts))
+	}
+	if l.engine != nil {
+		if app, err := l.engine.Store().AppByID(ctx, t.AppID.String()); err == nil {
+			if policy := app.RetryPolicy(); !policy.Zero() {
+				return policy.Backoff(int(attempts))
+			}
 		}
 	}
 	return computeRetryBackoff(attempts)

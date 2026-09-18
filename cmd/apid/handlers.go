@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,35 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// marshalAppRetryPolicy validates and encodes the app-level retry default.
+// The same field bounds as trigger and queue policies apply; a nil policy
+// means the caller did not change the setting, while `{}` is an explicit
+// clear that is persisted as an empty object.
+func marshalAppRetryPolicy(policy *api.RetryPolicyDTO) ([]byte, *api.Problem) {
+	if policy == nil {
+		return nil, nil
+	}
+	if problem := validateTriggerRetryPolicy(policy); problem != nil {
+		return nil, problem
+	}
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		return nil, api.ErrValidation("invalid retry_policy")
+	}
+	return raw, nil
+}
+
+func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	var policy api.RetryPolicyDTO
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return nil
+	}
+	return &policy
+}
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), acct, r))
@@ -415,6 +445,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.AppProtocol != nil {
 		appProtocol = *req.AppProtocol
 	}
+	retryPolicy, retryProblem := marshalAppRetryPolicy(req.RetryPolicy)
+	if retryProblem != nil {
+		return state.App{}, retryProblem
+	}
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		Visibility: visibility,
@@ -464,8 +498,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// hand-built App{}s land safely; this branch never
 		// reaches the floor in practice because every exit
 		// path above assigns appProtocol explicitly.
-		AppProtocol: appProtocol,
-		Manifest:    stateManifestFromAPI(lifecycle),
+		AppProtocol:     appProtocol,
+		RetryPolicyJSON: retryPolicy,
+		Manifest:        stateManifestFromAPI(lifecycle),
 	}, nil
 }
 
@@ -803,6 +838,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// the same shape so the dashboard / CLI surface one
 		// consistent struct.
 		ScalingPolicy:  statePolicyToDTO(a.ScalingPolicy),
+		RetryPolicy:    retryPolicyDTOFromJSON(a.RetryPolicyJSON),
 		LastScaleOutAt: a.LastScaleOutAt,
 		LastScaleInAt:  a.LastScaleInAt,
 		// Issue #472 / ADR-054: per-app signature-enforcement flag.

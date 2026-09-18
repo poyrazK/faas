@@ -127,6 +127,7 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		Payload:                req.Payload,
 		Headers:                req.Headers,
 		DueAt:                  time.Now().UTC(),
+		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
 	})
@@ -193,7 +194,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
 		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:        marshalRetryPolicy(req.RetryPolicy),
+		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
@@ -314,7 +315,7 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		QueueName:       queueName,
 		Payload:         req.Payload,
 		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: marshalRetryPolicy(req.RetryPolicy),
+		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, req.RetryPolicy),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue queue send"))
@@ -685,6 +686,20 @@ func marshalRetryPolicy(p *api.RetryPolicyDTO) json.RawMessage {
 		return nil
 	}
 	return raw
+}
+
+// effectiveInvocationRetryPolicy applies deterministic precedence for an
+// invocation row: an explicit request override wins; otherwise the app-level
+// default is copied into the row. Queue binding consumers can replace this
+// value with their binding policy before dispatch.
+func effectiveInvocationRetryPolicy(app state.App, override *api.RetryPolicyDTO) json.RawMessage {
+	if override != nil {
+		return marshalRetryPolicy(override)
+	}
+	if len(app.RetryPolicyJSON) == 0 || string(app.RetryPolicyJSON) == "{}" {
+		return nil
+	}
+	return append(json.RawMessage(nil), app.RetryPolicyJSON...)
 }
 
 func ptrTime(t *time.Time) time.Time {

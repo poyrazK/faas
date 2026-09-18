@@ -709,6 +709,7 @@ func (d BucketDependency) EffectiveLabel() string {
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root. The supported top-level
 // declarations are `schema_version`, `hosting`, `function`, `scaling`,
+// `retry_policy`,
 // `queue_bindings`, `triggers`, `workflows`, `databases`, and `buckets`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
@@ -720,8 +721,11 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
-	QueueBindings []QueueBinding        `yaml:"queue_bindings,omitempty"`
-	Triggers      []Trigger             `yaml:"triggers"`
+	// RetryPolicy is the app-level default for invocation retries. It is
+	// inherited by invocations unless a binding or invocation overrides it.
+	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
+	QueueBindings []QueueBinding     `yaml:"queue_bindings,omitempty"`
+	Triggers      []Trigger          `yaml:"triggers"`
 	// EventTriggers is populated from [[triggers.event]] in gregale.toml.
 	// YAML trigger entries remain in Triggers for backward compatibility; the
 	// separate slice keeps the TOML event table from changing that wire shape.
@@ -884,6 +888,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if m.Scaling != nil {
 		if err := m.Scaling.Validate(); err != nil {
+			return err
+		}
+	}
+	if m.RetryPolicy != nil {
+		if err := validateAppRetryPolicy(m.RetryPolicy); err != nil {
 			return err
 		}
 	}
@@ -1128,6 +1137,28 @@ func validateRetryPolicy(idx int, policy *RetryPolicyConfig) error {
 	}
 	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
 		return fmt.Errorf("trigger[%d]: retry_policy.jitter_seconds must be between 0 and 1", idx)
+	}
+	return nil
+}
+
+func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
+	if policy == nil {
+		return nil
+	}
+	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
+		return fmt.Errorf("retry_policy.max_attempts must be between 1 and 25 when set")
+	}
+	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
+		return fmt.Errorf("retry_policy.base_seconds must be finite and non-negative")
+	}
+	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
+		return fmt.Errorf("retry_policy.max_seconds must be finite and non-negative")
+	}
+	if policy.MaxSeconds > 0 && policy.BaseSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
+		return fmt.Errorf("retry_policy.max_seconds must be at least base_seconds")
+	}
+	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
+		return fmt.Errorf("retry_policy.jitter_seconds must be between 0 and 1")
 	}
 	return nil
 }

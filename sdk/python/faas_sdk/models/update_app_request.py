@@ -97,6 +97,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.declared_route import DeclaredRoute
     from ..models.public_auth_block import PublicAuthBlock
+    from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_replicas import ServiceReplicas
     from ..models.workload_port import WorkloadPort
@@ -151,6 +152,8 @@ class UpdateAppRequest:
     """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
     max_retries: int | None | Unset = UNSET
     """Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."""
+    retry_policy: None | RetryPolicyDTO | Unset = UNSET
+    """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -263,6 +266,7 @@ class UpdateAppRequest:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.public_auth_block import PublicAuthBlock
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
 
         visibility: None | str | Unset
@@ -350,6 +354,14 @@ class UpdateAppRequest:
             max_retries = UNSET
         else:
             max_retries = self.max_retries
+
+        retry_policy: dict[str, Any] | None | Unset
+        if isinstance(self.retry_policy, Unset):
+            retry_policy = UNSET
+        elif isinstance(self.retry_policy, RetryPolicyDTO):
+            retry_policy = self.retry_policy.to_dict()
+        else:
+            retry_policy = self.retry_policy
 
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
@@ -581,6 +593,8 @@ class UpdateAppRequest:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if ports is not UNSET:
@@ -650,6 +664,7 @@ class UpdateAppRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.declared_route import DeclaredRoute
         from ..models.public_auth_block import PublicAuthBlock
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_replicas import ServiceReplicas
         from ..models.workload_port import WorkloadPort
@@ -909,6 +924,23 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
+
+        def _parse_retry_policy(data: object) -> None | RetryPolicyDTO | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                retry_policy_type_0 = RetryPolicyDTO.from_dict(data)
+
+                return retry_policy_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RetryPolicyDTO | Unset, data)
+
+        retry_policy = _parse_retry_policy(d.pop("retry_policy", UNSET))
 
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
@@ -1328,6 +1360,7 @@ class UpdateAppRequest:
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
+            retry_policy=retry_policy,
             service_replicas=service_replicas,
             ports=ports,
             favicon=favicon,

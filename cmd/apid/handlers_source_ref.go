@@ -196,7 +196,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	manifestCommitted := false
 	defer func(ctx context.Context) {
-		if manifestCommitted || (!stagedManifest.scalingChanged && len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0 && len(stagedManifest.bindingIDs) == 0) {
+		if manifestCommitted || (!stagedManifest.scalingChanged && !stagedManifest.retryPolicyChanged && len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0 && len(stagedManifest.bindingIDs) == 0) {
 			return
 		}
 		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {

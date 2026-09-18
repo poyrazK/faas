@@ -1168,7 +1168,8 @@ func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
 	return a.Target.Metric == b.Target.Metric && a.Target.Value == b.Target.Value
 }
 
-// applyManifestScalingPolicy reads and applies the optional scaling block.
+// applyManifestScalingPolicy reads and applies optional app defaults from the
+// manifest. The API remains authoritative for plan gates and validation.
 // It runs after the deployment has been accepted so a failed build/upload
 // cannot leave app configuration changed. The API remains authoritative for
 // plan gates and workload-class compatibility.
@@ -1180,24 +1181,53 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || m.Scaling == nil {
+	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	desired := m.Scaling.ToAPI()
 	current, err := client.GetApp(ctx, slug)
 	if err != nil {
 		return fmt.Errorf("read app before applying scaling policy: %w", err)
 	}
-	if scalingPolicyEqual(current.ScalingPolicy, desired) {
+	update := api.UpdateAppRequest{}
+	changed := false
+	if m.Scaling != nil {
+		desired := m.Scaling.ToAPI()
+		if !scalingPolicyEqual(current.ScalingPolicy, desired) {
+			update.ScalingPolicy = desired
+			changed = true
+		}
+	}
+	if m.RetryPolicy != nil {
+		desired := &api.RetryPolicyDTO{
+			MaxAttempts: m.RetryPolicy.MaxAttempts, BaseSeconds: m.RetryPolicy.BaseSeconds,
+			MaxSeconds: m.RetryPolicy.MaxSeconds, JitterSeconds: m.RetryPolicy.JitterSeconds,
+		}
+		if !retryPolicyDTOEqual(current.RetryPolicy, desired) {
+			update.RetryPolicy = desired
+			changed = true
+		}
+	}
+	if !changed {
 		return nil
 	}
-	if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{ScalingPolicy: desired}); err != nil {
-		return fmt.Errorf("apply scaling policy: %w", err)
+	if _, err := client.UpdateApp(ctx, slug, update); err != nil {
+		return fmt.Errorf("apply manifest app defaults: %w", err)
 	}
 	return nil
+}
+
+func retryPolicyDTOEqual(left, right *api.RetryPolicyDTO) bool {
+	zero := func(p *api.RetryPolicyDTO) bool {
+		return p == nil || (p.MaxAttempts == 0 && p.BaseSeconds == 0 && p.MaxSeconds == 0 && p.JitterSeconds == 0)
+	}
+	if zero(left) || zero(right) {
+		return zero(left) && zero(right)
+	}
+	return left.MaxAttempts == right.MaxAttempts && left.BaseSeconds == right.BaseSeconds &&
+		left.MaxSeconds == right.MaxSeconds && left.JitterSeconds == right.JitterSeconds
 }
 
 const manifestTriggerCleanupTimeout = 10 * time.Second
@@ -1372,6 +1402,9 @@ func validateProjectManifestConfig(cwd string) error {
 	}
 	if m.Scaling != nil {
 		return errors.New("scaling is supported on single-app deploys; configure each workload separately after project apply")
+	}
+	if m.RetryPolicy != nil {
+		return errors.New("retry_policy is supported on single-app deploys; configure each workload separately after project apply")
 	}
 	return nil
 }

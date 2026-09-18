@@ -93,6 +93,11 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 // Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
 // buildApp, the established helper signature in this package.
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	if req.RetryPolicy != nil {
+		if _, problem := marshalAppRetryPolicy(req.RetryPolicy); problem != nil {
+			return problem
+		}
+	}
 	if req.Visibility != nil {
 		visibility := api.AppVisibility(*req.Visibility)
 		if !visibility.Valid() {
@@ -1012,6 +1017,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	lifecycleManifest, lifecycleChanged := stateManifestForUpdate(app, &req)
+	retryPolicyJSON, retryPolicyProblem := marshalAppRetryPolicy(req.RetryPolicy)
+	if retryPolicyProblem != nil {
+		api.WriteProblem(w, retryPolicyProblem)
+		return
+	}
+	var retryPolicyPtr *[]byte
+	if req.RetryPolicy != nil {
+		retryPolicyPtr = &retryPolicyJSON
+	}
 	params := state.UpdateAppParams{
 		Visibility:         visibilityPtr(req.Visibility),
 		SetVisibility:      req.Visibility != nil,
@@ -1096,6 +1110,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// floor.
 		ScalingPolicy:    policyPtrFromReq(&req),
 		SetScalingPolicy: req.ScalingPolicy != nil,
+		RetryPolicyJSON:  retryPolicyPtr,
+		SetRetryPolicy:   req.RetryPolicy != nil,
 		// Issue #472 / ADR-054: per-app cosign signature-enforcement
 		// flag is NOT settable via the customer PATCH surface.
 		// Operators control it through PATCH /v1/apps/{slug}/security

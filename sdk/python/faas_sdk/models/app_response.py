@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..models.declared_route import DeclaredRoute
     from ..models.parked_deployment_ref import ParkedDeploymentRef
     from ..models.public_auth_status import PublicAuthStatus
+    from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
 
 
@@ -132,6 +133,8 @@ class AppResponse:
     """Per-app scaling policy (issue #462 / ADR-058). null = legacy row, project the empty-policy shape from
     min_instances / max_concurrency. Non-null = customer-authored policy persisted to the jsonb column
     `apps.scaling_policy`."""
+    retry_policy: None | RetryPolicyDTO | Unset = UNSET
+    """App-level default for invocation retries. Queue binding and per-invocation policies override this value."""
     last_scale_out_at: datetime.datetime | None | Unset = UNSET
     """RFC 3339 timestamp of the most recent scale-out event schedd admitted for this app, or null if the app has
     never scaled out."""
@@ -183,6 +186,7 @@ class AppResponse:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.parked_deployment_ref import ParkedDeploymentRef
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
 
         id = self.id
@@ -301,6 +305,14 @@ class AppResponse:
             scaling_policy = self.scaling_policy.to_dict()
         else:
             scaling_policy = self.scaling_policy
+
+        retry_policy: dict[str, Any] | None | Unset
+        if isinstance(self.retry_policy, Unset):
+            retry_policy = UNSET
+        elif isinstance(self.retry_policy, RetryPolicyDTO):
+            retry_policy = self.retry_policy.to_dict()
+        else:
+            retry_policy = self.retry_policy
 
         last_scale_out_at: None | str | Unset
         if isinstance(self.last_scale_out_at, Unset):
@@ -439,6 +451,8 @@ class AppResponse:
             field_dict["maintenance_mode"] = maintenance_mode
         if scaling_policy is not UNSET:
             field_dict["scaling_policy"] = scaling_policy
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
         if last_scale_out_at is not UNSET:
             field_dict["last_scale_out_at"] = last_scale_out_at
         if last_scale_in_at is not UNSET:
@@ -482,6 +496,7 @@ class AppResponse:
         from ..models.declared_route import DeclaredRoute
         from ..models.parked_deployment_ref import ParkedDeploymentRef
         from ..models.public_auth_status import PublicAuthStatus
+        from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
 
         d = dict(src_dict)
@@ -656,6 +671,23 @@ class AppResponse:
 
         scaling_policy = _parse_scaling_policy(d.pop("scaling_policy", UNSET))
 
+        def _parse_retry_policy(data: object) -> None | RetryPolicyDTO | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                retry_policy_type_1 = RetryPolicyDTO.from_dict(data)
+
+                return retry_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RetryPolicyDTO | Unset, data)
+
+        retry_policy = _parse_retry_policy(d.pop("retry_policy", UNSET))
+
         def _parse_last_scale_out_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -827,6 +859,7 @@ class AppResponse:
             declared_routes=declared_routes,
             maintenance_mode=maintenance_mode,
             scaling_policy=scaling_policy,
+            retry_policy=retry_policy,
             last_scale_out_at=last_scale_out_at,
             last_scale_in_at=last_scale_in_at,
             require_signed=require_signed,

@@ -25,6 +25,7 @@ type (
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
 	DeclaredRoute          = api.DeclaredRoute
+	RetryPolicyDTO         = api.RetryPolicyDTO
 
 	// End-customer consumers and credentials (ADR-120).
 	CreateAPIConsumerRequest                 = api.CreateAPIConsumerRequest
