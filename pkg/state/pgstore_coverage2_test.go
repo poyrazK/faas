@@ -72,6 +72,72 @@ func TestPg_CoverageNodeSharding(t *testing.T) {
 	}
 }
 
+func TestPg_CoverageAccountDeadLetterProjection(t *testing.T) {
+	s, ctx, account, app, _ := pgCoverageFixture(t)
+	now := time.Now().UTC()
+	dead := func() state.Invocation {
+		t.Helper()
+		inv, err := s.EnqueueInvocation(ctx, state.Invocation{
+			AppID: app.ID, AccountID: account.ID, Source: state.InvocationQueue,
+			State: state.InvocationPending, Method: "POST", Path: "/",
+			Payload: []byte(`{"source":"coverage"}`), Headers: []byte(`{}`),
+			DueAt: now, CreatedAt: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ClaimInvocation(ctx, inv.ID, "coverage-dlq", 30); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FailInvocation(ctx, inv.ID, "coverage failure", time.Second, 1); err != nil {
+			t.Fatal(err)
+		}
+		return inv
+	}
+
+	first := dead()
+	events, err := s.ListDeadLetterEventsForAccount(ctx, account.ID, 10, "")
+	if err != nil || len(events) != 1 || events[0].SourceID != first.ID {
+		t.Fatalf("account events = %+v, %v", events, err)
+	}
+	if _, err := s.DeadLetterEventByAccountID(ctx, account.ID, events[0].ID); err != nil {
+		t.Fatalf("account event by id: %v", err)
+	}
+	if _, err := s.ReplayDeadLetterEventForAccount(ctx, account.ID, events[0].ID); err != nil {
+		t.Fatalf("account replay: %v", err)
+	}
+	if err := s.DeleteDeadLetterEventForAccount(ctx, account.ID, events[0].ID); err != nil {
+		t.Fatalf("account delete first: %v", err)
+	}
+
+	second := dead()
+	if n, err := s.ReplayDeadLetterEventsForAccount(ctx, account.ID, 10); err != nil || n != 1 {
+		t.Fatalf("account replay all = %d, %v", n, err)
+	}
+	third := dead()
+	thirdEvents, err := s.ListDeadLetterEventsForAccount(ctx, account.ID, 10, "")
+	if err != nil {
+		t.Fatalf("list third event: %v", err)
+	}
+	var thirdEventID string
+	for _, event := range thirdEvents {
+		if event.SourceID == third.ID {
+			thirdEventID = event.ID
+			break
+		}
+	}
+	if thirdEventID == "" {
+		t.Fatalf("third event missing: %+v", thirdEvents)
+	}
+	if err := s.DeleteDeadLetterEventForAccount(ctx, account.ID, thirdEventID); err != nil {
+		t.Fatalf("account delete: %v", err)
+	}
+	if n, err := s.DeleteDeadLetterEventsForAccount(ctx, account.ID, 10); err != nil || n != 1 {
+		t.Fatalf("account delete all = %d, %v; want replayed second event", n, err)
+	}
+	_ = second
+}
+
 func TestPg_CoverageOrphanedAndReassign(t *testing.T) {
 	s, ctx, account, app, _ := pgCoverageFixture(t)
 	nodeID := resolveDefaultLocal(t, ctx, s)
