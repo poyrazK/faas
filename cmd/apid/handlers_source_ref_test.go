@@ -239,6 +239,7 @@ func buildSourceRefTarGzWithManifest(t *testing.T, manifest string) []byte {
 // (handlers_install_github_test.go).
 type sourceRefTestEnv struct {
 	h       http.Handler
+	srv     *server
 	store   *state.MemStore
 	gh      *sourceRefFake
 	key     string
@@ -296,6 +297,7 @@ func newSourceRefTestServer(t *testing.T, plan api.Plan, slug string, installID 
 	)
 	return sourceRefTestEnv{
 		h:       srv.handler(),
+		srv:     srv,
 		store:   store,
 		gh:      gh,
 		key:     pt,
