@@ -261,6 +261,10 @@ Restore an app during its deletion grace window
 
 List admitted per-route labels for one app (ADR-093)
 
+### apps tcp
+
+Manage raw TCP listeners
+
 ### apps streaming-cap
 
 Per-app streaming classification probe (ADR-102 D6)
@@ -320,6 +324,10 @@ Inspect networking or manage private-network attachments
 ### app routes
 
 List admitted per-route labels for one app (ADR-093)
+
+### app tcp
+
+Manage raw TCP listeners
 
 
 ## billing
