@@ -12,7 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/trace"
 )
 
 const (
@@ -67,6 +71,7 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 	if client.Transport == nil {
 		client.Transport = http.DefaultTransport
 	}
+	client.Transport = newDependencyTransport(client.Transport)
 	return &Handler{
 		Resolver:               resolver,
 		Backend:                backend,
@@ -170,8 +175,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_target_invalid", "Outbound integration target is invalid", "")
 		return
 	}
-	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL, r.Body)
+	dependencyCtx, dependencySpan := trace.StartSpan(ctx, "gregale.outbound.integration", dependencySpanAttributes(integration, appID)...)
+	defer dependencySpan.End()
+	upstreamReq, err := http.NewRequestWithContext(dependencyCtx, r.Method, upstreamURL, r.Body)
 	if err != nil {
+		dependencySpan.RecordError(err)
+		dependencySpan.SetStatus(codes.Error, "request construction failed")
 		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_request_invalid", "Outbound request could not be constructed", "")
 		return
@@ -179,6 +188,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header = forwardedHeaders(r.Header)
 	resp, err := h.Client.Do(upstreamReq)
 	if err != nil {
+		dependencySpan.RecordError(err)
+		dependencySpan.SetStatus(codes.Error, "upstream request failed")
 		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -187,6 +198,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeProblem(w, http.StatusBadGateway, "outbound_upstream_unavailable", "Outbound provider could not be reached", "1")
 		return
+	}
+	dependencySpan.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
+	if resp.StatusCode >= http.StatusBadRequest {
+		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
 	h.Metrics.ObserveUpstream(integration.ID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()

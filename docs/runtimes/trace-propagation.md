@@ -144,6 +144,24 @@ Flask/FastAPI/Django/psycopg spans to the platform's trace. We set
 `OTEL_PROPAGATORS=tracecontext,baggage` explicitly so a custom
 propagator in the parent image doesn't silently drop the join.
 
+## Platform-owned outbound integrations
+
+Requests sent through Gregale's configured outbound integrations
+(`/i/{integration_id}/...`) are instrumented by `outboundd` without any
+application SDK setup. The platform emits a binding span named
+`gregale.outbound.integration` and a child HTTP client span with the method,
+destination host, response status, network lifecycle events, duration, and
+error state. W3C trace context is injected into the provider request, so a
+caller that already has an active OTel context remains connected to the
+provider span. The platform outbound client also injects that context
+automatically.
+
+Integration ID, attached app ID, origin host, and origin scheme are bounded
+attributes. Request paths, query strings, bodies, credentials, and provider
+headers are intentionally excluded from spans. This covers the platform-owned
+binding path; arbitrary direct guest `fetch()` calls still require runtime
+instrumentation or a future transparent egress observation layer.
+
 ## What the platform does NOT do
 
 - **No library pre-installation.** The runner image ships with

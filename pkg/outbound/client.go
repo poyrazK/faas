@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // Client is the small opt-in adapter applications can use instead of building
@@ -60,5 +63,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body io.Reader) (*
 	}
 	req.Header.Set(TokenHeader, c.Token)
 	req.Header.Set(AppHeader, c.AppID)
+	// Preserve the active request trace when the platform outbound client is
+	// used. The gateway creates the dependency spans; this carrier makes them
+	// children of the caller's trace when a caller span is available.
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	return c.HTTP.Do(req)
 }
