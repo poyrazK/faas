@@ -45,6 +45,18 @@ type ReservedIPStore interface {
 var _ ReservedIPStore = (*MemStore)(nil)
 var _ ReservedIPStore = (*PgStore)(nil)
 
+// ReservedIPRouteStore is the scheduler-owned extension used by the
+// provider-neutral route reconciler. It deliberately stays separate from
+// ReservedIPStore so existing customer-facing test doubles do not need to
+// implement fleet-wide reads or generation-fenced writes.
+type ReservedIPRouteStore interface {
+	ListReservedIPsForRouting(context.Context, string) ([]ReservedIP, error)
+	UpdateReservedIPStatusIfGeneration(context.Context, string, string, int64, networkip.Status, string, string) (ReservedIP, error)
+}
+
+var _ ReservedIPRouteStore = (*MemStore)(nil)
+var _ ReservedIPRouteStore = (*PgStore)(nil)
+
 func validateReservedIP(in ReservedIP) (ReservedIP, error) {
 	in.ID = strings.TrimSpace(in.ID)
 	in.AccountID = strings.TrimSpace(in.AccountID)
@@ -186,6 +198,28 @@ func (m *MemStore) ListReservedIPs(ctx context.Context, accountID, region string
 	return out, nil
 }
 
+// ListReservedIPsForRouting returns the fleet-wide lease projection consumed
+// by the route reconciler. The account id is intentionally absent: route
+// ownership is already encoded by each lease row, while the reconciler must
+// converge the complete desired route set in one pass.
+func (m *MemStore) ListReservedIPsForRouting(ctx context.Context, region string) ([]ReservedIP, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	region = strings.TrimSpace(region)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ReservedIP, 0, len(m.reservedIPLeases))
+	for _, lease := range m.reservedIPLeases {
+		if region != "" && lease.Region != region {
+			continue
+		}
+		out = append(out, cloneReservedIP(lease))
+	}
+	reservedIPSort(out)
+	return out, nil
+}
+
 func (m *MemStore) AssignReservedIP(ctx context.Context, accountID, ipID, appID, nodeID string) (ReservedIP, error) {
 	if err := ctx.Err(); err != nil {
 		return ReservedIP{}, err
@@ -268,6 +302,41 @@ func (m *MemStore) UpdateReservedIPStatus(ctx context.Context, accountID, ipID s
 	lease, ok := m.reservedIPLeases[ipID]
 	if !ok || lease.AccountID != accountID {
 		return ReservedIP{}, ErrNotFound
+	}
+	if err := networkip.ValidateTransition(lease.Status, status); err != nil {
+		return ReservedIP{}, ErrConflict
+	}
+	if status == networkip.StatusAssigned && lease.AppID == "" {
+		return ReservedIP{}, ErrInvalidArgument
+	}
+	if status == networkip.StatusAvailable {
+		lease.AppID, lease.NodeID = "", ""
+	} else if nodeID != "" {
+		lease.NodeID = nodeID
+	}
+	lease.Status, lease.StatusDetail = status, detail
+	lease.Generation++
+	lease.UpdatedAt = time.Now().UTC()
+	m.reservedIPLeases[ipID] = lease
+	return cloneReservedIP(lease), nil
+}
+
+// UpdateReservedIPStatusIfGeneration is the route reconciler's compare-and-
+// swap status transition. A customer assignment or release that wins the
+// race makes the reconciler's observation stale and returns ErrConflict.
+func (m *MemStore) UpdateReservedIPStatusIfGeneration(ctx context.Context, accountID, ipID string, expectedGeneration int64, status networkip.Status, detail, nodeID string) (ReservedIP, error) {
+	if err := ctx.Err(); err != nil {
+		return ReservedIP{}, err
+	}
+	accountID, ipID, detail, nodeID = strings.TrimSpace(accountID), strings.TrimSpace(ipID), strings.TrimSpace(detail), strings.TrimSpace(nodeID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lease, ok := m.reservedIPLeases[ipID]
+	if !ok || lease.AccountID != accountID {
+		return ReservedIP{}, ErrNotFound
+	}
+	if lease.Generation != expectedGeneration {
+		return ReservedIP{}, ErrConflict
 	}
 	if err := networkip.ValidateTransition(lease.Status, status); err != nil {
 		return ReservedIP{}, ErrConflict

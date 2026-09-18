@@ -137,6 +137,38 @@ func (s *PgStore) ListReservedIPs(ctx context.Context, accountID, region string)
 	return out, nil
 }
 
+// ListReservedIPsForRouting returns the fleet-wide projection used by the
+// route reconciler. It intentionally does not expose account-scoped list
+// semantics: the reconciler must replace the complete desired route set for
+// a region so released leases are withdrawn as well.
+func (s *PgStore) ListReservedIPsForRouting(ctx context.Context, region string) ([]ReservedIP, error) {
+	region = strings.TrimSpace(region)
+	query := reservedIPSelect
+	args := []any{}
+	if region != "" {
+		query += ` where region = $1`
+		args = append(args, region)
+	}
+	query += ` order by region asc, address asc, id asc`
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]ReservedIP, 0)
+	for rows.Next() {
+		lease, scanErr := scanReservedIP(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, lease)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
+
 func (s *PgStore) AssignReservedIP(ctx context.Context, accountID, ipID, appID, nodeID string) (ReservedIP, error) {
 	accountID, ipID, appID, nodeID = strings.TrimSpace(accountID), strings.TrimSpace(ipID), strings.TrimSpace(appID), strings.TrimSpace(nodeID)
 	if accountID == "" || ipID == "" || appID == "" {
@@ -261,6 +293,54 @@ update reserved_ip_leases
 returning id::text, account_id::text, region, address::text, status,
           coalesce(app_id::text, ''), coalesce(node_id, ''), generation,
           status_detail, created_at, updated_at`, mustPgUUID(accountID), ipID, string(status), appArg, nodeID, detail))
+	if err != nil {
+		return ReservedIP{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ReservedIP{}, err
+	}
+	return row, nil
+}
+
+// UpdateReservedIPStatusIfGeneration is the route reconciler's compare-and-
+// swap transition. The row lock keeps the in-memory and Postgres stores on
+// the same race-loser contract: a newer assignment or release returns
+// ErrConflict and the next sweep re-reads the desired route.
+func (s *PgStore) UpdateReservedIPStatusIfGeneration(ctx context.Context, accountID, ipID string, expectedGeneration int64, status networkip.Status, detail, nodeID string) (ReservedIP, error) {
+	accountID, ipID, detail, nodeID = strings.TrimSpace(accountID), strings.TrimSpace(ipID), strings.TrimSpace(detail), strings.TrimSpace(nodeID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ReservedIP{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	lease, err := scanReservedIP(tx.QueryRow(ctx, reservedIPSelect+` where account_id = $1 and id = $2 for update`, mustPgUUID(accountID), ipID))
+	if err != nil {
+		return ReservedIP{}, err
+	}
+	if lease.Generation != expectedGeneration {
+		return ReservedIP{}, ErrConflict
+	}
+	if err := networkip.ValidateTransition(lease.Status, status); err != nil {
+		return ReservedIP{}, ErrConflict
+	}
+	if status == networkip.StatusAssigned && lease.AppID == "" {
+		return ReservedIP{}, ErrInvalidArgument
+	}
+	appArg := nullableUUID(lease.AppID)
+	if status == networkip.StatusAvailable {
+		appArg = nil
+		nodeID = ""
+	} else if nodeID == "" {
+		nodeID = lease.NodeID
+	}
+	row, err := scanReservedIP(tx.QueryRow(ctx, `
+update reserved_ip_leases
+   set status = $3, app_id = $4, node_id = nullif($5, ''),
+       generation = generation + 1, status_detail = $6
+ where account_id = $1 and id = $2 and generation = $7
+returning id::text, account_id::text, region, address::text, status,
+          coalesce(app_id::text, ''), coalesce(node_id, ''), generation,
+          status_detail, created_at, updated_at`, mustPgUUID(accountID), ipID, string(status), appArg, nodeID, detail, expectedGeneration))
 	if err != nil {
 		return ReservedIP{}, mapErr(err)
 	}
