@@ -241,6 +241,11 @@ type deploymentRequest struct {
 	NoTriggers  bool   `json:"no_triggers,omitempty"`
 }
 
+type imageDeploymentRequest struct {
+	Image       string `json:"image"`
+	Environment string `json:"environment,omitempty"`
+}
+
 type deploymentResponse struct {
 	StageState  json.RawMessage `json:"stage_state,omitempty"`
 	ID          string          `json:"id"`
@@ -530,6 +535,13 @@ func withEnvScope(path, scope string) string {
 func (c *client) createSourceRefDeployment(ctx context.Context, appSlug string, req deploymentRequest) (deploymentResponse, error) {
 	var out deploymentResponse
 	path := "/v1/apps/" + escapePath(appSlug) + "/deployments/source-ref"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) createImageDeployment(ctx context.Context, appSlug string, req imageDeploymentRequest) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/deployments"
 	err := c.request(ctx, http.MethodPost, path, req, &out, true)
 	return out, err
 }

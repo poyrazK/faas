@@ -29,6 +29,7 @@ type deploymentResource struct {
 
 type deploymentModel struct {
 	AppSlug      types.String `tfsdk:"app_slug"`
+	Image        types.String `tfsdk:"image"`
 	Repo         types.String `tfsdk:"repo"`
 	Ref          types.String `tfsdk:"ref"`
 	Environment  types.String `tfsdk:"environment"`
@@ -72,8 +73,16 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"image": schema.StringAttribute{
+				Optional:            true,
+				Description:         "Digest-pinned OCI image reference to deploy. Set this or both `repo` and `ref`.",
+				MarkdownDescription: "Digest-pinned OCI image reference to deploy. Set this or both `repo` and `ref`.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
 			"repo": schema.StringAttribute{
-				Required:            true,
+				Optional:            true,
 				Description:         "GitHub repository slug, for example `acme/orders-api`.",
 				MarkdownDescription: "GitHub repository slug, for example `acme/orders-api`.",
 				PlanModifiers: []planmodifier.String{
@@ -81,7 +90,7 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				},
 			},
 			"ref": schema.StringAttribute{
-				Required:            true,
+				Optional:            true,
 				Description:         "Git branch, tag, short commit SHA, or full commit SHA to deploy.",
 				MarkdownDescription: "Git branch, tag, short commit SHA, or full commit SHA to deploy.",
 				PlanModifiers: []planmodifier.String{
@@ -195,9 +204,13 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				MarkdownDescription: "Failure remediation, when applicable.",
 			},
 		},
-		Description:         "Deploy a GitHub source ref to Gregale and expose lifecycle and preview metadata.",
-		MarkdownDescription: "Deploy a GitHub source ref to Gregale and expose lifecycle and preview metadata.",
+		Description:         "Deploy a digest-pinned OCI image or GitHub source ref to Gregale and expose lifecycle and preview metadata.",
+		MarkdownDescription: "Deploy a digest-pinned OCI image or GitHub source ref to Gregale and expose lifecycle and preview metadata.",
 	}
+}
+
+func (r *deploymentResource) ConfigValidators(context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{deploymentSourceValidator{}}
 }
 
 func (r *deploymentResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -235,12 +248,21 @@ func (r *deploymentResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.createSourceRefDeployment(ctx, plan.AppSlug.ValueString(), deploymentRequest{
-		Repo:        plan.Repo.ValueString(),
-		Ref:         plan.Ref.ValueString(),
-		Environment: stringValue(plan.Environment),
-		NoTriggers:  plan.NoTriggers.ValueBool(),
-	})
+	var out deploymentResponse
+	var err error
+	if plan.Image.ValueString() != "" {
+		out, err = r.client.createImageDeployment(ctx, plan.AppSlug.ValueString(), imageDeploymentRequest{
+			Image:       plan.Image.ValueString(),
+			Environment: stringValue(plan.Environment),
+		})
+	} else {
+		out, err = r.client.createSourceRefDeployment(ctx, plan.AppSlug.ValueString(), deploymentRequest{
+			Repo:        plan.Repo.ValueString(),
+			Ref:         plan.Ref.ValueString(),
+			Environment: stringValue(plan.Environment),
+			NoTriggers:  plan.NoTriggers.ValueBool(),
+		})
+	}
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not create Gregale deployment", err)
 		return
@@ -290,7 +312,7 @@ func (r *deploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 }
 
 func (r *deploymentResource) Update(ctx context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Gregale deployments are immutable", "Change the source ref or deployment inputs to create a new deployment.")
+	resp.Diagnostics.AddError("Gregale deployments are immutable", "Change the image, source ref, or deployment inputs to create a new deployment.")
 }
 
 func (r *deploymentResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -350,6 +372,7 @@ func setDeploymentModel(ctx context.Context, state *tfsdk.State, out deploymentR
 	}
 	model := deploymentModel{
 		AppSlug:      fallback.AppSlug,
+		Image:        fallback.Image,
 		Repo:         fallback.Repo,
 		Ref:          fallback.Ref,
 		Environment:  fallback.Environment,

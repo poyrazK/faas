@@ -1,17 +1,19 @@
 page_title: "gregale_deployment Resource - Gregale"
 subcategory: ""
 description: |-
-  Deploys a GitHub source ref to Gregale and exposes lifecycle and preview metadata.
+  Deploys a digest-pinned OCI image or GitHub source ref to Gregale and exposes lifecycle and preview metadata.
 ---
 
 # gregale_deployment (Resource)
 
-Deploys a GitHub repository ref through Gregale's headless source-ref path.
-Create waits for the deployment to reach `live` and reports structured failure
-details when it does not.
+Deploys either a digest-pinned OCI image or a GitHub repository ref. Create
+waits for the deployment to reach `live` and reports structured failure details
+when it does not.
 
-The provider requires a GitHub repository installation that Gregale can use to
-resolve the repository and fetch the source archive.
+GitHub source-ref deployments require a repository installation that Gregale
+can use to resolve the repository and fetch the source archive. OCI deployments
+pull the image reference supplied by the caller and are recommended to use a
+digest rather than a mutable tag.
 
 ## Example Usage
 
@@ -24,18 +26,31 @@ resource "gregale_deployment" "api" {
 }
 ```
 
+For a prebuilt image, set `image` instead of `repo` and `ref`:
+
+```terraform
+resource "gregale_deployment" "api" {
+  app_slug    = "orders-api"
+  image       = "ghcr.io/acme/orders-api@sha256:..."
+  environment = "production"
+}
+```
+
+Set exactly one deployment source: either `image`, or both `repo` and `ref`.
+
 ## Schema
 
 ### Required
 
 - `app_slug` (String) Slug of the Gregale app. Changing it forces replacement.
-- `repo` (String) GitHub repository slug, for example `acme/orders-api`. Changing it forces replacement.
-- `ref` (String) Git branch, tag, short commit SHA, or full commit SHA. Changing it forces replacement.
 
 ### Optional
 
+- `image` (String) Digest-pinned OCI image reference. Use this instead of `repo` and `ref`. Changing it forces replacement.
+- `repo` (String) GitHub repository slug, for example `acme/orders-api`. Use this with `ref`; changing it forces replacement.
+- `ref` (String) Git branch, tag, short commit SHA, or full commit SHA. Use this with `repo`; changing it forces replacement.
 - `environment` (String) Registered Gregale project environment to target. Changing it forces replacement.
-- `no_triggers` (Boolean) Skip trigger declarations found in `gregale.yaml`. Changing it forces replacement.
+- `no_triggers` (Boolean) Skip trigger declarations found in `gregale.yaml` for source-ref deployments. Changing it forces replacement.
 
 ### Read-only
 
@@ -72,5 +87,5 @@ Import uses the app slug and deployment ID:
 terraform import gregale_deployment.api orders-api/deployment-uuid
 ```
 
-After import, configure `repo` and `ref` so Terraform can describe the
-immutable deployment inputs.
+After import, configure either `image` or both `repo` and `ref` so Terraform
+can describe the immutable deployment inputs.

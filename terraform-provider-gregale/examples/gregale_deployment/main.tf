@@ -31,3 +31,6 @@ output "deployment_id" {
 output "preview_url" {
   value = gregale_deployment.api.preview_url
 }
+
+// For prebuilt OCI deployments, replace repo/ref with:
+// image = "ghcr.io/acme/orders-api@sha256:..."

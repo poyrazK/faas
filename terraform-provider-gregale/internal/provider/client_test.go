@@ -459,6 +459,42 @@ func TestClientDeploymentLifecycleUsesSourceRefAndPreviewMetadata(t *testing.T) 
 	}
 }
 
+func TestClientCreateImageDeploymentUsesPublicContractAndIdempotency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/orders/deployments" {
+			t.Fatalf("request = %s %s, want POST /v1/apps/orders/deployments", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Fatal("image deployment request did not include an idempotency key")
+		}
+		var request imageDeploymentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode image deployment request: %v", err)
+		}
+		if request.Image != "ghcr.io/acme/orders@sha256:abc123" || request.Environment != "production" {
+			t.Fatalf("image deployment request = %+v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"dep-oci","app_id":"app-1","kind":"oci","status":"pending","created_at":"2026-09-19T10:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	got, err := client.createImageDeployment(context.Background(), "orders", imageDeploymentRequest{
+		Image:       "ghcr.io/acme/orders@sha256:abc123",
+		Environment: "production",
+	})
+	if err != nil {
+		t.Fatalf("createImageDeployment: %v", err)
+	}
+	if got.ID != "dep-oci" || got.AppID != "app-1" || got.Kind != "oci" || got.Status != "pending" {
+		t.Fatalf("created image deployment = %+v", got)
+	}
+}
+
 func TestClientGetLatestAppDeploymentUsesAppScopedContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/orders/deployments/latest" {
