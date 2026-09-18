@@ -4637,6 +4637,28 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: snapshot: %w", instance, err)
 }
 
+// TriggerExtensionHook forwards a host-initiated lifecycle notification to a
+// live guest when the configured VMM supports the extension transport. It is
+// an optional capability so older/test VMM implementations remain valid.
+func (m *Manager) TriggerExtensionHook(ctx context.Context, instance, phase string, metadata map[string]string) error {
+	if m == nil || m.vmm == nil {
+		return fmt.Errorf("extension_hook %s: nil vmm", instance)
+	}
+	m.mu.Lock()
+	inst, ok := m.live[instance]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("extension_hook %s: not live", instance)
+	}
+	hooker, ok := m.vmm.(interface {
+		TriggerExtensionHook(context.Context, Lease, string, map[string]string) error
+	})
+	if !ok {
+		return fmt.Errorf("extension_hook %s: unsupported", instance)
+	}
+	return hooker.TriggerExtensionHook(ctx, inst.Lease, phase, metadata)
+}
+
 // ResumeVM resumes a migration-prepared instance and restarts its liveness
 // monitor. It is idempotent at the VMM layer, which lets cancel and lease
 // expiry safely race with a late acknowledgement.

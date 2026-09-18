@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/onebox-faas/faas/pkg/extension"
 	"golang.org/x/sys/unix"
 )
 
@@ -58,7 +59,18 @@ const (
 	// envelope includes the base64 entropy plus host time and traceparent;
 	// capping it at encoded entropy + 64 rejected valid packets.
 	VsockResumeMaxBodyBytes = 8 * 1024
+	// VsockExtensionMsgType is the host-initiated lifecycle notification
+	// discriminator. It shares the resume listener and CONNECT handshake but
+	// carries a bounded phase/metadata envelope instead of resume state.
+	VsockExtensionMsgType uint32 = 2
+	// VsockExtensionMaxBodyBytes mirrors extension.MaxEventBytes.
+	VsockExtensionMaxBodyBytes = 16 * 1024
 )
+
+type extensionHookRequest struct {
+	Phase    extension.Phase   `json:"phase"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
 
 // warmBuilderResume is signalled after a successful resume-hook request. A
 // builder guest uses the same host→guest vsock handshake as app restores, but
@@ -111,6 +123,17 @@ const VsockResumeBindCID = 0xffffffff
 // terminal error closes the listener and is logged. The boot() caller does not
 // wait on this goroutine.
 func listenResumeHook(log *slog.Logger, onResume ...func()) error {
+	return listenResumeHookWithExtension(log, func() {
+		for _, callback := range onResume {
+			if callback != nil {
+				callback()
+				break
+			}
+		}
+	}, nil)
+}
+
+func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest)) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -124,7 +147,7 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	go acceptResumeConns(fd, log, onResume...)
+	go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension)
 	return nil
 }
 
@@ -138,6 +161,17 @@ func acceptResumeConns(fd int, log *slog.Logger, onResume ...func()) {
 // Own the listening descriptor for the lifetime of the accept loop. A terminal
 // error must not leave a listening socket with no goroutine to service it.
 func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume ...func()) {
+	acceptResumeConnsWithExtension(fd, log, accept, func() {
+		for _, callback := range onResume {
+			if callback != nil {
+				callback()
+				break
+			}
+		}
+	}, nil)
+}
+
+func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest)) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -149,7 +183,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")
-		go handleResumeConn(f, log, onResume...)
+		go handleResumeConnWithExtension(f, log, onResume, onExtension)
 	}
 }
 
@@ -161,6 +195,17 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 // keeps the guest off EOF-watching — some AF_VSOCK proxies don't propagate
 // CloseWrite promptly through to the guest side.
 func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
+	handleResumeConnWithExtension(f, log, func() {
+		for _, callback := range onResume {
+			if callback != nil {
+				callback()
+				break
+			}
+		}
+	}, nil)
+}
+
+func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest)) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -170,6 +215,10 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 		return
 	}
 	msgType := binary.BigEndian.Uint32(hdr[:4])
+	if msgType == VsockExtensionMsgType {
+		handleExtensionConn(f, log, hdr[4:], onExtension)
+		return
+	}
 	if msgType != VsockResumeMsgType {
 		log.Warn("vsock unknown msg type", "type", msgType)
 		resumeDiag(fmt.Sprintf("resume: unknown message type=%d", msgType))
@@ -253,10 +302,42 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
 	}
-	for _, callback := range onResume {
-		if callback != nil {
-			callback()
-			break
+	if onResume != nil {
+		onResume()
+	}
+}
+
+func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest)) {
+	bodyLen := binary.BigEndian.Uint32(lengthHeader)
+	if bodyLen == 0 || bodyLen > uint32(VsockExtensionMaxBodyBytes) {
+		log.Warn("vsock extension body length out of range", "len", bodyLen, "max", VsockExtensionMaxBodyBytes)
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(f, body); err != nil {
+		log.Warn("vsock read extension body", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckBodyRead})
+		return
+	}
+	var req extensionHookRequest
+	if err := json.Unmarshal(body, &req); err != nil || !req.Phase.Valid() || len(req.Metadata) > 32 {
+		if err == nil {
+			err = fmt.Errorf("invalid phase or metadata")
+		}
+		log.Warn("vsock extension body parse", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckJSON})
+		return
+	}
+	for key, value := range req.Metadata {
+		if strings.TrimSpace(key) == "" || len(key) > 128 || len(value) > 1024 {
+			log.Warn("vsock extension metadata out of range", "key", key)
+			_, _ = f.Write([]byte{VsockResumeAckJSON})
+			return
 		}
 	}
+	if onExtension != nil {
+		onExtension(req)
+	}
+	_, _ = f.Write([]byte{VsockResumeAckOK})
 }

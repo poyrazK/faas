@@ -31,10 +31,14 @@ func newExtensionLifecycle(log *slog.Logger) *extensionLifecycle {
 }
 
 func (l *extensionLifecycle) emit(phase extension.Phase) {
+	l.emitWithMetadata(phase, nil)
+}
+
+func (l *extensionLifecycle) emitWithMetadata(phase extension.Phase, metadata map[string]string) {
 	if l == nil || l.dispatcher == nil {
 		return
 	}
-	if err := l.dispatcher.Dispatch(context.Background(), phase, nil); err != nil {
+	if err := l.dispatcher.Dispatch(context.Background(), phase, metadata); err != nil {
 		if errors.Is(err, extension.ErrUnavailable) {
 			l.log.Debug("extension lifecycle hook unavailable", "phase", phase)
 			return

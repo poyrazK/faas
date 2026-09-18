@@ -194,7 +194,10 @@ func boot() error {
 	// resume hook. On restore, vmmd's TriggerResumeHook will then time out
 	// dial-resume and fail closed (per spec §11 V6).
 	if extensionHooks != nil {
-		if err := listenResumeHook(slog.Default(), func() { extensionHooks.emit(extension.PhasePostRestore) }); err != nil {
+		if err := listenResumeHookWithExtension(slog.Default(),
+			func() { extensionHooks.emit(extension.PhasePostRestore) },
+			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+		); err != nil {
 			slog.Default().Warn("vsock resume listener unavailable", "err", err)
 		}
 	} else if err := listenResumeHook(slog.Default()); err != nil {

@@ -63,6 +63,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
@@ -83,6 +84,56 @@ const ForwardStreamMaxBodyBytes = 100 * 1024 * 1024
 // stream that takes 30 s end-to-end fits comfortably inside the
 // window.
 const ForwardStreamResponseTimeout = 900 * time.Second
+
+func invocationExtensionMetadata(req *vmmdpb.ForwardHTTPRequestInit) map[string]string {
+	if req == nil {
+		return nil
+	}
+	metadata := make(map[string]string, 5)
+	for _, header := range req.GetHeaders() {
+		if header == nil {
+			continue
+		}
+		value := header.GetValue()
+		if len(value) > 1024 {
+			value = value[:1024]
+		}
+		switch strings.ToLower(header.GetName()) {
+		case "x-faas-invocation-id":
+			if value != "" {
+				metadata["invocation_id"] = value
+			}
+		case "x-faas-invocation-source":
+			if value != "" {
+				metadata["source"] = value
+			}
+		case "traceparent":
+			if value != "" {
+				metadata["traceparent"] = value
+			}
+		}
+	}
+	if _, ok := metadata["invocation_id"]; !ok {
+		if _, ok := metadata["source"]; !ok {
+			return nil
+		}
+	}
+	method := req.GetMethod()
+	if len(method) > 1024 {
+		method = method[:1024]
+	}
+	uri := req.GetRequestUri()
+	if len(uri) > 1024 {
+		uri = uri[:1024]
+	}
+	if method != "" {
+		metadata["method"] = method
+	}
+	if uri != "" {
+		metadata["uri"] = uri
+	}
+	return metadata
+}
 
 // streamBridgeSessionDeadline is the wall-clock ceiling for a
 // single v2 bridge session. Matches rawStreamSessionDeadline in
@@ -169,6 +220,20 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// lock contention for marginal signal value.
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
+	// Per-invocation extension hooks are deliberately asynchronous. A slow or
+	// absent extension must never add latency to the customer request path.
+	if hooker, ok := s.vmm.(extensionHookVMM); ok {
+		if metadata := invocationExtensionMetadata(reqInit); len(metadata) > 0 {
+			instance := reqInit.GetInstance()
+			go func() {
+				hookCtx, cancel := context.WithTimeout(context.Background(), extension.DefaultTimeout)
+				defer cancel()
+				if err := hooker.TriggerExtensionHook(hookCtx, instance, string(extension.PhaseInvoke), metadata); err != nil {
+					s.log.Debug("invocation extension hook unavailable", "instance", instance, "err", err)
+				}
+			}()
+		}
+	}
 	// Cap-lift (ADR-047 PR-B + PR-C, PR-D finalization): the
 	// streaming RPC is the only bridge today, so the base
 	// is the streaming cap (100 MiB / 900 s). The legacy

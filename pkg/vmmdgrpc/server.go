@@ -187,6 +187,13 @@ type ExecutionRestoreVMMAPI interface {
 	WakeExecution(context.Context, fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
 }
 
+// extensionHookVMM is the optional host→guest lifecycle notification seam.
+// Keeping it out of VmmdAPI lets mixed-version vmmd nodes and lightweight
+// test doubles continue serving all existing RPCs.
+type extensionHookVMM interface {
+	TriggerExtensionHook(context.Context, string, string, map[string]string) error
+}
+
 // flowCounter is the compute-side conntrack seam. Keeping it local to the
 // gRPC package avoids widening VmmdAPI (and every test fake) while allowing
 // production to inject flowcount.Reader and tests to inject a tiny fake.

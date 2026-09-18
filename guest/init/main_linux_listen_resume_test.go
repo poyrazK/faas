@@ -5,9 +5,14 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"log/slog"
 	"net"
+	"os"
 	"sync/atomic"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/extension"
+	"golang.org/x/sys/unix"
 )
 
 // TestListenResumeHookLocalSocket is a stand-in for the AF_VSOCK
@@ -98,6 +103,56 @@ func TestListenResumeHookLocalSocket(t *testing.T) {
 	}
 	if got.Load() != 1 {
 		t.Errorf("hook invocations = %d, want 1", got.Load())
+	}
+}
+
+func TestHandleResumeConnExtension(t *testing.T) {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("socketpair: %v", err)
+	}
+	readEnd := os.NewFile(uintptr(fds[0]), "guest-extension")
+	writeEnd := os.NewFile(uintptr(fds[1]), "host-extension")
+	defer func() { _ = readEnd.Close() }()
+	defer func() { _ = writeEnd.Close() }()
+
+	body, err := json.Marshal(extensionHookRequest{
+		Phase: extension.PhaseInvoke,
+		Metadata: map[string]string{
+			"invocation_id": "inv-123",
+			"source":        "gateway",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	msg := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint32(msg[:4], VsockExtensionMsgType)
+	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+	copy(msg[8:], body)
+
+	called := make(chan extensionHookRequest, 1)
+	go func() {
+		_, _ = writeEnd.Write(msg)
+	}()
+	handleResumeConnWithExtension(readEnd, slog.Default(), nil, func(req extensionHookRequest) {
+		called <- req
+	})
+	ack := []byte{0}
+	if _, err := writeEnd.Read(ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack[0] != VsockResumeAckOK {
+		t.Fatalf("ack = %d, want %d", ack[0], VsockResumeAckOK)
+	}
+
+	select {
+	case req := <-called:
+		if req.Phase != extension.PhaseInvoke || req.Metadata["invocation_id"] != "inv-123" {
+			t.Fatalf("request = %+v", req)
+		}
+	default:
+		t.Fatal("extension callback was not invoked")
 	}
 }
 

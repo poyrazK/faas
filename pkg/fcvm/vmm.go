@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -1620,6 +1621,15 @@ const resumeHookDialStep = 20 * time.Millisecond
 // depending on it produced EOF-mid-ack in the V6 metal test.
 const resumeHookMsgResume uint32 = 1
 
+// extensionHookMsgEvent is the host-initiated lifecycle notification type.
+// It shares the resume listener's CONNECT handshake and is consumed by the
+// guest extension bridge (guest/init/listen_resume_linux.go).
+const extensionHookMsgEvent uint32 = 2
+
+const extensionHookDialDeadline = extension.DefaultTimeout
+
+const extensionHookMaxBodyBytes = extension.MaxEventBytes
+
 // resumeHookGuestPort is the AF_VSOCK port the guest-init resume
 // listener binds. Must match guest/init/listen_resume_linux.go's
 // VsockResumePort.
@@ -1840,6 +1850,88 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	return nil
 }
 
+// TriggerExtensionHook delivers one bounded lifecycle notification to the
+// guest extension endpoint. Unlike TriggerResumeHook this is best-effort at
+// its call sites: the method reports transport/protocol errors so callers can
+// observe them, but an absent extension must not change VM behavior.
+func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase string, metadata map[string]string) error {
+	if v == nil {
+		return fmt.Errorf("vmm: TriggerExtensionHook: nil receiver")
+	}
+	p := extension.Phase(phase)
+	if !p.Valid() {
+		return fmt.Errorf("vmm: TriggerExtensionHook: invalid phase %q", phase)
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: TriggerExtensionHook: empty instance")
+	}
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: TriggerExtensionHook: chrootBase not configured")
+	}
+	for key, value := range metadata {
+		if strings.TrimSpace(key) == "" || len(key) > 128 || len(value) > 1024 {
+			return fmt.Errorf("vmm: TriggerExtensionHook: metadata %q out of range", key)
+		}
+	}
+	body, err := json.Marshal(struct {
+		Phase    extension.Phase   `json:"phase"`
+		Metadata map[string]string `json:"metadata,omitempty"`
+	}{Phase: p, Metadata: metadata})
+	if err != nil {
+		return fmt.Errorf("vmm: marshal extension hook body: %w", err)
+	}
+	if len(body) == 0 || len(body) > extensionHookMaxBodyBytes {
+		return fmt.Errorf("vmm: extension hook body %d bytes exceeds %d cap", len(body), extensionHookMaxBodyBytes)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, extensionHookDialDeadline)
+	defer cancel()
+	sock := v.vsockUDSSock(l.Instance)
+	var lastErr error
+	for {
+		if err := callCtx.Err(); err != nil {
+			if lastErr != nil {
+				return fmt.Errorf("vmm: extension hook dial vsock uds %s: %w", sock, lastErr)
+			}
+			return fmt.Errorf("vmm: extension hook dial vsock uds %s: %w", sock, err)
+		}
+		conn, dialErr := net.DialTimeout("unix", sock, 20*time.Millisecond)
+		if dialErr != nil {
+			lastErr = dialErr
+		} else {
+			_ = conn.SetDeadline(time.Now().Add(extensionHookDialDeadline))
+			connectCmd := fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort)
+			if _, err = conn.Write([]byte(connectCmd)); err == nil {
+				var connectAck string
+				connectAck, err = readConnectAck(conn)
+				if err == nil && connectAck == "OK" {
+					msg := make([]byte, 8+len(body))
+					binary.BigEndian.PutUint32(msg[:4], extensionHookMsgEvent)
+					binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+					copy(msg[8:], body)
+					if _, err = conn.Write(msg); err == nil {
+						ack := []byte{0}
+						if _, err = io.ReadFull(conn, ack); err == nil {
+							_ = conn.Close()
+							if ack[0] == 0 {
+								return nil
+							}
+							return fmt.Errorf("vmm: extension hook rejected (ack=%d)", ack[0])
+						}
+					}
+				}
+			}
+			lastErr = err
+			_ = conn.Close()
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-callCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
 // SendStatelessAdvisory is the host-side receiver for one batch
 // guest-init stateless_advisory_linux.go shipped over AF_VSOCK
 // DGRAM (port 1025, msg_type 2). The wire receiver goroutine in
@@ -1943,6 +2035,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			v.cleanupFailedSnapshotCapture(ctx, spec)
 		}
 	}()
+	// Notify an optional in-guest extension before Firecracker is paused so it
+	// can flush state that belongs in the snapshot. Hook delivery is strictly
+	// best-effort: snapshot correctness and error semantics do not depend on
+	// an extension being installed or reachable.
+	if err := v.TriggerExtensionHook(ctx, l, string(extension.PhasePreSnapshot), nil); err != nil {
+		slog.Default().Debug("vmm: pre-snapshot extension hook unavailable", "instance", l.Instance, "err", err)
+	}
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
