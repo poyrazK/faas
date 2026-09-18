@@ -201,7 +201,7 @@ func (l *Loop) newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) 
 		if l == nil || l.pool == nil {
 			return nil, true, fmt.Errorf("poller_queue: schedd database pool is not configured")
 		}
-		src, err := newQueuePoller(l.pool, t)
+		src, err := newQueuePoller(l.pool, t, l.ops)
 		return src, true, err
 	}
 	return newPollerForTrigger(t)

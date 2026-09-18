@@ -47,12 +47,24 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 		{name: "delayed task", source: state.InvocationDelayedTask, slug: "timers"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			queueName := ""
+			if tc.source == state.InvocationQueue {
+				queueName = tc.slug
+			}
+			if tc.source == state.InvocationQueue {
+				if _, err := store.CreateQueueBinding(ctx, state.QueueBinding{
+					AccountID: account.ID, AppID: app.ID, Name: tc.slug, QueueName: tc.slug,
+					Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
+				}); err != nil {
+					t.Fatalf("CreateQueueBinding: %v", err)
+				}
+			}
 			trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", tc.slug, true,
 				[]byte(`{"mode":"`+string(tc.source)+`"}`), string(tc.source), 10, 20, 3, 1<<20, "commit", limits)
 			if err != nil {
 				t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 			}
-			pollerSource, err := newQueuePoller(pool, trigger)
+			pollerSource, err := newQueuePoller(pool, trigger, nil)
 			if err != nil {
 				t.Fatalf("newQueuePoller: %v", err)
 			}
@@ -62,6 +74,7 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 				AccountID: account.ID,
 				AppID:     app.ID,
 				Source:    tc.source,
+				QueueName: queueName,
 				Payload:   json.RawMessage(`{"job":"success"}`),
 				DueAt:     time.Now().Add(-time.Second),
 			})
@@ -72,6 +85,24 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 			if result.Error != nil || len(result.Records) != 1 {
 				t.Fatalf("Poll success records=%d err=%v", len(result.Records), result.Error)
 			}
+			var blocked state.Invocation
+			if tc.source == state.InvocationQueue {
+				blocked, err = store.EnqueueInvocation(ctx, state.Invocation{
+					AccountID: account.ID,
+					AppID:     app.ID,
+					Source:    tc.source,
+					QueueName: tc.slug,
+					Payload:   json.RawMessage(`{"job":"blocked"}`),
+					DueAt:     time.Now().Add(-time.Second),
+				})
+				if err != nil {
+					t.Fatalf("EnqueueInvocation blocked: %v", err)
+				}
+				throttled := poller.Poll(ctx, trigger)
+				if throttled.Error != nil || len(throttled.Records) != 0 {
+					t.Fatalf("Poll while binding is full records=%d err=%v, want no records", len(throttled.Records), throttled.Error)
+				}
+			}
 			recordID, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), invocation.ID, invocation.Payload, []byte(`{}`), []byte(`{}`))
 			if err != nil {
 				t.Fatalf("InsertTriggerRecord success: %v", err)
@@ -80,11 +111,26 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 				t.Fatalf("Ack: %v", err)
 			}
 			assertQueueLinkedStates(t, ctx, pool, invocation.ID, recordID, "completed", "succeeded", "success")
+			if tc.source == state.InvocationQueue {
+				released := poller.Poll(ctx, trigger)
+				if released.Error != nil || len(released.Records) != 1 || released.Records[0].ItemIdentifier != blocked.ID {
+					t.Fatalf("Poll after binding slot release record=%+v err=%v", released.Records, released.Error)
+				}
+				blockedRecordID, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), blocked.ID, blocked.Payload, []byte(`{}`), []byte(`{}`))
+				if err != nil {
+					t.Fatalf("InsertTriggerRecord blocked: %v", err)
+				}
+				if err := poller.Ack(ctx, trigger, []string{blocked.ID}); err != nil {
+					t.Fatalf("Ack blocked: %v", err)
+				}
+				assertQueueLinkedStates(t, ctx, pool, blocked.ID, blockedRecordID, "completed", "succeeded", "success")
+			}
 
 			failed, err := store.EnqueueInvocation(ctx, state.Invocation{
 				AccountID: account.ID,
 				AppID:     app.ID,
 				Source:    tc.source,
+				QueueName: queueName,
 				Payload:   json.RawMessage(`{"job":"failed"}`),
 				DueAt:     time.Now().Add(-time.Second),
 			})

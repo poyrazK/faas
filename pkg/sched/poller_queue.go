@@ -32,13 +32,16 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // queuePoller is the kind=queue trigger's broker adapter. It holds
@@ -52,6 +55,7 @@ import (
 type queuePoller struct {
 	pool   *pgxpool.Pool
 	source string
+	ops    *wire.OpsMetrics
 
 	// mu protects itemsInFlight — the dispatcher passes item
 	// identifiers to Ack/Nack and we record them here so a
@@ -66,7 +70,7 @@ type queuePoller struct {
 // missing or set to anything other than 'queue' / 'delayed_task' —
 // the SQL trigger.kind='queue' CHECK permits both, but the poller
 // needs to know which partition it belongs to.
-func newQueuePoller(pool *pgxpool.Pool, t sqlc.Trigger) (triggerSource, error) {
+func newQueuePoller(pool *pgxpool.Pool, t sqlc.Trigger, ops *wire.OpsMetrics) (triggerSource, error) {
 	if !t.Source.Valid {
 		return nil, fmt.Errorf("poller_queue: trigger missing source")
 	}
@@ -76,6 +80,7 @@ func newQueuePoller(pool *pgxpool.Pool, t sqlc.Trigger) (triggerSource, error) {
 	q := &queuePoller{
 		pool:          pool,
 		source:        t.Source.String,
+		ops:           ops,
 		itemsInFlight: map[string]struct{}{},
 	}
 	return q, nil
@@ -100,6 +105,47 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		return PollResult{Error: fmt.Errorf("poller_queue: begin claim: %w", err)}
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	limit := pollLimit
+	if q.source == "queue" && t.Slug != "" {
+		var maxConcurrency int
+		err := tx.QueryRow(ctx, `
+			select max_concurrency
+			  from queue_bindings
+			 where app_id = $1
+			   and queue_name = $2
+			   and enabled
+			 for update`, t.AppID, t.Slug).Scan(&maxConcurrency)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return PollResult{Error: fmt.Errorf("poller_queue: query binding cap: %w", err)}
+		}
+		if err == nil {
+			var active int64
+			if err := tx.QueryRow(ctx, `
+				select count(*)
+				  from invocations
+				 where app_id = $1
+				   and source = $2
+				   and queue_name = $3
+				   and state = 'dispatching'
+				   and lease_expires_at is not null
+				   and lease_expires_at > now()`, t.AppID, q.source, t.Slug).Scan(&active); err != nil {
+				return PollResult{Error: fmt.Errorf("poller_queue: count binding leases: %w", err)}
+			}
+			remaining := maxConcurrency - int(active)
+			if remaining <= 0 {
+				if err := tx.Commit(ctx); err != nil {
+					return PollResult{Error: fmt.Errorf("poller_queue: commit throttled claim: %w", err)}
+				}
+				if q.ops != nil {
+					q.ops.ObserveQueueBindingConcurrencyThrottled(t.AppID.String(), t.Slug)
+				}
+				return PollResult{Records: []SourceRecord{}}
+			}
+			if remaining < limit {
+				limit = remaining
+			}
+		}
+	}
 	rows, err := tx.Query(ctx,
 		`with claimed as (
 			select i.id
@@ -140,13 +186,13 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		select id, payload, headers, metadata, created_at
 		  from updated
 		 order by created_at asc, id asc`,
-		t.ID, t.AppID, q.source, pollLimit, t.Slug,
+		t.ID, t.AppID, q.source, limit, t.Slug,
 	)
 	if err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: query invocations: %w", err)}
 	}
 	defer rows.Close()
-	out := make([]SourceRecord, 0, pollLimit)
+	out := make([]SourceRecord, 0, limit)
 	for rows.Next() {
 		var (
 			idStr     string

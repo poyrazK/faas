@@ -16,6 +16,7 @@ type queueMetrics struct {
 	bindingInFlight   *prometheus.GaugeVec
 	bindingLagSeconds *prometheus.GaugeVec
 	bindingDeadLetter *prometheus.GaugeVec
+	bindingThrottled  *prometheus.CounterVec
 }
 
 func newQueueMetrics(prefix string) *queueMetrics {
@@ -28,7 +29,15 @@ func newQueueMetrics(prefix string) *queueMetrics {
 		bindingInFlight:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
 		bindingLagSeconds: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_lag_seconds", Help: "Age in seconds of the oldest pending invocation for a queue binding; zero means no pending work."}, []string{"app", "binding"}),
 		bindingDeadLetter: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingThrottled:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_queue_binding_concurrency_throttled_total", Help: "Count of queue polls throttled because a queue binding reached its max concurrency."}, []string{"app", "binding"}),
 	}
+}
+
+func (q *queueMetrics) observeBindingThrottled(app, binding string) {
+	if q == nil {
+		return
+	}
+	q.bindingThrottled.WithLabelValues(app, binding).Inc()
 }
 
 func (q *queueMetrics) set(app string, depth, inFlight, deadLetter int, oldestPendingAt, now time.Time) {
@@ -103,4 +112,19 @@ func (m *OpsMetrics) SetQueueBindingState(app, binding string, depth, inFlight, 
 		return
 	}
 	m.queue.setBinding(m.appLabel(app), m.queueLabels.admit(binding), depth, inFlight, deadLetter, oldestPendingAt, now)
+}
+
+// ObserveQueueBindingConcurrencyThrottled records a poll that was held back
+// because the binding's hard max-concurrency lease cap was full. The labels
+// use the same admission-bounded app and queue-name sets as binding gauges.
+func (m *OpsMetrics) ObserveQueueBindingConcurrencyThrottled(app, binding string) {
+	if m == nil || m.queue == nil {
+		return
+	}
+	appLabel := m.appLabel(app)
+	if m.queueLabels == nil {
+		m.queue.observeBindingThrottled(appLabel, binding)
+		return
+	}
+	m.queue.observeBindingThrottled(appLabel, m.queueLabels.admit(binding))
 }
