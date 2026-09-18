@@ -124,7 +124,6 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 					return fmt.Errorf("fcvm: reconcile private network transport %s: %w", transportPlan.LinkName, err)
 				}
 			}
-			transportKnown = true
 			transportCreated = true
 		}
 		if !transportCreated && !peerSetKnown {
