@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugRunningFlowSummary } from './DebugRunningFlowSummary.js';
 import type { DebugRunningRequestAttribution } from './DebugRunningRequestAttribution.js';
 /**
  * One observed scheduler reason an application remained resident. The
@@ -20,5 +21,13 @@ export type DebugRunningCause = {
   last_activity_at?: string;
   idle_deadline?: string;
   request?: DebugRunningRequestAttribution;
+  /**
+   * Bounded endpoint-level flow summaries observed for the cause.
+   */
+  flow_topology?: Array<DebugRunningFlowSummary>;
+  /**
+   * True when optional flow detail was unavailable or stale.
+   */
+  flow_topology_degraded?: boolean;
 };
 

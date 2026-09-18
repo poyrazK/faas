@@ -403,6 +403,7 @@ from .debug_request_evidence_response import DebugRequestEvidenceResponse
 from .debug_running_cause import DebugRunningCause
 from .debug_running_cause_code import DebugRunningCauseCode
 from .debug_running_config import DebugRunningConfig
+from .debug_running_flow_summary import DebugRunningFlowSummary
 from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
@@ -1650,6 +1651,7 @@ __all__ = (
     "DebugRunningCause",
     "DebugRunningCauseCode",
     "DebugRunningConfig",
+    "DebugRunningFlowSummary",
     "DebugRunningObservation",
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",

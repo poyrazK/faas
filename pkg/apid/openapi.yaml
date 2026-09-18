@@ -30988,6 +30988,21 @@ components:
         instance_id: { type: string }
         match_delta_ms: { type: integer, format: int64, minimum: 0 }
 
+    DebugRunningFlowSummary:
+      type: object
+      description: |
+        A bounded endpoint-level flow summary observed for a running
+        instance. The platform omits payloads, headers, and unbounded
+        connection data.
+      properties:
+        instance_id: { type: string }
+        protocol: { type: string }
+        remote_ip: { type: string }
+        remote_port: { type: integer, minimum: 0, maximum: 65535 }
+        state: { type: string }
+        direction: { type: string }
+        count: { type: integer, format: int64, minimum: 0 }
+
     DebugRunningCause:
       type: object
       description: |
@@ -31008,6 +31023,13 @@ components:
         last_activity_at: { type: string, format: date-time }
         idle_deadline: { type: string, format: date-time }
         request: { $ref: '#/components/schemas/DebugRunningRequestAttribution' }
+        flow_topology:
+          type: array
+          description: Bounded endpoint-level flow summaries observed for the cause.
+          items: { $ref: '#/components/schemas/DebugRunningFlowSummary' }
+        flow_topology_degraded:
+          type: boolean
+          description: True when optional flow detail was unavailable or stale.
 
     DebugRunningObservation:
       type: object

@@ -205,6 +205,7 @@ export type { DebugRequestCorrelationStage } from './DebugRequestCorrelationStag
 export type { DebugRequestEvidenceResponse } from './DebugRequestEvidenceResponse.js';
 export type { DebugRunningCause } from './DebugRunningCause.js';
 export type { DebugRunningConfig } from './DebugRunningConfig.js';
+export type { DebugRunningFlowSummary } from './DebugRunningFlowSummary.js';
 export type { DebugRunningObservation } from './DebugRunningObservation.js';
 export type { DebugRunningRequestAttribution } from './DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './DebugRunningResponse.js';
