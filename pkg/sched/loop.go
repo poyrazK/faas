@@ -24,12 +24,14 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
@@ -358,6 +360,14 @@ func (l *Loop) WithGatewaySynth(g GatewaySynth) *Loop {
 // slash (postBatch concatenates "/v1/invocations:dispatch_batch").
 // nil opts out (tests that don't exercise the dispatch tick).
 func (l *Loop) WithGatewayHTTPClient(client *http.Client, baseURL string) *Loop {
+	if client != nil {
+		instrumented := *client
+		instrumented.Transport = dependencytrace.NewDependencyTransport(client.Transport,
+			attribute.String("gregale.dependency.type", "platform_internal"),
+			attribute.String("gregale.dependency.kind", "trigger_dispatch"),
+		)
+		client = &instrumented
+	}
 	l.gatewayHTTPClient = client
 	l.gatewayBaseURL = baseURL
 	return l

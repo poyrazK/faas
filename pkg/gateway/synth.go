@@ -14,6 +14,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -779,12 +785,21 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 		"source", logsanitize.Field(req.Source),
 		"trigger_id", logsanitize.Field(req.TriggerID),
 		"records", len(req.Records))
+	remoteCtx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	batchCtx, batchSpan := otel.GetTracerProvider().Tracer("gregale/trigger").Start(remoteCtx, "gregale.trigger.batch",
+		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
+		oteltrace.WithAttributes(
+			attribute.String("gregale.trigger.kind", req.Source),
+			attribute.Int("gregale.batch.size", len(req.Records)),
+		),
+	)
+	defer batchSpan.End()
 
 	// Audit round 2 finding #4: wrap the whole loop in a
 	// 5-minute timeout so a stuck Invoke can't pin the gateway
 	// for hours. The ctx is derived from r.Context() so
 	// client-side disconnects still cancel the loop.
-	ctx, cancel := context.WithTimeout(r.Context(), batchDispatchTotalTimeout)
+	ctx, cancel := context.WithTimeout(batchCtx, batchDispatchTotalTimeout)
 	defer cancel()
 
 	results := make([]batchDispatchResult, 0, len(req.Records))
@@ -806,6 +821,22 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 		}
 		results = append(results, s.dispatchBatchRecord(ctx, req, rec))
 	}
+	var succeeded, retry, deadLetter int
+	for _, result := range results {
+		switch result.Status {
+		case batchDispatchStatusSucceeded:
+			succeeded++
+		case batchDispatchStatusRetry:
+			retry++
+		case "dead_letter":
+			deadLetter++
+		}
+	}
+	batchSpan.SetAttributes(
+		attribute.Int("gregale.trigger.succeeded", succeeded),
+		attribute.Int("gregale.trigger.retry", retry),
+		attribute.Int("gregale.trigger.dlq", deadLetter),
+	)
 	s.calls.Add(1)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(batchDispatchResponse{Results: results})
@@ -828,11 +859,24 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 // per-record timeout for the next iteration; ctx.Err() check
 // above catches the next iteration. The two timeouts compose
 // cleanly because context.WithTimeout is short-circuiting.
-func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatchRequest, rec batchDispatchRecord) batchDispatchResult {
+func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatchRequest, rec batchDispatchRecord) (result batchDispatchResult) {
+	invocationCtx, invocationSpan := otel.GetTracerProvider().Tracer("gregale/trigger").Start(ctx, "gregale.invocation",
+		oteltrace.WithSpanKind(oteltrace.SpanKindConsumer),
+		oteltrace.WithAttributes(attribute.String("gregale.trigger.kind", req.Source)),
+	)
+	defer func() {
+		invocationSpan.SetAttributes(attribute.String("gregale.invocation.outcome", result.Status))
+		if result.Error != "" {
+			invocationSpan.SetStatus(codes.Error, result.Code)
+		} else {
+			invocationSpan.SetStatus(codes.Ok, "")
+		}
+		invocationSpan.End()
+	}()
 	// Per-record timeout (audit round 2 finding #4). Wraps the
 	// Invoke call so a stuck function or stuck dispatcher can't
 	// pin a single record.
-	recCtx, recCancel := context.WithTimeout(ctx, batchDispatchPerRecordTimeout)
+	recCtx, recCancel := context.WithTimeout(invocationCtx, batchDispatchPerRecordTimeout)
 	defer recCancel()
 	var payload []byte
 	if rec.PayloadB64 != "" {

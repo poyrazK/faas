@@ -80,6 +80,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -306,9 +310,19 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		return nil
 	}
 
-	// 2. Poll.
-	res := poller.Poll(ctx, t)
+	// 2. Poll. The broker may carry a W3C context in each record, but
+	// it is not available until Poll returns. Keep the poll span rooted
+	// in the scheduler cycle; dispatch spans below stitch producer
+	// context back to the source record once headers are available.
+	pollCtx, pollSpan := startTriggerSpan(ctx, "gregale.trigger.poll", oteltrace.SpanKindConsumer, nil,
+		attribute.String("gregale.trigger.kind", t.Kind))
+	res := poller.Poll(pollCtx, t)
+	pollSpan.SetAttributes(attribute.Int("gregale.trigger.records", len(res.Records)))
 	if res.Error != nil {
+		pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "error"))
+		pollSpan.RecordError(res.Error)
+		pollSpan.SetStatus(codes.Error, "trigger poll failed")
+		pollSpan.End()
 		// MED-2 (PR #993 / issue #757 review): a poll error is
 		// still a tick outcome the dashboard wants to count.
 		// Without this the schedd_esm_polls_total{outcome="error"}
@@ -323,12 +337,16 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		return fmt.Errorf("poll trigger %s: %w", t.ID, res.Error)
 	}
 	if len(res.Records) == 0 {
+		pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "empty"))
+		pollSpan.End()
 		// MED-2: count empty polls too. A trigger that's stuck
 		// with no data should show steady "empty" traffic so a
 		// rate(success)=0 alert fires, not "the metric vanished".
 		l.observeESMPoll(t.Kind, wire.ESMPollOutcomeEmpty)
 		return nil
 	}
+	pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "records"))
+	pollSpan.End()
 
 	// 3. Batch close: size / 6MB.
 	batch := closeBatch(res.Records, int(t.BatchSizeMax), int(t.PayloadMaxBytes))
@@ -542,8 +560,16 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 
 	// 6. Post the batch envelope to the gateway.
 	envelope := buildDispatchEnvelope(t, claimedBatch)
-	respBody, postErr := l.postBatch(ctx, envelope)
+	dispatchParent, links := triggerDispatchParent(ctx, claimedBatch)
+	dispatchCtx, dispatchSpan := startTriggerSpan(dispatchParent, "gregale.trigger.dispatch", oteltrace.SpanKindProducer, links,
+		attribute.String("gregale.trigger.kind", t.Kind),
+		attribute.Int("gregale.batch.size", len(claimedBatch)))
+	defer dispatchSpan.End()
+	respBody, postErr := l.postBatch(dispatchCtx, envelope)
 	if postErr != nil {
+		dispatchSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "gateway_error"))
+		dispatchSpan.RecordError(postErr)
+		dispatchSpan.SetStatus(codes.Error, "gateway dispatch failed")
 		l.log.Warn("sched trigger tick: gateway post",
 			"trigger_id", t.ID.String(),
 			"err", postErr)
@@ -571,6 +597,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 
 	var resp triggerDispatchResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
+		dispatchSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "malformed_response"))
+		dispatchSpan.RecordError(err)
+		dispatchSpan.SetStatus(codes.Error, "gateway response malformed")
 		l.log.Warn("sched trigger tick: response parse",
 			"trigger_id", t.ID.String(),
 			"err", err)
@@ -716,6 +745,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		}
 	}
 	if len(retryIDs) > 0 {
+		_, retrySpan := startTriggerSpan(dispatchCtx, "gregale.trigger.retry", oteltrace.SpanKindInternal, nil,
+			attribute.String("gregale.trigger.kind", t.Kind),
+			attribute.Int("gregale.trigger.records", len(retryIDs)))
+		defer retrySpan.End()
 		for i, id := range retryIDs {
 			attempts := retryAttempts[i]
 			// Review finding #9: exponential backoff + ±20%
@@ -753,6 +786,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		}
 	}
 	if len(dlqIDs) > 0 {
+		_, dlqSpan := startTriggerSpan(dispatchCtx, "gregale.trigger.dlq", oteltrace.SpanKindInternal, nil,
+			attribute.String("gregale.trigger.kind", t.Kind),
+			attribute.Int("gregale.trigger.records", len(dlqIDs)))
+		defer dlqSpan.End()
 		for i, id := range dlqIDs {
 			reason := dlqReasons[i]
 			lastErr := dlqErrors[i]
@@ -834,6 +871,12 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		"succeeded", len(succeedIDs),
 		"retry", len(retryIDs),
 		"dead_letter", len(dlqIDs))
+	dispatchSpan.SetAttributes(
+		attribute.String("gregale.trigger.outcome", "complete"),
+		attribute.Int("gregale.trigger.succeeded", len(succeedIDs)),
+		attribute.Int("gregale.trigger.retry", len(retryIDs)),
+		attribute.Int("gregale.trigger.dlq", len(dlqIDs)),
+	)
 	return nil
 }
 

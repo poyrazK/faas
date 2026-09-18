@@ -178,6 +178,21 @@ and provider headers are not span attributes. Customer code that opens its own
 database or storage client remains outside the platform-owned path and needs
 the runtime's OpenTelemetry instrumentation.
 
+## Event-triggered invocations
+
+Event-driven invocations preserve W3C trace context carried by a broker record's
+`traceparent`/`tracestate` headers. The platform joins the source event to the
+dispatch path with bounded spans for `gregale.trigger.poll`,
+`gregale.trigger.dispatch`, `gregale.trigger.batch`, and
+`gregale.invocation`. Retry and dead-letter outcomes are represented by
+`gregale.trigger.retry` and `gregale.trigger.dlq` spans.
+
+The schedd uses the first valid record context as the batch parent and records a
+small capped set of additional record contexts as span links when a batch mixes
+producers. If a broker record has no valid W3C context, the platform still emits
+the trigger spans from the scheduler cycle. Event payloads, item identifiers,
+header values, and credentials are not span attributes.
+
 ## What the platform does NOT do
 
 - **No library pre-installation.** The runner image ships with
