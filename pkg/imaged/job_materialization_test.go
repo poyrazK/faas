@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,6 +22,7 @@ type jobMaterializationPuller struct {
 	manifest oci.Manifest
 	config   oci.ImageConfig
 	blob     []byte
+	authSeen []oci.BasicAuth
 }
 
 func (p *jobMaterializationPuller) PullDigest(context.Context, string) (string, error) {
@@ -36,6 +39,32 @@ func (p *jobMaterializationPuller) PullManifest(context.Context, string) (oci.Ma
 }
 func (p *jobMaterializationPuller) PullBlob(context.Context, string, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(p.blob)), nil
+}
+
+func (p *jobMaterializationPuller) rememberAuth(auth *oci.BasicAuth) {
+	if auth != nil {
+		p.authSeen = append(p.authSeen, *auth)
+	}
+}
+func (p *jobMaterializationPuller) PullDigestWithAuth(ctx context.Context, ref string, auth *oci.BasicAuth) (string, error) {
+	p.rememberAuth(auth)
+	return p.PullDigest(ctx, ref)
+}
+func (p *jobMaterializationPuller) PullImageConfigWithAuth(ctx context.Context, ref string, auth *oci.BasicAuth) (oci.ImageConfig, error) {
+	p.rememberAuth(auth)
+	return p.PullImageConfig(ctx, ref)
+}
+func (p *jobMaterializationPuller) PullLayersWithAuth(ctx context.Context, ref string, auth *oci.BasicAuth) (oci.PullLayersResult, error) {
+	p.rememberAuth(auth)
+	return p.PullLayers(ctx, ref)
+}
+func (p *jobMaterializationPuller) PullManifestWithAuth(ctx context.Context, ref string, auth *oci.BasicAuth) (oci.Manifest, error) {
+	p.rememberAuth(auth)
+	return p.PullManifest(ctx, ref)
+}
+func (p *jobMaterializationPuller) PullBlobWithAuth(ctx context.Context, repo, digest string, auth *oci.BasicAuth) (io.ReadCloser, error) {
+	p.rememberAuth(auth)
+	return p.PullBlob(ctx, repo, digest)
 }
 
 func TestMaterializeJobPublishesResolvedArtifact(t *testing.T) {
@@ -88,6 +117,64 @@ func TestMaterializeJobPublishesResolvedArtifact(t *testing.T) {
 	}
 }
 
+func TestMaterializeJobUsesJobRegistryCredential(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "job-registry-auth@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	job, err := store.JobCreate(ctx, acct.ID, "private-materialize", "batch",
+		"registry.example/worker:latest", []string{"/bin/worker"},
+		256, 60, 2, 1, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("Generate identity: %v", err)
+	}
+	ciphertext, err := secretbox.SealBytes(identity.Recipient(), "registry_creds", []byte("job-secret"), 4096)
+	if err != nil {
+		t.Fatalf("SealBytes: %v", err)
+	}
+	if err := store.UpsertJobRegistryCredential(ctx, acct.ID, job.ID, "registry.example", "robot", ciphertext); err != nil {
+		t.Fatalf("UpsertJobRegistryCredential: %v", err)
+	}
+	digest := "sha256:" + strings.Repeat("c", 64)
+	puller := &jobMaterializationPuller{
+		digest:   digest,
+		manifest: oci.Manifest{Layers: []oci.Descriptor{{Digest: "sha256:" + strings.Repeat("d", 64)}}},
+		config:   oci.ImageConfig{},
+		blob:     []byte("gzip-tar-placeholder"),
+	}
+	appsRoot := t.TempDir()
+	h := New(store, &fakeNotifier{}, puller, &fakeBuilder{bytesOut: 123}, "./guest-init", appsRoot, silentLogger()).
+		WithSecretboxIdentity(identity).
+		WithStorage(mustLocalStorage(t, appsRoot))
+	if err := h.HandleNotification(ctx, db.Notification{
+		Channel: db.NotifyJobChanged,
+		Payload: `{"kind":"created","job_id":"` + job.ID + `"}`,
+	}); err != nil {
+		t.Fatalf("HandleNotification(job_changed): %v", err)
+	}
+	if len(puller.authSeen) != 4 {
+		t.Fatalf("auth calls = %d, want digest/manifest/config/blob", len(puller.authSeen))
+	}
+	for i, got := range puller.authSeen {
+		if got.Username != "robot" || got.Password != "job-secret" {
+			t.Fatalf("auth call %d = %+v, want robot/job-secret", i, got)
+		}
+	}
+	cred, err := store.GetJobRegistryCredential(ctx, acct.ID, job.ID, "registry.example")
+	if err != nil {
+		t.Fatalf("GetJobRegistryCredential: %v", err)
+	}
+	if cred.LastUsedAt == nil {
+		t.Fatal("LastUsedAt = nil after successful authenticated materialization")
+	}
+}
+
 func TestJobMaterializationRetryDelayIsBounded(t *testing.T) {
 	if got := jobMaterializationRetryDelay(1); got != 5*time.Second {
 		t.Fatalf("attempt 1 delay = %s, want 5s", got)
@@ -101,3 +188,5 @@ func TestJobMaterializationRetryDelayIsBounded(t *testing.T) {
 }
 
 var _ oci.ManifestPuller = (*jobMaterializationPuller)(nil)
+var _ oci.AuthPuller = (*jobMaterializationPuller)(nil)
+var _ oci.AuthManifestPuller = (*jobMaterializationPuller)(nil)

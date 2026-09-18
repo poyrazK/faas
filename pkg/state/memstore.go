@@ -121,6 +121,11 @@ type jobMaterializationClaim struct {
 	leaseUntil time.Time
 }
 
+type jobRegistryCredentialKey struct {
+	jobID    string
+	registry string
+}
+
 type MemStore struct {
 	objectBuckets             map[string]ObjectBucket
 	objectUsage               map[string]ObjectBucketUsage
@@ -243,6 +248,7 @@ type MemStore struct {
 	jobRuns                  map[string]JobRun
 	jobTasks                 map[string]map[int]JobTask // run_id → task_index → task
 	jobMaterializationClaims map[string]jobMaterializationClaim
+	jobRegistryCredentials   map[jobRegistryCredentialKey]JobRegistryCredential
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
@@ -923,6 +929,7 @@ func NewMemStore() *MemStore {
 		jobRuns:                        map[string]JobRun{},
 		jobTasks:                       map[string]map[int]JobTask{},
 		jobMaterializationClaims:       map[string]jobMaterializationClaim{},
+		jobRegistryCredentials:         map[jobRegistryCredentialKey]JobRegistryCredential{},
 		migrationLeases:                map[string]MigrationLease{},
 		workflowRuns:                   map[string]WorkflowRun{},
 		workflowSteps:                  map[string]map[string]WorkflowStep{},
@@ -17654,6 +17661,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for k := range m.registryCreds {
 		if m.registryCreds[k].AccountID == id {
 			delete(m.registryCreds, k)
+		}
+	}
+	for k := range m.jobRegistryCredentials {
+		if m.jobRegistryCredentials[k].AccountID == id {
+			delete(m.jobRegistryCredentials, k)
 		}
 	}
 	for k := range m.envs {

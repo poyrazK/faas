@@ -78,6 +78,21 @@ type Job struct {
 	ImageMaterializationNextAttemptAt *time.Time
 }
 
+// JobRegistryCredential is a sealed Basic Auth credential scoped to one job
+// image registry. The password is only decrypted by imaged for the duration
+// of a pull and is never part of an API response.
+type JobRegistryCredential struct {
+	ID                string
+	AccountID         string
+	JobID             string
+	Registry          string
+	Username          string
+	PasswordEncrypted []byte
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	LastUsedAt        *time.Time
+}
+
 // JobRun is one row of public.job_runs (migrations/00255 + 00574 for
 // dead_letter_count). RetryMax / TaskTimeoutS / StartedAt / FinishedAt
 // are nullable (the first two are per-run overrides; the second two
@@ -224,6 +239,16 @@ type JobImageMaterializationClaimer interface {
 	JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error)
 	JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
 	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
+}
+
+// JobRegistryCredentialStore is the optional persistence seam for private OCI
+// credentials used by job image materialization. It is separate from the
+// app-scoped registry credential surface because jobs are account-owned and do
+// not have an app parent.
+type JobRegistryCredentialStore interface {
+	UpsertJobRegistryCredential(ctx context.Context, accountID, jobID, registry, username string, passwordEncrypted []byte) error
+	GetJobRegistryCredential(ctx context.Context, accountID, jobID, registry string) (JobRegistryCredential, error)
+	MarkJobRegistryCredentialUsed(ctx context.Context, accountID, jobID, registry string) error
 }
 
 // newUUIDString is a thin shim over uuid.NewString so the memstore

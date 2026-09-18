@@ -76,21 +76,28 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		return h.failJobMaterialization(ctx, images, job,
 			fmt.Sprintf("OCI puller %T does not implement ManifestPuller", h.oci))
 	}
-
-	digest, err := pullDigestWithAuth(ctx, h.oci, job.ImageRef, nil)
-	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("resolve image: %v", err))
-	}
 	ref, err := oci.ParseReference(job.ImageRef)
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("parse image_ref: %v", err))
 	}
+	jobAuth, err := h.resolveJobRegistryAuth(ctx, job, ref.APIHost())
+	if err != nil {
+		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("registry credential: %v", err))
+	}
+	if jobAuth != nil {
+		defer func() { jobAuth.Password = "" }()
+	}
+
+	digest, err := pullDigestWithAuth(ctx, h.oci, job.ImageRef, jobAuth)
+	if err != nil {
+		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("resolve image: %v", err))
+	}
 	resolvedRef := (oci.Reference{Registry: ref.Registry, Repository: ref.Repository, Digest: digest}).String()
-	manifest, err := pullManifestWithAuth(ctx, mp, resolvedRef, nil)
+	manifest, err := pullManifestWithAuth(ctx, mp, resolvedRef, jobAuth)
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("pull manifest: %v", err))
 	}
-	config, err := pullImageConfigWithAuth(ctx, h.oci, resolvedRef, nil)
+	config, err := pullImageConfigWithAuth(ctx, h.oci, resolvedRef, jobAuth)
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("pull image config: %v", err))
 	}
@@ -118,7 +125,7 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 	}
 	defer closeAll()
 	for _, layer := range manifest.Layers {
-		rc, pullErr := pullBlobWithAuth(ctx, mp, repo, layer.Digest, nil)
+		rc, pullErr := pullBlobWithAuth(ctx, mp, repo, layer.Digest, jobAuth)
 		if pullErr != nil {
 			return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("pull layer %s: %v", layer.Digest, pullErr))
 		}
@@ -147,6 +154,7 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 	if _, err := images.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", digest, key, ""); err != nil {
 		return fmt.Errorf("imaged: publish job %s materialization state: %w", job.ID, err)
 	}
+	h.markJobRegistryCredentialUsed(ctx, job, ref.APIHost(), jobAuth)
 	h.log.Info("imaged: materialized job image", "job", job.ID, "digest", digest, "key", key)
 	return nil
 }
