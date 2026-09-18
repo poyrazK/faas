@@ -18,6 +18,9 @@ func main() {
 		fail(err)
 	}
 	for _, fixture := range catalog.Fixtures {
+		if err := apihostingcontract.ValidateContainerContract(fixture); err != nil {
+			fail(fmt.Errorf("%s: %w", fixture.ID, err))
+		}
 		files := make(fstest.MapFS, len(fixture.Files))
 		for path, body := range fixture.Files {
 			files[path] = &fstest.MapFile{Data: []byte(body)}

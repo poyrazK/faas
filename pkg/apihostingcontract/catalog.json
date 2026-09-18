@@ -12,7 +12,8 @@
       "id": "docker-oci",
       "description": "Arbitrary OCI application with an explicit exposed port.",
       "tags": ["oci", "runtime", "quick"],
-      "files": {"Dockerfile": "FROM busybox:1.36\nRUN mkdir -p /www && printf 'catalog oci\\n' > /www/index.html && printf 'ready\\n' > /www/healthz\nEXPOSE 9000\nCMD [\"busybox\",\"httpd\",\"-f\",\"-p\",\"9000\",\"-h\",\"/www\"]\n"},
+      "files": {"Dockerfile": "FROM busybox:1.36\nRUN mkdir -p /www && printf 'catalog oci\\n' > /www/index.html && printf 'ready\\n' > /www/healthz\nEXPOSE 9000\nCMD [\"sh\",\"-c\",\"exec busybox httpd -f -p ${PORT:-9000} -h /www\"]\n"},
+      "container": {"cmd": ["sh", "-c", "exec busybox httpd -f -p ${PORT:-9000} -h /www"], "exposed_ports": ["9000/tcp"], "honors_port": true, "stateless": true, "scale_to_zero": true, "request_wake": true},
       "expected": {"framework": "oci", "package_manager": "container", "port": 9000, "health_path": "/healthz", "start_command": "", "inferred": false}
     },
     {

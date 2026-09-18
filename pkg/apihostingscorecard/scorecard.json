@@ -22,7 +22,10 @@
       "description": "A stateless Linux/amd64 OCI image can preserve its process contract and use the full-rootfs path when it is not built from a Gregale base.",
       "capabilities": ["container-deployments"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
-      "evidence": [{"kind": "test", "locator": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"}]
+      "evidence": [
+        {"kind": "test", "locator": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"},
+        {"kind": "test", "locator": "pkg/apihostingcontract/catalog_test.go::TestContainerRuntimeContract"}
+      ]
     },
     {
       "id": "disposable-runs",

@@ -52,3 +52,23 @@ func TestCatalogProfiles(t *testing.T) {
 		t.Fatalf("catalog has %d quick runtime fixtures, want at least 3", quickRuntime)
 	}
 }
+
+func TestContainerRuntimeContract(t *testing.T) {
+	catalog, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ociFixtures := 0
+	for _, fixture := range catalog.Fixtures {
+		if !hasTag(fixture.Tags, "oci") {
+			continue
+		}
+		ociFixtures++
+		if err := ValidateContainerContract(fixture); err != nil {
+			t.Errorf("%s: %v", fixture.ID, err)
+		}
+	}
+	if ociFixtures == 0 {
+		t.Fatal("catalog has no OCI container fixtures")
+	}
+}

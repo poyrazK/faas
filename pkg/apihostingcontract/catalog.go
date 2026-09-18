@@ -18,9 +18,27 @@ type Fixture struct {
 	ID          string `json:"id"`
 	Description string `json:"description"`
 	// Tags classify acceptance coverage (for example runtime, quick, or sse).
-	Tags     []string          `json:"tags,omitempty"`
-	Files    map[string]string `json:"files"`
-	Expected Expected          `json:"expected"`
+	Tags      []string           `json:"tags,omitempty"`
+	Files     map[string]string  `json:"files"`
+	Expected  Expected           `json:"expected"`
+	Container *ContainerContract `json:"container,omitempty"`
+}
+
+// ContainerContract is the image/runtime portion of an OCI fixture. The
+// process fields mirror the subset projected by oci.ManifestFromConfig; the
+// lifecycle flags make the platform promise explicit for a normal stateless
+// HTTP container without requiring a metal test for every catalog change.
+type ContainerContract struct {
+	Entrypoint   []string          `json:"entrypoint,omitempty"`
+	Cmd          []string          `json:"cmd,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	WorkingDir   string            `json:"working_dir,omitempty"`
+	User         string            `json:"user,omitempty"`
+	ExposedPorts []string          `json:"exposed_ports,omitempty"`
+	HonorsPort   bool              `json:"honors_port"`
+	Stateless    bool              `json:"stateless"`
+	ScaleToZero  bool              `json:"scale_to_zero"`
+	RequestWake  bool              `json:"request_wake"`
 }
 
 // Expected is the profile and readiness contract asserted by the fixture runner.
