@@ -1104,12 +1104,16 @@ func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.
 	if store == nil || len(claimed) == 0 {
 		return nil, nil
 	}
-	nextFireAt := time.Now().Add(2 * time.Second)
 	for _, c := range claimed {
 		if retryExhausted(c.Attempts+1, t.MaxAttempts) {
 			exhausted = append(exhausted, c)
 			continue
 		}
+		// Use the trigger's retry policy for transport failures too. Queue
+		// bindings project their policy into this trigger config, so a
+		// gateway/network failure follows the same curve as a per-record
+		// retry result instead of the old fixed two-second delay.
+		nextFireAt := time.Now().Add(computeTransportRetryBackoff(t, c.Attempts+1))
 		if err := store.MarkTriggerRecordRetry(ctx, c.ID.String(), errMsg, nextFireAt); err != nil {
 			l.log.Warn("sched trigger tick: mark retry", "id", c.ID.String(), "err", err)
 		}
@@ -1120,6 +1124,20 @@ func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.
 		retryItems = append(retryItems, c.ItemIdentifier)
 	}
 	return retryItems, exhausted
+}
+
+// computeTransportRetryBackoff keeps the legacy two-second transport retry
+// for triggers without a policy while honoring the retry curve projected by
+// queue bindings. This avoids changing older trigger behavior merely because
+// markRetryAll now supports binding-scoped policy overrides.
+func computeTransportRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration {
+	var envelope struct {
+		RetryPolicy json.RawMessage `json:"retry_policy"`
+	}
+	if len(t.Config) > 0 && json.Unmarshal(t.Config, &envelope) == nil && len(envelope.RetryPolicy) > 0 && string(envelope.RetryPolicy) != "null" {
+		return computeTriggerRetryBackoff(t, attempts)
+	}
+	return 2 * time.Second
 }
 
 // retryExhausted reports whether the next delivery would consume the final

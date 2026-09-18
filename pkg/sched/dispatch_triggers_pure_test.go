@@ -13,6 +13,7 @@
 package sched
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -321,6 +322,26 @@ func TestComputeTriggerRetryBackoffUsesConfiguredPolicy(t *testing.T) {
 	legacy := sqlc.Trigger{Config: []byte(`{"mode":"queue"}`)}
 	if got := computeTriggerRetryBackoff(legacy, 1); got < 800*time.Millisecond || got > 1200*time.Millisecond {
 		t.Fatalf("legacy retry backoff = %v, want historical [800ms,1200ms]", got)
+	}
+}
+
+func TestMarkRetryAllUsesConfiguredTriggerRetryPolicy(t *testing.T) {
+	store := &fakeDeadLetterStore{}
+	trigger := sqlc.Trigger{
+		MaxAttempts: 5,
+		Config:      []byte(`{"retry_policy":{"base_seconds":7,"max_seconds":30}}`),
+	}
+	started := time.Now()
+	retryItems, exhausted := (&Loop{}).markRetryAll(context.Background(), trigger, []sqlc.TriggerRecord{{Attempts: 0}}, "gateway unavailable", store)
+	if len(retryItems) != 1 || len(exhausted) != 0 || len(store.retries) != 1 {
+		t.Fatalf("markRetryAll outputs retry_items=%d exhausted=%d retries=%d, want 1/0/1", len(retryItems), len(exhausted), len(store.retries))
+	}
+	delay := store.retries[0].Sub(started)
+	if delay < 7*time.Second || delay > 7500*time.Millisecond {
+		t.Fatalf("retry delay = %v, want approximately 7s from binding policy", delay)
+	}
+	if got := computeTransportRetryBackoff(sqlc.Trigger{}, 1); got != 2*time.Second {
+		t.Fatalf("legacy transport retry delay = %v, want 2s", got)
 	}
 }
 

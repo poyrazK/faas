@@ -67,6 +67,8 @@ type fakeDeadLetterStore struct {
 	// return ("", nil) for the listed item_identifiers
 	// regardless of the records map.
 	forceMissingIDs map[string]bool
+	// retries records retry timestamps for transport-failure tests.
+	retries []time.Time
 }
 
 func installPollerFactory(t *testing.T, kind string, factory func(sqlc.Trigger) (triggerSource, error)) {
@@ -184,8 +186,9 @@ func (f *fakeDeadLetterStore) InsertTriggerRecord(_ context.Context, _, _ string
 func (f *fakeDeadLetterStore) MarkTriggerRecordSucceeded(_ context.Context, _ string) error {
 	return nil
 }
-func (f *fakeDeadLetterStore) MarkTriggerRecordRetry(_ context.Context, _, _ string, _ time.Time) error {
-	return errors.New("not used in this test")
+func (f *fakeDeadLetterStore) MarkTriggerRecordRetry(_ context.Context, _, _ string, nextFireAt time.Time) error {
+	f.retries = append(f.retries, nextFireAt)
+	return nil
 }
 func (f *fakeDeadLetterStore) MarkTriggerRecordDeadLetter(_ context.Context, id, _ string) error {
 	f.marks = append(f.marks, id)
