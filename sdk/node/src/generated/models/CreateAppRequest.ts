@@ -49,7 +49,7 @@ export type CreateAppRequest = {
    */
   max_retries?: number;
   /**
-   * App-level default for invocation retries. Queue binding and per-invocation policies override this value.
+   * Initial app-level invocation retry default; queue binding and per-invocation policies may override it.
    */
   retry_policy?: RetryPolicyDTO;
   service_replicas?: ServiceReplicas;
@@ -126,4 +126,3 @@ export type CreateAppRequest = {
    */
   require_authn?: boolean;
 };
-

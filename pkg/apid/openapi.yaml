@@ -19552,7 +19552,7 @@ components:
           example: 5
         retry_policy:
           $ref: '#/components/schemas/RetryPolicyDTO'
-          description: "App-level default for invocation retries. Queue binding and per-invocation policies override this value."
+          description: "Initial app-level invocation retry default; queue binding and per-invocation policies may override it."
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
         ports:
