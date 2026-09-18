@@ -10621,6 +10621,9 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if inv.ID == "" {
 		inv.ID = newID()
 	}
+	if _, exists := m.invocations[inv.ID]; exists {
+		return Invocation{}, ErrConflict
+	}
 	if inv.State == "" {
 		inv.State = InvocationPending
 	}

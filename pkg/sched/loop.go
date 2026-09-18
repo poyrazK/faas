@@ -604,6 +604,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyAppDelete,                       // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
 		db.NotifyJobChanged,                      // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
 		db.NotifyPrivateNetworkAttachmentChanged, // durable detach cleanup; replayed if this LISTEN delivery is missed.
+		db.NotifyEventPublished,                  // Workstream B event matcher/fanout wakeup.
 		// PR #1099 P2 redesign: multiplexed onto the existing
 		// LISTEN. Same zero-cost pattern as NotifyCronRunNow +
 		// NotifyAppDelete; one LISTEN connection, one multiplexed
@@ -921,6 +922,11 @@ func (l *Loop) Run(ctx context.Context) error {
 	// next-tick latency for batches that land mid-cycle.
 	triggerT := time.NewTicker(time.Second)
 	defer triggerT.Stop()
+	// Event fanout has an advisory LISTEN fast path, plus a short ledger
+	// sweep so a schedd restart or reconnect cannot strand recent publishes.
+	eventFanoutT := time.NewTicker(5 * time.Second)
+	defer eventFanoutT.Stop()
+	l.runEventFanoutSweep(ctx)
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1039,6 +1045,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// effective interval when a broker ack/nack wakes the
 			// schedd mid-cycle (commits #16).
 			l.runTriggerTick(ctx)
+		case <-eventFanoutT.C:
+			l.runEventFanoutSweep(ctx)
 		case <-l.triggerWakeup:
 			// Same arm as the 1s ticker. The wake channel is
 			// buffered-size-1 so a burst of broker deliveries
@@ -1859,6 +1867,10 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// carried. Same defense-in-depth pattern as
 		// NotifyCronRunNow's handler arm above.
 		l.drainPendingOperatorIntents(ctx)
+	case db.NotifyEventPublished:
+		if err := l.routePublishedEvent(ctx, n.Payload); err != nil {
+			l.log.Warn("sched: event fanout failed", "err", err)
+		}
 	}
 }
 

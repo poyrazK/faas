@@ -264,6 +264,14 @@ from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc;
 
+-- name: ListEnabledEventSubscriptionsForAccount :many
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
+       s.created_at, s.updated_at
+from event_subscriptions s
+join apps a on a.id = s.app_id
+where s.account_id = $1 and s.enabled and a.status <> 'deleted'
+order by s.created_at asc, s.id asc;
+
 -- name: UpsertEventSubscription :one
 -- (xmax = 0) distinguishes a declaration first installed by this deploy from
 -- an idempotent replay of the same manifest row.

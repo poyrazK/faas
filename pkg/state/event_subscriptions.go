@@ -31,6 +31,7 @@ type EventSubscription struct {
 // test doubles and external integrations do not need to grow immediately.
 type EventSubscriptionStore interface {
 	ListEventSubscriptionsForApp(context.Context, string) ([]EventSubscription, error)
+	ListEnabledEventSubscriptionsForAccount(context.Context, string) ([]EventSubscription, error)
 	UpsertEventSubscription(context.Context, string, string, string, string, json.RawMessage) (EventSubscription, bool, error)
 	DeleteEventSubscription(context.Context, string, string, string) error
 }
@@ -81,6 +82,18 @@ func eventSubscriptionFromUpsert(row sqlc.UpsertEventSubscriptionRow) EventSubsc
 // ListEventSubscriptionsForApp returns subscriptions in stable creation order.
 func (s *PgStore) ListEventSubscriptionsForApp(ctx context.Context, appID string) ([]EventSubscription, error) {
 	rows, err := sqlc.New().ListEventSubscriptionsForApp(ctx, s.pool, mustPgUUID(appID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EventSubscription, len(rows))
+	for i, row := range rows {
+		out[i] = eventSubscriptionFromSQL(row)
+	}
+	return out, nil
+}
+
+func (s *PgStore) ListEnabledEventSubscriptionsForAccount(ctx context.Context, accountID string) ([]EventSubscription, error) {
+	rows, err := sqlc.New().ListEnabledEventSubscriptionsForAccount(ctx, s.pool, mustPgUUID(accountID))
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +157,26 @@ func (m *MemStore) ListEventSubscriptionsForApp(_ context.Context, appID string)
 	out := make([]EventSubscription, 0)
 	for _, subscription := range m.eventSubscriptions {
 		if subscription.AppID == canonicalAppID {
+			out = append(out, subscription)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (m *MemStore) ListEnabledEventSubscriptionsForAccount(_ context.Context, accountID string) ([]EventSubscription, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	canonicalAccountID := canonicalMemUUID(accountID)
+	out := make([]EventSubscription, 0)
+	for _, subscription := range m.eventSubscriptions {
+		app, appExists := m.apps[subscription.AppID]
+		if subscription.AccountID == canonicalAccountID && subscription.Enabled && appExists && app.Status != AppDeleted {
 			out = append(out, subscription)
 		}
 	}

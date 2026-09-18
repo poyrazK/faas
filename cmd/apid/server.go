@@ -1840,9 +1840,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobTaskLogs))))
 
 	// Workflows (ADR-081)
-	// Internal event ingress (EPIC #1278 / ADR-180). The first slice persists
-	// a tenant-scoped CloudEvents envelope; matching and delivery consume the
-	// durable event.published row in follow-up work.
+	// Internal event ingress (EPIC #1278 / ADR-180). The handler persists a
+	// tenant-scoped CloudEvents envelope and wakes schedd's content matcher;
+	// the durable events row remains the recovery source.
 	mux.HandleFunc("POST /v1/events:publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishEvent)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createWorkflowRun)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))

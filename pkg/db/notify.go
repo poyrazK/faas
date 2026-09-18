@@ -432,6 +432,10 @@ const (
 	// NotifyEventSubscriptionChanged wakes event-routing workers after a
 	// manifest deploy creates or compensates a durable subscription row.
 	NotifyEventSubscriptionChanged = "event_subscription_changed"
+	// NotifyEventPublished carries the normalized CloudEvents envelope to the
+	// scheduler's fanout worker. The event ledger remains authoritative; this
+	// channel is a low-latency wakeup for matching and enqueueing deliveries.
+	NotifyEventPublished = "event_published"
 	// NotifyJobChanged fires when a row is inserted/updated/deleted
 	// in public.jobs (issue #1184 Workstream A / ADR-099). Listeners:
 	//   - schedd dispatchJobsTick: wakes the 1s tick to claim any

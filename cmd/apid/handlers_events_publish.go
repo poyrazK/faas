@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// publishEvent handles POST /v1/events:publish. This first Workstream B slice
-// is durable ingress only: matching and delivery are deliberately downstream
-// consumers of the canonical event.published row.
+// publishEvent handles POST /v1/events:publish. It persists the canonical
+// envelope and wakes schedd's content-based fanout worker; the events row is
+// still the recovery source if the advisory notification is missed.
 func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.PublishEventRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -54,6 +55,10 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
+	// LISTEN is the low-latency wakeup for schedd's matcher. The events row
+	// remains authoritative; a later recovery sweep can re-read it if this
+	// advisory notification is missed.
+	_ = s.notif.Notify(r.Context(), db.NotifyEventPublished, string(payload))
 
 	writeJSON(w, http.StatusAccepted, api.PublishEventResponse{
 		ID:         envelope.ID,

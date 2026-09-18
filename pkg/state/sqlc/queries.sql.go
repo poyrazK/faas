@@ -5538,6 +5538,45 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 	return items, nil
 }
 
+const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
+       s.created_at, s.updated_at
+from event_subscriptions s
+join apps a on a.id = s.app_id
+where s.account_id = $1 and s.enabled and a.status <> 'deleted'
+order by s.created_at asc, s.id asc
+`
+
+func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]EventSubscription, error) {
+	rows, err := db.Query(ctx, listEnabledEventSubscriptionsForAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscription{}
+	for rows.Next() {
+		var i EventSubscription
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Source,
+			&i.Type,
+			&i.Filter,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnabledTriggers = `-- name: ListEnabledTriggers :many
 select id, account_id, app_id, kind, slug, enabled, config,
        batch_size_max, batch_window_ms, max_attempts,
