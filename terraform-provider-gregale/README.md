@@ -15,6 +15,7 @@ The initial surface is intentionally small:
 - `gregale_deployment` deploys a GitHub source ref and exposes lifecycle and preview metadata.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
+- `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -90,6 +91,22 @@ data "gregale_deployment" "release" {
 
 output "preview_url" {
   value = data.gregale_deployment.release.preview_url
+}
+```
+
+## Latest deployment lookup
+
+Use the latest deployment data source when a release was created by the CLI,
+dashboard, CI, or another Terraform stack and the deployment ID is not known
+ahead of time. Gregale resolves the newest deployment by creation time.
+
+```hcl
+data "gregale_latest_deployment" "api" {
+  app_slug = "orders-api"
+}
+
+output "preview_url" {
+  value = data.gregale_latest_deployment.api.preview_url
 }
 ```
 

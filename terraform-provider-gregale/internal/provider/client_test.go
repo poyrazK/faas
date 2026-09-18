@@ -458,3 +458,29 @@ func TestClientDeploymentLifecycleUsesSourceRefAndPreviewMetadata(t *testing.T) 
 		t.Fatalf("preview = %+v", preview)
 	}
 }
+
+func TestClientGetLatestAppDeploymentUsesAppScopedContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/orders/deployments/latest" {
+			t.Fatalf("request = %s %s, want GET /v1/apps/orders/deployments/latest", r.Method, r.URL.RequestURI())
+		}
+		if r.Header.Get("Idempotency-Key") != "" {
+			t.Fatal("latest deployment lookup included an idempotency key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"dep-latest","app_id":"app-1","kind":"github","status":"live","commit_sha":"abc123","created_at":"2026-09-18T10:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	got, err := client.getLatestAppDeployment(context.Background(), "orders")
+	if err != nil {
+		t.Fatalf("getLatestAppDeployment: %v", err)
+	}
+	if got.ID != "dep-latest" || got.AppID != "app-1" || got.Status != "live" || got.CommitSHA != "abc123" {
+		t.Fatalf("latest deployment = %+v", got)
+	}
+}

@@ -541,6 +541,13 @@ func (c *client) getDeployment(ctx context.Context, deploymentID string) (deploy
 	return out, err
 }
 
+func (c *client) getLatestAppDeployment(ctx context.Context, appSlug string) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/deployments/latest"
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
 func (c *client) getDeploymentURL(ctx context.Context, deploymentID string) (deploymentURLResponse, error) {
 	var out deploymentURLResponse
 	path := "/v1/deployments/" + escapePath(deploymentID) + "/url"

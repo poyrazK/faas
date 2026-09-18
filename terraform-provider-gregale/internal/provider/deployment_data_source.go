@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -182,6 +183,10 @@ func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		return
 	}
 
+	resp.Diagnostics.Append(setDeploymentDataSourceState(ctx, resp, out, preview, deploymentID)...)
+}
+
+func setDeploymentDataSourceState(ctx context.Context, resp *datasource.ReadResponse, out deploymentResponse, preview deploymentURLResponse, deploymentID string) diag.Diagnostics {
 	stageState := string(out.StageState)
 	if stageState == "null" {
 		stageState = ""
@@ -207,5 +212,5 @@ func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		ErrorWhy:     types.StringValue(out.ErrorWhy),
 		ErrorFix:     types.StringValue(out.ErrorFix),
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	return resp.State.Set(ctx, &state)
 }
