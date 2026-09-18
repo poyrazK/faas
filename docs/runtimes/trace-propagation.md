@@ -162,6 +162,22 @@ headers are intentionally excluded from spans. This covers the platform-owned
 binding path; arbitrary direct guest `fetch()` calls still require runtime
 instrumentation or a future transparent egress observation layer.
 
+## Platform-owned managed bindings
+
+Managed Postgres and object-storage control-plane calls are also traced by the
+platform when Gregale owns the provider client. Neon, S3-compatible, and GCS
+requests produce child HTTP dependency spans with the binding type and
+provider, destination host, method, response status, network lifecycle
+events, duration, and error state. Neon requests additionally sit beneath a
+`gregale.binding.managed_postgres` span, so the platform-owned binding is
+visible between the request and the provider API.
+
+The same redaction boundary applies: bucket names, object keys, database
+project identifiers, query strings, request bodies, authorization material,
+and provider headers are not span attributes. Customer code that opens its own
+database or storage client remains outside the platform-owned path and needs
+the runtime's OpenTelemetry instrumentation.
+
 ## What the platform does NOT do
 
 - **No library pre-installation.** The runner image ships with

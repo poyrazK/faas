@@ -16,11 +16,14 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/onebox-faas/faas/pkg/api"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+
+	"github.com/onebox-faas/faas/pkg/dependencytrace"
 )
 
 const (
@@ -87,7 +90,15 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 	if err != nil {
 		return nil, errors.New("GCS application default credentials are unavailable")
 	}
-	clientOptions := []option.ClientOption{option.WithCredentials(creds), storage.WithJSONReads(), storage.WithDisabledClientMetrics()}
+	oauthClient := oauth2.NewClient(context.Background(), creds.TokenSource)
+	oauthClient.Timeout = gcsRequestTimeout
+	oauthClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	oauthClient.Transport = dependencytrace.NewDependencyTransport(oauthClient.Transport,
+		attribute.String("gregale.dependency.type", "managed_binding"),
+		attribute.String("gregale.binding.type", "object_storage"),
+		attribute.String("gregale.binding.provider", "gcs"),
+	)
+	clientOptions := []option.ClientOption{option.WithCredentials(creds), option.WithHTTPClient(oauthClient), storage.WithJSONReads(), storage.WithDisabledClientMetrics()}
 	endpoint := c.Endpoint
 	if endpoint == "" {
 		endpoint = gcsDefaultEndpoint
@@ -98,9 +109,6 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 	if err != nil {
 		return nil, errors.New("GCS client initialization failed")
 	}
-	oauthClient := oauth2.NewClient(context.Background(), creds.TokenSource)
-	oauthClient.Timeout = gcsRequestTimeout
-	oauthClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	parsedEndpoint, err := url.Parse(endpoint)
 	if err != nil {
 		_ = client.Close()

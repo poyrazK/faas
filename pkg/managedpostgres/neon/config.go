@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -151,6 +154,15 @@ func nonnegativeSetting(values map[string]string, key string) (int64, error) {
 }
 
 func newProvider(logicalRegion, organizationID, apiKey string, baseURL *url.URL, client *http.Client, parsed settings) *Provider {
+	if client != nil {
+		clone := *client
+		clone.Transport = dependencytrace.NewDependencyTransport(client.Transport,
+			attribute.String("gregale.dependency.type", "managed_binding"),
+			attribute.String("gregale.binding.type", "managed_postgres"),
+			attribute.String("gregale.binding.provider", "neon"),
+		)
+		client = &clone
+	}
 	return &Provider{
 		baseURL:                baseURL,
 		httpClient:             client,

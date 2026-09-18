@@ -19,7 +19,10 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dependencytrace"
 )
 
 type S3 struct {
@@ -34,12 +37,18 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 	if key == "" || secret == "" {
 		return nil, errors.New("S3 credential environment variables are missing")
 	}
+	httpClient := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	httpClient.Transport = dependencytrace.NewDependencyTransport(httpClient.Transport,
+		attribute.String("gregale.dependency.type", "managed_binding"),
+		attribute.String("gregale.binding.type", "object_storage"),
+		attribute.String("gregale.binding.provider", "s3"),
+	)
 	client := s3.New(s3.Options{
 		Region:                     c.S3Region,
 		BaseEndpoint:               aws.String(c.Endpoint),
 		UsePathStyle:               c.PathStyle,
 		Credentials:                credentials.NewStaticCredentialsProvider(key, secret, getenv(c.SessionTokenEnv)),
-		HTTPClient:                 &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		HTTPClient:                 httpClient,
 		RetryMaxAttempts:           2,
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
