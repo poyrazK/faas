@@ -520,3 +520,85 @@ func TestClientGetLatestAppDeploymentUsesAppScopedContract(t *testing.T) {
 		t.Fatalf("latest deployment = %+v", got)
 	}
 }
+
+func TestClientTCPListenerLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/orders/tcp-listeners":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("TCP listener lookup included an idempotency key")
+			}
+			_, _ = w.Write([]byte(`[{"id":"listener-1","name":"postgres","guest_port":5432,"public_port":41001,"protocol":"tcp","enabled":true,"created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:00:00Z"}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/orders/tcp-listeners":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("TCP listener create request did not include an idempotency key")
+			}
+			var request tcpListenerRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode TCP listener create request: %v", err)
+			}
+			if request.Name != "postgres" || request.GuestPort != 5432 || request.PublicPort == nil || *request.PublicPort != 41001 {
+				t.Fatalf("TCP listener create request = %+v", request)
+			}
+			_, _ = w.Write([]byte(`{"id":"listener-1","name":"postgres","guest_port":5432,"public_port":41001,"protocol":"tcp","enabled":true,"created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:00:00Z"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/orders/tcp-listeners/postgres":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("TCP listener update request included an idempotency key")
+			}
+			var update tcpListenerUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Fatalf("decode TCP listener update request: %v", err)
+			}
+			if update.Enabled == nil || *update.Enabled {
+				t.Fatalf("TCP listener update request = %+v", update)
+			}
+			_, _ = w.Write([]byte(`{"id":"listener-1","name":"postgres","guest_port":5432,"public_port":41001,"protocol":"tcp","enabled":false,"created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/orders/tcp-listeners/postgres":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("TCP listener delete request included an idempotency key")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	publicPort := 41001
+	created, err := client.createTCPListener(context.Background(), "orders", tcpListenerRequest{
+		Name:       "postgres",
+		GuestPort:  5432,
+		PublicPort: &publicPort,
+	})
+	if err != nil {
+		t.Fatalf("createTCPListener: %v", err)
+	}
+	if created.ID != "listener-1" || created.PublicPort != 41001 || !created.Enabled {
+		t.Fatalf("created listener = %+v", created)
+	}
+
+	listed, err := client.listTCPListeners(context.Background(), "orders")
+	if err != nil {
+		t.Fatalf("listTCPListeners: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Name != "postgres" {
+		t.Fatalf("listed listeners = %+v", listed)
+	}
+
+	disabled := false
+	updated, err := client.updateTCPListener(context.Background(), "orders", "postgres", tcpListenerUpdate{Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("updateTCPListener: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatalf("updated listener = %+v", updated)
+	}
+	if err := client.deleteTCPListener(context.Background(), "orders", "postgres"); err != nil {
+		t.Fatalf("deleteTCPListener: %v", err)
+	}
+}

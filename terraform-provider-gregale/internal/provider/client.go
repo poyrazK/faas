@@ -272,6 +272,27 @@ type deploymentURLResponse struct {
 	Alive        bool   `json:"alive"`
 }
 
+type tcpListenerRequest struct {
+	Name       string `json:"name"`
+	GuestPort  int    `json:"guest_port"`
+	PublicPort *int   `json:"public_port,omitempty"`
+}
+
+type tcpListenerUpdate struct {
+	Enabled *bool `json:"enabled"`
+}
+
+type tcpListenerResponse struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	GuestPort  int    `json:"guest_port"`
+	PublicPort int    `json:"public_port"`
+	Protocol   string `json:"protocol"`
+	Enabled    bool   `json:"enabled"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -575,4 +596,30 @@ func (c *client) cancelDeployment(ctx context.Context, appSlug, deploymentID, re
 	}{Reason: reason}
 	err := c.request(ctx, http.MethodPost, path, body, &out, false)
 	return out, err
+}
+
+func (c *client) listTCPListeners(ctx context.Context, appSlug string) ([]tcpListenerResponse, error) {
+	var out []tcpListenerResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/tcp-listeners"
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) createTCPListener(ctx context.Context, appSlug string, req tcpListenerRequest) (tcpListenerResponse, error) {
+	var out tcpListenerResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/tcp-listeners"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) updateTCPListener(ctx context.Context, appSlug, name string, update tcpListenerUpdate) (tcpListenerResponse, error) {
+	var out tcpListenerResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/tcp-listeners/" + escapePath(name)
+	err := c.request(ctx, http.MethodPatch, path, update, &out, false)
+	return out, err
+}
+
+func (c *client) deleteTCPListener(ctx context.Context, appSlug, name string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/tcp-listeners/" + escapePath(name)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
 }
