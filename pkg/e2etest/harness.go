@@ -103,6 +103,13 @@ type Harness struct {
 	SignKeyPath       string
 	GatewayURL        string
 	GatewayControlURL string // /metrics + /healthz, loopback only
+	// gatewayPublicAddr and gatewayControlAddr are reserved before schedd
+	// starts so its RPS scale-up scraper can be pointed at the real
+	// gatewayd-internal control listener. Keeping the addresses on the
+	// harness also lets startGatewayd bind the exact ports named in the
+	// schedd config instead of silently falling back to another pair.
+	gatewayPublicAddr  string
+	gatewayControlAddr string
 	// RecoveryHMACKeyHex is a per-test 64-char hex string (32 bytes
 	// when decoded) that the harness injects as FAAS_MFA_RECOVERY_HMAC_KEY
 	// into every daemon's environment. Required because apid's
@@ -184,6 +191,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	if which&Gatewayd != 0 {
+		reserveGatewayAddresses(t, h)
+	}
 	if which&GatewaySynthStub != 0 {
 		startGatewaySynthStub(t, h)
 	}
@@ -736,6 +746,9 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	if which&Gatewayd != 0 {
+		reserveGatewayAddresses(t, h)
+	}
 	if which&GatewaySynthStub != 0 {
 		startGatewaySynthStub(t, h)
 	}
@@ -881,13 +894,10 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 // var or config knob lands in one place instead of two (Start vs
 // StartWithEnv had identical templates before PR #218).
 //
-// gateway_metrics_url is intentionally empty: schedd is started
-// BEFORE gatewayd-internal in Start() (the schedd first-boot
-// migration runs while gatewayd-internal is still booting), so the control
-// plane address isn't known yet. With an empty URL, schedd's
-// scaleup trigger is disabled (cmd/schedd/config.go:110-118,
-// issue #169 / #172). Boot path is unaffected — schedd logs a
-// single warn when the trigger ticks, which it doesn't.
+// gateway_metrics_url points at gatewayd-internal's bounded request counter
+// endpoint when the harness includes Gatewayd. The address is reserved before
+// schedd starts, so the production RPS scale-up trigger is exercised by metal
+// tests instead of being accidentally disabled by test boot ordering.
 func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) string {
 	t.Helper()
 	sockPath := filepath.Join(h.SockDir, "schedd.sock")
@@ -900,14 +910,18 @@ func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) 
 		gatewaySynth = filepath.Join(h.SockDir, "gatewayd-internal.sock")
 	}
 	cfgPath := filepath.Join(tmp, "schedd.toml")
+	metricsURL := ""
+	if h.gatewayControlAddr != "" {
+		metricsURL = "http://" + h.gatewayControlAddr + "/metrics/gateway-requests"
+	}
 	cfg := fmt.Sprintf(
 		`socket_path = %q
 owner_user = %q
 vmmd_socket = %q
 gateway_synth_socket = %q
-gateway_metrics_url = ""
+gateway_metrics_url = %q
 `,
-		sockPath, "root", vmmdSock, gatewaySynth,
+		sockPath, "root", vmmdSock, gatewaySynth, metricsURL,
 	)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatalf("e2etest: write schedd.toml: %v", err)
@@ -950,8 +964,14 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	if h.SockDir == "" {
 		h.SockDir = filepath.Join(h.TmpDir, "socks")
 	}
-	addr := freeTCPAddr(t)
-	controlAddr := freeTCPAddr(t)
+	addr := h.gatewayPublicAddr
+	if addr == "" {
+		addr = freeTCPAddr(t)
+	}
+	controlAddr := h.gatewayControlAddr
+	if controlAddr == "" {
+		controlAddr = freeTCPAddr(t)
+	}
 	// freeTCPAddr releases its probe listener before returning. The kernel can
 	// immediately hand the same ephemeral port back to the next probe, which
 	// makes the public and control servers race to bind one address. Keep
@@ -987,6 +1007,21 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	h.GatewayURL = "http://" + addr
 	h.GatewayControlURL = "http://" + controlAddr
 	waitTCP(t, controlAddr, 10*time.Second)
+}
+
+// reserveGatewayAddresses chooses the public and control ports before
+// schedd's TOML is rendered. freeTCPAddr closes its probe listener, so the
+// later daemon bind still gets the usual race-resistant availability check;
+// reserving both addresses here only makes the configuration deterministic.
+func reserveGatewayAddresses(t *testing.T, h *Harness) {
+	t.Helper()
+	addr := freeTCPAddr(t)
+	controlAddr := freeTCPAddr(t)
+	for controlAddr == addr {
+		controlAddr = freeTCPAddr(t)
+	}
+	h.gatewayPublicAddr = addr
+	h.gatewayControlAddr = controlAddr
 }
 
 func startGatewaySynthStub(t *testing.T, h *Harness) {
