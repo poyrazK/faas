@@ -1,5 +1,7 @@
 //go:build !no_pg
 
+// adr: 048
+
 package meter
 
 import (
