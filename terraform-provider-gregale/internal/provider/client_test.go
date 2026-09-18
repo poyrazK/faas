@@ -373,3 +373,62 @@ func TestClientEnvLifecycleUsesWriteOnlyValueAndScopedMetadata(t *testing.T) {
 		t.Fatalf("deleteEnv: %v", err)
 	}
 }
+
+func TestClientDeploymentLifecycleUsesSourceRefAndPreviewMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/orders/deployments/source-ref":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("deployment create request did not include an idempotency key")
+			}
+			var request deploymentRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode deployment request: %v", err)
+			}
+			if request.Repo != "acme/orders" || request.Ref != "main" || request.Environment != "production" || request.NoTriggers {
+				t.Fatalf("deployment request = %+v", request)
+			}
+			_, _ = w.Write([]byte(`{"id":"dep-1","app_id":"app-1","status":"pending","created_at":"2026-09-18T10:00:00Z"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/dep-1":
+			_, _ = w.Write([]byte(`{"id":"dep-1","app_id":"app-1","build_id":"build-1","kind":"github","status":"live","image_digest":"sha256:abc","created_at":"2026-09-18T10:00:00Z","source_url":"https://github.com/acme/orders","commit_sha":"abc123","scope":"production","stage_state":{"readiness":"complete"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/dep-1/url":
+			_, _ = w.Write([]byte(`{"deployment_id":"dep-1","host":"deploy-1-orders.gregale.dev","url":"https://deploy-1-orders.gregale.dev","alive":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/orders/deployments/dep-1/cancel":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	created, err := client.createSourceRefDeployment(context.Background(), "orders", deploymentRequest{
+		Repo:        "acme/orders",
+		Ref:         "main",
+		Environment: "production",
+	})
+	if err != nil {
+		t.Fatalf("createSourceRefDeployment: %v", err)
+	}
+	if created.ID != "dep-1" || created.Status != "pending" {
+		t.Fatalf("created deployment = %+v", created)
+	}
+	read, err := client.getDeployment(context.Background(), "dep-1")
+	if err != nil {
+		t.Fatalf("getDeployment: %v", err)
+	}
+	if read.Status != "live" || read.CommitSHA != "abc123" || read.Scope != "production" {
+		t.Fatalf("deployment = %+v", read)
+	}
+	preview, err := client.getDeploymentURL(context.Background(), "dep-1")
+	if err != nil {
+		t.Fatalf("getDeploymentURL: %v", err)
+	}
+	if !preview.Alive || preview.URL == "" {
+		t.Fatalf("preview = %+v", preview)
+	}
+}

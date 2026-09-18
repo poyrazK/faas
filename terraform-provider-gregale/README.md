@@ -12,6 +12,7 @@ The initial surface is intentionally small:
 - `gregale_cron` manages a scheduled app invocation and exposes scheduler state.
 - `gregale_env` manages scoped app environment variables without storing values in state.
 - `gregale_secret` manages scoped app secrets without storing plaintext in state.
+- `gregale_deployment` deploys a GitHub source ref and exposes lifecycle and preview metadata.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -133,6 +134,23 @@ Gregale or stored in the Terraform plan/state. Use `gregale_secret` for
 credentials; `gregale_env` is intended for non-sensitive runtime
 configuration. Omitting `scope` uses Gregale's `default` scope.
 
+## Deployment
+
+```hcl
+resource "gregale_deployment" "api" {
+  app_slug    = gregale_app.api.slug
+  repo        = "acme/orders-api"
+  ref         = var.git_ref
+  environment = "production"
+}
+```
+
+The resource deploys the source ref through Gregale's headless GitHub path,
+waits for the deployment to become live, and exposes the resolved commit,
+preview URL, stage state, and structured failure details. Deployment inputs
+are immutable; changing them creates a new deployment. Destroy cancels only a
+deployment that is still queued or building and never rolls back a live app.
+
 Creating the resource returns the DNS challenge immediately. Gregale verifies
 DNS and provisions TLS asynchronously; refresh the resource to observe
 `verification_status`, `cert_status`, and certificate expiry without making
@@ -152,6 +170,6 @@ output "production_environment_id" {
 ```
 
 The provider uses the same public REST contract as the CLI and sends
-idempotency keys for app, domain, alert, cron, environment variable, and secret writes. Application
+idempotency keys for app, domain, alert, cron, environment variable, secret, and deployment writes. Application
 environment values, secret values, alert webhook secrets, managed secret values, and bearer tokens
 are not returned by the managed resources or recorded in state.

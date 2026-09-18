@@ -234,6 +234,39 @@ type envListResponse struct {
 	Count int           `json:"count"`
 }
 
+type deploymentRequest struct {
+	Repo        string `json:"repo"`
+	Ref         string `json:"ref"`
+	Environment string `json:"environment,omitempty"`
+	NoTriggers  bool   `json:"no_triggers,omitempty"`
+}
+
+type deploymentResponse struct {
+	StageState  json.RawMessage `json:"stage_state,omitempty"`
+	ID          string          `json:"id"`
+	AppID       string          `json:"app_id"`
+	BuildID     string          `json:"build_id,omitempty"`
+	ImageDigest string          `json:"image_digest,omitempty"`
+	Kind        string          `json:"kind"`
+	Status      string          `json:"status"`
+	Error       string          `json:"error,omitempty"`
+	ErrorCode   string          `json:"error_code,omitempty"`
+	ErrorHint   string          `json:"error_hint,omitempty"`
+	ErrorWhy    string          `json:"error_why,omitempty"`
+	ErrorFix    string          `json:"error_fix,omitempty"`
+	CreatedAt   string          `json:"created_at"`
+	SourceURL   string          `json:"source_url,omitempty"`
+	CommitSHA   string          `json:"commit_sha,omitempty"`
+	Scope       string          `json:"scope,omitempty"`
+}
+
+type deploymentURLResponse struct {
+	DeploymentID string `json:"deployment_id"`
+	Host         string `json:"host,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Alive        bool   `json:"alive"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -492,4 +525,35 @@ func withEnvScope(path, scope string) string {
 		return path
 	}
 	return path + "?scope=" + url.QueryEscape(scope)
+}
+
+func (c *client) createSourceRefDeployment(ctx context.Context, appSlug string, req deploymentRequest) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/deployments/source-ref"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) getDeployment(ctx context.Context, deploymentID string) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/deployments/" + escapePath(deploymentID)
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) getDeploymentURL(ctx context.Context, deploymentID string) (deploymentURLResponse, error) {
+	var out deploymentURLResponse
+	path := "/v1/deployments/" + escapePath(deploymentID) + "/url"
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) cancelDeployment(ctx context.Context, appSlug, deploymentID, reason string) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/deployments/" + escapePath(deploymentID) + "/cancel"
+	body := struct {
+		Reason string `json:"reason,omitempty"`
+	}{Reason: reason}
+	err := c.request(ctx, http.MethodPost, path, body, &out, false)
+	return out, err
 }
