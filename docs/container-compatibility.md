@@ -34,5 +34,9 @@ listener reachable on `0.0.0.0`, and a process that honors `PORT` (default
 create durable storage, and privileged mode, host devices, host networking, and
 the Docker socket are not supported.
 
+Direct OCI images use TCP listener readiness by default; Gregale does not
+invent a `/healthz` endpoint that the image never declared. An explicit
+deployment health-path override selects HTTP readiness instead.
+
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.

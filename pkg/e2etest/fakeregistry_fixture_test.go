@@ -70,6 +70,7 @@ func TestImageVariants_RunHelloServer(t *testing.T) {
 	i1, _ := HelloImageAboveBase("library/hello", "x")
 	i2, _ := CPUBoundImage("library/hot")
 	i3, _ := WedgedLoopImage("library/wedged")
+	i4, _ := HelloImageWithoutHealthz("library/tcp", "x")
 	cases["above-base"] = struct {
 		img  fakeImage
 		want []string
@@ -82,6 +83,10 @@ func TestImageVariants_RunHelloServer(t *testing.T) {
 		img  fakeImage
 		want []string
 	}{i3, []string{"/hello-server", "-spin", "-ignore-term", "-no-listen"}}
+	cases["tcp-readiness"] = struct {
+		img  fakeImage
+		want []string
+	}{i4, []string{"/hello-server", "-no-healthz"}}
 	for name, c := range cases {
 		got := imageCmd(t, c.img)
 		if len(got) != len(c.want) {

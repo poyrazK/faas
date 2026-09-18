@@ -79,6 +79,13 @@ func HelloImageOnPort(repo, helloBody string, port int) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, false, port)
 }
 
+// HelloImageWithoutHealthz returns a normal direct OCI image that exposes an
+// HTTP listener but does not invent a /healthz endpoint. It models images such
+// as small Node/Go services whose startup contract is simply accepting TCP.
+func HelloImageWithoutHealthz(repo, helloBody string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, false, 8080, []string{"/hello-server", "-no-healthz"})
+}
+
 // HelloImageAboveBase returns an image identical to HelloImage except it has
 // TWO layers: the hardcoded helloLayerDiffID (matching BaseLayerImage's
 // layer) followed by an additional layer whose diff_id is computed from the
@@ -199,6 +206,10 @@ func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 }
 
 func layeredHelloImageOnPort(repo, helloBody string, aboveBase bool, port int) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, aboveBase, port, []string{"/hello-server"})
+}
+
+func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port int, cmd []string) (fakeImage, string) {
 	// Build the layer blob list. The "base" layer (always present) advertises
 	// the hardcoded helloLayerDiffID — a fake that the deploy-time base image
 	// (BaseLayerImage) repeats so oci.LayersAboveBase sees a matching prefix.
@@ -241,7 +252,7 @@ func layeredHelloImageOnPort(repo, helloBody string, aboveBase bool, port int) (
 		"architecture": "amd64",
 		"os":           "linux",
 		"config": map[string]any{
-			"Cmd":          []string{"/hello-server"},
+			"Cmd":          cmd,
 			"Env":          []string{},
 			"WorkingDir":   "/",
 			"ExposedPorts": map[string]any{fmt.Sprintf("%d/tcp", port): struct{}{}},
