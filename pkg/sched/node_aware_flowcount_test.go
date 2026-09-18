@@ -1,3 +1,6 @@
+// adr: 127 — persistent node telemetry provides bounded flow detail with a
+// freshness-bounded fallback to local observation.
+
 package sched
 
 import (
