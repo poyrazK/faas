@@ -1148,6 +1148,7 @@ type Invocation struct {
 	CompletedAt              pgtype.Timestamptz
 	InstanceID               pgtype.Text
 	Attempts                 int32
+	QuotaReserved            bool
 	LastError                pgtype.Text
 	CreatedAt                pgtype.Timestamptz
 	OrgID                    pgtype.UUID

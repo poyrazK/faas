@@ -1346,6 +1346,21 @@ type App struct {
 	CreatedAt          time.Time
 }
 
+// AcceptsRequestInvocations reports whether the app can serve an HTTP-style
+// /invoke envelope. Worker and job workloads are driven by their dedicated
+// queue/job lifecycles and intentionally have no request listener.
+func (app App) AcceptsRequestInvocations() bool {
+	if app.WorkloadClass == WorkloadClassWorker || app.WorkloadClass == WorkloadClassJob {
+		return false
+	}
+	switch app.Manifest.ExecutionMode {
+	case api.ExecutionModeWorker, api.ExecutionModeJob:
+		return false
+	default:
+		return true
+	}
+}
+
 // AppDeletionArtifact is a durable artifact owned exclusively by an app that
 // is waiting for permanent deletion. Shared keys are excluded by the Store so
 // the grace sweeper can remove every returned key without breaking another
@@ -3324,8 +3339,12 @@ type Invocation struct {
 	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 	Attempts       int             `json:"attempts"`
-	LastError      string          `json:"last_error,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
+	// QuotaReserved records whether ClaimInvocationWithCap acquired one
+	// account_async_quota slot for this dispatch. It is internal lifecycle
+	// state, not part of the customer invocation representation.
+	QuotaReserved bool      `json:"-"`
+	LastError     string    `json:"last_error,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 	// Outcome is the normalized terminal classification (issue #791).
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.

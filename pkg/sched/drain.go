@@ -456,6 +456,21 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
+	// /invoke is an HTTP/request primitive. Worker and job apps have no
+	// request listener, so an async/replay row targeting one can never become
+	// deliverable. Terminalise legacy rows here as a defence-in-depth backstop;
+	// apid rejects new rows before enqueue.
+	if (inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationReplay) && !app.AcceptsRequestInvocations() {
+		errText := "request invocation is incompatible with worker/job workload"
+		if err := d.store.FailInvocation(ctx, inv.ID, errText, 0, 0); err != nil {
+			d.log.Warn("drain: reject incompatible invocation", "inv", inv.ID, "app_id", inv.AppID, "err", err)
+			return
+		}
+		d.emitInvocationDestination(ctx, inv, state.OutcomeFailed, nil, errText)
+		d.emitDone(ctx, inv, state.InvocationFailed)
+		d.log.Warn("drain: incompatible invocation failed permanently", "inv", inv.ID, "app_id", inv.AppID, "workload_class", app.WorkloadClass, "execution_mode", app.Manifest.ExecutionMode)
+		return
+	}
 	// 1. Cap re-check (delayed_task source only — the plan may have
 	// been downgraded between EnqueueInvocation and now).
 	if inv.Source == state.InvocationDelayedTask {
@@ -515,8 +530,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if isDebugMirrorReplay(inv) {
 		if d.gateway == nil {
 			err := errors.New("sched: debug replay gateway is not configured")
-			retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
-			budget := d.queueAttemptBudget(ctx, inv)
+			retryAfter := d.invocationRetryDelay(inv)
+			budget := d.invocationAttemptBudget(ctx, inv)
 			failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err))
 			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 				d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
@@ -525,11 +540,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
 		if err != nil {
-			retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+			retryAfter := d.invocationRetryDelay(inv)
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
-			budget := d.queueAttemptBudget(ctx, inv)
+			budget := d.invocationAttemptBudget(ctx, inv)
 			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err))
 			if failErr == nil && retryAfter == 0 {
 				d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
@@ -568,7 +583,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		err = errors.New("sched: ensure wake returned no instance")
 	}
 	if err != nil {
-		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+		retryAfter := d.invocationRetryDelay(inv)
 		// Permanent wake errors short-circuit to state='failed' — a
 		// missing app, a deleted account, or a PARKED app will not
 		// recover by waiting 5s. The engine
@@ -577,7 +592,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if errors.Is(err, ErrPermanentWake) {
 			retryAfter = 0
 		}
-		budget := d.queueAttemptBudget(ctx, inv)
+		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
 		if failErr == nil && retryAfter == 0 {
 			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
@@ -623,11 +638,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// Permanent invoke errors (4xx) terminal-fail; transient
 		// (network / 5xx) retry. The gateway is the source of
 		// truth — it knows whether the failure is recoverable.
-		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+		retryAfter := d.invocationRetryDelay(inv)
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
-		budget := d.queueAttemptBudget(ctx, inv)
+		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
 		if failErr == nil && retryAfter == 0 {
 			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
@@ -752,12 +767,10 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 	return acct.Active()
 }
 
-// queueAttemptBudget (issue #394) returns the per-plan retry budget
-// for an invocation, resolved from the parent account's plan. Returns
-// 0 for non-queue sources (delayed_task, async_invoke, cron) and for
-// any lookup error — Store.FailInvocation treats budget==0 as
-// "infinite retry", which is the correct behaviour for those paths
-// and a safe degrade for lookups.
+// invocationAttemptBudget returns the row override when present, otherwise
+// the account plan's shared durable-invocation retry budget. ADR-134 applies
+// that fallback to async, queue, delayed-task, cron, and replay rows; limiting
+// it to queue rows allowed poisoned async invocations to retry forever.
 //
 // Plan caps rarely change (no churn from a healthy customer), so we
 // don't cache the value here. The AccountByID round-trip is one extra
@@ -771,31 +784,41 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 // MUST be observable — we slog a warning so the operator sees the
 // gate fall back. Without this, a sustained Postgres blip would
 // silently mask the dead-letter safety net issue #394 introduces.
-func (d *Drain) queueAttemptBudget(ctx context.Context, inv state.Invocation) int {
-	if inv.Source != state.InvocationQueue {
-		return 0
+func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
+	if policy := inv.RetryPolicy(); policy.MaxAttempts > 0 {
+		return policy.MaxAttempts
 	}
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {
-		d.log.WarnContext(ctx, "queueAttemptBudget: AppByID failed; falling back to legacy infinite retry",
+		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; falling back to legacy infinite retry",
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
 		return 0
 	}
 	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
 	if err != nil {
-		d.log.WarnContext(ctx, "queueAttemptBudget: AccountByID failed; falling back to legacy infinite retry",
+		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; falling back to legacy infinite retry",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
 		return 0
 	}
 	return api.MustLimitsFor(acct.Plan).MaxQueueAttempts
 }
 
+// invocationRetryDelay applies the per-row exponential backoff curve when
+// supplied and preserves the drain's configured fixed delay as the producer
+// default for rows without an override.
+func (d *Drain) invocationRetryDelay(inv state.Invocation) time.Duration {
+	if delay := inv.RetryPolicy().Backoff(inv.Attempts); delay > 0 {
+		return delay
+	}
+	return time.Duration(d.retryAfterSeconds) * time.Second
+}
+
 // accountAsyncCap (ADR-134 PR-B) returns the per-plan cap on
 // concurrent in-flight async invocations for the account owning
 // inv. Resolved via the same AppByID → AccountByID → MustLimitsFor
-// chain as queueAttemptBudget. Returns 0 on any lookup error so
+// chain as invocationAttemptBudget. Returns 0 on any lookup error so
 // the drain refuses to claim (the safe degrade — see comment on
-// queueAttemptBudget for the rationale).
+// invocationAttemptBudget for the rationale).
 func (d *Drain) accountAsyncCap(ctx context.Context, inv state.Invocation) int {
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {

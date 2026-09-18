@@ -60,7 +60,7 @@ func TestInvocation_DispatchContract(t *testing.T) {
 	}
 
 	// RetryPolicyJSON unmarshal success.
-	inv.RetryPolicyJSON = json.RawMessage(`{"MaxAttempts":5,"BaseSeconds":2,"MaxSeconds":60}`)
+	inv.RetryPolicyJSON = json.RawMessage(`{"max_attempts":5,"base_seconds":2,"max_seconds":60}`)
 	if rp := inv.RetryPolicy(); rp.MaxAttempts != 5 || rp.BaseSeconds != 2 || rp.MaxSeconds != 60 {
 		t.Errorf("RetryPolicy()=%+v, want MaxAttempts=5 BaseSeconds=2 MaxSeconds=60", rp)
 	}

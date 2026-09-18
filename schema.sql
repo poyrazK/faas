@@ -2710,6 +2710,7 @@ CREATE TABLE public.invocations (
     completed_at timestamp with time zone,
     instance_id text,
     attempts integer DEFAULT 0 NOT NULL,
+    quota_reserved boolean DEFAULT false NOT NULL,
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,

@@ -4105,9 +4105,9 @@ type InvokeRequest struct {
 	Headers json.RawMessage `json:"headers,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Path    string          `json:"path,omitempty"`
-	// DeadlineAt (ADR-134 PR-B): optional hard-stop. Must be
-	// within (now + Limits.MaxAsyncInvocationDeadlineSeconds) or
-	// the handler rejects with invalid_deadline_at.
+	// DeadlineAt (ADR-134 PR-B): optional hard-stop. Values beyond
+	// (now + Limits.MaxAsyncInvocationDeadlineSeconds) are clamped to
+	// that plan ceiling; omission uses the same ceiling as the default.
 	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
 	// RetryPolicy (ADR-134 PR-B): optional per-row override of
 	// the plan-default retry curve. Stored verbatim in

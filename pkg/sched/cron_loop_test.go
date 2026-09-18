@@ -142,6 +142,13 @@ func (s claimLosingStore) ClaimInvocation(ctx context.Context, id, instanceID st
 	return state.Invocation{}, state.ErrNotFound
 }
 
+func (s claimLosingStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID string, leaseSeconds, maxInflight int) (state.Invocation, error) {
+	if _, err := s.Store.ClaimInvocationWithCap(ctx, id, instanceID, leaseSeconds, maxInflight); err != nil {
+		return state.Invocation{}, err
+	}
+	return state.Invocation{}, state.ErrNotFound
+}
+
 func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path string) error {
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: path})

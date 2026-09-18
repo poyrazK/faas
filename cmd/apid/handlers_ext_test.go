@@ -3682,6 +3682,54 @@ func TestAsyncInvoke_AcceptedWithId(t *testing.T) {
 	if inv.State != state.InvocationPending {
 		t.Errorf("state = %v, want pending", inv.State)
 	}
+	if inv.DeadlineAt == nil {
+		t.Error("deadline_at is nil, want plan-default deadline")
+	}
+	if inv.ResultRetentionUntil == nil {
+		t.Error("result_retention_until is nil, want plan-default retention")
+	}
+}
+
+func TestInvokeRejectsWorkerWorkloadBeforeEnqueue(t *testing.T) {
+	for _, path := range []string{"/v1/apps/worker/invoke/async", "/v1/apps/worker/invoke"} {
+		t.Run(path, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			mustSeedAppWithWorkloadClass(t, e, "worker", state.WorkloadClassWorker)
+
+			rec := e.do(t, http.MethodPost, path, api.InvokeRequest{}, nil)
+			assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+			rows, err := e.store.ListInvocationsForAccount(context.Background(), e.acct.ID, 10, "")
+			if err != nil {
+				t.Fatalf("ListInvocationsForAccount: %v", err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("worker invoke persisted %d rows, want 0", len(rows))
+			}
+		})
+	}
+}
+
+func TestAsyncInvokePersistsSnakeCaseRetryPolicy(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "retry-app")
+	rec := e.do(t, http.MethodPost, "/v1/apps/retry-app/invoke/async", api.InvokeRequest{
+		RetryPolicy: &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 2, MaxSeconds: 20},
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.AsyncInvokeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	inv, err := e.store.InvocationByID(context.Background(), response.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	policy := inv.RetryPolicy()
+	if policy.MaxAttempts != 4 || policy.BaseSeconds != 2 || policy.MaxSeconds != 20 {
+		t.Fatalf("retry policy = %+v, want max=4 base=2 max_seconds=20", policy)
+	}
 }
 
 // TestAsyncInvoke_FreeRejected confirms the Free-plan gate fires before

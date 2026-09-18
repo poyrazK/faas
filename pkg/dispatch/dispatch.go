@@ -41,10 +41,10 @@ const (
 // as it can. Callers that require an explicit budget should refuse
 // the zero value (see PR-B's apid handler).
 type RetryPolicy struct {
-	MaxAttempts   int     // total attempts incl. the first (1 = no retry)
-	BaseSeconds   float64 // delay before attempt 1 (typical: 1.0)
-	MaxSeconds    float64 // cap on the doubled base (typical: 300.0)
-	JitterSeconds float64 // symmetric ± fraction of base (0.2 = ±20%)
+	MaxAttempts   int     `json:"max_attempts"`   // total attempts incl. the first (1 = no retry)
+	BaseSeconds   float64 `json:"base_seconds"`   // delay before attempt 1 (typical: 1.0)
+	MaxSeconds    float64 `json:"max_seconds"`    // cap on the doubled base (typical: 300.0)
+	JitterSeconds float64 `json:"jitter_seconds"` // symmetric ± fraction of base (0.2 = ±20%)
 }
 
 // Zero reports whether the policy is unset. Drains fall back to

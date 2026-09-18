@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -98,6 +99,10 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
+	if !app.AcceptsRequestInvocations() {
+		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if !limits.AsyncInvokeAllowed {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("async_invoke", acct.Plan))
@@ -105,6 +110,10 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	var req invokeRequest
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
+		return
+	}
+	if problem := validateInvokeRequest(req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if req.Method == "" {
@@ -127,6 +136,9 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		Payload:                req.Payload,
 		Headers:                req.Headers,
 		DueAt:                  time.Now().UTC(),
+		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
+		RetryPolicyJSON:        marshalRetryPolicy(req.RetryPolicy),
+		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
 	})
@@ -151,6 +163,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	if !app.AcceptsRequestInvocations() {
+		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if !limits.AsyncInvokeAllowed {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("sync_invoke", acct.Plan))
@@ -158,6 +174,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	var req invokeRequest
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
+		return
+	}
+	if problem := validateInvokeRequest(req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if req.Method == "" {
@@ -300,6 +320,10 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	var req queueSendRequest
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
+		return
+	}
+	if problem := validateInvocationRetryPolicy(req.RetryPolicy); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	queueName, problem := s.resolveQueueSendName(r.Context(), acct, app, req.QueueName)
@@ -637,10 +661,7 @@ func retentionForRequest(reqRetentionSeconds *int, acct state.Account) *time.Tim
 		return nil
 	}
 	seconds := limits.MaxAsyncResultRetentionSeconds
-	if reqRetentionSeconds != nil {
-		if *reqRetentionSeconds < 0 {
-			*reqRetentionSeconds = 0
-		}
+	if reqRetentionSeconds != nil && *reqRetentionSeconds > 0 {
 		if *reqRetentionSeconds < seconds {
 			seconds = *reqRetentionSeconds
 		}
@@ -651,21 +672,60 @@ func retentionForRequest(reqRetentionSeconds *int, acct state.Account) *time.Tim
 
 // deadlineForRequest (ADR-134 PR-B / ADR-135) clamps the customer's
 // requested deadline to the plan's MaxAsyncInvocationDeadlineSeconds.
-// nil or past-now deadlines return nil (no enforcement); a future
-// deadline beyond the plan max is clamped to now + plan max.
+// An omitted deadline receives the plan default; a requested deadline beyond
+// the plan max is clamped to now + plan max.
 func deadlineForRequest(reqDeadline *time.Time, acct state.Account) *time.Time {
-	if reqDeadline == nil {
-		return nil
-	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxAsyncInvocationDeadlineSeconds <= 0 {
 		return nil
 	}
 	maxDeadline := time.Now().UTC().Add(time.Duration(limits.MaxAsyncInvocationDeadlineSeconds) * time.Second)
+	if reqDeadline == nil {
+		return &maxDeadline
+	}
 	if reqDeadline.After(maxDeadline) {
 		return &maxDeadline
 	}
 	return reqDeadline
+}
+
+func validateInvokeRequest(req invokeRequest) *api.Problem {
+	if req.DeadlineAt != nil && !req.DeadlineAt.After(time.Now()) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation deadline", "deadline_at must be in the future")
+	}
+	if req.RetentionSeconds != nil && *req.RetentionSeconds < 0 {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation retention", "retention_seconds must be non-negative")
+	}
+	return validateInvocationRetryPolicy(req.RetryPolicy)
+}
+
+func validateInvocationRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
+	if policy == nil {
+		return nil
+	}
+	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation retry policy", "max_attempts must be between 0 and 25")
+	}
+	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
+	}
+	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
+	}
+	if policy.BaseSeconds > 0 && policy.MaxSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
+	}
+	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
 }
 
 // marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into
@@ -796,6 +856,10 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
+	if !app.AcceptsRequestInvocations() {
+		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
+		return
+	}
 	if orig.State != state.InvocationFailed && orig.State != state.InvocationDeadLetter {
 		api.WriteProblem(w, api.ErrInvocationNotReplayable(string(orig.State)))
 		return
@@ -807,14 +871,16 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 	// LastError / AckURL are nil on a fresh INSERT; the drain
 	// populates them as the row flows through dispatch.
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
-		AppID:     orig.AppID,
-		AccountID: acct.ID,
-		Source:    state.InvocationReplay,
-		Method:    orig.Method,
-		Path:      orig.Path,
-		Payload:   orig.Payload,
-		Headers:   orig.Headers,
-		DueAt:     time.Now().UTC(),
+		AppID:                orig.AppID,
+		AccountID:            acct.ID,
+		Source:               state.InvocationReplay,
+		Method:               orig.Method,
+		Path:                 orig.Path,
+		Payload:              orig.Payload,
+		Headers:              orig.Headers,
+		DueAt:                time.Now().UTC(),
+		DeadlineAt:           deadlineForRequest(nil, acct),
+		ResultRetentionUntil: retentionForRequest(nil, acct),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue replay invocation"))

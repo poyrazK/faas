@@ -3786,7 +3786,8 @@ type Store interface {
 	// ClaimInvocationWithCap is the cap-aware variant of
 	// ClaimInvocation (ADR-134 PR-B). Atomically transitions
 	// pending → dispatching + lease stamp + per-account counter
-	// increment so the cap cannot be raced. Returns
+	// increment, and records reservation ownership on the row, so the
+	// cap cannot be raced and every exit can release exactly once. Returns
 	// ErrQuotaExceeded when the account's current_inflight is at
 	// max_inflight. The MemStore shim implements the same
 	// semantics in-process.
@@ -3813,8 +3814,8 @@ type Store interface {
 	// (pending|dispatching) whose deadline_at is in the past.
 	ListDeadlineBreachedInvocations(ctx context.Context, now time.Time, limit int) ([]string, error)
 	// ForceDeadlineBreachedInvocations transitions the listed IDs
-	// to dead_letter with outcome='timeout'. Decrements the
-	// per-account counter for each transitioned row.
+	// to dead_letter with outcome='timeout'. Releases the per-account
+	// counter only for transitioned rows that own a reservation.
 	ForceDeadlineBreachedInvocations(ctx context.Context, ids []string) (int, error)
 	// RetryQueueDeadLetter (ADR-134 PR-C) resets an invocations
 	// row in state='dead_letter' back to 'pending' with
@@ -3852,13 +3853,12 @@ type Store interface {
 	// budget (issue #394) is the per-plan retry ceiling (see
 	// pkg/api.Limits.MaxQueueAttempts). Pass 0 to disable the budget —
 	// the row will retry indefinitely regardless of `attempts`. Pass
-	// any positive integer to enable the budget; once `attempts + 1`
-	// would meet or exceed `budget`, the transient path transitions
+	// any positive integer to enable the budget; once `attempts`
+	// meets or exceeds `budget`, the transient path transitions
 	// the row to state='dead_letter' instead of state='pending'.
-	// The legacy delayed-task-cap and account-suspended callers pass
-	// budget=0 because their retry semantics are not plan-scoped; the
-	// queue-source drain caller (drain.go:279/306) passes
-	// plan.LimitsForPlan(acct.Plan).MaxQueueAttempts.
+	// Pre-claim deferrals pass budget=0; the invocation drain uses a
+	// per-row override when supplied and otherwise the owning plan's
+	// MaxQueueAttempts across all durable invocation sources.
 	//
 	// opts (issue #791) refines the durable Outcome stamped on the
 	// permanent branch. The default is OutcomeFailed; the drain's two

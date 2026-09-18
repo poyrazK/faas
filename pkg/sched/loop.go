@@ -3517,7 +3517,8 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// → complete. Doing the claim here also keeps the row out of
 	// the drain's next tick (which filters state='pending').
 	if enq.ID != "" {
-		if _, err := l.engine.Store().ClaimInvocation(ctx, enq.ID, "", 60); err != nil {
+		maxInflight := api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
+		if _, err := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight); err != nil {
 			// The general drain won pending -> dispatching. It now owns
 			// delivery, so invoking from this path would duplicate the fire.
 			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", err)

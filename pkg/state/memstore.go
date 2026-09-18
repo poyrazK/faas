@@ -10722,6 +10722,7 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	now := time.Now()
 	exp := now.Add(time.Duration(leaseSeconds) * time.Second)
 	inv.State = InvocationDispatching
+	inv.QuotaReserved = false
 	inv.LeaseExpiresAt = &exp
 	inv.InstanceID = instanceID
 	inv.ReceivedAt = &now
@@ -10750,15 +10751,17 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	}
 	for _, id := range ids {
 		inv := m.invocations[id]
+		quotaReserved := inv.QuotaReserved
 		inv.State = InvocationPending
+		inv.QuotaReserved = false
 		inv.DueAt = now
 		inv.LeaseExpiresAt = nil
 		inv.InstanceID = ""
 		inv.LastError = "dispatch lease expired; requeued"
 		m.invocations[id] = inv
-		// ClaimInvocationWithCap reserves one slot per dispatch. Requeue
-		// releases the same slot for every transitioned row.
-		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+		if quotaReserved {
+			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+		}
 	}
 	return len(ids), nil
 }
@@ -10774,7 +10777,9 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
 	}
+	quotaReserved := inv.QuotaReserved
 	inv.State = InvocationCompleted
+	inv.QuotaReserved = false
 	inv.LastError = ""
 	if len(result) > 0 {
 		inv.Result = result
@@ -10788,7 +10793,9 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 	// with PgStore. Without the decrement, ClaimInvocationWithCap
 	// monotonically grows the counter and the 11th claim returns
 	// ErrQuotaExceeded under MemStore but not under PgStore.
-	m.decrementAccountAsyncInflightLocked(inv.AccountID)
+	if quotaReserved {
+		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+	}
 	return nil
 }
 
@@ -10810,7 +10817,7 @@ func (m *MemStore) decrementAccountAsyncInflightLocked(accountID string) {
 
 // FailInvocation is the durable store half of the drain's error
 // pathway. retryAfter > 0 leaves the row at state=pending with
-// due_at = now + retryAfter and bumps attempts (transient blip);
+// due_at = now + retryAfter while Claim owns the attempts increment;
 // retryAfter == 0 terminates the row at state=failed (e.g. invalid
 // envelope). State must be pending or dispatching to avoid racing
 // the happy-path Complete call (terminal states return ErrNotFound
@@ -10827,6 +10834,8 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 	if inv.State != InvocationPending && inv.State != InvocationDispatching {
 		return ErrNotFound
 	}
+	quotaReserved := inv.QuotaReserved
+	inv.QuotaReserved = false
 	failOpts := ApplyFailOptions(opts)
 	inv.LastError = lastError
 	if retryAfter > 0 {
@@ -10834,9 +10843,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		// exhausted) or transition to dead_letter (issue #394 — budget
 		// exhausted). Three branches:
 		//
-		//   budget <= 0          → legacy infinite retry; invariant of the
-		//                          pre-#394 drain and the path every
-		//                          non-queue caller still takes.
+		//   budget <= 0          → legacy infinite retry.
 		//   budget > 0 and
 		//   attempts <  budget  → transient re-queue; attempts is NOT
 		//                          bumped here — ClaimInvocation (line
@@ -10881,11 +10888,9 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		inv.Outcome = &outcome
 	}
 	m.invocations[id] = inv
-	// PR-B fixup (code-review #1185 finding #6): MemStore parity
-	// with PgStore. Decrement only on terminal transitions
-	// (dead_letter, failed) — the transient requeue branch keeps
-	// the counter incremented because the row is still in flight.
-	if inv.State == InvocationDeadLetter || inv.State == InvocationFailed {
+	// A slot belongs to the dispatching lease. Release it on every
+	// transition away from a cap-aware dispatch, including retries.
+	if quotaReserved {
 		m.decrementAccountAsyncInflightLocked(inv.AccountID)
 	}
 	return nil
@@ -10923,16 +10928,20 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if inv.State == InvocationCompleted || inv.State == InvocationFailed || inv.State == InvocationCancelled {
+	if inv.State == InvocationCompleted || inv.State == InvocationFailed || inv.State == InvocationCancelled || inv.State == InvocationDeadLetter {
 		return nil
 	}
+	quotaReserved := inv.QuotaReserved
 	inv.State = InvocationCancelled
+	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
 	m.invocations[id] = inv
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity.
 	// Cancel is always terminal; the row leaves the in-flight set.
-	m.decrementAccountAsyncInflightLocked(inv.AccountID)
+	if quotaReserved {
+		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+	}
 	return nil
 }
 
@@ -10947,10 +10956,10 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 		return inv.State, nil
 	}
 	inv.State = InvocationCancelled
+	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
 	m.invocations[id] = inv
-	m.decrementAccountAsyncInflightLocked(inv.AccountID)
 	return inv.State, nil
 }
 
@@ -21764,6 +21773,7 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	now := time.Now()
 	leaseExpires := now.Add(time.Duration(leaseSeconds) * time.Second)
 	inv.State = InvocationDispatching
+	inv.QuotaReserved = true
 	inv.LeaseExpiresAt = &leaseExpires
 	if instanceID != "" {
 		inv.InstanceID = instanceID
@@ -21859,8 +21869,8 @@ func (m *MemStore) ListDeadlineBreachedInvocations(_ context.Context, now time.T
 }
 
 // ForceDeadlineBreachedInvocations transitions the listed IDs to
-// dead_letter with outcome='timeout'. Decrements the per-account
-// counter for each transitioned row.
+// dead_letter with outcome='timeout'. Releases the per-account
+// counter only for transitioned rows that own a reservation.
 func (m *MemStore) ForceDeadlineBreachedInvocations(_ context.Context, ids []string) (int, error) {
 	forced, err := m.forceDeadlineBreachedInvocations(ids)
 	return len(forced), err
@@ -21886,18 +21896,17 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		if inv.State != InvocationPending && inv.State != InvocationDispatching {
 			continue
 		}
+		quotaReserved := inv.QuotaReserved
 		inv.State = InvocationDeadLetter
+		inv.QuotaReserved = false
 		outcome := OutcomeTimeout
 		inv.Outcome = &outcome
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
 		m.invocations[id] = inv
-		if row, ok := m.accountAsyncQuota[inv.AccountID]; ok {
-			if row.CurrentInflight > 0 {
-				row.CurrentInflight--
-				m.accountAsyncQuota[inv.AccountID] = row
-			}
+		if quotaReserved {
+			m.decrementAccountAsyncInflightLocked(inv.AccountID)
 		}
 		forced = append(forced, inv)
 	}
@@ -21922,6 +21931,7 @@ func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocation
 		return Invocation{}, ErrNotFound
 	}
 	inv.State = InvocationPending
+	inv.QuotaReserved = false
 	inv.Attempts = 0
 	inv.LastError = ""
 	inv.Outcome = nil

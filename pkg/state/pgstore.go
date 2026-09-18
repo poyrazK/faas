@@ -13459,7 +13459,7 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 const invocationSelectCols = `id, app_id, account_id, source, queue_name, state, method, path,
        payload, headers, due_at, scheduled_at, cron_id, ack_url,
        result, lease_expires_at, received_at, completed_at, attempts,
-       last_error, created_at, instance_id, outcome,
+       quota_reserved, last_error, created_at, instance_id, outcome,
        deadline_at, retry_policy, result_retention_until,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id`
@@ -13621,6 +13621,7 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 	row := s.pool.QueryRow(ctx, `
 		update invocations
 		   set state = 'dispatching',
+		       quota_reserved = false,
 		       lease_expires_at = now() + $3::interval,
 		       instance_id = coalesce(nullif($2, ''), instance_id),
 		       received_at = now(),
@@ -13660,7 +13661,7 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 	var requeued int
 	err = tx.QueryRow(ctx, `
 		with expired as (
-			select id
+			select id, quota_reserved
 			  from invocations
 			 where state = 'dispatching'
 			   and lease_expires_at is not null
@@ -13671,16 +13672,18 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 		), requeued as (
 			update invocations as i
 			   set state = 'pending',
+			       quota_reserved = false,
 			       due_at = $1,
 			       lease_expires_at = null,
 			       instance_id = null,
 			       last_error = 'dispatch lease expired; requeued'
 			  from expired
 			 where i.id = expired.id
-			 returning i.account_id
+			 returning i.account_id, expired.quota_reserved
 		), per_account as (
 			select account_id, count(*) as reclaimed
 			  from requeued
+			 where quota_reserved
 			 group by account_id
 		), decremented as (
 			update account_async_quota as q
@@ -13712,23 +13715,34 @@ func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
+	var quotaReserved bool
 	if err := tx.QueryRow(ctx, `
-		update invocations
+		with target as materialized (
+			select id, account_id, quota_reserved
+			  from invocations
+			 where id = $1 and state = 'dispatching'
+			 for update
+		)
+		update invocations as invocation
 		   set state = 'completed',
 		       outcome = 'success',
 		       completed_at = now(),
 		       received_at = coalesce(received_at, now()),
 		       last_error = '',
-		       result = coalesce($2, result)
-		 where id = $1 and state = 'dispatching'
-		 returning account_id`, id, nullableJSON(result)).Scan(&accountID); err != nil {
+		       result = coalesce($2, result),
+		       quota_reserved = false
+		  from target
+		 where invocation.id = target.id
+		 returning target.account_id, target.quota_reserved`, id, nullableJSON(result)).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
-	if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
-		return err
+	if quotaReserved {
+		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: invocations complete commit: %w", err)
@@ -13761,7 +13775,7 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	// the ceiling. Three call shapes:
 	//
 	//   retryAfter > 0, budget <= 0          → legacy infinite retry
-	//                                          (state='pending', bump
+	//                                          (state='pending', keep
 	//                                          attempts, set due_at).
 	//   retryAfter > 0, budget > 0           → transient decision via
 	//                                          the CASE in the SET
@@ -13776,11 +13790,9 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	//                                          errors; the budget gate
 	//                                          does not apply.
 	//
-	// PR-B: per-account counter decrement only on the terminal
-	// branches (state IN ('dead_letter','failed')). The transient
-	// requeue branch returns the row to (pending), which keeps the
-	// counter incremented — the row is still in flight from the
-	// quota's POV.
+	// A quota slot belongs to the dispatching lease, not to a pending row.
+	// Every transition away from a cap-aware dispatch therefore clears the
+	// row's reservation and decrements once, including transient retries.
 	var query string
 	var args []any
 	var terminalSelect bool
@@ -13799,43 +13811,66 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 		// encode-plan lookup failure on the GH Actions Postgres 15
 		// image.
 		retryText := strconv.FormatInt(retryAfter.Microseconds(), 10) + " microseconds"
-		query = `update invocations
+		query = `with target as materialized (
+					select id, account_id, quota_reserved
+					  from invocations
+					 where id = $1 and state in ('dispatching','pending')
+					 for update
+				)
+				update invocations as invocation
 				    set state = case when attempts >= $4 then 'dead_letter' else 'pending' end,
 				        outcome = case when attempts >= $4 then 'dead_letter' else null end,
 				        due_at = case when attempts >= $4 then due_at else now() + $2::interval end,
 				        completed_at = case when attempts >= $4 then now() else completed_at end,
 				        lease_expires_at = null,
+				        quota_reserved = false,
 				        last_error = $3
 				    -- Do NOT bump attempts on transient re-queue;
 				    -- ClaimInvocation (line 2327) already incremented
 				    -- it for this dispatch attempt. Double-bumping would
 				    -- make MaxQueueAttempts=10 dead-letter after 5
 				    -- iterations instead of 10.
-				  where id = $1 and state in ('dispatching','pending')
-				  returning account_id, state`
+				  from target
+				 where invocation.id = target.id
+				 returning target.account_id, invocation.state, target.quota_reserved`
 		args = []any{id, retryText, lastError, budget}
 		terminalSelect = true
 	case retryAfter > 0:
 		retryText := strconv.FormatInt(retryAfter.Microseconds(), 10) + " microseconds"
-		query = `update invocations
+		query = `with target as materialized (
+					select id, account_id, quota_reserved
+					  from invocations
+					 where id = $1 and state in ('dispatching','pending')
+					 for update
+				)
+				update invocations as invocation
 				    set state = 'pending',
 				        outcome = null,
 				        due_at = now() + $2::interval,
 				        lease_expires_at = null,
-				        last_error = $3,
-				        attempts = attempts + 1
-				  where id = $1 and state in ('dispatching','pending')
-				  returning account_id, state`
+				        quota_reserved = false,
+				        last_error = $3
+				  from target
+				 where invocation.id = target.id
+				 returning target.account_id, invocation.state, target.quota_reserved`
 		args = []any{id, retryText, lastError}
 		terminalSelect = true
 	default:
-		query = `update invocations
+		query = `with target as materialized (
+					select id, account_id, quota_reserved
+					  from invocations
+					 where id = $1 and state in ('dispatching','pending')
+					 for update
+				)
+				update invocations as invocation
 				    set state = 'failed',
 				        outcome = $3,
 				        completed_at = now(),
-				        last_error = $2
-				  where id = $1 and state in ('dispatching','pending')
-				  returning account_id, state`
+				        last_error = $2,
+				        quota_reserved = false
+				  from target
+				 where invocation.id = target.id
+				 returning target.account_id, invocation.state, target.quota_reserved`
 		args = []any{id, lastError, string(failOpts.Outcome)}
 		terminalSelect = true
 	}
@@ -13857,14 +13892,16 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
 	var newState string
-	if err := tx.QueryRow(ctx, query, args...).Scan(&accountID, &newState); err != nil {
+	var quotaReserved bool
+	if err := tx.QueryRow(ctx, query, args...).Scan(&accountID, &newState, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
-	// Decrement only on terminal transitions.
-	if newState == "dead_letter" || newState == "failed" {
+	// Release exactly the slot acquired by this row. Pending pre-claim
+	// deferrals carry quota_reserved=false and must not touch the counter.
+	if quotaReserved {
 		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
 			return err
 		}
@@ -13899,12 +13936,21 @@ func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
+	var quotaReserved bool
 	err = tx.QueryRow(ctx, `
-		update invocations
+		with target as materialized (
+			select id, account_id, quota_reserved
+			  from invocations
+			 where id = $1 and state in ('pending','dispatching')
+			 for update
+		)
+		update invocations as invocation
 		   set state = 'cancelled',
+		       quota_reserved = false,
 		       completed_at = coalesce(completed_at, now())
-		 where id = $1 and state in ('pending','dispatching')
-		 returning account_id`, id).Scan(&accountID)
+		  from target
+		 where invocation.id = target.id
+		 returning target.account_id, target.quota_reserved`, id).Scan(&accountID, &quotaReserved)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Distinguish "already terminal" from "not found" so the
 		// apid handler can choose the right response. Read
@@ -13921,8 +13967,10 @@ func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
-		return err
+	if quotaReserved {
+		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: invocations cancel commit: %w", err)
@@ -13937,17 +13985,15 @@ func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (Invoc
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var accountID string
+	var cancelledState string
 	err = tx.QueryRow(ctx, `
 		update invocations
 		   set state = 'cancelled',
+		       quota_reserved = false,
 		       completed_at = coalesce(completed_at, now())
 		 where id = $1 and state = 'pending'
-		 returning account_id`, id).Scan(&accountID)
+		 returning state`, id).Scan(&cancelledState)
 	if err == nil {
-		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
-			return "", err
-		}
 		if err := tx.Commit(ctx); err != nil {
 			return "", fmt.Errorf("state: pending invocation cancel commit: %w", err)
 		}
@@ -14391,7 +14437,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
 		&result, &leaseExpires, &receivedAt, &completedAt, &inv.Attempts,
-		&lastErr, &inv.CreatedAt, &instanceID, &outcome,
+		&inv.QuotaReserved, &lastErr, &inv.CreatedAt, &instanceID, &outcome,
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 	); err != nil {
@@ -28756,9 +28802,9 @@ func (s *PgStore) GetAccountAsyncQuota(ctx context.Context, accountID string) (i
 // step. Lazy-insert is safe: ON CONFLICT preserves current_inflight
 // for accounts that already have a counter row.
 //
-// Decrement is the caller's responsibility — see
-// DecrementAccountAsyncInflight, which CompleteInvocation /
-// FailInvocation / CancelInvocation call.
+// Reservation release is performed by the state-transition methods using
+// the row's quota_reserved marker, so retries and terminal exits decrement
+// exactly the slot acquired by this claim.
 func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID string, leaseSeconds, maxInflight int) (Invocation, error) {
 	leaseText := strconv.Itoa(leaseSeconds) + " seconds"
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -28806,6 +28852,7 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	row := tx.QueryRow(ctx, `
 		update invocations
 		   set state = 'dispatching',
+		       quota_reserved = true,
 		       lease_expires_at = now() + $3::interval,
 		       instance_id = coalesce(nullif($2, ''), instance_id),
 		       received_at = now(),
@@ -28852,11 +28899,10 @@ func (s *PgStore) upsertAccountAsyncQuotaTx(ctx context.Context, tx pgx.Tx, acco
 	return gotMax, gotCur, nil
 }
 
-// DecrementAccountAsyncInflight drops current_inflight by 1. Idempotent:
+// DecrementAccountAsyncInflight drops current_inflight by 1. Floor-safe:
 // running below zero is clamped at zero via greatest(). Used by
-// CompleteInvocation / FailInvocation / CancelInvocation on their
-// terminal-state branches and by RequeueExpiredInvocations on the
-// dispatching→pending transition. Returns nil on missing-cap-row — a
+// reservation-aware lifecycle transitions and by explicit repair paths.
+// Returns nil on missing-cap-row — a
 // tolerated condition (the increment never happened on a row that
 // bypassed ClaimInvocationWithCap).
 func (s *PgStore) DecrementAccountAsyncInflight(ctx context.Context, accountID string) error {
@@ -29059,17 +29105,47 @@ func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock and remember reservation ownership before changing state. Pending
+	// rows never acquired a slot, while dispatching rows claimed through the
+	// cap-aware path did; only the latter may decrement the counter.
+	reservedByID := make(map[string]bool, len(ids))
+	accountByID := make(map[string]string, len(ids))
+	reservationRows, err := tx.Query(ctx, `
+		select id, account_id, quota_reserved
+		  from invocations
+		 where id = any($1::uuid[])
+		   and state in ('pending', 'dispatching')
+		 for update`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations deadline lock: %w", err)
+	}
+	for reservationRows.Next() {
+		var id, accountID string
+		var reserved bool
+		if err := reservationRows.Scan(&id, &accountID, &reserved); err != nil {
+			reservationRows.Close()
+			return nil, fmt.Errorf("state: invocations deadline reservation scan: %w", err)
+		}
+		reservedByID[id] = reserved
+		accountByID[id] = accountID
+	}
+	if err := reservationRows.Err(); err != nil {
+		reservationRows.Close()
+		return nil, fmt.Errorf("state: invocations deadline reservation rows: %w", err)
+	}
+	reservationRows.Close()
+
 	// Return the transitioned invocation rows from the state-changing UPDATE
-	// itself. A deadline batch can contain a row that completed after the list
-	// query; only rows that actually transition may release a slot or emit a
-	// terminal destination.
+	// itself. The row locks above make the selected ownership snapshot and this
+	// transition one atomic decision.
 	rows, err := tx.Query(ctx,
 		`update invocations
 		   set state = 'dead_letter',
 		       outcome = 'timeout',
 		       last_error = 'deadline_at breached',
 		       completed_at = now(),
-		       received_at = coalesce(received_at, now())
+		       received_at = coalesce(received_at, now()),
+		       quota_reserved = false
 		 where id = any($1::uuid[])
 		   and state in ('pending', 'dispatching')
 		 returning `+invocationSelectCols, ids)
@@ -29083,12 +29159,10 @@ func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	}
 
 	for _, inv := range forced {
-		if _, err := tx.Exec(ctx, `
-			update account_async_quota
-			   set current_inflight = greatest(current_inflight - 1, 0),
-			       updated_at = now()
-			 where account_id = $1`, inv.AccountID); err != nil {
-			return nil, fmt.Errorf("state: invocations deadline decrement: %w", err)
+		if reservedByID[inv.ID] {
+			if err := decrementAccountAsyncInflightTx(ctx, tx, accountByID[inv.ID]); err != nil {
+				return nil, fmt.Errorf("state: invocations deadline decrement: %w", err)
+			}
 		}
 	}
 
