@@ -39,7 +39,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		return err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("tcpd server requires a non-nil context")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
