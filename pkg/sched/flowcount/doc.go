@@ -10,9 +10,11 @@
 // staleness (otherwise a parked WebSocket would be reaped mid-frame).
 // Reader also implements the optional Snapshotter interface. Snapshot returns
 // a bounded per-instance aggregate of original-direction protocol, remote
-// endpoint, port, state, and direction. This is a safe first telemetry slice;
-// packet bytes, latency, and lifecycle events remain the responsibility of a
-// future eBPF-backed implementation.
+// endpoint, port, state, and direction. EventLedger is the companion bounded
+// ingestion surface for a future eBPF-backed reader: it accepts lifecycle,
+// byte, packet, and timestamp deltas without requiring vmmd to load a kernel
+// program itself. Packet bytes, latency derivation, and lifecycle collection
+// remain backend responsibilities.
 //
 // Failure semantics: fail open. Any exec / parse / context error returns
 // (0, err) to the reaper, which logs and falls back to the LastRequest-only
