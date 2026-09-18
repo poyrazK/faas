@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // The development loop already has all of the server-side stage signals. This
@@ -220,6 +222,22 @@ func (t *devPhaseTracker) observeStage(name, status string, durationMS int64, re
 			reason = devPhaseFailed
 		}
 		t.completeWithReason(phase, time.Duration(durationMS)*time.Millisecond, reason)
+	}
+}
+
+// observeStageState reconciles the final persisted stage history into the
+// client-side tracker. SSE is best-effort and a terminal status frame can race
+// ahead of the final completed stage frames, especially on JSON/quiet deploys.
+func (t *devPhaseTracker) observeStageState(raw json.RawMessage) {
+	if t == nil || len(raw) == 0 {
+		return
+	}
+	var stages state.StageState
+	if err := json.Unmarshal(raw, &stages); err != nil {
+		return
+	}
+	for _, stage := range stages.History {
+		t.observeStage(string(stage.Name), stage.Status, stage.DurationMs, stage.Reason)
 	}
 }
 

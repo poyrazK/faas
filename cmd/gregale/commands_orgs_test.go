@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -184,6 +185,36 @@ func TestOrgs_Rm_HappyPath(t *testing.T) {
 	}
 	if sawMethod != "DELETE" || sawPath != "/v1/orgs/acme" {
 		t.Errorf("route = %s %s, want DELETE /v1/orgs/acme", sawMethod, sawPath)
+	}
+}
+
+func TestOrgs_Rm_JSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test")
+	resetJSONOut(t)
+	jsonOutput = true
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/orgs/acme" {
+			t.Fatalf("route = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdOrgs([]string{"rm", "-q", "acme"}); code != 0 {
+		t.Fatalf("orgs rm -q exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if got["slug"] != "acme" || got["deleted"] != true {
+		t.Fatalf("stdout = %#v", got)
 	}
 }
 

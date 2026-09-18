@@ -988,6 +988,28 @@ func TestCmdAppScale_ForwardsExplicitFlags(t *testing.T) {
 	}
 }
 
+func TestCmdAppScale_JSONReturnsUpdatedApp(t *testing.T) {
+	sink := &multiSink{onScale: func(string, []byte) (int, any) {
+		return http.StatusOK, api.AppResponse{Slug: "hello", RAMMB: 256}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+	stdout, restore := captureStdout(t)
+	defer restore()
+
+	if code := cmdAppScale("hello", []string{"--ram", "256"}); code != 0 {
+		t.Fatalf("cmdAppScale exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), `"slug": "hello"`) || strings.Contains(stdout.String(), "Updated") {
+		t.Fatalf("JSON output = %q", stdout.String())
+	}
+}
+
 func TestCmdAppScale_ConcurrencyPolicyPreservesExistingScalingFields(t *testing.T) {
 	var got api.UpdateAppRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1357,6 +1379,28 @@ func TestCmdAppRename_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "hello → my-hello") {
 		t.Errorf("stdout should show from→to: %q", stdout.String())
+	}
+}
+
+func TestCmdAppRename_JSONReturnsUpdatedApp(t *testing.T) {
+	sink := &multiSink{onRename: func(string) (int, any, []byte) {
+		return http.StatusOK, api.AppResponse{Slug: "my-hello"}, nil
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+	stdout, restore := captureStdout(t)
+	defer restore()
+
+	if code := cmdAppRename("hello", "my-hello"); code != 0 {
+		t.Fatalf("cmdAppRename exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), `"slug": "my-hello"`) || strings.Contains(stdout.String(), "Renamed") {
+		t.Fatalf("JSON output = %q", stdout.String())
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,23 @@ func TestDevPhaseTrackerPreservesFailureReason(t *testing.T) {
 	tracker.render(&out)
 	if got, want := out.String(), "build=failed (missing lockfile)"; !strings.Contains(got, want) {
 		t.Fatalf("rendered failure = %q, want substring %q", got, want)
+	}
+}
+
+func TestDevPhaseTrackerReconcilesFinalStageState(t *testing.T) {
+	tracker := newDevPhaseTracker()
+	tracker.observeStage("image_build", stageStatusInProgress, 0, "")
+	tracker.observeStageState(json.RawMessage(`{
+		"current":"",
+		"history":[{"name":"image_build","status":"completed","duration_ms":42000}]
+	}`))
+
+	receipt := tracker.receipt("live")
+	if len(receipt.Phases) != 1 {
+		t.Fatalf("phases = %#v, want one build phase", receipt.Phases)
+	}
+	if got := receipt.Phases[0]; got.Phase != devPhaseBuild || got.Status != stageStatusCompleted || got.DurationMS != 42000 {
+		t.Fatalf("build phase = %#v, want completed 42000ms", got)
 	}
 }
 

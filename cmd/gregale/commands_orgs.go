@@ -301,6 +301,9 @@ func cmdOrgsRm(args []string) int {
 	if err := client.DeleteOrg(context.Background(), slug); err != nil {
 		return printErr("Could not delete org", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"slug": slug, "deleted": true}))
+	}
 	PrintOK(osStdout, "Org %s scheduled for deletion", slug)
 	return 0
 }
@@ -818,6 +821,9 @@ func cmdOrgsKeysRm(args []string) int {
 	}
 	if err := client.RevokeOrgAPIKey(context.Background(), *slug, id); err != nil {
 		return printErr("Revoke failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"id": id, "revoked": true}))
 	}
 	PrintOK(osStdout, "Key %s revoked.", id)
 	return 0

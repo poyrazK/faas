@@ -203,7 +203,7 @@ func cmdCorsAllow(args []string) int {
 
 	opts := api.CreateCORSEdgeRuleOpts{
 		MatchHost:        matchHost,
-		MatchPath:        "*",
+		MatchPath:        "/*",
 		MatchMethods:     methods,
 		AllowOrigins:     origins,
 		AllowMethods:     methods,

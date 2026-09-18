@@ -860,6 +860,9 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Scale failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(updated))
+	}
 	PrintOK(osStdout, "Updated")
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure (mid-rotation token, transient
@@ -883,6 +886,9 @@ func cmdAppRename(slug, newSlug string) int {
 	}
 	if newSlug == slug {
 		// Idempotent no-op so the customer can re-run safely.
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"slug": slug, "renamed": false}))
+		}
 		PrintOK(osStdout, "%s already has that slug", slug)
 		return 0
 	}
@@ -893,6 +899,9 @@ func cmdAppRename(slug, newSlug string) int {
 	updated, err := client.RenameApp(context.Background(), slug, newSlug)
 	if err != nil {
 		return printErr("Rename failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(updated))
 	}
 	// The mid-string `→` here is a semantic from-to arrow (rename
 	// from old slug to new slug), not the §3.2 "in-progress" symbol.
@@ -1650,9 +1659,9 @@ func cmdTail(args []string) int {
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
 
-	if *includeStateless {
+	if !jsonOutput && *includeStateless {
 		_, _ = fmt.Fprintln(osStdout, "Tailing invocations + stateless advisories… Ctrl-C to exit.")
-	} else {
+	} else if !jsonOutput {
 		// Move 1 PR-A: stamp a discoverability hint so a customer
 		// who hits the tail and gets only invocation lines knows
 		// stateless advisories are a separate stream with their
@@ -1679,7 +1688,13 @@ func cmdTail(args []string) int {
 				if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
 					// Unparseable frame — print raw so the customer
 					// can see it; the next frame is independent.
-					_, _ = fmt.Fprintln(osStdout, e.Data)
+					if jsonOutput {
+						if err := json.NewEncoder(osStdout).Encode(map[string]any{"event": e.Event, "data": e.Data}); err != nil {
+							return printErr("Could not write event", err)
+						}
+					} else {
+						_, _ = fmt.Fprintln(osStdout, e.Data)
+					}
 					continue
 				}
 				if *onlySlug != "" && p.AppSlug != *onlySlug && p.AppID != *onlySlug {
@@ -1689,7 +1704,16 @@ func cmdTail(args []string) int {
 				if display == "" {
 					display = p.AppID
 				}
-				_, _ = fmt.Fprintf(osStdout, "%s %s %s\n", p.InvocationID, display, p.State)
+				if jsonOutput {
+					if err := json.NewEncoder(osStdout).Encode(map[string]any{
+						"event": e.Event, "invocation_id": p.InvocationID,
+						"app_id": p.AppID, "app_slug": p.AppSlug, "state": p.State,
+					}); err != nil {
+						return printErr("Could not write event", err)
+					}
+				} else {
+					_, _ = fmt.Fprintf(osStdout, "%s %s %s\n", p.InvocationID, display, p.State)
+				}
 			case "stateless_advisory":
 				if !*includeStateless {
 					continue
@@ -1701,10 +1725,25 @@ func cmdTail(args []string) int {
 					SamplePath string `json:"sample_path"`
 				}
 				if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
-					_, _ = fmt.Fprintln(osStdout, e.Data)
+					if jsonOutput {
+						if err := json.NewEncoder(osStdout).Encode(map[string]any{"event": e.Event, "data": e.Data}); err != nil {
+							return printErr("Could not write event", err)
+						}
+					} else {
+						_, _ = fmt.Fprintln(osStdout, e.Data)
+					}
 					continue
 				}
-				_, _ = fmt.Fprintf(osStdout, "stateless %s %d %s\n", p.AppID, p.N, p.SamplePath)
+				if jsonOutput {
+					if err := json.NewEncoder(osStdout).Encode(map[string]any{
+						"event": e.Event, "app_id": p.AppID, "instance": p.Instance,
+						"n": p.N, "sample_path": p.SamplePath,
+					}); err != nil {
+						return printErr("Could not write event", err)
+					}
+				} else {
+					_, _ = fmt.Fprintf(osStdout, "stateless %s %d %s\n", p.AppID, p.N, p.SamplePath)
+				}
 			}
 		case err := <-dec.Errors():
 			if err != nil && !errors.Is(err, io.EOF) {

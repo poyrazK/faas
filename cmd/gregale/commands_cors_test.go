@@ -41,9 +41,9 @@ func TestCorsAllowCredentialedDefaultsUseExplicitHeaders(t *testing.T) {
 	}
 }
 
-func TestCorsAllowUsesGatewayMatchAllSentinel(t *testing.T) {
+func TestCorsAllowUsesGatewayMatchAllPath(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"*"}`, http.StatusCreated)
+	f := authedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
 	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -53,8 +53,8 @@ func TestCorsAllowUsesGatewayMatchAllSentinel(t *testing.T) {
 	if err := json.Unmarshal(f.sawBody, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.MatchPath != "*" {
-		t.Fatalf("match_path = %q, want gateway match-all sentinel", body.MatchPath)
+	if body.MatchPath != "/*" {
+		t.Fatalf("match_path = %q, want gateway match-all path", body.MatchPath)
 	}
 }
 

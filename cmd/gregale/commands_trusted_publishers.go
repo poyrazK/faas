@@ -104,6 +104,11 @@ func cmdTrustedPublishersAdd(args []string) int {
 	}); err != nil {
 		return printErr("PUT trusted_signer", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{
+			"app": slug, "name": name, "added": true, "public_key_bytes": len(der),
+		}))
+	}
 	PrintOK(osStdout, "trusted signer %q added to app %q (%d bytes)\n", name, slug, len(der))
 	return 0
 }
@@ -135,10 +140,20 @@ func cmdTrustedPublishersRemove(args []string) int {
 		// Code == CodeTrustedSignerNotFound; we match on the code
 		// string so the check survives error-message drift.
 		if isTrustedSignerNotFound(err) {
+			if jsonOutput {
+				return jsonOut(writeJSON(map[string]any{
+					"app": slug, "name": name, "deleted": false, "already_absent": true,
+				}))
+			}
 			PrintOK(os.Stdout, "trusted signer %q already absent from app %q\n", name, slug)
 			return 0
 		}
 		return printErr("DELETE trusted_signer", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{
+			"app": slug, "name": name, "deleted": true,
+		}))
 	}
 	PrintOK(os.Stdout, "trusted signer %q removed from app %q\n", name, slug)
 	return 0

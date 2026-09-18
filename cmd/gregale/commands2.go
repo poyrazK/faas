@@ -740,6 +740,9 @@ func cmdApp(args []string) int {
 	if err != nil {
 		return printErr("Update failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(updated))
+	}
 	PrintOK(osStdout, "Updated")
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
@@ -1120,6 +1123,20 @@ func cliScalingPolicyPatchWithWake(ctx context.Context, client interface {
 			copyPolicy.Target = &target
 		}
 		policy = &copyPolicy
+	}
+	// App.MinInstances is the current canonical floor even when a legacy
+	// scaling_policy JSON object omitted the mirrored field.
+	policy.MinInstances = app.MinInstances
+	// Older/default rows can round-trip as a non-nil `{}` policy. The API
+	// validates cooldowns whenever a replacement policy is supplied, so
+	// preserving those zero values makes an unrelated queue-policy update
+	// fail with invalid_cooldown. Fill only the absent cooldowns; valid
+	// existing values remain untouched.
+	if policy.ScaleOutCooldownS == 0 {
+		policy.ScaleOutCooldownS = 5
+	}
+	if policy.ScaleInCooldownS == 0 {
+		policy.ScaleInCooldownS = 60
 	}
 	if setOverflow {
 		policy.ConcurrencyOverflow = overflow

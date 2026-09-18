@@ -118,6 +118,32 @@ func TestCmdJobsList_ForwardsPaginationAndKeepsEnvelope(t *testing.T) {
 	}
 }
 
+func TestCmdJobsRm_JSONHandlesNoContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/jobs/test-job" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+
+	stdout, restore := captureStdout(t)
+	code := cmdJobsRm([]string{"test-job"})
+	restore()
+	if code != 0 {
+		t.Fatalf("cmdJobsRm = %d, want 0", code)
+	}
+	if got := stdout.String(); !strings.Contains(got, `"name":"test-job"`) || !strings.Contains(got, `"deleted":true`) {
+		t.Fatalf("JSON output = %q", got)
+	}
+}
+
 // TestCmdJobsAdd_NoImage verifies that omitting --image fails
 // locally with the per-leaf usage line. The handler-side
 // validSlug + buildJob pipeline is exercised in

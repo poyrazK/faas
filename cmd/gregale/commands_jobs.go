@@ -345,14 +345,14 @@ func cmdJobsRm(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	dresp, err := client.DeleteJob(context.Background(), args[0])
+	_, err = client.DeleteJob(context.Background(), args[0])
 	if err != nil {
 		return printErr("Delete failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSONSingle(dresp))
+		return jsonOut(writeJSONSingle(map[string]any{"name": args[0], "deleted": true}))
 	}
-	PrintOK(osStdout, "Removed job %s (deleted_at=%s)", dresp.Name, dresp.DeletedAt)
+	PrintOK(osStdout, "Removed job %s", args[0])
 	return 0
 }
 
@@ -800,6 +800,6 @@ func writeJSONSingle(v any) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(os.Stdout, string(b))
+	_, err = fmt.Fprintln(osStdout, string(b))
 	return err
 }

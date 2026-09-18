@@ -431,6 +431,25 @@ func TestTierC_OrgsKeysRm_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierC_OrgsKeysRm_JSON(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	authedFakeAPI(t, "", http.StatusNoContent)
+	stdout, restore := captureStdout(t)
+	defer restore()
+
+	if code := cmdOrgsKeysRm([]string{"--org", "acme", "k-1"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if got["id"] != "k-1" || got["revoked"] != true {
+		t.Fatalf("stdout = %#v", got)
+	}
+}
+
 // --- orgs invitations list-all (cursor walker, Tier C arm) ---
 
 func TestTierC_OrgsInvitationsListAll_HappyPath(t *testing.T) {

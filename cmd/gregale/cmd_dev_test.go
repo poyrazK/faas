@@ -80,6 +80,13 @@ func TestDevSourceFingerprintTracksDeployableFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	withoutEnvFile, err := devSourceFingerprint(dir, "")
+	if err != nil {
+		t.Fatalf("empty optional env file: %v", err)
+	}
+	if withoutEnvFile != first {
+		t.Fatal("empty optional env file changed developer source fingerprint")
+	}
 
 	ignoredDir := filepath.Join(dir, "node_modules")
 	if err := os.Mkdir(ignoredDir, 0o700); err != nil {

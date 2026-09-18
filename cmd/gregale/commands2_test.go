@@ -248,6 +248,22 @@ func TestCLIScalingPolicyPatchLegacyAppUsesSafeCooldownDefaults(t *testing.T) {
 	}
 }
 
+func TestCLIScalingPolicyPatchEmptyPolicyUsesSafeCooldownDefaults(t *testing.T) {
+	fake := &fakeManifestScalingClient{app: api.AppResponse{
+		Slug: constSlug, MinInstances: 1, ScalingPolicy: &api.ScalingPolicy{},
+	}}
+	policy, err := cliScalingPolicyPatch(context.Background(), fake, constSlug, api.ConcurrencyOverflowDrop, 0, true, false)
+	if err != nil {
+		t.Fatalf("cliScalingPolicyPatch: %v", err)
+	}
+	if policy.MinInstances != 1 || policy.ScaleOutCooldownS != 5 || policy.ScaleInCooldownS != 60 {
+		t.Fatalf("policy = %+v, want empty-policy fields plus safe cooldown defaults", policy)
+	}
+	if policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop {
+		t.Fatalf("concurrency_overflow = %q, want drop", policy.ConcurrencyOverflow)
+	}
+}
+
 // TestCmdAppMinInstances_HobbyRejects is the wire-level CLI check for
 // the plan-tier gate (ux_spec §6.5). When apid returns 403
 // plan_min_instances_not_allowed, the CLI must surface a non-zero exit

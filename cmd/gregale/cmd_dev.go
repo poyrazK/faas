@@ -483,7 +483,14 @@ func cmdDev(args []string) int {
 			}
 			if jsonOutput {
 				execution.onTerminal = func(dep api.DeploymentResponse) int {
+					// The SSE terminal frame may arrive without the final completed
+					// stage frames. Refresh once so the machine-readable receipt does
+					// not claim a live deployment still has an in-progress build.
+					if final, getErr := client.GetDeployment(deployCtx, dep.ID); getErr == nil {
+						dep = final
+					}
 					devTelemetry.setDeploymentID(dep.ID)
+					devTelemetry.observeStageState(dep.StageState)
 					if dep.Status == deploymentStatusFailed {
 						return 1
 					}
@@ -785,6 +792,12 @@ func devSourceFingerprint(sourceDir string, extraFiles ...string) ([sha256.Size]
 		return sum, err
 	}
 	for _, extra := range extraFiles {
+		// No env file is the normal developer-loop path. Callers use an
+		// empty string to represent that absence, so do not turn it into an
+		// lstat of the current directory's empty pathname.
+		if extra == "" {
+			continue
+		}
 		digest, digestErr := devEnvFileFingerprint(extra)
 		if digestErr != nil {
 			return sum, digestErr
