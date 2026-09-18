@@ -51,6 +51,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |  | `` |  |
+| `FAAS_APP_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
@@ -78,6 +79,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_CANARY_PROGRESSION_TOKEN` | meterd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); Safe Deploy activation requires this and FAAS_SAFEDEPLOY_TOKEN together |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_CLI_AUTH_URL_BASE` | apid | `default` |  |  | `` |  |
+| `FAAS_COMMIT_SHA` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_COMPLETION_CACHE_PATH` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_COMPUTE_ADMISSION_CEILING_MB` | vmmd | `dropin` |  |  | `` | host-fact-derived RAM admission ceiling installed by node_join |
 | `FAAS_COMPUTE_GATEWAY_DISCOVERY` | gatewayd-public, shared | `unit` |  |  | `` |  |
@@ -89,6 +91,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DATA_PLACEMENT` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS` | schedd | `default` |  |  | `` |  |
+| `FAAS_DEPLOYMENT_CREATED_AT` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
+| `FAAS_DEPLOYMENT_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
+| `FAAS_DEPLOYMENT_TAG` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_DEPLOY_BASE_REF` | imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT` | shared | `default` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_GO124` | shared | `envfile` |  |  | `` |  |
@@ -168,6 +173,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
+| `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SOCKET` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SVC_KEY_PATH` | schedd | `default` |  |  | `` |  |
@@ -213,6 +219,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MIGRATE_LIVE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_TICK_LIMIT` | schedd | `default` |  |  | `` |  |
+| `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
@@ -302,7 +309,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RECOVERY_HMAC_KEY_FILE` | apid | `default` |  |  | `` |  |
-| `FAAS_REGION` | meterd | `default` |  |  | `` |  |
+| `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
 | `FAAS_REQUEST_TELEMETRY_ENABLED` | apid, gatewayd-internal | `default` |  |  | `` |  |
@@ -354,6 +361,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SYFT_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_TAIL_PIPE_PATH` | guest | `guest` |  |  | `` |  |
 | `FAAS_TAIL_WAIT_SEC` | guest | `guest` |  |  | `` |  |
+| `FAAS_TENANT_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_TENANT_SURFACES_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_TEST_BUILDER_BASE_PATH` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_TEST_BUILDER_BASE_REF` | shared | `dev-only` |  |  | `` | must never be set on a production host |
