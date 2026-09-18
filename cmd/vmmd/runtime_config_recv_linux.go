@@ -21,6 +21,16 @@ const runtimeConfigMaxFrame = 32 << 10
 
 const VsockRuntimeConfigHostPort uint32 = fcvm.VsockRuntimeConfigHostPort
 
+type runtimeConfigRequest struct {
+	Scope string `json:"scope"`
+}
+
+type runtimeConfigResponse struct {
+	Env      map[string]string `json:"env,omitempty"`
+	Revision string            `json:"revision,omitempty"`
+	Error    string            `json:"error,omitempty"`
+}
+
 type runtimeConfigStore interface {
 	ListAppEnv(context.Context, string, string) ([]state.AppEnv, error)
 }
