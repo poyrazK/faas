@@ -2,6 +2,8 @@
 
 This alert means a durable PostgreSQL worker cannot claim work or refresh its derived state. The affected operation label identifies the customer impact:
 
+## Symptoms
+
 - `managed_realtime_drain_claim`: connection-drain operations may remain `running` and matching sockets may stay open.
 - `job_materialization_claim`: pending job images missed by the notification fast path cannot recover, so those jobs cannot dispatch.
 - `usage_daily_rollup`: daily usage and daily-cost alerts are stale; raw `usage_minutes` and provider billing remain authoritative.
