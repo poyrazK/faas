@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// adr: 022
 // Exercise the real protocol handler after injected accept errors. A listener
 // that exits on the first transient error cannot answer the queued request.
 func TestResumeAcceptSurvivesTransientErrors(t *testing.T) {
@@ -52,8 +53,8 @@ func TestResumeAcceptSurvivesTransientErrors(t *testing.T) {
 			}
 			var header [8]byte
 			// An invalid message type exercises dispatch and the ACK wire path
-			// without changing host entropy or the test machine's wall clock.
-			binary.BigEndian.PutUint32(header[:4], VsockResumeMsgType+1)
+			// without colliding with the valid pre-snapshot message type.
+			binary.BigEndian.PutUint32(header[:4], VsockPreSnapshotMsgType+1)
 			if _, err := conn.Write(header[:]); err != nil {
 				t.Fatal(err)
 			}
