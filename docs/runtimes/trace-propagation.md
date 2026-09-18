@@ -209,6 +209,18 @@ producers. If a broker record has no valid W3C context, the platform still emits
 the trigger spans from the scheduler cycle. Event payloads, item identifiers,
 header values, and credentials are not span attributes.
 
+## Platform-to-guest transport
+
+The vmmd HTTP bridge emits a platform-owned client span for the host-side
+transport into the selected guest instance. The span records the bridge kind,
+wire protocol, guest application protocol, bounded guest port, instance ID,
+response status, duration, and transport errors. It does not record request
+paths, query strings, headers, bodies, or credentials.
+
+This span covers the platform-to-guest hop only. Direct guest-to-internet TCP
+flows bypass the HTTP bridge; observing those flows requires a separate
+kernel-level flow telemetry implementation and is not inferred from this span.
+
 ## What the platform does NOT do
 
 - **No library pre-installation.** The runner image ships with

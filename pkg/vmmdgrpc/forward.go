@@ -1493,7 +1493,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		}
 		transport := newStreamBridgeH2CTransport(sockPath)
 		defer transport.CloseIdleConnections()
-		client = newGuestHTTPClient(transport)
+		client = newGuestHTTPClient(instrumentGuestTransport(transport, reqInit, requestBridgeProtocol, dialPort))
 	}
 	if s.ops != nil {
 		s.ops.Observe("stream_bridge_acquire", time.Since(start), nil)
