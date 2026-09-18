@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One unified queue invocation or broker trigger dead-letter event.
+ * One unified queue invocation, broker trigger, or outbound webhook delivery dead-letter event.
  */
 export type DeadLetterEvent = {
   id: string;
-  source: 'invocation' | 'trigger_record';
+  source: 'invocation' | 'trigger_record' | 'webhook_delivery';
   source_id: string;
   /**
    * Invocation source or trigger kind.

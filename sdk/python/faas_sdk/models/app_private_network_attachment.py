@@ -30,6 +30,9 @@ class AppPrivateNetworkAttachment:
     region: str
     cidrs: list[str]
     status: AppPrivateNetworkAttachmentStatus
+    allowed_cidrs: list[str] | Unset = UNSET
+    """Optional private-network policy. Empty preserves allow-all behavior; populated ranges are admitted
+    symmetrically for private egress and ingress."""
     address: str | Unset = UNSET
     """Stable Gregale member address for this app when the fabric is enabled."""
     status_detail: str | Unset = UNSET
@@ -47,6 +50,10 @@ class AppPrivateNetworkAttachment:
         cidrs = self.cidrs
 
         status: str = self.status
+
+        allowed_cidrs: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_cidrs, Unset):
+            allowed_cidrs = self.allowed_cidrs
 
         address = self.address
 
@@ -71,6 +78,8 @@ class AppPrivateNetworkAttachment:
                 "status": status,
             }
         )
+        if allowed_cidrs is not UNSET:
+            field_dict["allowed_cidrs"] = allowed_cidrs
         if address is not UNSET:
             field_dict["address"] = address
         if status_detail is not UNSET:
@@ -94,6 +103,8 @@ class AppPrivateNetworkAttachment:
         cidrs = cast(list[str], d.pop("cidrs"))
 
         status = check_app_private_network_attachment_status(d.pop("status"))
+
+        allowed_cidrs = cast(list[str], d.pop("allowed_cidrs", UNSET))
 
         address = d.pop("address", UNSET)
 
@@ -119,6 +130,7 @@ class AppPrivateNetworkAttachment:
             region=region,
             cidrs=cidrs,
             status=status,
+            allowed_cidrs=allowed_cidrs,
             address=address,
             status_detail=status_detail,
             created_at=created_at,

@@ -1,60 +1,53 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.dead_letter_event import DeadLetterEvent
+from ...models.dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
     id: str,
     *,
-    idempotency_key: str | Unset = UNSET,
+    body: DashboardReplayFailedEventBody,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    if not isinstance(idempotency_key, Unset):
-        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/dlq/{id}/replay".format(
+        "url": "/dashboard/failed-events/{slug}/{id}/replay".format(
             slug=quote(str(slug), safe=""),
             id=quote(str(id), safe=""),
         ),
     }
 
+    _kwargs["data"] = body.to_dict()
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> DeadLetterEvent | Problem | None:
-    if response.status_code == 202:
-        response_202 = DeadLetterEvent.from_dict(response.json())
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
+    if response.status_code == 303:
+        response_303 = cast(Any, None)
+        return response_303
 
-        return response_202
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
 
-    if response.status_code == 401:
-        response_401 = Problem.from_dict(response.json())
-
-        return response_401
+        return response_400
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
         return response_404
-
-    if response.status_code == 429:
-        response_429 = Problem.from_dict(response.json())
-
-        return response_429
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -62,9 +55,7 @@ def _parse_response(
         return None
 
 
-def _build_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[DeadLetterEvent | Problem]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -78,31 +69,29 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    idempotency_key: str | Unset = UNSET,
-) -> Response[DeadLetterEvent | Problem]:
-    """Replay one dead-letter event atomically.
+    body: DashboardReplayFailedEventBody,
+) -> Response[Any | Problem]:
+    """Replay a failed event from the dashboard.
 
-     Resets the source invocation, trigger record, or outbound webhook
-    delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+     Resets the source event to pending and redirects to the Failed Events inbox.
 
     Args:
         slug (str):
         id (str):
-        idempotency_key (str | Unset):
+        body (DashboardReplayFailedEventBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DeadLetterEvent | Problem]
+        Response[Any | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
-        idempotency_key=idempotency_key,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -117,32 +106,30 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    idempotency_key: str | Unset = UNSET,
-) -> DeadLetterEvent | Problem | None:
-    """Replay one dead-letter event atomically.
+    body: DashboardReplayFailedEventBody,
+) -> Any | Problem | None:
+    """Replay a failed event from the dashboard.
 
-     Resets the source invocation, trigger record, or outbound webhook
-    delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+     Resets the source event to pending and redirects to the Failed Events inbox.
 
     Args:
         slug (str):
         id (str):
-        idempotency_key (str | Unset):
+        body (DashboardReplayFailedEventBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DeadLetterEvent | Problem
+        Any | Problem
     """
 
     return sync_detailed(
         slug=slug,
         id=id,
         client=client,
-        idempotency_key=idempotency_key,
+        body=body,
     ).parsed
 
 
@@ -151,31 +138,29 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    idempotency_key: str | Unset = UNSET,
-) -> Response[DeadLetterEvent | Problem]:
-    """Replay one dead-letter event atomically.
+    body: DashboardReplayFailedEventBody,
+) -> Response[Any | Problem]:
+    """Replay a failed event from the dashboard.
 
-     Resets the source invocation, trigger record, or outbound webhook
-    delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+     Resets the source event to pending and redirects to the Failed Events inbox.
 
     Args:
         slug (str):
         id (str):
-        idempotency_key (str | Unset):
+        body (DashboardReplayFailedEventBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DeadLetterEvent | Problem]
+        Response[Any | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
-        idempotency_key=idempotency_key,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -188,25 +173,23 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    idempotency_key: str | Unset = UNSET,
-) -> DeadLetterEvent | Problem | None:
-    """Replay one dead-letter event atomically.
+    body: DashboardReplayFailedEventBody,
+) -> Any | Problem | None:
+    """Replay a failed event from the dashboard.
 
-     Resets the source invocation, trigger record, or outbound webhook
-    delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+     Resets the source event to pending and redirects to the Failed Events inbox.
 
     Args:
         slug (str):
         id (str):
-        idempotency_key (str | Unset):
+        body (DashboardReplayFailedEventBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DeadLetterEvent | Problem
+        Any | Problem
     """
 
     return (
@@ -214,6 +197,6 @@ async def asyncio(
             slug=slug,
             id=id,
             client=client,
-            idempotency_key=idempotency_key,
+            body=body,
         )
     ).parsed

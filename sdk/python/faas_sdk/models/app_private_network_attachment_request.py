@@ -19,6 +19,8 @@ class AppPrivateNetworkAttachmentRequest:
     region: str | Unset = UNSET
     """Optional when attaching a Gregale-owned network; it must match the network region."""
     cidrs: list[str] | Unset = UNSET
+    allowed_cidrs: list[str] | Unset = UNSET
+    """Optional private-network policy ranges. Each range must be contained by the attached network CIDR."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -29,6 +31,10 @@ class AppPrivateNetworkAttachmentRequest:
         cidrs: list[str] | Unset = UNSET
         if not isinstance(self.cidrs, Unset):
             cidrs = self.cidrs
+
+        allowed_cidrs: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_cidrs, Unset):
+            allowed_cidrs = self.allowed_cidrs
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -41,6 +47,8 @@ class AppPrivateNetworkAttachmentRequest:
             field_dict["region"] = region
         if cidrs is not UNSET:
             field_dict["cidrs"] = cidrs
+        if allowed_cidrs is not UNSET:
+            field_dict["allowed_cidrs"] = allowed_cidrs
 
         return field_dict
 
@@ -53,10 +61,13 @@ class AppPrivateNetworkAttachmentRequest:
 
         cidrs = cast(list[str], d.pop("cidrs", UNSET))
 
+        allowed_cidrs = cast(list[str], d.pop("allowed_cidrs", UNSET))
+
         app_private_network_attachment_request = cls(
             network_id=network_id,
             region=region,
             cidrs=cidrs,
+            allowed_cidrs=allowed_cidrs,
         )
 
         app_private_network_attachment_request.additional_properties = d
