@@ -168,9 +168,30 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// 1. Schedule the mirror VM.
-	//nolint:contextcheck // ctx is rooted at context.Background() (ADR-098 detached-ctx pattern)
-	instanceID, _, err := h.backend.ScheduleMirror(ctx, rule.AppID, rule.MirrorDeploymentID, rule.ID)
+	// 1. Schedule the mirror VM and retain its complete forwarding target.
+	// Production implements MirrorTargetBackend so the request is delivered to
+	// the admitted shadow instance, including its node and runtime port. Legacy
+	// adapters keep the original single-box fallback but still stamp the mirror
+	// instance/deployment identity onto the source target copy.
+	var mirrorTarget Target
+	var instanceID string
+	var err error
+	if targetBackend, ok := h.backend.(MirrorTargetBackend); ok {
+		//nolint:contextcheck // ctx is rooted at context.Background() (ADR-098 detached-ctx pattern)
+		mirrorTarget, err = targetBackend.ScheduleMirrorTarget(ctx, rule.AppID, rule.MirrorDeploymentID, rule.ID)
+		instanceID = mirrorTarget.InstanceID
+	} else {
+		var wakeID string
+		//nolint:contextcheck // ctx is rooted at context.Background() (ADR-098 detached-ctx pattern)
+		instanceID, wakeID, err = h.backend.ScheduleMirror(ctx, rule.AppID, rule.MirrorDeploymentID, rule.ID)
+		if sourceTarget != nil {
+			mirrorTarget = *sourceTarget
+		}
+		mirrorTarget.AppID = rule.AppID
+		mirrorTarget.InstanceID = instanceID
+		mirrorTarget.DeploymentID = rule.MirrorDeploymentID
+		mirrorTarget.WakeID = wakeID
+	}
 	if err != nil {
 		resultLabel := "sched_error"
 		if errors.Is(err, sched.ErrMirrorSlotAtCapacity) {
@@ -211,16 +232,24 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		return
 	}
 
-	// 3. Round-trip via the injected MirrorRoundTripper.
-	rt := h.mirrorRoundTripper
-	if rt == nil {
-		rt = NewDefaultMirrorRoundTripper(nil)
-	}
-	targetURL := mirrorTargetURL(sourceTarget)
-
+	// 3. Round-trip through the same per-node HTTP→vmmd bridge as ordinary
+	// customer traffic. Tests and legacy single-box deployments can still
+	// inject/use the URL round-tripper fallback.
 	start := time.Now()
-	//nolint:contextcheck // ctx is detached (ADR-098)
-	resp, err := rt.RoundTripMirror(ctx, targetURL, mirrorReq)
+	var resp *http.Response
+	if rt := h.mirrorRoundTripper; rt != nil {
+		//nolint:contextcheck // ctx is detached (ADR-098)
+		resp, err = rt.RoundTripMirror(ctx, mirrorTargetURL(&mirrorTarget), mirrorReq)
+	} else if h.proxyByNode != nil {
+		mirrorReq.Header.Set("x-faas-instance", mirrorTarget.InstanceID)
+		mirrorReq.Header.Set("x-faas-app", rule.AppID)
+		capture := newMirrorResponseCapture()
+		h.proxyByNode(mirrorTarget).ServeHTTP(capture, mirrorReq)
+		resp = capture.response()
+	} else {
+		//nolint:contextcheck // ctx is detached (ADR-098)
+		resp, err = NewDefaultMirrorRoundTripper(nil).RoundTripMirror(ctx, mirrorTargetURL(&mirrorTarget), mirrorReq)
+	}
 	latency := time.Since(start)
 	if err != nil {
 		if h.metrics != nil {
@@ -270,6 +299,51 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if bodyDiff {
 			h.metrics.ObserveMirrorBodyDiff(rule.AppID, rule.ID)
 		}
+	}
+}
+
+// mirrorResponseCapture is the bounded ResponseWriter used when a mirror is
+// forwarded through the production vmmd bridge. It retains only the bytes the
+// classifier can consume while reporting successful writes to the forwarder,
+// preventing a customer-controlled mirror response from growing gateway RAM.
+type mirrorResponseCapture struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func newMirrorResponseCapture() *mirrorResponseCapture {
+	return &mirrorResponseCapture{header: make(http.Header)}
+}
+
+func (w *mirrorResponseCapture) Header() http.Header { return w.header }
+
+func (w *mirrorResponseCapture) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *mirrorResponseCapture) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	remaining := int(mirrorResponseBodyCap) - w.body.Len()
+	if remaining > 0 {
+		_, _ = w.body.Write(p[:min(len(p), remaining)])
+	}
+	return len(p), nil
+}
+
+func (w *mirrorResponseCapture) response() *http.Response {
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     w.header.Clone(),
+		Body:       io.NopCloser(bytes.NewReader(w.body.Bytes())),
 	}
 }
 
@@ -425,23 +499,32 @@ func snapshotSourceBody(r *http.Request) (body []byte, restore func()) {
 	if r == nil || r.Body == nil {
 		return nil, func() {}
 	}
+	original := r.Body
 	cap := int64(api.MirrorBodySnapshotCap)
-	limited := io.LimitReader(r.Body, cap)
+	limited := io.LimitReader(original, cap)
 	buf, err := io.ReadAll(limited)
+	restore = func() {
+		// Replay the captured prefix and then continue from the original
+		// admitted body. Keeping the unread tail is load-bearing for bodies
+		// larger than MirrorBodySnapshotCap; replacing the body with buf alone
+		// would silently truncate the customer request.
+		r.Body = &prefixReplayReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(buf), original),
+			Closer: original,
+		}
+	}
 	if err != nil {
 		// Capture failed (MaxBytesReader trip, network blip).
-		// Return nil body so the dispatch goroutine treats
-		// the source shape as unknown — statusDiff=true.
-		return nil, func() {}
-	}
-	restore = func() {
-		// Re-wire r.Body to a fresh reader over the SAME bytes
-		// we just consumed. The source proxy downstream reads
-		// from this reader — the bytes are not mutated by
-		// dispatchMirror (which has its own copy).
-		r.Body = io.NopCloser(bytes.NewReader(buf))
+		// Return nil to the mirror classifier, but still replay any prefix
+		// already consumed so the source request is not corrupted.
+		return nil, restore
 	}
 	return buf, restore
+}
+
+type prefixReplayReadCloser struct {
+	io.Reader
+	io.Closer
 }
 
 // tryAcquireMirrorSlot (issue #72 / ADR-133 / ADR-125 PR-A3

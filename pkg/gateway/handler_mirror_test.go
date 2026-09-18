@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,23 @@ type mirrorFakeBackend struct {
 	appLookupHits atomic.Int32
 
 	scheduleErr error
+}
+
+type mirrorTargetFakeBackend struct {
+	*mirrorFakeBackend
+	target Target
+}
+
+func (m *mirrorTargetFakeBackend) ScheduleMirrorTarget(_ context.Context, _, mirrorDeploymentID, ruleID string) (Target, error) {
+	m.scheduleCalls.Add(1)
+	m.mu.Lock()
+	m.scheduleRuleIDs = append(m.scheduleRuleIDs, ruleID)
+	m.scheduleDeployments = append(m.scheduleDeployments, mirrorDeploymentID)
+	m.mu.Unlock()
+	if m.scheduleErr != nil {
+		return Target{}, m.scheduleErr
+	}
+	return m.target, nil
 }
 
 func (m *mirrorFakeBackend) Lookup(_ context.Context, host string) (App, bool) {
@@ -205,6 +223,125 @@ func TestHandler_MirrorFanout_SpawnsGoroutine(t *testing.T) {
 	}
 	if got := b.scheduleDeployments[0]; got != "dep-B" {
 		t.Errorf("scheduleDeployments[0] = %q, want dep-B", got)
+	}
+}
+
+func TestHandler_MirrorFanout_PreservesSourceRequestBody(t *testing.T) {
+	const payload = `{"feature":"mirror-body"}`
+	sourceBody := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read source body: %v", err)
+		}
+		sourceBody <- string(body)
+		_, _ = w.Write([]byte("source response"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &mirrorFakeBackend{
+		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		host:         "jane-api.apps.dom",
+		upstreamAddr: upstream.Listener.Addr().String(),
+		mirrorRules: []MirrorRuleRow{
+			{ID: "rule-1", AppID: "app-1", MirrorDeploymentID: "dep-B", Percent: 100},
+		},
+	}
+	rt := &stubMirrorRoundTripper{
+		cannedResponse: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(stringBody("mirror response")),
+		},
+	}
+
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithMirrorRoundTripper(rt)
+	req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case got := <-sourceBody:
+		if got != payload {
+			t.Fatalf("source body = %q, want %q", got, payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("source request did not reach upstream")
+	}
+	waitForMirrorCalls(t, b, 1, 2*time.Second)
+}
+
+func TestHandler_MirrorFanout_ForwardsToAdmittedMirrorTarget(t *testing.T) {
+	base := &mirrorFakeBackend{
+		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		host:         "jane-api.apps.dom",
+		upstreamAddr: "source-node",
+		mirrorRules: []MirrorRuleRow{
+			{ID: "rule-1", AppID: "app-1", MirrorDeploymentID: "dep-B", Percent: 100},
+		},
+	}
+	b := &mirrorTargetFakeBackend{
+		mirrorFakeBackend: base,
+		target: Target{
+			AppID:        "app-1",
+			NodeID:       "mirror-node",
+			InstanceID:   "i-mirror",
+			DeploymentID: "dep-B",
+			Port:         9090,
+		},
+	}
+
+	mirrorForward := make(chan Target, 1)
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithForwarding(func(target Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if target.InstanceID == "i-mirror" {
+				if got := r.Header.Get("x-faas-instance"); got != "i-mirror" {
+					t.Errorf("mirror x-faas-instance = %q, want i-mirror", got)
+				}
+				mirrorForward <- target
+				_, _ = w.Write([]byte("mirror response"))
+				return
+			}
+			_, _ = w.Write([]byte("source response"))
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	select {
+	case target := <-mirrorForward:
+		if target.NodeID != "mirror-node" || target.DeploymentID != "dep-B" || target.Port != 9090 {
+			t.Fatalf("mirror target = %+v, want admitted dep-B target", target)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror request was not forwarded")
+	}
+}
+
+func TestSnapshotSourceBody_RestoresBodyBeyondSnapshotCap(t *testing.T) {
+	payload := strings.Repeat("x", api.MirrorBodySnapshotCap+1024)
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/", strings.NewReader(payload))
+
+	snapshot, restore := snapshotSourceBody(req)
+	if len(snapshot) != api.MirrorBodySnapshotCap {
+		t.Fatalf("snapshot length = %d, want %d", len(snapshot), api.MirrorBodySnapshotCap)
+	}
+	restore()
+	got, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != payload {
+		t.Fatalf("restored body length = %d, want %d", len(got), len(payload))
 	}
 }
 

@@ -5888,7 +5888,7 @@ haveApp:
 	// Bounded to ONE admit per request — sustained cold-bucket
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
-	if !pick.OK && pick.ColdBucket != "" {
+	if pick.ColdBucket != "" {
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
@@ -6046,7 +6046,11 @@ haveApp:
 	//     did" rather than a silent no-diff.
 	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
 		sourceBody, restoreBody := snapshotSourceBody(r)
-		defer restoreBody() // safety net in case the goroutine didn't already take ownership
+		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
+		// it before the source proxy runs; deferring this until ServeHTTP exits
+		// leaves Content-Length non-zero with an empty body and turns mirrored
+		// POST requests into upstream cancellations/502s.
+		restoreBody()
 		// Install the cross-goroutine status sink BEFORE the proxy
 		// commits its WriteHeader, so the dispatchMirror goroutine
 		// reads the committed status via rec.captureStatusForMirror()

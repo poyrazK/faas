@@ -1,8 +1,9 @@
 // handler_wakefanout_test.go — PR-C (issue #556) end-to-end pinned
 // test for wake-fan-out. The plan's contract:
 //
-//   - Picker returns !OK with ColdBucket=dep-B (the deployment the
-//     operator's traffic ratio landed on, currently empty).
+//   - Picker returns ColdBucket=dep-B (the deployment the operator's traffic
+//     ratio landed on, currently empty), optionally with a warm sibling
+//     fallback target.
 //   - Handler sees ColdBucket!="", calls Backend.Admit(appID, dep-B,
 //     max) — exactly ONE retry-bound admit per request.
 //   - Handler re-picks; if the retry still fails the handler
@@ -224,11 +225,68 @@ func TestHandler_WakeFanOut_AdmitsOnceEvenIfRetryStillCold(t *testing.T) {
 	}
 }
 
+// TestHandler_WakeFanOut_WakesColdBucketDespiteWarmFallback covers the
+// production split-routing failure where Pick returns the warm sibling as a
+// temporary fallback (OK=true) while ColdBucket identifies the deployment the
+// weighted stride actually selected. The fallback must not suppress fan-out;
+// otherwise a cold 50% bucket never wakes and receives 0% of customer traffic.
+func TestHandler_WakeFanOut_WakesColdBucketDespiteWarmFallback(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("hello from canary"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &wakefanoutBackend{
+		app:            gateway.App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		host:           "jane-api.apps.dom",
+		upstreamAddr:   upstream.Listener.Addr().String(),
+		admitsByDeploy: map[string]int32{},
+		firstPick: gateway.PickResult{
+			Target: gateway.Target{
+				NodeID:       upstream.Listener.Addr().String(),
+				InstanceID:   "i-stable-1",
+				DeploymentID: "dep-A",
+			},
+			OK:         true,
+			Picked:     "dep-B",
+			ColdBucket: "dep-B",
+		},
+		secondPick: gateway.PickResult{
+			Target: gateway.Target{
+				NodeID:       upstream.Listener.Addr().String(),
+				InstanceID:   "i-canary-1",
+				DeploymentID: "dep-B",
+				WakeID:       "fake-wake-id",
+			},
+			OK:     true,
+			Picked: "dep-B",
+		},
+	}
+	h := gateway.NewHandlerWith(b, gateway.NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := b.totalAdmits.Load(); got != 1 {
+		t.Fatalf("totalAdmits = %d, want 1", got)
+	}
+	if got := b.admitsByDeploy["dep-B"]; got != 1 {
+		t.Fatalf("admitsByDeploy[dep-B] = %d, want 1", got)
+	}
+	if got := b.picks.Load(); got != 2 {
+		t.Fatalf("Pick calls = %d, want 2", got)
+	}
+}
+
 // TestHandler_WakeFanOut_NotTriggeredOnWarmPick (issue #556 /
 // PR-C): when the first Pick returns OK=true and no ColdBucket, the
 // handler must NOT call wake-fan-out Admit. The wake-fan-out branch
-// is gated on `!pick.OK && pick.ColdBucket != ""`; a warm Pick with
-// ColdBucket="" must not fire the fan-out path.
+// is gated on `pick.ColdBucket != ""`; a warm Pick with ColdBucket="" must
+// not fire the fan-out path.
 //
 // Counting: warm Pick → no fan-out → proxy. Total = 0 admits.
 func TestHandler_WakeFanOut_NotTriggeredOnWarmPick(t *testing.T) {
