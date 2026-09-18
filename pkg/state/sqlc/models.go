@@ -232,6 +232,7 @@ type App struct {
 	StartCommand              pgtype.Text
 	StreamingEnabled          bool
 	ScalingPolicy             []byte
+	RetryPolicy               []byte
 	LastScaleOutAt            pgtype.Timestamptz
 	LastScaleInAt             pgtype.Timestamptz
 	RequireSigned             bool
