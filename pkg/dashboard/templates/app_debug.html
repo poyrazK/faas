@@ -310,6 +310,22 @@
             </tbody>
           </table>
           {{if .Data.Selected.CorrelationComplete}}<p class="notice">All applicable request stages have retained evidence.</p>{{else}}<p class="notice">Correlation is incomplete. Use the missing stages to decide which telemetry to enable or inspect next.</p>{{end}}
+          <h3>Dependency latency</h3>
+          {{if .Data.Selected.DependencyLatency}}
+            <p class="muted">Aggregated from retained redacted spans. Total time is not a critical-path sum because child spans may overlap.</p>
+            <table class="span-table" aria-label="Dependency latency">
+              <thead><tr><th>Type</th><th>Kind</th><th>Span</th><th>Calls</th><th>Errors</th><th>Total</th><th>Max</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.DependencyLatency}}
+                <tr><td><code>{{.Type}}</code></td><td>{{if .Kind}}<code>{{.Kind}}</code>{{else}}—{{end}}</td><td><code>{{.Name}}</code></td><td>{{.Calls}}</td><td>{{if .Errors}}<span class="error">{{.Errors}}</span>{{else}}—{{end}}</td><td>{{.TotalDurationMS}} ms</td><td>{{.MaxDurationMS}} ms</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+            {{if .Data.Selected.DependencyLatencyTruncated}}<p class="muted">Dependency latency was truncated to the 16 slowest retained groups.</p>{{end}}
+            {{if .Data.Selected.SpansTruncated}}<p class="muted">This breakdown uses the slowest retained spans, not every span in the trace.</p>{{end}}
+          {{else}}
+            <p class="muted">No retained dependency spans were captured for this request.</p>
+          {{end}}
           {{if $.Data.ReplayCSRF}}
             <form method="post" action="/dashboard/apps/{{.Data.AppSlug}}/debug/requests/{{.Data.Selected.Request.ID}}/replay">
               <input type="hidden" name="csrf_token" value="{{$.Data.ReplayCSRF}}">

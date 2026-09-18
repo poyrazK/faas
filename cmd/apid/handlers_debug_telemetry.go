@@ -385,6 +385,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	correlation := buildDebugRequestCorrelation(request, timeline, spans)
+	dependencyLatency, dependencyLatencyTruncated := buildDebugDependencyLatency(spans)
 
 	explanation := buildDebugEvidenceExplanation(request, regression, spans)
 	if regressionErr != nil {
@@ -392,14 +393,16 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	response := api.DebugRequestEvidenceResponse{
-		Request:        request,
-		Regression:     regression,
-		Timeline:       timeline,
-		Correlation:    correlation,
-		Spans:          spans,
-		SpansTruncated: truncated,
-		Explanation:    explanation,
-		GeneratedAt:    now.Format(time.RFC3339Nano),
+		Request:                    request,
+		Regression:                 regression,
+		Timeline:                   timeline,
+		Correlation:                correlation,
+		DependencyLatency:          dependencyLatency,
+		DependencyLatencyTruncated: dependencyLatencyTruncated,
+		Spans:                      spans,
+		SpansTruncated:             truncated,
+		Explanation:                explanation,
+		GeneratedAt:                now.Format(time.RFC3339Nano),
 	}
 	response.Explanation = debugger.Synthesize(response)
 	writeJSON(w, http.StatusOK, response)
@@ -418,14 +421,15 @@ func buildDebugEvidenceDegradedExplanation(spans []api.DebugTelemetrySpan) api.D
 }
 
 type debugEvidenceSpan struct {
-	TraceID       string `json:"trace_id"`
-	SpanID        string `json:"span_id"`
-	ParentSpanID  string `json:"parent_span_id"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
-	DurationNanos uint64 `json:"duration_nanos"`
-	Status        string `json:"status"`
-	DBStatement   string `json:"db_statement"`
+	TraceID       string            `json:"trace_id"`
+	SpanID        string            `json:"span_id"`
+	ParentSpanID  string            `json:"parent_span_id"`
+	Name          string            `json:"name"`
+	Kind          string            `json:"kind"`
+	DurationNanos uint64            `json:"duration_nanos"`
+	Status        string            `json:"status"`
+	DBStatement   string            `json:"db_statement"`
+	Attributes    map[string]string `json:"attributes"`
 }
 
 // parseDebugEvidenceSpans parses the writer's JSON summary, drops sensitive
@@ -451,15 +455,138 @@ func parseDebugEvidenceSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
 	}
 	out := make([]api.DebugTelemetrySpan, 0, len(input))
 	for _, span := range input {
+		dependencyType := sanitizeDebugDependencyType(span.Attributes["gregale.dependency.type"])
+		dependencyKind := ""
+		if dependencyType != "" {
+			dependencyKind = sanitizeDebugDependencyKind(span.Attributes["gregale.dependency.kind"])
+		}
 		out = append(out, api.DebugTelemetrySpan{
-			TraceID:       boundDebugEvidenceText(span.TraceID, debugEvidenceMaxSpanTextBytes),
-			SpanID:        boundDebugEvidenceText(span.SpanID, debugEvidenceMaxSpanTextBytes),
-			ParentSpanID:  boundDebugEvidenceText(span.ParentSpanID, debugEvidenceMaxSpanTextBytes),
-			Name:          boundDebugEvidenceText(span.Name, debugEvidenceMaxSpanTextBytes),
-			Kind:          boundDebugEvidenceText(span.Kind, debugEvidenceMaxSpanTextBytes),
-			DurationNanos: span.DurationNanos,
-			Status:        boundDebugEvidenceText(span.Status, debugEvidenceMaxSpanTextBytes),
-			DBStatement:   sanitizeDebugDBStatement(span.DBStatement),
+			TraceID:        boundDebugEvidenceText(span.TraceID, debugEvidenceMaxSpanTextBytes),
+			SpanID:         boundDebugEvidenceText(span.SpanID, debugEvidenceMaxSpanTextBytes),
+			ParentSpanID:   boundDebugEvidenceText(span.ParentSpanID, debugEvidenceMaxSpanTextBytes),
+			Name:           boundDebugEvidenceText(span.Name, debugEvidenceMaxSpanTextBytes),
+			Kind:           boundDebugEvidenceText(span.Kind, debugEvidenceMaxSpanTextBytes),
+			DurationNanos:  span.DurationNanos,
+			Status:         boundDebugEvidenceText(span.Status, debugEvidenceMaxSpanTextBytes),
+			DBStatement:    sanitizeDebugDBStatement(span.DBStatement),
+			DependencyType: dependencyType,
+			DependencyKind: dependencyKind,
+		})
+	}
+	return out, truncated
+}
+
+func sanitizeDebugDependencyType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "managed_binding", "outbound_integration", "guest_transport", "platform_internal":
+		return strings.TrimSpace(value)
+	default:
+		return ""
+	}
+}
+
+func sanitizeDebugDependencyKind(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) == 0 || len(value) > 64 {
+		return ""
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
+			return ""
+		}
+	}
+	return value
+}
+
+type debugDependencyLatencyAggregate struct {
+	dependencyType string
+	dependencyKind string
+	name           string
+	calls          int
+	errors         int
+	totalNanos     uint64
+	maxNanos       uint64
+}
+
+// buildDebugDependencyLatency groups only retained, already-redacted spans.
+// The platform classification comes from a small allowlist of attributes;
+// arbitrary customer attributes and destinations are ignored.
+func buildDebugDependencyLatency(spans []api.DebugTelemetrySpan) ([]api.DebugRequestDependencyLatency, bool) {
+	const maxAggregateNanos = uint64(24 * time.Hour)
+
+	aggregates := make(map[string]*debugDependencyLatencyAggregate)
+	for _, span := range spans {
+		dependencyType := span.DependencyType
+		if dependencyType == "" {
+			dependencyType = "application"
+		}
+		name := span.Name
+		if name == "" {
+			name = "<unnamed>"
+		}
+		key := dependencyType + "\x00" + span.DependencyKind + "\x00" + name
+		aggregate := aggregates[key]
+		if aggregate == nil {
+			aggregate = &debugDependencyLatencyAggregate{
+				dependencyType: dependencyType,
+				dependencyKind: span.DependencyKind,
+				name:           name,
+			}
+			aggregates[key] = aggregate
+		}
+		duration := span.DurationNanos
+		if duration > maxAggregateNanos {
+			duration = maxAggregateNanos
+		}
+		aggregate.calls++
+		if strings.EqualFold(span.Status, "error") {
+			aggregate.errors++
+		}
+		if aggregate.totalNanos > maxAggregateNanos-duration {
+			aggregate.totalNanos = maxAggregateNanos
+		} else {
+			aggregate.totalNanos += duration
+		}
+		if duration > aggregate.maxNanos {
+			aggregate.maxNanos = duration
+		}
+	}
+
+	ordered := make([]*debugDependencyLatencyAggregate, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		ordered = append(ordered, aggregate)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].maxNanos != ordered[j].maxNanos {
+			return ordered[i].maxNanos > ordered[j].maxNanos
+		}
+		if ordered[i].totalNanos != ordered[j].totalNanos {
+			return ordered[i].totalNanos > ordered[j].totalNanos
+		}
+		if ordered[i].dependencyType != ordered[j].dependencyType {
+			return ordered[i].dependencyType < ordered[j].dependencyType
+		}
+		if ordered[i].dependencyKind != ordered[j].dependencyKind {
+			return ordered[i].dependencyKind < ordered[j].dependencyKind
+		}
+		return ordered[i].name < ordered[j].name
+	})
+
+	truncated := len(ordered) > debugDependencyLatencyMax
+	if truncated {
+		ordered = ordered[:debugDependencyLatencyMax]
+	}
+	out := make([]api.DebugRequestDependencyLatency, 0, len(ordered))
+	for _, aggregate := range ordered {
+		out = append(out, api.DebugRequestDependencyLatency{
+			Type:            aggregate.dependencyType,
+			Kind:            aggregate.dependencyKind,
+			Name:            aggregate.name,
+			Calls:           aggregate.calls,
+			Errors:          aggregate.errors,
+			TotalDurationMS: int64(aggregate.totalNanos / uint64(time.Millisecond)),
+			MaxDurationMS:   int64(aggregate.maxNanos / uint64(time.Millisecond)),
 		})
 	}
 	return out, truncated
@@ -602,7 +729,10 @@ func textFromPg(value pgtype.Text) string {
 	return value.String
 }
 
-const debugTimelineMaxEvents = 200
+const (
+	debugTimelineMaxEvents    = 200
+	debugDependencyLatencyMax = 16
+)
 
 var debugCorrelationPhases = [...]string{"edge", "queue", "wake", "guest", "downstream", "billing"}
 

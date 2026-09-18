@@ -5,6 +5,7 @@
 import type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 import type { DebugRegressionItem } from './DebugRegressionItem.js';
 import type { DebugRequestCorrelation } from './DebugRequestCorrelation.js';
+import type { DebugRequestDependencyLatency } from './DebugRequestDependencyLatency.js';
 import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 import type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
 import type { DebugTimelineEvent } from './DebugTimelineEvent.js';
@@ -16,6 +17,11 @@ export type DebugRequestEvidenceResponse = {
   regression?: (DebugRegressionItem | null);
   timeline: Array<DebugTimelineEvent>;
   correlation: DebugRequestCorrelation;
+  dependency_latency: Array<DebugRequestDependencyLatency>;
+  /**
+   * True when more than 16 dependency groups were retained.
+   */
+  dependency_latency_truncated: boolean;
   spans: Array<DebugTelemetrySpan>;
   spans_truncated: boolean;
   explanation: DebugEvidenceExplanation;

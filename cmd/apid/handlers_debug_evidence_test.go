@@ -33,7 +33,11 @@ func TestNormalizeDebugRequestIdentifier(t *testing.T) {
 func TestParseDebugEvidenceSpansSortsSanitizesAndCaps(t *testing.T) {
 	input := make([]debugEvidenceSpan, 0, debugEvidenceMaxSpans+1)
 	input = append(input,
-		debugEvidenceSpan{TraceID: "trace", SpanID: "slow", Name: "db.query", Kind: "client", DurationNanos: 12_000_000, DBStatement: " SELECT  * FROM users WHERE id = 'secret' AND n = 42 ", Status: "error"},
+		debugEvidenceSpan{TraceID: "trace", SpanID: "slow", Name: "db.query", Kind: "client", DurationNanos: 12_000_000, DBStatement: " SELECT  * FROM users WHERE id = 'secret' AND n = 42 ", Status: "error", Attributes: map[string]string{
+			"gregale.dependency.type": "managed_binding",
+			"gregale.dependency.kind": "managed_postgres",
+			"db.statement":            "SELECT * FROM users WHERE id = 'secret'",
+		}},
 		debugEvidenceSpan{TraceID: "trace", SpanID: "fast", Name: "http.client", Kind: "client", DurationNanos: 1_000_000},
 	)
 	for i := 0; i < debugEvidenceMaxSpans-1; i++ {
@@ -58,6 +62,36 @@ func TestParseDebugEvidenceSpansSortsSanitizesAndCaps(t *testing.T) {
 	}
 	if strings.Contains(spans[0].DBStatement, "secret") {
 		t.Fatal("sanitized statement leaked a literal")
+	}
+	if spans[0].DependencyType != "managed_binding" || spans[0].DependencyKind != "managed_postgres" {
+		t.Fatalf("dependency classification = (%q, %q)", spans[0].DependencyType, spans[0].DependencyKind)
+	}
+}
+
+func TestBuildDebugDependencyLatencyAggregatesAndCaps(t *testing.T) {
+	spans := []api.DebugTelemetrySpan{
+		{DependencyType: "managed_binding", DependencyKind: "managed_postgres", Name: "HTTP GET", DurationNanos: 80_000_000, Status: "error"},
+		{DependencyType: "managed_binding", DependencyKind: "managed_postgres", Name: "HTTP GET", DurationNanos: 20_000_000},
+		{DependencyType: "guest_transport", DependencyKind: "vmmd_guest_bridge", Name: "HTTP POST", DurationNanos: 120_000_000},
+	}
+	got, truncated := buildDebugDependencyLatency(spans)
+	if truncated || len(got) != 2 {
+		t.Fatalf("aggregates = (%+v, %v), want two groups", got, truncated)
+	}
+	if got[0].Type != "guest_transport" || got[0].MaxDurationMS != 120 || got[0].Calls != 1 {
+		t.Fatalf("slowest dependency = %+v", got[0])
+	}
+	if got[1].Type != "managed_binding" || got[1].Calls != 2 || got[1].Errors != 1 || got[1].TotalDurationMS != 100 || got[1].MaxDurationMS != 80 {
+		t.Fatalf("aggregated binding = %+v", got[1])
+	}
+
+	many := make([]api.DebugTelemetrySpan, 0, debugDependencyLatencyMax+1)
+	for i := 0; i < debugDependencyLatencyMax+1; i++ {
+		many = append(many, api.DebugTelemetrySpan{Name: "span-" + string(rune('a'+i)), DurationNanos: uint64(i+1) * uint64(time.Millisecond)})
+	}
+	got, truncated = buildDebugDependencyLatency(many)
+	if !truncated || len(got) != debugDependencyLatencyMax {
+		t.Fatalf("cap = (%d, %v), want (%d, true)", len(got), truncated, debugDependencyLatencyMax)
 	}
 }
 

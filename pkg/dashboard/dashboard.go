@@ -2023,18 +2023,33 @@ type DebugRequestView struct {
 // explanation are already bounded/redacted by the API handler's shared
 // projection, so the dashboard never renders raw customer attributes.
 type DebugRequestDetailView struct {
-	Request             DebugRequestView
-	Regression          *DebugRegressionView
-	Correlation         []DebugCorrelationStageView
-	CorrelationComplete bool
-	Timeline            []DebugTimelineEventView
-	Spans               []DebugSpanView
-	SpansTruncated      bool
-	Explanation         string
-	EvidenceStatus      string
-	Findings            []DebugEvidenceFindingView
-	Recommendations     []DebugEvidenceRecommendationView
-	GeneratedAt         string
+	Request                    DebugRequestView
+	Regression                 *DebugRegressionView
+	Correlation                []DebugCorrelationStageView
+	CorrelationComplete        bool
+	DependencyLatency          []DebugDependencyLatencyView
+	DependencyLatencyTruncated bool
+	Timeline                   []DebugTimelineEventView
+	Spans                      []DebugSpanView
+	SpansTruncated             bool
+	Explanation                string
+	EvidenceStatus             string
+	Findings                   []DebugEvidenceFindingView
+	Recommendations            []DebugEvidenceRecommendationView
+	GeneratedAt                string
+}
+
+// DebugDependencyLatencyView is the template-safe projection of one
+// bounded request dependency aggregate. Total duration is not additive
+// critical-path time because child spans may overlap.
+type DebugDependencyLatencyView struct {
+	Type            string
+	Kind            string
+	Name            string
+	Calls           int
+	Errors          int
+	TotalDurationMS int64
+	MaxDurationMS   int64
 }
 
 // DebugEvidenceFindingView is the template-safe projection of one

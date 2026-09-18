@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.debug_evidence_explanation import DebugEvidenceExplanation
     from ..models.debug_regression_item import DebugRegressionItem
     from ..models.debug_request_correlation import DebugRequestCorrelation
+    from ..models.debug_request_dependency_latency import DebugRequestDependencyLatency
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
     from ..models.debug_telemetry_span import DebugTelemetrySpan
     from ..models.debug_timeline_event import DebugTimelineEvent
@@ -31,6 +32,9 @@ class DebugRequestEvidenceResponse:
     correlation: DebugRequestCorrelation
     """Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable
     telemetry is visible."""
+    dependency_latency: list[DebugRequestDependencyLatency]
+    dependency_latency_truncated: bool
+    """True when more than 16 dependency groups were retained."""
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
     explanation: DebugEvidenceExplanation
@@ -50,6 +54,13 @@ class DebugRequestEvidenceResponse:
             timeline.append(timeline_item)
 
         correlation = self.correlation.to_dict()
+
+        dependency_latency = []
+        for dependency_latency_item_data in self.dependency_latency:
+            dependency_latency_item = dependency_latency_item_data.to_dict()
+            dependency_latency.append(dependency_latency_item)
+
+        dependency_latency_truncated = self.dependency_latency_truncated
 
         spans = []
         for spans_item_data in self.spans:
@@ -77,6 +88,8 @@ class DebugRequestEvidenceResponse:
                 "request": request,
                 "timeline": timeline,
                 "correlation": correlation,
+                "dependency_latency": dependency_latency,
+                "dependency_latency_truncated": dependency_latency_truncated,
                 "spans": spans,
                 "spans_truncated": spans_truncated,
                 "explanation": explanation,
@@ -93,6 +106,7 @@ class DebugRequestEvidenceResponse:
         from ..models.debug_evidence_explanation import DebugEvidenceExplanation
         from ..models.debug_regression_item import DebugRegressionItem
         from ..models.debug_request_correlation import DebugRequestCorrelation
+        from ..models.debug_request_dependency_latency import DebugRequestDependencyLatency
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
         from ..models.debug_telemetry_span import DebugTelemetrySpan
         from ..models.debug_timeline_event import DebugTimelineEvent
@@ -108,6 +122,15 @@ class DebugRequestEvidenceResponse:
             timeline.append(timeline_item)
 
         correlation = DebugRequestCorrelation.from_dict(d.pop("correlation"))
+
+        dependency_latency = []
+        _dependency_latency = d.pop("dependency_latency")
+        for dependency_latency_item_data in _dependency_latency:
+            dependency_latency_item = DebugRequestDependencyLatency.from_dict(dependency_latency_item_data)
+
+            dependency_latency.append(dependency_latency_item)
+
+        dependency_latency_truncated = d.pop("dependency_latency_truncated")
 
         spans = []
         _spans = d.pop("spans")
@@ -143,6 +166,8 @@ class DebugRequestEvidenceResponse:
             request=request,
             timeline=timeline,
             correlation=correlation,
+            dependency_latency=dependency_latency,
+            dependency_latency_truncated=dependency_latency_truncated,
             spans=spans,
             spans_truncated=spans_truncated,
             explanation=explanation,

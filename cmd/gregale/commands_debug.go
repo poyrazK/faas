@@ -867,6 +867,34 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 		}
 	}
 
+	if len(resp.DependencyLatency) == 0 {
+		_, _ = fmt.Fprintln(w, "dependency latency: no retained dependency spans")
+	} else {
+		_, _ = fmt.Fprintln(w, "DEPENDENCY LATENCY")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "TYPE\tKIND\tSPAN\tCALLS\tERRORS\tTOTAL_MS\tMAX_MS")
+		for _, dependency := range resp.DependencyLatency {
+			kind := dependency.Kind
+			if kind == "" {
+				kind = "-"
+			}
+			errors := "-"
+			if dependency.Errors > 0 {
+				errors = fmt.Sprintf("%d", dependency.Errors)
+			}
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
+				dependency.Type, kind, dependency.Name, dependency.Calls, errors,
+				dependency.TotalDurationMS, dependency.MaxDurationMS)
+		}
+		_ = tw.Flush()
+		if resp.DependencyLatencyTruncated {
+			_, _ = fmt.Fprintln(w, "dependency latency truncated to the slowest retained groups")
+		}
+		if resp.SpansTruncated {
+			_, _ = fmt.Fprintln(w, "dependency latency is based on the slowest retained spans")
+		}
+	}
+
 	if len(resp.Spans) == 0 {
 		_, _ = fmt.Fprintln(w, "span evidence: no linked OTel spans")
 	} else {

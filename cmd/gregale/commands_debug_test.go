@@ -227,6 +227,10 @@ func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
 			Spans: []api.DebugTelemetrySpan{{
 				Name: "db.query", Kind: "client", DurationNanos: 20_000_000, Status: "error",
 			}},
+			DependencyLatency: []api.DebugRequestDependencyLatency{{
+				Type: "managed_binding", Kind: "managed_postgres", Name: "HTTP GET",
+				Calls: 2, Errors: 1, TotalDurationMS: 40, MaxDurationMS: 25,
+			}},
 			Explanation: api.DebugEvidenceExplanation{Headline: "Cold boot dominated request latency."},
 			GeneratedAt: "2026-09-06T10:01:00Z",
 		})
@@ -254,6 +258,9 @@ func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
 		"billing",
 		"correlation incomplete",
 		"SPAN EVIDENCE",
+		"DEPENDENCY LATENCY",
+		"managed_postgres",
+		"40",
 		"db.query",
 		"Cold boot dominated request latency.",
 	} {

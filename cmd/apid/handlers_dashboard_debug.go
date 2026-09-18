@@ -859,6 +859,19 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			SpanID:      span.SpanID,
 		})
 	}
+	dependencyLatency, dependencyLatencyTruncated := buildDebugDependencyLatency(spans)
+	dependencyViews := make([]dashboard.DebugDependencyLatencyView, 0, len(dependencyLatency))
+	for _, dependency := range dependencyLatency {
+		dependencyViews = append(dependencyViews, dashboard.DebugDependencyLatencyView{
+			Type:            dependency.Type,
+			Kind:            dependency.Kind,
+			Name:            dependency.Name,
+			Calls:           dependency.Calls,
+			Errors:          dependency.Errors,
+			TotalDurationMS: dependency.TotalDurationMS,
+			MaxDurationMS:   dependency.MaxDurationMS,
+		})
+	}
 
 	var matching *dashboard.DebugRegressionView
 	var regressionErr error
@@ -926,13 +939,15 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		})
 	}
 	evidence := api.DebugRequestEvidenceResponse{
-		Request:        item,
-		Regression:     apiRegression,
-		Timeline:       timeline,
-		Correlation:    correlation,
-		Spans:          spans,
-		SpansTruncated: truncated,
-		Explanation:    explanation,
+		Request:                    item,
+		Regression:                 apiRegression,
+		Timeline:                   timeline,
+		Correlation:                correlation,
+		DependencyLatency:          dependencyLatency,
+		DependencyLatencyTruncated: dependencyLatencyTruncated,
+		Spans:                      spans,
+		SpansTruncated:             truncated,
+		Explanation:                explanation,
 	}
 	explanation = debugger.Synthesize(evidence)
 	findingViews := make([]dashboard.DebugEvidenceFindingView, 0, len(explanation.Findings))
@@ -948,18 +963,20 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		})
 	}
 	data.Selected = &dashboard.DebugRequestDetailView{
-		Request:             request,
-		Regression:          matching,
-		Timeline:            timelineViews,
-		Correlation:         correlationViews,
-		CorrelationComplete: correlation.Complete,
-		Spans:               spanViews,
-		SpansTruncated:      truncated,
-		Explanation:         explanation.Headline,
-		EvidenceStatus:      explanation.Diagnosis,
-		Findings:            findingViews,
-		Recommendations:     recommendationViews,
-		GeneratedAt:         now.Format(time.RFC3339),
+		Request:                    request,
+		Regression:                 matching,
+		Timeline:                   timelineViews,
+		Correlation:                correlationViews,
+		CorrelationComplete:        correlation.Complete,
+		DependencyLatency:          dependencyViews,
+		DependencyLatencyTruncated: dependencyLatencyTruncated,
+		Spans:                      spanViews,
+		SpansTruncated:             truncated,
+		Explanation:                explanation.Headline,
+		EvidenceStatus:             explanation.Diagnosis,
+		Findings:                   findingViews,
+		Recommendations:            recommendationViews,
+		GeneratedAt:                now.Format(time.RFC3339),
 	}
 	return nil
 }

@@ -209,6 +209,7 @@ export type { DebugReplayRequest } from './models/DebugReplayRequest.js';
 export type { DebugReplayResponse } from './models/DebugReplayResponse.js';
 export type { DebugRequestCorrelation } from './models/DebugRequestCorrelation.js';
 export type { DebugRequestCorrelationStage } from './models/DebugRequestCorrelationStage.js';
+export type { DebugRequestDependencyLatency } from './models/DebugRequestDependencyLatency.js';
 export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidenceResponse.js';
 export type { DebugRunningCause } from './models/DebugRunningCause.js';
 export type { DebugRunningConfig } from './models/DebugRunningConfig.js';

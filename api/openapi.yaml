@@ -31301,6 +31301,21 @@ components:
         duration_nanos: { type: integer, format: int64, minimum: 0 }
         status: { type: string, maxLength: 256 }
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal], description: "Allowlisted platform-owned dependency classification." }
+        dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
+
+    DebugRequestDependencyLatency:
+      type: object
+      description: "Bounded latency aggregate for one retained dependency span group. Total duration may include overlapping child spans and is not a critical-path sum."
+      required: [type, name, calls, total_duration_ms, max_duration_ms]
+      properties:
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
+        name: { type: string, maxLength: 256 }
+        calls: { type: integer, minimum: 1, maximum: 100 }
+        errors: { type: integer, minimum: 0, maximum: 100 }
+        total_duration_ms: { type: integer, format: int64, minimum: 0 }
+        max_duration_ms: { type: integer, format: int64, minimum: 0 }
 
     DebugEvidenceExplanation:
       type: object
@@ -31403,7 +31418,7 @@ components:
     DebugRequestEvidenceResponse:
       type: object
       description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, correlation, spans, spans_truncated, explanation, generated_at]
+      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -31415,6 +31430,11 @@ components:
           maxItems: 200
           items: { $ref: '#/components/schemas/DebugTimelineEvent' }
         correlation: { $ref: '#/components/schemas/DebugRequestCorrelation' }
+        dependency_latency:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/DebugRequestDependencyLatency' }
+        dependency_latency_truncated: { type: boolean, description: "True when more than 16 dependency groups were retained." }
         spans:
           type: array
           maxItems: 100

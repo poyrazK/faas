@@ -8182,6 +8182,25 @@ type DebugTelemetrySpan struct {
 	DurationNanos uint64 `json:"duration_nanos"`
 	Status        string `json:"status,omitempty"`
 	DBStatement   string `json:"db_statement,omitempty"`
+	// DependencyType and DependencyKind are allowlisted platform-owned
+	// classifications. Raw span attributes never cross the debugger boundary.
+	DependencyType string `json:"dependency_type,omitempty"`
+	DependencyKind string `json:"dependency_kind,omitempty"`
+}
+
+// DebugRequestDependencyLatency is a bounded aggregation of retained spans
+// for one request. TotalDurationMS is not a critical-path sum: child spans
+// can overlap. The response remains useful for identifying the slowest
+// managed binding or platform edge without exposing URLs, headers, payloads,
+// or arbitrary span attributes.
+type DebugRequestDependencyLatency struct {
+	Type            string `json:"type"`
+	Kind            string `json:"kind,omitempty"`
+	Name            string `json:"name"`
+	Calls           int    `json:"calls"`
+	Errors          int    `json:"errors,omitempty"`
+	TotalDurationMS int64  `json:"total_duration_ms"`
+	MaxDurationMS   int64  `json:"max_duration_ms"`
 }
 
 // DebugEvidenceExplanation is a bounded root-cause synthesis for a request's
@@ -8271,14 +8290,16 @@ type DebugRequestCorrelationStage struct {
 // evidence, a matching active regression observation, and a deterministic
 // explanation for GET /v1/apps/{slug}/debug/requests/{req_id}/evidence.
 type DebugRequestEvidenceResponse struct {
-	Request        DebugTelemetryRequestItem `json:"request"`
-	Regression     *DebugRegressionItem      `json:"regression,omitempty"`
-	Timeline       []DebugTimelineEvent      `json:"timeline"`
-	Correlation    DebugRequestCorrelation   `json:"correlation"`
-	Spans          []DebugTelemetrySpan      `json:"spans"`
-	SpansTruncated bool                      `json:"spans_truncated"`
-	Explanation    DebugEvidenceExplanation  `json:"explanation"`
-	GeneratedAt    string                    `json:"generated_at"`
+	Request                    DebugTelemetryRequestItem       `json:"request"`
+	Regression                 *DebugRegressionItem            `json:"regression,omitempty"`
+	Timeline                   []DebugTimelineEvent            `json:"timeline"`
+	Correlation                DebugRequestCorrelation         `json:"correlation"`
+	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
+	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
+	Spans                      []DebugTelemetrySpan            `json:"spans"`
+	SpansTruncated             bool                            `json:"spans_truncated"`
+	Explanation                DebugEvidenceExplanation        `json:"explanation"`
+	GeneratedAt                string                          `json:"generated_at"`
 }
 
 // RequestAnalyticsRoute is one aggregated route/method row returned by

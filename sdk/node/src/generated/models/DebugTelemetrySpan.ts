@@ -17,5 +17,13 @@ export type DebugTelemetrySpan = {
    * SQL fingerprint with literals redacted.
    */
   db_statement?: string;
+  /**
+   * Allowlisted platform-owned dependency classification.
+   */
+  dependency_type?: 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal';
+  /**
+   * Allowlisted platform-owned dependency kind; raw span attributes are never returned.
+   */
+  dependency_kind?: string;
 };
 

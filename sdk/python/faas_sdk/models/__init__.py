@@ -400,6 +400,8 @@ from .debug_request_correlation import DebugRequestCorrelation
 from .debug_request_correlation_stage import DebugRequestCorrelationStage
 from .debug_request_correlation_stage_phase import DebugRequestCorrelationStagePhase
 from .debug_request_correlation_stage_status import DebugRequestCorrelationStageStatus
+from .debug_request_dependency_latency import DebugRequestDependencyLatency
+from .debug_request_dependency_latency_type import DebugRequestDependencyLatencyType
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
 from .debug_running_cause import DebugRunningCause
 from .debug_running_cause_code import DebugRunningCauseCode
@@ -413,6 +415,7 @@ from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
 from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
 from .debug_telemetry_span import DebugTelemetrySpan
+from .debug_telemetry_span_dependency_type import DebugTelemetrySpanDependencyType
 from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
 from .declared_route import DeclaredRoute
@@ -1652,6 +1655,8 @@ __all__ = (
     "DebugRequestCorrelationStage",
     "DebugRequestCorrelationStagePhase",
     "DebugRequestCorrelationStageStatus",
+    "DebugRequestDependencyLatency",
+    "DebugRequestDependencyLatencyType",
     "DebugRequestEvidenceResponse",
     "DebugRunningCause",
     "DebugRunningCauseCode",
@@ -1665,6 +1670,7 @@ __all__ = (
     "DebugTelemetryRequestItem",
     "DebugTelemetryRequestItemMethod",
     "DebugTelemetrySpan",
+    "DebugTelemetrySpanDependencyType",
     "DebugTimelineEvent",
     "DebugTimelineEventPhase",
     "DeclaredRoute",
