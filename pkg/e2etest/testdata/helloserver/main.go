@@ -11,7 +11,8 @@
 //
 // Modes:
 //
-//	(default)      serve the contents of -body-file on / and 200 on /healthz
+//	(default)      serve the contents of -body-file on / and 200 on /healthz;
+//	               bind $PORT when -addr is omitted (falling back to 8080)
 //	-spin          also burn one CPU forever (cpu-fairness fixture)
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
 //	-no-listen     never bind the port, so liveness sees conn_refused
@@ -28,12 +29,23 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", "", "listen address (defaults to $PORT or :8080)")
 	bodyFile := flag.String("body-file", "/app/hello.txt", "file whose contents are served on /")
 	spin := flag.Bool("spin", false, "burn one CPU forever")
 	ignoreTerm := flag.Bool("ignore-term", false, "ignore SIGTERM")
 	noListen := flag.Bool("no-listen", false, "never bind the port")
 	flag.Parse()
+	if *addr == "" {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if strings.HasPrefix(port, ":") {
+			*addr = port
+		} else {
+			*addr = ":" + port
+		}
+	}
 
 	if *ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)

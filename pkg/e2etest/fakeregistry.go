@@ -68,7 +68,15 @@ type blobEntry struct {
 // work pair this with `BaseLayerImage` as the deploy-time base — base's
 // diff_ids prefix the app's, above-base is exactly the app layer.
 func HelloImage(repo, helloBody string) (fakeImage, string) {
-	return layeredHelloImage(repo, helloBody, false)
+	return layeredHelloImageOnPort(repo, helloBody, false, 8080)
+}
+
+// HelloImageOnPort returns the same scratch-style image as HelloImage, but
+// advertises a non-default TCP listener. The image's process has no baked-in
+// port argument; it binds the PORT environment variable that guest-init
+// injects from this OCI ExposedPorts declaration.
+func HelloImageOnPort(repo, helloBody string, port int) (fakeImage, string) {
+	return layeredHelloImageOnPort(repo, helloBody, false, port)
 }
 
 // HelloImageAboveBase returns an image identical to HelloImage except it has
@@ -78,7 +86,7 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 // single layer prefixes the app's two layers, so oci.LayersAboveBase puts
 // the second (above-base) layer into `above`.
 func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
-	return layeredHelloImage(repo, helloBody, true)
+	return layeredHelloImageOnPort(repo, helloBody, true, 8080)
 }
 
 // CPUBoundImage returns a single-layer image whose entrypoint is hello-server
@@ -130,10 +138,9 @@ func WedgedLoopImage(repo string) (fakeImage, string) {
 	return layeredHelloImageWithCmd(repo, []string{"/hello-server", "-spin", "-ignore-term", "-no-listen"})
 }
 
-// layeredHelloImageWithCmd is layeredHelloImage with a custom Cmd.
-// Kept as a separate helper to avoid growing the existing
-// layeredHelloImage signature (which already has two callers —
-// HelloImage + HelloImageAboveBase — that don't need a knob).
+// layeredHelloImageWithCmd is layeredHelloImageOnPort with a custom Cmd.
+// Kept as a separate helper so the CPU/wedged fixtures can change Cmd without
+// adding command-shape branches to the ordinary image builder.
 func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 	// Layer shape identical to layeredHelloImage (one base layer with
 	// the hardcoded diff_id; no above-base layer — pairs with the
@@ -191,7 +198,7 @@ func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 	return img, ref
 }
 
-func layeredHelloImage(repo, helloBody string, aboveBase bool) (fakeImage, string) {
+func layeredHelloImageOnPort(repo, helloBody string, aboveBase bool, port int) (fakeImage, string) {
 	// Build the layer blob list. The "base" layer (always present) advertises
 	// the hardcoded helloLayerDiffID — a fake that the deploy-time base image
 	// (BaseLayerImage) repeats so oci.LayersAboveBase sees a matching prefix.
@@ -237,7 +244,7 @@ func layeredHelloImage(repo, helloBody string, aboveBase bool) (fakeImage, strin
 			"Cmd":          []string{"/hello-server"},
 			"Env":          []string{},
 			"WorkingDir":   "/",
-			"ExposedPorts": map[string]any{"8080/tcp": struct{}{}},
+			"ExposedPorts": map[string]any{fmt.Sprintf("%d/tcp", port): struct{}{}},
 		},
 		"rootfs": map[string]any{
 			"type":     "layers",
