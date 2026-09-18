@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
@@ -72,19 +73,27 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 		// one of those gates failed on the first attempt.
 		return nil
 	}
-	// Never replace a usable release when the current pointer names a
-	// directory that cannot be verified for rollback. A dangling legacy
-	// pointer is tolerated for first installation; an existing but incomplete
-	// release is a hard preflight error so activation cannot leave the host
-	// without a safe recovery target.
+	rollbackTarget := previous
+	// Prefer the active release as the rollback target. An operator hotfix can
+	// legitimately make that immutable directory fail verification, though,
+	// and refusing every future signed release leaves the host permanently
+	// wedged on the hotfix. In that case, continue only when another retained
+	// release verifies as a complete rollback target. The active directory is
+	// never rewritten or trusted, and rollback re-verifies the fallback before
+	// activating it.
 	if previous != "" {
 		if _, statErr := os.Stat(previous); statErr == nil {
 			previousManifest, readErr := releasebundle.Read(previous)
-			if readErr != nil {
-				return fmt.Errorf("deploycontroller: current release is not rollback-capable: %w", readErr)
+			currentErr := readErr
+			if currentErr == nil {
+				currentErr = verifyInstalledRelease(previous, previousManifest)
 			}
-			if verifyErr := verifyInstalledRelease(previous, previousManifest); verifyErr != nil {
-				return fmt.Errorf("deploycontroller: current release is not rollback-capable: %w", verifyErr)
+			if currentErr != nil {
+				fallback, fallbackErr := newestVerifiedRollback(c.config.ReleasesRoot, releaseRoot, previous)
+				if fallbackErr != nil {
+					return fmt.Errorf("deploycontroller: current release is not rollback-capable: %w; no verified retained fallback: %v", currentErr, fallbackErr)
+				}
+				rollbackTarget = fallback
 			}
 		} else if !os.IsNotExist(statErr) {
 			return fmt.Errorf("deploycontroller: stat current release: %w", statErr)
@@ -94,25 +103,77 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 	if err := c.runtime.Preflight(ctx, manifest, releaseRoot); err != nil {
 		return fmt.Errorf("deploycontroller: preflight %q: %w", releaseID, err)
 	}
-	if err := c.runtime.Migrate(ctx, manifest, releaseRoot, previous); err != nil {
+	if err := c.runtime.Migrate(ctx, manifest, releaseRoot, rollbackTarget); err != nil {
 		return fmt.Errorf("deploycontroller: migrate %q: %w", releaseID, err)
 	}
 	if err := c.runtime.Activate(ctx, releaseRoot); err != nil {
-		return c.rollback(ctx, releaseID, previous, fmt.Errorf("activate: %w", err))
+		return c.rollback(ctx, releaseID, rollbackTarget, fmt.Errorf("activate: %w", err))
 	}
 	if err := activatePointer(c.config.CurrentPath, releaseRoot); err != nil {
-		return c.rollback(ctx, releaseID, previous, fmt.Errorf("publish: %w", err))
+		return c.rollback(ctx, releaseID, rollbackTarget, fmt.Errorf("publish: %w", err))
 	}
 	if err := c.runtime.Restart(ctx, manifest); err != nil {
-		return c.rollback(ctx, releaseID, previous, err)
+		return c.rollback(ctx, releaseID, rollbackTarget, err)
 	}
 	if err := c.runtime.Healthy(ctx, manifest); err != nil {
-		return c.rollback(ctx, releaseID, previous, err)
+		return c.rollback(ctx, releaseID, rollbackTarget, err)
 	}
 	if _, err := releaseretention.Prune(c.config.ReleasesRoot, c.config.CurrentPath, releaseretention.DefaultKeepPrevious); err != nil {
 		return fmt.Errorf("deploycontroller: release %q is healthy but retention failed: %w", releaseID, err)
 	}
 	return nil
+}
+
+type rollbackCandidate struct {
+	path    string
+	modTime int64
+}
+
+// newestVerifiedRollback finds the most recently modified complete release
+// other than the candidate and the drifted active directory. Retention keeps a
+// bounded set of these directories specifically for recovery.
+func newestVerifiedRollback(releasesRoot string, excluded ...string) (string, error) {
+	excludedPaths := make(map[string]struct{}, len(excluded))
+	for _, path := range excluded {
+		excludedPaths[filepath.Clean(path)] = struct{}{}
+	}
+
+	entries, err := os.ReadDir(releasesRoot)
+	if err != nil {
+		return "", fmt.Errorf("read releases root: %w", err)
+	}
+	candidates := make([]rollbackCandidate, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(releasesRoot, entry.Name())
+		if _, skip := excludedPaths[filepath.Clean(path)]; skip {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		candidates = append(candidates, rollbackCandidate{path: path, modTime: info.ModTime().UnixNano()})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].modTime == candidates[j].modTime {
+			return candidates[i].path > candidates[j].path
+		}
+		return candidates[i].modTime > candidates[j].modTime
+	})
+
+	for _, candidate := range candidates {
+		manifest, readErr := releasebundle.Read(candidate.path)
+		if readErr != nil || manifest.ReleaseID != filepath.Base(candidate.path) {
+			continue
+		}
+		if verifyErr := verifyInstalledRelease(candidate.path, manifest); verifyErr == nil {
+			return candidate.path, nil
+		}
+	}
+	return "", errors.New("no complete retained release")
 }
 
 // readCurrentTarget normalizes a relative current symlink against the

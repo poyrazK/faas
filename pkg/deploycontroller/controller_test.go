@@ -14,6 +14,7 @@ import (
 
 type fakeRuntime struct {
 	calls        []string
+	migrateFrom  string
 	migrateErr   error
 	restartErr   error
 	healthyErr   error
@@ -25,8 +26,9 @@ func (f *fakeRuntime) Preflight(_ context.Context, _ releasebundle.Manifest, _ s
 	f.calls = append(f.calls, "preflight")
 	return nil
 }
-func (f *fakeRuntime) Migrate(_ context.Context, _ releasebundle.Manifest, _, _ string) error {
+func (f *fakeRuntime) Migrate(_ context.Context, _ releasebundle.Manifest, _, previous string) error {
 	f.calls = append(f.calls, "migrate")
+	f.migrateFrom = previous
 	return f.migrateErr
 }
 func (f *fakeRuntime) Activate(_ context.Context, root string) error {
@@ -183,6 +185,63 @@ func TestDeployRejectsExistingCurrentReleaseWithoutVerifiedRollback(t *testing.T
 	}
 	if len(runtime.calls) != 0 {
 		t.Fatalf("runtime calls = %v, want no calls before preflight", runtime.calls)
+	}
+}
+
+func TestDeployUsesVerifiedRetainedReleaseWhenCurrentDrifted(t *testing.T) {
+	root := t.TempDir()
+	newRelease := makeRelease(t, root, "new")
+	fallback := makeRelease(t, root, "fallback")
+	if err := os.WriteFile(filepath.Join(fallback, "sbom-baseline.json"), []byte(`{"counts":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	drifted := makeRelease(t, root, "drifted")
+	if err := os.WriteFile(filepath.Join(drifted, "bin", "apid"), []byte("operator-hotfix"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(drifted, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	controller := newController(t, root, current, runtime)
+
+	if err := controller.Deploy(context.Background(), "new"); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if runtime.migrateFrom != fallback {
+		t.Fatalf("migration rollback target = %q, want %q", runtime.migrateFrom, fallback)
+	}
+	if got, err := os.Readlink(current); err != nil || got != newRelease {
+		t.Fatalf("current = %q, %v; want %q", got, err, newRelease)
+	}
+}
+
+func TestDeployRollsBackToVerifiedRetainedReleaseWhenCurrentDrifted(t *testing.T) {
+	root := t.TempDir()
+	makeRelease(t, root, "new")
+	fallback := makeRelease(t, root, "fallback")
+	drifted := makeRelease(t, root, "drifted")
+	if err := os.WriteFile(filepath.Join(drifted, "bin", "apid"), []byte("operator-hotfix"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(drifted, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{healthyErr: errors.New("gateway not ready")}
+	controller := newController(t, root, current, runtime)
+
+	err := controller.Deploy(context.Background(), "new")
+	if err == nil || !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("Deploy error = %v, want rollback error", err)
+	}
+	if got, readErr := os.Readlink(current); readErr != nil || got != fallback {
+		t.Fatalf("current = %q, %v; want fallback %q", got, readErr, fallback)
+	}
+	want := []string{"preflight", "migrate", "activate:" + filepath.Join(root, "new"), "restart", "healthy", "activate:" + fallback, "restart", "healthy"}
+	if strings.Join(runtime.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", runtime.calls, want)
 	}
 }
 
