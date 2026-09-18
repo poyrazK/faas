@@ -18,6 +18,7 @@ type qualificationProvider struct {
 	provision    int
 	inspect      int
 	usage        int
+	restore      int
 	issue        int
 	revoke       int
 	delete       int
@@ -34,8 +35,9 @@ func (p *qualificationProvider) Provision(_ context.Context, request ProvisionRe
 	return ObservedDatabase{ProviderResourceID: p.resourceID, Status: ProviderStatusReady, Spec: request.Spec}, nil
 }
 
-func (*qualificationProvider) Restore(context.Context, RestoreRequest) (ObservedDatabase, error) {
-	return ObservedDatabase{}, ErrUnsupported
+func (p *qualificationProvider) Restore(_ context.Context, request RestoreRequest) (ObservedDatabase, error) {
+	p.restore++
+	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: ProviderStatusReady, Spec: request.Spec}, nil
 }
 
 func (p *qualificationProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
@@ -117,14 +119,17 @@ func TestQualifyProviderExercisesLifecycleAndCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
-	if !provider.deleted || provider.provision != 2 || provider.inspect != 1 || provider.usage != 1 || provider.issue != 1 || provider.revoke != 1 || provider.delete != 2 {
+	if !provider.deleted || provider.provision != 2 || provider.inspect != 1 || provider.usage != 1 || provider.restore != 1 || provider.issue != 1 || provider.revoke != 1 || provider.delete != 3 {
 		t.Fatalf("provider calls = %+v", provider)
 	}
-	if len(report.Checks) != 21 {
+	if len(report.Checks) != 25 {
 		t.Fatalf("checks = %d (%+v)", len(report.Checks), report.Checks)
 	}
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS != 250 {
 		t.Fatalf("scale-to-zero evidence = %+v", report.ScaleToZero)
+	}
+	if report.Restore == nil || !report.Restore.Restored || !report.Restore.Deleted {
+		t.Fatalf("restore evidence = %+v", report.Restore)
 	}
 }
 
@@ -400,6 +405,27 @@ func TestEvaluateQualificationArtifactFailsClosed(t *testing.T) {
 		if !found {
 			t.Fatalf("readiness reasons = %v, missing %q", readiness.Reasons, wanted)
 		}
+	}
+	missingRestore := artifact
+	missingRestore.Report.Restore = nil
+	missingRestore.Approval = func() *QualificationApproval {
+		copy := *artifact.Approval
+		copy.ReportSHA256 = qualificationReportSHA256(missingRestore.Report)
+		return &copy
+	}()
+	readiness = EvaluateQualificationArtifact(missingRestore, "backend-default", "fingerprint-default", nil, now)
+	if readiness.Ready {
+		t.Fatal("artifact without restore evidence was reported ready")
+	}
+	foundRestoreReason := false
+	for _, reason := range readiness.Reasons {
+		if reason == "restore_evidence_missing" {
+			foundRestoreReason = true
+			break
+		}
+	}
+	if !foundRestoreReason {
+		t.Fatalf("readiness reasons = %v, missing restore_evidence_missing", readiness.Reasons)
 	}
 }
 

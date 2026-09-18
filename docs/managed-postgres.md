@@ -62,9 +62,12 @@ organization. Set `FAAS_ENVIRONMENT=staging`,
 and point `FAAS_MANAGED_POSTGRES_CONFIG` at the provider configuration. The
 command provisions one resource, retries the same idempotency key to exercise
 ambiguous-create recovery, inspects it, reads a complete usage window, issues
-and revokes a read/write credential, and deletes the resource. It always
+and revokes a read/write credential, and deletes the resource. When the
+qualification spec advertises a point-in-time restore window, it also creates
+and deletes a disposable restore target before deleting the source. It always
 attempts cleanup after an intermediate failure and emits a JSON report with
-only stable check codes. The command also emits a versioned `approval`
+only stable check codes and restore evidence (without provider IDs). The
+command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
 machine-readable `readiness` result.
 The approval is bound to the report digest, exact backend fingerprint, expiry,

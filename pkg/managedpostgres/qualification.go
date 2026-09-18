@@ -36,6 +36,14 @@ type ScaleToZeroEvidence struct {
 	WakeLatencyMS int64 `json:"wake_latency_ms"`
 }
 
+// RestoreEvidence records the result of the disposable restore target used by
+// a mutating qualification run. It contains no provider resource ID; the
+// target is deleted before the source resource is cleaned up.
+type RestoreEvidence struct {
+	Restored bool `json:"restored"`
+	Deleted  bool `json:"deleted"`
+}
+
 // QualificationReport is safe to persist in an operator audit log. It does
 // not contain provider resource IDs, endpoint hosts, passwords, or URLs.
 type QualificationReport struct {
@@ -46,6 +54,7 @@ type QualificationReport struct {
 	CompletedAt time.Time            `json:"completed_at"`
 	Checks      []QualificationCheck `json:"checks"`
 	ScaleToZero *ScaleToZeroEvidence `json:"scale_to_zero,omitempty"`
+	Restore     *RestoreEvidence     `json:"restore,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -67,6 +76,10 @@ var requiredProviderQualificationChecks = [...]string{
 	"provision", "provision_observed", "provision_idempotent", "provision_idempotent_identity",
 	"inspect", "inspect_observed", "usage", "usage_valid", "credentials_issue", "credentials_valid",
 	"scale_to_zero_probe", "credentials_revoke", "delete", "delete_recovery", "delete_complete", "delete_recovery_complete",
+}
+
+var restoreQualificationChecks = [...]string{
+	"restore", "restore_observed", "restore_delete", "restore_delete_complete",
 }
 
 var requiredLifecycleQualificationChecks = [...]string{
@@ -208,10 +221,17 @@ func ValidateQualificationReport(report QualificationReport) error {
 	if strings.TrimSpace(report.Provider) == "" || report.Provider != strings.TrimSpace(report.Provider) || report.ResourceID == "" || len(report.ResourceID) > 255 || !report.Mutating || report.StartedAt.IsZero() || report.CompletedAt.IsZero() || report.CompletedAt.Before(report.StartedAt) {
 		return ErrInvalid
 	}
-	if !hasQualificationChecks(report.Checks, requiredProviderQualificationChecks[:]) {
+	requiredChecks := requiredProviderQualificationChecks[:]
+	if report.Restore != nil {
+		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
+	}
+	if !hasQualificationChecks(report.Checks, requiredChecks) {
 		return ErrInvalid
 	}
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS < 0 {
+		return ErrUnavailable
+	}
+	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.Deleted) {
 		return ErrUnavailable
 	}
 	return nil
@@ -287,10 +307,17 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		case errors.Is(err, ErrQualificationFailed):
 			add("provider_checks_failed")
 		case errors.Is(err, ErrUnavailable):
-			add("scale_to_zero_evidence_missing")
+			if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.Deleted) {
+				add("restore_evidence_missing")
+			} else {
+				add("scale_to_zero_evidence_missing")
+			}
 		default:
 			add("report_invalid")
 		}
+	}
+	if artifact.Spec.RestoreWindowSeconds > 0 && artifact.Report.Restore == nil {
+		add("restore_evidence_missing")
 	}
 	if approval.ReportSHA256 == "" || approval.ReportSHA256 != qualificationReportSHA256(artifact.Report) {
 		add("report_digest_mismatch")
@@ -425,8 +452,9 @@ const defaultQualificationTimeout = 10 * time.Minute
 const qualificationCleanupTimeout = 2 * time.Minute
 
 // QualifyProvider validates a provider's advertised contract and, when
-// Mutating is true, exercises the create/recovery/inspect/usage/credential
-// and delete paths against one operator-supplied isolated resource identity.
+// Mutating is true, exercises the create/recovery/inspect/usage/credential,
+// restore (when the requested spec advertises a restore window), and delete
+// paths against one operator-supplied isolated resource identity.
 // The same deterministic keys are reused for retries, and cleanup is attempted
 // even when an intermediate check fails.
 func QualifyProvider(parent context.Context, provider Provider, options QualificationOptions) (report QualificationReport, resultErr error) {
@@ -496,12 +524,16 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	deleteKey := qualificationKey("delete", options.ResourceID)
 	deleteRecoveryKey := qualificationKey("delete-recovery", options.ResourceID)
 	credentialKey := qualificationKey("credential", options.ResourceID)
+	restoreResourceID := qualificationKey("restore", options.ResourceID)
 	observed, err := provider.Provision(ctx, ProvisionRequest{
 		ResourceID:     options.ResourceID,
 		Spec:           options.Spec,
 		IdempotencyKey: provisionKey,
 	})
 	providerResourceID := observed.ProviderResourceID
+	restoreTargetProviderResourceID := ""
+	restoreAttempted := false
+	restoreDeleted := false
 	deleted := false
 	credentialIssued := false
 	credentialRequest := CredentialRequest{
@@ -519,8 +551,29 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 				resultErr = fmt.Errorf("%w: cleanup_credentials", ErrQualificationFailed)
 			}
 		}
+		if restoreAttempted && !restoreDeleted {
+			cleanupResult, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{
+				ResourceID:              restoreResourceID,
+				ProviderResourceID:      restoreTargetProviderResourceID,
+				RestoreSourceResourceID: providerResourceID,
+				IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
+			})
+			if cleanupErr == nil && !cleanupResult.Done {
+				cleanupErr = ErrUnavailable
+			}
+			if cleanupErr != nil && resultErr == nil {
+				report.Checks = append(report.Checks, QualificationCheck{Name: "cleanup_restore", Error: qualificationErrorCode(cleanupErr)})
+				resultErr = fmt.Errorf("%w: cleanup_restore", ErrQualificationFailed)
+			} else {
+				restoreDeleted = true
+			}
+		}
 		if !deleted && providerResourceID != "" {
-			if _, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey}); cleanupErr != nil && resultErr == nil {
+			cleanupResult, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
+			if cleanupErr == nil && !cleanupResult.Done {
+				cleanupErr = ErrUnavailable
+			}
+			if cleanupErr != nil && resultErr == nil {
 				report.Checks = append(report.Checks, QualificationCheck{Name: "cleanup_resource", Error: qualificationErrorCode(cleanupErr)})
 				resultErr = fmt.Errorf("%w: cleanup_resource", ErrQualificationFailed)
 			}
@@ -592,6 +645,48 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		if !record("scale_to_zero_probe", probeErr) {
 			return report, resultErr
 		}
+	}
+	if options.Spec.RestoreWindowSeconds > 0 {
+		restoreAttempted = true
+		report.Restore = &RestoreEvidence{}
+		window := time.Duration(options.Spec.RestoreWindowSeconds) * time.Second
+		offset := window / 2
+		if offset <= 0 {
+			offset = time.Nanosecond
+		}
+		restored, restoreErr := provider.Restore(ctx, RestoreRequest{
+			ResourceID:       restoreResourceID,
+			SourceResourceID: providerResourceID,
+			Spec:             options.Spec,
+			PointInTime:      time.Now().UTC().Add(-offset),
+			IdempotencyKey:   qualificationKey("restore", options.ResourceID),
+		})
+		if !record("restore", restoreErr) {
+			return report, resultErr
+		}
+		if restored.ProviderResourceID == "" || (restored.Status != ProviderStatusPending && restored.Status != ProviderStatusReady) {
+			record("restore_observed", ErrUnavailable)
+			return report, resultErr
+		}
+		restoreTargetProviderResourceID = restored.ProviderResourceID
+		report.Restore.Restored = true
+		record("restore_observed", nil)
+		deletedRestore, deleteRestoreErr := provider.Delete(ctx, DeleteRequest{
+			ResourceID:              restoreResourceID,
+			ProviderResourceID:      restoreTargetProviderResourceID,
+			RestoreSourceResourceID: providerResourceID,
+			IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
+		})
+		if !record("restore_delete", deleteRestoreErr) {
+			return report, resultErr
+		}
+		if !deletedRestore.Done {
+			record("restore_delete_complete", ErrUnavailable)
+			return report, resultErr
+		}
+		restoreDeleted = true
+		report.Restore.Deleted = true
+		record("restore_delete_complete", nil)
 	}
 	if err := provider.RevokeCredentials(ctx, credentialRequest); !record("credentials_revoke", err) {
 		return report, resultErr
