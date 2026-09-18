@@ -6,6 +6,7 @@ This matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/
 
 | Capability | Category | Maturity | Plans | Description | Acceptance evidence |
 |---|---|---|---|---|---|
+| [Container deployments](../docs/container-compatibility) | delivery | `beta` | `free`, `hobby`, `pro`, `scale` | Deploy a stateless Linux/amd64 Docker or OCI image without rewriting it as a function. | `pkg/oci/container_contract_test.go::TestContainerDeploymentContract` |
 | [Custom domains](https://gregale.dev/docs/custom-domains) | edge | `beta` | `free`, `hobby`, `pro`, `scale` | Serve an API on a customer-owned domain with managed TLS. | `pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence` |
 | [Disposable isolated runs](https://gregale.dev/docs/executions) | runtime | `preview` | `hobby`, `pro`, `scale` | Execute untrusted Node.js or Python source in a fresh, networkless Firecracker microVM with bounded time, memory, and output. | `cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection` |
 | [Firecracker isolation](https://gregale.dev/docs/security) | runtime | `beta` | `free`, `hobby`, `pro`, `scale` | Run each workload in an isolated Firecracker microVM. | `cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal` |

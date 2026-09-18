@@ -69,8 +69,9 @@ npx gregale deploy
 
 See the [quickstart](docs/quickstart.md) for the first-deploy flow, the
 [installation guide](docs/cli-install.md) for the current platform and release
-matrix, and the [generated CLI reference](docs/cli-reference.md) for commands
-and flags.
+matrix, the [container compatibility contract](docs/container-compatibility.md)
+for direct OCI deployments, and the [generated CLI reference](docs/cli-reference.md)
+for commands and flags.
 
 ## Platform areas
 
@@ -80,7 +81,7 @@ release checklist. Availability and maturity live in the
 
 | Area | Examples |
 |---|---|
-| Delivery | Framework detection, local source and tarball builds, Dockerfiles, OCI images, GitHub push-to-deploy, deployment diff/dry-run, monorepo projects, named environments, protected promotions, PR previews, and a remote [`gregale dev`](docs/gregale-dev.md) loop. |
+| Delivery | Framework detection, local source and tarball builds, Dockerfiles, direct container deployments, OCI images, GitHub push-to-deploy, deployment diff/dry-run, monorepo projects, named environments, protected promotions, PR previews, and a remote [`gregale dev`](docs/gregale-dev.md) loop. |
 | Runtime | Firecracker isolation, framework apps, functions, versioned runtime profiles, resource profiles, multi-instance routing, scale-to-zero, and bounded disposable executions. |
 | Edge | Managed TLS and custom domains, HTTP/1.1, HTTP/2 and gRPC, streaming and SSE, authentication gates, rate limits, edge rules, traffic splitting, canary rollouts, and traffic mirroring. |
 | Async | Cron triggers, delayed tasks, event-source mappings, queues, run-to-completion jobs, async invocations, and durable workflows. |
@@ -93,8 +94,9 @@ release checklist. Availability and maturity live in the
    Source detection identifies apps and functions, validates configuration, and
    can preview the affected workloads before changing remote state.
 2. Source builds run inside an ephemeral builder microVM. Railpack/BuildKit is
-   the zero-config path; Dockerfiles are the escape hatch. Untrusted build code
-   never runs directly on the host.
+   the zero-config path; Dockerfiles and direct OCI images preserve the
+   application's normal process model. Untrusted build code never runs directly
+   on the host.
 3. `imaged` turns the OCI result into a shared read-only base plus a per-app
    layer, injects `guest-init`, boots the app, waits for readiness, and captures
    a restorable snapshot.
@@ -106,9 +108,9 @@ release checklist. Availability and maturity live in the
    the metering and observability paths.
 
 Functions and framework apps share this data plane. A function is a handler
-wrapped by a Gregale runtime; an app is an HTTP server that follows the guest
-listener contract. Both use the same build, isolation, routing, snapshot,
-scaling, and metering machinery.
+wrapped by a Gregale runtime; a container app is an HTTP server that follows the
+guest listener contract, with no function-framework rewrite required. Both use
+the same build, isolation, routing, snapshot, scaling, and metering machinery.
 
 ## Architecture
 

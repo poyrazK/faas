@@ -4,6 +4,10 @@
 creating an app, starting a deployment, downloading filesystem layers, or
 executing the container. No Gregale login is required.
 
+See the [container compatibility contract](container-compatibility.md) for the
+runtime boundary. A deployable image should start a stateless HTTP server on
+`0.0.0.0:$PORT`; the default port is `8080`.
+
 ```sh
 gregale doctor --image registry.example.com/team/api:release
 gregale doctor --image registry.example.com/team/api@sha256:<digest> --json --strict
@@ -45,8 +49,10 @@ Selection accepts baseline amd64 (no variant or `v1`) and skips ARM, Windows,
 and unknown-platform attestation entries. Missing or multiple distinct compatible
 images fail with a platform diagnostic. Publish one compatible image or pin the
 intended child digest. Nested indexes and additional CPU/OS requirements are not
-supported. Existing deployment checks, including Gregale base-layer compatibility,
-still apply; selecting a platform does not make every Docker image deployable.
+supported. Existing deployment checks still apply. Images that do not share a
+Gregale base can use the self-contained full-rootfs path described in the
+[container compatibility contract](container-compatibility.md); selecting a
+platform alone does not make every Docker image deployable.
 
 ## Private registries
 

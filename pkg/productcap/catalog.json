@@ -2,6 +2,16 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "container-deployments",
+      "name": "Container deployments",
+      "category": "delivery",
+      "description": "Deploy a stateless Linux/amd64 Docker or OCI image without rewriting it as a function.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "/docs/container-compatibility",
+      "acceptance_test": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"
+    },
+    {
       "id": "custom-domains",
       "name": "Custom domains",
       "category": "edge",
