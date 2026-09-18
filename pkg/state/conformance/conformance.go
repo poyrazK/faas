@@ -68,6 +68,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"lease_requeue_releases_each_slot", testLeaseRequeueReleasesEachSlot},
 		{"deadline_force_only_releases_transitions", testDeadlineForceOnlyReleasesTransitions},
@@ -91,6 +92,33 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testQueueBindingState(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC()
+	for _, inv := range []state.Invocation{
+		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "orders", State: state.InvocationPending, DueAt: now, CreatedAt: now.Add(-time.Minute)},
+		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "payments", State: state.InvocationPending, DueAt: now, CreatedAt: now.Add(-2 * time.Minute)},
+		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "orders", State: state.InvocationDeadLetter, DueAt: now, CreatedAt: now.Add(-30 * time.Second)},
+	} {
+		if _, err := fx.Store.EnqueueInvocation(fx.Ctx, inv); err != nil {
+			t.Fatalf("EnqueueInvocation(%s): %v", inv.QueueName, err)
+		}
+	}
+	stats, err := fx.Store.QueueStateForQueue(fx.Ctx, fx.App.ID, "orders")
+	if err != nil {
+		t.Fatalf("QueueStateForQueue: %v", err)
+	}
+	if stats.Depth != 1 || stats.DeadLetter != 1 || stats.OldestPendingAt.IsZero() {
+		t.Fatalf("orders queue stats = %+v, want depth=1 dead_letter=1 oldest pending", stats)
+	}
+	payments, err := fx.Store.QueueStateForQueue(fx.Ctx, fx.App.ID, "payments")
+	if err != nil {
+		t.Fatalf("QueueStateForQueue(payments): %v", err)
+	}
+	if payments.Depth != 1 || payments.DeadLetter != 0 {
+		t.Fatalf("payments queue stats = %+v, want depth=1 dead_letter=0", payments)
 	}
 }
 
