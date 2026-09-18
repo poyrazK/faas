@@ -6,8 +6,9 @@
 # updates src/version.txt, generates SHA256SUMS, commits everything back
 # to a release branch, force-updates the MAJOR moving tag so customers
 # pinned at @vN always resolve to the latest vendored binary, and
-# attaches a GitHub Release via softprops/action-gh-release (SHA-pinned
-# to match .github/workflows/cd-controlplane.yml:99-110).
+# creates a GitHub Release via softprops/action-gh-release. Assets are then
+# uploaded one at a time with digest verification so a slow canonical bundle
+# cannot strand concurrent uploads or delete already-verified retry state.
 #
 # The CLI compatibility asset remains in the first job. The daemon bundle
 # job below is the production release surface: it builds the immutable
@@ -255,12 +256,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: |
-            .github/actions/deploy/bin/gregale
-            /tmp/gregale-build/gregale-darwin-arm64
-            /tmp/gregale-build/gregale_*.tar.gz
-            scripts/install.sh
-            /tmp/gregale-build/CLI-SHA256SUMS
           # Release candidates (for example v0.1.18-rc.1) must not be
           # presented as stable releases. Keep the tag convention and the
           # GitHub release classification in lockstep.
@@ -318,6 +313,39 @@ jobs:
             ```yaml
             - uses: poyrazK/faas/.github/actions/deploy@<40-character-commit-sha>
             ```
+
+      # softprops uploads every configured file concurrently. A transient
+      # failure while publishing rc.173 left one request hung for twenty
+      # minutes and made the retry delete already-good assets before replacing
+      # them. Keep the list declarative for the duplicate-name CI checker, but
+      # publish through the digest-aware sequential helper.
+      - name: Attach CLI release assets sequentially
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          CLI_RELEASE_ASSETS: |
+            .github/actions/deploy/bin/gregale
+            /tmp/gregale-build/gregale-darwin-arm64
+            /tmp/gregale-build/gregale_*.tar.gz
+            scripts/install.sh
+            /tmp/gregale-build/CLI-SHA256SUMS
+        run: |
+          set -euo pipefail
+          assets=()
+          while IFS= read -r pattern; do
+            [[ -n "$pattern" ]] || continue
+            matched=false
+            while IFS= read -r path; do
+              [[ -n "$path" ]] || continue
+              assets+=("$path")
+              matched=true
+            done < <(compgen -G "$pattern" | sort)
+            [[ "$matched" == true ]] || {
+              echo "release asset pattern matched no files: $pattern" >&2
+              exit 1
+            }
+          done < <(printf '%s\n' "$CLI_RELEASE_ASSETS")
+          scripts/ci/upload-release-assets.sh "${assets[@]}"
 
   # ADR-172: the npm channel. Consumes the archives built above rather than
   # rebuilding the CLI, so npm and the curl installer can never ship
@@ -802,17 +830,24 @@ jobs:
     name: Attach canonical daemon bundle
     needs: [build, daemon-bundle]
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
+      - name: Check out release upload helper
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Download canonical release artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release
 
-      - name: Attach canonical release artifacts
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: |
+      - name: Attach canonical release artifacts sequentially
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          CANONICAL_RELEASE_ASSETS: |
             ${{ runner.temp }}/gregale-release/release.tar.gz
             ${{ runner.temp }}/gregale-release/release.cosign.bundle
             ${{ runner.temp }}/gregale-release/release.sbom.json
@@ -820,3 +855,7 @@ jobs:
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
             ${{ runner.temp }}/gregale-release/runtime-bases.env
             ${{ runner.temp }}/gregale-release/SHA256SUMS
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(printf '%s\n' "$CANONICAL_RELEASE_ASSETS" | sed '/^[[:space:]]*$/d')
+          scripts/ci/upload-release-assets.sh "${assets[@]}"

@@ -30,7 +30,10 @@ def release_assets(workflow: pathlib.Path) -> list[tuple[str, str]]:
             release_step = True
             continue
 
-        if release_step and stripped == "files: |":
+        declarative_asset_list = re.fullmatch(
+            r"[A-Z][A-Z0-9_]*_RELEASE_ASSETS:\s*\|", stripped
+        )
+        if (release_step and stripped == "files: |") or declarative_asset_list:
             files_indent = indent
             continue
 
