@@ -171,7 +171,12 @@ type AppConfigPatch struct {
 	// the change row ever lands). The field maps 1:1 to
 	// api.UpdateAppRequest.AppProtocol so the engine does not
 	// depend on the wire DTO shape.
-	AppProtocol *string
+	AppProtocol      *string
+	ExecutionMode    *string
+	RestartPolicy    *string
+	StartupDeadlineS *int
+	MaxRetries       *int
+	ServiceReplicas  *api.ServiceReplicas
 	// ScalingPolicy is the declarative app-level autoscaling policy.
 	// Nil means "don't touch"; a non-nil value replaces the policy.
 	ScalingPolicy *api.ScalingPolicy

@@ -20,6 +20,16 @@ func TestManifestDefaults(t *testing.T) {
 	}
 }
 
+func TestAppManifestWorkerMode(t *testing.T) {
+	m := AppManifest{ExecutionMode: ExecutionModeWorker}
+	if err := m.ValidateLifecyclePlan(PlanHobby); err != nil {
+		t.Fatalf("worker lifecycle validation: %v", err)
+	}
+	if got := m.EffectiveRestartPolicy(); got != RestartPolicyAlways {
+		t.Fatalf("worker restart policy = %q, want %q", got, RestartPolicyAlways)
+	}
+}
+
 func TestManifestExplicitValuesWin(t *testing.T) {
 	m := AppManifest{
 		Entrypoint: []string{"/app/server"},

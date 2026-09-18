@@ -708,7 +708,7 @@ func (d BucketDependency) EffectiveLabel() string {
 }
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root. The supported top-level
-// declarations are `schema_version`, `hosting`, `function`, `scaling`,
+// declarations are `schema_version`, `hosting`, `function`, `lifecycle`, `scaling`,
 // `queue_bindings`, `triggers`, `workflows`, `databases`, and `buckets`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
@@ -719,6 +719,7 @@ type Manifest struct {
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
 	QueueBindings []QueueBinding        `yaml:"queue_bindings,omitempty"`
 	Triggers      []Trigger             `yaml:"triggers"`
@@ -738,6 +739,61 @@ type Manifest struct {
 type FunctionConfig struct {
 	Runtime string `yaml:"runtime"`
 	Handler string `yaml:"handler"`
+}
+
+// LifecycleConfig is the declarative app-level lifecycle policy. Pointer
+// fields preserve the partial-update contract: omitting a key leaves the
+// current app setting unchanged, while an explicit zero clears/inherits it.
+// The API remains authoritative for plan gates and workload compatibility.
+type LifecycleConfig struct {
+	ExecutionMode    *string              `yaml:"execution_mode,omitempty"`
+	RestartPolicy    *string              `yaml:"restart_policy,omitempty"`
+	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
+	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
+}
+
+// ToAPI returns the lifecycle portion of an app PATCH request.
+func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
+	if c == nil {
+		return api.UpdateAppRequest{}
+	}
+	return api.UpdateAppRequest{
+		ExecutionMode:    c.ExecutionMode,
+		RestartPolicy:    c.RestartPolicy,
+		StartupDeadlineS: c.StartupDeadlineS,
+		MaxRetries:       c.MaxRetries,
+		ServiceReplicas:  c.ServiceReplicas,
+	}
+}
+
+// Empty reports whether the block contains no desired lifecycle changes.
+func (c *LifecycleConfig) Empty() bool {
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil &&
+		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.ServiceReplicas == nil)
+}
+
+// Validate checks lifecycle shape locally. Plan-specific admission is still
+// performed by apid when the patch is applied.
+func (c *LifecycleConfig) Validate() error {
+	if c == nil || c.Empty() {
+		return nil
+	}
+	m := api.AppManifest{}
+	if c.ExecutionMode != nil {
+		m.ExecutionMode = *c.ExecutionMode
+	}
+	if c.RestartPolicy != nil {
+		m.RestartPolicy = *c.RestartPolicy
+	}
+	if c.StartupDeadlineS != nil {
+		m.StartupDeadlineS = *c.StartupDeadlineS
+	}
+	if c.MaxRetries != nil {
+		m.MaxRetries = *c.MaxRetries
+	}
+	m.ServiceReplicas = c.ServiceReplicas
+	return m.ValidateLifecyclePlan(api.PlanScale)
 }
 
 // Load reads `gregale.yaml`, `gregale.yml`, or the event-only `gregale.toml`
@@ -885,6 +941,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.Scaling != nil {
 		if err := m.Scaling.Validate(); err != nil {
 			return err
+		}
+	}
+	if m.Lifecycle != nil {
+		if err := m.Lifecycle.Validate(); err != nil {
+			return fmt.Errorf("lifecycle: %w", err)
 		}
 	}
 	seenBindings := make(map[string]struct{}, len(m.QueueBindings))

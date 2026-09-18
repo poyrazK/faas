@@ -16,32 +16,36 @@ const maxDeployIdempotencyKeyLength = 255
 // content identity for local/tarball deploys; image and source-ref fields
 // cover the two paths where the CLI does not have source bytes.
 type deployIdempotencyIntent struct {
-	Slug           string `json:"slug"`
-	Shape          shape  `json:"shape"`
-	Runtime        string `json:"runtime,omitempty"`
-	Handler        string `json:"handler,omitempty"`
-	Image          string `json:"image,omitempty"`
-	Repo           string `json:"repo,omitempty"`
-	Ref            string `json:"ref,omitempty"`
-	SourceSHA256   string `json:"source_sha256,omitempty"`
-	SourceRoot     string `json:"source_root,omitempty"`
-	Profile        string `json:"profile,omitempty"`
-	Dockerfile     bool   `json:"dockerfile,omitempty"`
-	RequireAuthn   *bool  `json:"require_authn,omitempty"`
-	AppProtocol    string `json:"app_protocol,omitempty"`
-	Reason         string `json:"reason,omitempty"`
-	Tag            string `json:"tag,omitempty"`
-	DeployedBy     string `json:"deployed_by,omitempty"`
-	PRNumber       int    `json:"pr_number,omitempty"`
-	TrafficPercent int    `json:"traffic_percent,omitempty"`
-	CanaryPreset   string `json:"canary_preset,omitempty"`
-	CanaryStages   string `json:"canary_stages,omitempty"`
-	Environment    string `json:"environment,omitempty"`
-	RollbackOn5xx  *bool  `json:"rollback_on_5xx,omitempty"`
-	NoTriggers     bool   `json:"no_triggers,omitempty"`
-	ProjectSlug    string `json:"project_slug,omitempty"`
-	DeployOnly     string `json:"deploy_only,omitempty"`
-	DeployExclude  string `json:"deploy_exclude,omitempty"`
+	Slug             string `json:"slug"`
+	Shape            shape  `json:"shape"`
+	Runtime          string `json:"runtime,omitempty"`
+	Handler          string `json:"handler,omitempty"`
+	Image            string `json:"image,omitempty"`
+	Repo             string `json:"repo,omitempty"`
+	Ref              string `json:"ref,omitempty"`
+	SourceSHA256     string `json:"source_sha256,omitempty"`
+	SourceRoot       string `json:"source_root,omitempty"`
+	Profile          string `json:"profile,omitempty"`
+	Dockerfile       bool   `json:"dockerfile,omitempty"`
+	RequireAuthn     *bool  `json:"require_authn,omitempty"`
+	AppProtocol      string `json:"app_protocol,omitempty"`
+	ExecutionMode    string `json:"execution_mode,omitempty"`
+	RestartPolicy    string `json:"restart_policy,omitempty"`
+	StartupDeadlineS int    `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int    `json:"max_retries,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	Tag              string `json:"tag,omitempty"`
+	DeployedBy       string `json:"deployed_by,omitempty"`
+	PRNumber         int    `json:"pr_number,omitempty"`
+	TrafficPercent   int    `json:"traffic_percent,omitempty"`
+	CanaryPreset     string `json:"canary_preset,omitempty"`
+	CanaryStages     string `json:"canary_stages,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	RollbackOn5xx    *bool  `json:"rollback_on_5xx,omitempty"`
+	NoTriggers       bool   `json:"no_triggers,omitempty"`
+	ProjectSlug      string `json:"project_slug,omitempty"`
+	DeployOnly       string `json:"deploy_only,omitempty"`
+	DeployExclude    string `json:"deploy_exclude,omitempty"`
 }
 
 // validateDeployIdempotencyKey validates the user-facing logical key before

@@ -24147,6 +24147,29 @@ components:
           type: [string, "null"]
           enum: [http1, http2, grpc]
           example: http1
+        execution_mode:
+          type: [string, "null"]
+          enum: [request, service, worker, job]
+          description: "Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload."
+        restart_policy:
+          type: [string, "null"]
+          enum: [no, on-failure, always, unless-stopped]
+          description: "Supervisor restart policy. Omitted → no change."
+        startup_deadline_s:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Maximum startup deadline in seconds; zero inherits the plan default."
+        max_retries:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Maximum lifecycle restart attempts; zero inherits the plan default."
+        service_replicas:
+          type: [object, "null"]
+          description: "Replica policy for service mode."
+          properties:
+            min: { type: integer, minimum: 0 }
+            max: { type: integer, minimum: 0 }
+            desired: { type: integer, minimum: 0 }
         scaling_policy:
           description: "Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy."
           oneOf:

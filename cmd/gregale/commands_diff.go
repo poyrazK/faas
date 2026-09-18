@@ -108,6 +108,10 @@ func deployPreviewRequested(dryRun, diff, serverDiff bool) (bool, error) {
 // --diff short-circuit path so the diff sees the same flags a real
 // deploy would.
 func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string, vcpu int) diffCLIOptions {
+	return buildDiffOptionsWithLifecycle(slug, sh, runtime, handler, image, cwd, requireAuthnPtr, appProtocolPtr, resourceProfile, vcpu, "", "", 0, 0)
+}
+
+func buildDiffOptionsWithLifecycle(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string, vcpu int, executionMode, restartPolicy string, startupDeadlineS, maxRetries int) diffCLIOptions {
 	opts := diffCLIOptions{
 		Slug:     slug,
 		AppShape: sh,
@@ -134,6 +138,22 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 			opts.AppConfig.RAMMB = &memory
 			opts.AppConfig.CPUMillicores = &cpu
 		}
+	}
+	if executionMode != "" {
+		value := executionMode
+		opts.AppConfig.ExecutionMode = &value
+	}
+	if restartPolicy != "" {
+		value := restartPolicy
+		opts.AppConfig.RestartPolicy = &value
+	}
+	if startupDeadlineS != 0 {
+		value := startupDeadlineS
+		opts.AppConfig.StartupDeadlineS = &value
+	}
+	if maxRetries != 0 {
+		value := maxRetries
+		opts.AppConfig.MaxRetries = &value
 	}
 	opts.AppConfig.ScalingPolicy = previewScalingPolicyFromManifest(cwd)
 	return opts
@@ -381,6 +401,26 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 	if policy := previewScalingPolicyFromManifest(opts.Cwd); policy != nil {
 		p.AppConfig.ScalingPolicy = policy
 	}
+	if opts.Cwd != "" {
+		if m, ok, err := gregalemanifest.Load(opts.Cwd); err == nil && ok && m != nil && m.Lifecycle != nil && !m.Lifecycle.Empty() {
+			desired := m.Lifecycle.ToAPI()
+			if p.AppConfig.ExecutionMode == nil {
+				p.AppConfig.ExecutionMode = desired.ExecutionMode
+			}
+			if p.AppConfig.RestartPolicy == nil {
+				p.AppConfig.RestartPolicy = desired.RestartPolicy
+			}
+			if p.AppConfig.StartupDeadlineS == nil {
+				p.AppConfig.StartupDeadlineS = desired.StartupDeadlineS
+			}
+			if p.AppConfig.MaxRetries == nil {
+				p.AppConfig.MaxRetries = desired.MaxRetries
+			}
+			if p.AppConfig.ServiceReplicas == nil {
+				p.AppConfig.ServiceReplicas = desired.ServiceReplicas
+			}
+		}
+	}
 	// Manifest: PR-0 synthesises a placeholder from the CLI flags
 	// (image / handler). Real manifest extraction from the tarball
 	// is the imaged contract — PR-0 keeps the diff text-only so
@@ -596,6 +636,11 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		RequireAuthn:        p.RequireAuthn,
 		EvictionPriority:    p.EvictionPriority,
 		AppProtocol:         p.AppProtocol,
+		ExecutionMode:       p.ExecutionMode,
+		RestartPolicy:       p.RestartPolicy,
+		StartupDeadlineS:    p.StartupDeadlineS,
+		MaxRetries:          p.MaxRetries,
+		ServiceReplicas:     p.ServiceReplicas,
 		ScalingPolicy:       p.ScalingPolicy,
 	}
 	if patch.RAMMB == nil && patch.VCPU == nil && patch.CPUMillicores == nil &&
@@ -605,7 +650,9 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		patch.StreamingEnabled == nil && patch.WebSocketEnabled == nil &&
 		patch.RequireSigned == nil && patch.WarmSnapshotEnabled == nil &&
 		patch.RequireAuthn == nil && patch.EvictionPriority == nil &&
-		patch.AppProtocol == nil && patch.ScalingPolicy == nil {
+		patch.AppProtocol == nil && patch.ExecutionMode == nil && patch.RestartPolicy == nil &&
+		patch.StartupDeadlineS == nil && patch.MaxRetries == nil && patch.ServiceReplicas == nil &&
+		patch.ScalingPolicy == nil {
 		return nil
 	}
 	return patch

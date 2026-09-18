@@ -113,7 +113,12 @@ type DiffAppConfigPatch struct {
 	// The closed set {http1, http2, grpc} is validated by
 	// deploydiff/quota.go::quotaCheckAppProtocol which mirrors
 	// the per-plan gate (grpc Hobby+/Pro/Scale only).
-	AppProtocol *string `json:"app_protocol,omitempty"`
+	AppProtocol      *string          `json:"app_protocol,omitempty"`
+	ExecutionMode    *string          `json:"execution_mode,omitempty"`
+	RestartPolicy    *string          `json:"restart_policy,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	// ScalingPolicy replaces the app-level autoscaling policy when present.
 	// Nil preserves the existing policy during a preview.
 	ScalingPolicy *ScalingPolicy `json:"scaling_policy,omitempty"`

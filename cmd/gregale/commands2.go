@@ -902,6 +902,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
 		"require-authn", "no-require-authn", "app-protocol",
+		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
 		if explicit[name] {
@@ -929,6 +930,26 @@ func validateExplicitDockerfile(sourceDir string) error {
 		return errors.New("dockerfile at the selected source root must be a regular file")
 	}
 	return nil
+}
+
+func validateDeployLifecycleFlags(executionMode, restartPolicy string, startupDeadlineS, maxRetries int) error {
+	manifest := api.AppManifest{
+		ExecutionMode:    executionMode,
+		RestartPolicy:    restartPolicy,
+		StartupDeadlineS: startupDeadlineS,
+		MaxRetries:       maxRetries,
+	}
+	return manifest.ValidateLifecyclePlan(api.PlanScale)
+}
+
+func applyDeployLifecycleToCreateRequest(req *api.CreateAppRequest, executionMode, restartPolicy string, startupDeadlineS, maxRetries int) {
+	if req == nil {
+		return
+	}
+	req.ExecutionMode = executionMode
+	req.RestartPolicy = restartPolicy
+	req.StartupDeadlineS = startupDeadlineS
+	req.MaxRetries = maxRetries
 }
 
 // materializeCommittedGitSource builds the HEAD archive selected by the
@@ -990,6 +1011,7 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 		"create-only": {}, "name": {}, "template": {}, "path": {}, "worktree": {},
 		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
 		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "app-protocol": {},
+		"execution-mode": {}, "restart-policy": {}, "startup-deadline-s": {}, "max-retries": {},
 		"json": {},
 	}
 	var incompatible []string
@@ -1040,10 +1062,30 @@ func configureExistingApp(ctx context.Context, client *Client, existing api.AppR
 		problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
 		return &api.APIError{Problem: *problem}
 	}
-	if requireAuthnPtr == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" {
+	if requireAuthnPtr == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
+		req.ExecutionMode == "" && req.RestartPolicy == "" && req.StartupDeadlineS == 0 && req.MaxRetries == 0 && req.ServiceReplicas == nil {
 		return nil
 	}
 	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
+	if req.ExecutionMode != "" {
+		value := req.ExecutionMode
+		upd.ExecutionMode = &value
+	}
+	if req.RestartPolicy != "" {
+		value := req.RestartPolicy
+		upd.RestartPolicy = &value
+	}
+	if req.StartupDeadlineS != 0 {
+		value := req.StartupDeadlineS
+		upd.StartupDeadlineS = &value
+	}
+	if req.MaxRetries != 0 {
+		value := req.MaxRetries
+		upd.MaxRetries = &value
+	}
+	if req.ServiceReplicas != nil {
+		upd.ServiceReplicas = req.ServiceReplicas
+	}
 	if req.ResourceProfile != "" {
 		profile := req.ResourceProfile
 		upd.ResourceProfile = &profile
@@ -1166,6 +1208,64 @@ func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
 		return a.Target == nil && b.Target == nil
 	}
 	return a.Target.Metric == b.Target.Metric && a.Target.Value == b.Target.Value
+}
+
+func serviceReplicasEqual(a, b *api.ServiceReplicas) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Min == b.Min && a.Max == b.Max && a.Desired == b.Desired
+}
+
+func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
+	manifest := current.Manifest
+	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
+		return true
+	}
+	if desired.RestartPolicy != nil && manifest.RestartPolicy != *desired.RestartPolicy {
+		return true
+	}
+	if desired.StartupDeadlineS != nil && manifest.StartupDeadlineS != *desired.StartupDeadlineS {
+		return true
+	}
+	if desired.MaxRetries != nil && manifest.MaxRetries != *desired.MaxRetries {
+		return true
+	}
+	if desired.ServiceReplicas != nil && !serviceReplicasEqual(manifest.ServiceReplicas, desired.ServiceReplicas) {
+		return true
+	}
+	return false
+}
+
+// applyManifestLifecycle reads and applies the optional lifecycle block. It
+// runs after the app exists, allowing OCI image deploys to use worker mode
+// without requiring an HTTP listener or an image-derived app.json first.
+func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, slug, cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil || m.Lifecycle == nil || m.Lifecycle.Empty() {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	desired := m.Lifecycle.ToAPI()
+	current, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("read app before applying lifecycle policy: %w", err)
+	}
+	if !lifecyclePatchNeeded(current, desired) {
+		return nil
+	}
+	if _, err := client.UpdateApp(ctx, slug, desired); err != nil {
+		return fmt.Errorf("apply lifecycle policy: %w", err)
+	}
+	return nil
 }
 
 // applyManifestScalingPolicy reads and applies the optional scaling block.
@@ -1709,6 +1809,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
 	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
+	executionMode := fs.String("execution-mode", "", "app lifecycle mode: request|service|worker|job")
+	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
+	startupDeadlineS := fs.Int("startup-deadline-s", 0, "maximum startup deadline in seconds (0 = plan default)")
+	maxRetries := fs.Int("max-retries", 0, "maximum lifecycle restart attempts (0 = plan default)")
 	// Issue #737 / ADR-083: explicit shape override. Without either flag
 	// the CLI auto-detects from the cwd (handler.*-only → function,
 	// otherwise app). With --function or --app, detection is skipped.
@@ -2027,6 +2131,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			"Invalid app protocol", "app_protocol must be one of: http1, http2, grpc")
 		return printErr("Invalid --app-protocol", &api.APIError{Problem: *problem})
 	}
+	if err := validateDeployLifecycleFlags(*executionMode, *restartPolicy, *startupDeadlineS, *maxRetries); err != nil {
+		return printErr("Invalid lifecycle flags", err)
+	}
 	if *trafficPercent < -1 || *trafficPercent > 100 {
 		return printErr("Invalid --traffic-percent", &api.APIError{Problem: *api.ErrInvalidTrafficPercent(*trafficPercent)})
 	}
@@ -2127,7 +2234,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// the scan and apply requests.
 			"function", "app", "runtime", "handler", "dockerfile",
 			"vcpu", "profile", "require-authn", "no-require-authn",
-			"app-protocol",
+			"app-protocol", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		} {
 			if explicit[name] {
 				unsupported = append(unsupported, "--"+name)
@@ -2481,6 +2588,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// creation so an unrelated working tree cannot affect create-only latency.
 	if *createOnly && *templateName == "" && *sourcePath == "" && !*worktree && (deployFunction || deployApp) {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
@@ -2862,7 +2970,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
-		AppProtocol: appProtocolIntent, Reason: *reason, Tag: *tag,
+		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
+		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, NoTriggers: *noTriggers,
@@ -2901,7 +3010,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*deployShowAffected, *diffJSON,
 				*diffStrict || !*diffLenient, *noTriggers, *environment)
 		}
-		opts := buildDiffOptions(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu)
+		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -3076,6 +3185,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
@@ -3144,6 +3254,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		stagedManifestTriggerTxn.commit()
 	}
 	applyManifestScaling := func() error {
+		if err := applyManifestLifecycle(ctx, client, slug, sourceDir); err != nil {
+			return err
+		}
 		return applyManifestScalingPolicy(ctx, client, slug, sourceDir)
 	}
 	if !*noTriggers {
