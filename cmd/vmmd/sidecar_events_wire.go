@@ -48,3 +48,15 @@ func (r *FrameworkReadyReceiver) SidecarEmitter() SidecarEventEmitter {
 	}
 	return r.emitter
 }
+
+// WithEventPublisher attaches the persistence seam for the in-guest event
+// publish endpoint. The receiver supplies the trusted instance id; the
+// callback is responsible for resolving account identity and writing the
+// canonical event envelope. A nil callback leaves the endpoint disabled.
+func (r *FrameworkReadyReceiver) WithEventPublisher(publisher GuestEventPublisher) *FrameworkReadyReceiver {
+	if r == nil {
+		return r
+	}
+	r.eventPublisher = publisher
+	return r
+}

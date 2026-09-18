@@ -27,11 +27,12 @@
 // workload_OOM channel: the guest-init cgroup.events listener
 // emits a JSON envelope {peak_mb, plan_mb} when the per-VM
 // cgroup v2 leaf detects an oom_kill event. Type outside the
-// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06} is dropped with a
+// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07} is dropped with a
 // Warn (forward-compatible with future event classes).
 //
-// Each connection carries one EOF-delimited frame capped at 1024 bytes. Frames
-// are parsed and dispatched synchronously inside a bounded listener worker.
+// Each connection carries one EOF-delimited frame. Lifecycle telemetry is
+// capped at 1024 bytes; event publish frames are capped at 64 KiB. Frames are
+// parsed and dispatched synchronously inside a bounded listener worker.
 package main
 
 import (
@@ -88,6 +89,10 @@ const (
 	// VsockFrameworkReadyHostTypeDisk carries the latest writable-root
 	// filesystem sample emitted by guest-init.
 	VsockFrameworkReadyHostTypeDisk byte = 0x06
+	// VsockFrameworkReadyHostTypeEventPublish carries a caller-authored
+	// event request from the in-guest metadata proxy. The host resolves
+	// account identity from the instance-bound listener before persisting it.
+	VsockFrameworkReadyHostTypeEventPublish byte = 0x07
 )
 
 // Sidecar init-exit status closed enum (issue #463 / ADR-069 /
@@ -108,7 +113,12 @@ const (
 // frameworkReadyMaxDatagram for ALL types so the host bound is
 // the larger of the two. 1024 is a generous future-proof margin
 // that still pinpoints a runaway sender.
-const frameworkReadyMaxDatagram = 1024
+const (
+	frameworkReadyMaxDatagram = 1024
+	// VsockEventPublishMaxBody is larger than the lifecycle frames but still
+	// bounded before the body reaches the event ledger or JSON decoder.
+	VsockEventPublishMaxBody uint32 = 64 << 10
+)
 
 // FrameworkReadyReceiver parses and dispatches the per-instance streams owned
 // by JailerVMM.
@@ -122,11 +132,17 @@ const frameworkReadyMaxDatagram = 1024
 // missing sidecar wiring (e.g. local-dev without a
 // state.Store).
 type FrameworkReadyReceiver struct {
-	ctx     context.Context
-	log     *slog.Logger
-	mgr     *fcvm.Manager
-	emitter SidecarEventEmitter
+	ctx            context.Context
+	log            *slog.Logger
+	mgr            *fcvm.Manager
+	emitter        SidecarEventEmitter
+	eventPublisher GuestEventPublisher
 }
+
+// GuestEventPublisher is the host-side persistence seam for the in-guest
+// metadata event endpoint. The callback receives the trusted instance id and
+// raw JSON request body; callers derive account identity from the instance.
+type GuestEventPublisher func(context.Context, string, []byte) error
 
 // StartFrameworkReadyReceiver registers the event channel with JailerVMM.
 // JailerVMM binds <vsock.sock>_1027 separately for every instance before
@@ -158,16 +174,19 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return "read", fmt.Errorf("framework_ready set deadline: %w", err)
 	}
-	body, err := io.ReadAll(io.LimitReader(conn, frameworkReadyMaxDatagram+1))
+	body, err := io.ReadAll(io.LimitReader(conn, int64(VsockEventPublishMaxBody)+2))
 	if err != nil {
 		return "read", fmt.Errorf("framework_ready read: %w", err)
 	}
-	if len(body) > frameworkReadyMaxDatagram {
-		return "protocol", fmt.Errorf("framework_ready frame %d bytes exceeds limit %d", len(body), frameworkReadyMaxDatagram)
+	if len(body) > int(VsockEventPublishMaxBody)+1 {
+		return "protocol", fmt.Errorf("framework_ready frame %d bytes exceeds event cap %d", len(body), VsockEventPublishMaxBody+1)
 	}
 	msg, err := parseFrameworkReadyDatagram(body)
 	if err != nil {
 		return "protocol", fmt.Errorf("framework_ready parse: %w", err)
+	}
+	if msg.Kind != parseFWReadyKindEventPublish && len(body) > frameworkReadyMaxDatagram {
+		return "protocol", fmt.Errorf("framework_ready frame %d bytes exceeds lifecycle cap %d", len(body), frameworkReadyMaxDatagram)
 	}
 	switch msg.Kind {
 	case parseFWReadyKindOK:
@@ -182,6 +201,8 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		r.dispatchWorkloadOOM(instance, msg.WorkloadOOM)
 	case parseFWReadyKindDisk:
 		r.dispatchDiskUsage(instance, msg.Disk)
+	case parseFWReadyKindEventPublish:
+		r.dispatchEventPublish(instance, msg.EventPublish)
 	}
 	return "", nil
 }
@@ -358,14 +379,24 @@ func (r *FrameworkReadyReceiver) dispatchDiskUsage(instance string, wire diskUsa
 		"capacity_bytes", wire.CapacityBytes)
 }
 
+func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload []byte) {
+	if r.eventPublisher == nil {
+		r.log.Warn("event publish receiver unavailable", "instance", instance)
+		return
+	}
+	if err := r.eventPublisher(r.ctx, instance, payload); err != nil {
+		r.log.Warn("in-guest event publish failed", "instance", instance, "err", err)
+	}
+}
+
 // parseFWKind is the discriminator for
 // parseFrameworkReadyDatagram (issue #463 / ADR-069 /
 // ADR-071 / PR-C, extended for tail events in issue #667 /
 // ADR-078, extended for workload OOM in Cluster C /
 // ADR-121). Closed set: OK for type=0x01, InitExit for
 // type=0x02, Restart for type=0x03, Tail for type=0x04,
-// WorkloadOOM for type=0x05, DiskTelemetry for type=0x06. A future type=0x07 adds its
-// own enum value here.
+// WorkloadOOM for type=0x05, DiskTelemetry for type=0x06, and
+// EventPublish for type=0x07.
 type parseFWKind uint8
 
 const (
@@ -382,6 +413,9 @@ const (
 	parseFWReadyKindWorkloadOOM
 	// parseFWReadyKindDisk carries guest writable-root filesystem usage.
 	parseFWReadyKindDisk
+	// parseFWReadyKindEventPublish carries the raw JSON request from the
+	// in-guest metadata event endpoint.
+	parseFWReadyKindEventPublish
 )
 
 // tailEventOutcome (issue #667 / ADR-078) mirrors the
@@ -403,7 +437,8 @@ const (
 // Kind; type=0x02/0x03 fill the matching envelope; type=0x04
 // fills the Tail outcome + elapsed_ms; type=0x05 (Cluster C /
 // ADR-121) fills WorkloadOOM's peak_mb + plan_mb; type=0x06 fills Disk's
-// used_bytes + capacity_bytes. The
+// used_bytes + capacity_bytes; type=0x07 fills EventPublish's raw JSON
+// body. The
 // instance id is NOT on the wire — the host resolves it from
 // the STREAM peer CID.
 type parseFWReadyMsg struct {
@@ -427,8 +462,9 @@ type parseFWReadyMsg struct {
 	// CodeAppRuntimeOOM Observed closure template. Zero
 	// values are tolerated at the wire (the engine guard
 	// is downstream).
-	WorkloadOOM workloadOOMWire
-	Disk        diskUsageWire
+	WorkloadOOM  workloadOOMWire
+	Disk         diskUsageWire
+	EventPublish []byte
 }
 
 type diskUsageWire struct {
@@ -490,6 +526,8 @@ func (m parseFWReadyMsg) TypeLabel() string {
 		return fmt.Sprintf("workload_oom(0x%02x)", VsockFrameworkReadyHostTypeWorkloadOOM)
 	case parseFWReadyKindDisk:
 		return fmt.Sprintf("disk_telemetry(0x%02x)", VsockFrameworkReadyHostTypeDisk)
+	case parseFWReadyKindEventPublish:
+		return fmt.Sprintf("event_publish(0x%02x)", VsockFrameworkReadyHostTypeEventPublish)
 	default:
 		return "unknown"
 	}
@@ -607,6 +645,12 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 			return msg, fmt.Errorf("disk_telemetry: invalid sample used=%d capacity=%d", msg.Disk.UsedBytes, msg.Disk.CapacityBytes)
 		}
 		msg.Kind = parseFWReadyKindDisk
+	case VsockFrameworkReadyHostTypeEventPublish:
+		if len(rest) == 0 || uint32(len(rest)) > VsockEventPublishMaxBody || !json.Valid(rest) {
+			return msg, fmt.Errorf("event_publish: invalid JSON body")
+		}
+		msg.Kind = parseFWReadyKindEventPublish
+		msg.EventPublish = append([]byte(nil), rest...)
 	default:
 		return msg, fmt.Errorf("unknown msg sub-type 0x%02x", b[0])
 	}

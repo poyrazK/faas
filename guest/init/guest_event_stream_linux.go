@@ -46,4 +46,7 @@ func sendGuestEventFrame(frame []byte, timeout time.Duration) error {
 	return nil
 }
 
-const frameworkReadyMaxStreamFrame = 1024
+// Lifecycle telemetry remains small, but the in-guest event publish proxy
+// carries a bounded JSON payload. Keep one transport cap shared by both so a
+// sender cannot allocate an unbounded frame before it reaches vmmd.
+const frameworkReadyMaxStreamFrame = (64 << 10) + 1

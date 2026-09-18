@@ -122,6 +122,13 @@ func boot() error {
 		if err := startWorkloadIdentityProxy(slog.Default()); err != nil {
 			slog.Default().Warn("workload identity proxy unavailable", "err", err)
 		}
+		// Workstream B: applications can publish tenant-scoped internal
+		// events through the metadata address. The host-side vmmd receiver
+		// derives account identity from the live instance before persisting
+		// the event, so no bearer credential is staged in the guest.
+		if err := startEventPublishProxy(slog.Default()); err != nil {
+			slog.Default().Warn("event publish proxy unavailable", "err", err)
+		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
@@ -388,6 +395,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
 	env = StampWorkloadIdentityEnv(env)
+	env = StampEventPublishEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
 	// boot/wake trace seed. The W3C trace context was shipped from the

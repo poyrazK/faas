@@ -1138,6 +1138,50 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recv = nil
 	}
 	if recv != nil {
+		// Workstream B: the guest metadata event proxy sends only the
+		// caller-authored JSON over the instance-bound vsock stream. Resolve
+		// account identity from vmmd's live map and persist the same canonical
+		// event envelope as POST /v1/events:publish. A missing database is the
+		// expected default-local development posture, so the endpoint reports
+		// a bounded transport error instead of accepting an unverifiable event.
+		recv.WithEventPublisher(func(publishCtx context.Context, instance string, body []byte) error {
+			if store == nil || pool == nil {
+				return errors.New("event publish persistence is not configured")
+			}
+			_, accountID, identityErr := mgr.InstanceIdentity(instance)
+			if identityErr != nil {
+				return identityErr
+			}
+			var req api.PublishEventRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				return fmt.Errorf("decode in-guest event publish: %w", err)
+			}
+			occurredAt := time.Time{}
+			if req.Time != nil {
+				occurredAt = *req.Time
+			}
+			envelope, err := (events.Envelope{
+				ID: req.ID, Source: req.Source, Type: req.Type,
+				Time: occurredAt, DataContentType: req.DataContentType,
+				Data: req.Data, AccountID: req.AccountID,
+			}).Normalize(accountID, time.Now().UTC())
+			if err != nil {
+				return fmt.Errorf("validate in-guest event publish: %w", err)
+			}
+			payload, err := json.Marshal(envelope)
+			if err != nil {
+				return fmt.Errorf("encode in-guest event publish: %w", err)
+			}
+			if err := store.AppendEvent(publishCtx, "vmmd", "event.published", &accountID, payload); err != nil {
+				return fmt.Errorf("persist in-guest event publish: %w", err)
+			}
+			// The ledger is authoritative; a lost advisory is recovered by
+			// schedd's event fanout sweep just like the public ingress path.
+			if err := db.Notify(publishCtx, pool, db.NotifyEventPublished, string(payload)); err != nil {
+				log.Warn("vmmd: in-guest event publish wake failed", "event_id", envelope.ID, "err", err)
+			}
+			return nil
+		})
 		// PR-C §3,§4 (issue #463 / ADR-069 / ADR-071):
 		// wire the sidecar events emitter onto the
 		// receiver. Production uses

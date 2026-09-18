@@ -32,11 +32,17 @@ import (
 // framework_ready_recv.go is linux-only; on non-linux the
 // emitter is set but never consumed.
 type FrameworkReadyReceiver struct {
-	fd      atomic.Int32
-	log     *slog.Logger
-	mgr     *fcvm.Manager
-	emitter SidecarEventEmitter
+	fd             atomic.Int32
+	log            *slog.Logger
+	mgr            *fcvm.Manager
+	emitter        SidecarEventEmitter
+	eventPublisher GuestEventPublisher
 }
+
+// GuestEventPublisher mirrors the Linux receiver's callback type so the
+// always-compiled WithEventPublisher method remains source-compatible on
+// development hosts without AF_VSOCK.
+type GuestEventPublisher func(context.Context, string, []byte) error
 
 // Close is a no-op on non-linux platforms.
 func (r *FrameworkReadyReceiver) Close() {
@@ -45,6 +51,7 @@ func (r *FrameworkReadyReceiver) Close() {
 		_ = r.log
 		_ = r.mgr
 		_ = r.emitter
+		_ = r.eventPublisher
 	}
 }
 
