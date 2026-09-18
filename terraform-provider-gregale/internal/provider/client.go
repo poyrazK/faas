@@ -293,6 +293,18 @@ type tcpListenerResponse struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
+type staticEgressIPRequest struct {
+	IP  string `json:"ip"`
+	Set bool   `json:"set"`
+}
+
+type staticEgressIPResponse struct {
+	IP          *string `json:"ip"`
+	SetAt       *string `json:"set_at"`
+	PlanCap     int     `json:"plan_cap"`
+	PlanAllowed bool    `json:"plan_allowed"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -621,5 +633,24 @@ func (c *client) updateTCPListener(ctx context.Context, appSlug, name string, up
 
 func (c *client) deleteTCPListener(ctx context.Context, appSlug, name string) error {
 	path := "/v1/apps/" + escapePath(appSlug) + "/tcp-listeners/" + escapePath(name)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func (c *client) getStaticEgressIP(ctx context.Context, appSlug string) (staticEgressIPResponse, error) {
+	var out staticEgressIPResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/static-egress-ip"
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) setStaticEgressIP(ctx context.Context, appSlug, ip string) (staticEgressIPResponse, error) {
+	var out staticEgressIPResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/static-egress-ip"
+	err := c.request(ctx, http.MethodPut, path, staticEgressIPRequest{IP: ip, Set: true}, &out, true)
+	return out, err
+}
+
+func (c *client) clearStaticEgressIP(ctx context.Context, appSlug string) error {
+	path := "/v1/apps/" + escapePath(appSlug) + "/static-egress-ip"
 	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
 }

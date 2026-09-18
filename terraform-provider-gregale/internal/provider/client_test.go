@@ -602,3 +602,60 @@ func TestClientTCPListenerLifecycleUsesPublicContract(t *testing.T) {
 		t.Fatalf("deleteTCPListener: %v", err)
 	}
 }
+
+func TestClientStaticEgressIPLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/orders/static-egress-ip":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("static egress IP lookup included an idempotency key")
+			}
+			_, _ = w.Write([]byte(`{"ip":"203.0.113.42","set_at":"2026-09-19T10:00:00Z","plan_cap":1,"plan_allowed":true}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/orders/static-egress-ip":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("static egress IP set request did not include an idempotency key")
+			}
+			var request staticEgressIPRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode static egress IP set request: %v", err)
+			}
+			if request.IP != "203.0.113.42" || !request.Set {
+				t.Fatalf("static egress IP set request = %+v", request)
+			}
+			_, _ = w.Write([]byte(`{"ip":"203.0.113.42","set_at":"2026-09-19T10:00:00Z","plan_cap":1,"plan_allowed":true}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/orders/static-egress-ip":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("static egress IP clear request included an idempotency key")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	created, err := client.setStaticEgressIP(context.Background(), "orders", "203.0.113.42")
+	if err != nil {
+		t.Fatalf("setStaticEgressIP: %v", err)
+	}
+	if created.IP == nil || *created.IP != "203.0.113.42" || !created.PlanAllowed {
+		t.Fatalf("created static egress IP = %+v", created)
+	}
+
+	read, err := client.getStaticEgressIP(context.Background(), "orders")
+	if err != nil {
+		t.Fatalf("getStaticEgressIP: %v", err)
+	}
+	if read.IP == nil || *read.IP != "203.0.113.42" || read.PlanCap != 1 {
+		t.Fatalf("read static egress IP = %+v", read)
+	}
+
+	if err := client.clearStaticEgressIP(context.Background(), "orders"); err != nil {
+		t.Fatalf("clearStaticEgressIP: %v", err)
+	}
+}
