@@ -168,6 +168,36 @@ type alertRuleResponse struct {
 	UpdatedAt                 string  `json:"updated_at"`
 }
 
+type cronRequest struct {
+	AppID         string `json:"app_id"`
+	Schedule      string `json:"schedule"`
+	Path          string `json:"path,omitempty"`
+	Enabled       *bool  `json:"enabled,omitempty"`
+	Timezone      string `json:"timezone,omitempty"`
+	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+}
+
+type cronPatch struct {
+	Schedule      *string `json:"schedule,omitempty"`
+	Path          *string `json:"path,omitempty"`
+	Enabled       *bool   `json:"enabled,omitempty"`
+	Timezone      *string `json:"timezone,omitempty"`
+	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+}
+
+type cronResponse struct {
+	ID              string `json:"id"`
+	AppID           string `json:"app_id"`
+	Schedule        string `json:"schedule"`
+	Path            string `json:"path"`
+	Enabled         bool   `json:"enabled"`
+	SuspendedReason string `json:"suspended_reason,omitempty"`
+	Timezone        string `json:"timezone"`
+	SkipIfRunning   bool   `json:"skip_if_running"`
+	CreatedAt       string `json:"created_at"`
+	LastFiredAt     string `json:"last_fired_at,omitempty"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -319,4 +349,26 @@ func (c *client) updateAlertRule(ctx context.Context, appSlug, alertID string, p
 func (c *client) deleteAlertRule(ctx context.Context, appSlug, alertID string) error {
 	path := "/v1/apps/" + escapePath(appSlug) + "/alerts/" + escapePath(alertID)
 	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func (c *client) createCron(ctx context.Context, req cronRequest) (cronResponse, error) {
+	var out cronResponse
+	err := c.request(ctx, http.MethodPost, "/v1/crons", req, &out, true)
+	return out, err
+}
+
+func (c *client) getCron(ctx context.Context, cronID string) (cronResponse, error) {
+	var out cronResponse
+	err := c.request(ctx, http.MethodGet, "/v1/crons/"+escapePath(cronID), nil, &out, false)
+	return out, err
+}
+
+func (c *client) updateCron(ctx context.Context, cronID string, patch cronPatch) (cronResponse, error) {
+	var out cronResponse
+	err := c.request(ctx, http.MethodPatch, "/v1/crons/"+escapePath(cronID), patch, &out, false)
+	return out, err
+}
+
+func (c *client) deleteCron(ctx context.Context, cronID string) error {
+	return c.request(ctx, http.MethodDelete, "/v1/crons/"+escapePath(cronID), nil, nil, false)
 }

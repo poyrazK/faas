@@ -9,6 +9,7 @@ The initial surface is intentionally small:
 - `gregale_app` manages an API app through the public app lifecycle API.
 - `gregale_domain` manages a custom hostname binding and exposes DNS/TLS state.
 - `gregale_alert` manages an app alert rule and exposes evaluation state.
+- `gregale_cron` manages a scheduled app invocation and exposes scheduler state.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -82,6 +83,22 @@ The webhook secret is sent on create/update but is never written to the plan
 or state. Gregale returns only `webhook_secret_masked`; Terraform refreshes
 the rule's `state`, firing timestamps, and delivery configuration.
 
+## Scheduled invocation
+
+```hcl
+resource "gregale_cron" "sync" {
+  app_id         = gregale_app.api.app_id
+  schedule       = "*/15 * * * *"
+  path           = "/internal/sync"
+  timezone       = "UTC"
+  skip_if_running = true
+}
+```
+
+The schedule uses the standard five-field cron format. Gregale evaluates it
+in the configured IANA timezone and reports `last_fired_at` and any
+`suspended_reason` during refresh.
+
 Creating the resource returns the DNS challenge immediately. Gregale verifies
 DNS and provisions TLS asynchronously; refresh the resource to observe
 `verification_status`, `cert_status`, and certificate expiry without making
@@ -101,6 +118,6 @@ output "production_environment_id" {
 ```
 
 The provider uses the same public REST contract as the CLI and sends
-idempotency keys for app, domain, and alert creation. Application secret
+idempotency keys for app, domain, alert, and cron creation. Application secret
 values, alert webhook secrets, and bearer tokens are not returned by the
 managed resources or recorded in state.

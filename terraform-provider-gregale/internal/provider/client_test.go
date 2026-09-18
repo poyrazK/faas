@@ -189,3 +189,79 @@ func TestClientAlertRuleLifecycleUsesPublicContract(t *testing.T) {
 		t.Fatalf("deleteAlertRule: %v", err)
 	}
 }
+
+func TestClientCronLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/crons":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("cron create request did not include an idempotency key")
+			}
+			var request cronRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			if request.AppID != "app-1" || request.Schedule != "*/15 * * * *" || request.Path != "/internal/sync" || request.Timezone != "UTC" {
+				t.Fatalf("create request = %+v", request)
+			}
+			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"*/15 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"created_at":"2026-09-18T10:00:00Z"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/crons/cron-1":
+			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"*/15 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"created_at":"2026-09-18T10:00:00Z","last_fired_at":"2026-09-18T10:15:00Z"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/crons/cron-1":
+			var patch cronPatch
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+				t.Fatalf("decode update request: %v", err)
+			}
+			if patch.Schedule == nil || *patch.Schedule != "0 * * * *" {
+				t.Fatalf("update request = %+v", patch)
+			}
+			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"0 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"created_at":"2026-09-18T10:00:00Z"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/crons/cron-1":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	skipIfRunning := true
+	created, err := client.createCron(context.Background(), cronRequest{
+		AppID:         "app-1",
+		Schedule:      "*/15 * * * *",
+		Path:          "/internal/sync",
+		Timezone:      "UTC",
+		SkipIfRunning: &skipIfRunning,
+	})
+	if err != nil {
+		t.Fatalf("createCron: %v", err)
+	}
+	if created.ID != "cron-1" || created.AppID != "app-1" {
+		t.Fatalf("create response = %+v", created)
+	}
+
+	read, err := client.getCron(context.Background(), "cron-1")
+	if err != nil {
+		t.Fatalf("getCron: %v", err)
+	}
+	if read.LastFiredAt != "2026-09-18T10:15:00Z" {
+		t.Fatalf("read response = %+v", read)
+	}
+
+	updatedSchedule := "0 * * * *"
+	updated, err := client.updateCron(context.Background(), "cron-1", cronPatch{Schedule: &updatedSchedule})
+	if err != nil {
+		t.Fatalf("updateCron: %v", err)
+	}
+	if updated.Schedule != "0 * * * *" {
+		t.Fatalf("update response = %+v", updated)
+	}
+
+	if err := client.deleteCron(context.Background(), "cron-1"); err != nil {
+		t.Fatalf("deleteCron: %v", err)
+	}
+}
