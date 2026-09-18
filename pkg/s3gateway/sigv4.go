@@ -175,6 +175,11 @@ func verifyPresignedSigV4(ctx context.Context, r *http.Request, parsed sigV4Requ
 	}
 	clone := r.Clone(ctx)
 	clone.Body, clone.GetBody = nil, nil
+	// The signer automatically adds content-length to the canonical headers
+	// whenever ContentLength is positive. Preserve it only when the client
+	// included it in X-Amz-SignedHeaders; SDKs such as botocore deliberately
+	// leave content-length unsigned even when the transport knows the size.
+	clone.ContentLength = 0
 	originalHeaders := r.Header
 	clone.Header = make(http.Header)
 	for _, name := range strings.Split(parsed.SignedHeader, ";") {
@@ -233,6 +238,10 @@ func verifySigV4(ctx context.Context, r *http.Request, parsed sigV4Request, secr
 	}
 	clone := r.Clone(ctx)
 	clone.Body, clone.GetBody = nil, nil
+	// SignHTTP adds a positive ContentLength to the canonical headers even
+	// when the original request did not sign content-length. Keep it at zero
+	// unless the client explicitly included that header in SignedHeaders.
+	clone.ContentLength = 0
 	clone.Header = make(http.Header)
 	clone.Host = r.Host
 	for _, name := range strings.Split(parsed.SignedHeader, ";") {

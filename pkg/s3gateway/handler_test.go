@@ -636,6 +636,66 @@ func TestGatewayRejectsTamperedSignatureAndAcceptsPresignedRequests(t *testing.T
 	}
 }
 
+func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+
+	body := []byte("hello")
+	sum := sha256.Sum256(body)
+	signedAt := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+
+	// Botocore does not sign content-length for PutObject. The transport still
+	// supplies the length when the request reaches net/http, so verification
+	// must not add it to the reconstructed canonical request.
+	headerRequest := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/header.txt", bytes.NewReader(body))
+	headerRequest.Host = "s3.gregale.dev"
+	headerRequest.ContentLength = 0
+	headerRequest.Header.Set("Content-Type", "text/plain")
+	headerRequest.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
+	headerRequest.Header.Set("X-Amz-Date", "20260907T120000Z")
+	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, headerRequest, hex.EncodeToString(sum[:]), "s3", "us-east-1", signedAt); err != nil {
+		t.Fatal(err)
+	}
+	headerRequest.ContentLength = int64(len(body))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, headerRequest)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("header-signed PUT = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// The same distinction applies to a presigned URL whose signed headers
+	// contain only host, which is the default botocore behavior.
+	presignRequest := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/presigned-unsigned-length.txt", bytes.NewReader(body))
+	presignRequest.Host = "s3.gregale.dev"
+	presignRequest.ContentLength = 0
+	query := presignRequest.URL.Query()
+	query.Set("X-Amz-Expires", "300")
+	presignRequest.URL.RawQuery = query.Encode()
+	signedURL, signedHeaders, err := awsv4.NewSigner().PresignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, presignRequest, "UNSIGNED-PAYLOAD", "s3", "us-east-1", signedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presigned, err := http.NewRequest(http.MethodPut, signedURL, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	presigned.Host = "s3.gregale.dev"
+	presigned.ContentLength = int64(len(body))
+	for name, values := range signedHeaders {
+		for _, value := range values {
+			if !strings.EqualFold(name, "Host") {
+				presigned.Header.Add(name, value)
+			}
+		}
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, presigned)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("presigned PUT = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
