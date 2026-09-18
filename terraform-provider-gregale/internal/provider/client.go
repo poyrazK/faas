@@ -99,6 +99,27 @@ type projectEnvironmentResponse struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
+type domainRequest struct {
+	Domain string `json:"domain"`
+	AppID  string `json:"app_id"`
+}
+
+type domainResponse struct {
+	Domain           string   `json:"domain"`
+	AppID            string   `json:"app_id"`
+	ChallengeToken   string   `json:"challenge_token,omitempty"`
+	TXTRecord        string   `json:"txt_record,omitempty"`
+	Verified         bool     `json:"verified"`
+	VerifiedAt       string   `json:"verified_at,omitempty"`
+	Default          bool     `json:"default,omitempty"`
+	CertNotAfter     string   `json:"cert_not_after,omitempty"`
+	CertSANs         []string `json:"cert_sans,omitempty"`
+	CertExpiresAt    string   `json:"cert_expires_at,omitempty"`
+	CertLastError    string   `json:"cert_last_error,omitempty"`
+	DNSLastCheckedAt string   `json:"dns_last_checked_at,omitempty"`
+	CertStatus       string   `json:"cert_status,omitempty"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -208,4 +229,20 @@ func (c *client) getProjectEnvironment(ctx context.Context, project, environment
 	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment)
 	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
 	return out, err
+}
+
+func (c *client) createDomain(ctx context.Context, req domainRequest) (domainResponse, error) {
+	var out domainResponse
+	err := c.request(ctx, http.MethodPost, "/v1/domains", req, &out, true)
+	return out, err
+}
+
+func (c *client) getDomain(ctx context.Context, domain string) (domainResponse, error) {
+	var out domainResponse
+	err := c.request(ctx, http.MethodGet, "/v1/domains/"+escapePath(domain), nil, &out, false)
+	return out, err
+}
+
+func (c *client) deleteDomain(ctx context.Context, domain string) error {
+	return c.request(ctx, http.MethodDelete, "/v1/domains/"+escapePath(domain), nil, nil, false)
 }

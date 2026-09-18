@@ -7,6 +7,7 @@ the control plane.
 The initial surface is intentionally small:
 
 - `gregale_app` manages an API app through the public app lifecycle API.
+- `gregale_domain` manages a custom hostname binding and exposes DNS/TLS state.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -44,6 +45,25 @@ resource "gregale_app" "api" {
 }
 ```
 
+## Custom domain
+
+```hcl
+resource "gregale_domain" "api" {
+  domain = "api.example.com"
+  app_id = gregale_app.api.app_id
+}
+
+output "domain_txt_record" {
+  value     = gregale_domain.api.txt_record
+  sensitive = true
+}
+```
+
+Creating the resource returns the DNS challenge immediately. Gregale verifies
+DNS and provisions TLS asynchronously; refresh the resource to observe
+`verification_status`, `cert_status`, and certificate expiry without making
+`terraform apply` wait for DNS propagation.
+
 ## Environment lookup
 
 ```hcl
@@ -57,6 +77,6 @@ output "production_environment_id" {
 }
 ```
 
-The provider uses the same public REST contract as the CLI and sends an
-idempotency key for app creation. Secret values and bearer tokens are not
-returned by the managed resources or recorded in state.
+The provider uses the same public REST contract as the CLI and sends
+idempotency keys for app and domain creation. Application secret values and
+bearer tokens are not returned by the managed resources or recorded in state.

@@ -74,3 +74,39 @@ func TestNewClientRejectsUnsupportedBaseURL(t *testing.T) {
 		t.Fatal("newClient accepted unsupported scheme")
 	}
 }
+
+func TestClientCreateDomainUsesPublicContractAndIdempotency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/domains" {
+			t.Fatalf("request = %s %s, want POST /v1/domains", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Fatal("domain create request did not include an idempotency key")
+		}
+		var request domainRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if request.Domain != "api.example.com" || request.AppID != "app-1" {
+			t.Fatalf("request = %+v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domain":"api.example.com","app_id":"app-1","challenge_token":"challenge","txt_record":"gregale=challenge","verified":false,"cert_status":"pending"}`))
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	got, err := client.createDomain(context.Background(), domainRequest{Domain: "api.example.com", AppID: "app-1"})
+	if err != nil {
+		t.Fatalf("createDomain: %v", err)
+	}
+	if got.Domain != "api.example.com" || got.AppID != "app-1" || got.CertStatus != "pending" {
+		t.Fatalf("response = %+v", got)
+	}
+}
