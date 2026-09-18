@@ -52,6 +52,80 @@ func testInvocationClaimPreservesStoredCap(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testInvocationRetryReleasesReservedSlot(t *testing.T, fx *Fixture) {
+	const cap = 2
+	if _, _, err := fx.Store.EnsureAccountAsyncQuota(fx.Ctx, fx.Account.ID, cap); err != nil {
+		t.Fatalf("EnsureAccountAsyncQuota: %v", err)
+	}
+	inv, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocationWithCap(fx.Ctx, inv.ID, "instance-1", 30, cap); err != nil {
+		t.Fatalf("ClaimInvocationWithCap(first): %v", err)
+	}
+	if err := fx.Store.FailInvocation(fx.Ctx, inv.ID, "transient", time.Millisecond, cap); err != nil {
+		t.Fatalf("FailInvocation(retry): %v", err)
+	}
+	if max, current, err := fx.Store.GetAccountAsyncQuota(fx.Ctx, fx.Account.ID); err != nil {
+		t.Fatalf("GetAccountAsyncQuota(after retry): %v", err)
+	} else if max != cap || current != 0 {
+		t.Fatalf("quota after retry = %d/%d, want %d/0", max, current, cap)
+	}
+	if _, err := fx.Store.ClaimInvocationWithCap(fx.Ctx, inv.ID, "instance-2", 30, cap); err != nil {
+		t.Fatalf("ClaimInvocationWithCap(second): %v", err)
+	}
+	if _, current, err := fx.Store.GetAccountAsyncQuota(fx.Ctx, fx.Account.ID); err != nil || current != 1 {
+		t.Fatalf("quota after re-claim = %d, %v; want 1", current, err)
+	}
+	if err := fx.Store.CompleteInvocation(fx.Ctx, inv.ID, nil); err != nil {
+		t.Fatalf("CompleteInvocation: %v", err)
+	}
+	if _, current, err := fx.Store.GetAccountAsyncQuota(fx.Ctx, fx.Account.ID); err != nil || current != 0 {
+		t.Fatalf("quota after completion = %d, %v; want 0", current, err)
+	}
+}
+
+func testLegacyClaimDoesNotReleaseReservedSlot(t *testing.T, fx *Fixture) {
+	const cap = 2
+	if _, _, err := fx.Store.EnsureAccountAsyncQuota(fx.Ctx, fx.Account.ID, cap); err != nil {
+		t.Fatalf("EnsureAccountAsyncQuota: %v", err)
+	}
+	reserved, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(reserved): %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocationWithCap(fx.Ctx, reserved.ID, "reserved", 30, cap); err != nil {
+		t.Fatalf("ClaimInvocationWithCap: %v", err)
+	}
+
+	legacy, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationCron, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(legacy): %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocation(fx.Ctx, legacy.ID, "legacy", 30); err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
+	if err := fx.Store.CompleteInvocation(fx.Ctx, legacy.ID, nil); err != nil {
+		t.Fatalf("CompleteInvocation(legacy): %v", err)
+	}
+	if _, current, err := fx.Store.GetAccountAsyncQuota(fx.Ctx, fx.Account.ID); err != nil || current != 1 {
+		t.Fatalf("quota after legacy completion = %d, %v; want reserved sibling's slot (1)", current, err)
+	}
+	if err := fx.Store.CompleteInvocation(fx.Ctx, reserved.ID, nil); err != nil {
+		t.Fatalf("CompleteInvocation(reserved): %v", err)
+	}
+}
+
 // testLeaseRequeueReleasesEachSlot verifies that lease recovery accounts for
 // every abandoned dispatch, not merely one row per account. A leaked slot can
 // permanently reduce queue throughput after a worker or host disappears.
@@ -115,7 +189,7 @@ func testDeadlineForceOnlyReleasesTransitions(t *testing.T, fx *Fixture) {
 		t.Fatalf("EnsureAccountAsyncQuota: %v", err)
 	}
 
-	ids := make([]string, 0, 3)
+	ids := make([]string, 0, 4)
 	for i := 0; i < 3; i++ {
 		inv, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
 			AppID: fx.App.ID, AccountID: fx.Account.ID,
@@ -129,6 +203,14 @@ func testDeadlineForceOnlyReleasesTransitions(t *testing.T, fx *Fixture) {
 			t.Fatalf("ClaimInvocationWithCap(%d): %v", i, err)
 		}
 	}
+	pending, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(pending): %v", err)
+	}
+	ids = append(ids, pending.ID)
 
 	// Make the first row terminal before the deadline batch is forced. The
 	// second row is still active; the third row proves the counter is not
@@ -136,12 +218,12 @@ func testDeadlineForceOnlyReleasesTransitions(t *testing.T, fx *Fixture) {
 	if err := fx.Store.CompleteInvocation(fx.Ctx, ids[0], nil); err != nil {
 		t.Fatalf("CompleteInvocation: %v", err)
 	}
-	forced, err := fx.Store.ForceDeadlineBreachedInvocations(fx.Ctx, []string{ids[0], ids[1]})
+	forced, err := fx.Store.ForceDeadlineBreachedInvocations(fx.Ctx, []string{ids[0], ids[1], ids[3]})
 	if err != nil {
 		t.Fatalf("ForceDeadlineBreachedInvocations: %v", err)
 	}
-	if forced != 1 {
-		t.Fatalf("forced = %d, want 1", forced)
+	if forced != 2 {
+		t.Fatalf("forced = %d, want 2", forced)
 	}
 
 	completed, err := fx.Store.InvocationByID(fx.Ctx, ids[0])

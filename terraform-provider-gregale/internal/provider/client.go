@@ -241,6 +241,11 @@ type deploymentRequest struct {
 	NoTriggers  bool   `json:"no_triggers,omitempty"`
 }
 
+type imageDeploymentRequest struct {
+	Image       string `json:"image"`
+	Environment string `json:"environment,omitempty"`
+}
+
 type deploymentResponse struct {
 	StageState  json.RawMessage `json:"stage_state,omitempty"`
 	ID          string          `json:"id"`
@@ -534,9 +539,23 @@ func (c *client) createSourceRefDeployment(ctx context.Context, appSlug string, 
 	return out, err
 }
 
+func (c *client) createImageDeployment(ctx context.Context, appSlug string, req imageDeploymentRequest) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/deployments"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
 func (c *client) getDeployment(ctx context.Context, deploymentID string) (deploymentResponse, error) {
 	var out deploymentResponse
 	path := "/v1/deployments/" + escapePath(deploymentID)
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) getLatestAppDeployment(ctx context.Context, appSlug string) (deploymentResponse, error) {
+	var out deploymentResponse
+	path := "/v1/apps/" + escapePath(appSlug) + "/deployments/latest"
 	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
 	return out, err
 }

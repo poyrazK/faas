@@ -31,10 +31,21 @@ func healthcheckPathFromDep(dep state.Deployment) string {
 	}
 	if len(dep.APIHostingReceipt) > 0 {
 		var receipt struct {
+			Source struct {
+				Kind string `json:"kind"`
+			} `json:"source"`
 			Profile frameworkprofile.Profile `json:"profile"`
 		}
-		if err := json.Unmarshal(dep.APIHostingReceipt, &receipt); err == nil && validRuntimeHealthPath(receipt.Profile.HealthPath) {
-			return receipt.Profile.HealthPath
+		if err := json.Unmarshal(dep.APIHostingReceipt, &receipt); err == nil {
+			if receipt.Source.Kind == string(state.DeploymentKindImage) && receipt.Profile.HealthPath == "" {
+				// An empty profile path is an intentional direct-OCI TCP
+				// readiness contract. Do not fall through to a stale inferred
+				// /healthz profile from before the receipt was written.
+				return ""
+			}
+			if validRuntimeHealthPath(receipt.Profile.HealthPath) {
+				return receipt.Profile.HealthPath
+			}
 		}
 	}
 	if len(dep.InferredProfile) > 0 {

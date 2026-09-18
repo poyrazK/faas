@@ -413,6 +413,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampOverridePortEnv(env, m.EffectivePort())
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
+	env = StampRuntimeConfigEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
 	// boot/wake trace seed. The W3C trace context was shipped from the

@@ -16,21 +16,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func isDirectOCIImage(app state.App, dep state.Deployment) bool {
+	return dep.Kind == state.DeploymentKindImage && app.Type != state.AppTypeFunction && strings.TrimSpace(app.Runtime) == ""
+}
+
 func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile.Profile {
-	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: string(markers.FrameworkUnknown), Port: api.DefaultAppPort, HealthPath: "/healthz"}
+	// A direct OCI image is a normal HTTP container, not a Gregale runner.
+	// Unless it carries an explicit override, its only readiness contract is
+	// accepting connections on the advertised port. An empty HealthPath is
+	// persisted deliberately: sched treats it as the legacy TCP gate instead
+	// of inventing a /healthz endpoint the image never promised.
+	healthPath := "/healthz"
+	if isDirectOCIImage(app, dep) {
+		healthPath = ""
+	}
+	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: string(markers.FrameworkUnknown), Port: api.DefaultAppPort, HealthPath: healthPath}
 	if persisted, ok := persistedProfile(dep); ok {
 		profile = persisted
 	}
 	if profile.Port <= 0 {
 		profile.Port = api.DefaultAppPort
 	}
-	if profile.HealthPath == "" {
+	if profile.HealthPath == "" && !isDirectOCIImage(app, dep) {
 		profile.HealthPath = "/healthz"
 	}
 	if app.Manifest.Port > 0 {
 		profile.Port = app.Manifest.Port
 	}
-	if app.Manifest.Healthz != "" {
+	// Image manifests are seeded with /healthz for the guest contract even
+	// when the OCI image declared no HTTP endpoint. Do not mistake that
+	// platform default for an explicit direct-OCI readiness choice; a
+	// non-default app value remains an intentional override.
+	if app.Manifest.Healthz != "" && (!isDirectOCIImage(app, dep) || app.Manifest.Healthz != defaultHealthzPath) {
 		profile.HealthPath = app.Manifest.Healthz
 	}
 	if len(dep.OverrideHealthcheck) > 0 {
@@ -61,10 +78,16 @@ func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile
 	return profile
 }
 
-// HostingHealthPath returns the effective public readiness path used by the
-// deployment receipt and smoke verifier.
+// HostingHealthPath returns the effective public smoke path used by the
+// deployment receipt and smoke verifier. Direct OCI boot readiness is a TCP
+// listener gate, so the public smoke still uses the conventional root path
+// instead of falling back to the nonexistent /healthz endpoint.
 func HostingHealthPath(app state.App, dep state.Deployment) string {
-	return hostingReceiptProfile(app, dep).HealthPath
+	path := hostingReceiptProfile(app, dep).HealthPath
+	if path == "" && isDirectOCIImage(app, dep) {
+		return "/"
+	}
+	return path
 }
 
 func buildHostingReceipt(app state.App, dep state.Deployment, smoke apihostingreceipt.SmokeResult) apihostingreceipt.Receipt {

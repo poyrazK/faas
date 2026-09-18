@@ -70,6 +70,8 @@ func Run(t *testing.T, open Open) {
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
+		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
+		{"legacy_claim_does_not_release_another_rows_slot", testLegacyClaimDoesNotReleaseReservedSlot},
 		{"lease_requeue_releases_each_slot", testLeaseRequeueReleasesEachSlot},
 		{"deadline_force_only_releases_transitions", testDeadlineForceOnlyReleasesTransitions},
 		{"unified_dead_letter_ledger_replays_invocation", testUnifiedDeadLetterLedger},

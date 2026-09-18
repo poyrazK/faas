@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -75,4 +76,26 @@ func (c *NodeAwareFlowCounter) Open(ctx context.Context, instanceID string) (int
 		return c.fallback.Open(ctx, instanceID)
 	}
 	return 0, nil
+}
+
+// Snapshot returns remote bounded flow detail when fresh and falls back to
+// the local reader for single-box deployments or telemetry gaps. The optional
+// method keeps older FlowCounter implementations source-compatible.
+func (c *NodeAwareFlowCounter) Snapshot(ctx context.Context, instanceID string) ([]flowcount.FlowSummary, error) {
+	if c == nil {
+		return nil, nil
+	}
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	if c.telemetry != nil {
+		if rows, ok := c.telemetry.LookupFlowSummaries(instanceID, now); ok {
+			return rows, nil
+		}
+	}
+	if snapshotter, ok := c.fallback.(flowcount.Snapshotter); ok {
+		return snapshotter.Snapshot(ctx, instanceID)
+	}
+	return nil, nil
 }

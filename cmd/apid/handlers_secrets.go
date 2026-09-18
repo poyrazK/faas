@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -251,6 +252,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"name":   key,
 		"scope":  scope,
 	})
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
 		Key string `json:"key"`
 	}{Key: key})
@@ -440,6 +442,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		"name":   key,
 		"scope":  scope,
 	})
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "delete", scope, key)
 	w.WriteHeader(http.StatusNoContent)
 }
 

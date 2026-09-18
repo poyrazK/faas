@@ -937,12 +937,12 @@ func cmdAppRestart(slug string, args []string) int {
 }
 
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
-// subcommand form (scale / rename / security / routes) or the legacy
+// subcommand form (scale / rename / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--require-signed=true|false]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--require-signed=true|false]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -966,6 +966,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppNetwork(slug, args[2:])
 		case subRoutes:
 			return cmdAppsRoutes(slug, args[2:])
+		case subTCPListeners:
+			return cmdAppsTCP(slug, args[2:])
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, args[2:])
 		case subStaticEgressIP:

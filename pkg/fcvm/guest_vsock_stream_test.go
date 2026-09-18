@@ -28,7 +28,7 @@ func TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets(t *testing.T) {
 		instance string
 		body     string
 	}
-	receipts := make(chan receipt, 2)
+	receipts := make(chan receipt, 3)
 	var observerMu sync.Mutex
 	available := map[uint32]bool{}
 	v.WithGuestVsockTransportObserver(func(port uint32, kind string, err error) {
@@ -36,7 +36,7 @@ func TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets(t *testing.T) {
 		available[port] = err == nil && kind == ""
 		observerMu.Unlock()
 	})
-	for _, port := range []uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort} {
+	for _, port := range []uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort, VsockRuntimeConfigHostPort} {
 		port := port
 		if err := v.RegisterGuestVsockStreamHandler(port, func(instance string, conn net.Conn) (string, error) {
 			body, err := io.ReadAll(conn)
@@ -54,7 +54,7 @@ func TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets(t *testing.T) {
 	}
 	defer v.closeGuestVsockListeners(lease.Instance)
 
-	for _, port := range []uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort} {
+	for _, port := range []uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort, VsockRuntimeConfigHostPort} {
 		path := v.guestVsockUDSSock(lease.Instance, port)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -76,7 +76,7 @@ func TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets(t *testing.T) {
 	}
 
 	seen := map[uint32]bool{}
-	for range 2 {
+	for range 3 {
 		select {
 		case got := <-receipts:
 			if got.instance != lease.Instance || got.body != "frame" {
@@ -87,7 +87,7 @@ func TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets(t *testing.T) {
 			t.Fatal("timed out waiting for guest receiver")
 		}
 	}
-	for _, port := range []uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort} {
+	for _, port := range []uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort, VsockRuntimeConfigHostPort} {
 		if !seen[port] {
 			t.Errorf("port %d did not receive a stream", port)
 		}

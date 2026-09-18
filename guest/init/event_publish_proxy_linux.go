@@ -45,6 +45,7 @@ func startEventPublishProxy(log *slog.Logger) error {
 		return fmt.Errorf("event publish proxy listen: %w", err)
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc(metadataEnvPath, metadataEnvHandler)
 	mux.HandleFunc(eventPublishPath, func(w http.ResponseWriter, r *http.Request) {
 		handleEventPublishRequest(w, r, func(body []byte) error {
 			frame := make([]byte, 1+len(body))
@@ -64,7 +65,7 @@ func startEventPublishProxy(log *slog.Logger) error {
 			log.Warn("event publish proxy stopped", "err", err)
 		}
 	}()
-	log.Info("event publish proxy started", "endpoint", EventPublishEndpoint)
+	log.Info("event publish proxy started", "endpoint", EventPublishEndpoint, "metadata_endpoint", metadataEnvEndpoint)
 	return nil
 }
 

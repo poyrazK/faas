@@ -1,3 +1,6 @@
+// adr: 127 — persistent node telemetry provides bounded flow detail with a
+// freshness-bounded fallback to local observation.
+
 package sched
 
 import (
@@ -5,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -13,6 +17,7 @@ type nodeAwareFlowFallback struct {
 	warmCalls int
 	warmedIDs []string
 	count     int64
+	flows     []flowcount.FlowSummary
 }
 
 func (f *nodeAwareFlowFallback) Warm(_ context.Context, instances []state.Instance) error {
@@ -29,6 +34,10 @@ func (f *nodeAwareFlowFallback) Open(_ context.Context, _ string) (int64, error)
 	return f.count, nil
 }
 
+func (f *nodeAwareFlowFallback) Snapshot(_ context.Context, _ string) ([]flowcount.FlowSummary, error) {
+	return append([]flowcount.FlowSummary(nil), f.flows...), nil
+}
+
 func TestNodeAwareFlowCounterPrefersFreshRemoteTelemetry(t *testing.T) {
 	cache := NewNodeTelemetryCache()
 	now := time.Unix(300, 0)
@@ -41,6 +50,39 @@ func TestNodeAwareFlowCounterPrefersFreshRemoteTelemetry(t *testing.T) {
 	got, err := counter.Open(context.Background(), "vm-1")
 	if err != nil || got != remote {
 		t.Fatalf("Open = (%d, %v), want (%d, nil)", got, err, remote)
+	}
+}
+
+func TestNodeAwareFlowCounterSnapshotPrefersFreshRemoteTelemetry(t *testing.T) {
+	cache := NewNodeTelemetryCache()
+	now := time.Unix(350, 0)
+	cache.Replace("node-a", now, now, []NodeTelemetry{{
+		InstanceID: "vm-1",
+		FlowSummaries: []flowcount.FlowSummary{{
+			InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: 443, Count: 2,
+		}},
+	}})
+	fallback := &nodeAwareFlowFallback{flows: []flowcount.FlowSummary{{RemoteIP: "192.0.2.1"}}}
+	counter := NewNodeAwareFlowCounter(cache, fallback)
+	counter.now = func() time.Time { return now }
+
+	got, err := counter.Snapshot(context.Background(), "vm-1")
+	if err != nil || len(got) != 1 || got[0].RemoteIP != "203.0.113.10" {
+		t.Fatalf("Snapshot = (%+v, %v), want fresh remote summary", got, err)
+	}
+}
+
+func TestNodeAwareFlowCounterSnapshotFallsBackWhenRemoteIsStale(t *testing.T) {
+	cache := NewNodeTelemetryCache()
+	now := time.Unix(450, 0)
+	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-1"}})
+	fallback := &nodeAwareFlowFallback{flows: []flowcount.FlowSummary{{RemoteIP: "192.0.2.1", Count: 1}}}
+	counter := NewNodeAwareFlowCounter(cache, fallback)
+	counter.now = func() time.Time { return now.Add(TelemetryFreshness + time.Nanosecond) }
+
+	got, err := counter.Snapshot(context.Background(), "vm-1")
+	if err != nil || len(got) != 1 || got[0].RemoteIP != "192.0.2.1" {
+		t.Fatalf("stale Snapshot = (%+v, %v), want local fallback summary", got, err)
 	}
 }
 

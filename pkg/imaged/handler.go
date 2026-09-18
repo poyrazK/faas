@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -1360,7 +1362,13 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 			return fmt.Errorf("decode job_changed payload: %w", err)
 		}
-		if p.JobID == "" || p.Kind == "deleted" {
+		if p.JobID == "" {
+			return nil
+		}
+		if p.Kind == "deleted" {
+			if err := h.deleteJobArtifact(ctx, p.JobID); err != nil {
+				return fmt.Errorf("cleanup job %s: %w", p.JobID, err)
+			}
 			return nil
 		}
 		return h.MaterializeJob(ctx, p.JobID)
@@ -1402,6 +1410,71 @@ type deploymentChangedPayload struct {
 type jobChangedPayload struct {
 	Kind  string `json:"kind"`
 	JobID string `json:"job_id"`
+}
+
+// deleteJobArtifact removes the canonical ext4 image after a job is
+// soft-deleted. Job deletion is guarded by the state layer against live task
+// instances, so no running VM can still be using this fixed key. Missing
+// objects are harmless: the path is idempotent and also covers jobs created
+// before image materialization was enabled.
+func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
+	be, err := h.storageFor()
+	if err != nil {
+		return err
+	}
+	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// ReconcileDeletedJobArtifacts removes canonical job images whose job row is
+// no longer visible. Job deletion is soft-delete, so JobGetByID returning
+// ErrNotFound is the durable signal that the artifact can no longer be used.
+// This sweep closes the gap where imaged was down (or disconnected from
+// LISTEN/NOTIFY) when the job_changed deletion notification was emitted.
+//
+// Only backends that can enumerate keys participate. Remote backends own
+// their catalog garbage collection; active rows are always retained so a
+// concurrent materialization on another imaged node cannot be raced.
+func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
+	if h == nil || h.store == nil {
+		return nil
+	}
+	be, err := h.storageFor()
+	if err != nil {
+		return err
+	}
+	lister, ok := be.(storage.LocalArtifactLister)
+	if !ok {
+		return nil
+	}
+	keys, err := lister.List(ctx, "jobs/")
+	if err != nil {
+		return err
+	}
+	var reconcileErrs []error
+	for _, key := range keys {
+		const prefix = "jobs/"
+		const suffix = ".ext4"
+		if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) {
+			continue
+		}
+		jobID := strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix)
+		if _, err := uuid.Parse(jobID); err != nil || sched.JobLayerKey(jobID) != key {
+			continue
+		}
+		if _, err := h.store.JobGetByID(ctx, jobID); err == nil {
+			continue
+		} else if !errors.Is(err, state.ErrNotFound) {
+			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
+			continue
+		}
+		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s artifact delete: %w", jobID, err))
+		}
+	}
+	return errors.Join(reconcileErrs...)
 }
 
 // PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were

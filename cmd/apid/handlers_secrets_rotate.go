@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -168,6 +169,7 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		"kid":        kid,
 		"rotated_at": nowStr,
 	})
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, auditKind, scope, key)
 
 	writeJSON(w, http.StatusOK, api.RotateAppSecretResponse{
 		Key:       key,

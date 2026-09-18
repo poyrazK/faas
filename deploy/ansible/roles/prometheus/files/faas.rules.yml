@@ -20,6 +20,48 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: durable_background_workers
+    interval: 30s
+    rules:
+      - alert: FaasManagedRealtimeDrainClaimFailed
+        expr: increase(apid_ops_total{op="managed_realtime_drain_claim",code="err"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: page
+          component: apid
+          family: durable_background_workers
+          public_status: degraded
+        annotations:
+          summary: "Managed realtime drain operations cannot be claimed"
+          description: "Apid is failing to claim durable managed realtime drain operations. Customer drain requests can remain running and live connections may not close until the claimer recovers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableBackgroundWorkers.md"
+
+      - alert: FaasJobImageMaterializationClaimFailed
+        expr: imaged_ops_total{op="job_materialization_claim",code="err"} > 0
+        for: 2m
+        labels:
+          severity: page
+          component: imaged
+          family: durable_background_workers
+          public_status: degraded
+        annotations:
+          summary: "Pending job images cannot be reclaimed"
+          description: "Imaged failed its pending job image claim pass. Jobs whose notification was missed can remain pending and cannot dispatch until imaged successfully reconciles them."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableBackgroundWorkers.md"
+
+      - alert: FaasUsageDailyRollupFailed
+        expr: increase(meterd_ops_total{op="usage_daily_rollup",code="err"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: meterd
+          family: durable_background_workers
+          public_status: degraded
+        annotations:
+          summary: "Daily usage rollup is failing"
+          description: "Meterd cannot refresh usage_daily. Raw usage and provider billing remain authoritative, but daily customer usage and daily cost alerts are stale until the rollup succeeds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableBackgroundWorkers.md"
+
   - name: account_lifecycle
     interval: 30s
     rules:

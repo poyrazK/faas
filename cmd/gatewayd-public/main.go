@@ -230,6 +230,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// sessions). We construct it here so the DNSHandoff wiring
 	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
 	pgStore := state.NewPgStore(pool)
+	tcpStop, err := startTCPIngress(ctx, log, pgStore)
+	if err != nil {
+		return err
+	}
+	defer tcpStop()
 	publicStorageRegistry, err := loadPublicStorageRegistry(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: load object storage: %w", err)

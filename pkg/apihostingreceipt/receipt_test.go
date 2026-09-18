@@ -25,6 +25,19 @@ func TestReceiptRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReceiptAllowsEmptyHealthPathForTCPReadiness(t *testing.T) {
+	receipt := Receipt{
+		SchemaVersion: SchemaVersion,
+		DeploymentID:  "dep-tcp",
+		AppID:         "app-tcp",
+		Profile:       frameworkprofile.Profile{Version: frameworkprofile.Version},
+		Smoke:         SmokeResult{Status: SmokeSkipped},
+	}
+	if _, err := Encode(receipt); err != nil {
+		t.Fatalf("Encode TCP-readiness receipt: %v", err)
+	}
+}
+
 func TestVerifierSuccessAndHost(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ready" || r.Host != "demo.apps.example" || r.Header.Get("X-Gregale-Platform-Smoke") != "1" {

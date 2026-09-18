@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
@@ -2057,12 +2058,23 @@ func (l *Loop) runReaper(ctx context.Context) {
 			// glitch fails open (LastRequest-only path; safe default).
 			var open int64
 			flowCountDegraded := false
+			var flowSummaries []flowcount.FlowSummary
+			flowSummaryDegraded := false
 			if l.flowCounts != nil {
 				if v, err := l.flowCounts.Open(ctx, ins.ID); err == nil {
 					open = v
 				} else {
 					flowCountDegraded = true
 					l.log.Warn("reaper: flow count", "instance", ins.ID, "err", err)
+				}
+				if snapshotter, ok := l.flowCounts.(flowcount.Snapshotter); ok {
+					rows, err := snapshotter.Snapshot(ctx, ins.ID)
+					if err != nil {
+						flowSummaryDegraded = true
+						l.log.Warn("reaper: flow summary", "instance", ins.ID, "err", err)
+					} else {
+						flowSummaries = rows
+					}
 				}
 			}
 			snapshot = append(snapshot, InstanceInfo{
@@ -2099,6 +2111,8 @@ func (l *Loop) runReaper(ctx context.Context) {
 				ConfiguredMinInstances: appConfiguredFloor[a.ID],
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,
+				FlowSummaries:          flowSummaries,
+				FlowSummaryDegraded:    flowSummaryDegraded,
 				FlowCountDegraded:      flowCountDegraded,
 				// Issue #667 / ADR-078: in-flight waitUntil task count.
 				// Sourced from instances.tail_count (PR #671 schema);
@@ -3517,7 +3531,8 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// → complete. Doing the claim here also keeps the row out of
 	// the drain's next tick (which filters state='pending').
 	if enq.ID != "" {
-		if _, err := l.engine.Store().ClaimInvocation(ctx, enq.ID, "", 60); err != nil {
+		maxInflight := api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
+		if _, err := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight); err != nil {
 			// The general drain won pending -> dispatching. It now owns
 			// delivery, so invoking from this path would duplicate the fire.
 			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", err)

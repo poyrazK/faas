@@ -67,7 +67,10 @@ func TestDirectOCIFullRootfsMetal(t *testing.T) {
 	appID := mustGetAppID(t, h, key, "oci-fullrootfs")
 	setAppIdleTimeout(t, h, key, "oci-fullrootfs", api.IdleTimeoutFloorSeconds)
 
-	image, ref := e2etest.HelloImage("library/full-rootfs", "hello from arbitrary oci")
+	// This image deliberately has no /healthz endpoint. A direct OCI image's
+	// normal-container contract is TCP readiness unless the customer supplies
+	// an explicit health path override.
+	image, ref := e2etest.HelloImageWithoutHealthz("library/full-rootfs", "hello from arbitrary oci")
 	ref = registry.AddImage("library/full-rootfs", image)
 	body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/deployments", api.CreateDeploymentRequest{Image: ref})
 	if status != http.StatusAccepted {

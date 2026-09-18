@@ -433,6 +433,7 @@ func buildCapacityReport(
 				OpenConns:           in.GetOpenConns(),
 				DiskUsedBytes:       in.GetDiskUsedBytes(),
 				DiskCapacityBytes:   in.GetDiskCapacityBytes(),
+				FlowSummaries:       flowSummariesForCapacity(in.GetFlowSummaries()),
 			}
 			report.Instances = append(report.Instances, row)
 		}
@@ -469,6 +470,27 @@ func buildCapacityReport(
 		}
 	}
 	return report
+}
+
+func flowSummariesForCapacity(in []*vmmdpb.FlowSummary) []*scheddpb.FlowSummary {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*scheddpb.FlowSummary, 0, len(in))
+	for _, row := range in {
+		if row == nil {
+			continue
+		}
+		out = append(out, &scheddpb.FlowSummary{
+			Protocol:   row.GetProtocol(),
+			RemoteIp:   row.GetRemoteIp(),
+			RemotePort: row.GetRemotePort(),
+			State:      row.GetState(),
+			Direction:  row.GetDirection(),
+			Count:      row.GetCount(),
+		})
+	}
+	return out
 }
 
 // clampInt32 caps v at the int32 max. Used to avoid

@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -200,6 +201,13 @@ type extensionHookVMM interface {
 type flowCounter interface {
 	Warm(context.Context, []state.Instance) error
 	Open(context.Context, string) (int64, error)
+}
+
+// flowSnapshotter is the optional detail surface implemented by
+// flowcount.Reader. Keeping it separate from flowCounter lets older test
+// doubles and alternate readers continue to provide only OpenConns.
+type flowSnapshotter interface {
+	Snapshot(context.Context, string) ([]flowcount.FlowSummary, error)
 }
 
 // Server implements vmmdpb.VmmdServer.
@@ -1135,7 +1143,9 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	}
 
 	var total int64
-	openConns := s.openConns(ctx)
+	flowTelemetry := s.flowTelemetry(ctx)
+	openConns := flowTelemetry.openConns
+	emitFlowSummarySpan(ctx, flowTelemetry.summaries)
 	resp.Instances = make([]*vmmdpb.InstanceStats, 0, len(resident))
 	for inst, b := range resident {
 		total += b
@@ -1149,6 +1159,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
@@ -1159,16 +1170,29 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 // attributes the result to instance IDs. Errors are fail-open: a missing
 // conntrack binary or transient kernel read must not make Stats unavailable.
 func (s *Server) openConns(ctx context.Context) map[string]int64 {
+	return s.flowTelemetry(ctx).openConns
+}
+
+type flowTelemetrySnapshot struct {
+	openConns map[string]int64
+	summaries map[string][]flowcount.FlowSummary
+}
+
+// flowTelemetry performs one conntrack warm and serves both the legacy
+// OpenConns count and the optional bounded endpoint summaries from that same
+// snapshot. A summary failure is isolated to detail; the existing connection
+// count remains available.
+func (s *Server) flowTelemetry(ctx context.Context) flowTelemetrySnapshot {
 	if s == nil || s.flowCounter == nil {
-		return nil
+		return flowTelemetrySnapshot{}
 	}
 	provider, ok := s.vmm.(interface{ SnapshotLiveHostIPs() map[string]string })
 	if !ok {
-		return nil
+		return flowTelemetrySnapshot{}
 	}
 	hosts := provider.SnapshotLiveHostIPs()
 	if len(hosts) == 0 {
-		return map[string]int64{}
+		return flowTelemetrySnapshot{openConns: map[string]int64{}, summaries: map[string][]flowcount.FlowSummary{}}
 	}
 	instances := make([]state.Instance, 0, len(hosts))
 	for id, hostIP := range hosts {
@@ -1178,7 +1202,7 @@ func (s *Server) openConns(ctx context.Context) map[string]int64 {
 		if s.log != nil {
 			s.log.Warn("vmmd: conntrack snapshot failed; open connections omitted", "err", err)
 		}
-		return nil
+		return flowTelemetrySnapshot{}
 	}
 	counts := make(map[string]int64, len(hosts))
 	for id := range hosts {
@@ -1191,7 +1215,23 @@ func (s *Server) openConns(ctx context.Context) map[string]int64 {
 		}
 		counts[id] = value
 	}
-	return counts
+
+	summaries := make(map[string][]flowcount.FlowSummary)
+	if snapshotter, ok := s.flowCounter.(flowSnapshotter); ok {
+		for id := range hosts {
+			rows, err := snapshotter.Snapshot(ctx, id)
+			if err != nil {
+				if s.log != nil {
+					s.log.Warn("vmmd: conntrack flow summary lookup failed", "instance", id, "err", err)
+				}
+				continue
+			}
+			if len(rows) > 0 {
+				summaries[id] = rows
+			}
+		}
+	}
+	return flowTelemetrySnapshot{openConns: counts, summaries: summaries}
 }
 
 // buildInstanceStatsRow assembles one wire row from the per-instance

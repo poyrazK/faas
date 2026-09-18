@@ -418,6 +418,10 @@ func TestHealthcheckPathFromDep_Mega4(t *testing.T) {
 	if got := healthcheckPathFromDep(state.Deployment{APIHostingReceipt: receipt, InferredProfile: profile}); got != "/receiptz" {
 		t.Errorf("hosting receipt path = %q, want /receiptz", got)
 	}
+	tcpReceipt := json.RawMessage(`{"source":{"kind":"image"},"profile":{"version":"v1","port":8080,"health_path":""}}`)
+	if got := healthcheckPathFromDep(state.Deployment{APIHostingReceipt: tcpReceipt, InferredProfile: profile}); got != "" {
+		t.Errorf("direct OCI receipt path = %q, want empty TCP-readiness path", got)
+	}
 	if got := healthcheckPathFromDep(state.Deployment{
 		OverrideHealthcheck: json.RawMessage(`{"path":"/overridez"}`),
 		APIHostingReceipt:   receipt,

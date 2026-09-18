@@ -291,6 +291,49 @@ func TestDrain_TransientInvokeRetries(t *testing.T) {
 	}
 }
 
+func TestDrain_IncompatibleWorkerInvocationFailsWithoutWake(t *testing.T) {
+	d, store, _, notifier, ds := newDrainHarness(t, api.PlanPro, true)
+	ctx := context.Background()
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	manifest := apps[0].Manifest
+	manifest.ExecutionMode = api.ExecutionModeWorker
+	if _, err := store.UpdateApp(ctx, apps[0].ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatalf("UpdateApp(worker): %v", err)
+	}
+	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
+
+	d.Tick(ctx)
+	got, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if got.State != state.InvocationFailed || got.Attempts != 0 {
+		t.Fatalf("worker invocation = state %q attempts %d, want failed/0", got.State, got.Attempts)
+	}
+	if ds.calls.Load() != 0 {
+		t.Fatalf("gateway calls = %d, want 0", ds.calls.Load())
+	}
+	if notifier.count(db.NotifyInvocationDone) != 1 {
+		t.Fatalf("completion notifications = %d, want 1", notifier.count(db.NotifyInvocationDone))
+	}
+}
+
+func TestDrain_InvocationRetryPolicyOverridesPlanBudgetAndDelay(t *testing.T) {
+	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, false)
+	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
+	inv.RetryPolicyJSON = json.RawMessage(`{"max_attempts":7,"base_seconds":2,"max_seconds":10}`)
+	inv.Attempts = 3
+	if got := d.invocationAttemptBudget(context.Background(), inv); got != 7 {
+		t.Fatalf("attempt budget = %d, want 7", got)
+	}
+	if got := d.invocationRetryDelay(inv); got != 8*time.Second {
+		t.Fatalf("retry delay = %s, want 8s", got)
+	}
+}
+
 // TestDrain_PermanentInvokeTerminates pins the retryAfter=0 branch.
 // A permanent invoke error (4xx) puts the row to state=failed. No
 // future tick should pick it up.

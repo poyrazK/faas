@@ -3,7 +3,9 @@ package imaged
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type jobMaterializationPuller struct {
@@ -115,6 +119,51 @@ func TestMaterializeJobPublishesResolvedArtifact(t *testing.T) {
 	if body, _ := io.ReadAll(rc); string(body) != "fake ext4 full-rootfs" {
 		t.Fatalf("published artifact = %q, want fake builder output", body)
 	}
+	deleted, hasLive, err := store.JobSoftDelete(ctx, job.ID)
+	if err != nil || !deleted || hasLive {
+		t.Fatalf("JobSoftDelete = deleted:%v live:%v err:%v, want deleted without live tasks", deleted, hasLive, err)
+	}
+	if err := h.HandleNotification(ctx, db.Notification{
+		Channel: db.NotifyJobChanged,
+		Payload: `{"kind":"deleted","job_id":"` + job.ID + `"}`,
+	}); err != nil {
+		t.Fatalf("HandleNotification(deleted job_changed): %v", err)
+	}
+	if _, err := h.storage.Get(ctx, got.ImageStorageKey); !storage.IsNotFound(err) {
+		t.Fatalf("deleted job artifact error = %v, want storage not found", err)
+	}
+}
+
+func TestReconcileDeletedJobArtifactsWithoutNotification(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "job-artifact-reconcile@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	job, err := store.JobCreate(ctx, acct.ID, "orphaned-artifact", "batch",
+		"registry.example/worker:latest", []string{"/bin/worker"},
+		256, 60, 2, 1, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	root := t.TempDir()
+	h := New(store, &fakeNotifier{}, nil, nil, "", root, silentLogger()).
+		WithStorage(mustLocalStorage(t, root))
+	key := sched.JobLayerKey(job.ID)
+	if err := h.storage.Put(ctx, key, strings.NewReader("orphaned job image")); err != nil {
+		t.Fatalf("Put job artifact: %v", err)
+	}
+	deleted, hasLive, err := store.JobSoftDelete(ctx, job.ID)
+	if err != nil || !deleted || hasLive {
+		t.Fatalf("JobSoftDelete = deleted:%v live:%v err:%v, want deleted without live tasks", deleted, hasLive, err)
+	}
+	if err := h.ReconcileDeletedJobArtifacts(ctx); err != nil {
+		t.Fatalf("ReconcileDeletedJobArtifacts: %v", err)
+	}
+	if _, err := h.storage.Get(ctx, key); !storage.IsNotFound(err) {
+		t.Fatalf("reconciled job artifact error = %v, want storage not found", err)
+	}
 }
 
 func TestMaterializeJobUsesJobRegistryCredential(t *testing.T) {
@@ -184,6 +233,30 @@ func TestJobMaterializationRetryDelayIsBounded(t *testing.T) {
 	}
 	if got := jobMaterializationRetryDelay(20); got != jobMaterializationRetryMax {
 		t.Fatalf("large attempt delay = %s, want cap %s", got, jobMaterializationRetryMax)
+	}
+}
+
+type failingPendingJobClaimStore struct {
+	*state.MemStore
+	err error
+}
+
+func (s *failingPendingJobClaimStore) JobClaimPendingImageMaterialization(context.Context, int, string, time.Duration) ([]state.Job, error) {
+	return nil, s.err
+}
+
+func TestPendingJobMaterializationClaimFailureIsObservable(t *testing.T) {
+	store := &failingPendingJobClaimStore{MemStore: state.NewMemStore(), err: errors.New("claim failed")}
+	ops := wire.NewOpsMetrics("imaged_test")
+	h := New(store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithOpsMetrics(ops)
+	if err := h.MaterializePendingJobs(context.Background()); !errors.Is(err, store.err) {
+		t.Fatalf("MaterializePendingJobs error = %v, want %v", err, store.err)
+	}
+
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if body := recorder.Body.String(); !strings.Contains(body, `imaged_test_ops_total{code="err",op="job_materialization_claim"} 1`) {
+		t.Fatalf("metrics missing pending job claim failure:\n%s", body)
 	}
 }
 

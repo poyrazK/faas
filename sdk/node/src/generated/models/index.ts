@@ -164,6 +164,7 @@ export type { CreatePrivateNetworkRequest } from './CreatePrivateNetworkRequest.
 export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './CreateQueueBindingRequest.js';
+export type { CreateTCPListenerRequest } from './CreateTCPListenerRequest.js';
 export type { CreateTenantSurfaceRequest } from './CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './CreateTriggerBatchRequest.js';
 export type { CreateTriggerBatchResponse } from './CreateTriggerBatchResponse.js';
@@ -205,6 +206,7 @@ export type { DebugRequestCorrelationStage } from './DebugRequestCorrelationStag
 export type { DebugRequestEvidenceResponse } from './DebugRequestEvidenceResponse.js';
 export type { DebugRunningCause } from './DebugRunningCause.js';
 export type { DebugRunningConfig } from './DebugRunningConfig.js';
+export type { DebugRunningFlowSummary } from './DebugRunningFlowSummary.js';
 export type { DebugRunningObservation } from './DebugRunningObservation.js';
 export type { DebugRunningRequestAttribution } from './DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './DebugRunningResponse.js';
@@ -575,6 +577,7 @@ export type { StatusUptimeBucket } from './StatusUptimeBucket.js';
 export type { StorageUsageListResponse } from './StorageUsageListResponse.js';
 export type { StorageUsageResponse } from './StorageUsageResponse.js';
 export type { SweepStuckBuildsResponse } from './SweepStuckBuildsResponse.js';
+export type { TCPListenerResponse } from './TCPListenerResponse.js';
 export type { TemplateView } from './TemplateView.js';
 export type { TenantHostnameResponse } from './TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './TenantSurfaceResponse.js';
@@ -611,6 +614,7 @@ export type { UpdateProjectEnvironmentConfigRequest } from './UpdateProjectEnvir
 export type { UpdateProjectEnvironmentRequest } from './UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectRequest } from './UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './UpdateQueueBindingRequest.js';
+export type { UpdateTCPListenerRequest } from './UpdateTCPListenerRequest.js';
 export type { UpdateTriggerRequest } from './UpdateTriggerRequest.js';
 export type { UploadDeployOptions } from './UploadDeployOptions.js';
 export type { UploadSessionResponse } from './UploadSessionResponse.js';

@@ -11,10 +11,12 @@
 //
 // Modes:
 //
-//	(default)      serve the contents of -body-file on / and 200 on /healthz
+//	(default)      serve the contents of -body-file on / and 200 on /healthz;
+//	               bind $PORT when -addr is omitted (falling back to 8080)
 //	-spin          also burn one CPU forever (cpu-fairness fixture)
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
 //	-no-listen     never bind the port, so liveness sees conn_refused
+//	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 package main
 
 import (
@@ -28,12 +30,24 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", "", "listen address (defaults to $PORT or :8080)")
 	bodyFile := flag.String("body-file", "/app/hello.txt", "file whose contents are served on /")
 	spin := flag.Bool("spin", false, "burn one CPU forever")
 	ignoreTerm := flag.Bool("ignore-term", false, "ignore SIGTERM")
 	noListen := flag.Bool("no-listen", false, "never bind the port")
+	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	flag.Parse()
+	if *addr == "" {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if strings.HasPrefix(port, ":") {
+			*addr = port
+		} else {
+			*addr = ":" + port
+		}
+	}
 
 	if *ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
@@ -55,7 +69,9 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	if !*noHealthz {
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)

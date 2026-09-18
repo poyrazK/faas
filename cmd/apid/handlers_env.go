@@ -44,6 +44,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/data"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -404,6 +405,7 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		"name":                  key,
 		"snapshots_invalidated": invalidated,
 	})
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
 		Key   string `json:"key"`
 		Scope string `json:"scope"`
@@ -510,6 +512,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"name":                  key,
 		"snapshots_invalidated": invalidated,
 	})
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "delete", scope, key)
 	w.WriteHeader(http.StatusNoContent)
 }
 

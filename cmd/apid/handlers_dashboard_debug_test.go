@@ -133,6 +133,10 @@ func TestDashboardHandler_DebugRunningPanelProjectsObservation(t *testing.T) {
 			Summary:         "1 active TCP connection(s) keep the instance warm; protocol is not identified.",
 			InstanceCount:   1,
 			OpenConnections: 1,
+			FlowTopology: []api.DebugRunningFlowSummary{{
+				InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: 443,
+				State: "ESTABLISHED", Direction: "outbound", Count: 1,
+			}},
 		}},
 	})
 	if err != nil {
@@ -156,6 +160,8 @@ func TestDashboardHandler_DebugRunningPanelProjectsObservation(t *testing.T) {
 		"Current observed causes",
 		"Open connection",
 		"1 active TCP connection(s) keep the instance warm",
+		"Bounded flow topology",
+		"203.0.113.10:443",
 		"Configuration context",
 		"Recent observations",
 		"gregale debug running --since 3h debug-running-panel",

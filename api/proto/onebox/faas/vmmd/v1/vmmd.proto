@@ -1106,6 +1106,9 @@ message InstanceStats {
   // fields keep an unavailable sample distinct from a real zero.
   google.protobuf.Int64Value disk_used_bytes = 14;
   google.protobuf.Int64Value disk_capacity_bytes = 15;
+  // Bounded conntrack endpoint summaries. Empty on older nodes or when the
+  // optional flow snapshotter is unavailable.
+  repeated FlowSummary flow_summaries = 16;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -1911,4 +1914,15 @@ message ForwardTCPResponse {
     ForwardTCPResponseInit init = 1;
     bytes body_chunk = 2;
   }
+}
+
+// FlowSummary is one bounded endpoint aggregate observed in conntrack for an
+// instance. It is an endpoint snapshot, not packet byte or latency accounting.
+message FlowSummary {
+  string protocol = 1;
+  string remote_ip = 2;
+  uint32 remote_port = 3;
+  string state = 4;
+  string direction = 5;
+  int64 count = 6;
 }

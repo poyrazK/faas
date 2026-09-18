@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -15,6 +16,7 @@ const (
 	debugRunningEventKind        = "debug.running_reason"
 	debugRunningSchemaVersion    = 1
 	runningReasonMinEmitInterval = 15 * time.Second
+	debugRunningFlowTopologyMax  = 32
 )
 
 // runningReasonObservation is the scheduler-side representation of one
@@ -34,15 +36,17 @@ type runningReasonObservation struct {
 }
 
 type runningReasonCause struct {
-	Code            string
-	Summary         string
-	InstanceCount   int
-	OpenConnections int64
-	TailTasks       int
-	Mode            string
-	WorkloadClass   string
-	LastActivityAt  time.Time
-	IdleDeadline    time.Time
+	Code                 string
+	Summary              string
+	InstanceCount        int
+	OpenConnections      int64
+	FlowTopology         []api.DebugRunningFlowSummary
+	FlowTopologyDegraded bool
+	TailTasks            int
+	Mode                 string
+	WorkloadClass        string
+	LastActivityAt       time.Time
+	IdleDeadline         time.Time
 }
 
 // runningReasonEvent is the durable JSON shape appended to events with the
@@ -78,26 +82,28 @@ type runningReasonState struct {
 // without a database or clock side effects.
 func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningReasonObservation {
 	type group struct {
-		appID              string
-		configuredFloor    int
-		effectiveFloor     int
-		prewarmFloor       int
-		idleTimeoutSeconds int
-		running            int
-		degraded           bool
-		openInstances      int
-		openConnections    int64
-		tailInstances      int
-		tailTasks          int
-		recentInstances    int
-		startupInstances   int
-		unknownInstances   int
-		staleCandidates    int
-		lastActivity       time.Time
-		idleDeadline       time.Time
-		cooldownUntil      time.Time
-		workloadModes      map[string]int
-		workloadClasses    map[string]int
+		appID                string
+		configuredFloor      int
+		effectiveFloor       int
+		prewarmFloor         int
+		idleTimeoutSeconds   int
+		running              int
+		degraded             bool
+		openInstances        int
+		openConnections      int64
+		flowTopology         []api.DebugRunningFlowSummary
+		flowTopologyDegraded bool
+		tailInstances        int
+		tailTasks            int
+		recentInstances      int
+		startupInstances     int
+		unknownInstances     int
+		staleCandidates      int
+		lastActivity         time.Time
+		idleDeadline         time.Time
+		cooldownUntil        time.Time
+		workloadModes        map[string]int
+		workloadClasses      map[string]int
 	}
 	groups := map[string]*group{}
 	for _, in := range instances {
@@ -153,6 +159,10 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 			g.openInstances++
 			g.openConnections += in.OpenConns
 		}
+		if in.FlowSummaryDegraded {
+			g.flowTopologyDegraded = true
+		}
+		g.flowTopology = appendFlowTopology(g.flowTopology, in.Instance, in.FlowSummaries)
 		if in.TailCount > 0 {
 			g.tailInstances++
 			g.tailTasks += in.TailCount
@@ -189,10 +199,12 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 		}
 		if g.openInstances > 0 {
 			causes = append(causes, runningReasonCause{
-				Code:            api.DebugRunningReasonOpenConnection,
-				Summary:         fmt.Sprintf("%d active TCP connection(s) keep the instance warm; protocol is not identified.", g.openConnections),
-				InstanceCount:   g.openInstances,
-				OpenConnections: g.openConnections,
+				Code:                 api.DebugRunningReasonOpenConnection,
+				Summary:              fmt.Sprintf("%d active TCP connection(s) keep the instance warm; protocol is not identified.", g.openConnections),
+				InstanceCount:        g.openInstances,
+				OpenConnections:      g.openConnections,
+				FlowTopology:         g.flowTopology,
+				FlowTopologyDegraded: g.flowTopologyDegraded,
 			})
 		}
 		if g.tailInstances > 0 {
@@ -313,13 +325,15 @@ func debugRunningReasonRank(code string) int {
 
 func runningCauseToAPI(c runningReasonCause) api.DebugRunningCause {
 	out := api.DebugRunningCause{
-		Code:            c.Code,
-		Summary:         c.Summary,
-		InstanceCount:   c.InstanceCount,
-		OpenConnections: c.OpenConnections,
-		TailTasks:       c.TailTasks,
-		Mode:            c.Mode,
-		WorkloadClass:   c.WorkloadClass,
+		Code:                 c.Code,
+		Summary:              c.Summary,
+		InstanceCount:        c.InstanceCount,
+		OpenConnections:      c.OpenConnections,
+		FlowTopology:         c.FlowTopology,
+		FlowTopologyDegraded: c.FlowTopologyDegraded,
+		TailTasks:            c.TailTasks,
+		Mode:                 c.Mode,
+		WorkloadClass:        c.WorkloadClass,
 	}
 	if !c.LastActivityAt.IsZero() {
 		out.LastActivityAt = c.LastActivityAt.UTC().Format(time.RFC3339Nano)
@@ -328,6 +342,53 @@ func runningCauseToAPI(c runningReasonCause) api.DebugRunningCause {
 		out.IdleDeadline = c.IdleDeadline.UTC().Format(time.RFC3339Nano)
 	}
 	return out
+}
+
+func appendFlowTopology(dst []api.DebugRunningFlowSummary, instanceID string, rows []flowcount.FlowSummary) []api.DebugRunningFlowSummary {
+	for _, row := range rows {
+		if row.InstanceID == "" {
+			row.InstanceID = instanceID
+		}
+		dst = append(dst, api.DebugRunningFlowSummary{
+			InstanceID: row.InstanceID,
+			Protocol:   row.Protocol,
+			RemoteIP:   row.RemoteIP,
+			RemotePort: row.RemotePort,
+			State:      row.State,
+			Direction:  row.Direction,
+			Count:      row.Count,
+		})
+		if len(dst) > debugRunningFlowTopologyMax {
+			sortFlowTopology(dst)
+			dst = dst[:debugRunningFlowTopologyMax]
+		}
+	}
+	sortFlowTopology(dst)
+	return dst
+}
+
+func sortFlowTopology(rows []api.DebugRunningFlowSummary) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Count != rows[j].Count {
+			return rows[i].Count > rows[j].Count
+		}
+		if rows[i].InstanceID != rows[j].InstanceID {
+			return rows[i].InstanceID < rows[j].InstanceID
+		}
+		if rows[i].Protocol != rows[j].Protocol {
+			return rows[i].Protocol < rows[j].Protocol
+		}
+		if rows[i].RemoteIP != rows[j].RemoteIP {
+			return rows[i].RemoteIP < rows[j].RemoteIP
+		}
+		if rows[i].RemotePort != rows[j].RemotePort {
+			return rows[i].RemotePort < rows[j].RemotePort
+		}
+		if rows[i].State != rows[j].State {
+			return rows[i].State < rows[j].State
+		}
+		return rows[i].Direction < rows[j].Direction
+	})
 }
 
 func runningObservationEvent(obs runningReasonObservation, observedAt time.Time, accountID string) runningReasonEvent {

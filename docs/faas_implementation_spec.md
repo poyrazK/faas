@@ -1647,6 +1647,15 @@ identifier. Empty-app labels are pre-instantiated for both `park`/`keep`
 and `admit`/`reject_at_cap`/`no_signal` so the panel exists at day 1 on
 an idle box (precedent: OCI-pull histogram in `pkg/wire/metrics.go`).
 
+Actionable reactive scale-up decisions also append a bounded `scale.decision`
+audit event, subject=`apps.id`, from `pkg/sched/scaleup`. Its payload carries
+the observed RPS/CPU signals, configured targets, current and desired instance
+counts, capacity/headroom, closed-set outcome, and a reason such as
+`rps_target_exceeded`, `cpu_target_exceeded`, or `capacity_exhausted`.
+Identical decisions are sampled at most once per 30 seconds per app; metric
+counters remain per-tick. Event persistence is best-effort and never blocks or
+fails the scheduler tick.
+
 The `scale_up` row is owned by ADR-037 (reactive scale-up trigger, issue
 #169 / #172). The `scale_down` row is owned by ADR-038 (issue #171, this
 PR). They are symmetric by design — the same Prometheus registry, the

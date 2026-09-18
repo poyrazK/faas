@@ -70,7 +70,11 @@ func (r Receipt) Validate() error {
 	if r.Profile.Version == "" {
 		return errors.New("profile.version is required")
 	}
-	if !strings.HasPrefix(r.Profile.HealthPath, "/") {
+	// Empty means the workload has no HTTP readiness endpoint and the runtime
+	// should use its TCP listener gate. Source/framework profiles normally set
+	// /healthz (or an inferred path); direct OCI images intentionally leave it
+	// empty unless the customer supplied an explicit override.
+	if r.Profile.HealthPath != "" && !strings.HasPrefix(r.Profile.HealthPath, "/") {
 		return errors.New("profile.health_path must start with /")
 	}
 	switch r.Smoke.Status {

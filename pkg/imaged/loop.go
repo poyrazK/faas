@@ -373,6 +373,12 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 	l.gcMu.Lock()
 	defer l.gcMu.Unlock()
 
+	if l.handler != nil {
+		if err := l.handler.ReconcileDeletedJobArtifacts(ctx); err != nil {
+			l.log.Warn("imaged: reconcile deleted job artifacts", "err", err)
+		}
+	}
+
 	pct, err := l.lvUsedPct(ctx)
 	pctKnown := err == nil && !math.IsNaN(pct) && !math.IsInf(pct, 0)
 	pressure := pctKnown && pct >= api.SnapshotBudgetAlarmPct

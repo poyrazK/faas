@@ -82,7 +82,11 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 				OpenConns:         5,
 				DiskUsedBytes:     wrapperspb.Int64(80),
 				DiskCapacityBytes: wrapperspb.Int64(100),
-				LastRequestAt:     timestamppb.New(time.Unix(123, 0)),
+				FlowSummaries: []*vmmdpb.FlowSummary{{
+					Protocol: "tcp", RemoteIp: "203.0.113.10", RemotePort: 443,
+					State: "ESTABLISHED", Direction: "outbound", Count: 2,
+				}},
+				LastRequestAt: timestamppb.New(time.Unix(123, 0)),
 			}},
 		}, nil
 	})
@@ -97,6 +101,9 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 	row := got.GetInstances()[0]
 	if row.GetInstanceId() != "vm-1" || row.GetInflightRequests() != 3 || row.GetOpenConns() != 5 || row.GetRequestCountTotal() == nil || row.GetRequestCountTotal().GetValue() != 123 || row.GetCpuPct().GetValue() != 12.5 || row.GetDiskUsedBytes().GetValue() != 80 || row.GetDiskCapacityBytes().GetValue() != 100 {
 		t.Fatalf("telemetry row = %+v, want vm-1 cpu=12.5 inflight=3 open_conns=5", row)
+	}
+	if len(row.GetFlowSummaries()) != 1 || row.GetFlowSummaries()[0].GetRemoteIp() != "203.0.113.10" || row.GetFlowSummaries()[0].GetCount() != 2 {
+		t.Fatalf("flow summaries = %+v, want one endpoint summary", row.GetFlowSummaries())
 	}
 }
 

@@ -1650,6 +1650,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		scaleup.Options{
 			Logger:   log,
 			Metrics:  ops,
+			Events:   store,
 			Interval: cfg.ScaleUpInterval,
 		},
 	)

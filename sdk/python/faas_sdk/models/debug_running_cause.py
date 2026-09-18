@@ -11,6 +11,7 @@ from ..models.debug_running_cause_code import DebugRunningCauseCode, check_debug
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.debug_running_flow_summary import DebugRunningFlowSummary
     from ..models.debug_running_request_attribution import DebugRunningRequestAttribution
 
 
@@ -40,6 +41,10 @@ class DebugRunningCause:
     collapsed requests; match_delta_ms and count make that limitation
     explicit.
     """
+    flow_topology: list[DebugRunningFlowSummary] | Unset = UNSET
+    """Bounded endpoint-level flow summaries observed for the cause."""
+    flow_topology_degraded: bool | Unset = UNSET
+    """True when optional flow detail was unavailable or stale."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +74,15 @@ class DebugRunningCause:
         if not isinstance(self.request, Unset):
             request = self.request.to_dict()
 
+        flow_topology: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.flow_topology, Unset):
+            flow_topology = []
+            for flow_topology_item_data in self.flow_topology:
+                flow_topology_item = flow_topology_item_data.to_dict()
+                flow_topology.append(flow_topology_item)
+
+        flow_topology_degraded = self.flow_topology_degraded
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -92,11 +106,16 @@ class DebugRunningCause:
             field_dict["idle_deadline"] = idle_deadline
         if request is not UNSET:
             field_dict["request"] = request
+        if flow_topology is not UNSET:
+            field_dict["flow_topology"] = flow_topology
+        if flow_topology_degraded is not UNSET:
+            field_dict["flow_topology_degraded"] = flow_topology_degraded
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_running_flow_summary import DebugRunningFlowSummary
         from ..models.debug_running_request_attribution import DebugRunningRequestAttribution
 
         d = dict(src_dict)
@@ -135,6 +154,17 @@ class DebugRunningCause:
         else:
             request = DebugRunningRequestAttribution.from_dict(_request)
 
+        _flow_topology = d.pop("flow_topology", UNSET)
+        flow_topology: list[DebugRunningFlowSummary] | Unset = UNSET
+        if _flow_topology is not UNSET:
+            flow_topology = []
+            for flow_topology_item_data in _flow_topology:
+                flow_topology_item = DebugRunningFlowSummary.from_dict(flow_topology_item_data)
+
+                flow_topology.append(flow_topology_item)
+
+        flow_topology_degraded = d.pop("flow_topology_degraded", UNSET)
+
         debug_running_cause = cls(
             code=code,
             summary=summary,
@@ -146,6 +176,8 @@ class DebugRunningCause:
             last_activity_at=last_activity_at,
             idle_deadline=idle_deadline,
             request=request,
+            flow_topology=flow_topology,
+            flow_topology_degraded=flow_topology_degraded,
         )
 
         debug_running_cause.additional_properties = d

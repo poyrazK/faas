@@ -241,6 +241,15 @@ func run(args []string) (status int) {
 			}
 			return cmdAppsRoutes(args[2], args[3:])
 		}
+		// `gregale apps tcp <slug> [list|add|enable|disable|rm]` —
+		// app-owned raw TCP listener management. Keep this before the
+		// delete fall-through so the subcommand is never parsed as a slug.
+		if len(args) > 1 && args[1] == subTCPListeners {
+			if len(args) < 3 {
+				return cmdAppsTCP("", nil)
+			}
+			return cmdAppsTCP(args[2], args[3:])
+		}
 		// `gregale apps streaming-cap <slug>` — ADR-102 D6 operator
 		// entry point. Same shape as the routes arm above: 3-token
 		// form (`apps streaming-cap <slug>`), placed BEFORE the
@@ -261,7 +270,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()

@@ -61,6 +61,39 @@ type AppChangedPayload struct {
 	Legacy           bool   `json:"-"`
 }
 
+// RuntimeConfigChangedPayload is the private invalidation envelope used by
+// vmmd's live configuration cache. Values are never carried on this channel;
+// consumers re-read the scoped rows after receiving the wake-up.
+type RuntimeConfigChangedPayload struct {
+	Kind      string `json:"kind,omitempty"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Key       string `json:"key,omitempty"`
+}
+
+// ParseRuntimeConfigChangedPayload validates the minimal identity needed to
+// invalidate one app's cached configuration. Legacy bare app IDs are accepted
+// so mixed-version control planes can still invalidate safely.
+func ParseRuntimeConfigChangedPayload(raw string) (RuntimeConfigChangedPayload, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return RuntimeConfigChangedPayload{}, errors.New("db: empty runtime config payload")
+	}
+	if strings.HasPrefix(raw, "{") {
+		var payload RuntimeConfigChangedPayload
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			return RuntimeConfigChangedPayload{}, fmt.Errorf("db: decode runtime config payload: %w", err)
+		}
+		payload.AppID = strings.TrimSpace(payload.AppID)
+		if payload.AppID == "" {
+			return RuntimeConfigChangedPayload{}, errors.New("db: runtime config payload missing app_id")
+		}
+		return payload, nil
+	}
+	return RuntimeConfigChangedPayload{AppID: raw}, nil
+}
+
 // EdgeRuleChangedPayload is the fleet convergence wire contract for edge-rule
 // mutations. Prepare fences every affected hostname before the database write;
 // apply invalidates caches and releases the fence after the write; abort
@@ -408,7 +441,15 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                             400). Only imaged subscribes.
 const (
 	NotifyAppChanged = "app_changed"
-	NotifyAppWake    = "app_wake"
+	// NotifyAppEnvChanged wakes live-config consumers after an app env row is
+	// changed. The payload contains identity only; values are re-read from the
+	// store by the receiving vmmd.
+	NotifyAppEnvChanged = "app_env_changed"
+	// NotifySecretRotated uses the same identity-only envelope for secret set,
+	// rotate, and delete mutations. The name is retained for compatibility with
+	// the original rotation contract.
+	NotifySecretRotated = "secret_rotated"
+	NotifyAppWake       = "app_wake"
 	// NotifyPrivateNetworkAttachmentChanged carries the durable cleanup
 	// event emitted when an app attachment is detached. Unlike the broad
 	// app_changed stream, this channel is replayed so a schedd restart or

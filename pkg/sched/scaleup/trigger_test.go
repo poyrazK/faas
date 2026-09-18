@@ -1,7 +1,10 @@
 package scaleup
 
+// adr: 037
+
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -30,6 +33,29 @@ func (f *fakeStore) ListAllApps(_ context.Context) ([]state.App, error) {
 
 func (f *fakeStore) ListAppsByNodeID(_ context.Context, _ string) ([]state.App, error) {
 	return f.apps, nil
+}
+
+type capturedEvent struct {
+	actor   string
+	kind    string
+	subject string
+	data    []byte
+}
+
+type fakeEventWriter struct {
+	mu     sync.Mutex
+	events []capturedEvent
+}
+
+func (f *fakeEventWriter) AppendEvent(_ context.Context, actor, kind string, subject *string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var subjectValue string
+	if subject != nil {
+		subjectValue = *subject
+	}
+	f.events = append(f.events, capturedEvent{actor: actor, kind: kind, subject: subjectValue, data: append([]byte(nil), data...)})
+	return nil
 }
 
 // fakeLedger is a minimal Ledger. Concurrency returns the value
@@ -259,6 +285,38 @@ func TestTrigger_RejectAtCap(t *testing.T) {
 	}
 	if len(engine.admitCalls) != 0 || len(engine.ensureWakeCalls) != 0 {
 		t.Errorf("engine calls = admit:%v ensure:%v, want no calls", engine.admitCalls, engine.ensureWakeCalls)
+	}
+}
+
+func TestTrigger_ScaleDecisionEventIsBoundedAndExplainsDecision(t *testing.T) {
+	events := &fakeEventWriter{}
+	tr := New(nil, nil, nil, nil, nil, Options{Events: events})
+	stats := AppStats{
+		AppID:          "app1",
+		TargetRPS:      50,
+		MaxConcurrency: 5,
+		Concurrency:    2,
+		PerInstanceRPS: 70,
+		HaveRPS:        true,
+	}
+	decision := Decision{Outcome: OutcomeAdmit, ShouldAdmit: true, Headroom: 3, Desired: 3}
+	now := time.Unix(1_700_000_000, 0)
+	tr.emitScaleDecision(context.Background(), stats, decision, now)
+	tr.emitScaleDecision(context.Background(), stats, decision, now.Add(time.Second))
+	tr.emitScaleDecision(context.Background(), stats, decision, now.Add(30*time.Second))
+
+	if got := len(events.events); got != 2 {
+		t.Fatalf("decision events = %d, want 2 after the 30-second sampling window", got)
+	}
+	var payload ScaleDecisionEvent
+	if err := json.Unmarshal(events.events[0].data, &payload); err != nil {
+		t.Fatalf("unmarshal decision event: %v", err)
+	}
+	if events.events[0].actor != "schedd" || events.events[0].kind != scaleDecisionEventKind || events.events[0].subject != "app1" {
+		t.Fatalf("event envelope = %+v, want schedd/scale.decision/app1", events.events[0])
+	}
+	if payload.Reason != "rps_target_exceeded" || payload.ObservedRPS != 70 || payload.TargetRPS != 50 || payload.DesiredInstances != 3 || payload.CapacityInstances != 5 {
+		t.Fatalf("decision payload = %+v, want signal, target, desired, and capacity fields", payload)
 	}
 }
 

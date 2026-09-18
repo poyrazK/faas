@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -71,6 +72,13 @@ type InstanceInfo struct {
 	// pressure is a separate axis and tearing down connections is fine
 	// there.
 	OpenConns int64
+	// FlowSummaries is the bounded endpoint detail captured alongside
+	// OpenConns for the running-state debugger. It is observational only and
+	// never changes reaping decisions.
+	FlowSummaries []flowcount.FlowSummary
+	// FlowSummaryDegraded is true when the optional endpoint-detail read
+	// failed. The scheduler still fails open and uses OpenConns/LastRequest.
+	FlowSummaryDegraded bool
 	// FlowCountDegraded is true when the conntrack read failed for this
 	// snapshot row. The reaper deliberately fails open, but the debugger
 	// must surface that it could not prove the connection state.

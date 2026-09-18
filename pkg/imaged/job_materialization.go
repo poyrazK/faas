@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 const (
@@ -152,6 +153,18 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("build ext4: %v", err))
 	}
 	if _, err := images.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", digest, key, ""); err != nil {
+		// The build completed, but the source row may have been deleted or
+		// changed while the worker was pulling layers. The conditional state
+		// update fences that stale worker from publishing readiness; remove
+		// the artifact it just wrote so the fixed jobs/<id>.ext4 key cannot
+		// become an orphan. Use a detached, bounded context because a caller
+		// cancellation must not skip cleanup after a successful Put.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		cleanupErr := be.Delete(cleanupCtx, key)
+		cancel()
+		if cleanupErr != nil && !storage.IsNotFound(cleanupErr) {
+			h.log.Warn("imaged: cleanup stale job materialization", "job", job.ID, "key", key, "err", cleanupErr)
+		}
 		return fmt.Errorf("imaged: publish job %s materialization state: %w", job.ID, err)
 	}
 	h.markJobRegistryCredentialUsed(ctx, job, ref.APIHost(), jobAuth)
@@ -167,19 +180,19 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("imaged: job image materialization store unavailable")
 	}
+	started := time.Now()
 	var jobs []state.Job
+	var err error
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
-		var err error
 		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, h.jobMaterializationOwner(), jobMaterializationLease)
-		if err != nil {
-			return err
-		}
 	} else {
-		var err error
 		jobs, err = images.JobListPendingImageMaterialization(ctx, jobMaterializationBatchSize)
-		if err != nil {
-			return err
-		}
+	}
+	if h.ops != nil {
+		h.ops.Observe("job_materialization_claim", time.Since(started), err)
+	}
+	if err != nil {
+		return err
 	}
 	for _, job := range jobs {
 		if err := h.materializeClaimedJob(ctx, images, job); err != nil {

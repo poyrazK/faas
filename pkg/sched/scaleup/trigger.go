@@ -82,6 +82,13 @@ type Ledger interface {
 	Concurrency(appID string) int
 }
 
+// EventWriter is the narrow durable-audit surface used by the trigger.
+// Keeping it separate from state.Store makes the scale-up worker easy to
+// exercise without a database and preserves the existing AppStore seam.
+type EventWriter interface {
+	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error
+}
+
 // Engine is the slice of sched.Engine the trigger needs. AdmitInstance
 // performs the admission; the typed AdmitResult.AtCapacity=true signals
 // the cap rejection path. The signature intentionally avoids importing
@@ -268,6 +275,7 @@ type Trigger struct {
 	engine      Engine
 	ledger      Ledger
 	metrics     *wire.OpsMetrics
+	events      EventWriter
 	log         *slog.Logger
 	interval    time.Duration
 
@@ -288,6 +296,13 @@ type Trigger struct {
 	// direct test/integration callers safe.
 	admissionMu      sync.Mutex
 	admissionBackoff map[string]admissionBackoffState
+	eventMu          sync.Mutex
+	decisionEvents   map[string]decisionEventState
+}
+
+type decisionEventState struct {
+	fingerprint string
+	at          time.Time
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -296,6 +311,9 @@ type Options struct {
 	// Metrics is the per-daemon OpsMetrics the trigger emits into.
 	// Nil is safe — the trigger no-ops on every Observe call.
 	Metrics *wire.OpsMetrics
+	// Events is optional. When present, actionable scale decisions are
+	// persisted as bounded `scale.decision` audit events.
+	Events EventWriter
 	// Logger is used for warn-level diagnostics. Nil falls back to
 	// slog.Default() so the trigger is always observable.
 	Logger *slog.Logger
@@ -323,10 +341,12 @@ func New(appStore AppStore, instats InstatsReader, scraper PromScraper, engine E
 		engine:           engine,
 		ledger:           ledger,
 		metrics:          opts.Metrics,
+		events:           opts.Events,
 		log:              opts.Logger,
 		interval:         opts.Interval,
 		ring:             NewRingBuffer(5, time.Second, opts.Interval),
 		admissionBackoff: make(map[string]admissionBackoffState),
+		decisionEvents:   make(map[string]decisionEventState),
 	}
 }
 
@@ -388,10 +408,10 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // outage).
 //
 // The trigger is read-only on the apps table and the ledger; the only
-// side effect is the Engine.AdmitInstance call on the admit branch
-// and the metric observations. AdmitInstance is the same path the
-// gateway uses on a request-driven wake, so the trigger cannot
-// bypass the cap.
+// side effects are the Engine.AdmitInstance call on the admit branch,
+// metric observations, and best-effort durable scale.decision events.
+// AdmitInstance is the same path the gateway uses on a request-driven wake,
+// so the trigger cannot bypass the cap.
 func (t *Trigger) Tick(ctx context.Context) error {
 	if t == nil || t.appStore == nil {
 		return nil
@@ -489,6 +509,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit is observable.
 		t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+		t.emitScaleDecision(ctx, stats, dec, time.Now())
 		if !dec.ShouldAdmit {
 			continue
 		}

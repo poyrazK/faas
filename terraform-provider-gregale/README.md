@@ -12,7 +12,10 @@ The initial surface is intentionally small:
 - `gregale_cron` manages a scheduled app invocation and exposes scheduler state.
 - `gregale_env` manages scoped app environment variables without storing values in state.
 - `gregale_secret` manages scoped app secrets without storing plaintext in state.
-- `gregale_deployment` deploys a GitHub source ref and exposes lifecycle and preview metadata.
+- `gregale_deployment` deploys a digest-pinned OCI image or GitHub source ref and exposes lifecycle and preview metadata.
+- `data.gregale_app` reads an existing app for adoption and resource composition.
+- `data.gregale_deployment` reads an existing deployment for status and preview composition.
+- `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -50,6 +53,60 @@ resource "gregale_app" "api" {
   max_concurrency  = 8
   idle_timeout_s   = 60
   health_path      = "/healthz"
+}
+```
+
+## Existing app lookup
+
+Use the app data source when the app already exists or is managed outside
+Terraform. It is read-only and can supply stable IDs and current runtime
+metadata to other resources.
+
+```hcl
+data "gregale_app" "api" {
+  slug = "orders-api"
+}
+
+resource "gregale_domain" "api" {
+  domain = "api.example.com"
+  app_id = data.gregale_app.api.id
+}
+
+output "app_url" {
+  value = data.gregale_app.api.url
+}
+```
+
+## Existing deployment lookup
+
+Use the deployment data source when a deployment was created by the CLI,
+dashboard, CI, or another Terraform stack. It is read-only and exposes current
+status, resolved commit metadata, structured failure details, and the preview
+URL.
+
+```hcl
+data "gregale_deployment" "release" {
+  deployment_id = var.deployment_id
+}
+
+output "preview_url" {
+  value = data.gregale_deployment.release.preview_url
+}
+```
+
+## Latest deployment lookup
+
+Use the latest deployment data source when a release was created by the CLI,
+dashboard, CI, or another Terraform stack and the deployment ID is not known
+ahead of time. Gregale resolves the newest deployment by creation time.
+
+```hcl
+data "gregale_latest_deployment" "api" {
+  app_slug = "orders-api"
+}
+
+output "preview_url" {
+  value = data.gregale_latest_deployment.api.preview_url
 }
 ```
 
@@ -145,11 +202,25 @@ resource "gregale_deployment" "api" {
 }
 ```
 
+For CI pipelines that build and publish an image first, use the same resource
+with a digest-pinned OCI image instead of `repo` and `ref`:
+
+```hcl
+resource "gregale_deployment" "api" {
+  app_slug    = gregale_app.api.slug
+  image       = var.image_digest
+  environment = "production"
+}
+```
+
+Set exactly one deployment source: either `image`, or both `repo` and `ref`.
+
 The resource deploys the source ref through Gregale's headless GitHub path,
-waits for the deployment to become live, and exposes the resolved commit,
-preview URL, stage state, and structured failure details. Deployment inputs
-are immutable; changing them creates a new deployment. Destroy cancels only a
-deployment that is still queued or building and never rolls back a live app.
+or submits the OCI image to Gregale, waits for the deployment to become live,
+and exposes the resolved commit, preview URL, stage state, and structured
+failure details. Deployment inputs are immutable; changing them creates a new
+deployment. Destroy cancels only a deployment that is still queued or building
+and never rolls back a live app.
 
 Creating the resource returns the DNS challenge immediately. Gregale verifies
 DNS and provisions TLS asynchronously; refresh the resource to observe

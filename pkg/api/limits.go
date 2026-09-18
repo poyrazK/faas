@@ -3838,6 +3838,10 @@ const (
 	// but admissions are deliberately paced across ticks so one bad metric
 	// sample cannot turn into an unbounded cold-boot fan-out.
 	ScaleUpMaxBurstPerTick = 4
+	// ScaleDecisionEventMinIntervalSeconds bounds repeated durable scale
+	// decision events for one app. Metrics remain per-tick; the audit stream
+	// is sampled so a sustained hot app cannot flood events.
+	ScaleDecisionEventMinIntervalSeconds = 30
 
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /

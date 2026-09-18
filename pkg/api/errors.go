@@ -5372,6 +5372,16 @@ func ErrInvocationNotReplayable(state string) *Problem {
 		WithDocs("https://gregale.dev/docs/event-driven#invocations")
 }
 
+// ErrInvocationWorkloadClass rejects the HTTP-style invoke primitive for
+// worker/job workloads. Those workloads have dedicated queue/job lifecycles
+// and no request listener, so retrying the same invocation cannot succeed.
+func ErrInvocationWorkloadClass(workloadClass, executionMode string) *Problem {
+	detail := fmt.Sprintf("this app cannot accept request invocations (workload_class=%q, execution_mode=%q); use a queue binding for workers or the jobs API for run-to-completion work.", workloadClass, executionMode)
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Invocation is incompatible with this workload", detail).
+		WithDocs(docsBase + "/event-driven#invocations")
+}
+
 // ErrBuildProvenanceNotFound is the ADR-038 surface for a build
 // whose populator INSERT never landed (best-effort WARN inside
 // builderd.recordProvenance) OR for a pre-PR build that pre-dates

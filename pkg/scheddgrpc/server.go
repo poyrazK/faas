@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -1370,6 +1371,7 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			InstanceID:       row.GetInstanceId(),
 			InflightRequests: row.GetInflightRequests(),
 			OpenConns:        row.GetOpenConns(),
+			FlowSummaries:    flowSummariesFromProto(row.GetInstanceId(), row.GetFlowSummaries()),
 		}
 		if value := row.GetRequestCountTotal(); value != nil {
 			v := value.GetValue()
@@ -1411,6 +1413,28 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			item.DiskCapacityBytes = &v
 		}
 		out = append(out, item)
+	}
+	return out
+}
+
+func flowSummariesFromProto(instanceID string, in []*scheddpb.FlowSummary) []flowcount.FlowSummary {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]flowcount.FlowSummary, 0, len(in))
+	for _, row := range in {
+		if row == nil || row.GetRemotePort() > 65535 {
+			continue
+		}
+		out = append(out, flowcount.FlowSummary{
+			InstanceID: instanceID,
+			Protocol:   row.GetProtocol(),
+			RemoteIP:   row.GetRemoteIp(),
+			RemotePort: uint16(row.GetRemotePort()),
+			State:      row.GetState(),
+			Direction:  row.GetDirection(),
+			Count:      row.GetCount(),
+		})
 	}
 	return out
 }

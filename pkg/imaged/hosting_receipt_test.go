@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -34,5 +35,58 @@ func TestBuildHostingReceiptUsesPersistedProfileAndURL(t *testing.T) {
 func TestHostingAppURLEmptySlug(t *testing.T) {
 	if got := hostingAppURL(""); got != "" {
 		t.Fatalf("hostingAppURL(\"\") = %q, want empty", got)
+	}
+}
+
+func TestHostingReceiptProfileDirectOCIUsesTCPReadiness(t *testing.T) {
+	profile := hostingReceiptProfile(
+		state.App{Manifest: state.AppManifest{Healthz: defaultHealthzPath}},
+		state.Deployment{Kind: state.DeploymentKindImage},
+	)
+	if profile.HealthPath != "" {
+		t.Fatalf("direct OCI health path = %q, want empty TCP-readiness contract", profile.HealthPath)
+	}
+	if profile.Port != api.DefaultAppPort {
+		t.Fatalf("direct OCI port = %d, want %d", profile.Port, api.DefaultAppPort)
+	}
+}
+
+func TestHostingReceiptProfileDirectOCINonDefaultManifestHealthWins(t *testing.T) {
+	profile := hostingReceiptProfile(
+		state.App{Manifest: state.AppManifest{Healthz: "/ready"}},
+		state.Deployment{Kind: state.DeploymentKindImage},
+	)
+	if profile.HealthPath != "/ready" {
+		t.Fatalf("direct OCI manifest health path = %q, want /ready", profile.HealthPath)
+	}
+}
+
+func TestHostingReceiptProfileFunctionImageKeepsHTTPReadiness(t *testing.T) {
+	profile := hostingReceiptProfile(
+		state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Healthz: defaultHealthzPath}},
+		state.Deployment{Kind: state.DeploymentKindImage},
+	)
+	if profile.HealthPath != defaultHealthzPath {
+		t.Fatalf("function image health path = %q, want %s", profile.HealthPath, defaultHealthzPath)
+	}
+}
+
+func TestHostingReceiptProfileDirectOCIHealthOverrideWins(t *testing.T) {
+	profile := hostingReceiptProfile(
+		state.App{},
+		state.Deployment{
+			Kind:                state.DeploymentKindImage,
+			OverrideHealthcheck: json.RawMessage(`{"path":"/ready"}`),
+		},
+	)
+	if profile.HealthPath != "/ready" {
+		t.Fatalf("direct OCI override health path = %q, want /ready", profile.HealthPath)
+	}
+}
+
+func TestHostingHealthPathDirectOCIFallsBackToRootForSmoke(t *testing.T) {
+	path := HostingHealthPath(state.App{}, state.Deployment{Kind: state.DeploymentKindImage})
+	if path != "/" {
+		t.Fatalf("direct OCI smoke path = %q, want /", path)
 	}
 }

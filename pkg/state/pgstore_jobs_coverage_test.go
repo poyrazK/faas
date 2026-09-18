@@ -146,6 +146,40 @@ func TestPg_Jobs_JobRunCreateInheritsOptionalDefaults(t *testing.T) {
 	}
 }
 
+func TestPg_Jobs_ClaimPendingImageMaterialization(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "pg-jobs-materialization-claim@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobCreate(ctx, acct.ID, "materialization-claim", "batch",
+		"oci://registry.example/worker:latest",
+		[]string{"/bin/sh", "-c", "echo materialization"}, 256, 60, 1, 3,
+		json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+
+	claimed, err := s.JobClaimPendingImageMaterialization(ctx, 1, "imaged-test", time.Minute)
+	if err != nil {
+		t.Fatalf("JobClaimPendingImageMaterialization: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("claimed = %d, want 1", len(claimed))
+	}
+	if claimed[0].ID != job.ID || claimed[0].ImageMaterializationAttempts != 1 {
+		t.Fatalf("claimed job = %+v, want %s with attempt 1", claimed[0], job.ID)
+	}
+
+	again, err := s.JobClaimPendingImageMaterialization(ctx, 1, "other-imaged", time.Minute)
+	if err != nil {
+		t.Fatalf("second JobClaimPendingImageMaterialization: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("second claim returned %d jobs during active lease, want 0", len(again))
+	}
+}
+
 // defaultLocalNodeID returns the UUID of the local compute_node row that
 // migration 00024 inserts. The instances.node_id column is NOT NULL, so
 // every fixture that creates an instance row needs this ID.
