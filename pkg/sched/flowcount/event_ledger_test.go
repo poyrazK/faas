@@ -1,3 +1,5 @@
+// adr: 127 — bounded egress flow-event telemetry is an additive observability
+// seam for the future backend reader; it does not alter G7 reaper semantics.
 package flowcount
 
 import (
