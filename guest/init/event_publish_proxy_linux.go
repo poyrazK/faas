@@ -27,25 +27,20 @@ const (
 )
 
 // startEventPublishProxy exposes the metadata-style event ingress inside the
-// guest. The preferred listener is the loopback-local link address; the
-// wildcard fallback is only for images where the tiny network helper is not
-// present. The workload still cannot reach another VM's vsock because
-// Firecracker terminates the channel per instance.
+// guest. The listener is restricted to the loopback-local link address; the
+// workload still cannot reach another VM's vsock because Firecracker
+// terminates the channel per instance.
 func startEventPublishProxy(log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
 	// The metadata address is loopback-local inside the VM. BusyBox images
-	// normally ship `ip`; if a minimal image does not, retain the wildcard
-	// fallback so the proxy still works on a platform that routes the address
-	// to the guest without requiring an image-specific network helper.
+	// normally ship `ip`; if a minimal image does not, fail closed rather than
+	// binding a wildcard address and exposing the platform endpoint externally.
 	if err := exec.Command("ip", "addr", "add", "169.254.169.254/32", "dev", "lo").Run(); err != nil {
 		log.Debug("event publish metadata address setup skipped", "err", err)
 	}
 	ln, err := net.Listen("tcp4", eventPublishListenAddr)
-	if err != nil {
-		ln, err = net.Listen("tcp4", ":80")
-	}
 	if err != nil {
 		return fmt.Errorf("event publish proxy listen: %w", err)
 	}
