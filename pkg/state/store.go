@@ -3833,6 +3833,14 @@ type Store interface {
 	ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
 	DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error
 	DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
+	// Account-scoped unified dead-letter projection. These methods include
+	// app-owned events plus account-owned job runs, whose app_id is NULL.
+	ListDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int, before string) ([]DeadLetterEvent, error)
+	DeadLetterEventByAccountID(ctx context.Context, accountID, eventID string) (DeadLetterEvent, error)
+	ReplayDeadLetterEventForAccount(ctx context.Context, accountID, eventID string) (DeadLetterEvent, error)
+	ReplayDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int) (int, error)
+	DeleteDeadLetterEventForAccount(ctx context.Context, accountID, eventID string) error
+	DeleteDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int) (int, error)
 	// ListExpiredTriggerRecordsForReaper (ADR-134 PR-E) returns
 	// trigger_records IDs whose result_retention_until is in
 	// the past.

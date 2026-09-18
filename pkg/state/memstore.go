@@ -22055,6 +22055,70 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			FirstFailedAt: failedAt, LastFailedAt: failedAt, CreatedAt: delivery.CreatedAt,
 		})
 	}
+	for _, run := range m.jobRuns {
+		if run.AggregateStatus != "dead_letter" || appID != "" {
+			continue
+		}
+		eventID := unifiedDeadLetterEventID("job_run", run.ID)
+		if _, purged := m.deadLetterPurged[eventID]; purged {
+			continue
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"job_id": run.JobID, "trigger_kind": run.TriggerKind,
+			"tasks": run.Tasks, "tasks_failed": run.TasksFailed,
+			"dead_letter_count": run.DeadLetterCount,
+		})
+		detail, _ := json.Marshal(map[string]int{
+			"dead_letter_count": run.DeadLetterCount, "tasks_failed": run.TasksFailed,
+		})
+		failedAt := run.CreatedAt
+		if run.FinishedAt != nil {
+			failedAt = *run.FinishedAt
+		}
+		out = append(out, DeadLetterEvent{
+			ID: eventID, AccountID: run.AccountID, Source: "job_run", SourceID: run.ID,
+			Origin: run.TriggerKind, Payload: payload, Headers: json.RawMessage("{}"),
+			ErrorKind: "job_run_dead_letter", ErrorDetail: detail,
+			RetryCount: run.DeadLetterCount, FirstFailedAt: failedAt,
+			LastFailedAt: failedAt, CreatedAt: run.CreatedAt,
+		})
+	}
+	for _, run := range m.workflowRuns {
+		if run.Status != WorkflowRunStatusDead || run.AppID != appID {
+			continue
+		}
+		app, ok := m.apps[run.AppID]
+		if !ok {
+			continue
+		}
+		eventID := unifiedDeadLetterEventID("workflow_run", run.ID)
+		if _, purged := m.deadLetterPurged[eventID]; purged {
+			continue
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"workflow_name": run.WorkflowName, "input": json.RawMessage(run.Input),
+			"current_step": run.CurrentStep,
+		})
+		detail, _ := json.Marshal(map[string]string{"last_error": stringValue(run.LastError)})
+		failedAt := run.CreatedAt
+		if run.FinishedAt != nil {
+			failedAt = *run.FinishedAt
+		}
+		maxAttempt := 0
+		for _, step := range m.workflowSteps[run.ID] {
+			if step.Attempt > maxAttempt {
+				maxAttempt = step.Attempt
+			}
+		}
+		out = append(out, DeadLetterEvent{
+			ID: eventID, AccountID: app.AccountID, AppID: run.AppID,
+			Source: "workflow_run", SourceID: run.ID, Origin: run.WorkflowName,
+			Payload: payload, Headers: json.RawMessage("{}"),
+			ErrorKind: "workflow_run_dead", ErrorDetail: detail,
+			RetryCount: maxAttempt, FirstFailedAt: failedAt,
+			LastFailedAt: failedAt, CreatedAt: run.CreatedAt,
+		})
+	}
 	seen := make(map[string]struct{}, len(out))
 	for _, ev := range out {
 		seen[ev.ID] = struct{}{}
@@ -22064,6 +22128,36 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		if _, ok := seen[id]; !ok && ev.AppID == appID {
+			out = append(out, ev)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastFailedAt.Equal(out[j].LastFailedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].LastFailedAt.After(out[j].LastFailedAt)
+	})
+	return out
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (m *MemStore) deadLetterEventsForAccountLocked(accountID string) []DeadLetterEvent {
+	out := make([]DeadLetterEvent, 0)
+	for appID, app := range m.apps {
+		if app.AccountID != accountID {
+			continue
+		}
+		out = append(out, m.deadLetterEventsLocked(appID)...)
+	}
+	// Jobs are account-owned and are represented by the empty app scope.
+	for _, ev := range m.deadLetterEventsLocked("") {
+		if ev.AccountID == accountID {
 			out = append(out, ev)
 		}
 	}
@@ -22102,6 +22196,132 @@ func (m *MemStore) ListDeadLetterEvents(_ context.Context, appID string, limit i
 		events = events[:limit]
 	}
 	return events, nil
+}
+
+func (m *MemStore) ListDeadLetterEventsForAccount(_ context.Context, accountID string, limit int, before string) ([]DeadLetterEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	events := m.deadLetterEventsForAccountLocked(accountID)
+	if before != "" {
+		anchor := -1
+		for i := range events {
+			if events[i].ID == before {
+				anchor = i
+				break
+			}
+		}
+		if anchor >= 0 {
+			events = events[anchor+1:]
+		}
+	}
+	if len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
+}
+
+func (m *MemStore) DeadLetterEventByAccountID(_ context.Context, accountID, eventID string) (DeadLetterEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
+		if ev.ID == eventID {
+			return ev, nil
+		}
+	}
+	return DeadLetterEvent{}, ErrNotFound
+}
+
+func (m *MemStore) ReplayDeadLetterEventForAccount(_ context.Context, accountID, eventID string) (DeadLetterEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
+		if ev.ID != eventID {
+			continue
+		}
+		if ev.AppID != "" {
+			return m.replayDeadLetterEventLocked(accountID, ev.AppID, eventID)
+		}
+		return m.replayAccountJobDeadLetterLocked(accountID, ev)
+	}
+	return DeadLetterEvent{}, ErrNotFound
+}
+
+func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID string, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	replayed := 0
+	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
+		if replayed >= limit || ev.ReplayedAt != nil {
+			continue
+		}
+		var err error
+		if ev.AppID != "" {
+			_, err = m.replayDeadLetterEventLocked(accountID, ev.AppID, ev.ID)
+		} else {
+			_, err = m.replayAccountJobDeadLetterLocked(accountID, ev)
+		}
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return replayed, err
+		}
+		replayed++
+	}
+	return replayed, nil
+}
+
+func (m *MemStore) DeleteDeadLetterEventForAccount(_ context.Context, accountID, eventID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
+		if ev.ID != eventID || ev.AccountID != accountID {
+			continue
+		}
+		if m.deadLetterPurged == nil {
+			m.deadLetterPurged = make(map[string]struct{})
+		}
+		m.deadLetterPurged[eventID] = struct{}{}
+		delete(m.deadLetterSnapshots, eventID)
+		return nil
+	}
+	return ErrNotFound
+}
+
+func (m *MemStore) DeleteDeadLetterEventsForAccount(_ context.Context, accountID string, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	purged := 0
+	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
+		if purged >= limit {
+			break
+		}
+		if m.deadLetterPurged == nil {
+			m.deadLetterPurged = make(map[string]struct{})
+		}
+		m.deadLetterPurged[ev.ID] = struct{}{}
+		delete(m.deadLetterSnapshots, ev.ID)
+		purged++
+	}
+	return purged, nil
 }
 
 func (m *MemStore) DeadLetterEventByID(_ context.Context, appID, eventID string) (DeadLetterEvent, error) {
@@ -22179,6 +22399,30 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		delivery.NextAttemptAt = now
 		delivery.UpdatedAt = now
 		m.appWebhookDeliveries[event.SourceID] = delivery
+	case "job_run":
+		return m.replayAccountJobDeadLetterLocked(accountID, *event)
+	case "workflow_run":
+		run, ok := m.workflowRuns[event.SourceID]
+		app, appOK := m.apps[run.AppID]
+		if !ok || !appOK || app.AccountID != accountID || run.Status != WorkflowRunStatusDead {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		for name, step := range m.workflowSteps[run.ID] {
+			if step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead {
+				step.Status = WorkflowStepStatusPending
+				step.Output = nil
+				step.Error = nil
+				step.FinishedAt = nil
+				m.workflowSteps[run.ID][name] = step
+			}
+		}
+		run.Status = WorkflowRunStatusPending
+		run.Output = nil
+		run.LastError = nil
+		run.ScheduledFor = now
+		run.FinishedAt = nil
+		run.UpdatedAt = now
+		m.workflowRuns[run.ID] = run
 	default:
 		return DeadLetterEvent{}, ErrNotFound
 	}
@@ -22188,6 +22432,42 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 	}
 	m.deadLetterSnapshots[eventID] = *event
 	return *event, nil
+}
+
+func (m *MemStore) replayAccountJobDeadLetterLocked(accountID string, event DeadLetterEvent) (DeadLetterEvent, error) {
+	run, ok := m.jobRuns[event.SourceID]
+	if !ok || run.AccountID != accountID || run.AggregateStatus != "dead_letter" {
+		return DeadLetterEvent{}, ErrNotFound
+	}
+	for idx, task := range m.jobTasks[run.ID] {
+		if task.Status != "failed" && task.Status != "timeout" && task.Status != "oom" && task.Status != "cancelled" {
+			continue
+		}
+		task.Status = "queued"
+		task.Attempt++
+		task.InstanceID = nil
+		task.NextAttemptAt = nil
+		task.StartedAt = nil
+		task.FinishedAt = nil
+		task.ErrorClass = nil
+		task.ErrorMessage = nil
+		task.ExitCode = nil
+		task.LeaseToken = nil
+		task.LeaseExpiresAt = nil
+		task.LastLeaseNode = nil
+		m.jobTasks[run.ID][idx] = task
+	}
+	now := time.Now().UTC()
+	run.DeadLetterCount = 0
+	run.AggregateStatus = "running"
+	run.FinishedAt = nil
+	m.jobRuns[run.ID] = run
+	event.ReplayedAt = &now
+	if m.deadLetterSnapshots == nil {
+		m.deadLetterSnapshots = make(map[string]DeadLetterEvent)
+	}
+	m.deadLetterSnapshots[event.ID] = event
+	return event, nil
 }
 
 // ReplayDeadLetterEvents replays up to limit pending events while holding the

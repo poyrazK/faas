@@ -27364,7 +27364,7 @@ func (s *PgStore) ListDeadLetterEvents(ctx context.Context, appID string, limit 
 		with anchor as (
 			select last_failed_at, id from dead_letter_events where id = $2
 		)
-		select id::text, account_id::text, app_id::text, source, source_id::text,
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
@@ -27380,10 +27380,200 @@ func (s *PgStore) ListDeadLetterEvents(ctx context.Context, appID string, limit 
 	return scanDeadLetterEvents(rows)
 }
 
+// ListDeadLetterEventsForAccount returns the account-wide failed-events
+// projection. Unlike the app-scoped reader it also includes account-owned
+// job runs, which intentionally have no app_id.
+func (s *PgStore) ListDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int, before string) ([]DeadLetterEvent, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	var beforeParam any
+	if before != "" {
+		beforeParam = before
+	}
+	rows, err := s.pool.Query(ctx, `
+		with anchor as (
+			select last_failed_at, id from dead_letter_events where id = $2
+		)
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1
+		   and ($2::uuid is null or
+		        (last_failed_at, id) < (select last_failed_at, id from anchor))
+		 order by last_failed_at desc, id desc
+		 limit $3`, accountID, beforeParam, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanDeadLetterEvents(rows)
+}
+
+// DeadLetterEventByAccountID reads one event while enforcing account scope.
+func (s *PgStore) DeadLetterEventByAccountID(ctx context.Context, accountID, eventID string) (DeadLetterEvent, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where id = $1 and account_id = $2`, eventID, accountID)
+	event, err := scanDeadLetterEventRows(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		return DeadLetterEvent{}, err
+	}
+	return event, nil
+}
+
+// ReplayDeadLetterEventForAccount atomically redrives one event from the
+// account-wide projection, including job and workflow sources.
+func (s *PgStore) ReplayDeadLetterEventForAccount(ctx context.Context, accountID, eventID string) (DeadLetterEvent, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	row := tx.QueryRow(ctx, `
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where id = $1 and account_id = $2 and replayed_at is null
+		 for update`, eventID, accountID)
+	ev, err := scanDeadLetterEventRows(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		return DeadLetterEvent{}, err
+	}
+	now, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
+	ev.ReplayedAt = &now
+	if err := tx.Commit(ctx); err != nil {
+		return DeadLetterEvent{}, err
+	}
+	return ev, nil
+}
+
+// ReplayDeadLetterEventsForAccount replays up to limit account-wide events.
+func (s *PgStore) ReplayDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	rows, err := tx.Query(ctx, `
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1 and replayed_at is null
+		 order by last_failed_at desc, id desc
+		 limit $2
+		 for update skip locked`, accountID, limit)
+	if err != nil {
+		return 0, err
+	}
+	events, err := scanDeadLetterEvents(rows)
+	if err != nil {
+		return 0, err
+	}
+	replayed := 0
+	for _, ev := range events {
+		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return 0, err
+		}
+		replayed++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return replayed, nil
+}
+
+// DeleteDeadLetterEventForAccount purges only the projection row.
+func (s *PgStore) DeleteDeadLetterEventForAccount(ctx context.Context, accountID, eventID string) error {
+	tag, err := s.pool.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2`, eventID, accountID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteDeadLetterEventsForAccount purges up to limit account-wide rows.
+func (s *PgStore) DeleteDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	if limit > deadLetterEventsMaxLimit {
+		limit = deadLetterEventsMaxLimit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	rows, err := tx.Query(ctx, `
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
+		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
+		       error_kind, error_detail, retry_count, first_failed_at,
+		       last_failed_at, replayed_at, created_at
+		  from dead_letter_events
+		 where account_id = $1
+		 order by last_failed_at desc, id desc
+		 limit $2
+		 for update skip locked`, accountID, limit)
+	if err != nil {
+		return 0, err
+	}
+	events, err := scanDeadLetterEvents(rows)
+	if err != nil {
+		return 0, err
+	}
+	purged := 0
+	for _, ev := range events {
+		tag, err := tx.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2`, ev.ID, accountID)
+		if err != nil {
+			return 0, err
+		}
+		purged += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return purged, nil
+}
+
 // DeadLetterEventByID reads one unified DLQ event while enforcing app scope.
 func (s *PgStore) DeadLetterEventByID(ctx context.Context, appID, eventID string) (DeadLetterEvent, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id::text, account_id::text, app_id::text, source, source_id::text,
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
@@ -27410,7 +27600,7 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	row := tx.QueryRow(ctx, `
-		select id::text, account_id::text, app_id::text, source, source_id::text,
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
@@ -27453,7 +27643,7 @@ func (s *PgStore) ReplayDeadLetterEvents(ctx context.Context, accountID, appID s
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	rows, err := tx.Query(ctx, `
-		select id::text, account_id::text, app_id::text, source, source_id::text,
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
@@ -27514,7 +27704,7 @@ func (s *PgStore) DeleteDeadLetterEvents(ctx context.Context, accountID, appID s
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	rows, err := tx.Query(ctx, `
-		select id::text, account_id::text, app_id::text, source, source_id::text,
+		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
@@ -27581,6 +27771,40 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 			       last_response_code = null, next_attempt_at = now(), updated_at = now()
 			 where id = $1 and account_id = $2 and app_id = $3 and status = 'dead'`,
 			ev.SourceID, accountID, appID)
+	case "job_run":
+		// An account-level replay redrives every exhausted task in the run.
+		// This is deliberately an operator override of the original retry
+		// budget; the next failure is recorded as a fresh ledger event.
+		_, err = tx.Exec(ctx, `
+			update job_tasks
+			   set status = 'queued', attempt = attempt + 1,
+			       instance_id = null, next_attempt_at = now(),
+			       started_at = null, finished_at = null,
+			       error_class = null, error_message = null, exit_code = null,
+			       lease_token = null, lease_expires_at = null, last_lease_node = null
+			 where run_id = $1::uuid
+			   and status in ('failed', 'timeout', 'oom', 'cancelled')`, ev.SourceID)
+		if err == nil {
+			tag, err = tx.Exec(ctx, `
+				update job_runs
+				   set dead_letter_count = 0, aggregate_status = 'running', finished_at = null
+				 where id = $1::uuid and account_id = $2 and dead_letter_count > 0`,
+				ev.SourceID, accountID)
+		}
+	case "workflow_run":
+		_, err = tx.Exec(ctx, `
+			update workflow_steps
+			   set status = 'pending', output = null, error = null, finished_at = null
+			 where run_id = $1::uuid and status in ('failed', 'dead')`, ev.SourceID)
+		if err == nil {
+			tag, err = tx.Exec(ctx, `
+				update workflow_runs r
+				   set status = 'pending', output = null, last_error = null,
+				       scheduled_for = now(), finished_at = null, updated_at = now()
+				 where r.id = $1::uuid and r.app_id = $2::uuid and r.status = 'dead'
+				   and exists (select 1 from apps a where a.id = r.app_id and a.account_id = $3)`,
+				ev.SourceID, appID, accountID)
+		}
 	default:
 		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}

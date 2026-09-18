@@ -149,6 +149,13 @@ func testUnifiedDeadLetterLedger(t *testing.T, fx *Fixture) {
 	if len(events) != 1 || events[0].Source != "invocation" || events[0].SourceID != inv.ID {
 		t.Fatalf("dead-letter events = %+v, want one invocation event", events)
 	}
+	accountEvents, err := fx.Store.ListDeadLetterEventsForAccount(fx.Ctx, fx.Account.ID, 10, "")
+	if err != nil || len(accountEvents) != 1 || accountEvents[0].ID != events[0].ID {
+		t.Fatalf("account dead-letter events = %+v, %v", accountEvents, err)
+	}
+	if _, err := fx.Store.DeadLetterEventByAccountID(fx.Ctx, fx.Account.ID, events[0].ID); err != nil {
+		t.Fatalf("DeadLetterEventByAccountID: %v", err)
+	}
 	event, err := fx.Store.DeadLetterEventByID(fx.Ctx, fx.App.ID, events[0].ID)
 	if err != nil {
 		t.Fatalf("DeadLetterEventByID: %v", err)
@@ -169,6 +176,18 @@ func testUnifiedDeadLetterLedger(t *testing.T, fx *Fixture) {
 	}
 	if got.State != state.InvocationPending || got.Attempts != 0 {
 		t.Fatalf("invocation after replay = %+v, want pending with zero attempts", got)
+	}
+	if _, err := fx.Store.ReplayDeadLetterEventForAccount(fx.Ctx, fx.Account.ID, event.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ReplayDeadLetterEventForAccount after app replay: err = %v, want ErrNotFound", err)
+	}
+	if n, err := fx.Store.ReplayDeadLetterEventsForAccount(fx.Ctx, fx.Account.ID, 10); err != nil || n != 0 {
+		t.Fatalf("ReplayDeadLetterEventsForAccount = %d, %v; want 0", n, err)
+	}
+	if err := fx.Store.DeleteDeadLetterEventForAccount(fx.Ctx, fx.Account.ID, event.ID); err != nil {
+		t.Fatalf("DeleteDeadLetterEventForAccount: %v", err)
+	}
+	if n, err := fx.Store.DeleteDeadLetterEventsForAccount(fx.Ctx, fx.Account.ID, 10); err != nil || n != 0 {
+		t.Fatalf("DeleteDeadLetterEventsForAccount = %d, %v; want 0", n, err)
 	}
 }
 
