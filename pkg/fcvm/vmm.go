@@ -1877,7 +1877,7 @@ func (v *JailerVMM) TriggerPreSnapshotHook(ctx context.Context, l Lease) error {
 		c, err := net.DialTimeout("unix", sock, 20*time.Millisecond)
 		if err == nil {
 			_ = c.SetDeadline(time.Now().Add(preSnapshotHookDeadline))
-			if _, err = c.Write([]byte(fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort))); err == nil {
+			if _, err = fmt.Fprintf(c, "CONNECT %d\n", resumeHookGuestPort); err == nil {
 				var connectAck string
 				connectAck, err = readConnectAck(c)
 				if err == nil {

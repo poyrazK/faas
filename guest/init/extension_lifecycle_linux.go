@@ -35,10 +35,14 @@ func (l *extensionLifecycle) emit(phase extension.Phase) {
 }
 
 func (l *extensionLifecycle) emitMetadata(phase extension.Phase, metadata map[string]string) {
+	l.emitMetadataContext(context.Background(), phase, metadata)
+}
+
+func (l *extensionLifecycle) emitMetadataContext(ctx context.Context, phase extension.Phase, metadata map[string]string) {
 	if l == nil || l.dispatcher == nil {
 		return
 	}
-	if err := l.dispatcher.Dispatch(context.Background(), phase, metadata); err != nil {
+	if err := l.dispatcher.Dispatch(ctx, phase, metadata); err != nil {
 		if errors.Is(err, extension.ErrUnavailable) {
 			l.log.Debug("extension lifecycle hook unavailable", "phase", phase)
 			return

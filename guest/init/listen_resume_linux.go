@@ -145,17 +145,10 @@ func listenResumeHookWithCallbacks(log *slog.Logger, callbacks resumeHookCallbac
 	return nil
 }
 
-// acceptResumeConns accepts connections on fd and dispatches each to a
-// goroutine running handleResumeConn. Sequential accepts; each handle runs in
-// its own goroutine so a slow hook does not back up the listener.
-func acceptResumeConns(fd int, log *slog.Logger, onResume ...func()) {
-	var callback func()
-	if len(onResume) > 0 {
-		callback = onResume[0]
-	}
-	acceptResumeConnsWithCallbacks(fd, log, unix.Accept4, resumeHookCallbacks{onResume: callback})
-}
-
+// acceptResumeConnsWithCallbacks accepts connections on fd and dispatches each
+// to a goroutine running handleResumeConnWithCallbacks. Sequential accepts;
+// each handle runs in its own goroutine so a slow hook does not back up the
+// listener.
 // Own the listening descriptor for the lifetime of the accept loop. A terminal
 // error must not leave a listening socket with no goroutine to service it.
 func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume ...func()) {
@@ -182,21 +175,14 @@ func acceptResumeConnsWithCallbacks(fd int, log *slog.Logger, accept func(int, i
 	}
 }
 
-// handleResumeConn reads the resume request, runs RunResumeHook, and writes
-// the ack. Closes the file on return regardless of error.
+// handleResumeConnWithCallbacks reads the resume request, runs the applicable
+// lifecycle callback, and writes the ack. Closes the file on return regardless
+// of error.
 //
 // Wire format (ADR-022): 4-byte big-endian msg type + 4-byte big-endian body
 // length + JSON body {"hostTimeUnixNano": N} + 1-byte ack. The length prefix
 // keeps the guest off EOF-watching — some AF_VSOCK proxies don't propagate
 // CloseWrite promptly through to the guest side.
-func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
-	var callback func()
-	if len(onResume) > 0 {
-		callback = onResume[0]
-	}
-	handleResumeConnWithCallbacks(f, log, resumeHookCallbacks{onResume: callback})
-}
-
 func handleResumeConnWithCallbacks(f *os.File, log *slog.Logger, callbacks resumeHookCallbacks) {
 	defer func() { _ = f.Close() }()
 

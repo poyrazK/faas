@@ -118,7 +118,7 @@ func withInvokeLifecycle(handler executionproto.Handler, hooks *extensionLifecyc
 		return handler
 	}
 	return func(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter) (result executionproto.Result, err error) {
-		hooks.emitMetadata(extension.PhaseInvoke, map[string]string{
+		hooks.emitMetadataContext(ctx, extension.PhaseInvoke, map[string]string{
 			"state":        "start",
 			"execution_id": req.ExecutionID,
 			"runtime":      string(req.Runtime),
@@ -128,7 +128,7 @@ func withInvokeLifecycle(handler executionproto.Handler, hooks *extensionLifecyc
 			if err != nil {
 				status = string(api.ExecutionStatusFailed)
 			}
-			hooks.emitMetadata(extension.PhaseInvoke, map[string]string{
+			hooks.emitMetadataContext(context.WithoutCancel(ctx), extension.PhaseInvoke, map[string]string{
 				"state":        "end",
 				"execution_id": req.ExecutionID,
 				"runtime":      string(req.Runtime),
