@@ -19,6 +19,7 @@ This matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/
 | [Scale to zero](https://gregale.dev/docs/scale-to-zero) | runtime | `beta` | `free`, `hobby`, `pro`, `scale` | Park idle APIs and wake them on the next request. | `pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader` |
 | [Source deploys](https://gregale.dev/docs/deploy-from-source) | delivery | `beta` | `free`, `hobby`, `pro`, `scale` | Deploy an API from a local source tree, tarball, Dockerfile, or OCI image. | `cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball` |
 | [Streaming and gRPC](https://gregale.dev/docs/runtime-node) | edge | `beta` | `hobby`, `pro`, `scale` | Serve streaming HTTP responses, SSE, and gRPC APIs. | `pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode` |
+| [Worker pools](../docs/cli/deploy) | async | `preview` | `hobby`, `pro`, `scale` | Run long-lived non-HTTP OCI workers with queue bindings and queue-depth scaling. | `pkg/api/appmanifest_test.go::TestAppManifestWorkerMode` |
 | [Jobs and workflows](../docs/faas_openapi_spec) | async | `preview` | `hobby`, `pro`, `scale` | Run asynchronous jobs and durable workflows alongside an API. | `cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle` |
 
 ## Promotion rule
