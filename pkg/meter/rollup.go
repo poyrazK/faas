@@ -54,6 +54,12 @@ type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (rows int64, err error)
 }
 
+// RollupObserver records each daily window attempt. wire.OpsMetrics satisfies
+// this interface; keeping the seam narrow leaves RollupLoop easy to unit test.
+type RollupObserver interface {
+	Observe(op string, duration time.Duration, err error)
+}
+
 // rollupSQL is the half-open [start, end) INSERT ... ON CONFLICT
 // statement that rolls one window of usage_minutes rows into
 // usage_daily. Mirrors the column set declared in
@@ -85,7 +91,7 @@ SELECT
     now()
 FROM public.usage_minutes
 WHERE minute >= $1 AND minute < $2
-GROUP BY 1, 2, 3, 4
+GROUP BY 1, 2, 3, 4, 5
 ON CONFLICT (account_id, app_id, day) DO UPDATE SET
     meter_kind      = EXCLUDED.meter_kind,
     job_id          = EXCLUDED.job_id,
@@ -134,15 +140,20 @@ func RollupOnce(ctx context.Context, db execer, windowStart, windowEnd time.Time
 // parallelise via the (account_id, app_id, day) PK — the SQL's
 // additive merge is safe under concurrent calls on disjoint day
 // ranges, and the on-conflict update under concurrent calls on
-// the same day range is monotonic-additive.
-func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slog.Logger) {
+// the same day range converges because both overwrite with the same complete
+// aggregate for that window.
+func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slog.Logger, observers ...RollupObserver) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	runDailyRollups(ctx, db, time.Now().UTC(), log, "initial")
+	var observer RollupObserver
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
+	runDailyRollups(ctx, db, time.Now().UTC(), log, "initial", observer)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -150,7 +161,7 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			runDailyRollups(ctx, db, time.Now().UTC(), log, "tick")
+			runDailyRollups(ctx, db, time.Now().UTC(), log, "tick", observer)
 		}
 	}
 }
@@ -169,9 +180,14 @@ func dailyRollupWindows(now time.Time) []dailyRollupWindow {
 	}
 }
 
-func runDailyRollups(ctx context.Context, db execer, now time.Time, log *slog.Logger, phase string) {
+func runDailyRollups(ctx context.Context, db execer, now time.Time, log *slog.Logger, phase string, observer RollupObserver) {
 	for _, window := range dailyRollupWindows(now) {
-		if _, err := RollupOnce(ctx, db, window.start, window.end); err != nil {
+		started := time.Now()
+		_, err := RollupOnce(ctx, db, window.start, window.end)
+		if observer != nil {
+			observer.Observe("usage_daily_rollup", time.Since(started), err)
+		}
+		if err != nil {
 			log.Warn("meter: usage_daily rollup",
 				"phase", phase,
 				"window_start", window.start.Format(time.RFC3339),

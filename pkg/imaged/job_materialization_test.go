@@ -3,7 +3,9 @@ package imaged
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type jobMaterializationPuller struct {
@@ -198,6 +201,30 @@ func TestJobMaterializationRetryDelayIsBounded(t *testing.T) {
 	}
 	if got := jobMaterializationRetryDelay(20); got != jobMaterializationRetryMax {
 		t.Fatalf("large attempt delay = %s, want cap %s", got, jobMaterializationRetryMax)
+	}
+}
+
+type failingPendingJobClaimStore struct {
+	*state.MemStore
+	err error
+}
+
+func (s *failingPendingJobClaimStore) JobClaimPendingImageMaterialization(context.Context, int, string, time.Duration) ([]state.Job, error) {
+	return nil, s.err
+}
+
+func TestPendingJobMaterializationClaimFailureIsObservable(t *testing.T) {
+	store := &failingPendingJobClaimStore{MemStore: state.NewMemStore(), err: errors.New("claim failed")}
+	ops := wire.NewOpsMetrics("imaged_test")
+	h := New(store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithOpsMetrics(ops)
+	if err := h.MaterializePendingJobs(context.Background()); !errors.Is(err, store.err) {
+		t.Fatalf("MaterializePendingJobs error = %v, want %v", err, store.err)
+	}
+
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if body := recorder.Body.String(); !strings.Contains(body, `imaged_test_ops_total{code="err",op="job_materialization_claim"} 1`) {
+		t.Fatalf("metrics missing pending job claim failure:\n%s", body)
 	}
 }
 

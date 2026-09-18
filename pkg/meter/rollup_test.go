@@ -20,10 +20,14 @@ package meter
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // stubExecer is a recording stub of the execer interface. It
@@ -106,6 +110,18 @@ func TestRollupOnce_EmptyWindowReturnsZero(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("rows = %d, want 0 for empty window", n)
+	}
+}
+
+func TestDailyRollupFailureIsObservable(t *testing.T) {
+	db := &stubExecer{err: errors.New("rollup failed")}
+	ops := wire.NewOpsMetrics("meterd_test")
+	runDailyRollups(context.Background(), db, time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), slog.Default(), "test", ops)
+
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if body := recorder.Body.String(); !strings.Contains(body, `meterd_test_ops_total{code="err",op="usage_daily_rollup"} 2`) {
+		t.Fatalf("metrics missing both daily rollup failures:\n%s", body)
 	}
 }
 

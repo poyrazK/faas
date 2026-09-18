@@ -180,19 +180,19 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("imaged: job image materialization store unavailable")
 	}
+	started := time.Now()
 	var jobs []state.Job
+	var err error
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
-		var err error
 		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, h.jobMaterializationOwner(), jobMaterializationLease)
-		if err != nil {
-			return err
-		}
 	} else {
-		var err error
 		jobs, err = images.JobListPendingImageMaterialization(ctx, jobMaterializationBatchSize)
-		if err != nil {
-			return err
-		}
+	}
+	if h.ops != nil {
+		h.ops.Observe("job_materialization_claim", time.Since(started), err)
+	}
+	if err != nil {
+		return err
 	}
 	for _, job := range jobs {
 		if err := h.materializeClaimedJob(ctx, images, job); err != nil {

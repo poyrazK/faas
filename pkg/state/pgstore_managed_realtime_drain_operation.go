@@ -53,7 +53,7 @@ func (s *PgStore) ClaimManagedRealtimeDrainOperations(ctx context.Context, limit
 	}
 	rows, err := s.pool.Query(ctx, `
 		WITH claimable AS (
-			SELECT id
+			SELECT id AS operation_id
 			  FROM managed_realtime_drain_operations
 			 WHERE status = 'running'
 			   AND next_attempt_at <= now()
@@ -65,7 +65,7 @@ func (s *PgStore) ClaimManagedRealtimeDrainOperations(ctx context.Context, limit
 		UPDATE managed_realtime_drain_operations op
 		   SET claimed_at = now(), claim_token = gen_random_uuid(), attempts = op.attempts + 1
 		  FROM claimable
-		 WHERE op.id = claimable.id
+		 WHERE op.id = claimable.operation_id
 		RETURNING `+managedRealtimeDrainOperationColumns, limit, leaseSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("state: claim managed realtime drain operations: %w", err)

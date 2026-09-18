@@ -372,7 +372,7 @@ func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit
 	}
 	rows, err := s.pool.Query(ctx,
 		`with candidates as (
-			select id from jobs
+			select id as candidate_id from jobs
 			 where status <> 'deleted'
 			   and image_materialization_status = 'pending'
 			   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
@@ -387,7 +387,7 @@ func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit
 		        image_materialization_lease_until = now() + $3::interval,
 		        updated_at = now()
 		   from candidates c
-		  where j.id = c.id
+		  where j.id = c.candidate_id
 		 returning `+jobSelectCols,
 		limit, owner, lease.String())
 	if err != nil {

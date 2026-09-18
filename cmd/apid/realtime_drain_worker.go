@@ -45,7 +45,11 @@ func (s *server) runManagedRealtimeDrainWorker(ctx context.Context) {
 }
 
 func (s *server) runManagedRealtimeDrainPass(ctx context.Context, worker state.ManagedRealtimeDrainOperationWorker) {
+	started := time.Now()
 	claims, err := worker.ClaimManagedRealtimeDrainOperations(ctx, managedRealtimeDrainWorkerBatch, managedRealtimeDrainClaimLease)
+	if s.ops != nil {
+		s.ops.Observe("managed_realtime_drain_claim", time.Since(started), err)
+	}
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			s.log.WarnContext(ctx, "claim managed realtime drain operations", "err", err)

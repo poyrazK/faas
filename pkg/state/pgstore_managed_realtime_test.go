@@ -3,6 +3,7 @@ package state_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,33 @@ func pgManagedRealtimeEndpoint(accountID, appID string) state.ManagedRealtimeEnd
 		CallbackAuthTokenSealed: []byte("sealed-callback-token"),
 		AuthTokenSealed:         []byte("sealed-auth-token"),
 		Enabled:                 true,
+	}
+}
+
+func TestPgStore_ManagedRealtimeDrainOperationClaim(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-managed-realtime-drain-claim")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatalf("CreateManagedRealtimeEndpointIfUnderQuota: %v", err)
+	}
+	op, err := s.CreateManagedRealtimeDrainOperation(ctx, state.ManagedRealtimeDrainOperationInput{
+		AccountID: accountID, AppID: appID, EndpointID: endpoint.ID,
+		Reason: "deploy", Matched: 1, ConnectionIDs: []string{"connection-1"}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("CreateManagedRealtimeDrainOperation: %v", err)
+	}
+
+	claims, err := s.ClaimManagedRealtimeDrainOperations(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimManagedRealtimeDrainOperations: %v", err)
+	}
+	if len(claims) != 1 {
+		t.Fatalf("claims = %d, want 1", len(claims))
+	}
+	if claims[0].Operation.ID != op.ID || claims[0].Operation.Attempts != 1 || claims[0].ClaimToken == "" {
+		t.Fatalf("claim = %+v, want operation %s with attempt 1 and a token", claims[0], op.ID)
 	}
 }
 

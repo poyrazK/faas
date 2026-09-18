@@ -1179,7 +1179,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// surface stays focused on its existing 6 timer ticks.
 	// The pgxpool.Pool satisfies the meter.execer contract
 	// (Exec(ctx, sql, args...) → (rows int64, err error)).
-	go meter.RollupLoop(ctx, poolAdapter{pool}, mc.RollupInterval, log)
+	go meter.RollupLoop(ctx, poolAdapter{pool}, mc.RollupInterval, log, ops)
 
 	// ADR-049 §B.1: drift detector. The reconciler owns its own
 	// Prometheus registry (not wire.OpsMetrics) so it can be wired
