@@ -12091,6 +12091,76 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Dashboard form-POST siblings of the unified failed-events API. These
+  # routes use the named dashboard CSRF cookie and redirect back to the inbox.
+  /dashboard/failed-events/{slug}/{id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Unified failed-event identifier.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      tags: [queues]
+      operationId: dashboardReplayFailedEvent
+      summary: Replay a failed event from the dashboard.
+      description: Resets the source event to pending and redirects to the Failed Events inbox.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '303': { description: Redirect to the Failed Events inbox. }
+        '400':
+          description: Invalid dashboard CSRF token.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /dashboard/failed-events/{slug}/{id}/discard:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Unified failed-event identifier.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      tags: [queues]
+      operationId: dashboardDiscardFailedEvent
+      summary: Discard a failed event from the dashboard.
+      description: Removes the ledger projection and redirects to the Failed Events inbox.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '303': { description: Redirect to the Failed Events inbox. }
+        '400':
+          description: Invalid dashboard CSRF token.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert"
   # (test-fire the customer's instantiated preset against their
   # configured webhook URL). The body is empty (the rule already
