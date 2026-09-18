@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 type jobMaterializationPuller struct {
@@ -114,6 +115,19 @@ func TestMaterializeJobPublishesResolvedArtifact(t *testing.T) {
 	defer rc.Close()
 	if body, _ := io.ReadAll(rc); string(body) != "fake ext4 full-rootfs" {
 		t.Fatalf("published artifact = %q, want fake builder output", body)
+	}
+	deleted, hasLive, err := store.JobSoftDelete(ctx, job.ID)
+	if err != nil || !deleted || hasLive {
+		t.Fatalf("JobSoftDelete = deleted:%v live:%v err:%v, want deleted without live tasks", deleted, hasLive, err)
+	}
+	if err := h.HandleNotification(ctx, db.Notification{
+		Channel: db.NotifyJobChanged,
+		Payload: `{"kind":"deleted","job_id":"` + job.ID + `"}`,
+	}); err != nil {
+		t.Fatalf("HandleNotification(deleted job_changed): %v", err)
+	}
+	if _, err := h.storage.Get(ctx, got.ImageStorageKey); !storage.IsNotFound(err) {
+		t.Fatalf("deleted job artifact error = %v, want storage not found", err)
 	}
 }
 

@@ -1360,7 +1360,13 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 			return fmt.Errorf("decode job_changed payload: %w", err)
 		}
-		if p.JobID == "" || p.Kind == "deleted" {
+		if p.JobID == "" {
+			return nil
+		}
+		if p.Kind == "deleted" {
+			if err := h.deleteJobArtifact(ctx, p.JobID); err != nil {
+				return fmt.Errorf("cleanup job %s: %w", p.JobID, err)
+			}
 			return nil
 		}
 		return h.MaterializeJob(ctx, p.JobID)
@@ -1402,6 +1408,22 @@ type deploymentChangedPayload struct {
 type jobChangedPayload struct {
 	Kind  string `json:"kind"`
 	JobID string `json:"job_id"`
+}
+
+// deleteJobArtifact removes the canonical ext4 image after a job is
+// soft-deleted. Job deletion is guarded by the state layer against live task
+// instances, so no running VM can still be using this fixed key. Missing
+// objects are harmless: the path is idempotent and also covers jobs created
+// before image materialization was enabled.
+func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
+	be, err := h.storageFor()
+	if err != nil {
+		return err
+	}
+	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were
