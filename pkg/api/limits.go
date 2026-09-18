@@ -3689,6 +3689,11 @@ const (
 	// gateway process's RSS budget.
 	RawStreamMaxResponseBytes int64 = 1 * 1024 * 1024 * 1024
 
+	// RawTCPStreamMaxBytes bounds each direction of a protocol-neutral public
+	// TCP session. TCP ingress is long-lived, so this is a safety ceiling for a
+	// runaway connection rather than an HTTP request-body limit.
+	RawTCPStreamMaxBytes int64 = 1 * 1024 * 1024 * 1024
+
 	// Post-response tail (issue #667 / ADR-078).
 	//
 	// TailCapMax is a structural constant applied uniformly across

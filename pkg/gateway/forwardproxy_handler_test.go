@@ -100,6 +100,10 @@ func (s *stubVmmdClient) ForwardRawStream(ctx context.Context, _ ...grpc.CallOpt
 	return stream, nil
 }
 
+func (s *stubVmmdClient) ForwardTCPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardTCPStream is not used by HTTP gateway tests")
+}
+
 func (s *stubVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed in handler integration test")
 }

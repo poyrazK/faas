@@ -361,6 +361,10 @@ func (f *fakeVmmdClient) ForwardRawStream(context.Context, ...grpc.CallOption) (
 	return f.RawStream, nil
 }
 
+func (f *fakeVmmdClient) ForwardTCPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], error) {
+	panic("ForwardTCPStream: not stubbed (HTTP gateway tests do not use the L4 bridge)")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")

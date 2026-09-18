@@ -47,6 +47,7 @@ const (
 	Vmmd_Logs_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Logs"
 	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
 	Vmmd_ForwardRawStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
+	Vmmd_ForwardTCPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
 	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
 	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
 	Vmmd_UmountParentExt4_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
@@ -295,6 +296,12 @@ type VmmdClient interface {
 	// (missing init), Internal (nsenter / bridge crash). The legacy
 	// ForwardHTTPStream is unaffected.
 	ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error)
+	// ForwardTCPStream is the protocol-neutral byte tunnel used by the public
+	// Layer-4 ingress path. Unlike ForwardRawStream, it does not carry an HTTP
+	// request/response head: every body_chunk is application-owned bytes. The
+	// first frame addresses a live instance and guest listener; the client
+	// half-closes the gRPC stream to half-close the guest socket.
+	ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error)
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -700,6 +707,19 @@ func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOpti
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse]
 
+func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ForwardTCPRequest, ForwardTCPResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse]
+
 func (c *vmmdClient) MountParentExt4ReadOnly(ctx context.Context, in *MountParentExt4ReadOnlyRequest, opts ...grpc.CallOption) (*MountParentExt4ReadOnlyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MountParentExt4ReadOnlyResponse)
@@ -1027,6 +1047,12 @@ type VmmdServer interface {
 	// (missing init), Internal (nsenter / bridge crash). The legacy
 	// ForwardHTTPStream is unaffected.
 	ForwardRawStream(grpc.BidiStreamingServer[ForwardRawRequest, ForwardRawResponse]) error
+	// ForwardTCPStream is the protocol-neutral byte tunnel used by the public
+	// Layer-4 ingress path. Unlike ForwardRawStream, it does not carry an HTTP
+	// request/response head: every body_chunk is application-owned bytes. The
+	// first frame addresses a live instance and guest listener; the client
+	// half-closes the gRPC stream to half-close the guest socket.
+	ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -1232,6 +1258,9 @@ func (UnimplementedVmmdServer) ForwardHTTPStream(grpc.BidiStreamingServer[Forwar
 }
 func (UnimplementedVmmdServer) ForwardRawStream(grpc.BidiStreamingServer[ForwardRawRequest, ForwardRawResponse]) error {
 	return status.Error(codes.Unimplemented, "method ForwardRawStream not implemented")
+}
+func (UnimplementedVmmdServer) ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error {
+	return status.Error(codes.Unimplemented, "method ForwardTCPStream not implemented")
 }
 func (UnimplementedVmmdServer) MountParentExt4ReadOnly(context.Context, *MountParentExt4ReadOnlyRequest) (*MountParentExt4ReadOnlyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MountParentExt4ReadOnly not implemented")
@@ -1695,6 +1724,13 @@ func _Vmmd_ForwardRawStream_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardRawStreamServer = grpc.BidiStreamingServer[ForwardRawRequest, ForwardRawResponse]
 
+func _Vmmd_ForwardTCPStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ForwardTCPStream(&grpc.GenericServerStream[ForwardTCPRequest, ForwardTCPResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardTCPStreamServer = grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]
+
 func _Vmmd_MountParentExt4ReadOnly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MountParentExt4ReadOnlyRequest)
 	if err := dec(in); err != nil {
@@ -2005,6 +2041,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ForwardRawStream",
 			Handler:       _Vmmd_ForwardRawStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ForwardTCPStream",
+			Handler:       _Vmmd_ForwardTCPStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

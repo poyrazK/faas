@@ -283,6 +283,13 @@ service Vmmd {
   // ForwardHTTPStream is unaffected.
   rpc ForwardRawStream(stream ForwardRawRequest) returns (stream ForwardRawResponse);
 
+  // ForwardTCPStream is the protocol-neutral byte tunnel used by the public
+  // Layer-4 ingress path. Unlike ForwardRawStream, it does not carry an HTTP
+  // request/response head: every body_chunk is application-owned bytes. The
+  // first frame addresses a live instance and guest listener; the client
+  // half-closes the gRPC stream to half-close the guest socket.
+  rpc ForwardTCPStream(stream ForwardTCPRequest) returns (stream ForwardTCPResponse);
+
   // MountParentExt4ReadOnly (ADR-053) is the staging-only path that
   // lets imaged compose the per-runtime base ext4 from a shared
   // debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -1862,4 +1869,40 @@ message ReconcilePrivateNetworkFabricAck {
   string detail = 3;
   repeated string expected_peer_addresses = 4;
   repeated string observed_peer_addresses = 5;
+}
+
+// ForwardTCPRequestInit addresses one guest TCP listener. The caller is
+// responsible for selecting a listener declared by the app manifest; vmmd
+// only resolves the instance-local network namespace and dials the supplied
+// guest port.
+message ForwardTCPRequestInit {
+  string instance = 1;
+  uint32 port = 2;
+  // Optional per-direction byte cap. Zero means the transport default
+  // selected by the receiving vmmd.
+  int64 max_bytes = 3;
+}
+
+// ForwardTCPRequest carries protocol-neutral bytes. The init frame MUST be
+// first; subsequent frames are copied verbatim to the guest socket.
+message ForwardTCPRequest {
+  oneof frame {
+    ForwardTCPRequestInit init = 1;
+    bytes body_chunk = 2;
+  }
+}
+
+// ForwardTCPResponseInit is sent once before response bytes. A non-empty
+// error means the guest socket could not be opened and no bytes follow.
+message ForwardTCPResponseInit {
+  string error = 1;
+}
+
+// ForwardTCPResponse carries protocol-neutral bytes read from the guest
+// socket. End-of-stream is represented by the server closing the gRPC stream.
+message ForwardTCPResponse {
+  oneof frame {
+    ForwardTCPResponseInit init = 1;
+    bytes body_chunk = 2;
+  }
 }

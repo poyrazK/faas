@@ -35,7 +35,7 @@ reads = {}
 daemon_dirs = [
     "cmd/apid", "cmd/schedd", "cmd/vmmd", "cmd/imaged", "cmd/builderd",
     "cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public",
-    "cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge",
+    "cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge",
 ]
 for tree in [root / d for d in daemon_dirs] + [root / "pkg"]:
     for path in tree.rglob("*.go"):

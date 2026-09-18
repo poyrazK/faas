@@ -22,7 +22,7 @@ GO_VERSION="${GO_VERSION:-1.25.13}"
 
 DAEMONS=(apid gatewayd-public gatewayd-internal s3-gatewayd realtimed schedd vmmd builderd imaged meterd githubd outboundd)
 CLIS=(gregale gregalectl)
-TOOLS=(vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge)
+TOOLS=(vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-stream-bridge)
 
 if [[ ! -d "${SRC_ROOT}" ]]; then
     echo "compile-daemons: SRC_ROOT=${SRC_ROOT} not present; expected the repo mounted at this path" >&2
