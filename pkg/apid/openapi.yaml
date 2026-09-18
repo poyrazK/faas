@@ -3278,6 +3278,96 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/tcp-listeners:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppTCPListeners
+      summary: List an app's raw TCP listeners.
+      description: |
+        Lists stable public TCP endpoints owned by the app. Each listener
+        forwards its public port to the declared guest port; disabled
+        listeners fail closed at the edge while retaining their public port.
+      responses:
+        '200':
+          description: The app's TCP listeners.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TCPListenerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: createAppTCPListener
+      summary: Expose one app port over raw TCP.
+      description: |
+        Creates an enabled TCP listener. `public_port` is optional; when it
+        is omitted Gregale allocates a free port from the reserved
+        40000–49999 range. Public ports remain stable across instance wake,
+        migration, and redeployments. `name` and `guest_port` must match an
+        explicitly declared TCP listener in the app manifest. Unnamed
+        declarations use the deterministic name `tcp-<guest_port>`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTCPListenerRequest' }
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The created TCP listener.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TCPListenerResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/tcp-listeners/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Listener name within the app.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+    patch:
+      tags: [apps]
+      operationId: updateAppTCPListener
+      summary: Enable or disable an app TCP listener.
+      description: Disabling a listener fail-closes new connections without releasing its stable public port.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTCPListenerRequest' }
+      responses:
+        '200':
+          description: The updated TCP listener.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TCPListenerResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [apps]
+      operationId: deleteAppTCPListener
+      summary: Delete an app TCP listener.
+      responses:
+        '204': { description: No body. The listener was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/consumers/{consumer_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -20317,6 +20407,62 @@ components:
         protocol:
           type: string
           enum: [tcp, udp]
+
+    TCPListenerResponse:
+      description: "One app-owned raw TCP listener with a stable public endpoint."
+      type: object
+      additionalProperties: false
+      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, description: "Stable listener identifier." }
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+        guest_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: "TCP port exposed by the workload."
+        public_port:
+          type: integer
+          minimum: 40000
+          maximum: 49999
+          description: "Stable Gregale public TCP port."
+        protocol:
+          type: string
+          enum: [tcp]
+        enabled:
+          type: boolean
+          description: "Whether the edge accepts new TCP connections."
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateTCPListenerRequest:
+      description: "Request to expose one workload TCP port."
+      type: object
+      additionalProperties: false
+      required: [name, guest_port]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+        guest_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        public_port:
+          type: integer
+          minimum: 40000
+          maximum: 49999
+          description: "Optional stable public port; Gregale allocates one when omitted."
+
+    UpdateTCPListenerRequest:
+      description: "Request to change whether an app TCP listener accepts connections."
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
 
     AppManifestHealthcheck:
       description: "AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1 surfaces the field for the registry-pull path."

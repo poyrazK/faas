@@ -362,6 +362,7 @@ var cliCommands = []cliCommand{
 			{Name: "ls", Short: "Alias for the default list action"},
 			{Name: "restore", Short: "Restore an app during its deletion grace window"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
+			{Name: "tcp", Short: "Manage raw TCP listeners"},
 			{Name: "streaming-cap", Short: "Per-app streaming classification probe (ADR-102 D6)"},
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
 			{Name: "--quiet", Short: "Delete one app (positional: <slug>)"},
@@ -381,6 +382,7 @@ var cliCommands = []cliCommand{
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
 			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
+			{Name: "tcp", Short: "Manage raw TCP listeners"},
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{

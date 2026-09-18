@@ -14,8 +14,10 @@ import (
 var ErrInvalidTCPListener = errors.New("state: invalid TCP listener")
 
 const (
-	tcpListenerPublicPortMin = 40000
-	tcpListenerPublicPortMax = 49999
+	TCPListenerPublicPortMin = 40000
+	TCPListenerPublicPortMax = 49999
+	tcpListenerPublicPortMin = TCPListenerPublicPortMin
+	tcpListenerPublicPortMax = TCPListenerPublicPortMax
 )
 
 func normalizeTCPListener(in TCPListener) (TCPListener, error) {
