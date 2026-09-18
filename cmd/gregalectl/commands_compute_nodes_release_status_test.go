@@ -86,6 +86,30 @@ func TestCmdComputeNodesReleaseStatusRejectsInvalidRelease(t *testing.T) {
 	}
 }
 
+func TestCmdComputeNodesReleaseStatusHonorsGlobalJSON(t *testing.T) {
+	resetMemStore(t)
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
+
+	stdout, restore := captureOsStdoutComputeNodes(t)
+	code := cmdComputeNodesReleaseStatus([]string{
+		"--desired-release=" + strings.Repeat("a", 40),
+		"--break-glass-db",
+	})
+	restore()
+	if code != 3 {
+		t.Fatalf("exit = %d, want not-ready exit 3", code)
+	}
+	var report computeNodesReleaseStatus
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("global --json output is not JSON: %v (raw %q)", err, stdout.String())
+	}
+	if report.ActiveNodeCount == 0 {
+		t.Fatalf("report = %+v, want the seeded active node", report)
+	}
+}
+
 func TestComputeNodeFromOperatorResponseParsesHeartbeat(t *testing.T) {
 	stamp := "2026-09-12T18:00:00.123456Z"
 	row := computeNodeFromOperatorResponse(api.ComputeNodeOperatorResponse{LastHeartbeatAt: stamp})

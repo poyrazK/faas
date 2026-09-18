@@ -24,7 +24,7 @@ func TestCDPlatformOrchestratesControlComputeAndFleetGate(t *testing.T) {
 	if !(control < computeNeedsControl && computeNeedsControl < compute && compute < verify && verify < gate) {
 		t.Fatalf("platform rollout stages are out of order: control=%d needs=%d compute=%d verify=%d gate=%d", control, computeNeedsControl, compute, verify, gate)
 	}
-	if !strings.Contains(workflow, "--timeout '${gate_timeout}'") || !strings.Contains(workflow, "--break-glass-db --json") {
+	if !strings.Contains(workflow, "--timeout '${gate_timeout}'") || !strings.Contains(workflow, "--break-glass-db -json") {
 		t.Fatal("platform workflow must execute the bounded, machine-readable active-node release gate")
 	}
 	if strings.Contains(workflow, "--property=EnvironmentFile=/etc/faas/compute-db.env") {

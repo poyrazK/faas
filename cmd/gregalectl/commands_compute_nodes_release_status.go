@@ -79,12 +79,12 @@ func cmdComputeNodesReleaseStatus(args []string) int {
 		}
 		report := evaluateComputeNodesReleaseStatus(nodes, *desired, now, *heartbeatStaleness)
 		if report.Ready {
-			emitComputeNodesReleaseStatus(osStdout, report, *jsonOut)
+			emitComputeNodesReleaseStatus(osStdout, report, *jsonOut || jsonOutput)
 			return 0
 		}
 		if *timeout == 0 || !time.Now().Before(deadline) {
 			report.TimedOut = *timeout > 0
-			emitComputeNodesReleaseStatus(osStdout, report, *jsonOut)
+			emitComputeNodesReleaseStatus(osStdout, report, *jsonOut || jsonOutput)
 			return 3
 		}
 
