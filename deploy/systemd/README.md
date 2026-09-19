@@ -39,6 +39,7 @@ role you are testing, then reload systemd:
 
 ```sh
 sudo install -m 0644 deploy/systemd/faas-gatewayd-public.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/faas-apid.socket /etc/systemd/system/
 sudo install -m 0644 deploy/systemd/faas-gatewayd-public.socket /etc/systemd/system/
 sudo install -m 0644 deploy/systemd/faas-gatewayd-internal.service /etc/systemd/system/
 sudo systemctl daemon-reload

@@ -272,6 +272,7 @@ jobs:
           # host and reintroduces the split-role failure mode.
           for unit in \
             faas-apid.service \
+            faas-apid.socket \
             faas-cp.slice \
             faas-gatewayd-public.socket \
             faas-gatewayd-public.service \
@@ -677,9 +678,37 @@ jobs:
           }
           REMOTE
           # Observe the public, unauthenticated customer path throughout the
-          # mutating activation window. This is deliberately diagnostic: the
-          # orchestrator's post-rollout origin and public checks remain gates.
-          scripts/ci/observe_rollout_availability.sh \
+          # mutating activation window. GitHub-hosted runner egress is blocked
+          # by the production edge policy, so use the control-plane VM only as
+          # a SOCKS egress point while still traversing public DNS + Cloudflare.
+          probe_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+          ssh -N -D "127.0.0.1:${probe_port}" \
+            -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            -o ExitOnForwardFailure=yes root@${{ env.CP_HOST }} &
+          probe_proxy_pid=$!
+          cleanup_probe_proxy() {
+            kill "$probe_proxy_pid" 2>/dev/null || true
+            wait "$probe_proxy_pid" 2>/dev/null || true
+          }
+          trap cleanup_probe_proxy EXIT
+          probe_proxy="socks5h://127.0.0.1:${probe_port}"
+          proxy_ready=0
+          for _ in $(seq 1 20); do
+            if curl --fail --silent --show-error --proxy "$probe_proxy" \
+              --connect-timeout 1 --max-time 3 \
+              'https://api.gregale.dev/v1/status?rollout_probe=proxy-preflight' \
+              >/dev/null; then
+              proxy_ready=1
+              break
+            fi
+            kill -0 "$probe_proxy_pid" 2>/dev/null || break
+            sleep 0.25
+          done
+          (( proxy_ready == 1 )) || {
+            echo "::error::control-plane rollout probe proxy did not become ready" >&2
+            exit 1
+          }
+          ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh \
             "https://api.gregale.dev/v1/status" -- \
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
@@ -706,6 +735,8 @@ jobs:
              mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
+          cleanup_probe_proxy
+          trap - EXIT
 
       - name: Verify PostgreSQL backup namespace contract
         run: |

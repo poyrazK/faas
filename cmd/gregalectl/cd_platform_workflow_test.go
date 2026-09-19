@@ -124,6 +124,14 @@ func TestCDPlatformRequiresPublicReadinessAndProductionDeployments(t *testing.T)
 			t.Fatalf("production deployment gate missing %q", required)
 		}
 	}
+	publicGateStart := publicReadiness - 500
+	if publicGateStart < 0 {
+		publicGateStart = 0
+	}
+	publicGate := workflow[publicGateStart:metricsGate]
+	if !strings.Contains(publicGate, `ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}"`) {
+		t.Fatal("public rollout gate must run from the GCP control-plane vantage point")
+	}
 }
 
 func TestNormalAnsibleConvergenceRemovesLegacyOCIOverrides(t *testing.T) {

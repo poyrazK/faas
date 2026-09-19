@@ -41,6 +41,24 @@ for socket_unit in "${socket_units[@]}"; do
   done
 done
 
+apid_socket_units=(
+  "${root}/deploy/ansible/roles/control_plane_service/files/faas-apid.socket"
+  "${root}/deploy/systemd/faas-apid.socket"
+)
+for socket_unit in "${apid_socket_units[@]}"; do
+  if [[ ! -f "$socket_unit" ]]; then
+    echo "systemd-hardening-check: missing ${socket_unit}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  for directive in 'ListenStream=127.0.0.1:8081' 'FileDescriptorName=api' 'Backlog=4096'; do
+    if ! grep -Fqx "$directive" "$socket_unit"; then
+      echo "systemd-hardening-check: ${socket_unit}: missing ${directive}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+done
+
 caddy_dropin="${unit_root}/host_hardening/templates/90-gregale-caddy-hardening.conf.j2"
 if [[ ! -f "$caddy_dropin" ]]; then
   echo "systemd-hardening-check: missing ${caddy_dropin}" >&2

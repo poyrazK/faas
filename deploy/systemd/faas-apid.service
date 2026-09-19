@@ -1,9 +1,9 @@
 [Unit]
 Description=onebox-faas apid — public control-plane API (spec §4.1)
 Documentation=https://gregale.dev/docs/ops/apid
-After=network.target postgresql.service faas-cp.slice
+After=network.target postgresql.service faas-cp.slice faas-apid.socket
 Wants=faas-cp.slice
-Requires=postgresql.service
+Requires=postgresql.service faas-apid.socket
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 

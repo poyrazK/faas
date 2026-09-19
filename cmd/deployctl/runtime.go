@@ -49,6 +49,12 @@ const (
 // removes the last mutable legacy service residue.
 var legacyManagedServices = []string{"gatewayd", "spool-sync"}
 
+// managedSocketUnits are process-independent listeners shipped by release
+// bundles. An older rollback bundle can omit a socket that a newer release
+// installed, so topology reconciliation must retire the stale listener before
+// restarting the older daemon that binds the address itself.
+var managedSocketUnits = []string{"faas-apid.socket", "faas-gatewayd-public.socket"}
+
 func managedServiceNames() []string {
 	entries := daemonunitspec.UnitEntries()
 	names := make([]string, 0, len(entries)+len(legacyManagedServices))
@@ -279,6 +285,9 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 	if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
+	if err := r.reconcileSocketTopology(ctx, units); err != nil {
+		return err
+	}
 	if err := r.reconcileServiceTopology(ctx, services); err != nil {
 		return err
 	}
@@ -291,6 +300,40 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 		}
 		if err := runCommand(ctx, "systemctl", "enable", "faas-"+service+".service"); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// reconcileSocketTopology removes a listener that is absent from the target
+// bundle. This is especially important when rolling back the first APID
+// socket-activation release: the older binary calls net.Listen directly and
+// cannot bind while the systemd-owned socket remains active.
+func (r hostRuntime) reconcileSocketTopology(ctx context.Context, releaseUnits string) error {
+	for _, unit := range managedSocketUnits {
+		if _, err := os.Lstat(filepath.Join(releaseUnits, unit)); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect release socket %s: %w", unit, err)
+		}
+
+		target := filepath.Join(r.unitDir, unit)
+		masked, err := maskedUnit(target)
+		if err != nil {
+			return fmt.Errorf("inspect installed socket %s: %w", unit, err)
+		}
+		if _, err := os.Lstat(target); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("inspect installed socket %s: %w", unit, err)
+		}
+		if !masked {
+			if err := runCommand(ctx, "systemctl", "disable", "--now", unit); err != nil {
+				return fmt.Errorf("disable omitted socket %s: %w", unit, err)
+			}
+		}
+		if err := os.Remove(target); err != nil {
+			return fmt.Errorf("remove omitted socket %s: %w", unit, err)
 		}
 	}
 	return nil

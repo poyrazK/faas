@@ -300,6 +300,43 @@ func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
 	}
 }
 
+func TestReconcileSocketTopologyRetiresSocketOmittedFromRollback(t *testing.T) {
+	unitDir := t.TempDir()
+	releaseUnits := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(unitDir, "faas-apid.socket"),
+		filepath.Join(unitDir, "faas-gatewayd-public.socket"),
+		filepath.Join(releaseUnits, "faas-gatewayd-public.socket"),
+	} {
+		if err := os.WriteFile(path, []byte("[Socket]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	orig := runCommand
+	t.Cleanup(func() { runCommand = orig })
+	var calls [][]string
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+
+	r := hostRuntime{unitDir: unitDir}
+	if err := r.reconcileSocketTopology(context.Background(), releaseUnits); err != nil {
+		t.Fatalf("reconcileSocketTopology: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(unitDir, "faas-apid.socket")); !os.IsNotExist(err) {
+		t.Fatalf("rollback-incompatible apid socket still exists: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(unitDir, "faas-gatewayd-public.socket")); err != nil {
+		t.Fatalf("socket retained by rollback bundle changed: %v", err)
+	}
+	want := []string{"systemctl", "disable", "--now", "faas-apid.socket"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
+		t.Fatalf("socket reconciliation calls = %v, want %v", calls, want)
+	}
+}
+
 func TestManagedServiceNamesIncludesOptionalRegistry(t *testing.T) {
 	managed := managedServiceNames()
 	for _, entry := range daemonunitspec.OptionalRegistry {

@@ -1,0 +1,14 @@
+[Unit]
+Description=Gregale durable control-plane API listener
+Documentation=https://gregale.dev/docs/ops/apid
+Before=faas-apid.service
+
+[Socket]
+ListenStream=127.0.0.1:8081
+FileDescriptorName=api
+NoDelay=true
+Backlog=4096
+Service=faas-apid.service
+
+[Install]
+WantedBy=sockets.target

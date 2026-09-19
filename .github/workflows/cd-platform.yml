@@ -307,11 +307,14 @@ jobs:
         run: |
           set -euo pipefail
           status_file="$RUNNER_TEMP/public-platform-status.json"
-          curl --fail --silent --show-error --location \
-            --retry 12 --retry-delay 5 --retry-all-errors \
-            --connect-timeout 3 --max-time 10 \
-            --header 'Cache-Control: no-cache' \
-            "https://api.gregale.dev/v1/status?rollout_probe=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+          # Preserve the public edge path, but originate the request from the
+          # GCP control plane because Cloudflare blocks GitHub-hosted egress.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            "curl --fail --silent --show-error --location \
+              --retry 12 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 3 --max-time 10 \
+              --header 'Cache-Control: no-cache' \
+              'https://api.gregale.dev/v1/status?rollout_probe=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'" \
             > "$status_file"
           jq -e '
             .data_status == "fresh" and

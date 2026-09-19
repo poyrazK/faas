@@ -148,6 +148,16 @@ func TestUnitVmmd_Shape(t *testing.T) {
 func TestUnitApid_Shape(t *testing.T) {
 	u := UnitApid()
 	assertBasicShape(t, "apid", u)
+	foundSocket := false
+	for _, requirement := range u.Requires {
+		if requirement == "faas-apid.socket" {
+			foundSocket = true
+			break
+		}
+	}
+	if !foundSocket {
+		t.Errorf("apid: Requires = %v, want durable faas-apid.socket", u.Requires)
+	}
 	if u.User != "faas-apid" {
 		t.Errorf("apid: User = %q, want faas-apid", u.User)
 	}

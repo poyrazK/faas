@@ -36,7 +36,12 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 	workflow := string(body)
 	observer := strings.Index(workflow, "scripts/ci/observe_rollout_availability.sh")
-	publicPath := strings.Index(workflow, "https://api.gregale.dev/v1/status")
+	publicPath := -1
+	if observer >= 0 {
+		if offset := strings.Index(workflow[observer:], "https://api.gregale.dev/v1/status"); offset >= 0 {
+			publicPath = observer + offset
+		}
+	}
 	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
 	if observer < 0 || publicPath < 0 || activate < 0 || !(observer <= publicPath && publicPath < activate) {
 		t.Fatalf("customer-path observer must wrap activation: observer=%d public=%d activate=%d", observer, publicPath, activate)
@@ -53,6 +58,8 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 		"Rollout attribution is **inconclusive**",
 		"HTTP status counts:",
 		"customer path lost after a healthy pre-rollout baseline",
+		"ROLLOUT_PROBE_PROXY",
+		`--proxy "$probe_proxy"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("customer-path observer is missing baseline diagnostic %q", required)
@@ -60,6 +67,15 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 	if strings.Contains(script, `--user-agent "gregale-rollout-observer/`) {
 		t.Fatal("customer-path observer must use the same edge identity as the final public gate")
+	}
+	for _, required := range []string{
+		`ssh -N -D "127.0.0.1:${probe_port}"`,
+		`probe_proxy="socks5h://127.0.0.1:${probe_port}"`,
+		`ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane rollout must observe from the GCP vantage point; missing %q", required)
+		}
 	}
 }
 
@@ -212,6 +228,9 @@ func TestCDControlPlaneBundlesEveryCanonicalControlPlaneDaemon(t *testing.T) {
 		if !strings.Contains(unitList, unit) {
 			t.Errorf("control-plane workflow does not bundle canonical unit %s", unit)
 		}
+	}
+	if !strings.Contains(unitList, "faas-apid.socket") {
+		t.Error("control-plane workflow does not bundle the durable APID socket")
 	}
 }
 

@@ -499,7 +499,7 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen: net.Listen,
+		listen: apidListener,
 		// Production wires the Postgres store immediately after db.Open in
 		// run(). Leaving this unset prevents a direct runWithDeps caller from
 		// silently exercising an in-memory store as a production fallback.
