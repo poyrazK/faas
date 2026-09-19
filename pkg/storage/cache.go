@@ -6,7 +6,7 @@
 // compute node (issue #96 review finding). LocalCacheBackend
 // wraps any StorageBackend with an LRU on disk rooted at
 // FAAS_STORAGE_CACHE_DIR (default /var/lib/faas/cache when
-// FAAS_STORAGE_BACKEND=oci; opt-in otherwise) so a registry
+// a remote FAAS_STORAGE_BACKEND; opt-in otherwise) so a shared store
 // outage degrades to last-known-good reads when the operator
 // opts in via FAAS_STORAGE_CACHE_SERVE_STALE.
 //

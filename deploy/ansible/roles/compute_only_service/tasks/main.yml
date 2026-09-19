@@ -332,21 +332,26 @@
   ansible.builtin.assert:
     that:
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
-      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=(?:oci|gcs)$') | length) == 1"
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
       - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
-      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
-      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
+      - >-
+        (((faas_storage_env_content.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=gcs$')) is none) or
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_GCS_BUCKET=[a-z0-9][a-z0-9._-]+$') | length) == 1)
+      - >-
+        (((((faas_storage_env_content.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=oci$')) is none) and
+        (((faas_storage_env_content.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_FALLBACK_BACKEND=oci$')) is none)) or
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1))
     fail_msg: >-
       /etc/faas/storage.env must declare the strict shared-artifact
-      contract: FAAS_STORAGE_BACKEND=oci,
+      contract: FAAS_STORAGE_BACKEND=oci or gcs,
       FAAS_STORAGE_LOCAL_PREFIXES=none, FAAS_REQUIRE_SHARED_ARTIFACTS=1,
-      FAAS_STORAGE_CACHE_SERVE_STALE=0, and exactly one HTTPS
-      FAAS_OCI_REGISTRY assignment. Without this gate a compute node may
+      FAAS_STORAGE_CACHE_SERVE_STALE=0, and the selected remote endpoint.
+      Without this gate a compute node may
       restore a different local copy for the same snapshot key.
   no_log: true
   when: (faas_box_role | default('single-box')) == 'compute-only'

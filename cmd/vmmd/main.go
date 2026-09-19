@@ -778,13 +778,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// from the key on Restore. The env-driven fork (FAAS_STORAGE_BACKEND)
 	// routes the same call sites through a remote OCI distribution-spec
 	// backend when the operator sets one up.
-	storageBackend, err := storage.BackendFromEnv()
+	storageBackend, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("vmmd: %w", err)
 	}
-	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
+	storageKind := envOr("FAAS_STORAGE_BACKEND", "local")
+	switch storageKind {
+	case "oci":
 		log.Info("vmmd: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
-	} else {
+	case "gcs":
+		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
@@ -817,7 +822,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the self-registered node ID in hand. The local backend is intentionally
 	// excluded: two hosts can both have /srv/fc while sharing no bytes, so
 	// marking local-only reads as replicas would create false-ready rows.
-	if nodeID != "" && strings.EqualFold(os.Getenv("FAAS_STORAGE_BACKEND"), "oci") {
+	if nodeID != "" && storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
 		if storage.AsCacheBackend(storageBackend) == nil {
 			return errors.New("vmmd: OCI snapshot fan-out requires the local read-through cache")
 		}

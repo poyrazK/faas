@@ -53,6 +53,18 @@ type StorageBackend interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// IsRemoteBackendKind reports whether kind selects a shared remote artifact
+// store. Callers use this instead of hard-coding OCI so local-path shortcuts
+// can never bypass publication when the canonical store is GCS.
+func IsRemoteBackendKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "oci", "gcs":
+		return true
+	default:
+		return false
+	}
+}
+
 // LocalPathResolver is an optional capability for storage backends whose
 // object is already present as a local file. Callers may use the returned
 // path to avoid copying a large blob into a temporary staging file. A false

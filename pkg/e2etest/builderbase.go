@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // StagedBuilderBasePath returns the ext4 imaged stages the builder base to on
@@ -24,18 +26,18 @@ func StagedBuilderBasePath() string {
 // HasRealBuilderBase reports whether imaged can obtain a real builder base on
 // this host, by either route it supports.
 //
-// A local-backend host keeps the base as a file on disk. An OCI-backend host
+// A local-backend host keeps the base as a file on disk. A remote-backend host
 // keeps NO file under /srv/fc/base at all — imaged resolves the production ref
 // through the registry and the read-through blob cache, exactly as
 // run-native-e2e.sh's own pre-flight documents when it skips the file check
-// for FAAS_STORAGE_BACKEND=oci.
+// for a remote artifact backend.
 //
 // Checking only for the file therefore reports "no base" on precisely the host
 // that has one. faas-acceptance-1 runs the OCI backend, so the first version of
 // this check was false there and the stub override still applied, leaving the
 // 14 validate-base-ext4 failures in place.
 func HasRealBuilderBase() bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_STORAGE_BACKEND")), "oci") {
+	if storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
 		return true
 	}
 	info, err := os.Stat(StagedBuilderBasePath())

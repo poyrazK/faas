@@ -728,6 +728,19 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := validateSharedStorageEnv(path); err != nil {
 		t.Fatalf("valid storage env rejected: %v", err)
 	}
+	gcsMigration := "FAAS_STORAGE_BACKEND=gcs\n" +
+		"FAAS_GCS_BUCKET=gregale-artifacts-test\n" +
+		"FAAS_STORAGE_FALLBACK_BACKEND=oci\n" +
+		"FAAS_OCI_REGISTRY=https://registry.example\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\n" +
+		"FAAS_REQUIRE_SHARED_ARTIFACTS=1\n" +
+		"FAAS_STORAGE_CACHE_SERVE_STALE=0\n"
+	if err := os.WriteFile(path, []byte(gcsMigration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path); err != nil {
+		t.Fatalf("valid GCS migration env rejected: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=local\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

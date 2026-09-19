@@ -744,7 +744,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if signPubPath == "" {
 		signPubPath = envOr("FAAS_SIGN_PUB", cosign.DefaultSignPubPath)
 	}
-	storageBackend, err := storage.BackendFromEnv()
+	storageBackend, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("schedd: storage backend: %w", err)
 	}

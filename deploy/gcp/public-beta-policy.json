@@ -54,6 +54,18 @@
       "gregale-compute@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com"
     ]
   },
+  "artifact_storage": {
+    "bucket": "gregale-artifacts-5ae37259",
+    "location": "EUROPE-WEST3",
+    "storage_class": "STANDARD",
+    "required_role": "roles/storage.objectUser",
+    "service_accounts": [
+      "gregale-control@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com",
+      "gregale-compute@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com"
+    ],
+    "require_uniform_bucket_level_access": true,
+    "require_public_access_prevention": true
+  },
   "audit_logs": {
     "minimum_retention_days": 30,
     "services": {

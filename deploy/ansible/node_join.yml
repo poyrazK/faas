@@ -161,15 +161,24 @@
     # caller must not be able to bypass the multi-box OCI contract and make
     # snapshots host-local by accident. The lookup runs on the controller;
     # no secret-bearing value is printed or copied into Ansible output.
-    - name: Validate shared OCI storage contract before staging it
+    - name: Validate shared remote storage contract before staging it
       ansible.builtin.assert:
         that:
           - >-
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
-            regex_search('(?m)^FAAS_STORAGE_BACKEND=oci\s*$')) is not none
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=(oci|gcs)\s*$')) is not none
           - >-
-            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
-            regex_search('(?m)^FAAS_OCI_REGISTRY=\S+$')) is not none
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=gcs\s*$')) is none) or
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_GCS_BUCKET=[a-z0-9][a-z0-9._-]+\s*$')) is not none)
+          - >-
+            (((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=oci\s*$')) is none) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_FALLBACK_BACKEND=oci\s*$')) is none)) or
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_OCI_REGISTRY=https://\S+$')) is not none)
           - >-
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none\s*$')) is not none
@@ -183,8 +192,8 @@
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=.*snap/')) is none
         fail_msg: >-
-          storage.env must set FAAS_STORAGE_BACKEND=oci and
-          FAAS_OCI_REGISTRY, set FAAS_STORAGE_LOCAL_PREFIXES=none,
+          storage.env must select OCI or GCS remote storage and configure its
+          endpoint, set FAAS_STORAGE_LOCAL_PREFIXES=none,
           FAAS_REQUIRE_SHARED_ARTIFACTS=1, and set
           FAAS_STORAGE_CACHE_SERVE_STALE=0. It must not route snap/ through
           FAAS_STORAGE_LOCAL_PREFIXES for a multi-box compute node.

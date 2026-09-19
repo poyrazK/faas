@@ -61,6 +61,7 @@ def inspect_control_plane_dev_env(project: str, instance: dict[str, Any], forbid
 def collect(policy: dict[str, Any]) -> dict[str, Any]:
     project = policy["project_id"]
     bucket = policy["backup"]["bucket"]
+    artifact_bucket = policy["artifact_storage"]["bucket"]
     billing = gcloud("billing", "projects", "describe", project, allow_error=True)
     billing_account = ""
     if isinstance(billing, dict):
@@ -85,6 +86,12 @@ def collect(policy: dict[str, Any]) -> dict[str, Any]:
         "firewalls": gcloud("compute", "firewall-rules", "list", "--project", project),
         "project_iam": gcloud("projects", "get-iam-policy", project),
         "backup_iam": gcloud("storage", "buckets", "get-iam-policy", f"gs://{bucket}", allow_error=True),
+        "artifact_storage": gcloud(
+            "storage", "buckets", "describe", f"gs://{artifact_bucket}", allow_error=True
+        ),
+        "artifact_storage_iam": gcloud(
+            "storage", "buckets", "get-iam-policy", f"gs://{artifact_bucket}", allow_error=True
+        ),
         "backup_service_account_iam": gcloud(
             "iam", "service-accounts", "get-iam-policy", policy["backup"]["writer_service_account"],
             "--project", project, allow_error=True,
@@ -323,6 +330,49 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
         for role in ("roles/storage.objectAdmin", "roles/storage.admin"):
             if writer in role_members(backup_iam, role):
                 failures.append(f"backup writer retains destructive {role}")
+
+    artifact_policy = policy["artifact_storage"]
+    artifact_state = snap.get("artifact_storage", {})
+    if artifact_state.get("_error"):
+        failures.append(f"artifact bucket cannot be audited: {artifact_state['_error']}")
+    else:
+        if str(artifact_state.get("location", "")).upper() != artifact_policy["location"].upper():
+            failures.append(
+                f"artifact bucket location is {artifact_state.get('location')}, "
+                f"expected {artifact_policy['location']}"
+            )
+        if str(artifact_state.get("default_storage_class", "")).upper() != artifact_policy["storage_class"].upper():
+            failures.append(
+                f"artifact bucket storage class is {artifact_state.get('default_storage_class')}, "
+                f"expected {artifact_policy['storage_class']}"
+            )
+        if artifact_policy.get("require_uniform_bucket_level_access") and not artifact_state.get(
+            "uniform_bucket_level_access"
+        ):
+            failures.append("artifact bucket uniform bucket-level access is disabled")
+        if artifact_policy.get("require_public_access_prevention") and artifact_state.get(
+            "public_access_prevention"
+        ) != "enforced":
+            failures.append("artifact bucket public access prevention is not enforced")
+
+    artifact_iam = snap.get("artifact_storage_iam", {})
+    if artifact_iam.get("_error"):
+        failures.append(f"artifact bucket IAM cannot be audited: {artifact_iam['_error']}")
+    else:
+        required_role = artifact_policy["required_role"]
+        granted = role_members(artifact_iam, required_role)
+        for account in artifact_policy["service_accounts"]:
+            member = f"serviceAccount:{account}"
+            if member not in granted:
+                failures.append(f"artifact bucket {required_role} missing for {account}")
+        public_members = {
+            member
+            for binding in artifact_iam.get("bindings", [])
+            for member in binding.get("members", [])
+            if member in {"allUsers", "allAuthenticatedUsers"}
+        }
+        if public_members:
+            failures.append(f"artifact bucket has public IAM members: {', '.join(sorted(public_members))}")
 
     backup_sa_iam = snap.get("backup_service_account_iam", {})
     if backup_sa_iam.get("_error"):

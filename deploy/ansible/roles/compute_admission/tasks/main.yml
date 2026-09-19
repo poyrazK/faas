@@ -65,18 +65,23 @@
   ansible.builtin.assert:
     that:
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=(?:oci|gcs)$') | length) == 1"
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
       - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
-      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
+      - >-
+        (((faas_admission_storage_blob.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=gcs$')) is none) or
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_GCS_BUCKET=[a-z0-9][a-z0-9._-]+$') | length) == 1)
+      - >-
+        (((((faas_admission_storage_blob.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=oci$')) is none) and
+        (((faas_admission_storage_blob.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_FALLBACK_BACKEND=oci$')) is none)) or
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1))
     fail_msg: >-
       The shared storage environment does not declare exactly one canonical
-      strict shared-artifact contract. Require OCI remote-only storage, HTTPS,
+      strict shared-artifact contract. Require remote-only storage,
       and stale-cache fallback disabled before admitting this node.
   when: not (faas_image_seed | default(false) | bool)
 

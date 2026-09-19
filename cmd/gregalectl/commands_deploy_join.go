@@ -151,8 +151,8 @@ func cmdDeployJoinNode(args []string) int {
 	signKey := fs.String("sign-key", "", "image-signing private key (required for apply)")
 	verifyKey := fs.String("verify-key", "", "image-signing public key (required for apply)")
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute-db.env source (required for apply)")
-	storageEnv := fs.String("storage-env", "", "shared OCI storage.env source (required for multi-box apply)")
-	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only OCI lifecycle credential source (required for multi-box apply)")
+	storageEnv := fs.String("storage-env", "", "shared remote storage.env source (required for multi-box apply)")
+	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only migration lifecycle credential source (required for multi-box apply)")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
 	storageDevice := fs.String("storage-device", "", "optional fast-root block device (must be an absolute path; manifest host value is used when omitted)")
 	formatStorage := fs.Bool("format-storage", false, "format an explicitly supplied blank storage device as XFS with reflink support")
@@ -1601,11 +1601,24 @@ func validateSharedStorageEnv(path string) error {
 		values[key] = value
 		seen[key] = true
 	}
-	if values["FAAS_STORAGE_BACKEND"] != "oci" {
-		return errors.New("must set FAAS_STORAGE_BACKEND=oci")
+	backend := strings.ToLower(values["FAAS_STORAGE_BACKEND"])
+	if !storage.IsRemoteBackendKind(backend) {
+		return errors.New("must set FAAS_STORAGE_BACKEND=oci or gcs")
 	}
-	if !strings.HasPrefix(values["FAAS_OCI_REGISTRY"], "https://") {
-		return errors.New("FAAS_OCI_REGISTRY must use https://")
+	fallback := strings.ToLower(values["FAAS_STORAGE_FALLBACK_BACKEND"])
+	if fallback != "" && fallback != "oci" {
+		return errors.New("FAAS_STORAGE_FALLBACK_BACKEND must be empty or oci")
+	}
+	if backend == "oci" || fallback == "oci" {
+		if !strings.HasPrefix(values["FAAS_OCI_REGISTRY"], "https://") {
+			return errors.New("FAAS_OCI_REGISTRY must use https:// for OCI storage")
+		}
+	}
+	if backend == "gcs" {
+		bucket := strings.TrimSpace(values["FAAS_GCS_BUCKET"])
+		if bucket == "" || strings.ContainsAny(bucket, "/ \\") {
+			return errors.New("FAAS_GCS_BUCKET must contain a private GCS bucket name")
+		}
 	}
 	if raw := values["FAAS_STORAGE_LOCAL_PREFIXES"]; raw != "" {
 		for _, prefix := range strings.Split(raw, ",") {
@@ -1630,8 +1643,8 @@ func validateSharedStorageEnv(path string) error {
 	if seen["FAAS_STORAGE_CACHE_DIR"] && strings.TrimSpace(values["FAAS_STORAGE_CACHE_DIR"]) == "" {
 		return errors.New("FAAS_STORAGE_CACHE_DIR must not be empty; the node-local cache is required for prepositioned wakes")
 	}
-	if cacheDir := strings.TrimSpace(values["FAAS_STORAGE_CACHE_DIR"]); cacheDir != "" && cacheDir != storage.DefaultOCICacheDir {
-		return fmt.Errorf("FAAS_STORAGE_CACHE_DIR=%q is not supported by the managed systemd units; use %s", cacheDir, storage.DefaultOCICacheDir)
+	if cacheDir := strings.TrimSpace(values["FAAS_STORAGE_CACHE_DIR"]); cacheDir != "" && cacheDir != storage.DefaultRemoteCacheDir {
+		return fmt.Errorf("FAAS_STORAGE_CACHE_DIR=%q is not supported by the managed systemd units; use %s", cacheDir, storage.DefaultRemoteCacheDir)
 	}
 	return nil
 }

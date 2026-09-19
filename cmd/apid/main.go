@@ -1479,7 +1479,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Read through the same storage backend here so OCI-backed deployments
 	// do not depend on an apid-local mirror. FAAS_SBOM_ROOT remains the
 	// compatibility path for older single-box artifacts.
-	sbomStorage, err := artifactstorage.BackendFromEnv()
+	sbomStorage, err := artifactstorage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}

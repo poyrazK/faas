@@ -182,8 +182,10 @@ box with `--storage-env /secure/storage.env`. The join pipeline installs it
 on the control plane and the adopted compute node as `root:faas 0440` and
 rejects `FAAS_STORAGE_BACKEND=local` or a `snap/` local-prefix override at
 both the CLI and Ansible staging boundaries. The file must set
-`FAAS_STORAGE_BACKEND=oci` and `FAAS_OCI_REGISTRY`; credentials
-remain outside the repository. This lets vmmd preposition snapshots into
+`FAAS_STORAGE_BACKEND=oci` with an HTTPS registry, or
+`FAAS_STORAGE_BACKEND=gcs` with `FAAS_GCS_BUCKET`; credentials remain outside
+the repository. GCS uses the VM's attached service account through ADC. This
+lets vmmd preposition snapshots into
 each node's bounded read-through cache without provider-specific disk or
 peer-address configuration.
 
@@ -279,10 +281,12 @@ artifacts that define a VM's execution environment. Its root-only
 `/etc/faas/storage.env` must contain:
 
 ```text
-FAAS_STORAGE_BACKEND=oci
+FAAS_STORAGE_BACKEND=gcs
 FAAS_STORAGE_LOCAL_PREFIXES=none
 FAAS_REQUIRE_SHARED_ARTIFACTS=1
 FAAS_STORAGE_CACHE_SERVE_STALE=0
+FAAS_GCS_BUCKET=gregale-artifacts-<project-suffix>
+FAAS_STORAGE_FALLBACK_BACKEND=oci
 FAAS_OCI_REGISTRY=https://<registry>/<organization>
 ```
 
@@ -296,7 +300,7 @@ Firecracker and kernel artifacts; their SHA-256 values must match
 `release.firecracker_digest` and `release.kernel_digest`.
 This makes a mismatched host fail during join, while the node is still
 drained, instead of failing its first customer restore.
-Strict mode also requires an HTTPS registry and rejects stale-cache fallback;
+Strict mode also requires the selected GCS bucket or HTTPS registry and rejects stale-cache fallback;
 the cache may still accelerate successful remote reads, but it cannot serve a
 last-known-good blob after the registry reports an error.
 

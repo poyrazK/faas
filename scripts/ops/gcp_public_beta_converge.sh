@@ -9,6 +9,7 @@ operator="${GCP_OPERATOR_ACCOUNT:-hpk.working@gmail.com}"
 region="${GCP_REGION:-europe-west3}"
 control="${GCP_CONTROL_INSTANCE:-faas-control-plane}"
 backup_bucket="${GCP_BACKUP_BUCKET:-gregale-pg-backups-5ae37259}"
+artifact_bucket="${GCP_ARTIFACT_BUCKET:-gregale-artifacts-5ae37259}"
 backup_sa="gregale-backup@${project}.iam.gserviceaccount.com"
 compute_sa="gregale-compute@${project}.iam.gserviceaccount.com"
 control_sa="gregale-control@${project}.iam.gserviceaccount.com"
@@ -145,8 +146,8 @@ remove_service_account_role() {
 }
 
 bucket_has_role() {
-  local member="$1" role="$2"
-  gcloud storage buckets get-iam-policy "gs://$backup_bucket" --format=json \
+  local bucket="$1" member="$2" role="$3"
+  gcloud storage buckets get-iam-policy "gs://$bucket" --format=json \
     | python3 -c 'import json,sys
 member, role = sys.argv[1:]
 policy = json.load(sys.stdin)
@@ -155,16 +156,21 @@ raise SystemExit(0 if any(row.get("role") == role and member in row.get("members
 }
 
 ensure_bucket_role() {
-  local member="$1" role="$2"
-  bucket_has_role "$member" "$role" \
-    || run gcloud storage buckets add-iam-policy-binding "gs://$backup_bucket" \
+  local bucket="$1" member="$2" role="$3"
+  if ((apply == 0)) && ! exists gcloud storage buckets describe "gs://$bucket"; then
+    run gcloud storage buckets add-iam-policy-binding "gs://$bucket" \
+      --member="$member" --role="$role" --quiet
+    return
+  fi
+  bucket_has_role "$bucket" "$member" "$role" \
+    || run gcloud storage buckets add-iam-policy-binding "gs://$bucket" \
       --member="$member" --role="$role" --quiet
 }
 
 remove_bucket_role() {
-  local member="$1" role="$2"
-  bucket_has_role "$member" "$role" \
-    && run gcloud storage buckets remove-iam-policy-binding "gs://$backup_bucket" \
+  local bucket="$1" member="$2" role="$3"
+  bucket_has_role "$bucket" "$member" "$role" \
+    && run gcloud storage buckets remove-iam-policy-binding "gs://$bucket" \
       --member="$member" --role="$role" --quiet
   return 0
 }
@@ -353,6 +359,14 @@ identity_phase() {
   ensure_project_role "serviceAccount:$compute_sa" roles/monitoring.metricWriter
   ensure_project_role "serviceAccount:$control_sa" roles/logging.logWriter
   ensure_project_role "serviceAccount:$control_sa" roles/monitoring.metricWriter
+  if ! exists gcloud storage buckets describe "gs://$artifact_bucket"; then
+    run gcloud storage buckets create "gs://$artifact_bucket" --project="$project" \
+      --location="$region" --default-storage-class=STANDARD \
+      --uniform-bucket-level-access --public-access-prevention --quiet
+  else
+    run gcloud storage buckets update "gs://$artifact_bucket" \
+      --uniform-bucket-level-access --public-access-prevention --quiet
+  fi
 
   if ! exists gcloud iam roles describe gregaleBackupWriter --project="$project"; then
     run gcloud iam roles create gregaleBackupWriter --project="$project" \
@@ -361,8 +375,10 @@ identity_phase() {
     run gcloud iam roles update gregaleBackupWriter --project="$project" \
       --file="$root/deploy/gcp/backup-writer-role.yaml" --quiet
   fi
-  ensure_bucket_role "serviceAccount:$backup_sa" "$backup_role"
-  ensure_bucket_role "serviceAccount:$restore_sa" roles/storage.objectViewer
+  ensure_bucket_role "$backup_bucket" "serviceAccount:$backup_sa" "$backup_role"
+  ensure_bucket_role "$backup_bucket" "serviceAccount:$restore_sa" roles/storage.objectViewer
+  ensure_bucket_role "$artifact_bucket" "serviceAccount:$compute_sa" roles/storage.objectUser
+  ensure_bucket_role "$artifact_bucket" "serviceAccount:$control_sa" roles/storage.objectUser
   ensure_service_account_role "$backup_sa" "serviceAccount:$control_sa" roles/iam.serviceAccountTokenCreator
 
   local name zone desired current original_status
@@ -392,9 +408,9 @@ identity_phase() {
   # the append-only writer; compute identities never receive bucket access.
   local default_compute_sa='811654175645-compute@developer.gserviceaccount.com'
   for account in "$default_compute_sa" "$compute_sa"; do
-    remove_bucket_role "serviceAccount:$account" roles/storage.objectAdmin
+    remove_bucket_role "$backup_bucket" "serviceAccount:$account" roles/storage.objectAdmin
   done
-  remove_bucket_role "serviceAccount:$backup_sa" roles/storage.objectAdmin
+  remove_bucket_role "$backup_bucket" "serviceAccount:$backup_sa" roles/storage.objectAdmin
   remove_service_account_role "$backup_sa" "serviceAccount:$default_compute_sa" roles/iam.serviceAccountTokenCreator
 }
 

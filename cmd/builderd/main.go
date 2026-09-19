@@ -156,12 +156,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	var sourceStorage storage.StorageBackend
-	if os.Getenv("FAAS_STORAGE_BACKEND") == "oci" {
-		sourceStorage, err = storage.BackendFromEnv()
+	if storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+		sourceStorage, err = storage.BackendFromEnvContext(ctx)
 		if err != nil {
 			return fmt.Errorf("builderd: source storage: %w", err)
 		}
-		log.Info("source storage enabled", "backend", "oci")
+		log.Info("source storage enabled", "backend", os.Getenv("FAAS_STORAGE_BACKEND"))
 	}
 	// Gate-B box-role gate. builderd is a compute-only daemon —
 	// it refuses to start under RoleControlPlane. The role is

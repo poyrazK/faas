@@ -2122,7 +2122,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// publication of a new snapshot. Force the StorageBackend.Put path so
 	// the shared registry receives the blob. Explicit local-prefix routing
 	// still remains functional because Put dispatches the key normally.
-	if spec.StorageKey != "" && v.storage != nil && !strings.EqualFold(os.Getenv("FAAS_STORAGE_BACKEND"), "oci") {
+	if spec.StorageKey != "" && v.storage != nil && !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
 		if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
 			if localPath, pathOK, pathErr := resolver.LocalPath(spec.StorageKey); pathErr != nil {
 				return SnapshotInfo{}, fmt.Errorf("vmm: resolve snapshot mem path: %w", pathErr)

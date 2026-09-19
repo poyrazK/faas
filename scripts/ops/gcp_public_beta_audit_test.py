@@ -132,6 +132,24 @@ def healthy_snapshot() -> dict:
                 }
             ]
         },
+        "artifact_storage": {
+            "name": POLICY["artifact_storage"]["bucket"],
+            "location": POLICY["artifact_storage"]["location"],
+            "default_storage_class": POLICY["artifact_storage"]["storage_class"],
+            "uniform_bucket_level_access": True,
+            "public_access_prevention": "enforced",
+        },
+        "artifact_storage_iam": {
+            "bindings": [
+                {
+                    "role": POLICY["artifact_storage"]["required_role"],
+                    "members": [
+                        f"serviceAccount:{account}"
+                        for account in POLICY["artifact_storage"]["service_accounts"]
+                    ],
+                }
+            ]
+        },
         "default_log_bucket": {"retentionDays": POLICY["audit_logs"]["minimum_retention_days"]},
         "alert_policies": [
             {
@@ -190,6 +208,11 @@ class AuditTest(unittest.TestCase):
             }
         )
         snap["backup_service_account_iam"]["bindings"] = []
+        snap["artifact_storage"]["location"] = "EU"
+        snap["artifact_storage"]["uniform_bucket_level_access"] = False
+        snap["artifact_storage_iam"]["bindings"] = [
+            {"role": "roles/storage.objectViewer", "members": ["allUsers"]}
+        ]
         snap["alert_policies"] = []
         snap["budgets"] = {"_error": "permission denied"}
 
@@ -206,6 +229,10 @@ class AuditTest(unittest.TestCase):
             "backup bucket grants access to compute identity",
             "backup writer retains destructive roles/storage.objectAdmin",
             "control-plane identity cannot mint short-lived backup writer tokens",
+            "artifact bucket location is EU",
+            "artifact bucket uniform bucket-level access is disabled",
+            "artifact bucket roles/storage.objectUser missing",
+            "artifact bucket has public IAM members",
             "storage.googleapis.com: audit logs missing",
             "enabled alert policy is missing",
             "billing budgets cannot be audited",

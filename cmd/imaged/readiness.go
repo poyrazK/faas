@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -196,8 +197,8 @@ func checkFileWritable(path string) error {
 }
 
 func buildImageReadinessProbe(kind, storageRoot, cacheRoot string) *wire.ReadyzProbe {
-	// OCI writes the configured local cache; the local-backend root can be read-only.
-	if kind == "oci" && cacheRoot != "" {
+	// Remote backends write the configured local cache; the local-backend root can be read-only.
+	if storage.IsRemoteBackendKind(kind) && cacheRoot != "" {
 		return buildWritableReadinessProbe(cacheRoot)
 	}
 	return BuildReadinessProbe(storageRoot)

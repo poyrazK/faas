@@ -71,7 +71,7 @@ func TestHandler_OCIBackendEnv_Handoff(t *testing.T) {
 	t.Setenv("FAAS_STORAGE_CACHE_DIR", "") // explicit disable for shape stability
 	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "snap/,base/,kernel/,layers/")
 
-	be, err := storage.BackendFromEnv()
+	be, err := storage.BackendFromEnvContext(t.Context())
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}

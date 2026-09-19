@@ -322,8 +322,26 @@ func TestOCIBackendFromEnvRejectsUnknownSnapshotCompression(t *testing.T) {
 func TestBackendFromEnv_SharedArtifactsRejectsLocalBackend(t *testing.T) {
 	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")
-	if _, err := BackendFromEnv(); err == nil || !strings.Contains(err.Error(), "requires FAAS_STORAGE_BACKEND=oci") {
-		t.Fatalf("BackendFromEnv(local, shared) err = %v, want explicit OCI requirement", err)
+	if _, err := BackendFromEnv(); err == nil || !strings.Contains(err.Error(), "requires a remote FAAS_STORAGE_BACKEND") {
+		t.Fatalf("BackendFromEnv(local, shared) err = %v, want explicit remote requirement", err)
+	}
+}
+
+func TestValidateSharedArtifactModeAcceptsGCS(t *testing.T) {
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_CACHE_SERVE_STALE", "0")
+	t.Setenv("FAAS_GCS_BUCKET", "gregale-artifacts-5ae37259")
+	if err := validateSharedArtifactMode("gcs"); err != nil {
+		t.Fatalf("validateSharedArtifactMode(gcs): %v", err)
+	}
+}
+
+func TestResolveCacheDirGCSDefaultsCacheDir(t *testing.T) {
+	unsetEnvForTest(t, "FAAS_STORAGE_CACHE_DIR")
+	dir, ok := resolveCacheDir("gcs")
+	if !ok || dir != DefaultRemoteCacheDir {
+		t.Fatalf("resolveCacheDir(gcs) = %q, %t; want %q, true", dir, ok, DefaultRemoteCacheDir)
 	}
 }
 

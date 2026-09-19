@@ -1,6 +1,6 @@
 // commands_artifact.go — release artifact publication and verification.
 //
-// Multi-box compute nodes use the OCI storage backend for every shared
+// Multi-box compute nodes use a remote storage backend for every shared
 // artifact. The release bundle carries the release-pinned Firecracker kernel,
 // but carrying a file in the bundle is not enough: vmmd resolves the
 // release-pinned kernel through StorageBackend at wake time. These commands
@@ -39,6 +39,8 @@ var storageEnvNames = []string{
 	"FAAS_STORAGE_CACHE_MAX_BYTES",
 	"FAAS_STORAGE_CACHE_SERVE_STALE",
 	"FAAS_STORAGE_SNAPSHOT_COMPRESSION",
+	"FAAS_STORAGE_FALLBACK_BACKEND",
+	"FAAS_GCS_BUCKET",
 	"FAAS_OCI_REGISTRY",
 	"FAAS_OCI_REPO_PREFIX",
 	"FAAS_OCI_USERNAME",
@@ -47,7 +49,7 @@ var storageEnvNames = []string{
 	"FAAS_REQUIRE_SHARED_ARTIFACTS",
 }
 
-var storageEnvName = regexp.MustCompile(`^FAAS_(?:STORAGE_[A-Z0-9_]+|APPS_[A-Z0-9_]+|OCI_[A-Z0-9_]+|REQUIRE_SHARED_ARTIFACTS)$`)
+var storageEnvName = regexp.MustCompile(`^FAAS_(?:STORAGE_[A-Z0-9_]+|APPS_[A-Z0-9_]+|OCI_[A-Z0-9_]+|GCS_[A-Z0-9_]+|REQUIRE_SHARED_ARTIFACTS)$`)
 
 type artifactReport struct {
 	Operation      string `json:"operation"`
@@ -170,12 +172,12 @@ func cmdArtifactPublish(args []string) int {
 			return printErr("gregalectl artifact publish", err)
 		}
 	}
-	be, err := storage.BackendFromEnv()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	be, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return printErr("gregalectl artifact publish", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 	report, err := publishArtifact(ctx, be, contract.key, contract.digest, opts.file)
 	if err != nil {
 		return printErr("gregalectl artifact publish", err)
@@ -224,12 +226,12 @@ func cmdArtifactVerify(args []string) int {
 			}
 		}()
 	}
-	be, err := storage.BackendFromEnv()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	be, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return printErr("gregalectl artifact verify", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 	report, err := verifyArtifact(ctx, be, contract.key, contract.digest)
 	if err != nil {
 		return printErr("gregalectl artifact verify", err)
@@ -288,7 +290,9 @@ func cmdArtifactLifecycleCheck(args []string) int {
 	if err := os.Setenv("FAAS_STORAGE_CACHE_DIR", ""); err != nil {
 		return printErr("gregalectl artifact lifecycle-check", err)
 	}
-	be, err := storage.BackendFromEnv()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	be, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return printErr("gregalectl artifact lifecycle-check", err)
 	}
@@ -297,8 +301,6 @@ func cmdArtifactLifecycleCheck(args []string) int {
 		return printErr("gregalectl artifact lifecycle-check", fmt.Errorf("generate probe: %w", err))
 	}
 	key := "scans/gregale-lifecycle-check-" + hex.EncodeToString(random[:8]) + ".scan.json"
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
 	report, err := verifyArtifactLifecycle(ctx, be, key, random)
 	if err != nil {
 		return printErr("gregalectl artifact lifecycle-check", err)
@@ -525,8 +527,8 @@ func hashArtifactReader(r io.Reader) (string, int64, error) {
 // runner-local filesystem would report success while leaving split compute
 // nodes unable to wake from the shared-artifact path.
 func validateArtifactStorageContract() error {
-	if os.Getenv("FAAS_STORAGE_BACKEND") != "oci" {
-		return fmt.Errorf("shared artifact operations require FAAS_STORAGE_BACKEND=oci")
+	if !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+		return fmt.Errorf("shared artifact operations require a remote FAAS_STORAGE_BACKEND (oci or gcs)")
 	}
 	shared := strings.TrimSpace(os.Getenv("FAAS_REQUIRE_SHARED_ARTIFACTS"))
 	if !strings.EqualFold(shared, "1") && !strings.EqualFold(shared, "true") {

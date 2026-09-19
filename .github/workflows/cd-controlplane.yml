@@ -189,7 +189,7 @@ jobs:
             remote_stage="$1"
             trap 'rm -f -- "$remote_stage"' EXIT
             test -s /etc/faas/storage.env
-            grep -Fqx "FAAS_STORAGE_BACKEND=oci" /etc/faas/storage.env
+            grep -Eq '^FAAS_STORAGE_BACKEND=(oci|gcs)$' /etc/faas/storage.env
             getent group faas >/dev/null
             install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
             install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d

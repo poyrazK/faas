@@ -1224,9 +1224,17 @@ func (o *OCIRegistryStorageBackend) compressArtifact(
 	key string,
 	r io.Reader,
 ) (path, hexDigest string, uncompressedSize int64, err error) {
-	f, err := osCreateTemp("", "faas-oci-artifact-*.zst")
+	return compressRemoteArtifact(ctx, "oci", "faas-oci-artifact-*.zst", key, r)
+}
+
+func compressRemoteArtifact(
+	ctx context.Context,
+	backend, pattern, key string,
+	r io.Reader,
+) (path, hexDigest string, uncompressedSize int64, err error) {
+	f, err := osCreateTemp("", pattern)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("storage: oci put %q: create zstd tmp: %w", key, err)
+		return "", "", 0, fmt.Errorf("storage: %s put %q: create zstd tmp: %w", backend, key, err)
 	}
 	path = f.Name()
 	succeeded := false
@@ -1244,21 +1252,21 @@ func (o *OCIRegistryStorageBackend) compressArtifact(
 		zstd.WithEncoderConcurrency(1),
 	)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("storage: oci put %q: create zstd encoder: %w", key, err)
+		return "", "", 0, fmt.Errorf("storage: %s put %q: create zstd encoder: %w", backend, key, err)
 	}
 	uncompressedSize, copyErr := copyContext(ctx, encoder, r)
 	closeErr := encoder.Close()
 	if copyErr != nil {
-		return "", "", 0, fmt.Errorf("storage: oci put %q: compress snapshot: %w", key, copyErr)
+		return "", "", 0, fmt.Errorf("storage: %s put %q: compress artifact: %w", backend, key, copyErr)
 	}
 	if closeErr != nil {
-		return "", "", 0, fmt.Errorf("storage: oci put %q: finish zstd stream: %w", key, closeErr)
+		return "", "", 0, fmt.Errorf("storage: %s put %q: finish zstd stream: %w", backend, key, closeErr)
 	}
 	if err := f.Sync(); err != nil {
-		return "", "", 0, fmt.Errorf("storage: oci put %q: fsync zstd tmp: %w", key, err)
+		return "", "", 0, fmt.Errorf("storage: %s put %q: fsync zstd tmp: %w", backend, key, err)
 	}
 	if err := f.Close(); err != nil {
-		return "", "", 0, fmt.Errorf("storage: oci put %q: close zstd tmp: %w", key, err)
+		return "", "", 0, fmt.Errorf("storage: %s put %q: close zstd tmp: %w", backend, key, err)
 	}
 	succeeded = true
 	return path, hex.EncodeToString(h.Sum(nil)), uncompressedSize, nil

@@ -286,7 +286,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// from final ext4 artifacts because registry blobs are immutable and can be
 	// shared by every deployment that references the same digest.
 	blobCacheRoot := strings.TrimSpace(os.Getenv("FAAS_OCI_BLOB_CACHE_DIR"))
-	if blobCacheRoot == "" && envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
+	if blobCacheRoot == "" && storage.IsRemoteBackendKind(envOr("FAAS_STORAGE_BACKEND", "local")) {
 		blobCacheRoot = filepath.Join(envOr("FAAS_STORAGE_CACHE_DIR", "/var/lib/faas/cache"), "oci-blobs")
 	}
 	if blobCacheRoot != "" {
@@ -315,7 +315,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// operators route the same call sites through a remote OCI
 	// distribution-spec backend instead of the local FS layout — the
 	// PrefixRouter / apps-fc split only applies to the local driver.
-	storageBackend, err := storage.BackendFromEnv()
+	storageBackend, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("imaged: %w", err)
 	}
@@ -326,9 +326,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if _, ok := storageBackend.(storage.SnapshotRepositoryIndexer); ok {
 		log.Info("imaged: snapshot repository index reconciled", "deployment_count", indexedSnapshots)
 	}
-	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
+	storageKind := envOr("FAAS_STORAGE_BACKEND", "local")
+	switch storageKind {
+	case "oci":
 		log.Info("imaged: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
-	} else {
+	case "gcs":
+		log.Info("imaged: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	default:
 		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
 			"apps_root", appsRoot)
 	}
@@ -399,8 +404,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// FAAS_APPS_ROOT. Reject the mixed configuration at boot instead of
 		// allowing every deployment to build successfully and fail during the
 		// later snapshot handoff with "layer not found".
-		if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
-			return fmt.Errorf("imaged: FAAS_ARTIFACT_REPLICATOR is incompatible with FAAS_STORAGE_BACKEND=oci; unset the replicator for OCI-backed deployments")
+		if storage.IsRemoteBackendKind(envOr("FAAS_STORAGE_BACKEND", "local")) {
+			return fmt.Errorf("imaged: FAAS_ARTIFACT_REPLICATOR is incompatible with remote artifact storage; unset the replicator")
 		}
 		if !filepath.IsAbs(helper) {
 			return fmt.Errorf("imaged: FAAS_ARTIFACT_REPLICATOR=%q must be absolute", helper)

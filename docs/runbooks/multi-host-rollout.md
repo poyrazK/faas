@@ -144,13 +144,16 @@ For snapshot locality, prepare one secret-backed `/etc/faas/storage.env`
 payload and pass it to the provider-neutral join command as
 `--storage-env /secure/storage.env`. The join pipeline installs the same
 payload on the control plane and compute node. It must contain
-`FAAS_STORAGE_BACKEND=oci` and `FAAS_OCI_REGISTRY`; leave `snap/` out of
-`FAAS_STORAGE_LOCAL_PREFIXES` so snapshots remain in shared OCI storage and
+`FAAS_STORAGE_BACKEND=oci` with `FAAS_OCI_REGISTRY`, or
+`FAAS_STORAGE_BACKEND=gcs` with `FAAS_GCS_BUCKET`; leave `snap/` out of
+`FAAS_STORAGE_LOCAL_PREFIXES` so snapshots remain in shared remote storage and
 the node-local cache can be warmed by vmmd. Leave
 `FAAS_STORAGE_CACHE_DIR` unset for the default `/var/lib/faas/cache`, or set
 it to a non-empty path; an explicitly empty value disables the required
 prepositioning cache. Do not put registry credentials in the manifest,
-inventory, or git.
+inventory, or git. During a GCS cutover, set
+`FAAS_STORAGE_FALLBACK_BACKEND=oci` and retain the existing OCI settings until
+the rollback-retention window closes; new writes go only to GCS.
 
 Prepare a separate `/secure/imaged-storage.env` containing only
 `FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`, and pass it as

@@ -236,14 +236,14 @@ type EnqueueResult struct {
 }
 
 // sourceBackendFromEnv enables the split-box source handoff only when the
-// deployment explicitly selects the OCI backend. Single-box/local installs
+// deployment explicitly selects a remote backend. Single-box/local installs
 // keep the historical shared filesystem contract and do not upload a second
 // copy of the source archive.
-func sourceBackendFromEnv() (storage.StorageBackend, error) {
-	if os.Getenv("FAAS_STORAGE_BACKEND") != "oci" {
+func sourceBackendFromEnv(ctx context.Context) (storage.StorageBackend, error) {
+	if !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
 		return nil, nil
 	}
-	be, err := storage.BackendFromEnv()
+	be, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("source storage: %w", err)
 	}
@@ -320,7 +320,7 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.SourcePath == "" {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: SourcePath is required")
 	}
-	sourceStorage, err := sourceBackendFromEnv()
+	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: %w", err)
 	}

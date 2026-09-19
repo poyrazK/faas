@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -31,10 +32,10 @@ import (
 //
 // Env contract:
 //
-//	FAAS_STORAGE_BACKEND          "local" (default) | "oci"
+//	FAAS_STORAGE_BACKEND          "local" (default) | "oci" | "gcs"
 //	FAAS_STORAGE_ROOT             local-only — root dir (e.g. /srv/fc)
 //	FAAS_APPS_ROOT                local-only — apps prefix (may equal ROOT)
-//	FAAS_STORAGE_LOCAL_PREFIXES   oci-only — comma-separated prefix list
+//	FAAS_STORAGE_LOCAL_PREFIXES   remote-only — comma-separated prefix list
 //	                                routed to the local backend (default
 //	                                "snap/,base/,kernel/,layers/"). The
 //	                                literal "none" disables all local
@@ -50,7 +51,7 @@ import (
 //	                                honouring it as routes strips prefixes
 //	                                and crashes imaged — see env.go:155
 //	                                and the 2026-07-31 incident).
-//	FAAS_STORAGE_CACHE_DIR        local+oci — optional. When set, wrap
+//	FAAS_STORAGE_CACHE_DIR        local+remote — optional. When set, wrap
 //	                                the resulting backend in a read-through
 //	                                LocalCacheBackend rooted at this dir.
 //	                                Solves the "registry outage → cold boot
@@ -59,19 +60,23 @@ import (
 //	                                defaults to on at /var/lib/faas/cache
 //	                                when the env var is unset; set to ""
 //	                                to explicitly disable.
-//	FAAS_STORAGE_CACHE_MAX_BYTES  local+oci — optional cache byte budget
+//	FAAS_STORAGE_CACHE_MAX_BYTES  local+remote — optional cache byte budget
 //	                                (default 1 GiB).
 //	FAAS_OCI_REGISTRY             oci-only — full URL incl. scheme (e.g. https://ghcr.io/org)
 //	FAAS_OCI_REPO_PREFIX          oci-only — repo namespace (default "faas")
 //	FAAS_OCI_USERNAME             oci-only — optional Basic-Auth user for token endpoint
 //	FAAS_OCI_PASSWORD             oci-only — optional Basic-Auth password
 //	FAAS_OCI_TIMEOUT_SECONDS      oci-only — per-request timeout (default 60)
+//	FAAS_GCS_BUCKET               gcs-only — existing private bucket name
+//	FAAS_STORAGE_FALLBACK_BACKEND gcs-only — optional "oci" read fallback
+//	                                during migration. Writes go only to GCS;
+//	                                missing reads and deletes also consult OCI.
 //	FAAS_STORAGE_SNAPSHOT_COMPRESSION
-//	                                oci-only — remote encoding for snapshot
+//	                                remote — encoding for snapshot
 //	                                memory: "none" (default) | "zstd". Readers
 //	                                always accept both formats, allowing a safe
 //	                                reader-first rolling deployment.
-//	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require the OCI backend
+//	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require a remote backend
 //	                                with FAAS_STORAGE_LOCAL_PREFIXES=none.
 //	                                This is the production split-node gate:
 //	                                snapshots, bases, kernels, and layers
@@ -84,7 +89,15 @@ import (
 // compute node can keep canonical content-addressed blobs on local
 // disk while routing per-app layers to the registry. ADR-054.
 func BackendFromEnv() (StorageBackend, error) {
-	kind := envOr("FAAS_STORAGE_BACKEND", "local")
+	return BackendFromEnvContext(context.Background())
+}
+
+// BackendFromEnvContext is BackendFromEnv with caller-owned cancellation for
+// cloud client discovery. Long-lived daemons should pass their boot context;
+// BackendFromEnv remains the compatibility entry point for tests and tools
+// that have no surrounding operation context.
+func BackendFromEnvContext(ctx context.Context) (StorageBackend, error) {
+	kind := strings.ToLower(strings.TrimSpace(envOr("FAAS_STORAGE_BACKEND", "local")))
 	if err := validateSharedArtifactMode(kind); err != nil {
 		return nil, err
 	}
@@ -95,8 +108,10 @@ func BackendFromEnv() (StorageBackend, error) {
 		be, err = localBackendFromEnv()
 	case "oci":
 		be, err = ociBackendFromEnv()
+	case "gcs":
+		be, err = gcsBackendFromEnv(ctx)
 	default:
-		return nil, fmt.Errorf("storage: unknown FAAS_STORAGE_BACKEND=%q (want \"local\" or \"oci\")", kind)
+		return nil, fmt.Errorf("storage: unknown FAAS_STORAGE_BACKEND=%q (want \"local\", \"oci\", or \"gcs\")", kind)
 	}
 	if err != nil {
 		return nil, err
@@ -104,11 +119,15 @@ func BackendFromEnv() (StorageBackend, error) {
 	return wrapWithCache(be, kind)
 }
 
-// DefaultOCICacheDir is the canonical cache directory when
-// FAAS_STORAGE_BACKEND=oci and FAAS_STORAGE_CACHE_DIR is unset. ADR-054
+// DefaultRemoteCacheDir is the canonical cache directory when a shared remote
+// backend is selected and FAAS_STORAGE_CACHE_DIR is unset. ADR-054
 // §2 + the acceptance amendment pin this default for multi-box fleets.
 // Exported so tests and operator tooling can assert the contract.
-const DefaultOCICacheDir = "/var/lib/faas/cache"
+const DefaultRemoteCacheDir = "/var/lib/faas/cache"
+
+// DefaultOCICacheDir is retained for source compatibility with existing
+// operator tooling. New code should use DefaultRemoteCacheDir.
+const DefaultOCICacheDir = DefaultRemoteCacheDir
 
 // resolveCacheDir applies the cache-dir env contract without performing
 // any I/O. Pure function — no MkdirAll, no parent construction. Lets
@@ -132,8 +151,8 @@ func resolveCacheDir(kind string) (string, bool) {
 		}
 		return dir, true
 	}
-	if kind == "oci" {
-		return DefaultOCICacheDir, true
+	if IsRemoteBackendKind(kind) {
+		return DefaultRemoteCacheDir, true
 	}
 	return "", false
 }
@@ -234,17 +253,24 @@ func validateSharedArtifactMode(kind string) error {
 	if !strings.EqualFold(strings.TrimSpace(raw), "1") && !strings.EqualFold(strings.TrimSpace(raw), "true") {
 		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS=%q must be 0, 1, false, or true", raw)
 	}
-	if kind != "oci" {
-		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS requires FAAS_STORAGE_BACKEND=oci; got %q", kind)
+	if !IsRemoteBackendKind(kind) {
+		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS requires a remote FAAS_STORAGE_BACKEND (oci or gcs); got %q", kind)
 	}
 	rawPrefixes, set := os.LookupEnv("FAAS_STORAGE_LOCAL_PREFIXES")
 	if !set || !strings.EqualFold(strings.TrimSpace(rawPrefixes), "none") {
 		return errors.New("storage: shared artifact mode requires explicit FAAS_STORAGE_LOCAL_PREFIXES=none; refusing node-local artifact routes")
 	}
-	registry := strings.TrimSpace(os.Getenv("FAAS_OCI_REGISTRY"))
-	parsedRegistry, err := url.Parse(registry)
-	if err != nil || !strings.EqualFold(parsedRegistry.Scheme, "https") || parsedRegistry.Host == "" {
-		return errors.New("storage: shared artifact mode requires FAAS_OCI_REGISTRY to use an HTTPS URL")
+	if kind == "oci" || strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_STORAGE_FALLBACK_BACKEND")), "oci") {
+		registry := strings.TrimSpace(os.Getenv("FAAS_OCI_REGISTRY"))
+		parsedRegistry, err := url.Parse(registry)
+		if err != nil || !strings.EqualFold(parsedRegistry.Scheme, "https") || parsedRegistry.Host == "" {
+			return errors.New("storage: OCI shared artifact storage requires FAAS_OCI_REGISTRY to use an HTTPS URL")
+		}
+	}
+	if kind == "gcs" {
+		if err := validateGCSBucket(os.Getenv("FAAS_GCS_BUCKET")); err != nil {
+			return err
+		}
 	}
 	if stale := strings.TrimSpace(os.Getenv("FAAS_STORAGE_CACHE_SERVE_STALE")); stale != "" {
 		on, err := strconv.ParseBool(stale)
@@ -310,6 +336,14 @@ func localBackendFromEnv() (StorageBackend, error) {
 // blobs (snap/, base/, kernel/, layers/) and the OCI backend
 // serves the per-app layer + everything else.
 func ociBackendFromEnv() (StorageBackend, error) {
+	remote, err := ociRemoteFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return routeRemoteBackend(remote)
+}
+
+func ociRemoteFromEnv() (StorageBackend, error) {
 	registry := os.Getenv("FAAS_OCI_REGISTRY")
 	if registry == "" {
 		return nil, fmt.Errorf("storage: FAAS_STORAGE_BACKEND=oci requires FAAS_OCI_REGISTRY (e.g. https://ghcr.io/onebox-faas)")
@@ -328,23 +362,65 @@ func ociBackendFromEnv() (StorageBackend, error) {
 		}
 		opts = append(opts, WithTimeout(time.Duration(n)*time.Second))
 	}
+	compression, err := snapshotCompressionFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if compression == snapshotCompressionZstd {
+		opts = append(opts, WithSnapshotCompression(compression))
+	}
+	oci, err := NewOCIRegistryStorageBackend(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: oci backend: %w", err)
+	}
+	return oci, nil
+}
+
+func gcsBackendFromEnv(ctx context.Context) (StorageBackend, error) {
+	compression, err := snapshotCompressionFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	fallback := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_STORAGE_FALLBACK_BACKEND")))
+	if fallback != "" && fallback != "oci" {
+		return nil, fmt.Errorf("storage: unsupported FAAS_STORAGE_FALLBACK_BACKEND=%q (want \"oci\")", fallback)
+	}
+	gcsRemote, err := NewGCSStorageBackend(ctx, os.Getenv("FAAS_GCS_BUCKET"), compression)
+	if err != nil {
+		return nil, fmt.Errorf("storage: gcs backend: %w", err)
+	}
+	var remote StorageBackend = gcsRemote
+	if fallback != "" {
+		legacy, legacyErr := ociRemoteFromEnv()
+		if legacyErr != nil {
+			return nil, fmt.Errorf("storage: OCI fallback: %w", legacyErr)
+		}
+		remote, err = NewFallbackStorageBackend(remote, legacy)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return routeRemoteBackend(remote)
+}
+
+func snapshotCompressionFromEnv() (string, error) {
 	compression := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_STORAGE_SNAPSHOT_COMPRESSION")))
 	switch compression {
 	case "", snapshotCompressionNone:
+		return snapshotCompressionNone, nil
 	case snapshotCompressionZstd:
-		opts = append(opts, WithSnapshotCompression(compression))
+		return compression, nil
 	default:
-		return nil, fmt.Errorf(
+		return "", fmt.Errorf(
 			"storage: FAAS_STORAGE_SNAPSHOT_COMPRESSION=%q: want %q or %q",
 			compression,
 			snapshotCompressionNone,
 			snapshotCompressionZstd,
 		)
 	}
-	oci, err := NewOCIRegistryStorageBackend(opts...)
-	if err != nil {
-		return nil, fmt.Errorf("storage: oci backend: %w", err)
-	}
+}
+
+func routeRemoteBackend(remote StorageBackend) (StorageBackend, error) {
 	storageRoot := envOr("FAAS_STORAGE_ROOT", "/srv/fc")
 	prefixes, err := parseLocalPrefixes(os.Getenv("FAAS_STORAGE_LOCAL_PREFIXES"))
 	if err != nil {
@@ -364,7 +440,7 @@ func ociBackendFromEnv() (StorageBackend, error) {
 		}
 		routes[p] = prefixRoot
 	}
-	router, err := NewPrefixRouter(routes, oci)
+	router, err := NewPrefixRouter(routes, remote)
 	if err != nil {
 		return nil, fmt.Errorf("storage: prefix router: %w", err)
 	}

@@ -129,7 +129,7 @@ func TestSourceBackendFromEnv_NonOCIReturnsNil(t *testing.T) {
 	// uploaded. The function must return (nil, nil) so the caller
 	// can short-circuit publishSource without an env check.
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")
-	be, err := sourceBackendFromEnv()
+	be, err := sourceBackendFromEnv(t.Context())
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -140,7 +140,7 @@ func TestSourceBackendFromEnv_NonOCIReturnsNil(t *testing.T) {
 
 func TestSourceBackendFromEnv_EmptyReturnsNil(t *testing.T) {
 	t.Setenv("FAAS_STORAGE_BACKEND", "")
-	be, err := sourceBackendFromEnv()
+	be, err := sourceBackendFromEnv(t.Context())
 	if err != nil {
 		t.Errorf("err = %v, want nil", err)
 	}
@@ -157,7 +157,7 @@ func TestSourceBackendFromEnv_OCIMissingRegistryErrors(t *testing.T) {
 	// "source storage:" prefix (line 192).
 	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
 	t.Setenv("FAAS_OCI_REGISTRY", "")
-	_, err := sourceBackendFromEnv()
+	_, err := sourceBackendFromEnv(t.Context())
 	if err == nil {
 		t.Fatal("err = nil, want error from BackendFromEnv")
 	}

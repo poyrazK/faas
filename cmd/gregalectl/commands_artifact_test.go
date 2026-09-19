@@ -80,6 +80,11 @@ func TestValidateArtifactStorageContract(t *testing.T) {
 	if err := validateArtifactStorageContract(); err != nil {
 		t.Fatalf("valid shared artifact contract: %v", err)
 	}
+	t.Setenv("FAAS_STORAGE_BACKEND", "gcs")
+	if err := validateArtifactStorageContract(); err != nil {
+		t.Fatalf("valid GCS shared artifact contract: %v", err)
+	}
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
 
 	for name, value := range map[string]string{
 		"FAAS_STORAGE_BACKEND":          "local",
