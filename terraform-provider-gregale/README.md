@@ -21,6 +21,7 @@ The initial surface is intentionally small:
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
 - `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
+- `data.gregale_private_network` reads an existing private network for attachment and peering composition.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -210,6 +211,26 @@ resource "gregale_private_network" "prod" {
 
 TCP and UDP rules require at least one port or inclusive range. ICMP rules
 omit `ports`; an empty `cidrs` list means the whole private network CIDR.
+
+## Existing private-network lookup
+
+Use the private-network data source when a network is owned by another
+Terraform stack, the CLI, or the dashboard. It exposes the canonical network
+ID, region, CIDR, status, and complete network policy for composing attachments
+and peerings without duplicating lifecycle ownership.
+
+```hcl
+data "gregale_private_network" "shared" {
+  network_id = var.network_id
+}
+
+resource "gregale_private_network_attachment" "api" {
+  app_slug   = "orders-api"
+  network_id = data.gregale_private_network.shared.id
+  region     = data.gregale_private_network.shared.region
+  cidrs      = [data.gregale_private_network.shared.cidr]
+}
+```
 
 ## Private-network peering
 
