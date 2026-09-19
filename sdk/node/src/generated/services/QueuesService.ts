@@ -338,8 +338,10 @@ export class QueuesService {
    * Read queue binding consumer state and queue counters.
    * Returns the durable push-consumer projection and binding-scoped
    * queue counters. `consumer_state` is control-plane state
-   * (`active`, `paused`, `not_configured`, or `external`); it does not
-   * claim to be a broker connection liveness signal.
+   * (`active`, `paused`, `not_configured`, or `external`), while
+   * `consumer_liveness` and the poll timestamps expose the scheduler's
+   * last-known health. A push snapshot is stale after 30 seconds without
+   * a completed poll; pull bindings report `external` liveness.
    *
    * @returns QueueBindingStatusResponse Queue binding status.
    * @throws ApiError

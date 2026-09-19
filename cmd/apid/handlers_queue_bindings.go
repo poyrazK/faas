@@ -214,9 +214,8 @@ func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct 
 }
 
 // getQueueBindingStatus returns the durable consumer projection together with
-// binding-scoped queue counters. It deliberately reports configuration state,
-// not process liveness: broker/worker liveness remains observable through the
-// schedd metrics and alerts documented in FaasDurableQueue.
+// binding-scoped queue counters and the scheduler's last-known poll health.
+// Fleet-wide liveness and alerting remain observable through schedd metrics.
 func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -238,17 +237,18 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 	}
 
 	resp := api.QueueBindingStatusResponse{
-		BindingID:     binding.ID,
-		Name:          binding.Name,
-		QueueName:     binding.QueueName,
-		Mode:          binding.Mode,
-		WorkloadClass: string(binding.WorkloadClass),
-		Enabled:       binding.Enabled,
-		ConsumerState: "external",
-		GeneratedAt:   time.Now().UTC(),
-		Depth:         stats.Depth,
-		InFlight:      stats.InFlight,
-		DeadLetter:    stats.DeadLetter,
+		BindingID:        binding.ID,
+		Name:             binding.Name,
+		QueueName:        binding.QueueName,
+		Mode:             binding.Mode,
+		WorkloadClass:    string(binding.WorkloadClass),
+		Enabled:          binding.Enabled,
+		ConsumerState:    "external",
+		ConsumerLiveness: "external",
+		GeneratedAt:      time.Now().UTC(),
+		Depth:            stats.Depth,
+		InFlight:         stats.InFlight,
+		DeadLetter:       stats.DeadLetter,
 	}
 	if !stats.OldestPendingAt.IsZero() {
 		oldest := stats.OldestPendingAt
@@ -262,6 +262,7 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 
 	if binding.Mode == "push" {
 		resp.ConsumerState = "not_configured"
+		resp.ConsumerLiveness = "not_observed"
 		resp.ConsumerStateReason = "push_consumer_not_provisioned"
 		triggerID, triggerErr := queueBindingTriggerID(r.Context(), s.store, app.ID, binding.ID)
 		if triggerErr != nil {
@@ -275,16 +276,48 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 				api.WriteProblem(w, api.ErrInternal("could not load queue consumer status"))
 				return
 			}
-			if binding.Enabled && trigger.Enabled {
+			consumerActive := binding.Enabled && trigger.Enabled
+			if consumerActive {
 				resp.ConsumerState = "active"
 				resp.ConsumerStateReason = "push_consumer_enabled"
 			} else {
 				resp.ConsumerState = "paused"
 				resp.ConsumerStateReason = "push_consumer_disabled"
 			}
+			if healthStore, ok := s.store.(state.TriggerConsumerHealthStore); ok {
+				health, healthErr := healthStore.TriggerConsumerHealth(r.Context(), triggerID)
+				if healthErr != nil && !errors.Is(healthErr, state.ErrNotFound) {
+					api.WriteProblem(w, api.ErrInternal("could not load queue consumer health"))
+					return
+				}
+				resp.LastPollAt = health.LastPollAt
+				resp.LastSuccessAt = health.LastSuccessAt
+				resp.LastErrorAt = health.LastErrorAt
+				resp.LastError = health.LastError
+				resp.LagMessages = health.LagMessages
+				resp.LagAgeSeconds = health.LagAgeSeconds
+				if consumerActive {
+					resp.ConsumerLiveness = queueBindingConsumerLiveness(time.Now().UTC(), health)
+				}
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+const queueBindingConsumerStaleAfter = 30 * time.Second
+
+func queueBindingConsumerLiveness(now time.Time, health state.TriggerConsumerHealth) string {
+	if health.LastPollAt == nil {
+		return "not_observed"
+	}
+	if now.Sub(*health.LastPollAt) > queueBindingConsumerStaleAfter {
+		return "stale"
+	}
+	if health.LastErrorAt != nil && (health.LastSuccessAt == nil || health.LastErrorAt.After(*health.LastSuccessAt)) {
+		return "degraded"
+	}
+	return "healthy"
 }
 
 func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {

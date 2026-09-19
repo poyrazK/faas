@@ -14,7 +14,14 @@ export type QueueBindingStatusResponse = {
   enabled: boolean;
   consumer_state: 'active' | 'paused' | 'not_configured' | 'external';
   consumer_state_reason?: string;
+  consumer_liveness: 'healthy' | 'degraded' | 'stale' | 'not_observed' | 'external';
   trigger_id?: string;
+  last_poll_at?: string | null;
+  last_success_at?: string | null;
+  last_error_at?: string | null;
+  last_error?: string;
+  lag_messages?: number | null;
+  lag_age_seconds?: number | null;
   depth: number;
   in_flight: number;
   dead_letter: number;

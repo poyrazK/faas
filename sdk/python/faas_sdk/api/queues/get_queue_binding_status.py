@@ -77,8 +77,10 @@ def sync_detailed(
 
      Returns the durable push-consumer projection and binding-scoped
     queue counters. `consumer_state` is control-plane state
-    (`active`, `paused`, `not_configured`, or `external`); it does not
-    claim to be a broker connection liveness signal.
+    (`active`, `paused`, `not_configured`, or `external`), while
+    `consumer_liveness` and the poll timestamps expose the scheduler's
+    last-known health. A push snapshot is stale after 30 seconds without
+    a completed poll; pull bindings report `external` liveness.
 
     Args:
         slug (str):
@@ -114,8 +116,10 @@ def sync(
 
      Returns the durable push-consumer projection and binding-scoped
     queue counters. `consumer_state` is control-plane state
-    (`active`, `paused`, `not_configured`, or `external`); it does not
-    claim to be a broker connection liveness signal.
+    (`active`, `paused`, `not_configured`, or `external`), while
+    `consumer_liveness` and the poll timestamps expose the scheduler's
+    last-known health. A push snapshot is stale after 30 seconds without
+    a completed poll; pull bindings report `external` liveness.
 
     Args:
         slug (str):
@@ -146,8 +150,10 @@ async def asyncio_detailed(
 
      Returns the durable push-consumer projection and binding-scoped
     queue counters. `consumer_state` is control-plane state
-    (`active`, `paused`, `not_configured`, or `external`); it does not
-    claim to be a broker connection liveness signal.
+    (`active`, `paused`, `not_configured`, or `external`), while
+    `consumer_liveness` and the poll timestamps expose the scheduler's
+    last-known health. A push snapshot is stale after 30 seconds without
+    a completed poll; pull bindings report `external` liveness.
 
     Args:
         slug (str):
@@ -181,8 +187,10 @@ async def asyncio(
 
      Returns the durable push-consumer projection and binding-scoped
     queue counters. `consumer_state` is control-plane state
-    (`active`, `paused`, `not_configured`, or `external`); it does not
-    claim to be a broker connection liveness signal.
+    (`active`, `paused`, `not_configured`, or `external`), while
+    `consumer_liveness` and the poll timestamps expose the scheduler's
+    last-known health. A push snapshot is stale after 30 seconds without
+    a completed poll; pull bindings report `external` liveness.
 
     Args:
         slug (str):

@@ -43,6 +43,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -69,6 +70,8 @@ type fakeDeadLetterStore struct {
 	forceMissingIDs map[string]bool
 	// retries records retry timestamps for transport-failure tests.
 	retries []time.Time
+	// health records scheduler poll observations for the liveness projection.
+	health []state.TriggerConsumerHealthObservation
 }
 
 func installPollerFactory(t *testing.T, kind string, factory func(sqlc.Trigger) (triggerSource, error)) {
@@ -208,11 +211,44 @@ func (f *fakeDeadLetterStore) TriggerRecordIDByItemIdentifier(_ context.Context,
 	return "", nil
 }
 
+func (f *fakeDeadLetterStore) RecordTriggerConsumerHealth(_ context.Context, _ string, observation state.TriggerConsumerHealthObservation) error {
+	f.health = append(f.health, observation)
+	return nil
+}
+
 // makeLoopForDLQ builds a Loop with just enough wiring for
 // deadLetterAll — log + nil engine — so the test exercises the
 // helper directly without the full dispatchOneTrigger surface.
 func makeLoopForDLQ() *Loop {
 	return &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+func TestRecordTriggerConsumerHealthCapturesKafkaLagWithoutTimestamp(t *testing.T) {
+	store := &fakeDeadLetterStore{}
+	trigger := sqlc.Trigger{
+		ID:   pgtypeUUIDFromString(t, "00000000-0000-0000-0000-000000000099"),
+		Kind: string(api.TriggerKindKafka),
+	}
+	loop := makeLoopForDLQ()
+	loop.recordTriggerConsumerHealth(context.Background(), store, trigger, PollResult{
+		Records: []SourceRecord{{Metadata: map[string]any{
+			"offset":          int64(40),
+			"high_water_mark": int64(47),
+		}}},
+	})
+	if len(store.health) != 1 {
+		t.Fatalf("health observations = %d, want 1", len(store.health))
+	}
+	observation := store.health[0]
+	if !observation.Success || observation.Error != "" {
+		t.Fatalf("observation success/error = %v/%q, want true/empty", observation.Success, observation.Error)
+	}
+	if observation.LagMessages == nil || *observation.LagMessages != 6 {
+		t.Fatalf("lag messages = %v, want 6", observation.LagMessages)
+	}
+	if observation.LagAgeSeconds == nil || *observation.LagAgeSeconds != 0 {
+		t.Fatalf("lag age = %v, want 0 for an unset record timestamp", observation.LagAgeSeconds)
+	}
 }
 
 // TestDeadLetterAll_HappyPath_BrokerHandleResolvesToUUID verifies

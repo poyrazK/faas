@@ -7,6 +7,10 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.queue_binding_status_response_consumer_liveness import (
+    QueueBindingStatusResponseConsumerLiveness,
+    check_queue_binding_status_response_consumer_liveness,
+)
 from ..models.queue_binding_status_response_consumer_state import (
     QueueBindingStatusResponseConsumerState,
     check_queue_binding_status_response_consumer_state,
@@ -35,12 +39,19 @@ class QueueBindingStatusResponse:
     workload_class: QueueBindingStatusResponseWorkloadClass
     enabled: bool
     consumer_state: QueueBindingStatusResponseConsumerState
+    consumer_liveness: QueueBindingStatusResponseConsumerLiveness
     depth: int
     in_flight: int
     dead_letter: int
     generated_at: datetime.datetime
     consumer_state_reason: str | Unset = UNSET
     trigger_id: str | Unset = UNSET
+    last_poll_at: datetime.datetime | None | Unset = UNSET
+    last_success_at: datetime.datetime | None | Unset = UNSET
+    last_error_at: datetime.datetime | None | Unset = UNSET
+    last_error: str | Unset = UNSET
+    lag_messages: int | None | Unset = UNSET
+    lag_age_seconds: float | None | Unset = UNSET
     oldest_pending_at: datetime.datetime | None | Unset = UNSET
     oldest_pending_age_seconds: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -60,6 +71,8 @@ class QueueBindingStatusResponse:
 
         consumer_state: str = self.consumer_state
 
+        consumer_liveness: str = self.consumer_liveness
+
         depth = self.depth
 
         in_flight = self.in_flight
@@ -71,6 +84,44 @@ class QueueBindingStatusResponse:
         consumer_state_reason = self.consumer_state_reason
 
         trigger_id = self.trigger_id
+
+        last_poll_at: None | str | Unset
+        if isinstance(self.last_poll_at, Unset):
+            last_poll_at = UNSET
+        elif isinstance(self.last_poll_at, datetime.datetime):
+            last_poll_at = self.last_poll_at.isoformat()
+        else:
+            last_poll_at = self.last_poll_at
+
+        last_success_at: None | str | Unset
+        if isinstance(self.last_success_at, Unset):
+            last_success_at = UNSET
+        elif isinstance(self.last_success_at, datetime.datetime):
+            last_success_at = self.last_success_at.isoformat()
+        else:
+            last_success_at = self.last_success_at
+
+        last_error_at: None | str | Unset
+        if isinstance(self.last_error_at, Unset):
+            last_error_at = UNSET
+        elif isinstance(self.last_error_at, datetime.datetime):
+            last_error_at = self.last_error_at.isoformat()
+        else:
+            last_error_at = self.last_error_at
+
+        last_error = self.last_error
+
+        lag_messages: int | None | Unset
+        if isinstance(self.lag_messages, Unset):
+            lag_messages = UNSET
+        else:
+            lag_messages = self.lag_messages
+
+        lag_age_seconds: float | None | Unset
+        if isinstance(self.lag_age_seconds, Unset):
+            lag_age_seconds = UNSET
+        else:
+            lag_age_seconds = self.lag_age_seconds
 
         oldest_pending_at: None | str | Unset
         if isinstance(self.oldest_pending_at, Unset):
@@ -97,6 +148,7 @@ class QueueBindingStatusResponse:
                 "workload_class": workload_class,
                 "enabled": enabled,
                 "consumer_state": consumer_state,
+                "consumer_liveness": consumer_liveness,
                 "depth": depth,
                 "in_flight": in_flight,
                 "dead_letter": dead_letter,
@@ -107,6 +159,18 @@ class QueueBindingStatusResponse:
             field_dict["consumer_state_reason"] = consumer_state_reason
         if trigger_id is not UNSET:
             field_dict["trigger_id"] = trigger_id
+        if last_poll_at is not UNSET:
+            field_dict["last_poll_at"] = last_poll_at
+        if last_success_at is not UNSET:
+            field_dict["last_success_at"] = last_success_at
+        if last_error_at is not UNSET:
+            field_dict["last_error_at"] = last_error_at
+        if last_error is not UNSET:
+            field_dict["last_error"] = last_error
+        if lag_messages is not UNSET:
+            field_dict["lag_messages"] = lag_messages
+        if lag_age_seconds is not UNSET:
+            field_dict["lag_age_seconds"] = lag_age_seconds
         if oldest_pending_at is not UNSET:
             field_dict["oldest_pending_at"] = oldest_pending_at
         if oldest_pending_age_seconds is not UNSET:
@@ -131,6 +195,8 @@ class QueueBindingStatusResponse:
 
         consumer_state = check_queue_binding_status_response_consumer_state(d.pop("consumer_state"))
 
+        consumer_liveness = check_queue_binding_status_response_consumer_liveness(d.pop("consumer_liveness"))
+
         depth = d.pop("depth")
 
         in_flight = d.pop("in_flight")
@@ -142,6 +208,77 @@ class QueueBindingStatusResponse:
         consumer_state_reason = d.pop("consumer_state_reason", UNSET)
 
         trigger_id = d.pop("trigger_id", UNSET)
+
+        def _parse_last_poll_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                last_poll_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return last_poll_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        last_poll_at = _parse_last_poll_at(d.pop("last_poll_at", UNSET))
+
+        def _parse_last_success_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                last_success_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return last_success_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        last_success_at = _parse_last_success_at(d.pop("last_success_at", UNSET))
+
+        def _parse_last_error_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                last_error_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return last_error_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        last_error_at = _parse_last_error_at(d.pop("last_error_at", UNSET))
+
+        last_error = d.pop("last_error", UNSET)
+
+        def _parse_lag_messages(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        lag_messages = _parse_lag_messages(d.pop("lag_messages", UNSET))
+
+        def _parse_lag_age_seconds(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        lag_age_seconds = _parse_lag_age_seconds(d.pop("lag_age_seconds", UNSET))
 
         def _parse_oldest_pending_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -177,12 +314,19 @@ class QueueBindingStatusResponse:
             workload_class=workload_class,
             enabled=enabled,
             consumer_state=consumer_state,
+            consumer_liveness=consumer_liveness,
             depth=depth,
             in_flight=in_flight,
             dead_letter=dead_letter,
             generated_at=generated_at,
             consumer_state_reason=consumer_state_reason,
             trigger_id=trigger_id,
+            last_poll_at=last_poll_at,
+            last_success_at=last_success_at,
+            last_error_at=last_error_at,
+            last_error=last_error,
+            lag_messages=lag_messages,
+            lag_age_seconds=lag_age_seconds,
             oldest_pending_at=oldest_pending_at,
             oldest_pending_age_seconds=oldest_pending_age_seconds,
         )

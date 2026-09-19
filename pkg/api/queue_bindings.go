@@ -24,9 +24,10 @@ type QueueBindingResponse struct {
 }
 
 // QueueBindingStatusResponse is the read-only control-plane projection for a
-// queue binding. ConsumerState describes the durable push-consumer projection
-// (it is not a broker connection liveness signal); queue counters come from
-// the same lease-aware queue view used by the autoscaler.
+// queue binding. ConsumerState describes the durable push-consumer projection;
+// ConsumerLiveness and the timestamps are the scheduler's last-known poll
+// health. Queue counters come from the same lease-aware queue view used by the
+// autoscaler.
 type QueueBindingStatusResponse struct {
 	BindingID               string     `json:"binding_id"`
 	Name                    string     `json:"name"`
@@ -36,7 +37,14 @@ type QueueBindingStatusResponse struct {
 	Enabled                 bool       `json:"enabled"`
 	ConsumerState           string     `json:"consumer_state"`
 	ConsumerStateReason     string     `json:"consumer_state_reason,omitempty"`
+	ConsumerLiveness        string     `json:"consumer_liveness"`
 	TriggerID               string     `json:"trigger_id,omitempty"`
+	LastPollAt              *time.Time `json:"last_poll_at,omitempty"`
+	LastSuccessAt           *time.Time `json:"last_success_at,omitempty"`
+	LastErrorAt             *time.Time `json:"last_error_at,omitempty"`
+	LastError               string     `json:"last_error,omitempty"`
+	LagMessages             *int64     `json:"lag_messages,omitempty"`
+	LagAgeSeconds           *float64   `json:"lag_age_seconds,omitempty"`
 	Depth                   int        `json:"depth"`
 	InFlight                int        `json:"in_flight"`
 	DeadLetter              int        `json:"dead_letter"`

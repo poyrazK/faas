@@ -13745,8 +13745,10 @@ paths:
       description: |
         Returns the durable push-consumer projection and binding-scoped
         queue counters. `consumer_state` is control-plane state
-        (`active`, `paused`, `not_configured`, or `external`); it does not
-        claim to be a broker connection liveness signal.
+        (`active`, `paused`, `not_configured`, or `external`), while
+        `consumer_liveness` and the poll timestamps expose the scheduler's
+        last-known health. A push snapshot is stale after 30 seconds without
+        a completed poll; pull bindings report `external` liveness.
       responses:
         '200':
           description: Queue binding status.
@@ -29404,7 +29406,7 @@ components:
       description: Read-only queue binding consumer projection and queue counters.
       type: object
       required: [binding_id, name, queue_name, mode, workload_class, enabled,
-                 consumer_state, depth, in_flight, dead_letter, generated_at]
+                 consumer_state, consumer_liveness, depth, in_flight, dead_letter, generated_at]
       properties:
         binding_id: { type: string }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
@@ -29414,7 +29416,14 @@ components:
         enabled: { type: boolean }
         consumer_state: { type: string, enum: [active, paused, not_configured, external] }
         consumer_state_reason: { type: string }
+        consumer_liveness: { type: string, enum: [healthy, degraded, stale, not_observed, external] }
         trigger_id: { type: string }
+        last_poll_at: { type: [string, "null"], format: date-time }
+        last_success_at: { type: [string, "null"], format: date-time }
+        last_error_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        lag_messages: { type: [integer, "null"], minimum: 0 }
+        lag_age_seconds: { type: [number, "null"], minimum: 0 }
         depth: { type: integer, minimum: 0 }
         in_flight: { type: integer, minimum: 0 }
         dead_letter: { type: integer, minimum: 0 }

@@ -24,8 +24,11 @@ For a binding-scoped control-plane snapshot, use
 `GET /v1/apps/{slug}/queue-bindings/{id}/status`. It combines the binding's
 push projection (`consumer_state` is `active`, `paused`, `not_configured`, or
 `external`) with depth, live leases, dead letters, and oldest-pending age.
-This is configuration/readiness state rather than a broker connection
-liveness check; use the schedd metrics for liveness and lag alerting.
+`consumer_liveness` is `healthy`, `degraded`, `stale`, or `not_observed` for
+push bindings and `external` for pull bindings. The response also includes the
+last poll/success/error timestamps, the last error text, and broker-native lag
+when the source exposes it. A stale snapshot means schedd has not completed a
+poll in 30 seconds; use the schedd metrics for fleet-wide liveness and alerting.
 
 `FaasDurableQueueStalled` means work is present but the oldest pending item
 has been waiting for more than five minutes. Check queue-depth scaling,

@@ -228,10 +228,11 @@ type MemStore struct {
 	// prewarmIntents mirrors the durable scheduled-capacity queue. The
 	// process-wide mutex provides the same claim serialization as
 	// SELECT ... FOR UPDATE SKIP LOCKED in PgStore.
-	prewarmIntents     map[string]PrewarmIntent
-	triggers           map[string]sqlc.Trigger
-	eventSubscriptions map[string]EventSubscription
-	records            map[string]sqlc.TriggerRecord
+	prewarmIntents        map[string]PrewarmIntent
+	triggers              map[string]sqlc.Trigger
+	triggerConsumerHealth map[string]TriggerConsumerHealth
+	eventSubscriptions    map[string]EventSubscription
+	records               map[string]sqlc.TriggerRecord
 	// triggerDeadLetters mirrors trigger_dead_letter rows. The production
 	// table is append-only; MemStore keeps insertion order for deterministic
 	// dashboard and handler tests.
@@ -918,17 +919,18 @@ func NewMemStore() *MemStore {
 		// (ADR-124 follow-up #3). Both sides are non-overlapping
 		// additive fields; column alignment kept (visual width per
 		// the table below) so the diff against `gofmt -s` stays clean.
-		mirrorRules:         map[string]MirrorRule{},
-		mirrorResults:       map[string]MirrorInvocationResult{},
-		domains:             map[string]CustomDomain{},
-		defaultDomains:      map[string]string{},
-		doctorObs:           map[string]DomainDoctorObservation{},
-		crons:               map[string]Cron{},
-		prewarmIntents:      map[string]PrewarmIntent{},
-		eventSubscriptions:  map[string]EventSubscription{},
-		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
-		deadLetterSnapshots: map[string]DeadLetterEvent{},
-		deadLetterPurged:    map[string]struct{}{},
+		mirrorRules:           map[string]MirrorRule{},
+		mirrorResults:         map[string]MirrorInvocationResult{},
+		domains:               map[string]CustomDomain{},
+		defaultDomains:        map[string]string{},
+		doctorObs:             map[string]DomainDoctorObservation{},
+		crons:                 map[string]Cron{},
+		prewarmIntents:        map[string]PrewarmIntent{},
+		triggerConsumerHealth: map[string]TriggerConsumerHealth{},
+		eventSubscriptions:    map[string]EventSubscription{},
+		triggerDeadLetters:    []sqlc.TriggerDeadLetter{},
+		deadLetterSnapshots:   map[string]DeadLetterEvent{},
+		deadLetterPurged:      map[string]struct{}{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.

@@ -87,6 +87,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -173,6 +174,10 @@ type storeLike interface {
 	// seq, SQS receipt handle, Redis entry-id, queue invocation_id)
 	// to the trigger_records.id UUID the dead_letter FK expects.
 	TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID, itemIdentifier string) (string, error)
+}
+
+type triggerConsumerHealthWriter interface {
+	RecordTriggerConsumerHealth(context.Context, string, state.TriggerConsumerHealthObservation) error
 }
 
 type terminalNacker interface {
@@ -317,6 +322,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	pollCtx, pollSpan := startTriggerSpan(ctx, "gregale.trigger.poll", oteltrace.SpanKindConsumer, nil,
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
+	l.recordTriggerConsumerHealth(ctx, store, t, res)
 	pollSpan.SetAttributes(attribute.Int("gregale.trigger.records", len(res.Records)))
 	if res.Error != nil {
 		pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "error"))
@@ -1461,6 +1467,48 @@ func (l *Loop) observeESMConsumerLag(source, shard string, messages int64, ageSe
 		return
 	}
 	l.ops.ObserveESMConsumerLag(source, shard, messages, ageSeconds)
+}
+
+// recordTriggerConsumerHealth keeps the control-plane status endpoint aligned
+// with the scheduler's broker observations. This is deliberately best-effort:
+// a health-write outage must not turn a broker poll into a delivery failure.
+func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike, t sqlc.Trigger, res PollResult) {
+	writer, ok := store.(triggerConsumerHealthWriter)
+	if !ok {
+		return
+	}
+	at := time.Now().UTC()
+	observation := state.TriggerConsumerHealthObservation{
+		LastPollAt: at,
+		Success:    res.Error == nil,
+	}
+	if res.Error != nil {
+		observation.Error = res.Error.Error()
+	}
+	if res.Error == nil && t.Kind == string(api.TriggerKindKafka) {
+		lagMessages := int64(0)
+		lagAgeSeconds := float64(0)
+		for _, rec := range res.Records {
+			if lag, ok := consumerLagFor(rec, t.Kind); ok && lag > lagMessages {
+				lagMessages = lag
+			}
+			if !rec.ReceivedAt.IsZero() {
+				age := time.Since(rec.ReceivedAt).Seconds()
+				if age > lagAgeSeconds {
+					lagAgeSeconds = age
+				}
+			}
+		}
+		if lagAgeSeconds < 0 {
+			lagAgeSeconds = 0
+		}
+		observation.LagMessages = &lagMessages
+		observation.LagAgeSeconds = &lagAgeSeconds
+	}
+	if err := writer.RecordTriggerConsumerHealth(ctx, t.ID.String(), observation); err != nil {
+		l.log.Warn("sched trigger tick: record consumer health",
+			"trigger_id", t.ID.String(), "err", err)
+	}
 }
 
 func (l *Loop) observeESMRecordProcessingBatch(source string, records []sqlc.TriggerRecord) {
