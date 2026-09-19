@@ -44,6 +44,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // fakeWeightsStore is the in-memory deploymentWeightsStore the
@@ -190,6 +191,56 @@ func TestPGBackend_PickRoundRobin_WithinDeployment(t *testing.T) {
 		if diff := c - wantPerInstance; diff < -tolerance || diff > tolerance {
 			t.Errorf("instance %s picked %d times, want %d ± %d", id, c, wantPerInstance, tolerance)
 		}
+	}
+}
+
+func TestPGBackend_PickDeploymentNeverFallsBackToWarmSibling(t *testing.T) {
+	scheduler := gateway.NewFakeScheduler("node-A").WithDeploymentID("dep-old")
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, scheduler, nil).
+		WithStore(&fakeWeightsStore{rows: map[string][]gateway.DeploymentWeightsRow{
+			"app-1": {
+				{ID: "dep-old", TrafficPercent: 50},
+				{ID: "dep-candidate", TrafficPercent: 50},
+			},
+		}})
+	if err := b.RefreshDeploymentWeights(context.Background(), "app-1"); err != nil {
+		t.Fatalf("RefreshDeploymentWeights: %v", err)
+	}
+	if _, _, _, err := b.Admit(context.Background(), "app-1", "dep-old", "", "", 5); err != nil {
+		t.Fatalf("seed old deployment target: %v", err)
+	}
+
+	pick := b.PickDeployment("app-1", "dep-candidate")
+	if pick.OK {
+		t.Fatalf("candidate pick fell back to target %+v", pick.Target)
+	}
+	if pick.Picked != "dep-candidate" || pick.ColdBucket != "dep-candidate" {
+		t.Fatalf("candidate pick = %+v, want candidate cold bucket", pick)
+	}
+}
+
+func TestPGBackend_DeploymentSmokeAllowsOneCachedTargetOverlap(t *testing.T) {
+	scheduler := gateway.NewFakeScheduler("node-A").WithDeploymentID("dep-old")
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, scheduler, nil).
+		WithStore(&fakeWeightsStore{rows: map[string][]gateway.DeploymentWeightsRow{
+			"app-1": {
+				{ID: "dep-old", TrafficPercent: 50},
+				{ID: "dep-candidate", TrafficPercent: 50},
+			},
+		}})
+	if err := b.RefreshDeploymentWeights(context.Background(), "app-1"); err != nil {
+		t.Fatalf("RefreshDeploymentWeights: %v", err)
+	}
+	if _, _, _, err := b.Admit(context.Background(), "app-1", "dep-old", "", sched.TriggerGateway, 1); err != nil {
+		t.Fatalf("seed old deployment target: %v", err)
+	}
+
+	scheduler.WithDeploymentID("dep-candidate")
+	if _, _, atCapacity, err := b.Admit(context.Background(), "app-1", "dep-candidate", "", sched.TriggerDeploymentSmoke, 1); err != nil || atCapacity {
+		t.Fatalf("candidate smoke admit = at_capacity %v, err %v; want one overlap", atCapacity, err)
+	}
+	if _, _, atCapacity, err := b.Admit(context.Background(), "app-1", "dep-candidate", "", sched.TriggerDeploymentSmoke, 1); err != nil || !atCapacity {
+		t.Fatalf("second smoke admit = at_capacity %v, err %v; want capped", atCapacity, err)
 	}
 }
 

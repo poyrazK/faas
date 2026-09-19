@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -962,6 +963,37 @@ func (b *PGBackend) Pick(appID string) PickResult {
 	return PickResult{Target: t, OK: true, Picked: chosen}
 }
 
+// PickDeployment selects only from deploymentID. Unlike the weighted public
+// picker, it never falls back to a warm sibling deployment: a successful
+// hosting smoke must prove that the candidate itself served the request.
+func (b *PGBackend) PickDeployment(appID, deploymentID string) PickResult {
+	if b == nil || appID == "" || deploymentID == "" {
+		return PickResult{}
+	}
+	var warmHint string
+	if b.warmHint != nil {
+		warmHint, _ = b.warmHint(appID)
+	}
+	b.tgtMu.RLock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		b.tgtMu.RUnlock()
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	set := picker.sets[deploymentID]
+	if set == nil {
+		b.tgtMu.RUnlock()
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	target, ok := set.pick(warmHint)
+	b.tgtMu.RUnlock()
+	if !ok {
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	target.DeploymentID = deploymentID
+	return PickResult{Target: target, OK: true, Picked: deploymentID}
+}
+
 // PickForInstance prefers the supplied instance when it is still routable.
 // Session affinity is deliberately best effort: a parked, failed, or
 // deployment-retired instance is ignored and ordinary weighted round-robin
@@ -1181,7 +1213,11 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 		for _, set := range picker.sets {
 			total += len(set.entries)
 		}
-		if total >= maxConcurrency {
+		admissionLimit := maxConcurrency
+		if trigger == sched.TriggerDeploymentSmoke {
+			admissionLimit++
+		}
+		if total >= admissionLimit {
 			b.tgtMu.Unlock()
 			return "", WakeMethodUnspecified, true, nil
 		}

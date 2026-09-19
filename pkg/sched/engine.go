@@ -2768,9 +2768,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-		NodeID:        placement.NodeID,
-		NodeCeilingMB: placement.CeilingMB,
-		VCPUBudget:    placement.VCPUBudget,
+		AllowConcurrencyOverage: trigger == TriggerDeploymentSmoke,
+		NodeID:                  placement.NodeID,
+		NodeCeilingMB:           placement.CeilingMB,
+		VCPUBudget:              placement.VCPUBudget,
 	}); err != nil {
 		// Admit failed (capacity / concurrency). The two rejection
 		// modes differ in how loudly the engine surfaces them:

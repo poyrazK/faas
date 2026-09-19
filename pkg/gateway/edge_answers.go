@@ -90,13 +90,20 @@ type deploymentSmokeValidator interface {
 }
 
 func (h *Handler) authorizedDeploymentSmoke(r *http.Request, app App) bool {
+	return h.authorizedDeploymentSmokeID(r, app) != ""
+}
+
+func (h *Handler) authorizedDeploymentSmokeID(r *http.Request, app App) string {
 	if h == nil || h.backend == nil || r.Header.Get(apihostingreceipt.PlatformSmokeHeader) != "1" {
-		return false
+		return ""
 	}
 	deploymentID := strings.TrimSpace(r.Header.Get(apihostingreceipt.PlatformSmokeDeploymentHeader))
 	token := strings.TrimSpace(r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader))
 	validator, ok := h.backend.(deploymentSmokeValidator)
-	return ok && validator.ValidateDeploymentSmoke(app.ID, deploymentID, token)
+	if !ok || !validator.ValidateDeploymentSmoke(app.ID, deploymentID, token) {
+		return ""
+	}
+	return deploymentID
 }
 
 // edgeHeadHeaderCache is intentionally small and process-local. Header values

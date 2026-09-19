@@ -467,6 +467,58 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	}
 }
 
+func TestHandleSnapshotWritten_SuccessNotifiesPreviousDeploymentSuperseded(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-cutover", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	notif := &fakeNotifier{}
+	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+		func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeVerified, StatusCode: http.StatusOK}, nil
+		},
+	)
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	var states []map[string]any
+	for _, call := range notif.calls {
+		if call.channel != db.NotifyDeploymentChanged {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(call.payload), &event); err != nil {
+			t.Fatalf("decode deployment event: %v", err)
+		}
+		if event["status"] != nil {
+			states = append(states, event)
+		}
+	}
+	if len(states) != 2 {
+		t.Fatalf("terminal deployment events = %v, want previous superseded + candidate live", states)
+	}
+	if states[0]["deployment_id"] != previous.ID || states[0]["status"] != string(state.DeploySuperseded) {
+		t.Fatalf("first terminal event = %v, want previous superseded", states[0])
+	}
+	if states[1]["deployment_id"] != candidate.ID || states[1]["status"] != string(state.DeployLive) {
+		t.Fatalf("second terminal event = %v, want candidate live", states[1])
+	}
+}
+
 func TestHandleSnapshotWritten_FailedSmokeRestoresPreviousLive(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")

@@ -153,6 +153,12 @@ type Request struct {
 	SidecarMBs     []int
 	VCPU           int // vcpus for this instance
 	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
+	// AllowConcurrencyOverage permits exactly one additional serving
+	// reservation above MaxConcurrency. The engine sets it only for an
+	// authenticated deployment smoke, while the previous revision remains
+	// available for rollback. The reservation still counts toward concurrency
+	// and consumes normal node RAM/vCPU capacity.
+	AllowConcurrencyOverage bool
 	// Kind discriminates the reservation shape (see Kind doc). Zero
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
@@ -277,7 +283,11 @@ func (l *NodeLedger) Admit(r Request) error {
 		if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 			maxConc = limits.MaxConcurrency
 		}
-		if have := l.perApp[r.AppID]; have >= maxConc {
+		admissionLimit := maxConc
+		if r.AllowConcurrencyOverage {
+			admissionLimit++
+		}
+		if have := l.perApp[r.AppID]; have >= admissionLimit {
 			return api.ErrPlanLimitConcurrencyAt(limits, maxConc, have)
 		}
 	}

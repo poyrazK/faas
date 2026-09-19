@@ -300,6 +300,38 @@ func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
 	}
 }
 
+func TestAdmitDeploymentSmokeAllowsExactlyOneServingOverlap(t *testing.T) {
+	l := NewLedger()
+	request := Request{
+		AppID: "app-1", Plan: api.PlanPro, RAMMB: 256, VCPU: 1,
+		MaxConcurrency: 1, NodeID: "node-a", NodeCeilingMB: 100000,
+		VCPUBudget: 160,
+	}
+	request.Instance = "old-live"
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit old live instance: %v", err)
+	}
+
+	request.Instance = "candidate-smoke"
+	request.AllowConcurrencyOverage = true
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit candidate smoke overlap: %v", err)
+	}
+	if got := l.Concurrency(request.AppID); got != 2 {
+		t.Fatalf("serving concurrency = %d, want 2 during smoke", got)
+	}
+
+	request.Instance = "second-smoke"
+	if err := l.Admit(request); err == nil {
+		t.Fatal("second smoke overage admitted, want concurrency rejection")
+	}
+	request.Instance = "ordinary-wake"
+	request.AllowConcurrencyOverage = false
+	if err := l.Admit(request); err == nil {
+		t.Fatal("ordinary wake admitted above configured max")
+	}
+}
+
 func TestAdmitWarmPoolKindReservesRAMWithoutConcurrencyUntilPromoted(t *testing.T) {
 	l := NewLedger()
 	req := Request{
