@@ -50,7 +50,11 @@ const (
 var legacyManagedServices = []string{"gatewayd", "spool-sync"}
 
 func managedServiceNames() []string {
-	names := append([]string(nil), daemonunitspec.ActivationOrder()...)
+	entries := daemonunitspec.UnitEntries()
+	names := make([]string, 0, len(entries)+len(legacyManagedServices))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
 	return append(names, legacyManagedServices...)
 }
 
@@ -391,6 +395,14 @@ func (r hostRuntime) reconcileServiceTopology(ctx context.Context, allowed []str
 		}
 		if err := runCommand(ctx, "systemctl", "mask", "--force", unit); err != nil {
 			return fmt.Errorf("mask omitted unit %s: %w", unit, err)
+		}
+		// Removing or masking a unit does not clear a failure already held
+		// by systemd. Without an explicit reset, a retired optional daemon
+		// remains visible in `systemctl --failed` after a successful rollout.
+		if err := runCommand(ctx, "systemctl", "is-failed", "--quiet", unit); err == nil {
+			if err := runCommand(ctx, "systemctl", "reset-failed", unit); err != nil {
+				return fmt.Errorf("reset omitted unit %s: %w", unit, err)
+			}
 		}
 	}
 	return nil

@@ -6,6 +6,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,7 +246,7 @@ func TestIsCanaryExecOverrideIgnoresCommentsAndEnvironment(t *testing.T) {
 
 func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
 	unitDir := t.TempDir()
-	for _, name := range []string{"faas-vmmd.service", "faas-gatewayd.service"} {
+	for _, name := range []string{"faas-vmmd.service", "faas-s3-gatewayd.service", "faas-gatewayd.service"} {
 		if err := os.WriteFile(filepath.Join(unitDir, name), []byte("[Unit]\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +282,7 @@ func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
 	if hasCall("systemctl", "disable", "--now", "faas-builderd.service") {
 		t.Errorf("already-masked builderd was sent through disable --now: %v", calls)
 	}
-	for _, service := range []string{"vmmd", "gatewayd"} {
+	for _, service := range []string{"vmmd", "s3-gatewayd", "gatewayd"} {
 		if _, err := os.Lstat(filepath.Join(unitDir, "faas-"+service+".service")); !os.IsNotExist(err) {
 			t.Errorf("stale %s unit still exists, err=%v", service, err)
 		}
@@ -289,9 +290,21 @@ func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
 	if target, err := os.Readlink(filepath.Join(unitDir, "faas-builderd.service")); err != nil || target != "/dev/null" {
 		t.Errorf("existing builderd mask was removed or changed, target=%q err=%v", target, err)
 	}
-	for _, service := range []string{"vmmd", "builderd", "gatewayd", "spool-sync"} {
+	for _, service := range []string{"vmmd", "builderd", "s3-gatewayd", "gatewayd", "spool-sync"} {
 		if !hasCall("systemctl", "mask", "--force", "faas-"+service+".service") {
 			t.Errorf("missing mask for omitted %s: %v", service, calls)
+		}
+		if !hasCall("systemctl", "reset-failed", "faas-"+service+".service") {
+			t.Errorf("missing failed-state reset for omitted %s: %v", service, calls)
+		}
+	}
+}
+
+func TestManagedServiceNamesIncludesOptionalRegistry(t *testing.T) {
+	managed := managedServiceNames()
+	for _, entry := range daemonunitspec.OptionalRegistry {
+		if !slices.Contains(managed, entry.Name) {
+			t.Errorf("managed service names omit optional daemon %q: %v", entry.Name, managed)
 		}
 	}
 }
