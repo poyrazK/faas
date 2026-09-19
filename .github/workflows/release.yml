@@ -39,26 +39,29 @@ permissions:
   packages: read
 
 jobs:
-  build:
+  cli-targets:
+    name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Full history so `git describe` and the tag-resolution
-          # plumbing work end-to-end. The binary itself is the
-          # gzipped output, not the repo history.
-          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
 
-      # Tags have their own cache scope, so setup-go's automatic cache missed
-      # on every release candidate and saved a new archive that the next tag
-      # could not restore. Main CI already builds these targets and publishes
-      # this dated cache after each push; release tags can restore the
-      # default-branch cache without spending another two minutes compiling.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
@@ -73,6 +76,43 @@ jobs:
             go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
 
+      - name: Build and archive target
+        env:
+          VERSION: ${{ github.ref_name }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          stage="/tmp/gregale-build/stage/${GOOS}_${GOARCH}"
+          archive="/tmp/gregale-build/archives/gregale_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz"
+          mkdir -p "$stage" "$(dirname "$archive")"
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+            -o "$stage/gregale" ./cmd/gregale
+          bash scripts/archive-cli-binary.sh \
+            --binary "$stage/gregale" \
+            --output "$archive" \
+            --mtime "@$(git log -1 --format=%ct)"
+
+      - name: Upload target
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-cli-target-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.sha }}
+          path: /tmp/gregale-build/
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: [cli-targets]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The fan-in job only creates the release branch and moving tag.
+          # One commit is enough; target builds already captured the source
+          # commit timestamp used for deterministic archives.
+          fetch-depth: 1
+
       # Four shipped targets (ADR-172). Windows is absent on purpose:
       # cmd/gregale transitively imports pkg/fcvm, which needs
       # syscall.Stat_t / Mkfifo / SYS_IOCTL and does not compile for
@@ -82,32 +122,25 @@ jobs:
       # archive. Those archives — not the bare binaries — are what
       # scripts/install.sh downloads and what the npm platform packages
       # are built from.
-      - name: Cross-build gregale for every shipped target
-        env:
-          VERSION: ${{ github.ref_name }}
+      - name: Download parallel CLI builds
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: gregale-cli-target-*-${{ github.sha }}
+          path: /tmp/gregale-build
+          merge-multiple: true
+
+      - name: Assemble shipped targets
         run: |
           set -euo pipefail
-          mkdir -p /tmp/gregale-build/archives
-          SEMVER="${VERSION#v}"
-          MTIME="@$(git log -1 --format=%ct)"
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            GOOS="${target%/*}"
-            GOARCH="${target#*/}"
-            stage="/tmp/gregale-build/stage/${GOOS}_${GOARCH}"
-            mkdir -p "$stage"
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
-              -o "$stage/gregale" ./cmd/gregale
-            # Archiving lives in a script so its reproducibility is gated by
-            # scripts/archive-cli-binary_test.sh on every PR. Inline, the
-            # claim was only a comment — and it was wrong: `tar -czf` writes
-            # the current wall-clock time into the gzip header, so two runs
-            # produced different bytes and different SHA256SUMS.
-            bash scripts/archive-cli-binary.sh \
-              --binary "$stage/gregale" \
-              --output "/tmp/gregale-build/archives/gregale_${SEMVER}_${GOOS}_${GOARCH}.tar.gz" \
-              --mtime "$MTIME"
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+            binary="/tmp/gregale-build/stage/${target}/gregale"
+            test -s "$binary"
+            # upload-artifact intentionally normalizes regular files to 0644.
+            # Restore the executable bit before vendoring and publishing the
+            # two historical bare-binary assets below.
+            chmod 0755 "$binary"
           done
+          test "$(find /tmp/gregale-build/archives -maxdepth 1 -name 'gregale_*.tar.gz' -type f | wc -l)" -eq 4
           # Historical asset layout, preserved verbatim: the bare
           # linux-amd64 binary is what the deploy action vendors below,
           # and gregale-darwin-arm64 is an already-published download
