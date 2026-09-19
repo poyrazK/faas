@@ -174,6 +174,13 @@ type PausedRestoreVMM interface {
 	CreatePausedFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
 }
 
+// WarmResumeVMM is the additive warm-pool promotion capability. It remains
+// separate from RoutedVMM so older vmmd clients and test doubles can continue
+// serving the existing lifecycle surface during a rolling upgrade.
+type WarmResumeVMM interface {
+	ResumeWarmInstance(ctx context.Context, nodeID, instance string) error
+}
+
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
 // client. cmd/schedd wires the production sched.DialVMMContext;
 // tests inject a recording stub so they don't need a real socket.
@@ -553,6 +560,24 @@ func (r *VMMRouter) WarmSnapshot(ctx context.Context, nodeID, instance, storageK
 		return SnapshotBytes{}, err
 	}
 	return cli.WarmSnapshot(ctx, instance, storageKey, vmstateStorageKey)
+}
+
+// ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
+// commits the durable WARM -> RUNNING transition separately; this RPC only
+// forwards the vmmd-side Firecracker resume operation.
+func (r *VMMRouter) ResumeWarmInstance(ctx context.Context, nodeID, instance string) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	resumer, ok := cli.(interface {
+		ResumeWarmInstance(context.Context, string) error
+	})
+	if !ok {
+		return api.NewProblem(501, api.CodeNotImplemented,
+			"Warm-pool resume unavailable", "vmmd client does not support warm-pool resume")
+	}
+	return resumer.ResumeWarmInstance(ctx, instance)
 }
 
 // Destroy implements RoutedVMM.

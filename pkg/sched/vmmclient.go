@@ -879,6 +879,15 @@ func (c *VMMClient) WarmSnapshot(ctx context.Context, instance, storageKey, vmst
 	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
 }
 
+// ResumeWarmInstance wraps the additive vmmd RPC used when the scheduler
+// promotes a paused warm-pool row into serving capacity.
+func (c *VMMClient) ResumeWarmInstance(ctx context.Context, instance string) error {
+	if _, err := c.cli.ResumeWarmInstance(ctx, &vmmdpb.ResumeWarmInstanceRequest{Instance: instance}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
 // FrameworkReady implements VMM. The wire RPC's NotFound return
 // (instance not live on this vmmd) is lifted to a structured gRPC
 // status error so the cmd/vmmd DGRAM listener can classify it as

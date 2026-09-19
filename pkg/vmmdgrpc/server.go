@@ -885,6 +885,35 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 	}, nil
 }
 
+// ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
+// owns the durable state transition and admission-ledger promotion; vmmd only
+// resumes Firecracker and restores its liveness bookkeeping.
+func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmInstanceRequest) (*vmmdpb.ResumeWarmInstanceResponse, error) {
+	const op = "ResumeWarmInstance"
+	start := time.Now()
+	if req.GetInstance() == "" {
+		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Missing instance", "instance is required on ResumeWarmInstance")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	resumer, ok := s.vmm.(interface {
+		ResumeVM(context.Context, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Warm-pool resume unavailable", "vmmd does not expose in-place resume")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := resumer.ResumeVM(ctx, req.GetInstance())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance()}, nil
+}
+
 // WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The
 // handler stays optional at the Manager/VMM seam so older test doubles can
 // continue serving the rest of the vmmd API while the warm path rolls out.

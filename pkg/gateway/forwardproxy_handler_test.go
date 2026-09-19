@@ -149,6 +149,9 @@ func (s *stubVmmdClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmS
 func (s *stubVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.SnapshotResponse, error) {
 	panic("WarmSnapshot: not stubbed in handler integration test")
 }
+func (s *stubVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not resume warm instances")
+}
 func (s *stubVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	return &vmmdpb.DestroyResponse{}, nil
 }

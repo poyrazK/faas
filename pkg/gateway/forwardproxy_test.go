@@ -409,6 +409,9 @@ func (f *fakeVmmdClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmS
 func (f *fakeVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.SnapshotResponse, error) {
 	panic("WarmSnapshot: not stubbed")
 }
+func (f *fakeVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
+	panic("ResumeWarmInstance: not stubbed")
+}
 func (f *fakeVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	panic("Destroy: not stubbed")
 }

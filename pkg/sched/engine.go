@@ -2445,6 +2445,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if mode == "" || mode == string(state.InstanceModeNormal) {
 		mode = instanceModeForApp(app)
 	}
+	// A paused warm-pool row already owns resident RAM and a vmmd lease, so
+	// promote it before the ordinary cold/snapshot admission path allocates a
+	// second VM. The helper runs under appMu and returns handled=true only after
+	// the vmmd resume, ledger promotion, and durable WARM -> RUNNING CAS all
+	// succeed; stale candidates are cleaned up and the normal path then remains
+	// the safe fallback.
+	if promoted, handled, promoteErr := e.promoteWarmInstanceLocked(ctx, app, acct, limits, dep, mode); handled || promoteErr != nil {
+		release()
+		return promoted, promoteErr
+	}
 
 	// PR-D (issue #462): worker-class first-check. Mirrors
 	// pkg/sched/reaper.go:170 (workers are reaper-exempt). A

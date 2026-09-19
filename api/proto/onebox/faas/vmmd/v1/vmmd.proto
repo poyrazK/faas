@@ -92,6 +92,11 @@ service Vmmd {
   // capture" — see pkg/sched/engine.go::captureWarmSnapshotLocked.
   rpc WarmSnapshot(WarmSnapshotRequest) returns (SnapshotResponse);
 
+  // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
+  // owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
+  // only resumes Firecracker and re-attaches its liveness loops.
+  rpc ResumeWarmInstance(ResumeWarmInstanceRequest) returns (ResumeWarmInstanceResponse);
+
   // WaitBuilderReady blocks until a KeepWarm builder writes its durable
   // build-done marker and emits the guest-stage build-ready line. A builder
   // that exits before that handoff returns ready=false with its exit code.
@@ -1943,4 +1948,14 @@ message PrivateNetworkFirewallRule {
   string protocol = 2;
   repeated string cidrs = 3;
   repeated string ports = 4;
+}
+
+// ResumeWarmInstanceRequest identifies a paused warm-pool VM by instance id.
+message ResumeWarmInstanceRequest {
+  string instance = 1;
+}
+
+// ResumeWarmInstanceResponse acknowledges the in-place resume.
+message ResumeWarmInstanceResponse {
+  string instance = 1;
 }

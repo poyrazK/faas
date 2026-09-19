@@ -31,6 +31,7 @@ const (
 	Vmmd_WaitJobExit_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
+	Vmmd_ResumeWarmInstance_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
 	Vmmd_WaitBuilderReady_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
@@ -133,6 +134,10 @@ type VmmdClient interface {
 	// engine's failure path is "Destroy the VM and skip the init
 	// capture" — see pkg/sched/engine.go::captureWarmSnapshotLocked.
 	WarmSnapshot(ctx context.Context, in *WarmSnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
+	// ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
+	// owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
+	// only resumes Firecracker and re-attaches its liveness loops.
+	ResumeWarmInstance(ctx context.Context, in *ResumeWarmInstanceRequest, opts ...grpc.CallOption) (*ResumeWarmInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -532,6 +537,16 @@ func (c *vmmdClient) WarmSnapshot(ctx context.Context, in *WarmSnapshotRequest, 
 	return out, nil
 }
 
+func (c *vmmdClient) ResumeWarmInstance(ctx context.Context, in *ResumeWarmInstanceRequest, opts ...grpc.CallOption) (*ResumeWarmInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeWarmInstanceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ResumeWarmInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) WaitBuilderReady(ctx context.Context, in *WaitBuilderReadyRequest, opts ...grpc.CallOption) (*WaitBuilderReadyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WaitBuilderReadyResponse)
@@ -884,6 +899,10 @@ type VmmdServer interface {
 	// engine's failure path is "Destroy the VM and skip the init
 	// capture" — see pkg/sched/engine.go::captureWarmSnapshotLocked.
 	WarmSnapshot(context.Context, *WarmSnapshotRequest) (*SnapshotResponse, error)
+	// ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
+	// owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
+	// only resumes Firecracker and re-attaches its liveness loops.
+	ResumeWarmInstance(context.Context, *ResumeWarmInstanceRequest) (*ResumeWarmInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -1211,6 +1230,9 @@ func (UnimplementedVmmdServer) PauseAndSnapshot(context.Context, *PauseAndSnapsh
 func (UnimplementedVmmdServer) WarmSnapshot(context.Context, *WarmSnapshotRequest) (*SnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WarmSnapshot not implemented")
 }
+func (UnimplementedVmmdServer) ResumeWarmInstance(context.Context, *ResumeWarmInstanceRequest) (*ResumeWarmInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeWarmInstance not implemented")
+}
 func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderReadyRequest) (*WaitBuilderReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitBuilderReady not implemented")
 }
@@ -1461,6 +1483,24 @@ func _Vmmd_WarmSnapshot_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).WarmSnapshot(ctx, req.(*WarmSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ResumeWarmInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeWarmInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ResumeWarmInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ResumeWarmInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ResumeWarmInstance(ctx, req.(*ResumeWarmInstanceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1931,6 +1971,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WarmSnapshot",
 			Handler:    _Vmmd_WarmSnapshot_Handler,
+		},
+		{
+			MethodName: "ResumeWarmInstance",
+			Handler:    _Vmmd_ResumeWarmInstance_Handler,
 		},
 		{
 			MethodName: "WaitBuilderReady",
