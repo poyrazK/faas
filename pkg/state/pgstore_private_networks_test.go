@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -160,6 +161,23 @@ func TestPgStorePrivateNetworkPeeringLifecycle(t *testing.T) {
 	listed, err := s.ListPrivateNetworkPeerings(ctx, accountID, "net-peering-left")
 	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
 		t.Fatalf("ListPrivateNetworkPeerings = %+v, err=%v", listed, err)
+	}
+	reconcileRows, err := s.ListPrivateNetworkPeeringsForReconcile(ctx, []string{api.PrivateNetworkPeeringStatusPending}, 10)
+	if err != nil || len(reconcileRows) != 1 || reconcileRows[0].ID != created.ID {
+		t.Fatalf("ListPrivateNetworkPeeringsForReconcile = %+v, err=%v", reconcileRows, err)
+	}
+	if _, err := s.ListPrivateNetworkPeeringsForReconcile(ctx, []string{"bogus"}, 10); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("invalid peering status = %v, want invalid argument", err)
+	}
+	if _, err := s.ListPrivateNetworkPeeringsForReconcile(ctx, nil, 0); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("invalid peering limit = %v, want invalid argument", err)
+	}
+	updated, err := s.UpdatePrivateNetworkPeeringStatus(ctx, accountID, created.ID, api.PrivateNetworkPeeringStatusReady, "routes active")
+	if err != nil || updated.Status != api.PrivateNetworkPeeringStatusReady || updated.StatusDetail != "routes active" {
+		t.Fatalf("UpdatePrivateNetworkPeeringStatus = %+v, err=%v", updated, err)
+	}
+	if _, err := s.UpdatePrivateNetworkPeeringStatus(ctx, accountID, created.ID, "bogus", ""); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("invalid peering update status = %v, want invalid argument", err)
 	}
 	got, err := s.GetPrivateNetworkPeering(ctx, accountID, created.ID)
 	if err != nil || got.ID != created.ID || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {

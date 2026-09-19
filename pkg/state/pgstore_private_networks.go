@@ -372,10 +372,54 @@ func (s *PgStore) ListPrivateNetworkPeerings(ctx context.Context, accountID, net
 	return out, nil
 }
 
+func (s *PgStore) ListPrivateNetworkPeeringsForReconcile(ctx context.Context, statuses []string, limit int) ([]PrivateNetworkPeering, error) {
+	if limit <= 0 || limit > 1000 {
+		return nil, ErrInvalidArgument
+	}
+	for _, status := range statuses {
+		if status != api.PrivateNetworkPeeringStatusPending && status != api.PrivateNetworkPeeringStatusReady && status != api.PrivateNetworkPeeringStatusError {
+			return nil, ErrInvalidArgument
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+		select id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at
+		  from private_network_peerings
+		 where ($1::text[] is null or status = any($1::text[]))
+		 order by updated_at asc, id asc
+		 limit $2`, nullableStrings(statuses), limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]PrivateNetworkPeering, 0)
+	for rows.Next() {
+		peering, scanErr := scanPrivateNetworkPeering(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, peering)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
+
 func (s *PgStore) GetPrivateNetworkPeering(ctx context.Context, accountID, id string) (PrivateNetworkPeering, error) {
 	return scanPrivateNetworkPeering(s.pool.QueryRow(ctx, `
 		select id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at
 		  from private_network_peerings where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id)))
+}
+
+func (s *PgStore) UpdatePrivateNetworkPeeringStatus(ctx context.Context, accountID, id, status, detail string) (PrivateNetworkPeering, error) {
+	if status != api.PrivateNetworkPeeringStatusPending && status != api.PrivateNetworkPeeringStatusReady && status != api.PrivateNetworkPeeringStatusError {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	return scanPrivateNetworkPeering(s.pool.QueryRow(ctx, `
+		update private_network_peerings
+		   set status = $3, status_detail = $4, updated_at = now()
+		 where account_id = $1 and id = $2
+		returning id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at`, mustPgUUID(accountID), strings.TrimSpace(id), status, detail))
 }
 
 func (s *PgStore) DeletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {

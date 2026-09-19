@@ -185,3 +185,42 @@ func TestMemStorePrivateNetworkPeeringReadsAndGuards(t *testing.T) {
 		t.Fatalf("canceled delete error = %v, want context canceled", err)
 	}
 }
+
+func TestMemStorePrivateNetworkPeeringReconcileSurface(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	for _, network := range []PrivateNetwork{
+		{ID: "alpha", AccountID: "acct-1", Name: "alpha", Region: "fra1", CIDR: netip.MustParsePrefix("10.80.0.0/20")},
+		{ID: "beta", AccountID: "acct-1", Name: "beta", Region: "fra1", CIDR: netip.MustParsePrefix("10.80.16.0/20")},
+	} {
+		if _, err := store.CreatePrivateNetwork(ctx, network); err != nil {
+			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
+		}
+	}
+	created, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		ID: "peer-reconcile", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1",
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering: %v", err)
+	}
+	rows, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, []string{api.PrivateNetworkPeeringStatusPending}, 10)
+	if err != nil || len(rows) != 1 || rows[0].ID != created.ID {
+		t.Fatalf("ListPrivateNetworkPeeringsForReconcile = %+v, %v", rows, err)
+	}
+	if _, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, []string{"bogus"}, 10); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("invalid status error = %v, want invalid argument", err)
+	}
+	if _, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, nil, 0); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("invalid limit error = %v, want invalid argument", err)
+	}
+	updated, err := store.UpdatePrivateNetworkPeeringStatus(ctx, created.AccountID, created.ID, api.PrivateNetworkPeeringStatusReady, "routes active")
+	if err != nil || updated.Status != api.PrivateNetworkPeeringStatusReady || updated.StatusDetail != "routes active" {
+		t.Fatalf("UpdatePrivateNetworkPeeringStatus = %+v, %v", updated, err)
+	}
+	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, created.AccountID, created.ID, "bogus", ""); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("invalid update status error = %v, want invalid argument", err)
+	}
+	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, "acct-missing", created.ID, api.PrivateNetworkPeeringStatusError, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign update error = %v, want not found", err)
+	}
+}

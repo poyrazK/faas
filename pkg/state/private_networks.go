@@ -82,6 +82,16 @@ type PrivateNetworkPeeringStore interface {
 	DeletePrivateNetworkPeering(context.Context, string, string) error
 }
 
+// PrivateNetworkPeeringReconcileStore is the durable worker surface for the
+// provider-neutral peering convergence loop. API callers keep using the
+// account-scoped methods above; the scheduler needs a bounded, status-filtered
+// view across all accounts plus an idempotent status transition.
+type PrivateNetworkPeeringReconcileStore interface {
+	PrivateNetworkPeeringStore
+	ListPrivateNetworkPeeringsForReconcile(context.Context, []string, int) ([]PrivateNetworkPeering, error)
+	UpdatePrivateNetworkPeeringStatus(context.Context, string, string, string, string) (PrivateNetworkPeering, error)
+}
+
 // PrivateNetworkPolicyStore is the additive extension used by the reusable
 // network firewall endpoint. Keeping it separate lets older Store adapters
 // continue serving the original network and attachment surfaces.
@@ -101,6 +111,8 @@ var _ PrivateNetworkStore = (*MemStore)(nil)
 var _ PrivateNetworkStore = (*PgStore)(nil)
 var _ PrivateNetworkPeeringStore = (*MemStore)(nil)
 var _ PrivateNetworkPeeringStore = (*PgStore)(nil)
+var _ PrivateNetworkPeeringReconcileStore = (*MemStore)(nil)
+var _ PrivateNetworkPeeringReconcileStore = (*PgStore)(nil)
 var _ PrivateNetworkPolicyStore = (*MemStore)(nil)
 var _ PrivateNetworkPolicyStore = (*PgStore)(nil)
 var _ PrivateNetworkFirewallPolicyStore = (*MemStore)(nil)
@@ -442,6 +454,43 @@ func (m *MemStore) ListPrivateNetworkPeerings(ctx context.Context, accountID, ne
 	return out, nil
 }
 
+func (m *MemStore) ListPrivateNetworkPeeringsForReconcile(ctx context.Context, statuses []string, limit int) ([]PrivateNetworkPeering, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 1000 {
+		return nil, ErrInvalidArgument
+	}
+	allowed := make(map[string]struct{}, len(statuses))
+	for _, status := range statuses {
+		if status != api.PrivateNetworkPeeringStatusPending && status != api.PrivateNetworkPeeringStatusReady && status != api.PrivateNetworkPeeringStatusError {
+			return nil, ErrInvalidArgument
+		}
+		allowed[status] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PrivateNetworkPeering, 0, len(m.privateNetworkPeerings))
+	for _, peering := range m.privateNetworkPeerings {
+		if len(allowed) > 0 {
+			if _, ok := allowed[peering.Status]; !ok {
+				continue
+			}
+		}
+		out = append(out, clonePrivateNetworkPeering(peering))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].UpdatedAt.Before(out[j].UpdatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *MemStore) GetPrivateNetworkPeering(ctx context.Context, accountID, id string) (PrivateNetworkPeering, error) {
 	if err := ctx.Err(); err != nil {
 		return PrivateNetworkPeering{}, err
@@ -452,6 +501,26 @@ func (m *MemStore) GetPrivateNetworkPeering(ctx context.Context, accountID, id s
 	if !ok || peering.AccountID != accountID {
 		return PrivateNetworkPeering{}, ErrNotFound
 	}
+	return clonePrivateNetworkPeering(peering), nil
+}
+
+func (m *MemStore) UpdatePrivateNetworkPeeringStatus(ctx context.Context, accountID, id, status, detail string) (PrivateNetworkPeering, error) {
+	if err := ctx.Err(); err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	if status != api.PrivateNetworkPeeringStatusPending && status != api.PrivateNetworkPeeringStatusReady && status != api.PrivateNetworkPeeringStatusError {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	peering, ok := m.privateNetworkPeerings[id]
+	if !ok || peering.AccountID != accountID {
+		return PrivateNetworkPeering{}, ErrNotFound
+	}
+	peering.Status = status
+	peering.StatusDetail = detail
+	peering.UpdatedAt = time.Now().UTC()
+	m.privateNetworkPeerings[id] = peering
 	return clonePrivateNetworkPeering(peering), nil
 }
 
