@@ -1619,6 +1619,11 @@ Tail the wake queue
 
 Enqueue a wake request
 
+| Flag | Meaning | |
+|---|---|---|
+| `--payload <J>` | JSON payload (inline \| @file \| -) |  |
+| `--queue-name <QUEUE>` | logical queue name |  |
+
 ### queue receive
 
 Receive a wake request
@@ -1642,6 +1647,17 @@ Inspect the dead-letter queue
 ### queue ack
 
 Ack a wake
+
+### queue setup
+
+Configure a simple push workload with queue-depth scaling
+
+| Flag | Meaning | |
+|---|---|---|
+| `--queue-name <QUEUE>` | logical queue name |  |
+| `--target-depth <N>` | messages per worker before scaling out |  |
+| `--max-concurrency <N>` | maximum concurrent deliveries per worker |  |
+| `--force` | replace an existing default binding on another queue |  |
 
 ### queue bindings
 
