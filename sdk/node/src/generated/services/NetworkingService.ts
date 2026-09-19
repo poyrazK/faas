@@ -114,10 +114,12 @@ export class NetworkingService {
     });
   }
   /**
-   * Replace a private network's reusable CIDR firewall policy.
-   * Replaces the network-level IPv4 CIDR allowlist used by every attached
-   * workload. An empty list disables the network policy. App-level policy
-   * may further restrict these destinations but cannot broaden them.
+   * Replace a private network's reusable firewall policy.
+   * Replaces the network-level IPv4 CIDR allowlist and optional
+   * protocol/port rules used by every attached workload. Empty lists
+   * preserve the legacy allow-all behavior; non-empty rules are enforced
+   * fail-closed. App-level policy may further restrict destinations but
+   * cannot broaden the network baseline.
    *
    * @returns PrivateNetwork Updated private network definition.
    * @throws ApiError

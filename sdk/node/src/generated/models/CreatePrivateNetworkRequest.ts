@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PrivateNetworkFirewallRule } from './PrivateNetworkFirewallRule.js';
 /**
  * POST /v1/networks body for a Gregale-owned network.
  */
@@ -13,5 +14,9 @@ export type CreatePrivateNetworkRequest = {
    * Optional reusable CIDR allowlist contained by cidr.
    */
   allowed_cidrs?: Array<string>;
+  /**
+   * Optional protocol/port allow rules contained by cidr.
+   */
+  firewall_rules?: Array<PrivateNetworkFirewallRule>;
 };
 

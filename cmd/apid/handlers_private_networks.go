@@ -77,14 +77,20 @@ func (s *server) createPrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", "", err.Error()))
 		return
 	}
+	firewallRules, err := api.ValidatePrivateNetworkFirewallRules(req.FirewallRules, cidr)
+	if err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("firewall_rules", "", err.Error()))
+		return
+	}
 	network, err := store.CreatePrivateNetwork(r.Context(), state.PrivateNetwork{
-		ID:           "net-" + uuid.NewString(),
-		AccountID:    acct.ID,
-		Name:         name,
-		Region:       region,
-		CIDR:         cidr,
-		AllowedCIDRs: allowedCIDRs,
-		Status:       api.PrivateNetworkStatusReady,
+		ID:            "net-" + uuid.NewString(),
+		AccountID:     acct.ID,
+		Name:          name,
+		Region:        region,
+		CIDR:          cidr,
+		AllowedCIDRs:  allowedCIDRs,
+		FirewallRules: firewallRules,
+		Status:        api.PrivateNetworkStatusReady,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
@@ -144,19 +150,29 @@ func (s *server) updatePrivateNetworkPolicy(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", "", err.Error()))
 		return
 	}
-	updated, err := store.UpdatePrivateNetworkPolicy(r.Context(), acct.ID, id, allowedCIDRs)
+	firewallRules, err := api.ValidatePrivateNetworkFirewallRules(req.FirewallRules, network.CIDR)
+	if err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("firewall_rules", "", err.Error()))
+		return
+	}
+	var updated state.PrivateNetwork
+	if firewallStore, supported := baseStore.(state.PrivateNetworkFirewallPolicyStore); supported {
+		updated, err = firewallStore.UpdatePrivateNetworkFirewallPolicy(r.Context(), acct.ID, id, allowedCIDRs, firewallRules)
+	} else {
+		updated, err = store.UpdatePrivateNetworkPolicy(r.Context(), acct.ID, id, allowedCIDRs)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
 		case errors.Is(err, state.ErrInvalidArgument):
-			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", "", "the network policy is not accepted"))
+			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("firewall_rules", "", "the network policy is not accepted"))
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not update private network policy"))
 		}
 		return
 	}
-	s.audit.Emit(r.Context(), "private_network.policy_updated", &acct.ID, map[string]any{"network_id": id, "allowed_cidrs": req.AllowedCIDRs})
+	s.audit.Emit(r.Context(), "private_network.policy_updated", &acct.ID, map[string]any{"network_id": id, "allowed_cidrs": req.AllowedCIDRs, "firewall_rules": req.FirewallRules})
 	writeJSON(w, http.StatusOK, privateNetworkResponse(updated))
 }
 
@@ -211,15 +227,16 @@ func (s *server) deletePrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 func privateNetworkResponse(network state.PrivateNetwork) api.PrivateNetwork {
 	createdAt, updatedAt := network.CreatedAt, network.UpdatedAt
 	return api.PrivateNetwork{
-		ID:           network.ID,
-		Name:         network.Name,
-		Region:       network.Region,
-		CIDR:         network.CIDR.String(),
-		AllowedCIDRs: privateNetworkPolicyStrings(network.AllowedCIDRs),
-		Status:       network.Status,
-		StatusDetail: network.StatusDetail,
-		CreatedAt:    &createdAt,
-		UpdatedAt:    &updatedAt,
+		ID:            network.ID,
+		Name:          network.Name,
+		Region:        network.Region,
+		CIDR:          network.CIDR.String(),
+		AllowedCIDRs:  privateNetworkPolicyStrings(network.AllowedCIDRs),
+		FirewallRules: network.FirewallRules,
+		Status:        network.Status,
+		StatusDetail:  network.StatusDetail,
+		CreatedAt:     &createdAt,
+		UpdatedAt:     &updatedAt,
 	}
 }
 

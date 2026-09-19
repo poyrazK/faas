@@ -18,16 +18,17 @@ import (
 // vmmd node-fabric operation realizes the account-scoped host bridge and its
 // node-local workload side-links. Cross-node transport remains a later layer.
 type PrivateNetwork struct {
-	ID           string
-	AccountID    string
-	Name         string
-	Region       string
-	CIDR         netip.Prefix
-	AllowedCIDRs []netip.Prefix
-	Status       string
-	StatusDetail string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            string
+	AccountID     string
+	Name          string
+	Region        string
+	CIDR          netip.Prefix
+	AllowedCIDRs  []netip.Prefix
+	FirewallRules []api.PrivateNetworkFirewallRule
+	Status        string
+	StatusDetail  string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // PrivateNetworkAddress is a stable address reservation for a network member.
@@ -63,10 +64,19 @@ type PrivateNetworkPolicyStore interface {
 	UpdatePrivateNetworkPolicy(context.Context, string, string, []netip.Prefix) (PrivateNetwork, error)
 }
 
+// PrivateNetworkFirewallPolicyStore extends the CIDR policy endpoint with
+// protocol/port rules while keeping the older policy interface compatible.
+type PrivateNetworkFirewallPolicyStore interface {
+	PrivateNetworkPolicyStore
+	UpdatePrivateNetworkFirewallPolicy(context.Context, string, string, []netip.Prefix, []api.PrivateNetworkFirewallRule) (PrivateNetwork, error)
+}
+
 var _ PrivateNetworkStore = (*MemStore)(nil)
 var _ PrivateNetworkStore = (*PgStore)(nil)
 var _ PrivateNetworkPolicyStore = (*MemStore)(nil)
 var _ PrivateNetworkPolicyStore = (*PgStore)(nil)
+var _ PrivateNetworkFirewallPolicyStore = (*MemStore)(nil)
+var _ PrivateNetworkFirewallPolicyStore = (*PgStore)(nil)
 
 func validatePrivateNetwork(in PrivateNetwork) (PrivateNetwork, error) {
 	in.ID = strings.TrimSpace(in.ID)
@@ -104,6 +114,11 @@ func validatePrivateNetwork(in PrivateNetwork) (PrivateNetwork, error) {
 		return PrivateNetwork{}, ErrInvalidArgument
 	}
 	in.AllowedCIDRs = policy
+	rules, err := api.ValidatePrivateNetworkFirewallRules(in.FirewallRules, in.CIDR)
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	in.FirewallRules = clonePrivateNetworkFirewallRules(rules)
 	if in.Status == "" {
 		in.Status = api.PrivateNetworkStatusReady
 	}
@@ -115,7 +130,21 @@ func validatePrivateNetwork(in PrivateNetwork) (PrivateNetwork, error) {
 
 func clonePrivateNetwork(in PrivateNetwork) PrivateNetwork {
 	in.AllowedCIDRs = append([]netip.Prefix(nil), in.AllowedCIDRs...)
+	in.FirewallRules = clonePrivateNetworkFirewallRules(in.FirewallRules)
 	return in
+}
+
+func clonePrivateNetworkFirewallRules(in []api.PrivateNetworkFirewallRule) []api.PrivateNetworkFirewallRule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]api.PrivateNetworkFirewallRule, len(in))
+	for i, rule := range in {
+		out[i] = rule
+		out[i].CIDRs = append([]string(nil), rule.CIDRs...)
+		out[i].Ports = append([]string(nil), rule.Ports...)
+	}
+	return out
 }
 
 func clonePrivateNetworkAddress(in PrivateNetworkAddress) PrivateNetworkAddress { return in }
@@ -282,6 +311,35 @@ func (m *MemStore) UpdatePrivateNetworkPolicy(ctx context.Context, accountID, id
 		return PrivateNetwork{}, ErrInvalidArgument
 	}
 	network.AllowedCIDRs = policy
+	network.UpdatedAt = time.Now().UTC()
+	m.privateNetworks[id] = network
+	return clonePrivateNetwork(network), nil
+}
+
+func (m *MemStore) UpdatePrivateNetworkFirewallPolicy(ctx context.Context, accountID, id string, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) (PrivateNetwork, error) {
+	if err := ctx.Err(); err != nil {
+		return PrivateNetwork{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	network, ok := m.privateNetworks[id]
+	if !ok || network.AccountID != accountID {
+		return PrivateNetwork{}, ErrNotFound
+	}
+	raw := make([]string, 0, len(allowedCIDRs))
+	for _, prefix := range allowedCIDRs {
+		raw = append(raw, prefix.String())
+	}
+	policy, err := api.ValidatePrivateNetworkPolicyCIDRs(raw, []netip.Prefix{network.CIDR})
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	validatedRules, err := api.ValidatePrivateNetworkFirewallRules(rules, network.CIDR)
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	network.AllowedCIDRs = policy
+	network.FirewallRules = clonePrivateNetworkFirewallRules(validatedRules)
 	network.UpdatedAt = time.Now().UTC()
 	m.privateNetworks[id] = network
 	return clonePrivateNetwork(network), nil

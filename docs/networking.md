@@ -74,15 +74,19 @@ the same live update as the stable member address. vmmd installs the nft
 accept/drop rules before publishing the new cached state; a failed update is
 reported as reconciliation error and never widens access.
 
-Networks can also carry a reusable, account-scoped CIDR firewall baseline. Set
-`allowed_cidrs` when creating a network or replace it with
-`PUT /v1/networks/{id}/policy`; the list is contained by the network CIDR and
-is applied to every attached workload. An attachment policy may only narrow
-that baseline, never broaden it. Updating the network policy is asynchronous:
-schedd replays the effective policy to every live node, and nftables keeps
-traffic blocked until each update succeeds. This first firewall slice is
-CIDR-based; protocol and port rules remain a follow-up once the control-plane
-contract is stable.
+Networks can also carry a reusable, account-scoped firewall baseline. Set
+`allowed_cidrs` and optional `firewall_rules` when creating a network or
+replace them with `PUT /v1/networks/{id}/policy`; every rule is contained by
+the network CIDR and is applied to every attached workload. A rule's
+`direction` is `ingress` or `egress`, `protocol` is `tcp`, `udp`, or `icmp`,
+and TCP/UDP rules carry ports such as `443` or `8000-8080`. Rule CIDRs are
+sources for ingress and destinations for egress; an omitted list means the
+whole network CIDR. An attachment policy may only narrow the CIDR baseline,
+never broaden it. Updating the network policy is asynchronous: schedd
+replays the effective policy to every live node, and nftables keeps traffic
+blocked until each update succeeds. Empty rule lists preserve the legacy
+CIDR-only behavior; the PUT body replaces both lists, so include a list when
+you intend to retain an existing restriction.
 
 Schedd applies a ready attachment once per live compute node and records a
 per-node convergence observation in its reconciliation logs. A partial node

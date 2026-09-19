@@ -898,6 +898,9 @@ from .prewarm_intent_response_status import PrewarmIntentResponseStatus
 from .prewarm_intent_response_trigger import PrewarmIntentResponseTrigger
 from .prewarm_request import PrewarmRequest
 from .private_network import PrivateNetwork
+from .private_network_firewall_rule import PrivateNetworkFirewallRule
+from .private_network_firewall_rule_direction import PrivateNetworkFirewallRuleDirection
+from .private_network_firewall_rule_protocol import PrivateNetworkFirewallRuleProtocol
 from .private_network_list_response import PrivateNetworkListResponse
 from .private_network_status import PrivateNetworkStatus
 from .problem import Problem
@@ -2155,6 +2158,9 @@ __all__ = (
     "PrewarmIntentResponseTrigger",
     "PrewarmRequest",
     "PrivateNetwork",
+    "PrivateNetworkFirewallRule",
+    "PrivateNetworkFirewallRuleDirection",
+    "PrivateNetworkFirewallRuleProtocol",
     "PrivateNetworkListResponse",
     "PrivateNetworkStatus",
     "Problem",

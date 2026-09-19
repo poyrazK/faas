@@ -28,6 +28,10 @@ type PrivateNetworkPolicyRouter interface {
 	UpdatePrivateNetworkWithPolicy(context.Context, string, string, []netip.Prefix, []netip.Prefix) error
 }
 
+type PrivateNetworkFirewallPolicyRouter interface {
+	UpdatePrivateNetworkWithFirewall(context.Context, string, string, []netip.Prefix, []netip.Prefix, []api.PrivateNetworkFirewallRule) error
+}
+
 // PrivateNetworkAttachmentRouter is the live Gregale-owned dataplane seam.
 // The extra identity lets vmmd attach an existing netns to its gpn-* bridge;
 // provider route-only updates retain the smaller PrivateNetworkRouter shape.
@@ -37,6 +41,10 @@ type PrivateNetworkAttachmentRouter interface {
 
 type PrivateNetworkPolicyAttachmentRouter interface {
 	UpdatePrivateNetworkAttachmentWithPolicy(context.Context, string, string, string, netip.Addr, []netip.Prefix, []netip.Prefix) error
+}
+
+type PrivateNetworkFirewallPolicyAttachmentRouter interface {
+	UpdatePrivateNetworkAttachmentWithFirewall(context.Context, string, string, string, netip.Addr, []netip.Prefix, []netip.Prefix, []api.PrivateNetworkFirewallRule) error
 }
 
 // PrivateNetworkFabricRouter is the additive vmmd capability used to prepare
@@ -79,7 +87,7 @@ func (a *PrivateNetworkRouteApplier) Apply(ctx context.Context, appID string, ci
 // error when one or more nodes fail, allowing operators to see which node is
 // unhealthy while the attachment remains fail-closed.
 func (a *PrivateNetworkRouteApplier) ApplyWithReport(ctx context.Context, appID string, cidrs []netip.Prefix) (privatenetwork.RouteApplyReport, error) {
-	return a.applyWithReport(ctx, appID, cidrs, nil, "", netip.Addr{})
+	return a.applyWithReport(ctx, appID, cidrs, nil, nil, "", netip.Addr{})
 }
 
 func (a *PrivateNetworkRouteApplier) ApplyAttachmentWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (privatenetwork.RouteApplyReport, error) {
@@ -93,16 +101,16 @@ func (a *PrivateNetworkRouteApplier) ApplyAttachmentWithReport(ctx context.Conte
 				if _, ok := a.router.(PrivateNetworkAttachmentRouter); !ok {
 					return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network attachment update unsupported")
 				}
-				return a.applyWithReport(ctx, attachment.AppID, attachment.CIDRs, attachment.AllowedCIDRs, attachment.NetworkID, address.Address)
+				return a.applyWithReport(ctx, attachment.AppID, attachment.CIDRs, attachment.AllowedCIDRs, attachment.FirewallRules, attachment.NetworkID, address.Address)
 			} else if !errors.Is(err, state.ErrNotFound) {
 				return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network lookup: %w", err)
 			}
 		}
 	}
-	return a.applyWithReport(ctx, attachment.AppID, attachment.CIDRs, attachment.AllowedCIDRs, "", netip.Addr{})
+	return a.applyWithReport(ctx, attachment.AppID, attachment.CIDRs, attachment.AllowedCIDRs, attachment.FirewallRules, "", netip.Addr{})
 }
 
-func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, networkID string, address netip.Addr) (privatenetwork.RouteApplyReport, error) {
+func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, networkID string, address netip.Addr) (privatenetwork.RouteApplyReport, error) {
 	rows, err := a.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
 		return privatenetwork.RouteApplyReport{}, err
@@ -124,7 +132,14 @@ func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID 
 	for _, nodeID := range nodes {
 		var applyErr error
 		if networkID != "" {
-			if len(allowedCIDRs) > 0 {
+			if len(firewallRules) > 0 {
+				policyRouter, ok := a.router.(PrivateNetworkFirewallPolicyAttachmentRouter)
+				if !ok {
+					applyErr = fmt.Errorf("private network firewall rules update unsupported")
+				} else {
+					applyErr = policyRouter.UpdatePrivateNetworkAttachmentWithFirewall(ctx, nodeID, appID, networkID, address, cidrs, allowedCIDRs, firewallRules)
+				}
+			} else if len(allowedCIDRs) > 0 {
 				policyRouter, ok := a.router.(PrivateNetworkPolicyAttachmentRouter)
 				if !ok {
 					applyErr = fmt.Errorf("private network policy update unsupported")
@@ -135,7 +150,14 @@ func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID 
 				applyErr = a.router.(PrivateNetworkAttachmentRouter).UpdatePrivateNetworkAttachment(ctx, nodeID, appID, networkID, address, cidrs)
 			}
 		} else {
-			if len(allowedCIDRs) > 0 {
+			if len(firewallRules) > 0 {
+				policyRouter, ok := a.router.(PrivateNetworkFirewallPolicyRouter)
+				if !ok {
+					applyErr = fmt.Errorf("private network firewall rules update unsupported")
+				} else {
+					applyErr = policyRouter.UpdatePrivateNetworkWithFirewall(ctx, nodeID, appID, cidrs, allowedCIDRs, firewallRules)
+				}
+			} else if len(allowedCIDRs) > 0 {
 				policyRouter, ok := a.router.(PrivateNetworkPolicyRouter)
 				if !ok {
 					applyErr = fmt.Errorf("private network policy update unsupported")

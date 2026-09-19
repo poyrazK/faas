@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // AppPrivateNetworkAttachment is the durable, provider-neutral attachment
@@ -26,10 +27,13 @@ type AppPrivateNetworkAttachment struct {
 	// only these destinations (and matching private ingress sources) are
 	// admitted; an empty list preserves the historical network-wide allow.
 	AllowedCIDRs []netip.Prefix
-	Status       string
-	StatusDetail string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// FirewallRules is the effective network-level rule set supplied by the
+	// connector during reconciliation; it is not persisted on the attachment.
+	FirewallRules []api.PrivateNetworkFirewallRule
+	Status        string
+	StatusDetail  string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // AppPrivateNetworkAttachmentStore stays separate from Store so older state
@@ -323,6 +327,14 @@ func scanAppPrivateNetworkAttachment(row privateNetworkAttachmentScanner) (AppPr
 func clonePrivateNetworkAttachment(in AppPrivateNetworkAttachment) AppPrivateNetworkAttachment {
 	in.CIDRs = append([]netip.Prefix(nil), in.CIDRs...)
 	in.AllowedCIDRs = append([]netip.Prefix(nil), in.AllowedCIDRs...)
+	if len(in.FirewallRules) > 0 {
+		in.FirewallRules = make([]api.PrivateNetworkFirewallRule, len(in.FirewallRules))
+		for i, rule := range in.FirewallRules {
+			in.FirewallRules[i] = rule
+			in.FirewallRules[i].CIDRs = append([]string(nil), rule.CIDRs...)
+			in.FirewallRules[i].Ports = append([]string(nil), rule.Ports...)
+		}
+	}
 	return in
 }
 

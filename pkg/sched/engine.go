@@ -249,10 +249,11 @@ func prefixesToCIDRStrings(prefixes []netip.Prefix) []string {
 // connector outage can never accidentally widen a guest's network policy.
 // The runtime attachment store is optional for legacy/local state adapters.
 type privateNetworkProjection struct {
-	CIDRs        []string
-	AllowedCIDRs []string
-	NetworkID    string
-	Address      string
+	CIDRs         []string
+	AllowedCIDRs  []string
+	FirewallRules []api.PrivateNetworkFirewallRule
+	NetworkID     string
+	Address       string
 }
 
 func (e *Engine) privateNetworkProjection(ctx context.Context, app state.App) privateNetworkProjection {
@@ -305,7 +306,21 @@ func (e *Engine) privateNetworkProjection(ctx context.Context, app state.App) pr
 	}
 	projection.NetworkID = attachment.NetworkID
 	projection.Address = address.Address.String()
+	projection.FirewallRules = clonePrivateNetworkFirewallRules(network.FirewallRules)
 	return projection
+}
+
+func clonePrivateNetworkFirewallRules(in []api.PrivateNetworkFirewallRule) []api.PrivateNetworkFirewallRule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]api.PrivateNetworkFirewallRule, len(in))
+	for i, rule := range in {
+		out[i] = rule
+		out[i].CIDRs = append([]string(nil), rule.CIDRs...)
+		out[i].Ports = append([]string(nil), rule.Ports...)
+	}
+	return out
 }
 
 // privateNetworkCIDRsFor is retained for callers that only need the legacy
@@ -2932,11 +2947,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// lock, so a PATCH that lands between two wakes takes
 		// effect on the next wake. Live instances keep their
 		// old netns — same contract as RAMMB and MaxConcurrency.
-		EgressAllowlist:            prefixesToCIDRStrings(app.EgressAllowlist),
-		PrivateNetworkCIDRs:        privateNetwork.CIDRs,
-		PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
-		PrivateNetworkID:           privateNetwork.NetworkID,
-		PrivateNetworkAddress:      privateNetwork.Address,
+		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
+		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
+		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
+		PrivateNetworkID:            privateNetwork.NetworkID,
+		PrivateNetworkAddress:       privateNetwork.Address,
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Empty = no static pin
 		// (default behaviour preserved). vmmd sets
@@ -4612,11 +4628,12 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
-		EgressAllowlist:            prefixesToCIDRStrings(app.EgressAllowlist),
-		PrivateNetworkCIDRs:        privateNetwork.CIDRs,
-		PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
-		PrivateNetworkID:           privateNetwork.NetworkID,
-		PrivateNetworkAddress:      privateNetwork.Address,
+		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
+		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
+		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
+		PrivateNetworkID:            privateNetwork.NetworkID,
+		PrivateNetworkAddress:       privateNetwork.Address,
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
@@ -5300,11 +5317,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// per-netns ruleset; a freshly-deployed app starts under
 		// its declared egress policy rather than awaiting a later
 		// wake.
-		EgressAllowlist:            prefixesToCIDRStrings(app.EgressAllowlist),
-		PrivateNetworkCIDRs:        privateNetwork.CIDRs,
-		PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
-		PrivateNetworkID:           privateNetwork.NetworkID,
-		PrivateNetworkAddress:      privateNetwork.Address,
+		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
+		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
+		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
+		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
+		PrivateNetworkID:            privateNetwork.NetworkID,
+		PrivateNetworkAddress:       privateNetwork.Address,
 		// ADR-119: see the Wake builder above. Prime threads
 		// the customer-supplied static IPv4 (BYOIP, Scale-only)
 		// onto the vmmd AppSpec so the per-netns renderer

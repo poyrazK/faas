@@ -277,11 +277,12 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// wake wire. apid parses + plan-gates + size-caps upstream;
 		// vmmd translates CIDRs into netns.Config.EgressAllowlist on
 		// Wake. Empty slice = no allowlist rule (current behaviour).
-		EgressAllowlist:            app.GetEgressAllowlist(),
-		PrivateNetworkCIDRs:        app.GetPrivateNetworkCidrs(),
-		PrivateNetworkAllowedCIDRs: app.GetPrivateNetworkAllowedCidrs(),
-		PrivateNetworkID:           app.GetPrivateNetworkId(),
-		PrivateNetworkAddress:      app.GetPrivateNetworkAddress(),
+		EgressAllowlist:             app.GetEgressAllowlist(),
+		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
+		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
+		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
+		PrivateNetworkID:            app.GetPrivateNetworkId(),
+		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
 		// tier-2 PR-B: schedd fans UpdateEgressAllowlist out by
 		// app_id, so the live Instance needs to remember which app
 		// it was woken for. The scheduler already knows the app
@@ -438,11 +439,12 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		APIEnvEntries: apiEnvFromProto(app.GetApiEnv()),
 		// ADR-031: see toWakeRequest for the rationale; cold-boot
 		// mirrors it so deploy primes the same egress policy.
-		EgressAllowlist:            app.GetEgressAllowlist(),
-		PrivateNetworkCIDRs:        app.GetPrivateNetworkCidrs(),
-		PrivateNetworkAllowedCIDRs: app.GetPrivateNetworkAllowedCidrs(),
-		PrivateNetworkID:           app.GetPrivateNetworkId(),
-		PrivateNetworkAddress:      app.GetPrivateNetworkAddress(),
+		EgressAllowlist:             app.GetEgressAllowlist(),
+		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
+		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
+		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
+		PrivateNetworkID:            app.GetPrivateNetworkId(),
+		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
 		// tier-2 PR-B: see toWakeRequest. The cold-boot path is
 		// the first boot of a deploy; setting AppID here means
 		// the very first UpdateEgressAllowlist fan-out finds the
@@ -748,4 +750,45 @@ func toPrivateNetworkCIDRs(ss []string) ([]netip.Prefix, error) {
 		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private_network_cidrs", err.Error())
 	}
 	return parsed, nil
+}
+
+func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, network []netip.Prefix) ([]api.PrivateNetworkFirewallRule, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(network) != 1 {
+		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", "firewall rules require exactly one private network CIDR")
+	}
+	rules := make([]api.PrivateNetworkFirewallRule, 0, len(raw))
+	for _, rule := range raw {
+		if rule == nil {
+			return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rule", "rule cannot be null")
+		}
+		rules = append(rules, api.PrivateNetworkFirewallRule{
+			Direction: rule.GetDirection(), Protocol: rule.GetProtocol(),
+			CIDRs: append([]string(nil), rule.GetCidrs()...), Ports: append([]string(nil), rule.GetPorts()...),
+		})
+	}
+	validated, err := api.ValidatePrivateNetworkFirewallRules(rules, network[0])
+	if err != nil {
+		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", err.Error())
+	}
+	return validated, nil
+}
+
+func privateNetworkFirewallRulesFromProto(raw []*vmmdpb.PrivateNetworkFirewallRule) []api.PrivateNetworkFirewallRule {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]api.PrivateNetworkFirewallRule, 0, len(raw))
+	for _, rule := range raw {
+		if rule == nil {
+			continue
+		}
+		out = append(out, api.PrivateNetworkFirewallRule{
+			Direction: rule.GetDirection(), Protocol: rule.GetProtocol(),
+			CIDRs: append([]string(nil), rule.GetCidrs()...), Ports: append([]string(nil), rule.GetPorts()...),
+		})
+	}
+	return out
 }

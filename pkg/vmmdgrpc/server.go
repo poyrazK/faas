@@ -1396,10 +1396,30 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	firewallRules, firewallErr := toPrivateNetworkFirewallRules(req.GetPrivateNetworkFirewallRules(), cidrs)
+	if firewallErr != nil {
+		return nil, grpcerr.ToStatus(toProblem(firewallErr))
+	}
 	if req.GetPrivateNetworkId() != "" || req.GetPrivateNetworkAddress() != "" {
 		allowedCIDRs, policyErr := toPrivateNetworkCIDRs(req.GetPrivateNetworkAllowedCidrs())
 		if policyErr != nil {
 			return nil, grpcerr.ToStatus(toProblem(policyErr))
+		}
+		if len(firewallRules) > 0 {
+			policyUpdater, ok := s.vmm.(interface {
+				UpdatePrivateNetworkAttachmentWithFirewall(context.Context, string, string, netip.Addr, []netip.Prefix, []netip.Prefix, []api.PrivateNetworkFirewallRule) error
+			})
+			if !ok {
+				return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_unavailable", "Private network firewall updates unavailable", "vmmd private-network firewall live update is not wired")))
+			}
+			address, parseErr := netip.ParseAddr(req.GetPrivateNetworkAddress())
+			if parseErr != nil || !address.Is4() {
+				return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network address", "private_network_address must be an IPv4 address")))
+			}
+			if err := policyUpdater.UpdatePrivateNetworkAttachmentWithFirewall(ctx, req.GetAppId(), req.GetPrivateNetworkId(), address, cidrs, allowedCIDRs, firewallRules); err != nil {
+				return nil, grpcerr.ToStatus(toProblem(err))
+			}
+			return &vmmdpb.UpdatePrivateNetworkAck{}, nil
 		}
 		if len(allowedCIDRs) > 0 {
 			policyUpdater, ok := s.vmm.(interface {
@@ -1435,6 +1455,18 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 	allowedCIDRs, policyErr := toPrivateNetworkCIDRs(req.GetPrivateNetworkAllowedCidrs())
 	if policyErr != nil {
 		return nil, grpcerr.ToStatus(toProblem(policyErr))
+	}
+	if len(firewallRules) > 0 {
+		policyUpdater, ok := s.vmm.(interface {
+			UpdatePrivateNetworkWithFirewall(context.Context, string, []netip.Prefix, []netip.Prefix, []api.PrivateNetworkFirewallRule) error
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_unavailable", "Private network firewall updates unavailable", "vmmd private-network firewall live update is not wired")))
+		}
+		if err := policyUpdater.UpdatePrivateNetworkWithFirewall(ctx, req.GetAppId(), cidrs, allowedCIDRs, firewallRules); err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+		return &vmmdpb.UpdatePrivateNetworkAck{}, nil
 	}
 	if len(allowedCIDRs) > 0 {
 		policyUpdater, ok := s.vmm.(interface {

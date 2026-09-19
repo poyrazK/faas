@@ -142,6 +142,10 @@ type Config struct {
 	// Gregale-owned side-link. Empty means legacy allow-all within the
 	// attached network CIDRs; populated ranges are admitted symmetrically.
 	PrivateNetworkAllowedCIDRs []netip.Prefix
+	// PrivateNetworkFirewallRules is the optional protocol/port allowlist for
+	// the attached private network. Non-empty rules make both directions
+	// fail-closed; empty preserves the CIDR-only behavior.
+	PrivateNetworkFirewallRules []PrivateNetworkFirewallRule
 	// OperatorExceptions (PR scale-out tier-1 residual Gap #4):
 	// per-netns accept-before-deny list. Each entry is emitted
 	// as `iifname "tap0" ip saddr <ex> accept` in the per-netns
@@ -486,20 +490,42 @@ func (c Config) NftCommands() [][]string {
 	// RFC1918 lateral-movement deny. The connector owns the readiness decision;
 	// vmmd only receives these CIDRs on a ready wake and still keeps all other
 	// RFC1918 destinations denied.
-	if rule := c.ForwardPrivateNetworkRule(nft); rule != nil {
+	if len(c.PrivateNetworkFirewallRules) > 0 {
+		cmds = append(cmds, c.ForwardPrivateNetworkFirewallRules(nft)...)
+		// A non-empty rule set is an explicit allowlist. Drop unmatched private
+		// egress before the general chain policy can accept it.
+		if destinations := c.privateNetworkPolicyDestinations(); len(destinations) > 0 {
+			var v4 []string
+			for _, prefix := range destinations {
+				if prefix.IsValid() && prefix.Addr().Is4() {
+					v4 = append(v4, prefix.String())
+				}
+			}
+			if len(v4) > 0 {
+				add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "drop")
+			}
+		}
+	} else if rule := c.ForwardPrivateNetworkRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
 	if c.privateNetworkEnabled() {
 		// DNAT'd private ingress is now addressed to the guest tap IP;
 		// admit only the published application port on the private side.
-		args := []string{"add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
-		if len(c.PrivateNetworkAllowedCIDRs) > 0 {
-			args = append(args, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
-		}
-		args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
-		add(args...)
-		if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+		if len(c.PrivateNetworkFirewallRules) > 0 {
+			for _, rule := range c.privateFirewallIngressRules(nft) {
+				cmds = append(cmds, rule)
+			}
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")
+		} else {
+			args := []string{"add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
+			if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+				args = append(args, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
+			}
+			args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
+			add(args...)
+			if len(c.PrivateNetworkAllowedCIDRs) > 0 {
+				add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")
+			}
 		}
 	}
 	// Spec §7 cap (only when ConntrackCap > 0): drop new forward flows whose
@@ -641,6 +667,22 @@ func (c Config) PrivateNetworkNftCommands() [][]string {
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
 	port := strconv.Itoa(c.guestAppPort())
 	forward := []string{"insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
+	if len(c.PrivateNetworkFirewallRules) > 0 {
+		cmds := make([][]string, 0, len(c.PrivateNetworkFirewallRules)+2)
+		for _, rule := range c.privateFirewallIngressRules(func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }) {
+			if len(rule) > 5 {
+				rule[5] = "insert"
+			}
+			cmds = append(cmds, rule)
+		}
+		cmds = append(cmds, nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop"))
+		cmds = append(cmds, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
+			"dnat", "to", fmt.Sprintf("%s:%s", GuestIP, port)))
+		cmds = append(cmds, nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.PrivateVethPeer,
+			"ip", "saddr", GuestIP, "snat", "to", c.PrivateNetworkAddress.String()))
+		return cmds
+	}
 	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 		forward = append(forward, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
 	}
@@ -825,6 +867,9 @@ func (c Config) ForwardAllowlistRule6(nft func(...string) []string) []string {
 // private destinations. It is intentionally separate from EgressAllowlist:
 // attaching a VPC must not flip public egress to an allowlist-only policy.
 func (c Config) ForwardPrivateNetworkRule(nft func(...string) []string) []string {
+	if len(c.PrivateNetworkFirewallRules) > 0 {
+		return nil
+	}
 	var v4 []string
 	for _, p := range c.privateNetworkPolicyDestinations() {
 		if p.Addr().Is4() {
@@ -843,6 +888,9 @@ func (c Config) ForwardPrivateNetworkRule(nft func(...string) []string) []string
 // attachment ranges, but keeping the family split makes the renderer safe for
 // a future dual-stack connector and mirrors the existing allowlist helpers.
 func (c Config) ForwardPrivateNetworkRule6(nft func(...string) []string) []string {
+	if len(c.PrivateNetworkFirewallRules) > 0 {
+		return nil
+	}
 	var v6 []string
 	for _, p := range c.privateNetworkPolicyDestinations() {
 		if !p.Addr().Is4() {

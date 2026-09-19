@@ -24,6 +24,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 186 | [Reusable private-network firewall policy](186-private-network-firewall-policy.md) | accepted | Network-level CIDR baseline layered over provider-neutral private-network reconciliation |
+| 187 | [Protocol-aware private-network firewall rules](187-private-network-firewall-rules.md) | accepted | Provider-neutral TCP/UDP/ICMP allow rules with fail-closed private-network enforcement |
 | 184 | [Operator-managed reserved public IP inventory](184-reserved-ip-inventory.md) | accepted | ADR-171 follow-up; durable platform-owned address pool and tenant claim transaction |
 | 179 | [Unified app-scoped dead-letter ledger and replay](179-unified-dead-letter-ledger.md) | accepted | issue #1278; additive projection over invocation and trigger dead-letter state |
 | 177 | [Durable container host-port leasing](177-container-host-port-leasing.md) | accepted | Node-local, restart-safe listener allocation for declared container ports |

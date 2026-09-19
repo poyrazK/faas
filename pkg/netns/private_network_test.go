@@ -120,6 +120,33 @@ func TestNftCommandsPrivatePolicyRestrictsIngressAndEgress(t *testing.T) {
 	}
 }
 
+func TestNftCommandsPrivateFirewallRulesFailClosed(t *testing.T) {
+	c := NewConfig("app", "fc-app", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.2"))
+	c.PrivateNetworkCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}
+	c.PrivateNetworkAllowedCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.8.0/24")}
+	c.PrivateNetworkBridge = "gpn-abc123"
+	c.PrivateVethHost = "gpn-h00001"
+	c.PrivateVethPeer = "gpn-p00001"
+	c.PrivateNetworkAddress = netip.MustParseAddr("10.42.0.2")
+	c.PrivateNetworkFirewallRules = []PrivateNetworkFirewallRule{
+		{Direction: "ingress", Protocol: "tcp", Ports: []PrivateNetworkFirewallPortRange{{Start: 443, End: 443}}},
+		{Direction: "egress", Protocol: "udp", Ports: []PrivateNetworkFirewallPortRange{{Start: 53, End: 53}}},
+	}
+	joined := make([]string, 0)
+	for _, cmd := range c.NftCommands() {
+		joined = append(joined, strings.Join(cmd, " "))
+	}
+	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } udp dport 53 accept") {
+		t.Fatalf("protocol-aware egress rule missing: %v", joined)
+	}
+	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 tcp dport 443 accept") {
+		t.Fatalf("protocol-aware ingress rule missing: %v", joined)
+	}
+	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } drop") || !containsCommand(joined, "iifname gpn-p00001 drop") {
+		t.Fatalf("firewall rules did not install terminal drops: %v", joined)
+	}
+}
+
 // adr: 009
 func TestPrivateNetworkNftCommandsAreAdditive(t *testing.T) {
 	c := NewConfig("app", "fc-app", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.2"))

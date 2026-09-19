@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,6 +15,9 @@ const (
 	PrivateNetworkAttachmentStatusError   = "error"
 	PrivateNetworkAttachmentMaxCIDRs      = 64
 	PrivateNetworkPolicyMaxCIDRs          = 64
+	PrivateNetworkFirewallMaxRules        = 64
+	PrivateNetworkFirewallMaxCIDRsPerRule = 64
+	PrivateNetworkFirewallMaxPortsPerRule = 16
 	PrivateNetworkStatusReady             = "ready"
 	PrivateNetworkStatusError             = "error"
 	PrivateNetworkMinPrefixBits           = 16
@@ -26,15 +30,16 @@ var privateNetworkIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$
 // Status describes the control-plane definition; an app attachment still
 // reports its own pending/ready state while host networking converges.
 type PrivateNetwork struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Region       string     `json:"region"`
-	CIDR         string     `json:"cidr"`
-	AllowedCIDRs []string   `json:"allowed_cidrs,omitempty"`
-	Status       string     `json:"status"`
-	StatusDetail string     `json:"status_detail,omitempty"`
-	CreatedAt    *time.Time `json:"created_at,omitempty"`
-	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	ID            string                       `json:"id"`
+	Name          string                       `json:"name"`
+	Region        string                       `json:"region"`
+	CIDR          string                       `json:"cidr"`
+	AllowedCIDRs  []string                     `json:"allowed_cidrs,omitempty"`
+	FirewallRules []PrivateNetworkFirewallRule `json:"firewall_rules,omitempty"`
+	Status        string                       `json:"status"`
+	StatusDetail  string                       `json:"status_detail,omitempty"`
+	CreatedAt     *time.Time                   `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time                   `json:"updated_at,omitempty"`
 }
 
 // PrivateNetworkListResponse wraps the account-scoped network collection.
@@ -45,16 +50,30 @@ type PrivateNetworkListResponse struct {
 // CreatePrivateNetworkRequest creates a Gregale-owned IPv4 network. The
 // region is a Gregale placement label, not a DigitalOcean region identifier.
 type CreatePrivateNetworkRequest struct {
-	Name         string   `json:"name"`
-	Region       string   `json:"region"`
-	CIDR         string   `json:"cidr"`
-	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	Name          string                       `json:"name"`
+	Region        string                       `json:"region"`
+	CIDR          string                       `json:"cidr"`
+	AllowedCIDRs  []string                     `json:"allowed_cidrs,omitempty"`
+	FirewallRules []PrivateNetworkFirewallRule `json:"firewall_rules,omitempty"`
 }
 
-// UpdatePrivateNetworkPolicyRequest replaces the network-level CIDR allowlist.
-// An empty list disables the policy and preserves legacy allow-all behavior.
+// UpdatePrivateNetworkPolicyRequest replaces the network-level CIDR and
+// protocol/port policy. Empty lists disable their respective restrictions and
+// preserve legacy allow-all behavior.
 type UpdatePrivateNetworkPolicyRequest struct {
-	AllowedCIDRs []string `json:"allowed_cidrs"`
+	AllowedCIDRs  []string                     `json:"allowed_cidrs"`
+	FirewallRules []PrivateNetworkFirewallRule `json:"firewall_rules,omitempty"`
+}
+
+// PrivateNetworkFirewallRule is an allow rule for traffic on a private
+// network. CIDRs are source ranges for ingress and destination ranges for
+// egress; an empty CIDR list means the whole network CIDR. TCP/UDP rules must
+// carry one or more single ports or inclusive ranges ("443" or "8000-8080").
+type PrivateNetworkFirewallRule struct {
+	Direction string   `json:"direction"`
+	Protocol  string   `json:"protocol"`
+	CIDRs     []string `json:"cidrs,omitempty"`
+	Ports     []string `json:"ports,omitempty"`
 }
 
 // ValidatePrivateNetworkIdentifier validates the stable operator/provider
@@ -175,6 +194,109 @@ func ValidatePrivateNetworkPolicyCIDRs(raw []string, destinations []netip.Prefix
 		seen = append(seen, prefix)
 	}
 	return seen, nil
+}
+
+// ValidatePrivateNetworkFirewallRules canonicalizes and validates a network
+// firewall rule set. Rules are intentionally provider-neutral and IPv4-only
+// in this first slice, matching the private-network attachment contract.
+func ValidatePrivateNetworkFirewallRules(raw []PrivateNetworkFirewallRule, network netip.Prefix) ([]PrivateNetworkFirewallRule, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > PrivateNetworkFirewallMaxRules {
+		return nil, fmt.Errorf("contains %d rules; maximum is %d", len(raw), PrivateNetworkFirewallMaxRules)
+	}
+	if !network.IsValid() {
+		return nil, fmt.Errorf("requires a valid network CIDR")
+	}
+	out := make([]PrivateNetworkFirewallRule, 0, len(raw))
+	for i, rule := range raw {
+		direction := strings.ToLower(strings.TrimSpace(rule.Direction))
+		if direction != "ingress" && direction != "egress" {
+			return nil, fmt.Errorf("rule %d direction must be ingress or egress", i)
+		}
+		protocol := strings.ToLower(strings.TrimSpace(rule.Protocol))
+		if protocol != "tcp" && protocol != "udp" && protocol != "icmp" {
+			return nil, fmt.Errorf("rule %d protocol must be tcp, udp, or icmp", i)
+		}
+		if protocol == "icmp" && len(rule.Ports) > 0 {
+			return nil, fmt.Errorf("rule %d icmp cannot specify ports", i)
+		}
+		if len(rule.CIDRs) > PrivateNetworkFirewallMaxCIDRsPerRule {
+			return nil, fmt.Errorf("rule %d contains %d CIDRs; maximum is %d", i, len(rule.CIDRs), PrivateNetworkFirewallMaxCIDRsPerRule)
+		}
+		ports, err := normalizeFirewallPorts(rule.Ports, protocol, i)
+		if err != nil {
+			return nil, err
+		}
+		cidrs := make([]string, 0, len(rule.CIDRs))
+		seen := make([]netip.Prefix, 0, len(rule.CIDRs))
+		for _, value := range rule.CIDRs {
+			value = strings.TrimSpace(value)
+			prefix, parseErr := netip.ParsePrefix(value)
+			if parseErr != nil {
+				return nil, fmt.Errorf("rule %d CIDR %q is invalid: %w", i, value, parseErr)
+			}
+			prefix = prefix.Masked()
+			if !prefix.Addr().Is4() || prefix.Bits() == 0 {
+				return nil, fmt.Errorf("rule %d CIDR %q must be a non-default IPv4 CIDR", i, value)
+			}
+			if !network.Contains(prefix.Addr()) || network.Bits() > prefix.Bits() {
+				return nil, fmt.Errorf("rule %d CIDR %q is outside the private network", i, value)
+			}
+			for _, existing := range seen {
+				if prefixesOverlap(prefix, existing) {
+					return nil, fmt.Errorf("rule %d CIDR %q overlaps %s", i, value, existing)
+				}
+			}
+			seen = append(seen, prefix)
+			cidrs = append(cidrs, prefix.String())
+		}
+		out = append(out, PrivateNetworkFirewallRule{Direction: direction, Protocol: protocol, CIDRs: cidrs, Ports: ports})
+	}
+	return out, nil
+}
+
+func normalizeFirewallPorts(raw []string, protocol string, rule int) ([]string, error) {
+	if protocol == "icmp" {
+		return nil, nil
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("rule %d %s requires at least one port or range", rule, protocol)
+	}
+	if len(raw) > PrivateNetworkFirewallMaxPortsPerRule {
+		return nil, fmt.Errorf("rule %d contains %d ports; maximum is %d", rule, len(raw), PrivateNetworkFirewallMaxPortsPerRule)
+	}
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		parts := strings.Split(value, "-")
+		if len(parts) > 2 || value == "" {
+			return nil, fmt.Errorf("rule %d port %q must be N or N-M", rule, value)
+		}
+		start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || start < 1 || start > 65535 {
+			return nil, fmt.Errorf("rule %d port %q is outside 1..65535", rule, value)
+		}
+		end := start
+		if len(parts) == 2 {
+			end, err = strconv.Atoi(strings.TrimSpace(parts[1]))
+			if err != nil || end < start || end > 65535 {
+				return nil, fmt.Errorf("rule %d port %q is not an increasing range within 1..65535", rule, value)
+			}
+		}
+		canonical := strconv.Itoa(start)
+		if end != start {
+			canonical += "-" + strconv.Itoa(end)
+		}
+		if _, exists := seen[canonical]; exists {
+			return nil, fmt.Errorf("rule %d repeats port %q", rule, canonical)
+		}
+		seen[canonical] = struct{}{}
+		out = append(out, canonical)
+	}
+	return out, nil
 }
 
 func prefixesOverlap(a, b netip.Prefix) bool {

@@ -434,6 +434,9 @@ type AppSpec struct {
 	// PrivateNetworkAllowedCIDRs is the optional private-network security
 	// policy. Empty preserves the legacy allow-all attachment behavior.
 	PrivateNetworkAllowedCIDRs []string
+	// PrivateNetworkFirewallRules carries the reusable network-level protocol/
+	// port allowlist. Empty preserves CIDR-only behavior.
+	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
 	// Sidecars carries the deployment's immutable sidecar layer handles and
 	// per-workload policy. Image defaults and command metadata are baked into
 	// each sidecar layer; sealed deployment env overrides travel separately in
@@ -942,25 +945,33 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 // UpdatePrivateNetwork applies the provider-verified private destination set
 // to all live instances of an app on this vmmd.
 func (c *VMMClient) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {
-	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, nil)
+	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, nil, nil)
 }
 
 func (c *VMMClient) UpdatePrivateNetworkWithPolicy(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix) error {
-	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, allowedCIDRs)
+	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, allowedCIDRs, nil)
+}
+
+func (c *VMMClient) UpdatePrivateNetworkWithFirewall(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) error {
+	return c.updatePrivateNetwork(ctx, appID, "", netip.Addr{}, cidrs, allowedCIDRs, rules)
 }
 
 func (c *VMMClient) UpdatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs []netip.Prefix) error {
-	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, nil)
+	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, nil, nil)
 }
 
 // UpdatePrivateNetworkAttachmentWithPolicy applies the private side-link and
 // its optional allowlist in one vmmd request. The additive method keeps older
 // scheduler fakes and rolling vmmd clients source-compatible.
 func (c *VMMClient) UpdatePrivateNetworkAttachmentWithPolicy(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
-	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, allowedCIDRs)
+	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, allowedCIDRs, nil)
 }
 
-func (c *VMMClient) updatePrivateNetwork(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
+func (c *VMMClient) UpdatePrivateNetworkAttachmentWithFirewall(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) error {
+	return c.updatePrivateNetwork(ctx, appID, networkID, address, cidrs, allowedCIDRs, rules)
+}
+
+func (c *VMMClient) updatePrivateNetwork(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) error {
 	ss := make([]string, 0, len(cidrs))
 	for _, p := range cidrs {
 		ss = append(ss, p.String())
@@ -970,6 +981,12 @@ func (c *VMMClient) updatePrivateNetwork(ctx context.Context, appID, networkID s
 	}
 	for _, p := range allowedCIDRs {
 		req.PrivateNetworkAllowedCidrs = append(req.PrivateNetworkAllowedCidrs, p.String())
+	}
+	for _, rule := range rules {
+		req.PrivateNetworkFirewallRules = append(req.PrivateNetworkFirewallRules, &vmmdpb.PrivateNetworkFirewallRule{
+			Direction: rule.Direction, Protocol: rule.Protocol,
+			Cidrs: append([]string(nil), rule.CIDRs...), Ports: append([]string(nil), rule.Ports...),
+		})
 	}
 	if address.IsValid() {
 		req.PrivateNetworkAddress = address.String()
@@ -1348,7 +1365,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			DependsOn:     dependsOn,
 		})
 	}
-	return &vmmdpb.AppSpec{
+	out := &vmmdpb.AppSpec{
 		BaseKey:         a.BaseKey,
 		LayerKey:        a.LayerKey,
 		VcpuCount:       a.VCPUCount,
@@ -1392,6 +1409,13 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		PrivateNetworkAddress:      a.PrivateNetworkAddress,
 		PrivateNetworkAllowedCidrs: a.PrivateNetworkAllowedCIDRs,
 	}
+	for _, rule := range a.PrivateNetworkFirewallRules {
+		out.PrivateNetworkFirewallRules = append(out.PrivateNetworkFirewallRules, &vmmdpb.PrivateNetworkFirewallRule{
+			Direction: rule.Direction, Protocol: rule.Protocol,
+			Cidrs: append([]string(nil), rule.CIDRs...), Ports: append([]string(nil), rule.Ports...),
+		})
+	}
+	return out
 }
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {

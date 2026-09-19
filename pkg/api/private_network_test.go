@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/netip"
+	"strconv"
 	"testing"
 )
 
@@ -56,5 +57,42 @@ func TestValidatePrivateNetworkPolicyCIDRsIsContainedAndOptional(t *testing.T) {
 	}
 	if _, err := ValidatePrivateNetworkPolicyCIDRs([]string{"10.43.0.0/16"}, destinations); err == nil {
 		t.Fatal("policy outside attached network unexpectedly accepted")
+	}
+}
+
+func TestValidatePrivateNetworkFirewallRulesCanonicalizesAndValidates(t *testing.T) {
+	network := netip.MustParsePrefix("10.42.0.0/16")
+	got, err := ValidatePrivateNetworkFirewallRules([]PrivateNetworkFirewallRule{{
+		Direction: " INGRESS ",
+		Protocol:  " TCP ",
+		CIDRs:     []string{"10.42.8.5/24"},
+		Ports:     []string{" 443 ", "8000 - 8080"},
+	}}, network)
+	if err != nil {
+		t.Fatalf("valid firewall rule rejected: %v", err)
+	}
+	if len(got) != 1 || got[0].Direction != "ingress" || got[0].Protocol != "tcp" {
+		t.Fatalf("rule identity not canonicalized: %#v", got)
+	}
+	if got[0].CIDRs[0] != "10.42.8.0/24" || got[0].Ports[0] != "443" || got[0].Ports[1] != "8000-8080" {
+		t.Fatalf("rule values not canonicalized: %#v", got[0])
+	}
+
+	for _, rule := range []PrivateNetworkFirewallRule{
+		{Direction: "ingress", Protocol: "icmp", Ports: []string{"8"}},
+		{Direction: "ingress", Protocol: "tcp"},
+		{Direction: "ingress", Protocol: "tcp", Ports: []string{"8080-80"}},
+		{Direction: "egress", Protocol: "udp", CIDRs: []string{"10.43.0.0/16"}, Ports: []string{"53"}},
+	} {
+		if _, err := ValidatePrivateNetworkFirewallRules([]PrivateNetworkFirewallRule{rule}, network); err == nil {
+			t.Errorf("invalid firewall rule accepted: %#v", rule)
+		}
+	}
+	tooManyCIDRs := make([]string, PrivateNetworkFirewallMaxCIDRsPerRule+1)
+	for i := range tooManyCIDRs {
+		tooManyCIDRs[i] = "10.42." + strconv.Itoa(i%256) + ".0/24"
+	}
+	if _, err := ValidatePrivateNetworkFirewallRules([]PrivateNetworkFirewallRule{{Direction: "ingress", Protocol: "icmp", CIDRs: tooManyCIDRs}}, network); err == nil {
+		t.Fatal("firewall rule CIDR cap not enforced")
 	}
 }

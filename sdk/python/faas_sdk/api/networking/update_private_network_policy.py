@@ -90,11 +90,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: UpdatePrivateNetworkPolicyRequest,
 ) -> Response[PrivateNetwork | Problem]:
-    """Replace a private network's reusable CIDR firewall policy.
+    """Replace a private network's reusable firewall policy.
 
-     Replaces the network-level IPv4 CIDR allowlist used by every attached
-    workload. An empty list disables the network policy. App-level policy
-    may further restrict these destinations but cannot broaden them.
+     Replaces the network-level IPv4 CIDR allowlist and optional
+    protocol/port rules used by every attached workload. Empty lists
+    preserve the legacy allow-all behavior; non-empty rules are enforced
+    fail-closed. App-level policy may further restrict destinations but
+    cannot broaden the network baseline.
 
     Args:
         id (str):
@@ -126,11 +128,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: UpdatePrivateNetworkPolicyRequest,
 ) -> PrivateNetwork | Problem | None:
-    """Replace a private network's reusable CIDR firewall policy.
+    """Replace a private network's reusable firewall policy.
 
-     Replaces the network-level IPv4 CIDR allowlist used by every attached
-    workload. An empty list disables the network policy. App-level policy
-    may further restrict these destinations but cannot broaden them.
+     Replaces the network-level IPv4 CIDR allowlist and optional
+    protocol/port rules used by every attached workload. Empty lists
+    preserve the legacy allow-all behavior; non-empty rules are enforced
+    fail-closed. App-level policy may further restrict destinations but
+    cannot broaden the network baseline.
 
     Args:
         id (str):
@@ -157,11 +161,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: UpdatePrivateNetworkPolicyRequest,
 ) -> Response[PrivateNetwork | Problem]:
-    """Replace a private network's reusable CIDR firewall policy.
+    """Replace a private network's reusable firewall policy.
 
-     Replaces the network-level IPv4 CIDR allowlist used by every attached
-    workload. An empty list disables the network policy. App-level policy
-    may further restrict these destinations but cannot broaden them.
+     Replaces the network-level IPv4 CIDR allowlist and optional
+    protocol/port rules used by every attached workload. Empty lists
+    preserve the legacy allow-all behavior; non-empty rules are enforced
+    fail-closed. App-level policy may further restrict destinations but
+    cannot broaden the network baseline.
 
     Args:
         id (str):
@@ -191,11 +197,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: UpdatePrivateNetworkPolicyRequest,
 ) -> PrivateNetwork | Problem | None:
-    """Replace a private network's reusable CIDR firewall policy.
+    """Replace a private network's reusable firewall policy.
 
-     Replaces the network-level IPv4 CIDR allowlist used by every attached
-    workload. An empty list disables the network policy. App-level policy
-    may further restrict these destinations but cannot broaden them.
+     Replaces the network-level IPv4 CIDR allowlist and optional
+    protocol/port rules used by every attached workload. Empty lists
+    preserve the legacy allow-all behavior; non-empty rules are enforced
+    fail-closed. App-level policy may further restrict destinations but
+    cannot broaden the network baseline.
 
     Args:
         id (str):

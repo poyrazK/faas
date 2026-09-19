@@ -41,5 +41,5 @@ func (c *StoreConnector) Check(ctx context.Context, attachment state.AppPrivateN
 	if network.Status != "ready" {
 		return CheckResult{Detail: network.StatusDetail}, nil
 	}
-	return CheckResult{Ready: true, Detail: "Gregale network definition ready", AllowedCIDRs: append([]netip.Prefix(nil), network.AllowedCIDRs...)}, nil
+	return CheckResult{Ready: true, Detail: "Gregale network definition ready", AllowedCIDRs: append([]netip.Prefix(nil), network.AllowedCIDRs...), FirewallRules: cloneFirewallRules(network.FirewallRules)}, nil
 }

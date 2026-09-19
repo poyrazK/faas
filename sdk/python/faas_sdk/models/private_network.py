@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.private_network_status import PrivateNetworkStatus, check_private_network_status
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.private_network_firewall_rule import PrivateNetworkFirewallRule
+
 
 T = TypeVar("T", bound="PrivateNetwork")
 
@@ -25,6 +29,8 @@ class PrivateNetwork:
     status: PrivateNetworkStatus
     allowed_cidrs: list[str] | Unset = UNSET
     """Optional reusable CIDR allowlist for all attached workloads."""
+    firewall_rules: list[PrivateNetworkFirewallRule] | Unset = UNSET
+    """Optional protocol/port allow rules applied to every attachment."""
     status_detail: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
@@ -44,6 +50,13 @@ class PrivateNetwork:
         allowed_cidrs: list[str] | Unset = UNSET
         if not isinstance(self.allowed_cidrs, Unset):
             allowed_cidrs = self.allowed_cidrs
+
+        firewall_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.firewall_rules, Unset):
+            firewall_rules = []
+            for firewall_rules_item_data in self.firewall_rules:
+                firewall_rules_item = firewall_rules_item_data.to_dict()
+                firewall_rules.append(firewall_rules_item)
 
         status_detail = self.status_detail
 
@@ -68,6 +81,8 @@ class PrivateNetwork:
         )
         if allowed_cidrs is not UNSET:
             field_dict["allowed_cidrs"] = allowed_cidrs
+        if firewall_rules is not UNSET:
+            field_dict["firewall_rules"] = firewall_rules
         if status_detail is not UNSET:
             field_dict["status_detail"] = status_detail
         if created_at is not UNSET:
@@ -79,6 +94,8 @@ class PrivateNetwork:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.private_network_firewall_rule import PrivateNetworkFirewallRule
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -91,6 +108,15 @@ class PrivateNetwork:
         status = check_private_network_status(d.pop("status"))
 
         allowed_cidrs = cast(list[str], d.pop("allowed_cidrs", UNSET))
+
+        _firewall_rules = d.pop("firewall_rules", UNSET)
+        firewall_rules: list[PrivateNetworkFirewallRule] | Unset = UNSET
+        if _firewall_rules is not UNSET:
+            firewall_rules = []
+            for firewall_rules_item_data in _firewall_rules:
+                firewall_rules_item = PrivateNetworkFirewallRule.from_dict(firewall_rules_item_data)
+
+                firewall_rules.append(firewall_rules_item)
 
         status_detail = d.pop("status_detail", UNSET)
 
@@ -115,6 +141,7 @@ class PrivateNetwork:
             cidr=cidr,
             status=status,
             allowed_cidrs=allowed_cidrs,
+            firewall_rules=firewall_rules,
             status_detail=status_detail,
             created_at=created_at,
             updated_at=updated_at,

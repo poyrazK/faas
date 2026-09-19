@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"strings"
@@ -78,7 +79,8 @@ func privateNetworkPolicyArgs(network PrivateNetwork) []string {
 
 func loadPrivateNetworkPolicy(ctx context.Context, row pgx.Row, network *PrivateNetwork) error {
 	var raw []string
-	if err := row.Scan(&raw); err != nil {
+	var rulesJSON []byte
+	if err := row.Scan(&raw, &rulesJSON); err != nil {
 		return mapErr(err)
 	}
 	policy := make([]netip.Prefix, 0, len(raw))
@@ -90,6 +92,17 @@ func loadPrivateNetworkPolicy(ctx context.Context, row pgx.Row, network *Private
 		policy = append(policy, prefix.Masked())
 	}
 	network.AllowedCIDRs = policy
+	if len(rulesJSON) > 0 {
+		var rules []api.PrivateNetworkFirewallRule
+		if err := json.Unmarshal(rulesJSON, &rules); err != nil {
+			return err
+		}
+		validated, err := api.ValidatePrivateNetworkFirewallRules(rules, network.CIDR)
+		if err != nil {
+			return err
+		}
+		network.FirewallRules = validated
+	}
 	return nil
 }
 
@@ -127,10 +140,14 @@ func (s *PgStore) CreatePrivateNetwork(ctx context.Context, network PrivateNetwo
 	}
 	id, _, name, region, cidr, status, detail := privateNetworkArgs(network)
 	policy := privateNetworkPolicyArgs(network)
+	rulesJSON, err := json.Marshal(network.FirewallRules)
+	if err != nil {
+		return PrivateNetwork{}, err
+	}
 	created, err := scanPrivateNetwork(tx.QueryRow(ctx, `
-		insert into private_networks (id, account_id, name, region, cidr, allowed_cidrs, status, status_detail)
-		values ($1, $2, $3, $4, $5::cidr, $6::cidr[], $7, $8)
-		returning id, account_id, name, region, cidr::text, status, status_detail, created_at, updated_at`, id, accountID, name, region, cidr, policy, status, detail))
+		insert into private_networks (id, account_id, name, region, cidr, allowed_cidrs, firewall_rules, status, status_detail)
+		values ($1, $2, $3, $4, $5::cidr, $6::cidr[], $7::jsonb, $8, $9)
+		returning id, account_id, name, region, cidr::text, status, status_detail, created_at, updated_at`, id, accountID, name, region, cidr, policy, rulesJSON, status, detail))
 	if err != nil {
 		return PrivateNetwork{}, mapErr(err)
 	}
@@ -138,6 +155,7 @@ func (s *PgStore) CreatePrivateNetwork(ctx context.Context, network PrivateNetwo
 		return PrivateNetwork{}, err
 	}
 	created.AllowedCIDRs = append([]netip.Prefix(nil), network.AllowedCIDRs...)
+	created.FirewallRules = clonePrivateNetworkFirewallRules(network.FirewallRules)
 	return created, nil
 }
 
@@ -148,7 +166,7 @@ func (s *PgStore) GetPrivateNetwork(ctx context.Context, accountID, id string) (
 	if err != nil {
 		return PrivateNetwork{}, err
 	}
-	if err := loadPrivateNetworkPolicy(ctx, s.pool.QueryRow(ctx, `select allowed_cidrs::text[] from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id)), &network); err != nil {
+	if err := loadPrivateNetworkPolicy(ctx, s.pool.QueryRow(ctx, `select allowed_cidrs::text[], firewall_rules from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id)), &network); err != nil {
 		return PrivateNetwork{}, err
 	}
 	return network, nil
@@ -168,7 +186,7 @@ func (s *PgStore) ListPrivateNetworks(ctx context.Context, accountID string) ([]
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		if err := loadPrivateNetworkPolicy(ctx, s.pool.QueryRow(ctx, `select allowed_cidrs::text[] from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), network.ID), &network); err != nil {
+		if err := loadPrivateNetworkPolicy(ctx, s.pool.QueryRow(ctx, `select allowed_cidrs::text[], firewall_rules from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), network.ID), &network); err != nil {
 			return nil, err
 		}
 		out = append(out, network)
@@ -200,6 +218,40 @@ func (s *PgStore) UpdatePrivateNetworkPolicy(ctx context.Context, accountID, id 
 		return PrivateNetwork{}, ErrNotFound
 	}
 	network.AllowedCIDRs = policy
+	network.UpdatedAt = time.Now().UTC()
+	return network, nil
+}
+
+func (s *PgStore) UpdatePrivateNetworkFirewallPolicy(ctx context.Context, accountID, id string, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) (PrivateNetwork, error) {
+	network, err := s.GetPrivateNetwork(ctx, accountID, id)
+	if err != nil {
+		return PrivateNetwork{}, err
+	}
+	raw := make([]string, 0, len(allowedCIDRs))
+	for _, prefix := range allowedCIDRs {
+		raw = append(raw, prefix.String())
+	}
+	policy, err := api.ValidatePrivateNetworkPolicyCIDRs(raw, []netip.Prefix{network.CIDR})
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	validatedRules, err := api.ValidatePrivateNetworkFirewallRules(rules, network.CIDR)
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	rulesJSON, err := json.Marshal(validatedRules)
+	if err != nil {
+		return PrivateNetwork{}, err
+	}
+	result, err := s.pool.Exec(ctx, `update private_networks set allowed_cidrs = $3::cidr[], firewall_rules = $4::jsonb where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id), raw, rulesJSON)
+	if err != nil {
+		return PrivateNetwork{}, mapErr(err)
+	}
+	if result.RowsAffected() == 0 {
+		return PrivateNetwork{}, ErrNotFound
+	}
+	network.AllowedCIDRs = policy
+	network.FirewallRules = clonePrivateNetworkFirewallRules(validatedRules)
 	network.UpdatedAt = time.Now().UTC()
 	return network, nil
 }

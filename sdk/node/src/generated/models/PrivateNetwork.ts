@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PrivateNetworkFirewallRule } from './PrivateNetworkFirewallRule.js';
 /**
  * Gregale-owned private-network definition.
  */
@@ -17,6 +18,10 @@ export type PrivateNetwork = {
    * Optional reusable CIDR allowlist for all attached workloads.
    */
   allowed_cidrs?: Array<string>;
+  /**
+   * Optional protocol/port allow rules applied to every attachment.
+   */
+  firewall_rules?: Array<PrivateNetworkFirewallRule>;
   status: 'ready' | 'error';
   status_detail?: string;
   created_at?: string;

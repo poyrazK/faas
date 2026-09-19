@@ -31,9 +31,10 @@ type Connector interface {
 }
 
 type CheckResult struct {
-	Ready        bool
-	Detail       string
-	AllowedCIDRs []netip.Prefix
+	Ready         bool
+	Detail        string
+	AllowedCIDRs  []netip.Prefix
+	FirewallRules []api.PrivateNetworkFirewallRule
 }
 
 // RouteApplier activates the exact CIDRs requested by the customer. It must be
@@ -212,6 +213,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 				break
 			}
 			effectiveAttachment := attachment
+			effectiveAttachment.FirewallRules = cloneFirewallRules(check.FirewallRules)
 			effectivePolicy, policyErr := mergePrivateNetworkPolicy(check.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
 			if policyErr != nil {
 				summary.Failed++
@@ -223,7 +225,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 				}
 				break
 			}
-			if len(check.AllowedCIDRs) > 0 {
+			if len(check.AllowedCIDRs) > 0 || len(check.FirewallRules) > 0 {
 				if _, supported := r.applier.(AttachmentRouteReportingApplier); !supported {
 					summary.Failed++
 					policyErr := errors.New("private network firewall policy cannot be enforced by the configured route applier")
@@ -304,6 +306,19 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		}
 	}
 	return summary, errors.Join(sweepErrs...)
+}
+
+func cloneFirewallRules(in []api.PrivateNetworkFirewallRule) []api.PrivateNetworkFirewallRule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]api.PrivateNetworkFirewallRule, len(in))
+	for i, rule := range in {
+		out[i] = rule
+		out[i].CIDRs = append([]string(nil), rule.CIDRs...)
+		out[i].Ports = append([]string(nil), rule.Ports...)
+	}
+	return out
 }
 
 func cloneRouteNodeObservations(in []RouteNodeObservation) []RouteNodeObservation {

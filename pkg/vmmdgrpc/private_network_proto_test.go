@@ -29,3 +29,21 @@ func TestToColdBootRequestPrivateNetworkCIDRs(t *testing.T) {
 		t.Fatalf("private network policy did not cross vmmd adapter: %v", request.PrivateNetworkAllowedCIDRs)
 	}
 }
+
+func TestToColdBootRequestPrivateNetworkFirewallRules(t *testing.T) {
+	request, err := toColdBootRequest(context.Background(), &vmmdpb.CreateColdBootRequest{
+		Instance: "i-firewall",
+		App: &vmmdpb.AppSpec{
+			PrivateNetworkCidrs: []string{"10.42.0.0/16"},
+			PrivateNetworkFirewallRules: []*vmmdpb.PrivateNetworkFirewallRule{{
+				Direction: "INGRESS", Protocol: "TCP", Cidrs: []string{"10.42.8.5/24"}, Ports: []string{"443"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.PrivateNetworkFirewallRules) != 1 || request.PrivateNetworkFirewallRules[0].Direction != "INGRESS" || request.PrivateNetworkFirewallRules[0].CIDRs[0] != "10.42.8.5/24" {
+		t.Fatalf("firewall rule did not cross vmmd adapter: %#v", request.PrivateNetworkFirewallRules)
+	}
+}

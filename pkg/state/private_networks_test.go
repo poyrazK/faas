@@ -86,7 +86,8 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	store := NewMemStore()
 	network, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{
 		AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28"),
-		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/30")},
+		AllowedCIDRs:  []netip.Prefix{netip.MustParsePrefix("10.42.0.0/30")},
+		FirewallRules: []api.PrivateNetworkFirewallRule{{Direction: "ingress", Protocol: "tcp", Ports: []string{"443"}}},
 	})
 	if err != nil {
 		t.Fatalf("CreatePrivateNetwork: %v", err)
@@ -97,9 +98,16 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	if len(network.AllowedCIDRs) != 1 || network.AllowedCIDRs[0].String() != "10.42.0.0/30" {
 		t.Fatalf("network policy = %v", network.AllowedCIDRs)
 	}
+	if len(network.FirewallRules) != 1 || network.FirewallRules[0].Ports[0] != "443" {
+		t.Fatalf("network firewall policy = %#v", network.FirewallRules)
+	}
 	updated, err := store.UpdatePrivateNetworkPolicy(ctx, "acct-1", network.ID, []netip.Prefix{netip.MustParsePrefix("10.42.0.4/30")})
 	if err != nil || len(updated.AllowedCIDRs) != 1 || updated.AllowedCIDRs[0].String() != "10.42.0.4/30" {
 		t.Fatalf("UpdatePrivateNetworkPolicy = %+v, err=%v", updated, err)
+	}
+	updated, err = store.UpdatePrivateNetworkFirewallPolicy(ctx, "acct-1", network.ID, updated.AllowedCIDRs, []api.PrivateNetworkFirewallRule{{Direction: "egress", Protocol: "udp", Ports: []string{"53"}}})
+	if err != nil || len(updated.FirewallRules) != 1 || updated.FirewallRules[0].Protocol != "udp" {
+		t.Fatalf("UpdatePrivateNetworkFirewallPolicy = %+v, err=%v", updated, err)
 	}
 	if _, err := store.UpdatePrivateNetworkPolicy(ctx, "acct-1", network.ID, []netip.Prefix{netip.MustParsePrefix("10.43.0.0/30")}); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("outside policy err = %v, want invalid argument", err)

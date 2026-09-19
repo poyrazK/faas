@@ -7679,11 +7679,13 @@ paths:
     put:
       tags: [networking]
       operationId: updatePrivateNetworkPolicy
-      summary: Replace a private network's reusable CIDR firewall policy.
+      summary: Replace a private network's reusable firewall policy.
       description: |
-        Replaces the network-level IPv4 CIDR allowlist used by every attached
-        workload. An empty list disables the network policy. App-level policy
-        may further restrict these destinations but cannot broaden them.
+        Replaces the network-level IPv4 CIDR allowlist and optional
+        protocol/port rules used by every attached workload. Empty lists
+        preserve the legacy allow-all behavior; non-empty rules are enforced
+        fail-closed. App-level policy may further restrict destinations but
+        cannot broaden the network baseline.
       requestBody:
         required: true
         content:
@@ -30218,6 +30220,11 @@ components:
           maxItems: 64
           description: Optional reusable CIDR allowlist for all attached workloads.
           items: { type: string, format: ipv4-cidr }
+        firewall_rules:
+          type: array
+          maxItems: 64
+          description: Optional protocol/port allow rules applied to every attachment.
+          items: { $ref: '#/components/schemas/PrivateNetworkFirewallRule' }
         status:
           type: string
           enum: [ready, error]
@@ -30253,6 +30260,11 @@ components:
           maxItems: 64
           description: Optional reusable CIDR allowlist contained by cidr.
           items: { type: string, format: ipv4-cidr }
+        firewall_rules:
+          type: array
+          maxItems: 64
+          description: Optional protocol/port allow rules contained by cidr.
+          items: { $ref: '#/components/schemas/PrivateNetworkFirewallRule' }
 
     UpdatePrivateNetworkPolicyRequest:
       description: PUT /v1/networks/{id}/policy body.
@@ -30262,8 +30274,37 @@ components:
         allowed_cidrs:
           type: array
           maxItems: 64
-          description: CIDRs reachable by attached workloads; empty disables the policy.
+          description: CIDRs reachable by attached workloads; empty disables the CIDR restriction.
           items: { type: string, format: ipv4-cidr }
+        firewall_rules:
+          type: array
+          maxItems: 64
+          description: Protocol/port allow rules contained by the network CIDR; empty disables the rule restriction.
+          items: { $ref: '#/components/schemas/PrivateNetworkFirewallRule' }
+
+    PrivateNetworkFirewallRule:
+      description: Provider-neutral private-network allow rule.
+      type: object
+      required: [direction, protocol]
+      properties:
+        direction:
+          type: string
+          enum: [ingress, egress]
+        protocol:
+          type: string
+          enum: [tcp, udp, icmp]
+        cidrs:
+          type: array
+          maxItems: 64
+          description: Source CIDRs for ingress or destination CIDRs for egress; empty means the network CIDR.
+          items: { type: string, format: ipv4-cidr }
+        ports:
+          type: array
+          maxItems: 16
+          description: TCP/UDP ports or inclusive ranges such as 443 or 8000-8080; omit for ICMP.
+          items:
+            type: string
+            pattern: '^[0-9]{1,5}(-[0-9]{1,5})?$'
 
     AppPrivateNetworkAttachmentRequest:
       description: PUT body for /v1/apps/{slug}/network/private.

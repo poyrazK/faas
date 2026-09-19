@@ -588,6 +588,9 @@ message AppSpec {
   // Optional private-network security policy. Empty preserves allow-all
   // behavior; populated CIDRs are enforced for private egress and ingress.
   repeated string private_network_allowed_cidrs = 22;
+  // Reusable network-level protocol/port allow rules. Empty preserves the
+  // CIDR-only behavior; non-empty rules are enforced fail-closed.
+  repeated PrivateNetworkFirewallRule private_network_firewall_rules = 23;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1229,6 +1232,7 @@ message UpdatePrivateNetworkRequest {
   // Optional private-network security policy. Empty preserves allow-all
   // behavior; populated CIDRs are enforced atomically with the attachment.
   repeated string private_network_allowed_cidrs = 5;
+  repeated PrivateNetworkFirewallRule private_network_firewall_rules = 6;
 }
 
 // UpdatePrivateNetworkAck is the empty success response.
@@ -1925,4 +1929,14 @@ message FlowSummary {
   string state = 4;
   string direction = 5;
   int64 count = 6;
+}
+
+// PrivateNetworkFirewallRule is the wire representation of one private
+// network allow rule. CIDRs are source ranges for ingress and destination
+// ranges for egress; ports are single values or inclusive ranges.
+message PrivateNetworkFirewallRule {
+  string direction = 1;
+  string protocol = 2;
+  repeated string cidrs = 3;
+  repeated string ports = 4;
 }

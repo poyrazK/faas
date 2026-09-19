@@ -2997,6 +2997,9 @@ type WakeRequest struct {
 	// PrivateNetworkAllowedCIDRs is an optional fail-closed security-group
 	// style policy. Empty preserves the legacy allow-all private network.
 	PrivateNetworkAllowedCIDRs []string
+	// PrivateNetworkFirewallRules is the optional network-level protocol/port
+	// allowlist. Empty preserves CIDR-only behavior.
+	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
 	// PrivateNetworkID and PrivateNetworkAddress are present only for a
 	// Gregale-owned, ready attachment. vmmd derives the stable gpn-* bridge
 	// from account+network identity and programs the allocated member address
@@ -3156,10 +3159,11 @@ type ColdBootRequest struct {
 	EgressAllowlist []string
 	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
 	// that invoke ColdBoot directly instead of using the scheduler wire.
-	PrivateNetworkCIDRs        []string
-	PrivateNetworkID           string
-	PrivateNetworkAddress      string
-	PrivateNetworkAllowedCIDRs []string
+	PrivateNetworkCIDRs         []string
+	PrivateNetworkID            string
+	PrivateNetworkAddress       string
+	PrivateNetworkAllowedCIDRs  []string
+	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3218,14 +3222,15 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
-		APIEnvEntries:              req.APIEnvEntries,
-		EgressAllowlist:            req.EgressAllowlist,
-		PrivateNetworkCIDRs:        req.PrivateNetworkCIDRs,
-		PrivateNetworkAllowedCIDRs: req.PrivateNetworkAllowedCIDRs,
-		PrivateNetworkID:           req.PrivateNetworkID,
-		PrivateNetworkAddress:      req.PrivateNetworkAddress,
-		Plan:                       req.Plan,
-		Port:                       req.Port,
+		APIEnvEntries:               req.APIEnvEntries,
+		EgressAllowlist:             req.EgressAllowlist,
+		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
+		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
+		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
+		PrivateNetworkID:            req.PrivateNetworkID,
+		PrivateNetworkAddress:       req.PrivateNetworkAddress,
+		Plan:                        req.Plan,
+		Port:                        req.Port,
 		// ADR-057 / PR-D: forward the per-deployment override
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
@@ -3602,6 +3607,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				return nil, fmt.Errorf("wake %s: private network policy: %w", req.Instance, aerr)
 			}
 			nc.PrivateNetworkAllowedCIDRs = allowed
+		}
+		if len(req.PrivateNetworkFirewallRules) > 0 {
+			validated, ferr := api.ValidatePrivateNetworkFirewallRules(req.PrivateNetworkFirewallRules, privateCIDRs[0])
+			if ferr != nil {
+				return nil, fmt.Errorf("wake %s: private network firewall: %w", req.Instance, ferr)
+			}
+			rules, ferr := toNetnsPrivateNetworkFirewallRules(validated)
+			if ferr != nil {
+				return nil, fmt.Errorf("wake %s: private network firewall: %w", req.Instance, ferr)
+			}
+			nc.PrivateNetworkFirewallRules = rules
 		}
 	}
 	if req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
@@ -5434,16 +5450,20 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 // explicit private accept rule and its bridge routes are changed. An empty
 // slice removes private connectivity while leaving the netns intact.
 func (m *Manager) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {
-	return m.updatePrivateNetwork(ctx, appID, cidrs, nil)
+	return m.updatePrivateNetwork(ctx, appID, cidrs, nil, nil)
 }
 
 // UpdatePrivateNetworkWithPolicy applies an optional private-network
 // allowlist atomically with the destination route update.
 func (m *Manager) UpdatePrivateNetworkWithPolicy(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix) error {
-	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs)
+	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs, nil)
 }
 
-func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix) error {
+func (m *Manager) UpdatePrivateNetworkWithFirewall(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) error {
+	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs, rules)
+}
+
+func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdatePrivateNetwork: empty app_id")
 	}
@@ -5468,6 +5488,20 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			return fmt.Errorf("fcvm: UpdatePrivateNetwork policy app=%s: %w", appID, err)
 		}
 		allowedCIDRs = validated
+	}
+	var renderedRules []netns.PrivateNetworkFirewallRule
+	if len(firewallRules) > 0 {
+		if len(cidrs) == 0 {
+			return fmt.Errorf("fcvm: UpdatePrivateNetwork firewall rules require a destination CIDR")
+		}
+		validated, err := api.ValidatePrivateNetworkFirewallRules(firewallRules, cidrs[0])
+		if err != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetwork firewall app=%s: %w", appID, err)
+		}
+		renderedRules, err = toNetnsPrivateNetworkFirewallRules(validated)
+		if err != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetwork firewall app=%s: %w", appID, err)
+		}
 	}
 
 	type target struct {
@@ -5494,13 +5528,14 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 
 	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
 	for _, t := range targets {
-		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
+		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
 		}
 		nc := t.net
 		nc.PrivateNetworkCIDRs = cidrs
 		nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
+		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		nx := func(parts ...string) []string {
 			return append([]string{"ip", "netns", "exec", t.netns, "nft"}, parts...)
 		}
@@ -5529,6 +5564,27 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip6", "faas", "forward", "handle", strconv.FormatUint(h6, 10))}); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s delete v6 rule: %w", appID, t.netns, err)
 			}
+		}
+		if len(renderedRules) > 0 || len(t.net.PrivateNetworkFirewallRules) > 0 {
+			// Multiple protocol/port rules cannot be tracked by the legacy
+			// single-handle patch path. Rebuild atomically so stale accepts and
+			// terminal drops are removed together, preserving fail-closed updates.
+			if err := m.runCommands(ctx, nc.NftResetCommands()); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s firewall reset: %w", appID, t.netns, err)
+			}
+			if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s firewall rebuild: %w", appID, t.netns, err)
+			}
+			for _, old := range t.prior {
+				if containsPrefix(cidrs, old) {
+					continue
+				}
+				if err := m.run.Run(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+					m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
+				}
+			}
+			newHandles[t.id] = struct{ h4, h6 uint64 }{}
+			continue
 		}
 		v4 := nc.ForwardPrivateNetworkRule(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
 		v6 := nc.ForwardPrivateNetworkRule6(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
@@ -5584,6 +5640,7 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			clean := t.net
 			clean.PrivateNetworkCIDRs = nil
 			clean.PrivateNetworkAllowedCIDRs = nil
+			clean.PrivateNetworkFirewallRules = nil
 			clean.PrivateNetworkBridge = ""
 			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
 			clean.PrivateNetworkAddress = netip.Addr{}
@@ -5603,6 +5660,7 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		}
 		inst.Net.PrivateNetworkCIDRs = append([]netip.Prefix(nil), cidrs...)
 		inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
+		inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		if len(cidrs) == 0 && inst.Net.PrivateVethHost != "" {
 			inst.Net.PrivateNetworkBridge = ""
 			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = "", ""
@@ -5619,17 +5677,21 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 // wakes receive the same fields in WakeRequest; this method closes the gap for
 // apps that become ready while already running.
 func (m *Manager) UpdatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs []netip.Prefix) error {
-	return m.updatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs, nil)
+	return m.updatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs, nil, nil)
 }
 
 // UpdatePrivateNetworkAttachmentWithPolicy applies a Gregale side-link and
 // its optional policy as one vmmd operation. A policy transition rebuilds the
 // per-netns ruleset fail-closed before publishing the new cached state.
 func (m *Manager) UpdatePrivateNetworkAttachmentWithPolicy(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
-	return m.updatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs, allowedCIDRs)
+	return m.updatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs, allowedCIDRs, nil)
 }
 
-func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix) error {
+func (m *Manager) UpdatePrivateNetworkAttachmentWithFirewall(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix, rules []api.PrivateNetworkFirewallRule) error {
+	return m.updatePrivateNetworkAttachment(ctx, appID, networkID, address, cidrs, allowedCIDRs, rules)
+}
+
+func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
 	if appID == "" || networkID == "" || !address.IsValid() || !address.Is4() {
 		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: invalid identity")
 	}
@@ -5658,6 +5720,17 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s policy: %w", appID, err)
 		}
 	}
+	var renderedRules []netns.PrivateNetworkFirewallRule
+	if len(firewallRules) > 0 {
+		validatedRules, ruleErr := api.ValidatePrivateNetworkFirewallRules(firewallRules, cidrs[0])
+		if ruleErr != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s firewall: %w", appID, ruleErr)
+		}
+		renderedRules, ruleErr = toNetnsPrivateNetworkFirewallRules(validatedRules)
+		if ruleErr != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s firewall: %w", appID, ruleErr)
+		}
+	}
 	type target struct {
 		id      string
 		account string
@@ -5679,12 +5752,13 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		}
 		desiredBridge := privatenetwork.BridgeName(t.account, networkID)
 		if nc.PrivateNetworkBridge == desiredBridge && nc.PrivateNetworkAddress == address && nc.PrivateVethHost != "" {
-			if samePrefixSet(nc.PrivateNetworkAllowedCIDRs, allowedCIDRs) {
+			if samePrefixSet(nc.PrivateNetworkAllowedCIDRs, allowedCIDRs) && sameFirewallRules(nc.PrivateNetworkFirewallRules, renderedRules) {
 				continue
 			}
 			// Re-rendering the complete per-netns table is deliberately
 			// fail-closed: policy is never widened if the replacement fails.
 			nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
+			nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 			_ = m.runCommands(ctx, nc.NftResetCommands())
 			if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s policy rebuild: %w", appID, t.id, err)
@@ -5692,6 +5766,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			m.mu.Lock()
 			if inst := m.live[t.id]; inst != nil {
 				inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
+				inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
 			}
 			m.mu.Unlock()
@@ -5703,6 +5778,8 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			}
 			clean := nc
 			clean.PrivateNetworkCIDRs = nil
+			clean.PrivateNetworkAllowedCIDRs = nil
+			clean.PrivateNetworkFirewallRules = nil
 			clean.PrivateNetworkBridge = ""
 			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
 			clean.PrivateNetworkAddress = netip.Addr{}
@@ -5722,12 +5799,18 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		nc.PrivateNetworkAddress = address
 		nc.PrivateNetworkCIDRs = cidrs
 		nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
+		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(t.slot)
 		if err := m.runCommands(ctx, nc.PrivateNetworkSetupCommands()); err != nil {
 			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s side-link: %w", appID, t.id, err)
 		}
-		if err := m.runCommands(ctx, nc.PrivateNetworkNftCommands()); err != nil {
+		// A fresh side-link needs both directions of the complete policy. The
+		// additive helper cannot safely position protocol rules relative to the
+		// established/reply accept and lateral deny rules, so rebuild the table
+		// fail-closed before publishing the link in the live instance state.
+		_ = m.runCommands(ctx, nc.NftResetCommands())
+		if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
 			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
@@ -5736,11 +5819,12 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			inst.Net.PrivateNetworkBridge = nc.PrivateNetworkBridge
 			inst.Net.PrivateNetworkAddress = nc.PrivateNetworkAddress
 			inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
+			inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = nc.PrivateVethHost, nc.PrivateVethPeer
 		}
 		m.mu.Unlock()
 	}
-	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs)
+	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs, firewallRules)
 }
 
 func insertNftRule(argv []string) []string {
@@ -6032,6 +6116,67 @@ next:
 		return false
 	}
 	return true
+}
+
+func sameFirewallRules(a, b []netns.PrivateNetworkFirewallRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Direction != b[i].Direction || a[i].Protocol != b[i].Protocol || !samePrefixSet(a[i].CIDRs, b[i].CIDRs) || len(a[i].Ports) != len(b[i].Ports) {
+			return false
+		}
+		for j := range a[i].Ports {
+			if a[i].Ports[j] != b[i].Ports[j] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func cloneNetnsPrivateNetworkFirewallRules(in []netns.PrivateNetworkFirewallRule) []netns.PrivateNetworkFirewallRule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]netns.PrivateNetworkFirewallRule, len(in))
+	for i, rule := range in {
+		out[i] = rule
+		out[i].CIDRs = append([]netip.Prefix(nil), rule.CIDRs...)
+		out[i].Ports = append([]netns.PrivateNetworkFirewallPortRange(nil), rule.Ports...)
+	}
+	return out
+}
+
+func toNetnsPrivateNetworkFirewallRules(raw []api.PrivateNetworkFirewallRule) ([]netns.PrivateNetworkFirewallRule, error) {
+	out := make([]netns.PrivateNetworkFirewallRule, 0, len(raw))
+	for i, rule := range raw {
+		converted := netns.PrivateNetworkFirewallRule{Direction: rule.Direction, Protocol: rule.Protocol}
+		for _, value := range rule.CIDRs {
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				return nil, fmt.Errorf("rule %d CIDR %q: %w", i, value, err)
+			}
+			converted.CIDRs = append(converted.CIDRs, prefix.Masked())
+		}
+		for _, value := range rule.Ports {
+			parts := strings.Split(value, "-")
+			start, err := strconv.ParseUint(parts[0], 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("rule %d port %q: %w", i, value, err)
+			}
+			end := start
+			if len(parts) == 2 {
+				end, err = strconv.ParseUint(parts[1], 10, 16)
+				if err != nil {
+					return nil, fmt.Errorf("rule %d port %q: %w", i, value, err)
+				}
+			}
+			converted.Ports = append(converted.Ports, netns.PrivateNetworkFirewallPortRange{Start: uint16(start), End: uint16(end)})
+		}
+		out = append(out, converted)
+	}
+	return out, nil
 }
 
 // setupNetwork realises the per-instance topology (veth/tap/addressing), applies

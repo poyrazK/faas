@@ -2,6 +2,8 @@ package sched
 
 import (
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 164
@@ -16,5 +18,15 @@ func TestAppSpecPrivateNetworkCIDRsWire(t *testing.T) {
 	}
 	if len(got.GetPrivateNetworkAllowedCidrs()) != 1 || got.GetPrivateNetworkAllowedCidrs()[0] != "10.42.8.0/24" {
 		t.Fatalf("private network policy did not cross vmmd wire: %v", got.GetPrivateNetworkAllowedCidrs())
+	}
+}
+
+func TestAppSpecPrivateNetworkFirewallRulesWire(t *testing.T) {
+	got := (AppSpec{PrivateNetworkCIDRs: []string{"10.42.0.0/16"}, PrivateNetworkFirewallRules: []api.PrivateNetworkFirewallRule{{
+		Direction: "ingress", Protocol: "tcp", CIDRs: []string{"10.42.8.0/24"}, Ports: []string{"443"},
+	}}}).toProto()
+	rules := got.GetPrivateNetworkFirewallRules()
+	if len(rules) != 1 || rules[0].GetDirection() != "ingress" || rules[0].GetProtocol() != "tcp" || rules[0].GetPorts()[0] != "443" {
+		t.Fatalf("private network firewall rules did not cross vmmd wire: %#v", rules)
 	}
 }

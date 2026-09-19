@@ -456,6 +456,7 @@ export type { PreviewCreatedWebhookPayload } from './PreviewCreatedWebhookPayloa
 export type { PrewarmIntentResponse } from './PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './PrewarmRequest.js';
 export type { PrivateNetwork } from './PrivateNetwork.js';
+export type { PrivateNetworkFirewallRule } from './PrivateNetworkFirewallRule.js';
 export type { PrivateNetworkListResponse } from './PrivateNetworkListResponse.js';
 export type { Problem } from './Problem.js';
 export type { ProgrammaticAPIKey } from './ProgrammaticAPIKey.js';
