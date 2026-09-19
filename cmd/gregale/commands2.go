@@ -3336,6 +3336,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Manifest resource scope resolution failed", err)
 	}
 	resolvedApp := api.AppResponse{}
+	if existingApp {
+		// Developer sessions already own the app and intentionally skip the
+		// create-or-fetch probe. Read its metadata once so receipts still use
+		// the customer-facing canonical URL when a custom domain is configured.
+		if app, readErr := client.GetApp(ctx, slug); readErr == nil {
+			resolvedApp = app
+		}
+	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
@@ -3372,6 +3380,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	appURL := deployedAppURL(slug)
 	if resolvedApp.ID != "" {
 		appURL = canonicalAppURL(resolvedApp)
+	} else if existingApp {
+		appURL = deploymentAppURL(ctx, client, slug)
 	}
 	if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest database bindings failed", err)

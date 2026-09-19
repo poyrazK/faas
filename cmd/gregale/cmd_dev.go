@@ -391,7 +391,7 @@ func cmdDev(args []string) int {
 		return printErr("Could not create developer environment", err)
 	}
 	if !jsonOutput {
-		PrintOK(osStdout, "Developer environment: %s", session.App.URL)
+		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
 		PrintProgress(osStdout, "lease expires %s after the latest sync", session.ExpiresAt.Local().Format(time.RFC822))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
@@ -419,7 +419,7 @@ func cmdDev(args []string) int {
 			return
 		}
 		devBrowserOpened = true
-		openDeveloperEnvironment(session.App.URL)
+		openDeveloperEnvironment(canonicalAppURL(session.App))
 	}
 	lastSynced, err := devSourceFingerprint(sourceDir, envFilePath)
 	if err != nil {
@@ -553,7 +553,7 @@ func cmdDev(args []string) int {
 		},
 		onChange: func() {
 			if !jsonOutput {
-				PrintProgress(osStdout, "change detected; syncing to %s", session.App.URL)
+				PrintProgress(osStdout, "change detected; syncing to %s", canonicalAppURL(session.App))
 			}
 		},
 		onSuperseded: func() {
@@ -566,7 +566,7 @@ func cmdDev(args []string) int {
 				return
 			}
 			if !jsonOutput {
-				PrintWarn(osStderr, "developer sync failed (exit %d); fix the source and save to retry (environment remains available at %s)", code, session.App.URL)
+				PrintWarn(osStderr, "developer sync failed (exit %d); fix the source and save to retry (environment remains available at %s)", code, canonicalAppURL(session.App))
 			}
 		},
 		onCancelFailed: func(cancelErr error) {
