@@ -257,6 +257,7 @@ func manifestsEqualIgnoreEmptyMaps(a, b api.AppManifest) bool {
 		RestartPolicy:    a.RestartPolicy,
 		StartupDeadlineS: a.StartupDeadlineS,
 		MaxRetries:       a.MaxRetries,
+		RequestTimeoutS:  a.RequestTimeoutS,
 		ServiceReplicas:  a.ServiceReplicas,
 	}
 	bClean := api.AppManifest{
@@ -272,6 +273,7 @@ func manifestsEqualIgnoreEmptyMaps(a, b api.AppManifest) bool {
 		RestartPolicy:    b.RestartPolicy,
 		StartupDeadlineS: b.StartupDeadlineS,
 		MaxRetries:       b.MaxRetries,
+		RequestTimeoutS:  b.RequestTimeoutS,
 		ServiceReplicas:  b.ServiceReplicas,
 	}
 	return reflect.DeepEqual(aClean, bClean)

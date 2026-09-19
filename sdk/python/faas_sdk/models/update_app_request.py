@@ -154,6 +154,8 @@ class UpdateAppRequest:
     """Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."""
     retry_policy: None | RetryPolicyDTO | Unset = UNSET
     """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
+    request_timeout_s: int | None | Unset = UNSET
+    """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -367,6 +369,12 @@ class UpdateAppRequest:
             retry_policy = self.retry_policy.to_dict()
         else:
             retry_policy = self.retry_policy
+
+        request_timeout_s: int | None | Unset
+        if isinstance(self.request_timeout_s, Unset):
+            request_timeout_s = UNSET
+        else:
+            request_timeout_s = self.request_timeout_s
 
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
@@ -612,6 +620,8 @@ class UpdateAppRequest:
             field_dict["max_retries"] = max_retries
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if ports is not UNSET:
@@ -962,6 +972,15 @@ class UpdateAppRequest:
             return cast(None | RetryPolicyDTO | Unset, data)
 
         retry_policy = _parse_retry_policy(d.pop("retry_policy", UNSET))
+
+        def _parse_request_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
 
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
@@ -1400,6 +1419,7 @@ class UpdateAppRequest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             retry_policy=retry_policy,
+            request_timeout_s=request_timeout_s,
             service_replicas=service_replicas,
             ports=ports,
             favicon=favicon,

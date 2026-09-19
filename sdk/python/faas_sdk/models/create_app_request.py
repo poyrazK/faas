@@ -66,6 +66,9 @@ class CreateAppRequest:
     and placement controls."""
     max_concurrency: int | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
+    request_timeout_s: int | Unset = UNSET
+    """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
+    ceiling is 30 seconds."""
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
@@ -174,6 +177,8 @@ class CreateAppRequest:
 
         idle_timeout_s = self.idle_timeout_s
 
+        request_timeout_s = self.request_timeout_s
+
         execution_mode: str | Unset = UNSET
         if not isinstance(self.execution_mode, Unset):
             execution_mode = self.execution_mode
@@ -278,6 +283,8 @@ class CreateAppRequest:
             field_dict["max_concurrency"] = max_concurrency
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
         if execution_mode is not UNSET:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
@@ -384,6 +391,8 @@ class CreateAppRequest:
         max_concurrency = d.pop("max_concurrency", UNSET)
 
         idle_timeout_s = d.pop("idle_timeout_s", UNSET)
+
+        request_timeout_s = d.pop("request_timeout_s", UNSET)
 
         _execution_mode = d.pop("execution_mode", UNSET)
         execution_mode: CreateAppRequestExecutionMode | Unset
@@ -504,6 +513,7 @@ class CreateAppRequest:
             resource_profile=resource_profile,
             max_concurrency=max_concurrency,
             idle_timeout_s=idle_timeout_s,
+            request_timeout_s=request_timeout_s,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,

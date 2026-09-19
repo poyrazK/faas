@@ -876,6 +876,7 @@ type LifecycleConfig struct {
 	RestartPolicy    *string              `yaml:"restart_policy,omitempty"`
 	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
+	RequestTimeoutS  *int                 `yaml:"request_timeout_s,omitempty"`
 	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
 }
 
@@ -889,6 +890,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
+		RequestTimeoutS:  c.RequestTimeoutS,
 		ServiceReplicas:  c.ServiceReplicas,
 	}
 }
@@ -896,7 +898,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
 	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil &&
-		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.ServiceReplicas == nil)
+		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil && c.ServiceReplicas == nil)
 }
 
 // Validate checks lifecycle shape locally. Plan-specific admission is still
@@ -917,6 +919,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.MaxRetries != nil {
 		m.MaxRetries = *c.MaxRetries
+	}
+	if c.RequestTimeoutS != nil {
+		m.RequestTimeoutS = *c.RequestTimeoutS
 	}
 	m.ServiceReplicas = c.ServiceReplicas
 	return m.ValidateLifecyclePlan(api.PlanScale)

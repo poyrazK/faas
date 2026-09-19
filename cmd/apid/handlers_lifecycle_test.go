@@ -13,7 +13,7 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 	req := api.CreateAppRequest{
 		Slug: "service-app", ExecutionMode: api.ExecutionModeService,
 		RestartPolicy: api.RestartPolicyAlways, StartupDeadlineS: 60,
-		MaxRetries: 10, ServiceReplicas: &api.ServiceReplicas{Min: 1, Max: 5, Desired: 2},
+		MaxRetries: 10, RequestTimeoutS: 12, ServiceReplicas: &api.ServiceReplicas{Min: 1, Max: 5, Desired: 2},
 	}
 	rec := e.do(t, "POST", "/v1/apps", req, nil)
 	if rec.Code != 201 {
@@ -24,7 +24,7 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Manifest.ExecutionMode != api.ExecutionModeService || out.Manifest.RestartPolicy != api.RestartPolicyAlways ||
-		out.Manifest.StartupDeadlineS != 60 || out.Manifest.MaxRetries != 10 ||
+		out.Manifest.StartupDeadlineS != 60 || out.Manifest.MaxRetries != 10 || out.Manifest.RequestTimeoutS != 12 || out.RequestTimeoutS != 12 ||
 		out.Manifest.ServiceReplicas == nil || out.Manifest.ServiceReplicas.Desired != 2 {
 		t.Fatalf("lifecycle response = %+v", out.Manifest)
 	}
@@ -38,6 +38,18 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 	if stored.Manifest.ServiceReplicas == nil || stored.Manifest.ServiceReplicas.Desired != 2 {
 		t.Fatalf("stored lifecycle = %+v", stored.Manifest)
 	}
+	if stored.Manifest.RequestTimeoutS != 12 {
+		t.Fatalf("stored request timeout = %d, want 12", stored.Manifest.RequestTimeoutS)
+	}
+}
+
+func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "timeout-too-large", RequestTimeoutS: 31}, nil)
+	if rec.Code != 422 {
+		t.Fatalf("request timeout: %d %s", rec.Code, rec.Body)
+	}
+	assertProblem(t, rec, 422, api.CodeValidation)
 }
 
 func TestUpdateApp_LifecycleIsPartialAndValidated(t *testing.T) {

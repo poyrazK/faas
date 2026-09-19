@@ -147,6 +147,10 @@ type AppManifest struct {
 	// lifecycle_failure_reason='crash_loop' (ADR-138 §Decision 3).
 	// 0 means inherit per-plan default.
 	MaxRetries int `json:"max_retries,omitempty"`
+	// RequestTimeoutS is the per-app customer request wall-clock budget.
+	// Zero inherits the plan/type default; positive values are bounded by
+	// the plan request-budget ceiling.
+	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
 	// ServiceReplicas is the per-deployment replica scaffold (ADR-137
 	// §Decision 3). Only honoured when ExecutionMode=service. M-2
 	// lays the schema + admission; M-4 workstream E lands the
@@ -490,6 +494,16 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.MaxRetries > MaxAppManifestMaxRetries {
 		return fmt.Errorf("app manifest: max_retries %d exceeds %d absolute cap", m.MaxRetries, MaxAppManifestMaxRetries)
+	}
+	// RequestTimeoutS is the per-app request wall-clock budget. Zero inherits
+	// the plan/type default; positive values must stay within the plan's
+	// effective request-budget ceiling.
+	if m.RequestTimeoutS < 0 {
+		return fmt.Errorf("app manifest: request_timeout_s %d must be >= 0", m.RequestTimeoutS)
+	}
+	requestTimeoutCap := int(limits.RequestBudgetMaxDuration() / time.Second)
+	if requestTimeoutCap > 0 && m.RequestTimeoutS > requestTimeoutCap {
+		return fmt.Errorf("app manifest: request_timeout_s %d exceeds plan %q cap %d", m.RequestTimeoutS, plan, requestTimeoutCap)
 	}
 	// ServiceReplicas shape: only meaningful when ExecutionMode=service.
 	// Rejecting the other modes here prevents a stale replica policy from

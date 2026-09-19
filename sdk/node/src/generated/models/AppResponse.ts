@@ -45,6 +45,10 @@ export type AppResponse = {
   concurrency_per_vm: number;
   effective_limits: AppEffectiveLimits;
   idle_timeout_s?: number | null;
+  /**
+   * Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default.
+   */
+  request_timeout_s?: number;
   min_instances: number;
   /**
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.

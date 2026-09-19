@@ -28,6 +28,17 @@ func cloneWorkloadPorts(ports []api.WorkloadPort) []api.WorkloadPort {
 }
 
 func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency int) *api.Problem {
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid lifecycle configuration", fmt.Sprintf("unknown plan %q", plan))
+	}
+	maxRequestTimeoutS := int(limits.RequestBudgetMaxDuration().Seconds())
+	if manifest.RequestTimeoutS < 0 || manifest.RequestTimeoutS > maxRequestTimeoutS {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid request timeout",
+			fmt.Sprintf("request_timeout_s must be between 0 and %d for the %s plan", maxRequestTimeoutS, plan))
+	}
 	if manifest.HealthPathWakes && !plan.HealthPathWakesAllowed() {
 		return api.NewProblem(http.StatusForbidden,
 			api.CodePlanHealthPathWakesNotAllowed,
@@ -43,11 +54,6 @@ func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency in
 			"Invalid lifecycle configuration", err.Error())
 	}
 	if manifest.ServiceReplicas != nil {
-		limits, ok := api.LimitsFor(plan)
-		if !ok {
-			return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Invalid lifecycle configuration", fmt.Sprintf("unknown plan %q", plan))
-		}
 		effectiveMax := maxConcurrency
 		if effectiveMax <= 0 || effectiveMax > limits.MaxConcurrency {
 			effectiveMax = limits.MaxConcurrency
@@ -71,6 +77,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		RestartPolicy:    req.RestartPolicy,
 		StartupDeadlineS: req.StartupDeadlineS,
 		MaxRetries:       req.MaxRetries,
+		RequestTimeoutS:  req.RequestTimeoutS,
 		ServiceReplicas:  req.ServiceReplicas,
 		Ports:            cloneWorkloadPorts(req.Ports),
 		Favicon:          append([]byte(nil), req.Favicon...),
@@ -96,6 +103,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		RestartPolicy:    manifest.RestartPolicy,
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
+		RequestTimeoutS:  manifest.RequestTimeoutS,
 		ServiceReplicas:  replicas,
 		Ports:            cloneWorkloadPorts(manifest.Ports),
 		Favicon:          append([]byte(nil), manifest.Favicon...),
@@ -121,6 +129,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		RestartPolicy:    manifest.RestartPolicy,
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
+		RequestTimeoutS:  manifest.RequestTimeoutS,
 		ServiceReplicas:  replicas,
 		Ports:            cloneWorkloadPorts(manifest.Ports),
 		Favicon:          append([]byte(nil), manifest.Favicon...),
@@ -135,7 +144,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
-		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil ||
+		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.Ports != nil
 	if !changed {
@@ -153,6 +162,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	}
 	if req.MaxRetries != nil {
 		manifest.MaxRetries = *req.MaxRetries
+	}
+	if req.RequestTimeoutS != nil {
+		manifest.RequestTimeoutS = *req.RequestTimeoutS
 	}
 	if req.ServiceReplicas != nil {
 		manifest.ServiceReplicas = req.ServiceReplicas
@@ -199,6 +211,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.RestartPolicy = manifest.RestartPolicy
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
+	updated.RequestTimeoutS = manifest.RequestTimeoutS
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
 	updated.Ports = cloneWorkloadPorts(manifest.Ports)
 	updated.Favicon = append([]byte(nil), manifest.Favicon...)

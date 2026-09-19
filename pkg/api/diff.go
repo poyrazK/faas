@@ -118,6 +118,7 @@ type DiffAppConfigPatch struct {
 	RestartPolicy    *string          `json:"restart_policy,omitempty"`
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
+	RequestTimeoutS  *int             `json:"request_timeout_s,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	// ScalingPolicy replaces the app-level autoscaling policy when present.
 	// Nil preserves the existing policy during a preview.

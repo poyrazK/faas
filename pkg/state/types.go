@@ -1484,13 +1484,17 @@ type AppManifest struct {
 	RestartPolicy    string             `json:"restart_policy,omitempty"`
 	StartupDeadlineS int                `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                `json:"max_retries,omitempty"`
-	ServiceReplicas  *ServiceReplicas   `json:"service_replicas,omitempty"`
-	Favicon          []byte             `json:"favicon,omitempty"`
-	RobotsTxt        string             `json:"robots_txt,omitempty"`
-	HeadWakes        bool               `json:"head_wakes,omitempty"`
-	CrawlerPolicy    string             `json:"crawler_policy,omitempty"`
-	HealthPath       string             `json:"health_path,omitempty"`
-	HealthPathWakes  bool               `json:"health_path_wakes,omitempty"`
+	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
+	// inherits the plan/type default; positive values are validated against
+	// the plan request-budget ceiling before persistence.
+	RequestTimeoutS int              `json:"request_timeout_s,omitempty"`
+	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	Favicon         []byte           `json:"favicon,omitempty"`
+	RobotsTxt       string           `json:"robots_txt,omitempty"`
+	HeadWakes       bool             `json:"head_wakes,omitempty"`
+	CrawlerPolicy   string           `json:"crawler_policy,omitempty"`
+	HealthPath      string           `json:"health_path,omitempty"`
+	HealthPathWakes bool             `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
@@ -1516,7 +1520,7 @@ func (m AppManifest) IsZero() bool {
 		m.BuildDockerfile == "" && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
-		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
+		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity

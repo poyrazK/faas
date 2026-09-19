@@ -72,6 +72,8 @@ class DiffAppConfigPatch:
     """Maximum startup deadline in seconds; zero inherits the plan default."""
     max_retries: int | None | Unset = UNSET
     """Maximum lifecycle restart attempts; zero inherits the plan default."""
+    request_timeout_s: int | None | Unset = UNSET
+    """Per-app request wall-clock timeout in seconds; zero inherits the plan/type default."""
     service_replicas: DiffAppConfigPatchServiceReplicasType0 | None | Unset = UNSET
     """Replica policy for service mode."""
     scaling_policy: None | ScalingPolicy | Unset = UNSET
@@ -142,6 +144,12 @@ class DiffAppConfigPatch:
         else:
             max_retries = self.max_retries
 
+        request_timeout_s: int | None | Unset
+        if isinstance(self.request_timeout_s, Unset):
+            request_timeout_s = UNSET
+        else:
+            request_timeout_s = self.request_timeout_s
+
         service_replicas: dict[str, Any] | None | Unset
         if isinstance(self.service_replicas, Unset):
             service_replicas = UNSET
@@ -201,6 +209,8 @@ class DiffAppConfigPatch:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if scaling_policy is not UNSET:
@@ -293,6 +303,15 @@ class DiffAppConfigPatch:
 
         max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
 
+        def _parse_request_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
         def _parse_service_replicas(data: object) -> DiffAppConfigPatchServiceReplicasType0 | None | Unset:
             if data is None:
                 return data
@@ -348,6 +367,7 @@ class DiffAppConfigPatch:
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
+            request_timeout_s=request_timeout_s,
             service_replicas=service_replicas,
             scaling_policy=scaling_policy,
         )

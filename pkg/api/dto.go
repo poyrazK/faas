@@ -91,6 +91,10 @@ type CreateAppRequest struct {
 	RestartPolicy    string `json:"restart_policy,omitempty"`
 	StartupDeadlineS int    `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int    `json:"max_retries,omitempty"`
+	// RequestTimeoutS overrides the app's request wall-clock budget in
+	// seconds. Zero inherits the plan/type default; positive values are
+	// bounded by the plan request-budget ceiling.
+	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. Binding
 	// and per-invocation overrides take precedence over this policy.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -281,6 +285,10 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string `json:"restart_policy,omitempty"`
 	StartupDeadlineS *int    `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int    `json:"max_retries,omitempty"`
+	// RequestTimeoutS overrides the app request wall-clock budget in
+	// seconds. A pointer distinguishes an explicit 0 (restore the plan
+	// default) from an omitted field.
+	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
 	// RetryPolicy replaces the app-level invocation retry default. An
 	// explicit empty object clears the default; nil leaves it unchanged.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -979,6 +987,7 @@ type AppResponse struct {
 	EffectiveLimits     AppEffectiveLimits     `json:"effective_limits"`
 	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
 	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
+	RequestTimeoutS     int                    `json:"request_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`

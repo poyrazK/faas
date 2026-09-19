@@ -33,6 +33,10 @@ export type CreateAppRequest = {
   max_concurrency?: number;
   idle_timeout_s?: number;
   /**
+   * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform ceiling is 30 seconds.
+   */
+  request_timeout_s?: number;
+  /**
    * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
    */
   execution_mode?: 'request' | 'service' | 'worker' | 'job';

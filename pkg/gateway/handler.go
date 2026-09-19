@@ -126,6 +126,10 @@ type App struct {
 	// It bounds how long a cached target may go untouched before the gateway
 	// checks authoritative instance state at the next request.
 	IdleTimeoutS int
+	// RequestTimeoutS is the per-app customer request wall-clock budget.
+	// Zero uses the type-aware plan default; positive values are validated by
+	// apid and still capped by the plan request-budget ceiling at the edge.
+	RequestTimeoutS int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can

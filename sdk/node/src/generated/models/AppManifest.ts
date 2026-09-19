@@ -48,6 +48,10 @@ export type AppManifest = {
    * Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan default'.
    */
   max_retries?: number | null;
+  /**
+   * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default.
+   */
+  request_timeout_s?: number | null;
   service_replicas?: ServiceReplicas;
   /**
    * Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB.

@@ -736,6 +736,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
+		RequestTimeoutS: a.Manifest.RequestTimeoutS,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
@@ -768,6 +769,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			RestartPolicy:    a.Manifest.RestartPolicy,
 			StartupDeadlineS: a.Manifest.StartupDeadlineS,
 			MaxRetries:       a.Manifest.MaxRetries,
+			RequestTimeoutS:  a.Manifest.RequestTimeoutS,
 			ServiceReplicas:  apiManifestFromState(a.Manifest).ServiceReplicas,
 			Favicon:          append([]byte(nil), a.Manifest.Favicon...),
 			RobotsTxt:        a.Manifest.RobotsTxt,

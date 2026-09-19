@@ -48,6 +48,10 @@ export type DiffAppConfigPatch = {
    */
   max_retries?: number | null;
   /**
+   * Per-app request wall-clock timeout in seconds; zero inherits the plan/type default.
+   */
+  request_timeout_s?: number | null;
+  /**
    * Replica policy for service mode.
    */
   service_replicas?: any | null;

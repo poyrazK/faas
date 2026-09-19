@@ -19479,6 +19479,7 @@ components:
         concurrency_per_vm: { type: integer, example: 80 }
         effective_limits: { $ref: '#/components/schemas/AppEffectiveLimits' }
         idle_timeout_s: { type: [integer, "null"] }
+        request_timeout_s: { type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default." }
         min_instances: { type: integer }
         status:
           type: string
@@ -20055,6 +20056,11 @@ components:
           description: "Named memory/CPU profile. When set, ram_mb and cpu_millicores are filled from the profile; explicit values must agree with it."
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
+        request_timeout_s:
+          type: integer
+          minimum: 0
+          maximum: 30
+          description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform ceiling is 30 seconds."
         # Service/lifecycle settings are persisted on the app and merged into
         # every deployment manifest. Omitted values use the mode/plan defaults.
         execution_mode:
@@ -20397,6 +20403,11 @@ components:
             - $ref: '#/components/schemas/RetryPolicyDTO'
             - type: "null"
           description: "Replace the app-level invocation retry default. Omit for no change; an empty object clears it."
+        request_timeout_s:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 30
+          description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
         service_replicas:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'
@@ -20894,6 +20905,11 @@ components:
           minimum: 0
           description: "Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan default'."
           example: 3
+        request_timeout_s:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 30
+          description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
         # M-2 (ADR-137 §Decision 3): per-deployment replica
         # scaffold for execution_mode='service'. Foundation here;
         # full rolling-deploy / rollback / image-digest pinning
@@ -24640,6 +24656,11 @@ components:
           type: [integer, "null"]
           minimum: 0
           description: "Maximum lifecycle restart attempts; zero inherits the plan default."
+        request_timeout_s:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 30
+          description: "Per-app request wall-clock timeout in seconds; zero inherits the plan/type default."
         service_replicas:
           type: [object, "null"]
           description: "Replica policy for service mode."

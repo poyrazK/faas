@@ -184,6 +184,7 @@ lifecycle:
   restart_policy: always
   startup_deadline_s: 30
   max_retries: 5
+  request_timeout_s: 20
 ```
 
 The equivalent one-off override is `gregale deploy --execution-mode worker`.

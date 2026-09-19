@@ -4117,6 +4117,24 @@ func TestApplyEdgeRuleBudget_UsesAppTypeDefault(t *testing.T) {
 	}
 }
 
+func TestApplyEdgeRuleBudget_UsesPerAppTimeout(t *testing.T) {
+	h := (&Handler{metrics: NewMetrics()}).WithEdgeRules(stubEdgeRuleMatcher{}, nil, nil)
+	app := App{ID: "app-1", AccountID: "acct-1", Type: AppTypeApp, Plan: api.PlanPro, RequestTimeoutS: 7}
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+
+	if blocked := h.applyEdgeRuleBudget(rec, req, app); blocked {
+		t.Fatal("budget applier unexpectedly blocked request")
+	}
+	budget, ok := reqbudget.FromContext(req.Context())
+	if !ok {
+		t.Fatal("budget was not attached to request context")
+	}
+	if budget.Total != 7*time.Second {
+		t.Fatalf("budget total = %s, want 7s", budget.Total)
+	}
+}
+
 func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
 	b := &warmPathBackend{
 		fakeBackend: &fakeBackend{app: App{ID: "app-warm", AccountID: "acct-1", Plan: api.PlanScale}, host: "warm.apps.dom"},

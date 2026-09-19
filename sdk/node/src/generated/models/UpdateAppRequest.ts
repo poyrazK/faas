@@ -48,6 +48,10 @@ export type UpdateAppRequest = {
    */
   retry_policy?: (RetryPolicyDTO | null);
   /**
+   * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default.
+   */
+  request_timeout_s?: number | null;
+  /**
    * Full replacement of the service replica policy. Omit for no change.
    */
   service_replicas?: ServiceReplicas;

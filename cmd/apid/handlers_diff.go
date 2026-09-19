@@ -319,6 +319,7 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 			RestartPolicy:       req.AppConfig.RestartPolicy,
 			StartupDeadlineS:    req.AppConfig.StartupDeadlineS,
 			MaxRetries:          req.AppConfig.MaxRetries,
+			RequestTimeoutS:     req.AppConfig.RequestTimeoutS,
 			ServiceReplicas:     req.AppConfig.ServiceReplicas,
 			ScalingPolicy:       req.AppConfig.ScalingPolicy,
 		}

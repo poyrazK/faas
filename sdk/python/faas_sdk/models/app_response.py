@@ -94,6 +94,8 @@ class AppResponse:
     """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
     and placement controls."""
     idle_timeout_s: int | None | Unset = UNSET
+    request_timeout_s: int | Unset = UNSET
+    """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
     deleted_at: datetime.datetime | None | Unset = UNSET
     delete_grace_until: datetime.datetime | None | Unset = UNSET
     preview_of_slug: str | Unset = UNSET
@@ -250,6 +252,8 @@ class AppResponse:
             idle_timeout_s = UNSET
         else:
             idle_timeout_s = self.idle_timeout_s
+
+        request_timeout_s = self.request_timeout_s
 
         deleted_at: None | str | Unset
         if isinstance(self.deleted_at, Unset):
@@ -433,6 +437,8 @@ class AppResponse:
             field_dict["resource_profile"] = resource_profile
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
         if deleted_at is not UNSET:
             field_dict["deleted_at"] = deleted_at
         if delete_grace_until is not UNSET:
@@ -584,6 +590,8 @@ class AppResponse:
             return cast(int | None | Unset, data)
 
         idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
+
+        request_timeout_s = d.pop("request_timeout_s", UNSET)
 
         def _parse_deleted_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -863,6 +871,7 @@ class AppResponse:
             runtime=runtime,
             resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
+            request_timeout_s=request_timeout_s,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,
             preview_of_slug=preview_of_slug,

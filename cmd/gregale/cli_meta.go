@@ -409,6 +409,7 @@ var cliCommands = []cliCommand{
 			{Name: "max-queue-wait-ms", Short: "set maximum queued concurrency wait", Value: "N"},
 			{Name: "wake-max-queue-depth", Short: "set per-app cold-wake waiter cap", Value: "N"},
 			{Name: "wake-max-queue-wait-seconds", Short: "set per-app cold-wake wait budget", Value: "N"},
+			{Name: "request-timeout", Short: "set per-app request timeout in seconds", Value: "SEC"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
 			{Name: "security-policy", Short: "deploy posture policy", ClosedSet: []string{"off", "warn", "enforce"}},
 			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},

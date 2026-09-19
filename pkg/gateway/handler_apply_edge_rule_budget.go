@@ -69,6 +69,8 @@ func cancelStampedRequestBudget(ctx context.Context) {
 // kind=budget never short-circuits, it always stamps a budget).
 func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, app App) bool {
 	if h.edgeRules == nil {
+		limits, _ := api.LimitsFor(app.Plan)
+		h.stampRequestBudget(w, r, app, appRequestBudget(limits, app), appRequestBudgetSource(app))
 		return false
 	}
 	limits, _ := api.LimitsFor(app.Plan)
@@ -77,7 +79,7 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("budget", "miss")
 		}
-		h.stampRequestBudget(w, r, app, limits.RequestBudgetForType(string(app.Type)), "plan_default")
+		h.stampRequestBudget(w, r, app, appRequestBudget(limits, app), appRequestBudgetSource(app))
 		return false
 	}
 	if rule.AccountID != app.AccountID {
@@ -97,7 +99,7 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 		// to the plan default rather than honouring a rule that
 		// belongs to a different account. Mirrors applyEdgeRuleIP /
 		// applyEdgeRuleValidate / applyEdgeRuleLimit.
-		h.stampRequestBudget(w, r, app, limits.RequestBudgetForType(string(app.Type)), "plan_default")
+		h.stampRequestBudget(w, r, app, appRequestBudget(limits, app), appRequestBudgetSource(app))
 		return false
 	}
 	// Resolve the budget value: rule.BudgetMs, optionally overridden
@@ -141,6 +143,24 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 	}
 	h.stampRequestBudget(w, r, app, total, source)
 	return false
+}
+
+func appRequestBudget(limits api.Limits, app App) time.Duration {
+	if app.RequestTimeoutS > 0 {
+		total := time.Duration(app.RequestTimeoutS) * time.Second
+		if ceiling := limits.RequestBudgetMaxDuration(); total > ceiling {
+			return ceiling
+		}
+		return total
+	}
+	return limits.RequestBudgetForType(string(app.Type))
+}
+
+func appRequestBudgetSource(app App) string {
+	if app.RequestTimeoutS > 0 {
+		return "app"
+	}
+	return "plan_default"
 }
 
 // stampRequestBudget stamps reqbudget.WithRemaining onto r.Context()

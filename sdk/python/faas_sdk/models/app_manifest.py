@@ -103,6 +103,8 @@ class AppManifest:
     max_retries: int | None | Unset = UNSET
     """Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0
     means 'use plan default'."""
+    request_timeout_s: int | None | Unset = UNSET
+    """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -219,6 +221,12 @@ class AppManifest:
         else:
             max_retries = self.max_retries
 
+        request_timeout_s: int | None | Unset
+        if isinstance(self.request_timeout_s, Unset):
+            request_timeout_s = UNSET
+        else:
+            request_timeout_s = self.request_timeout_s
+
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
@@ -282,6 +290,8 @@ class AppManifest:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if favicon is not UNSET:
@@ -510,6 +520,15 @@ class AppManifest:
 
         max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
 
+        def _parse_request_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
         if isinstance(_service_replicas, Unset):
@@ -566,6 +585,7 @@ class AppManifest:
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
+            request_timeout_s=request_timeout_s,
             service_replicas=service_replicas,
             favicon=favicon,
             robots_txt=robots_txt,

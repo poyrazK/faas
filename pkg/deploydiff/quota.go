@@ -61,6 +61,7 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 	out := []Break{}
 	if pending.AppConfig.ExecutionMode != nil || pending.AppConfig.RestartPolicy != nil ||
 		pending.AppConfig.StartupDeadlineS != nil || pending.AppConfig.MaxRetries != nil ||
+		pending.AppConfig.RequestTimeoutS != nil ||
 		pending.AppConfig.ServiceReplicas != nil {
 		lifecycle := api.AppManifest{}
 		if baseline.App != nil {
@@ -77,6 +78,9 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 		}
 		if pending.AppConfig.MaxRetries != nil {
 			lifecycle.MaxRetries = *pending.AppConfig.MaxRetries
+		}
+		if pending.AppConfig.RequestTimeoutS != nil {
+			lifecycle.RequestTimeoutS = *pending.AppConfig.RequestTimeoutS
 		}
 		if pending.AppConfig.ServiceReplicas != nil {
 			lifecycle.ServiceReplicas = pending.AppConfig.ServiceReplicas

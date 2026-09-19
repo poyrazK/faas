@@ -176,6 +176,7 @@ type AppConfigPatch struct {
 	RestartPolicy    *string
 	StartupDeadlineS *int
 	MaxRetries       *int
+	RequestTimeoutS  *int
 	ServiceReplicas  *api.ServiceReplicas
 	// ScalingPolicy is the declarative app-level autoscaling policy.
 	// Nil means "don't touch"; a non-nil value replaces the policy.

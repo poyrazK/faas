@@ -416,6 +416,9 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 			if p.AppConfig.MaxRetries == nil {
 				p.AppConfig.MaxRetries = desired.MaxRetries
 			}
+			if p.AppConfig.RequestTimeoutS == nil {
+				p.AppConfig.RequestTimeoutS = desired.RequestTimeoutS
+			}
 			if p.AppConfig.ServiceReplicas == nil {
 				p.AppConfig.ServiceReplicas = desired.ServiceReplicas
 			}
@@ -640,6 +643,7 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		RestartPolicy:       p.RestartPolicy,
 		StartupDeadlineS:    p.StartupDeadlineS,
 		MaxRetries:          p.MaxRetries,
+		RequestTimeoutS:     p.RequestTimeoutS,
 		ServiceReplicas:     p.ServiceReplicas,
 		ScalingPolicy:       p.ScalingPolicy,
 	}
@@ -651,7 +655,7 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		patch.RequireSigned == nil && patch.WarmSnapshotEnabled == nil &&
 		patch.RequireAuthn == nil && patch.EvictionPriority == nil &&
 		patch.AppProtocol == nil && patch.ExecutionMode == nil && patch.RestartPolicy == nil &&
-		patch.StartupDeadlineS == nil && patch.MaxRetries == nil && patch.ServiceReplicas == nil &&
+		patch.StartupDeadlineS == nil && patch.MaxRetries == nil && patch.RequestTimeoutS == nil && patch.ServiceReplicas == nil &&
 		patch.ScalingPolicy == nil {
 		return nil
 	}

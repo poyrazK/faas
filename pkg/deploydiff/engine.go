@@ -594,6 +594,13 @@ func diffLifecycleConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 			modify("max_retries", current.MaxRetries, *p.MaxRetries)
 		}
 	}
+	if p.RequestTimeoutS != nil && (base == nil || *p.RequestTimeoutS != current.RequestTimeoutS) {
+		if base == nil {
+			add("request_timeout_s", *p.RequestTimeoutS)
+		} else {
+			modify("request_timeout_s", current.RequestTimeoutS, *p.RequestTimeoutS)
+		}
+	}
 	if p.ServiceReplicas != nil && (base == nil || !reflect.DeepEqual(p.ServiceReplicas, current.ServiceReplicas)) {
 		if base == nil {
 			add("service_replicas", *p.ServiceReplicas)
