@@ -113,6 +113,53 @@ func TestMemStoreCoverageQueueIntrospection(t *testing.T) {
 	}
 }
 
+func TestMemStoreCoverageAccountDeadLetterProjection(t *testing.T) {
+	m, ctx, account, app, _ := memCoverageFixture(t)
+	now := time.Now().UTC()
+	jobRunID := newUUIDString()
+	workflowRunID := newUUIDString()
+	finished := now
+	m.mu.Lock()
+	m.jobRuns[jobRunID] = JobRun{
+		ID: jobRunID, JobID: newUUIDString(), AccountID: account.ID,
+		TriggerKind: "manual", Tasks: 1, TasksFailed: 1,
+		DeadLetterCount: 1, AggregateStatus: "dead_letter",
+		CreatedAt: now, FinishedAt: &finished,
+	}
+	m.jobTasks[jobRunID] = map[int]JobTask{
+		0: {RunID: jobRunID, TaskIndex: 0, Status: "failed", Attempt: 1},
+	}
+	m.workflowRuns[workflowRunID] = WorkflowRun{
+		ID: workflowRunID, AppID: app.ID, WorkflowName: "coverage-workflow",
+		Status: WorkflowRunStatusDead, Input: json.RawMessage(`{"ok":true}`),
+		DefinitionSnapshot: json.RawMessage(`{"steps":[]}`),
+		CreatedAt:          now, FinishedAt: &finished,
+	}
+	m.workflowSteps[workflowRunID] = map[string]WorkflowStep{
+		"step": {RunID: workflowRunID, StepName: "step", Status: WorkflowStepStatusDead, Attempt: 2},
+	}
+	m.mu.Unlock()
+
+	events, err := m.ListDeadLetterEventsForAccount(ctx, account.ID, 10, "")
+	if err != nil || len(events) != 2 {
+		t.Fatalf("account events = %+v, %v", events, err)
+	}
+	for _, event := range events {
+		if _, err := m.ReplayDeadLetterEventForAccount(ctx, account.ID, event.ID); err != nil {
+			t.Fatalf("replay %s: %v", event.Source, err)
+		}
+	}
+	if n, err := m.ReplayDeadLetterEventsForAccount(ctx, account.ID, 10); err != nil || n != 0 {
+		t.Fatalf("replay all after replay = %d, %v", n, err)
+	}
+	if n, err := m.DeleteDeadLetterEventsForAccount(ctx, account.ID, 10); err != nil || n != 2 {
+		t.Fatalf("delete all = %d, %v", n, err)
+	}
+	if _, err := m.DeadLetterEventByAccountID(ctx, account.ID, events[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted event lookup = %v", err)
+	}
+}
+
 func TestMemStoreCoverageInvocationStamps(t *testing.T) {
 	m, ctx, account, app, _ := memCoverageFixture(t)
 	minute := time.Now().UTC().Truncate(time.Minute)
