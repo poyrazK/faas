@@ -2166,12 +2166,18 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 }
 
 func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
-	if _, err := s.store.LiveDeployment(ctx, app.ID); err != nil {
+	dep, err := s.store.LiveDeployment(ctx, app.ID)
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
 				"App has no live deployment", "deploy the app before requesting a wake")
 		}
 		return api.ErrCapacity("could not resolve the app's live deployment")
+	}
+	if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+		return api.NewProblem(http.StatusConflict, api.CodeSecurityPostureBlocked,
+			"App is security quarantined",
+			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before requesting a wake")
 	}
 	if app.Status == state.AppEvictedCold {
 		if err := waitForAppInstancesDrained(ctx, s.store, app.ID, 0, 0); err != nil {

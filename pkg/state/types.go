@@ -313,6 +313,10 @@ const (
 	// accepts it so a future handler can stamp it without a
 	// migration.
 	ParkReasonAdminPark ParkReason = "admin_park"
+	// ParkReasonSecurityScanRegressed is stamped when a scheduled image
+	// re-scan finds blocking or unavailable evidence on a live enforce-mode
+	// deployment. It is a safety quarantine, not a customer lifecycle park.
+	ParkReasonSecurityScanRegressed ParkReason = "security_scan_regressed"
 )
 
 // IsValidParkReason reports whether r is one of the closed-set
@@ -321,7 +325,7 @@ const (
 // the SQL UPDATE surfaces a 23514.
 func (r ParkReason) IsValid() bool {
 	switch r {
-	case ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark:
+	case ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark, ParkReasonSecurityScanRegressed:
 		return true
 	default:
 		return false

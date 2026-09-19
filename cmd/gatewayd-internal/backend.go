@@ -229,6 +229,17 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	securityQuarantined := false
+	if deps, depErr := r.store.LiveDeployments(ctx, app.ID); depErr == nil {
+		for _, dep := range deps {
+			if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+				securityQuarantined = true
+				break
+			}
+		}
+	} else if !errors.Is(depErr, state.ErrNotFound) {
+		return gateway.App{}, false, depErr
+	}
 	favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 	concurrencyOverflow := ""
 	maxQueueWaitMS := 0
@@ -243,6 +254,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	return gateway.App{
 		ID:                      app.ID,
 		AccountID:               acct.ID,
+		SecurityQuarantined:     securityQuarantined,
 		Visibility:              api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:           string(acct.Status),
 		Type:                    gateway.AppType(app.Type),

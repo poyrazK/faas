@@ -1212,7 +1212,8 @@ type AppResponse struct {
 	// most-recently parked deployment for this app, or nil if the
 	// app has never been parked. Powers the "why is my app
 	// evicted_cold?" UX surface — operators see the closed-set
-	// reason (liveness_exhausted | lifecycle_park | admin_park) +
+	// reason (liveness_exhausted | lifecycle_park | admin_park |
+	// security_scan_regressed) +
 	// the timestamp without grepping the audit log. Nested (not
 	// flat) so AppResponse conflates app-state with
 	// deployment-state only at the explicit ref — mirrors the
