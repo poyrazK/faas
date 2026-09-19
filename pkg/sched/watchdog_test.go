@@ -162,6 +162,40 @@ func TestColdBootWatchdogFailsDeploymentDuringInitialSnapshot(t *testing.T) {
 	}
 }
 
+func TestWakingWatchdogMarksSnapshotsStale(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+			DeploymentID: dep.ID,
+			FCVersion:    "1.10.0",
+			MemBytes:     512 << 20,
+			StorageKey:   "/tmp/snap-" + tier,
+			Tier:         tier,
+		}); err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", tier, err)
+		}
+	}
+
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := engine.KillStuck(context.Background(), ins.ID, app.ID, StuckWakingTimeout); err != nil {
+		t.Fatalf("KillStuck: %v", err)
+	}
+
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if snap, err := store.LatestSnapshotForTier(context.Background(), dep.ID, tier); err == nil {
+			t.Errorf("LatestSnapshotForTier(%s) = %s, want no usable snapshot after restore timeout", tier, snap.ID)
+		}
+	}
+	if _, ok, tier := engine.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 512, api.AppProtocolHTTP1); ok || tier != wakeTierColdBootFallback {
+		t.Errorf("usableSnapshotForWake after restore timeout = ok %v tier %q, want false/%q", ok, tier, wakeTierColdBootFallback)
+	}
+}
+
 // TestWatchdogSweepLeavesYoungRowsAlone pins the negative half:
 // instances not yet past the budget stay where they are.
 func TestWatchdogSweepLeavesYoungRowsAlone(t *testing.T) {
