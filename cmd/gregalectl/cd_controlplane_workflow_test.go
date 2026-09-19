@@ -118,6 +118,24 @@ func TestCDControlPlaneConvergesAPIDLifecycleStorageBeforeActivation(t *testing.
 	}
 }
 
+func TestCDControlPlaneRepairsSharedCachePermissionsBeforeActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	root := strings.Index(workflow, "install -d -o faas-apid -g faas -m 2770 /var/lib/faas/cache")
+	repair := strings.Index(workflow, "find /var/lib/faas/cache -type d")
+	group := strings.Index(workflow, "-exec chgrp faas {} + -exec chmod 2770 {} +")
+	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	if root < 0 || repair < 0 || group < 0 || activate < 0 {
+		t.Fatalf("control-plane cache convergence is incomplete: root=%d repair=%d group=%d activate=%d", root, repair, group, activate)
+	}
+	if !(root < repair && repair <= group && group < activate) {
+		t.Fatalf("cache shards must be repaired before activation: root=%d repair=%d group=%d activate=%d", root, repair, group, activate)
+	}
+}
+
 func TestCDControlPlanePromotesVersionedStatusPage(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

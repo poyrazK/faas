@@ -94,6 +94,24 @@
     - restart faas-apid
     - restart faas-schedd
 
+# APID and schedd share the OCI read-through cache under their common faas
+# group. APID's RestrictSUIDSGID sandbox rejects its best-effort setgid chmod,
+# so shards created under UMask=0022 by older releases can persist as 02750.
+# Converge both the root and all durable fan-out directories as root without
+# changing cached blob file modes.
+- name: control_plane_service — ensure shared OCI cache root
+  ansible.builtin.file:
+    path: /var/lib/faas/cache
+    state: directory
+    owner: faas-apid
+    group: faas
+    mode: "2770"
+
+- name: control_plane_service — normalize shared OCI cache shard directories
+  ansible.builtin.command:
+    cmd: "find /var/lib/faas/cache -type d -exec chgrp faas {} + -exec chmod 2770 {} +"
+  changed_when: false
+
 # Manifest-generated split-box host_vars opt into a managed meterd routing
 # file. Legacy/operator-owned boxes keep the old example-only contract so an
 # Ansible run cannot overwrite a hand-maintained billing configuration.

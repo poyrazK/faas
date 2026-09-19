@@ -551,6 +551,12 @@ jobs:
           # root is host state and may not exist on control-only nodes, while
           # /var/lib/faas itself is intentionally not group-writable.
           install -d -o faas-apid -g faas -m 2770 /var/lib/faas/cache
+          # faas-apid runs with RestrictSUIDSGID=yes and UMask=0022. Older
+          # releases therefore left owner-specific 2750 shards that schedd
+          # could read but not update. Repair every persistent shard before
+          # activation; cached blob file modes remain unchanged.
+          find /var/lib/faas/cache -type d \
+            -exec chgrp faas {} + -exec chmod 2770 {} +
 
           install -d -o root -g root -m 0700 /etc/faas/secrets/outboundd
           outbound_env="$(mktemp /etc/faas/secrets/outboundd/.outboundd.env.XXXXXX)"

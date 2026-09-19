@@ -215,9 +215,10 @@ type LocalCacheBackend struct {
 //
 // root is created with mode 0o770 if missing. The imaged and builderd
 // services share the cache through their common faas group, so both the root
-// and its fan-out buckets must be group-writable and setgid. Setgid keeps
-// VMMD-created buckets in the provisioned shared group instead of root:root.
-// Cache blobs contain no
+// and its fan-out buckets must be group-writable. Setgid is preferred because
+// it keeps VMMD-created buckets in the provisioned shared group instead of
+// root:root; hardened services that cannot chmod setgid retain the inherited
+// faas group and fall back to 0770. Cache blobs contain no
 // secrets and are not intended for arbitrary users.
 func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*LocalCacheBackend, error) {
 	if parent == nil {
@@ -229,10 +230,9 @@ func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*
 	if maxBytes <= 0 {
 		maxBytes = DefaultCacheMaxBytes
 	}
-	if err := os.MkdirAll(root, 0o770); err != nil {
-		return nil, fmt.Errorf("storage: cache: mkdir %q: %w", root, err)
+	if err := ensureSharedCacheDir(root); err != nil {
+		return nil, fmt.Errorf("storage: cache: prepare root %q: %w", root, err)
 	}
-	_ = os.Chmod(root, 0o770|os.ModeSetgid)
 	cache := &LocalCacheBackend{
 		parent:     parent,
 		root:       root,
@@ -290,6 +290,46 @@ func (c *LocalCacheBackend) cacheFileFor(key string) (path string, metaPath stri
 	hex := hex.EncodeToString(sum[:])
 	full := filepath.Join(c.root, hex[:2], hex[2:])
 	return full, full + ".meta"
+}
+
+// ensureSharedCacheDir creates dir with the shared-cache permission contract.
+//
+// RestrictSUIDSGID=yes blocks chmod(2) calls that include the setgid bit. A
+// restricted daemon therefore creates 02750 under the normal 0022 umask and
+// cannot complete a chmod to 02770, even when it owns the new directory. Fall
+// back to 0770 in that case: the managed cache root already supplies the faas
+// group through setgid inheritance, and group write is the load-bearing part
+// of the cross-daemon contract. Existing group-writable directories owned by
+// another daemon are accepted because their chmod is expected to return
+// EPERM. Rollout convergence repairs legacy 02750 shards as root.
+func ensureSharedCacheDir(dir string) error {
+	return ensureSharedCacheDirWith(dir, os.MkdirAll, os.Chmod, os.Stat)
+}
+
+func ensureSharedCacheDirWith(
+	dir string,
+	mkdirAll func(string, os.FileMode) error,
+	chmod func(string, os.FileMode) error,
+	stat func(string) (os.FileInfo, error),
+) error {
+	if err := mkdirAll(dir, 0o770); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	setgidErr := chmod(dir, 0o770|os.ModeSetgid)
+	if setgidErr == nil {
+		return nil
+	}
+	info, statErr := stat(dir)
+	if statErr == nil && info.Mode().Perm() == 0o770 {
+		return nil
+	}
+	if err := chmod(dir, 0o770); err != nil {
+		if statErr != nil {
+			return fmt.Errorf("set shared mode: setgid chmod: %w; stat: %w; fallback chmod: %w", setgidErr, statErr, err)
+		}
+		return fmt.Errorf("set shared mode from %v: setgid chmod: %w; fallback chmod: %w", info.Mode(), setgidErr, err)
+	}
+	return nil
 }
 
 // Put writes the blob to the parent and then mirrors it into
@@ -425,10 +465,9 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 // spoolFile creates the Put-path temp file inside the destination
 // bucket directory so the install step is a same-filesystem rename.
 func (c *LocalCacheBackend) spoolFile(dir string) (*os.File, error) {
-	if err := os.MkdirAll(dir, 0o770); err != nil {
-		return nil, fmt.Errorf("storage: cache: mkdir %q: %w", dir, err)
+	if err := ensureSharedCacheDir(dir); err != nil {
+		return nil, fmt.Errorf("storage: cache: prepare bucket %q: %w", dir, err)
 	}
-	_ = os.Chmod(dir, 0o770|os.ModeSetgid)
 	return os.CreateTemp(dir, ".faas-cache-put-*")
 }
 
@@ -531,10 +570,9 @@ func (c *LocalCacheBackend) MarkGeneration(key, generation string) error {
 	if !regularFileExists(path) && !parentLocal {
 		return fmt.Errorf("storage: cache: mark generation %q without cached blob: %w", key, os.ErrNotExist)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
+	if err := ensureSharedCacheDir(filepath.Dir(path)); err != nil {
 		return fmt.Errorf("storage: cache: create generation directory %q: %w", key, err)
 	}
-	_ = os.Chmod(filepath.Dir(path), 0o770|os.ModeSetgid)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".faas-cache-generation-*")
 	if err != nil {
 		return fmt.Errorf("storage: cache: create generation marker %q: %w", key, err)
@@ -776,10 +814,9 @@ func (c *LocalCacheBackend) runCacheTouches() {
 // an OCI cache miss remains bounded by the copy buffer, not by layer size.
 func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, src io.Reader) (io.ReadCloser, error) {
 	path, metaPath := c.cacheFileFor(key)
-	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
-		return nil, fmt.Errorf("cache mkdir %q: %w", filepath.Dir(path), err)
+	if err := ensureSharedCacheDir(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("cache prepare directory %q: %w", filepath.Dir(path), err)
 	}
-	_ = os.Chmod(filepath.Dir(path), 0o770|os.ModeSetgid)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".faas-cache-*")
 	if err != nil {
 		return nil, fmt.Errorf("cache temp %q: %w", filepath.Dir(path), err)
