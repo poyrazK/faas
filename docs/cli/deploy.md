@@ -73,10 +73,12 @@ For a health-gated production release, use the opt-in safe path:
 gregale deploy --safe
 ```
 
-`--safe` selects Gregale's balanced 1% → 10% → 50% → 100% rollout and
-waits for the rollout to reach 100% traffic before returning success. The
-server's smoke verification, configured health gates, and rollback behavior
-remain the source of truth. Safe rollouts require a Pro or Scale plan.
+`--safe` selects Gregale's balanced 1% → 10% → 50% → 100% rollout, enables
+first-wake 5xx auto-rollback, and waits for the rollout to reach 100% traffic
+before returning success. The server's smoke verification, configured health
+gates, and rollback behavior remain the source of truth. Safe rollouts require
+a Pro or Scale plan, and the 5xx rollback protection cannot be disabled on a
+safe deploy.
 
 Preview the safe-release plan before uploading:
 

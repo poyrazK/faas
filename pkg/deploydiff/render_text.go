@@ -180,6 +180,9 @@ func renderSafeReleaseText(w io.Writer, p SafeReleasePreview) {
 		_, _ = fmt.Fprintf(w, "  Plan:         %s\n", formatSafeReleaseStages(p.Rollout.Stages))
 		_, _ = fmt.Fprintf(w, "  Next step:    %d%% traffic · step %d/%d\n", p.Rollout.TrafficPercent, p.Rollout.Step, p.Rollout.TotalSteps)
 	}
+	if p.RollbackOn5xx {
+		_, _ = fmt.Fprintln(w, "  5xx rollback: enabled (first wake)")
+	}
 	switch p.HealthGate.Status {
 	case SafeReleaseHealthReady:
 		_, _ = fmt.Fprintf(w, "  Health gate:  ready (%d actionable rule(s), %d firing)\n", p.HealthGate.Configured, p.HealthGate.Firing)

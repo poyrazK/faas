@@ -766,7 +766,7 @@ var cliCommands = []cliCommand{
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
-			{Name: "safe", Short: "deploy with the balanced health-gated rollout (Pro/Scale only)"},
+			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback (Pro/Scale only)"},
 			{Name: "require-authn", Short: "require bearer auth on every request"},
 			{Name: "no-require-authn", Short: "drop the token requirement"},
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},

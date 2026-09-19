@@ -90,7 +90,7 @@ func TestAddSafeReleasePreview_ReportsHealthGateInHumanOutput(t *testing.T) {
 	}
 	var out strings.Builder
 	deploydiff.RenderText(&out, d)
-	for _, want := range []string{"Safe rollout:", "1% (2m0s) → 10% (2m0s) → 50% (2m0s) → 100% (0s)", "step 1/4", "BLOCKED", "Health gate blocks rollout."} {
+	for _, want := range []string{"Safe rollout:", "1% (2m0s) → 10% (2m0s) → 50% (2m0s) → 100% (0s)", "step 1/4", "5xx rollback: enabled (first wake)", "BLOCKED", "Health gate blocks rollout."} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}

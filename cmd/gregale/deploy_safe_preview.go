@@ -81,7 +81,8 @@ func newSafeReleasePreview(spec *api.CanaryPresetSpec, latest *api.DeploymentRes
 		})
 	}
 	preview := &deploydiff.SafeReleasePreview{
-		Preset: spec.Preset,
+		Preset:        spec.Preset,
+		RollbackOn5xx: true,
 		Rollout: deploydiff.SafeReleaseRollout{
 			Step:           1,
 			TotalSteps:     len(stages),

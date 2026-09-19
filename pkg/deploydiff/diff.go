@@ -242,6 +242,7 @@ type SafeReleasePreview struct {
 	Rollout        SafeReleaseRollout    `json:"rollout"`
 	HealthGate     SafeReleaseHealthGate `json:"health_gate"`
 	RollbackTarget string                `json:"rollback_target"`
+	RollbackOn5xx  bool                  `json:"rollback_on_5xx"`
 }
 
 // SafeReleaseRollout describes the next server-side rollout step. Step is

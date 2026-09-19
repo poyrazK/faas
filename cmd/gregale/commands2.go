@@ -1929,7 +1929,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// surfaces as an exit-2 error instead of a 422.
 	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|custom); empty = no canary")
 	canaryStages := fs.String("canary-stages", "", "comma-separated percent@duration pairs for --canary-preset=custom (e.g. \"1@30s,10@2m,100@0s\")")
-	safeDeploy := fs.Bool("safe", false, "deploy with the balanced health-gated rollout (Pro/Scale only)")
+	safeDeploy := fs.Bool("safe", false, "deploy with the balanced health-gated rollout and first-wake 5xx rollback (Pro/Scale only)")
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
 	// --no-allow-unauthenticated analogue). Same flag pair as
 	// cmdApp / cmdAppScale. Mirrors the --warm-snapshot /
@@ -2060,10 +2060,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	var rollbackOn5xxPtr *bool
-	if explicit["rollback-on-5xx"] {
-		value := *rollbackOn5xx
-		rollbackOn5xxPtr = &value
+	rollbackOn5xxPtr, rollbackPolicyErr := resolveDeployRollbackOn5xx(*safeDeploy, explicit["rollback-on-5xx"], *rollbackOn5xx)
+	if rollbackPolicyErr != nil {
+		return printErr("Invalid rollout policy", rollbackPolicyErr)
 	}
 	// Project scope controls are all planner inputs. Treat each one as a
 	// project deploy request even when the operator omitted the discoverable

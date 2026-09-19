@@ -10,7 +10,8 @@ func TestRenderJSON_IncludesSafeReleasePreflight(t *testing.T) {
 	d := Diff{
 		Slug: "demo",
 		SafeRelease: &SafeReleasePreview{
-			Preset: "balanced",
+			Preset:        "balanced",
+			RollbackOn5xx: true,
 			Rollout: SafeReleaseRollout{
 				Step: 1, TotalSteps: 4, TrafficPercent: 1,
 				Stages: []SafeReleaseStage{{TrafficPercent: 1, Duration: "2m0s"}},
@@ -32,7 +33,7 @@ func TestRenderJSON_IncludesSafeReleasePreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := envelope.Diff.SafeRelease
-	if got.Rollout.Step != 1 || got.Rollout.TrafficPercent != 1 || got.HealthGate.Status != SafeReleaseHealthReady || got.RollbackTarget != "dep-previous" {
+	if got.Rollout.Step != 1 || got.Rollout.TrafficPercent != 1 || got.HealthGate.Status != SafeReleaseHealthReady || got.RollbackTarget != "dep-previous" || !got.RollbackOn5xx {
 		t.Fatalf("safe_release = %+v, want rollout/gate/rollback details", got)
 	}
 }
