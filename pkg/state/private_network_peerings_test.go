@@ -6,6 +6,8 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestMemStorePrivateNetworkPeeringLifecycle(t *testing.T) {
@@ -62,6 +64,63 @@ func TestMemStorePrivateNetworkPeeringRejectsUnsafeRelationships(t *testing.T) {
 	}
 	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{ID: "peer-foreign", AccountID: "acct-2", LeftNetworkID: "left", RightNetworkID: "right", Region: "fra1"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-account error = %v, want not found", err)
+	}
+}
+
+func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	for _, network := range []PrivateNetwork{
+		{ID: "alpha", AccountID: "acct-1", Name: "alpha", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.0.0/20")},
+		{ID: "beta", AccountID: "acct-1", Name: "beta", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.16.0/20")},
+		{ID: "gamma", AccountID: "acct-1", Name: "gamma", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.32.0/20")},
+	} {
+		if _, err := store.CreatePrivateNetwork(ctx, network); err != nil {
+			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
+		}
+	}
+	// Bypass CreatePrivateNetwork's own overlap guard so the peering guard is
+	// exercised independently.
+	store.mu.Lock()
+	store.privateNetworks["overlap"] = PrivateNetwork{ID: "overlap", AccountID: "acct-1", Name: "overlap", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.0.0/21")}
+	store.mu.Unlock()
+
+	invalid := []PrivateNetworkPeering{
+		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1", Status: "bogus"},
+		{ID: "bad id", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1"},
+		{AccountID: "acct-1", LeftNetworkID: "bad id", RightNetworkID: "beta", Region: "fra1"},
+		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "bad region"},
+	}
+	for _, peering := range invalid {
+		if _, err := store.CreatePrivateNetworkPeering(ctx, peering); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("invalid peering %+v error = %v, want invalid argument", peering, err)
+		}
+	}
+	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "overlap", Region: "fra1",
+	}); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("overlapping CIDRs error = %v, want invalid argument", err)
+	}
+
+	first, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		ID: "peer-alpha-beta", AccountID: "acct-1", LeftNetworkID: "beta", RightNetworkID: "alpha", Region: "fra1",
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering(first): %v", err)
+	}
+	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		ID: first.ID, AccountID: "acct-1", LeftNetworkID: "beta", RightNetworkID: "gamma", Region: "fra1",
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate ID error = %v, want conflict", err)
+	}
+	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		ID: "peer-alpha-gamma", AccountID: "acct-1", LeftNetworkID: "gamma", RightNetworkID: "alpha", Region: "fra1", Status: api.PrivateNetworkPeeringStatusReady,
+	}); err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering(second): %v", err)
+	}
+	listed, err := store.ListPrivateNetworkPeerings(ctx, "acct-1", "")
+	if err != nil || len(listed) != 2 || listed[0].LeftNetworkID != "alpha" || listed[1].LeftNetworkID != "alpha" {
+		t.Fatalf("ordered peerings = %+v, %v", listed, err)
 	}
 }
 
