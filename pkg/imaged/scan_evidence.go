@@ -28,11 +28,13 @@ func digestScanArtifact(path string) (string, error) {
 			return "", fmt.Errorf("scan artifact %q is a directory", path)
 		}
 	}
-	f, err := os.Open(path)
+	// The path is selected by the daemon's storage backend (local app
+	// artifact or its freshly staged remote copy), not customer input.
+	f, err := os.OpenFile(path, os.O_RDONLY, 0) // #nosec G304 -- storage backend selected the scan artifact.
 	if err != nil {
 		return "", fmt.Errorf("open scan artifact: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() //nolint:errcheck // read-only hash; close is best-effort after EOF.
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", fmt.Errorf("hash scan artifact: %w", err)
