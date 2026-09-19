@@ -566,7 +566,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, Sidecars: opts.Sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -604,6 +604,15 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}
 	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateAndPlanSidecars(rolloutReq, acct, api.MustLimitsFor(acct.Plan)); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, api.MustLimitsFor(acct.Plan), acct.Plan)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -682,6 +691,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		PRNumber:         opts.PRNumber,
 		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
+		Sidecars:         append(json.RawMessage(nil), rollout.Sidecars...),
 		Scope:            rolloutReq.Scope,
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",

@@ -78,6 +78,11 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 			_ = w.WriteField("workflows", string(raw))
 		}
 	}
+	if len(a.Sidecars) > 0 {
+		if raw, err := json.Marshal(a.Sidecars); err == nil {
+			_ = w.WriteField("sidecars", string(raw))
+		}
+	}
 	return w
 }
 
@@ -125,6 +130,7 @@ type DeployAnnotations struct {
 	DeployedBy  string // human-readable actor label
 	PRNumber    int    // positive int (DB CHECK; 0 collapses to NULL)
 	Workflows   []WorkflowSpec
+	Sidecars    Sidecars
 	// Rollout options share this transport envelope so local directory,
 	// tarball, developer-source, and source-ref deploys preserve the same
 	// semantics as image JSON deploys. The pointer preserves explicit zero.

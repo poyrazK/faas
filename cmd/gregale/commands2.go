@@ -1477,6 +1477,33 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	return append([]api.WorkflowSpec{}, m.Workflows...), nil
 }
 
+// loadExtensionSidecarsManifestForDeploy resolves the manifest's named
+// telemetry presets before any deployment mutation. The image digest stays
+// customer-supplied; the preset only contributes stable defaults.
+func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) (api.Sidecars, error) {
+	if cwd == "" {
+		return nil, nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || m == nil || len(m.Extensions) == 0 {
+		return nil, nil
+	}
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	acct, err := client.Whoami(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve account plan for extension manifest: %w", err)
+	}
+	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
+		return nil, err
+	}
+	return m.ToSidecars()
+}
+
 // validateSingleAppManifestTargets prevents the single-app deploy path from
 // silently dropping declarations it cannot apply. Project deploy owns
 // cross-workload and unified broker-trigger reconciliation; the direct path
@@ -3240,10 +3267,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 
 	var workflowDefs []api.WorkflowSpec
+	var sidecarDefs api.Sidecars
 	if !*createOnly {
 		workflowDefs, err = loadWorkflowManifestForDeploy(ctx, client, sourceDir)
 		if err != nil {
 			return printErr("Workflow manifest validation failed", err)
+		}
+		sidecarDefs, err = loadExtensionSidecarsManifestForDeploy(ctx, client, sourceDir)
+		if err != nil {
+			return printErr("Extension manifest validation failed", err)
 		}
 	}
 	manifestScope, err := manifestDeploymentScope(slug, sourceDir, *environment)
@@ -3352,6 +3384,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
+			Sidecars:       sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3380,7 +3413,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
 				Reason: ann.Reason, Tag: ann.Tag,
-				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Sidecars: sidecarDefs,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
@@ -3506,6 +3539,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:    *environment,
 		RollbackOn5xx:  rollbackOn5xxPtr,
 		Workflows:      workflowDefs,
+		Sidecars:       sidecarDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),
 		Tag:            annPtr(*tag),

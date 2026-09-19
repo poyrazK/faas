@@ -24,6 +24,7 @@ func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 		{name: "environment", ann: DeployAnnotations{Environment: "staging"}, wantField: "environment", wantValue: "staging"},
 		{name: "rollback enabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(true)}, wantField: "rollback_on_5xx", wantValue: "true"},
 		{name: "rollback explicitly disabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(false)}, wantField: "rollback_on_5xx", wantValue: "false"},
+		{name: "sidecar", ann: DeployAnnotations{Sidecars: Sidecars{{Name: "otel", Image: "registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Type: SidecarTypeSidecar}}}, wantField: "sidecars", wantValue: `[{"name":"otel","image":"registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"sidecar"}]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body bytes.Buffer

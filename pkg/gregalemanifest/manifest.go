@@ -13,9 +13,9 @@
 // discriminator without a YAML schema bump.
 //
 // File discovery: the loader takes a project dir and looks for
-// `gregale.yaml` first, then `gregale.yml`, and finally an event-only
-// `gregale.toml`. YAML remains the full deployment manifest; TOML is strict
-// and currently accepts only [[triggers.event]] declarations.
+// `gregale.yaml` first, then `gregale.yml`, and finally `gregale.toml`.
+// YAML remains the full deployment manifest; TOML is strict and accepts
+// event subscriptions plus extension declarations.
 //
 // Why a shared package, not `cmd/gregale/manifest.go`: the long-term
 // plan (per the plan's "loader location" section) is to also validate
@@ -96,6 +96,125 @@ type EventTrigger struct {
 	Source string `yaml:"source" toml:"source"`
 	Type   string `yaml:"type" toml:"type"`
 	Filter string `yaml:"filter,omitempty" toml:"filter"`
+}
+
+// ExtensionSpec declares one telemetry/observability sidecar in a manifest.
+// Presets provide safe defaults for the common agents while the image remains
+// explicit and digest-pinned: Gregale never silently selects a mutable image
+// on a customer's behalf.
+type ExtensionSpec struct {
+	Name          string                `yaml:"name,omitempty" toml:"name,omitempty"`
+	Preset        string                `yaml:"preset,omitempty" toml:"preset,omitempty"`
+	Image         string                `yaml:"image" toml:"image"`
+	Type          api.SidecarType       `yaml:"type,omitempty" toml:"type,omitempty"`
+	Cmd           []string              `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
+	Env           map[string]string     `yaml:"env,omitempty" toml:"env,omitempty"`
+	Port          int                   `yaml:"port,omitempty" toml:"port,omitempty"`
+	RamMB         int                   `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
+	ScratchMB     int                   `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
+	CPUMillicores int                   `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
+	DiskIOProfile string                `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
+	Essential     *bool                 `yaml:"essential,omitempty" toml:"essential,omitempty"`
+	DependsOn     []ExtensionDependency `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+}
+
+// ExtensionDependency gates an extension on another workload lifecycle.
+type ExtensionDependency struct {
+	Name      string                          `yaml:"name" toml:"name"`
+	Condition api.WorkloadDependencyCondition `yaml:"condition,omitempty" toml:"condition,omitempty"`
+}
+
+// ExtensionPreset is the closed set of platform-provided defaults.
+type ExtensionPreset string
+
+const (
+	ExtensionPresetOpenTelemetry ExtensionPreset = "opentelemetry"
+	ExtensionPresetSentry        ExtensionPreset = "sentry"
+	ExtensionPresetDogStatsD     ExtensionPreset = "datadog-dogstatsd"
+)
+
+type extensionPresetDefaults struct {
+	Name string
+	Port int
+	Env  map[string]string
+}
+
+func extensionPreset(name string) (extensionPresetDefaults, bool) {
+	switch ExtensionPreset(strings.ToLower(strings.TrimSpace(name))) {
+	case ExtensionPresetOpenTelemetry:
+		return extensionPresetDefaults{Name: "otel-collector", Port: 4318, Env: map[string]string{
+			"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+		}}, true
+	case ExtensionPresetSentry:
+		return extensionPresetDefaults{Name: "sentry-forwarder"}, true
+	case ExtensionPresetDogStatsD:
+		return extensionPresetDefaults{Name: "dogstatsd", Port: 8125, Env: map[string]string{
+			"DD_DOGSTATSD_NON_LOCAL_TRAFFIC": "false",
+		}}, true
+	default:
+		return extensionPresetDefaults{}, false
+	}
+}
+
+// ToSidecars resolves manifest extensions into the API deployment shape.
+// Image is intentionally required even for a preset; digest pinning is the
+// supply-chain boundary and the API performs the final stateful-image check.
+func (m *Manifest) ToSidecars() (api.Sidecars, error) {
+	if m == nil || len(m.Extensions) == 0 {
+		return nil, nil
+	}
+	out := make(api.Sidecars, 0, len(m.Extensions))
+	for i, ext := range m.Extensions {
+		presetName := strings.TrimSpace(ext.Preset)
+		defaults := extensionPresetDefaults{}
+		if presetName != "" {
+			var ok bool
+			defaults, ok = extensionPreset(presetName)
+			if !ok {
+				return nil, fmt.Errorf("extension[%d].preset: unsupported preset %q", i, ext.Preset)
+			}
+		}
+		name := strings.TrimSpace(ext.Name)
+		if name == "" {
+			name = defaults.Name
+		}
+		if name == "" {
+			return nil, fmt.Errorf("extension[%d].name: required when preset is omitted", i)
+		}
+		if strings.TrimSpace(ext.Image) == "" {
+			return nil, fmt.Errorf("extension[%d].image: required and must be digest-pinned", i)
+		}
+		typ := ext.Type
+		if typ == "" {
+			typ = api.SidecarTypeSidecar
+		}
+		env := make(map[string]string, len(defaults.Env)+len(ext.Env))
+		for k, v := range defaults.Env {
+			env[k] = v
+		}
+		for k, v := range ext.Env {
+			env[k] = v
+		}
+		deps := make([]api.WorkloadDependency, 0, len(ext.DependsOn))
+		for _, dep := range ext.DependsOn {
+			deps = append(deps, api.WorkloadDependency{Name: dep.Name, Condition: dep.Condition})
+		}
+		sc := api.Sidecar{
+			Name: name, Image: strings.TrimSpace(ext.Image), Type: typ,
+			Cmd: append([]string(nil), ext.Cmd...), Env: env,
+			Port: ext.Port, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
+			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
+			Essential: ext.Essential, DependsOn: deps,
+		}
+		if sc.Port == 0 {
+			sc.Port = defaults.Port
+		}
+		if len(sc.Env) == 0 {
+			sc.Env = nil
+		}
+		out = append(out, sc)
+	}
+	return out, nil
 }
 
 // Validate checks the event pattern and content filter without requiring an
@@ -710,7 +829,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root. The supported top-level
 // declarations are `schema_version`, `hosting`, `function`, `lifecycle`, `scaling`,
 // `retry_policy`,
-// `queue_bindings`, `triggers`, `workflows`, `databases`, and `buckets`; other keys are
+// `queue_bindings`, `triggers`, `extensions`, `workflows`, `databases`, and `buckets`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
 // shipping a no-op deploy.
@@ -731,6 +850,7 @@ type Manifest struct {
 	// YAML trigger entries remain in Triggers for backward compatibility; the
 	// separate slice keeps the TOML event table from changing that wire shape.
 	EventTriggers []EventTrigger       `yaml:"-"`
+	Extensions    []ExtensionSpec      `yaml:"extensions,omitempty"`
 	Workflows     []api.WorkflowSpec   `yaml:"workflows,omitempty"`
 	Databases     []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets       []BucketDependency   `yaml:"buckets,omitempty"`
@@ -882,8 +1002,9 @@ func parseManifest(b []byte) (*Manifest, error) {
 }
 
 type tomlManifest struct {
-	SchemaVersion int          `toml:"schema_version"`
-	Triggers      tomlTriggers `toml:"triggers"`
+	SchemaVersion int             `toml:"schema_version"`
+	Triggers      tomlTriggers    `toml:"triggers"`
+	Extensions    []ExtensionSpec `toml:"extensions"`
 }
 
 type tomlTriggers struct {
@@ -903,7 +1024,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
-	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event}, nil
+	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event, Extensions: raw.Extensions}, nil
 }
 
 // Validate runs schema checks against the decoded manifest. It retains the
@@ -955,6 +1076,15 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {
 			return fmt.Errorf("lifecycle: %w", err)
+		}
+	}
+	if len(m.Extensions) > 0 {
+		sidecars, err := m.ToSidecars()
+		if err != nil {
+			return err
+		}
+		if prob := sidecars.Validate(api.MustLimitsFor(plan)); prob != nil {
+			return fmt.Errorf("extensions: %s", prob.Detail)
 		}
 	}
 	seenBindings := make(map[string]struct{}, len(m.QueueBindings))

@@ -127,6 +127,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		kind           state.DeploymentKind
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
+		sidecars       api.Sidecars
 		devSource      devSourceMetadata
 		trafficPercent *int
 		canarySpec     *api.CanaryPresetSpec
@@ -231,6 +232,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
+		case "sidecars":
+			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
+			if readErr != nil || !json.Valid(b) {
+				api.WriteProblem(w, api.ErrValidation("sidecars must be valid JSON"))
+				return
+			}
+			if err := json.Unmarshal(b, &sidecars); err != nil {
+				api.WriteProblem(w, api.ErrValidation("sidecars must be a JSON array of definitions"))
+				return
+			}
 		case "traffic_percent":
 			b, readErr := io.ReadAll(io.LimitReader(part, 8))
 			value, parseErr := strconv.Atoi(strings.TrimSpace(string(b)))
@@ -292,7 +303,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, Sidecars: sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -308,6 +319,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -434,6 +449,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ActorVia:               routeKindForRequest(r),
 			ActorFromIP:            middleware.ClientIP(r),
 			Workflows:              marshalWorkflowDefinitions(workflows),
+			Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 			Reason:                 ann.Reason,
 			Tag:                    ann.Tag,
 			DeployedBy:             ann.DeployedBy,

@@ -35,6 +35,7 @@ type UploadDeployOptions struct {
 	DeployedBy  string         `json:"deployed_by,omitempty"`
 	PRNumber    int            `json:"pr_number,omitempty"`
 	Workflows   []WorkflowSpec `json:"workflows,omitempty"`
+	Sidecars    Sidecars       `json:"sidecars,omitempty"`
 	// RollbackOn5xx is persisted with the resumable session so a commit
 	// retry applies the same deployment safety policy as a single-shot
 	// deploy. nil/omitted keeps the server default false.

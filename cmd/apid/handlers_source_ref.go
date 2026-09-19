@@ -17,10 +17,9 @@
 // Why a separate file: the handler reads SourceRefStreamer + IDOR
 // + audit + cap helper wiring in one place, mirrors the canonical
 // `createDeployment` shape (cmd/apid/handlers.go:309) but without
-// the multipart / image / sidecar / override / signature gates —
-// none of which apply to a GitHub-tarball pull. Adding the
-// gates here would silently double-run; the source-ref path is a
-// narrow, well-defined seam.
+// the multipart / image / override / signature gates. Manifest
+// extensions are resolved after the archive is available and pass
+// through the same sidecar validator as local source deploys.
 //
 // Tokens: the install token is minted and scoped inside githubd's
 // streaming call. It is NOT persisted to the deployment row, NOT
@@ -30,6 +29,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -192,6 +192,23 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
+		if len(manifest.Extensions) > 0 {
+			sidecars, sidecarErr := manifest.ToSidecars()
+			if sidecarErr != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", sidecarErr.Error()))
+				return
+			}
+			rolloutReq.Sidecars = sidecars
+			if sidecarProblem := validateAndPlanSidecars(rolloutReq, acct, limits); sidecarProblem != nil {
+				api.WriteProblem(w, sidecarProblem)
+				return
+			}
+			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+			if rolloutProblem != nil {
+				api.WriteProblem(w, rolloutProblem)
+				return
+			}
+		}
 	}
 	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	manifestCommitted := false
@@ -265,6 +282,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {

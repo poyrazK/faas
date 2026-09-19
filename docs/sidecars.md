@@ -9,3 +9,20 @@ gregale deploy --dry-run
 ```
 
 The dry run reports image, CPU/RAM budget, ports, and plan compatibility before upload. Sidecars share the app's lifecycle and failure domain, so a crash or resource spike can affect the main process. Keep them stateless and safe to restart.
+
+## Manifest presets
+
+Telemetry extensions can be declared in either `gregale.yaml` or
+`gregale.toml`. A preset supplies the stable name, port, and environment
+defaults; the image is still required as an immutable OCI digest.
+
+```toml
+[[extensions]]
+preset = "opentelemetry"
+image = "registry.example.com/otel-collector@sha256:<64-hex-digest>"
+env = { OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318" }
+```
+
+The built-in presets are `opentelemetry`, `sentry`, and
+`datadog-dogstatsd`. Explicit fields override preset defaults, and the normal
+sidecar cap, digest, stateless-image, and plan validation still applies.

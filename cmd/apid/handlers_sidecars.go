@@ -79,14 +79,18 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 		return []byte("[]"), nil
 	}
 	type sealedSidecar struct {
-		Name      string            `json:"name"`
-		Image     string            `json:"image"`
-		Type      api.SidecarType   `json:"type"`
-		Cmd       []string          `json:"cmd,omitempty"`
-		Env       map[string]string `json:"env,omitempty"`
-		Port      int               `json:"port,omitempty"`
-		RamMB     int               `json:"ram_mb,omitempty"`
-		Essential *bool             `json:"essential,omitempty"`
+		Name          string                   `json:"name"`
+		Image         string                   `json:"image"`
+		Type          api.SidecarType          `json:"type"`
+		Cmd           []string                 `json:"cmd,omitempty"`
+		Env           map[string]string        `json:"env,omitempty"`
+		Port          int                      `json:"port,omitempty"`
+		RamMB         int                      `json:"ram_mb,omitempty"`
+		ScratchMB     int                      `json:"scratch_mb,omitempty"`
+		CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+		DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
+		Essential     *bool                    `json:"essential,omitempty"`
+		DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
 	}
 	out := make([]sealedSidecar, 0, len(ss))
 	for _, s := range ss {
@@ -113,14 +117,18 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			envOut[k] = base64.StdEncoding.EncodeToString(ct)
 		}
 		out = append(out, sealedSidecar{
-			Name:      s.Name,
-			Image:     s.Image,
-			Type:      s.Type,
-			Cmd:       s.Cmd,
-			Env:       envOut,
-			Port:      s.Port,
-			RamMB:     s.RamMB,
-			Essential: s.Essential,
+			Name:          s.Name,
+			Image:         s.Image,
+			Type:          s.Type,
+			Cmd:           s.Cmd,
+			Env:           envOut,
+			Port:          s.Port,
+			RamMB:         s.RamMB,
+			ScratchMB:     s.ScratchMB,
+			CPUMillicores: s.CPUMillicores,
+			DiskIOProfile: s.DiskIOProfile,
+			Essential:     s.Essential,
+			DependsOn:     s.DependsOn,
 		})
 	}
 	raw, err := json.Marshal(out)

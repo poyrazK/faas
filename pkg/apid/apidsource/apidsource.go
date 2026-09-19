@@ -199,7 +199,11 @@ type EnqueueParams struct {
 	PRNumber   int
 	// Workflows is the validated definition set carried by a multipart source
 	// deploy and stored with the deployment for run snapshotting.
-	Workflows              json.RawMessage
+	Workflows json.RawMessage
+	// Sidecars is the envelope-sealed sidecar set produced by apid's
+	// deployment validator. Source builds use the same immutable deployment
+	// shape as image deploys.
+	Sidecars               json.RawMessage
 	TrafficPercent         int
 	TrafficPercentExplicit bool
 	RollbackOn5xx          bool
@@ -453,6 +457,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		DeployedBy:             p.DeployedBy,
 		PRNumber:               p.PRNumber,
 		Workflows:              append(json.RawMessage(nil), p.Workflows...),
+		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
 		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:         p.TrafficPercent,
 		TrafficPercentExplicit: p.TrafficPercentExplicit,

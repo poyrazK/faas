@@ -21055,6 +21055,11 @@ components:
         workflows:
           type: array
           items: { $ref: '#/components/schemas/WorkflowSpec' }
+        sidecars:
+          type: array
+          maxItems: 2
+          items: { $ref: '#/components/schemas/Sidecar' }
+          description: "Up to 2 stateless sidecars (1 init + 1 sidecar) carried across the resumable upload session."
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false."

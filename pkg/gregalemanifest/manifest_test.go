@@ -238,6 +238,42 @@ filter = '{ "data": { "amount": { "$gt": 100 } } }'
 	}
 }
 
+func TestLoad_TOMLExtensionPreset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte(`[[extensions]]
+preset = "opentelemetry"
+image = "registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+env = { OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318" }
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil || !ok {
+		t.Fatalf("Load = manifest=%+v ok=%v err=%v", m, ok, err)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	sidecars, err := m.ToSidecars()
+	if err != nil {
+		t.Fatalf("ToSidecars: %v", err)
+	}
+	if len(sidecars) != 1 || sidecars[0].Name != "otel-collector" || sidecars[0].Port != 4318 {
+		t.Fatalf("sidecars = %+v, want preset defaults", sidecars)
+	}
+	if sidecars[0].Env["OTEL_EXPORTER_OTLP_PROTOCOL"] != "http/protobuf" ||
+		sidecars[0].Env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "" {
+		t.Fatalf("sidecar env = %+v, want preset and explicit values", sidecars[0].Env)
+	}
+}
+
+func TestExtensionPresetRequiresDigestImage(t *testing.T) {
+	m := &Manifest{Extensions: []ExtensionSpec{{Preset: string(ExtensionPresetSentry)}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "image") {
+		t.Fatalf("Validate = %v, want missing image error", err)
+	}
+}
+
 func TestLoad_TOMLRejectsUnsupportedField(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte("[hosting]\nstart = \"go run ./cmd/api\"\n"), 0o644); err != nil {
