@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugCriticalPathExemplar } from './DebugCriticalPathExemplar.js';
 import type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';
 /**
  * Bounded historical critical-path aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans.
@@ -9,6 +10,9 @@ import type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';
 export type DebugCriticalPathHistoryItem = {
   signature: string;
   segments: Array<DebugCriticalPathSegment>;
+  dominant_segment?: DebugCriticalPathSegment;
+  dominant_segment_exclusive_ms?: number;
+  exemplars: Array<DebugCriticalPathExemplar>;
   calls: number;
   error_calls: number;
   error_rate_pct: number;

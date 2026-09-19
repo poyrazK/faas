@@ -6445,7 +6445,7 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 }
 
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, count, received_at, spans_summary
+SELECT id, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2
@@ -6467,6 +6467,8 @@ type ListRequestTelemetryDependencySpansParams struct {
 type ListRequestTelemetryDependencySpansRow struct {
 	ID           pgtype.UUID
 	Count        int32
+	Status       int32
+	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	SpansSummary []byte
 }
@@ -6494,6 +6496,8 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 		if err := rows.Scan(
 			&i.ID,
 			&i.Count,
+			&i.Status,
+			&i.TraceID,
 			&i.ReceivedAt,
 			&i.SpansSummary,
 		); err != nil {

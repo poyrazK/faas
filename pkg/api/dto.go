@@ -8354,28 +8354,48 @@ type DebugCriticalPathSegment struct {
 	Name string `json:"name"`
 }
 
+// DebugCriticalPathExemplar is one bounded representative request for a
+// historical critical path. RequestID is either the retained public trace ID
+// or the internal telemetry-row ID, both of which are accepted by the debug
+// request endpoint. Only redacted path attribution is exposed.
+type DebugCriticalPathExemplar struct {
+	RequestID                  string                    `json:"request_id"`
+	TraceID                    string                    `json:"trace_id,omitempty"`
+	Window                     string                    `json:"window"`
+	ReceivedAt                 string                    `json:"received_at"`
+	DurationMS                 int64                     `json:"duration_ms"`
+	HTTPStatus                 int                       `json:"http_status"`
+	Error                      bool                      `json:"error"`
+	Count                      int64                     `json:"count"`
+	DominantSegment            *DebugCriticalPathSegment `json:"dominant_segment,omitempty"`
+	DominantSegmentExclusiveMS int64                     `json:"dominant_segment_exclusive_ms,omitempty"`
+}
+
 // DebugCriticalPathHistoryItem is one bounded historical critical-path
 // aggregate. Durations are weighted by collapsed request-row counts and the
 // split-window fields expose a recent regression without exporting spans.
 type DebugCriticalPathHistoryItem struct {
-	Signature            string                     `json:"signature"`
-	Segments             []DebugCriticalPathSegment `json:"segments"`
-	Calls                int64                      `json:"calls"`
-	ErrorCalls           int64                      `json:"error_calls"`
-	ErrorRatePct         float64                    `json:"error_rate_pct"`
-	P50MS                int64                      `json:"p50_ms"`
-	P95MS                int64                      `json:"p95_ms"`
-	P99MS                int64                      `json:"p99_ms"`
-	BaselineCalls        int64                      `json:"baseline_calls"`
-	CurrentCalls         int64                      `json:"current_calls"`
-	BaselineP95MS        int64                      `json:"baseline_p95_ms"`
-	CurrentP95MS         int64                      `json:"current_p95_ms"`
-	P95DeltaMS           int64                      `json:"p95_delta_ms"`
-	RegressionFactor     float64                    `json:"regression_factor"`
-	Regression           bool                       `json:"regression"`
-	BaselineErrorRatePct float64                    `json:"baseline_error_rate_pct"`
-	CurrentErrorRatePct  float64                    `json:"current_error_rate_pct"`
-	ErrorRateDeltaPct    float64                    `json:"error_rate_delta_pct"`
+	Signature                  string                      `json:"signature"`
+	Segments                   []DebugCriticalPathSegment  `json:"segments"`
+	DominantSegment            *DebugCriticalPathSegment   `json:"dominant_segment,omitempty"`
+	DominantSegmentExclusiveMS int64                       `json:"dominant_segment_exclusive_ms,omitempty"`
+	Exemplars                  []DebugCriticalPathExemplar `json:"exemplars"`
+	Calls                      int64                       `json:"calls"`
+	ErrorCalls                 int64                       `json:"error_calls"`
+	ErrorRatePct               float64                     `json:"error_rate_pct"`
+	P50MS                      int64                       `json:"p50_ms"`
+	P95MS                      int64                       `json:"p95_ms"`
+	P99MS                      int64                       `json:"p99_ms"`
+	BaselineCalls              int64                       `json:"baseline_calls"`
+	CurrentCalls               int64                       `json:"current_calls"`
+	BaselineP95MS              int64                       `json:"baseline_p95_ms"`
+	CurrentP95MS               int64                       `json:"current_p95_ms"`
+	P95DeltaMS                 int64                       `json:"p95_delta_ms"`
+	RegressionFactor           float64                     `json:"regression_factor"`
+	Regression                 bool                        `json:"regression"`
+	BaselineErrorRatePct       float64                     `json:"baseline_error_rate_pct"`
+	CurrentErrorRatePct        float64                     `json:"current_error_rate_pct"`
+	ErrorRateDeltaPct          float64                     `json:"error_rate_delta_pct"`
 }
 
 // DebugCriticalPathHistoryResponse is the bounded historical critical-path

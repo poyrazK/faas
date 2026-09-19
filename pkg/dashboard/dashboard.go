@@ -2165,25 +2165,42 @@ type DebugCriticalPathHistoryView struct {
 }
 
 type DebugCriticalPathHistoryItemView struct {
-	Signature            string
-	Segments             []DebugCriticalPathSegmentView
-	Calls                int64
-	ErrorCalls           int64
-	ErrorRatePct         float64
-	P50MS                int64
-	P95MS                int64
-	P99MS                int64
-	BaselineCalls        int64
-	CurrentCalls         int64
-	BaselineP95MS        int64
-	CurrentP95MS         int64
-	P95DeltaMS           int64
-	RegressionFactor     float64
-	Regression           bool
-	BaselineErrorRatePct float64
-	CurrentErrorRatePct  float64
-	ErrorRateDeltaPct    float64
-	RequestsURL          string
+	Signature                  string
+	Segments                   []DebugCriticalPathSegmentView
+	DominantSegment            *DebugCriticalPathSegmentView
+	DominantSegmentExclusiveMS int64
+	Exemplars                  []DebugCriticalPathExemplarView
+	Calls                      int64
+	ErrorCalls                 int64
+	ErrorRatePct               float64
+	P50MS                      int64
+	P95MS                      int64
+	P99MS                      int64
+	BaselineCalls              int64
+	CurrentCalls               int64
+	BaselineP95MS              int64
+	CurrentP95MS               int64
+	P95DeltaMS                 int64
+	RegressionFactor           float64
+	Regression                 bool
+	BaselineErrorRatePct       float64
+	CurrentErrorRatePct        float64
+	ErrorRateDeltaPct          float64
+	RequestsURL                string
+}
+
+type DebugCriticalPathExemplarView struct {
+	RequestID                  string
+	TraceID                    string
+	Window                     string
+	ReceivedAt                 string
+	DurationMS                 int64
+	HTTPStatus                 int
+	Error                      bool
+	Count                      int64
+	DominantSegment            *DebugCriticalPathSegmentView
+	DominantSegmentExclusiveMS int64
+	RequestURL                 string
 }
 
 type DebugCriticalPathSegmentView struct {

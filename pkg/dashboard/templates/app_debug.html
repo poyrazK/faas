@@ -218,13 +218,15 @@
           <p><strong>{{.Data.CriticalPathHistory.RepresentedRequests}}</strong> represented requests in <strong>{{.Data.CriticalPathHistory.TelemetryRows}}</strong> telemetry rows · <strong>{{.Data.CriticalPathHistory.PathSamples}}</strong> path samples</p>
           {{if .Data.CriticalPathHistory.CriticalPaths}}
             <table class="coverage-table" aria-label="Historical critical path regressions">
-              <thead><tr><th>Regression</th><th>Critical path</th><th>Calls</th><th>Error rate</th><th>P50</th><th>P95</th><th>Baseline P95</th><th>Current P95</th><th>Delta</th><th></th></tr></thead>
+              <thead><tr><th>Regression</th><th>Critical path</th><th>Dominant segment</th><th>Calls</th><th>Error rate</th><th>P50</th><th>P95</th><th>Baseline P95</th><th>Current P95</th><th>Delta</th><th>Examples</th><th></th></tr></thead>
               <tbody>
                 {{range .Data.CriticalPathHistory.CriticalPaths}}
                   <tr>
                     <td>{{if .Regression}}<span class="badge regressed">yes · {{printf "%.2fx" .RegressionFactor}}</span>{{else}}<span class="badge ok">no</span>{{end}}</td>
                     <td><code>{{range $index, $segment := .Segments}}{{if $index}} → {{end}}{{if $segment.Kind}}{{$segment.Type}}/{{$segment.Kind}}/{{$segment.Name}}{{else}}{{$segment.Type}}/{{$segment.Name}}{{end}}{{end}}</code></td>
+                    <td>{{if .DominantSegment}}<code>{{.DominantSegment.Name}}</code><br><small class="muted">{{.DominantSegmentExclusiveMS}} ms uncovered</small>{{else}}—{{end}}</td>
                     <td>{{.Calls}}</td><td>{{printf "%.2f%%" .ErrorRatePct}}</td><td>{{.P50MS}} ms</td><td>{{.P95MS}} ms</td><td>{{.BaselineP95MS}} ms</td><td>{{.CurrentP95MS}} ms</td><td>{{.P95DeltaMS}} ms</td>
+                    <td>{{if .Exemplars}}{{range .Exemplars}}<a href="{{.RequestURL}}"><span class="badge {{if .Error}}regressed{{else}}ok{{end}}">{{.Window}} · {{.DurationMS}} ms{{if .HTTPStatus}} · {{.HTTPStatus}}{{end}}</span></a><br>{{end}}{{else}}—{{end}}</td>
                     <td><a href="{{.RequestsURL}}">inspect requests →</a></td>
                   </tr>
                 {{end}}

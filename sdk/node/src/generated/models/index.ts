@@ -194,6 +194,7 @@ export type { DebugCompareResponse } from './DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './DebugCompareRouteStats.js';
 export type { DebugCoverageResponse } from './DebugCoverageResponse.js';
 export type { DebugCoverageSignal } from './DebugCoverageSignal.js';
+export type { DebugCriticalPathExemplar } from './DebugCriticalPathExemplar.js';
 export type { DebugCriticalPathHistoryItem } from './DebugCriticalPathHistoryItem.js';
 export type { DebugCriticalPathHistoryResponse } from './DebugCriticalPathHistoryResponse.js';
 export type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';

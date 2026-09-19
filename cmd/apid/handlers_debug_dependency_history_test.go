@@ -103,6 +103,48 @@ func TestBuildDebugCriticalPathHistoryDetectsRecentRegression(t *testing.T) {
 	}
 }
 
+func TestBuildDebugCriticalPathHistoryIncludesExemplarsAndDominantSegment(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := []sqlc.ListRequestTelemetryDependencySpansRow{
+		criticalPathHistoryTestRowWithIdentity(start.Add(10*time.Minute), 100, 200, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(70*time.Minute), 300, 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(80*time.Minute), 250, 500, "cccccccccccccccccccccccccccccccc"),
+	}
+
+	got, truncated, complete, _, _ := buildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
+	if truncated || !complete || len(got) != 1 {
+		t.Fatalf("history = (paths=%d truncated=%v complete=%v), want one complete path", len(got), truncated, complete)
+	}
+	path := got[0]
+	if path.DominantSegment == nil || path.DominantSegment.Name != "db.query" || path.DominantSegmentExclusiveMS != 300 {
+		t.Fatalf("dominant segment = %+v/%dms, want db.query/300ms", path.DominantSegment, path.DominantSegmentExclusiveMS)
+	}
+	if len(path.Exemplars) != 3 {
+		t.Fatalf("exemplars = %+v, want three bounded representatives", path.Exemplars)
+	}
+	if path.Exemplars[0].RequestID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || path.Exemplars[0].Window != "current" || path.Exemplars[0].DurationMS != 300 {
+		t.Fatalf("current exemplar = %+v", path.Exemplars[0])
+	}
+	if path.Exemplars[1].RequestID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || path.Exemplars[1].Window != "baseline" {
+		t.Fatalf("baseline exemplar = %+v", path.Exemplars[1])
+	}
+	if path.Exemplars[2].RequestID != "cccccccccccccccccccccccccccccccc" || !path.Exemplars[2].Error || path.Exemplars[2].HTTPStatus != 500 {
+		t.Fatalf("error exemplar = %+v", path.Exemplars[2])
+	}
+	for _, exemplar := range path.Exemplars {
+		if exemplar.DominantSegment == nil || exemplar.DominantSegment.Name != "db.query" {
+			t.Fatalf("exemplar attribution = %+v", exemplar)
+		}
+	}
+}
+
+func criticalPathHistoryTestRowWithIdentity(at time.Time, durationMS uint64, status int32, traceID string) sqlc.ListRequestTelemetryDependencySpansRow {
+	row := criticalPathHistoryTestRow(at, durationMS, status >= 400)
+	row.Status = status
+	row.TraceID = pgtype.Text{String: traceID, Valid: true}
+	return row
+}
+
 func criticalPathHistoryTestRow(at time.Time, durationMS uint64, errorStatus bool) sqlc.ListRequestTelemetryDependencySpansRow {
 	start := at.UnixNano()
 	end := at.Add(time.Duration(durationMS) * time.Millisecond).UnixNano()

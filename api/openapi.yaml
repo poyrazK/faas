@@ -5087,8 +5087,11 @@ paths:
         redacted span summaries. The result compares the newer and older
         halves of the selected window to flag a path regression. Raw span
         attributes, destinations, request bodies, and credentials are never
-        returned. Span evidence is sampled and the response marks row,
-        path-cardinality, and incomplete-parent coverage explicitly.
+        returned. Each path includes up to three representative request
+        identifiers (current slowest, baseline slowest, and an error sample
+        when available) plus the largest uncovered segment attribution. Span
+        evidence is sampled and the response marks row, path-cardinality, and
+        incomplete-parent coverage explicitly.
         Plan-gated by `DebugTelemetryEnabled` and clamped to
         `DebugTelemetryRetentionDays`.
       parameters:
@@ -32046,7 +32049,7 @@ components:
     DebugCriticalPathHistoryItem:
       type: object
       description: "Bounded historical critical-path aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
-      required: [signature, segments, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, baseline_calls, current_calls, baseline_p95_ms, current_p95_ms, p95_delta_ms, regression_factor, regression, baseline_error_rate_pct, current_error_rate_pct, error_rate_delta_pct]
+      required: [signature, segments, exemplars, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, baseline_calls, current_calls, baseline_p95_ms, current_p95_ms, p95_delta_ms, regression_factor, regression, baseline_error_rate_pct, current_error_rate_pct, error_rate_delta_pct]
       properties:
         signature: { type: string, maxLength: 8192 }
         segments:
@@ -32054,6 +32057,13 @@ components:
           minItems: 1
           maxItems: 32
           items: { $ref: '#/components/schemas/DebugCriticalPathSegment' }
+        dominant_segment:
+          $ref: '#/components/schemas/DebugCriticalPathSegment'
+        dominant_segment_exclusive_ms: { type: integer, format: int64, minimum: 0 }
+        exemplars:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/DebugCriticalPathExemplar' }
         calls: { type: integer, format: int64, minimum: 1 }
         error_calls: { type: integer, format: int64, minimum: 0 }
         error_rate_pct: { type: number, minimum: 0, maximum: 100 }
@@ -32070,6 +32080,23 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_delta_pct: { type: number }
+
+    DebugCriticalPathExemplar:
+      type: object
+      description: "Bounded representative request for a historical critical path. Request identifiers resolve only to retained redacted debugger evidence."
+      required: [request_id, window, received_at, duration_ms, http_status, error, count]
+      properties:
+        request_id: { type: string, maxLength: 128 }
+        trace_id: { type: string, maxLength: 128 }
+        window: { type: string, enum: [baseline, current] }
+        received_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        http_status: { type: integer, minimum: 0, maximum: 999 }
+        error: { type: boolean }
+        count: { type: integer, format: int64, minimum: 1 }
+        dominant_segment:
+          $ref: '#/components/schemas/DebugCriticalPathSegment'
+        dominant_segment_exclusive_ms: { type: integer, format: int64, minimum: 0 }
 
     DebugCriticalPathHistoryResponse:
       type: object

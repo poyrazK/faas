@@ -384,6 +384,8 @@ from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
+from .debug_critical_path_exemplar import DebugCriticalPathExemplar
+from .debug_critical_path_exemplar_window import DebugCriticalPathExemplarWindow
 from .debug_critical_path_history_item import DebugCriticalPathHistoryItem
 from .debug_critical_path_history_response import DebugCriticalPathHistoryResponse
 from .debug_critical_path_segment import DebugCriticalPathSegment
@@ -1672,6 +1674,8 @@ __all__ = (
     "DebugCompareRouteStats",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
+    "DebugCriticalPathExemplar",
+    "DebugCriticalPathExemplarWindow",
     "DebugCriticalPathHistoryItem",
     "DebugCriticalPathHistoryResponse",
     "DebugCriticalPathSegment",

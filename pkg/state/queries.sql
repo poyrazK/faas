@@ -1725,7 +1725,7 @@ LIMIT sqlc.arg('limit')::int;
 -- pass an app id from another tenant; the app lookup remains the primary
 -- IDOR boundary. The newest rows are preferred because spans_summary is
 -- sampled evidence, not a complete request trace archive.
-SELECT id, count, received_at, spans_summary
+SELECT id, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2

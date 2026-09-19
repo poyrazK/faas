@@ -534,24 +534,25 @@ func dashboardDebugCriticalPathHistoryView(response api.DebugCriticalPathHistory
 	}
 	for _, path := range response.CriticalPaths {
 		pathView := dashboard.DebugCriticalPathHistoryItemView{
-			Signature:            path.Signature,
-			Segments:             make([]dashboard.DebugCriticalPathSegmentView, 0, len(path.Segments)),
-			Calls:                path.Calls,
-			ErrorCalls:           path.ErrorCalls,
-			ErrorRatePct:         path.ErrorRatePct,
-			P50MS:                path.P50MS,
-			P95MS:                path.P95MS,
-			P99MS:                path.P99MS,
-			BaselineCalls:        path.BaselineCalls,
-			CurrentCalls:         path.CurrentCalls,
-			BaselineP95MS:        path.BaselineP95MS,
-			CurrentP95MS:         path.CurrentP95MS,
-			P95DeltaMS:           path.P95DeltaMS,
-			RegressionFactor:     path.RegressionFactor,
-			Regression:           path.Regression,
-			BaselineErrorRatePct: path.BaselineErrorRatePct,
-			CurrentErrorRatePct:  path.CurrentErrorRatePct,
-			ErrorRateDeltaPct:    path.ErrorRateDeltaPct,
+			Signature:                  path.Signature,
+			Segments:                   make([]dashboard.DebugCriticalPathSegmentView, 0, len(path.Segments)),
+			DominantSegmentExclusiveMS: path.DominantSegmentExclusiveMS,
+			Calls:                      path.Calls,
+			ErrorCalls:                 path.ErrorCalls,
+			ErrorRatePct:               path.ErrorRatePct,
+			P50MS:                      path.P50MS,
+			P95MS:                      path.P95MS,
+			P99MS:                      path.P99MS,
+			BaselineCalls:              path.BaselineCalls,
+			CurrentCalls:               path.CurrentCalls,
+			BaselineP95MS:              path.BaselineP95MS,
+			CurrentP95MS:               path.CurrentP95MS,
+			P95DeltaMS:                 path.P95DeltaMS,
+			RegressionFactor:           path.RegressionFactor,
+			Regression:                 path.Regression,
+			BaselineErrorRatePct:       path.BaselineErrorRatePct,
+			CurrentErrorRatePct:        path.CurrentErrorRatePct,
+			ErrorRateDeltaPct:          path.ErrorRateDeltaPct,
 		}
 		for _, segment := range path.Segments {
 			pathView.Segments = append(pathView.Segments, dashboard.DebugCriticalPathSegmentView{
@@ -559,6 +560,37 @@ func dashboardDebugCriticalPathHistoryView(response api.DebugCriticalPathHistory
 				Kind: segment.Kind,
 				Name: segment.Name,
 			})
+		}
+		if path.DominantSegment != nil {
+			pathView.DominantSegment = &dashboard.DebugCriticalPathSegmentView{
+				Type: path.DominantSegment.Type,
+				Kind: path.DominantSegment.Kind,
+				Name: path.DominantSegment.Name,
+			}
+		}
+		pathView.Exemplars = make([]dashboard.DebugCriticalPathExemplarView, 0, len(path.Exemplars))
+		for _, exemplar := range path.Exemplars {
+			exemplarView := dashboard.DebugCriticalPathExemplarView{
+				RequestID:                  exemplar.RequestID,
+				TraceID:                    exemplar.TraceID,
+				Window:                     exemplar.Window,
+				ReceivedAt:                 exemplar.ReceivedAt,
+				DurationMS:                 exemplar.DurationMS,
+				HTTPStatus:                 exemplar.HTTPStatus,
+				Error:                      exemplar.Error,
+				Count:                      exemplar.Count,
+				DominantSegmentExclusiveMS: exemplar.DominantSegmentExclusiveMS,
+			}
+			if exemplar.DominantSegment != nil {
+				exemplarView.DominantSegment = &dashboard.DebugCriticalPathSegmentView{
+					Type: exemplar.DominantSegment.Type,
+					Kind: exemplar.DominantSegment.Kind,
+					Name: exemplar.DominantSegment.Name,
+				}
+			}
+			values := url.Values{"since": []string{response.Since}, "request_id": []string{exemplar.RequestID}}
+			exemplarView.RequestURL = "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode() + "#request-detail"
+			pathView.Exemplars = append(pathView.Exemplars, exemplarView)
 		}
 		values := url.Values{"since": []string{response.Since}, "min_latency_ms": []string{strconv.FormatInt(path.CurrentP95MS, 10)}}
 		pathView.RequestsURL = "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode() + "#requests"

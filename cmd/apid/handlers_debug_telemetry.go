@@ -226,14 +226,15 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 }
 
 const (
-	debugDependencyHistoryMaxRows     = 2000
-	debugDependencyHistoryMaxGroups   = 256
-	debugDependencyHistoryMaxOutput   = 50
-	debugDependencyHistoryMinCalls    = int64(5)
-	debugDependencyRegressionFactor   = 1.5
-	debugDependencyRegressionDeltaMS  = int64(25)
-	debugCriticalPathHistoryMaxGroups = 128
-	debugCriticalPathHistoryMaxOutput = 25
+	debugDependencyHistoryMaxRows        = 2000
+	debugDependencyHistoryMaxGroups      = 256
+	debugDependencyHistoryMaxOutput      = 50
+	debugDependencyHistoryMinCalls       = int64(5)
+	debugDependencyRegressionFactor      = 1.5
+	debugDependencyRegressionDeltaMS     = int64(25)
+	debugCriticalPathHistoryMaxGroups    = 128
+	debugCriticalPathHistoryMaxOutput    = 25
+	debugCriticalPathHistoryMaxExemplars = 3
 )
 
 // debugDependencyLatencyHandler — GET /v1/apps/{slug}/debug/dependencies.
@@ -365,17 +366,19 @@ func (s *server) debugCriticalPathHistoryHandler(w http.ResponseWriter, r *http.
 type debugCriticalPathHistorySample = debugDependencyHistorySample
 
 type debugCriticalPathHistoryAggregate struct {
-	signature      string
-	segments       []api.DebugCriticalPathSegment
-	all            []debugCriticalPathHistorySample
-	baseline       []debugCriticalPathHistorySample
-	current        []debugCriticalPathHistorySample
-	calls          int64
-	errors         int64
-	baselineCalls  int64
-	currentCalls   int64
-	baselineErrors int64
-	currentErrors  int64
+	signature                  string
+	segments                   []api.DebugCriticalPathSegment
+	dominantSegment            *api.DebugCriticalPathSegment
+	dominantSegmentExclusiveMS int64
+	all                        []debugCriticalPathHistorySample
+	baseline                   []debugCriticalPathHistorySample
+	current                    []debugCriticalPathHistorySample
+	calls                      int64
+	errors                     int64
+	baselineCalls              int64
+	currentCalls               int64
+	baselineErrors             int64
+	currentErrors              int64
 }
 
 func buildDebugCriticalPathHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugCriticalPathHistoryItem, bool, bool, int64, int64) {
@@ -428,7 +431,16 @@ func buildDebugCriticalPathHistory(rows []sqlc.ListRequestTelemetryDependencySpa
 		sample := debugCriticalPathHistorySample{
 			durationNanos: debugCriticalPathDurationNanos(path.DurationMS),
 			weight:        weight,
-			isError:       debugCriticalPathHasError(path),
+			isError:       debugCriticalPathHasError(path) || row.Status >= 400,
+			requestID:     debugCriticalPathRequestID(row),
+			traceID:       textFromPg(row.TraceID),
+			receivedAt:    row.ReceivedAt,
+			httpStatus:    int(row.Status),
+		}
+		sample.dominantSegment, sample.dominantExclusiveMS = debugCriticalPathDominantSegment(path)
+		if sample.dominantExclusiveMS > aggregate.dominantSegmentExclusiveMS {
+			aggregate.dominantSegment = sample.dominantSegment
+			aggregate.dominantSegmentExclusiveMS = sample.dominantExclusiveMS
 		}
 		aggregate.all = append(aggregate.all, sample)
 		aggregate.calls += weight
@@ -436,6 +448,7 @@ func buildDebugCriticalPathHistory(rows []sqlc.ListRequestTelemetryDependencySpa
 			aggregate.errors += weight
 		}
 		isCurrent := row.ReceivedAt.Valid && !row.ReceivedAt.Time.Before(cutover)
+		sample.isCurrent = isCurrent
 		if isCurrent {
 			aggregate.current = append(aggregate.current, sample)
 			aggregate.currentCalls += weight
@@ -472,24 +485,27 @@ func buildDebugCriticalPathHistory(rows []sqlc.ListRequestTelemetryDependencySpa
 		baselineErrorRate := debugDependencyErrorRate(aggregate.baselineErrors, aggregate.baselineCalls)
 		currentErrorRate := debugDependencyErrorRate(aggregate.currentErrors, aggregate.currentCalls)
 		out = append(out, api.DebugCriticalPathHistoryItem{
-			Signature:            aggregate.signature,
-			Segments:             aggregate.segments,
-			Calls:                aggregate.calls,
-			ErrorCalls:           aggregate.errors,
-			ErrorRatePct:         debugDependencyErrorRate(aggregate.errors, aggregate.calls),
-			P50MS:                debugWeightedDependencyPercentile(aggregate.all, 0.50),
-			P95MS:                debugWeightedDependencyPercentile(aggregate.all, 0.95),
-			P99MS:                debugWeightedDependencyPercentile(aggregate.all, 0.99),
-			BaselineCalls:        aggregate.baselineCalls,
-			CurrentCalls:         aggregate.currentCalls,
-			BaselineP95MS:        baselineP95,
-			CurrentP95MS:         currentP95,
-			P95DeltaMS:           p95Delta,
-			RegressionFactor:     factor,
-			Regression:           regression,
-			BaselineErrorRatePct: baselineErrorRate,
-			CurrentErrorRatePct:  currentErrorRate,
-			ErrorRateDeltaPct:    currentErrorRate - baselineErrorRate,
+			Signature:                  aggregate.signature,
+			Segments:                   aggregate.segments,
+			DominantSegment:            aggregate.dominantSegment,
+			DominantSegmentExclusiveMS: aggregate.dominantSegmentExclusiveMS,
+			Exemplars:                  debugCriticalPathHistoryExemplars(aggregate),
+			Calls:                      aggregate.calls,
+			ErrorCalls:                 aggregate.errors,
+			ErrorRatePct:               debugDependencyErrorRate(aggregate.errors, aggregate.calls),
+			P50MS:                      debugWeightedDependencyPercentile(aggregate.all, 0.50),
+			P95MS:                      debugWeightedDependencyPercentile(aggregate.all, 0.95),
+			P99MS:                      debugWeightedDependencyPercentile(aggregate.all, 0.99),
+			BaselineCalls:              aggregate.baselineCalls,
+			CurrentCalls:               aggregate.currentCalls,
+			BaselineP95MS:              baselineP95,
+			CurrentP95MS:               currentP95,
+			P95DeltaMS:                 p95Delta,
+			RegressionFactor:           factor,
+			Regression:                 regression,
+			BaselineErrorRatePct:       baselineErrorRate,
+			CurrentErrorRatePct:        currentErrorRate,
+			ErrorRateDeltaPct:          currentErrorRate - baselineErrorRate,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -509,6 +525,116 @@ func buildDebugCriticalPathHistory(rows []sqlc.ListRequestTelemetryDependencySpa
 		truncated = true
 	}
 	return out, truncated, complete, representedRequests, pathSamples
+}
+
+func debugCriticalPathHistoryExemplars(aggregate *debugCriticalPathHistoryAggregate) []api.DebugCriticalPathExemplar {
+	if aggregate == nil {
+		return nil
+	}
+	candidates := make([]debugCriticalPathHistorySample, 0, debugCriticalPathHistoryMaxExemplars)
+	if current := debugCriticalPathHistorySlowest(aggregate.current); current != nil {
+		candidates = append(candidates, *current)
+	}
+	if baseline := debugCriticalPathHistorySlowest(aggregate.baseline); baseline != nil {
+		candidates = append(candidates, *baseline)
+	}
+	failure := debugCriticalPathHistorySlowestError(aggregate.current)
+	if failure == nil {
+		failure = debugCriticalPathHistorySlowestError(aggregate.baseline)
+	}
+	if failure != nil {
+		candidates = append(candidates, *failure)
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	exemplars := make([]api.DebugCriticalPathExemplar, 0, debugCriticalPathHistoryMaxExemplars)
+	for _, sample := range candidates {
+		if sample.requestID == "" || len(exemplars) >= debugCriticalPathHistoryMaxExemplars {
+			continue
+		}
+		if _, ok := seen[sample.requestID]; ok {
+			continue
+		}
+		seen[sample.requestID] = struct{}{}
+		window := "baseline"
+		if sample.isCurrent {
+			window = "current"
+		}
+		exemplars = append(exemplars, api.DebugCriticalPathExemplar{
+			RequestID:                  sample.requestID,
+			TraceID:                    sample.traceID,
+			Window:                     window,
+			ReceivedAt:                 timeFromPg(sample.receivedAt),
+			DurationMS:                 int64(sample.durationNanos / uint64(time.Millisecond)),
+			HTTPStatus:                 sample.httpStatus,
+			Error:                      sample.isError,
+			Count:                      sample.weight,
+			DominantSegment:            sample.dominantSegment,
+			DominantSegmentExclusiveMS: sample.dominantExclusiveMS,
+		})
+	}
+	return exemplars
+}
+
+func debugCriticalPathHistorySlowest(samples []debugCriticalPathHistorySample) *debugCriticalPathHistorySample {
+	var best *debugCriticalPathHistorySample
+	for i := range samples {
+		candidate := &samples[i]
+		if candidate.requestID == "" {
+			continue
+		}
+		if best == nil || candidate.durationNanos > best.durationNanos ||
+			(candidate.durationNanos == best.durationNanos && candidate.receivedAt.Time.After(best.receivedAt.Time)) {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func debugCriticalPathHistorySlowestError(samples []debugCriticalPathHistorySample) *debugCriticalPathHistorySample {
+	var best *debugCriticalPathHistorySample
+	for i := range samples {
+		candidate := &samples[i]
+		if !candidate.isError || candidate.requestID == "" {
+			continue
+		}
+		if best == nil || candidate.durationNanos > best.durationNanos ||
+			(candidate.durationNanos == best.durationNanos && candidate.receivedAt.Time.After(best.receivedAt.Time)) {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func debugCriticalPathRequestID(row sqlc.ListRequestTelemetryDependencySpansRow) string {
+	if traceID := textFromPg(row.TraceID); traceID != "" {
+		return traceID
+	}
+	return uuidFromPg(row.ID)
+}
+
+func debugCriticalPathDominantSegment(path *api.DebugRequestCriticalPath) (*api.DebugCriticalPathSegment, int64) {
+	if path == nil {
+		return nil, 0
+	}
+	var dominant *api.DebugCriticalPathSegment
+	var exclusive int64
+	for _, span := range path.Spans {
+		if span.ExclusiveMS < exclusive {
+			continue
+		}
+		dependencyType := span.DependencyType
+		if dependencyType == "" {
+			dependencyType = "application"
+		}
+		name := span.Name
+		if name == "" {
+			name = "<unnamed>"
+		}
+		dominant = &api.DebugCriticalPathSegment{Type: dependencyType, Kind: span.DependencyKind, Name: name}
+		exclusive = span.ExclusiveMS
+	}
+	return dominant, exclusive
 }
 
 func debugCriticalPathIdentity(path *api.DebugRequestCriticalPath) (string, []api.DebugCriticalPathSegment) {
@@ -559,9 +685,16 @@ func debugCriticalPathDurationNanos(durationMS int64) uint64 {
 }
 
 type debugDependencyHistorySample struct {
-	durationNanos uint64
-	weight        int64
-	isError       bool
+	durationNanos       uint64
+	weight              int64
+	isError             bool
+	requestID           string
+	traceID             string
+	receivedAt          pgtype.Timestamptz
+	httpStatus          int
+	isCurrent           bool
+	dominantSegment     *api.DebugCriticalPathSegment
+	dominantExclusiveMS int64
 }
 
 type debugDependencyHistoryAggregate struct {

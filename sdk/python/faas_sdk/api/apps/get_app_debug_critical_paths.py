@@ -101,8 +101,11 @@ def sync_detailed(
     redacted span summaries. The result compares the newer and older
     halves of the selected window to flag a path regression. Raw span
     attributes, destinations, request bodies, and credentials are never
-    returned. Span evidence is sampled and the response marks row,
-    path-cardinality, and incomplete-parent coverage explicitly.
+    returned. Each path includes up to three representative request
+    identifiers (current slowest, baseline slowest, and an error sample
+    when available) plus the largest uncovered segment attribution. Span
+    evidence is sampled and the response marks row, path-cardinality, and
+    incomplete-parent coverage explicitly.
     Plan-gated by `DebugTelemetryEnabled` and clamped to
     `DebugTelemetryRetentionDays`.
 
@@ -142,8 +145,11 @@ def sync(
     redacted span summaries. The result compares the newer and older
     halves of the selected window to flag a path regression. Raw span
     attributes, destinations, request bodies, and credentials are never
-    returned. Span evidence is sampled and the response marks row,
-    path-cardinality, and incomplete-parent coverage explicitly.
+    returned. Each path includes up to three representative request
+    identifiers (current slowest, baseline slowest, and an error sample
+    when available) plus the largest uncovered segment attribution. Span
+    evidence is sampled and the response marks row, path-cardinality, and
+    incomplete-parent coverage explicitly.
     Plan-gated by `DebugTelemetryEnabled` and clamped to
     `DebugTelemetryRetentionDays`.
 
@@ -178,8 +184,11 @@ async def asyncio_detailed(
     redacted span summaries. The result compares the newer and older
     halves of the selected window to flag a path regression. Raw span
     attributes, destinations, request bodies, and credentials are never
-    returned. Span evidence is sampled and the response marks row,
-    path-cardinality, and incomplete-parent coverage explicitly.
+    returned. Each path includes up to three representative request
+    identifiers (current slowest, baseline slowest, and an error sample
+    when available) plus the largest uncovered segment attribution. Span
+    evidence is sampled and the response marks row, path-cardinality, and
+    incomplete-parent coverage explicitly.
     Plan-gated by `DebugTelemetryEnabled` and clamped to
     `DebugTelemetryRetentionDays`.
 
@@ -217,8 +226,11 @@ async def asyncio(
     redacted span summaries. The result compares the newer and older
     halves of the selected window to flag a path regression. Raw span
     attributes, destinations, request bodies, and credentials are never
-    returned. Span evidence is sampled and the response marks row,
-    path-cardinality, and incomplete-parent coverage explicitly.
+    returned. Each path includes up to three representative request
+    identifiers (current slowest, baseline slowest, and an error sample
+    when available) plus the largest uncovered segment attribution. Span
+    evidence is sampled and the response marks row, path-cardinality, and
+    incomplete-parent coverage explicitly.
     Plan-gated by `DebugTelemetryEnabled` and clamped to
     `DebugTelemetryRetentionDays`.
 
