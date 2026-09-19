@@ -788,13 +788,13 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-push")
 	f.vmmd.SetVersion(instance.ID, "queue-push")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-push\n", 10*time.Second)
-	// The trigger batch contract treats an empty failure list as a successful
+	// A valid JSON scalar without a batchItemFailures member is a successful
 	// delivery. This is the function response the fake guest returns for the
 	// synthetic /_triggers/esm/<trigger-id> request.
 	f.vmmd.SetResponse(instance.ID, normalPathResponse{
 		status:  http.StatusOK,
 		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"batchItemFailures":[]}`),
+		body:    []byte(`"ok"`),
 	})
 
 	createdBody, statusCode := doReq(t, f.h, f.key, http.MethodPost,
@@ -829,6 +829,9 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 	invocation := waitForNormalPathInvocationState(t, f.store, sent.ID, state.InvocationCompleted, 20*time.Second)
 	if invocation.Outcome == nil || *invocation.Outcome != state.OutcomeSuccess {
 		t.Fatalf("invocation outcome=%v, want success", invocation.Outcome)
+	}
+	if invocation.Attempts != 1 {
+		t.Fatalf("invocation attempts=%d, want exactly one delivery", invocation.Attempts)
 	}
 	if invocation.Source != state.InvocationQueue {
 		t.Fatalf("invocation source=%q, want queue", invocation.Source)

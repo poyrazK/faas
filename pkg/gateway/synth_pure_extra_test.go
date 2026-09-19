@@ -61,6 +61,42 @@ func TestParseBatchFailures_SkipsEmptyIdentifiers(t *testing.T) {
 	}
 }
 
+func TestParseBatchFailures_ValidJSONWithoutFailureEnvelopeIsSuccess(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "string", body: `"ok"`},
+		{name: "number", body: `42`},
+		{name: "array", body: `["ok"]`},
+		{name: "null", body: `null`},
+		{name: "object without member", body: `{"status":"ok"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseBatchFailures([]byte(tt.body))
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if len(got) != 0 {
+				t.Fatalf("failures = %v, want empty", got)
+			}
+		})
+	}
+}
+
+func TestParseBatchFailures_RejectsNonArrayFailureMember(t *testing.T) {
+	for _, body := range []string{
+		`{"batchItemFailures":"bad"}`,
+		`{"batchItemFailures":null}`,
+		`{"batchItemFailures":{}}`,
+	} {
+		if _, err := parseBatchFailures([]byte(body)); err == nil {
+			t.Errorf("body %s: got nil error, want non-array member error", body)
+		}
+	}
+}
+
 // --- containsString ----------------------------------------------
 
 func TestContainsString_AllBranches(t *testing.T) {

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1040,12 +1041,34 @@ type batchFailureItem struct {
 // Idempotency: callers treat empty slice as "all succeeded" so
 // the empty-body case is the success path.
 func parseBatchFailures(body []byte) ([]string, error) {
-	if len(body) == 0 {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
 		return []string{}, nil
 	}
-	var env batchFailuresEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
+	var root json.RawMessage
+	if err := json.Unmarshal(trimmed, &root); err != nil {
 		return nil, fmt.Errorf("parseBatchFailures: %w", err)
+	}
+	// Only an object can carry the partial-failure member. Scalars, arrays,
+	// and null are valid successful function responses and therefore mean that
+	// no records were reported as failed.
+	if len(root) == 0 || root[0] != '{' {
+		return []string{}, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(root, &fields); err != nil {
+		return nil, fmt.Errorf("parseBatchFailures: %w", err)
+	}
+	raw, ok := fields["batchItemFailures"]
+	if !ok {
+		return []string{}, nil
+	}
+	if first := bytes.TrimSpace(raw); len(first) == 0 || first[0] != '[' {
+		return nil, errors.New("parseBatchFailures: batchItemFailures must be an array")
+	}
+	var env batchFailuresEnvelope
+	if err := json.Unmarshal(root, &env); err != nil {
+		return nil, fmt.Errorf("parseBatchFailures: batchItemFailures: %w", err)
 	}
 	out := make([]string, 0, len(env.BatchItemFailures))
 	for _, it := range env.BatchItemFailures {
