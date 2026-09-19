@@ -49,7 +49,7 @@ export type AppManifest = {
    */
   max_retries?: number | null;
   /**
-   * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default.
+   * Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
   service_replicas?: ServiceReplicas;

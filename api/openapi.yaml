@@ -20909,7 +20909,7 @@ components:
           type: [integer, "null"]
           minimum: 0
           maximum: 30
-          description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
+          description: "Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."
         # M-2 (ADR-137 §Decision 3): per-deployment replica
         # scaffold for execution_mode='service'. Foundation here;
         # full rolling-deploy / rollback / image-digest pinning

@@ -104,7 +104,7 @@ class AppManifest:
     """Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0
     means 'use plan default'."""
     request_timeout_s: int | None | Unset = UNSET
-    """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
