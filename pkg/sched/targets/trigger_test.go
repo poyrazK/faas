@@ -492,6 +492,35 @@ func TestTrigger_QueueDepthAggregatesEnabledBindings(t *testing.T) {
 	}
 }
 
+func TestTrigger_WorkerPoolScalesBindingsWithinPerBindingCaps(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID: "worker-fair", AccountID: "acct-1", WorkloadClass: state.WorkloadClassWorker,
+		MaxConcurrency: 8,
+		ScalingPolicy:  &state.ScalingPolicy{Target: &state.ScalingTarget{Metric: "queue_depth", Value: 10}},
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"worker-fair": 1}}
+	engine := &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}
+	bindings := &fakeQueueBindings{
+		byApp: map[string][]state.QueueBinding{"worker-fair": {
+			{ID: "orders-binding", QueueName: "orders", Enabled: true, MaxConcurrency: 1},
+			{ID: "billing-binding", QueueName: "billing", Enabled: true, MaxConcurrency: 4},
+			{ID: "disabled-binding", QueueName: "disabled", Enabled: false, MaxConcurrency: 8},
+		}},
+		byQueue: map[string]state.QueueStats{
+			"orders":   {Depth: 100},
+			"billing":  {Depth: 11},
+			"disabled": {Depth: 1000},
+		},
+	}
+	tr := New(store, nil, engine, ledger, Options{QueueBindingStatsReader: bindings})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.desired) != 1 || engine.desired[0] != 3 {
+		t.Fatalf("worker desired = %v, want [3] (orders capped at 1, billing at 2)", engine.desired)
+	}
+}
+
 func TestDecideQueueDepthColdStartAndCap(t *testing.T) {
 	tests := []struct {
 		name       string

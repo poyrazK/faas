@@ -6,6 +6,8 @@ The schedd publishes bounded per-app gauges for the durable queue:
 - `schedd_queue_in_flight` is dispatching invocations with a live lease.
 - `schedd_queue_oldest_age_seconds` is the age of the oldest pending item.
 - `schedd_queue_dead_letter` is the terminal dead-letter count.
+- `schedd_queue_binding_worker_demand` is the uncapped worker demand for each
+  queue binding before app and account caps are applied.
 
 Kafka bindings also publish `schedd_esm_consumer_lag_messages` and
 `schedd_esm_consumer_lag_age_seconds` by bounded source shard. These are

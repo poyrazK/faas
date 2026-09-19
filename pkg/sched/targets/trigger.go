@@ -136,11 +136,78 @@ type QueueStatsReader interface {
 }
 
 // QueueBindingStatsReader is the optional binding-aware queue signal. The
-// target trigger still scales an app-level worker fleet, so it aggregates
-// enabled bindings for the decision while emitting each binding's own gauges.
+// target trigger still scales an app-level worker fleet, but retains each
+// enabled binding's sample so its concurrency cap contributes to the target.
 type QueueBindingStatsReader interface {
 	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]state.QueueBinding, error)
 	QueueStateForQueue(ctx context.Context, appID, queueName string) (state.QueueStats, error)
+}
+
+// queueDepthSignal keeps the aggregate queue projection used by the generic
+// scaler together with the binding-level samples needed to size a worker
+// fleet fairly. A single app-level depth is not enough when two bindings have
+// independent concurrency caps: one hot binding must not turn into an
+// unbounded replica request while another binding's backlog is ignored.
+type queueDepthSignal struct {
+	queue    state.QueueStats
+	bindings []queueBindingDepth
+}
+
+type queueBindingDepth struct {
+	binding state.QueueBinding
+	queue   state.QueueStats
+}
+
+// desiredWorkers returns the worker-pool target for a queue-depth signal. With
+// bindings, each active backlog earns at least one worker and is capped by its
+// binding max-concurrency before the app/account cap is applied by the caller.
+// The legacy app-wide queue path preserves its original aggregate formula.
+func (s queueDepthSignal) desiredWorkers(target float64, maxInstances int) int {
+	if target <= 0 {
+		return 1
+	}
+	desired := 0
+	if len(s.bindings) == 0 {
+		if s.queue.Depth > 0 {
+			desired = int(math.Ceil(float64(s.queue.Depth) / target))
+		}
+	} else {
+		for _, perBinding := range s.bindingWorkerDemand(target) {
+			desired += perBinding
+		}
+	}
+	if desired < 1 {
+		desired = 1
+	}
+	if maxInstances > 0 && desired > maxInstances {
+		desired = maxInstances
+	}
+	return desired
+}
+
+// bindingWorkerDemand computes the uncapped per-binding worker demand. The
+// app-level worker cap is applied after these values are summed; exposing the
+// uncapped values as metrics lets operators see which binding is responsible
+// for pressure even when the account cap limits the fleet.
+func (s queueDepthSignal) bindingWorkerDemand(target float64) map[string]int {
+	if target <= 0 || len(s.bindings) == 0 {
+		return nil
+	}
+	demand := make(map[string]int, len(s.bindings))
+	for _, sample := range s.bindings {
+		workers := 0
+		if sample.binding.Enabled && sample.queue.Depth > 0 {
+			workers = int(math.Ceil(float64(sample.queue.Depth) / target))
+			if workers < 1 {
+				workers = 1
+			}
+			if sample.binding.MaxConcurrency > 0 && workers > sample.binding.MaxConcurrency {
+				workers = sample.binding.MaxConcurrency
+			}
+		}
+		demand[sample.binding.QueueName] = workers
+	}
+	return demand
 }
 
 // Stats is the snapshot of inputs the pure decide() function reads.
@@ -387,44 +454,46 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 	}
 }
 
-// readQueueState returns the app-level signal used by the existing scaler.
-// When bindings exist, only enabled binding queues contribute to the signal;
-// this prevents a disabled or unrelated queue from causing scale-out. An app
-// with no bindings falls back to the legacy app-wide queue projection.
-func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time) (state.QueueStats, bool, error) {
+// readQueueState returns the queue signal used by the existing scaler. When
+// bindings exist, only enabled binding queues contribute to the aggregate;
+// the individual samples are retained so worker pools can scale fairly across
+// bindings. An app with no bindings falls back to the legacy app-wide queue
+// projection.
+func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time) (queueDepthSignal, bool, error) {
 	if t.queueBindings != nil {
 		bindings, err := t.queueBindings.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
 		if err != nil {
-			return state.QueueStats{}, false, err
+			return queueDepthSignal{}, false, err
 		}
 		if len(bindings) > 0 {
-			var aggregate state.QueueStats
+			signal := queueDepthSignal{bindings: make([]queueBindingDepth, 0, len(bindings))}
 			for _, binding := range bindings {
 				var queue state.QueueStats
 				if binding.Enabled {
 					queue, err = t.queueBindings.QueueStateForQueue(ctx, app.ID, binding.QueueName)
 					if err != nil {
-						return state.QueueStats{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
+						return queueDepthSignal{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
 					}
-					aggregate.Depth += queue.Depth
-					aggregate.InFlight += queue.InFlight
-					aggregate.DeadLetter += queue.DeadLetter
-					if !queue.OldestPendingAt.IsZero() && (aggregate.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(aggregate.OldestPendingAt)) {
-						aggregate.OldestPendingAt = queue.OldestPendingAt
+					signal.queue.Depth += queue.Depth
+					signal.queue.InFlight += queue.InFlight
+					signal.queue.DeadLetter += queue.DeadLetter
+					if !queue.OldestPendingAt.IsZero() && (signal.queue.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(signal.queue.OldestPendingAt)) {
+						signal.queue.OldestPendingAt = queue.OldestPendingAt
 					}
 				}
+				signal.bindings = append(signal.bindings, queueBindingDepth{binding: binding, queue: queue})
 				if t.metrics != nil {
 					t.metrics.SetQueueBindingState(app.ID, binding.QueueName, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
 			}
-			return aggregate, true, nil
+			return signal, true, nil
 		}
 	}
 	if t.queueStats == nil {
-		return state.QueueStats{}, false, nil
+		return queueDepthSignal{}, false, nil
 	}
 	queue, err := t.queueStats.QueueState(ctx, app.ID)
-	return queue, true, err
+	return queueDepthSignal{queue: queue}, true, err
 }
 
 // Interval returns the tick rate. schedd's loop uses this when
@@ -548,7 +617,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 				continue
 			}
-			queue, ok, err := t.readQueueState(ctx, app, now)
+			queueSignal, ok, err := t.readQueueState(ctx, app, now)
 			if err != nil {
 				t.log.Warn("targets: queue state failed", "app_id", app.ID, "err", err)
 				if t.metrics != nil {
@@ -562,6 +631,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 				continue
 			}
+			queue := queueSignal.queue
 			if t.metrics != nil {
 				// Queue gauges are sampled alongside the queue-depth decision;
 				// OpsMetrics bounds app labels before they reach Prometheus.
@@ -583,10 +653,12 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			})
 			workerQueuePath = app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
 			if workerQueuePath {
-				workerDesired = 1
-				if policy.Target.Value > 0 && queue.Depth > 0 {
-					workerDesired = int(math.Ceil(float64(queue.Depth) / policy.Target.Value))
+				if t.metrics != nil {
+					for binding, demand := range queueSignal.bindingWorkerDemand(policy.Target.Value) {
+						t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
+					}
 				}
+				workerDesired = queueSignal.desiredWorkers(policy.Target.Value, maxInstances)
 				if policy.MinInstances > workerDesired {
 					workerDesired = policy.MinInstances
 				}

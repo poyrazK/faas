@@ -14,6 +14,7 @@ func TestOpsMetrics_QueueState(t *testing.T) {
 	m.SetQueueState("worker-1", 7, 2, 3, now.Add(-5*time.Second), now)
 	m.SetQueueState("worker-empty", -1, -1, -1, time.Time{}, now)
 	m.SetQueueBindingState("worker-1", "orders", 4, 1, 2, now.Add(-3*time.Second), now)
+	m.SetQueueBindingWorkerDemand("worker-1", "orders", 1)
 	m.ObserveQueueBindingConcurrencyThrottled("worker-1", "orders")
 	body := render(t, m)
 	for _, want := range []string{
@@ -27,6 +28,7 @@ func TestOpsMetrics_QueueState(t *testing.T) {
 		`schedd_queue_binding_in_flight{app="worker-1",binding="orders"} 1`,
 		`schedd_queue_binding_lag_seconds{app="worker-1",binding="orders"} 3`,
 		`schedd_queue_binding_dead_letter{app="worker-1",binding="orders"} 2`,
+		`schedd_queue_binding_worker_demand{app="worker-1",binding="orders"} 1`,
 		`schedd_queue_binding_concurrency_throttled_total{app="worker-1",binding="orders"} 1`,
 	} {
 		if !strings.Contains(body, want) {

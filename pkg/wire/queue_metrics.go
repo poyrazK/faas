@@ -8,28 +8,30 @@ import (
 )
 
 type queueMetrics struct {
-	depth             *prometheus.GaugeVec
-	inFlight          *prometheus.GaugeVec
-	oldestAge         *prometheus.GaugeVec
-	deadLetter        *prometheus.GaugeVec
-	bindingDepth      *prometheus.GaugeVec
-	bindingInFlight   *prometheus.GaugeVec
-	bindingLagSeconds *prometheus.GaugeVec
-	bindingDeadLetter *prometheus.GaugeVec
-	bindingThrottled  *prometheus.CounterVec
+	depth               *prometheus.GaugeVec
+	inFlight            *prometheus.GaugeVec
+	oldestAge           *prometheus.GaugeVec
+	deadLetter          *prometheus.GaugeVec
+	bindingDepth        *prometheus.GaugeVec
+	bindingInFlight     *prometheus.GaugeVec
+	bindingLagSeconds   *prometheus.GaugeVec
+	bindingDeadLetter   *prometheus.GaugeVec
+	bindingWorkerDemand *prometheus.GaugeVec
+	bindingThrottled    *prometheus.CounterVec
 }
 
 func newQueueMetrics(prefix string) *queueMetrics {
 	return &queueMetrics{
-		depth:             prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_depth", Help: "Current durable queue depth, labelled by admitted app."}, []string{"app"}),
-		inFlight:          prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app."}, []string{"app"}),
-		oldestAge:         prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_oldest_age_seconds", Help: "Age in seconds of the oldest pending durable queue invocation, labelled by admitted app; zero means no pending work."}, []string{"app"}),
-		deadLetter:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app."}, []string{"app"}),
-		bindingDepth:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_depth", Help: "Current durable queue depth, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
-		bindingInFlight:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
-		bindingLagSeconds: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_lag_seconds", Help: "Age in seconds of the oldest pending invocation for a queue binding; zero means no pending work."}, []string{"app", "binding"}),
-		bindingDeadLetter: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
-		bindingThrottled:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_queue_binding_concurrency_throttled_total", Help: "Count of queue polls throttled because a queue binding reached its max concurrency."}, []string{"app", "binding"}),
+		depth:               prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_depth", Help: "Current durable queue depth, labelled by admitted app."}, []string{"app"}),
+		inFlight:            prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app."}, []string{"app"}),
+		oldestAge:           prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_oldest_age_seconds", Help: "Age in seconds of the oldest pending durable queue invocation, labelled by admitted app; zero means no pending work."}, []string{"app"}),
+		deadLetter:          prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app."}, []string{"app"}),
+		bindingDepth:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_depth", Help: "Current durable queue depth, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingInFlight:     prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingLagSeconds:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_lag_seconds", Help: "Age in seconds of the oldest pending invocation for a queue binding; zero means no pending work."}, []string{"app", "binding"}),
+		bindingDeadLetter:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingWorkerDemand: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_worker_demand", Help: "Uncapped worker demand derived from backlog for a queue binding, before app and account caps."}, []string{"app", "binding"}),
+		bindingThrottled:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_queue_binding_concurrency_throttled_total", Help: "Count of queue polls throttled because a queue binding reached its max concurrency."}, []string{"app", "binding"}),
 	}
 }
 
@@ -112,6 +114,24 @@ func (m *OpsMetrics) SetQueueBindingState(app, binding string, depth, inFlight, 
 		return
 	}
 	m.queue.setBinding(m.appLabel(app), m.queueLabels.admit(binding), depth, inFlight, deadLetter, oldestPendingAt, now)
+}
+
+// SetQueueBindingWorkerDemand records the uncapped worker demand derived from
+// a binding's backlog. The app/account worker cap is applied by the scheduler;
+// this gauge preserves the per-binding pressure signal for observability.
+func (m *OpsMetrics) SetQueueBindingWorkerDemand(app, binding string, demand int) {
+	if m == nil || m.queue == nil {
+		return
+	}
+	if demand < 0 {
+		demand = 0
+	}
+	appLabel := m.appLabel(app)
+	if m.queueLabels == nil {
+		m.queue.bindingWorkerDemand.WithLabelValues(appLabel, binding).Set(float64(demand))
+		return
+	}
+	m.queue.bindingWorkerDemand.WithLabelValues(appLabel, m.queueLabels.admit(binding)).Set(float64(demand))
 }
 
 // ObserveQueueBindingConcurrencyThrottled records a poll that was held back
