@@ -36,9 +36,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/redact"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -280,7 +282,7 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 		SampleMsg:    redactedSample,
 		HeadersJSON:  headersJSON,
 		Redactions:   allRedactions,
-		InstanceID:   req.Header.Get("X-Gregale-Instance-ID"), // propagated by vmmd
+		InstanceID:   firstHeader(req, "X-Gregale-Instance-ID", api.InstanceIDHeader),
 		ReceivedAt:   r.cfg.Now().UTC(),
 	}
 
@@ -463,9 +465,38 @@ func extractHeaders(req *http.Request, maxKeys int) map[string]string {
 // apid handler rejects the row as InvalidArgument and the
 // gateway metric increments redaction_failed (a defensive
 // double-check).
-func resolveAccountID(req *http.Request) string    { return reqContextString(req, accountIDKey) }
-func resolveAppID(req *http.Request) string        { return reqContextString(req, appIDKey) }
-func resolveDeploymentID(req *http.Request) string { return reqContextString(req, deploymentIDKey) }
+func resolveAccountID(req *http.Request) string {
+	return firstNonEmpty(reqContextString(req, accountIDKey), req.Header.Get(api.TenantIDHeader))
+}
+
+func resolveAppID(req *http.Request) string {
+	return firstNonEmpty(reqContextString(req, appIDKey), req.Header.Get(api.AppIDHeader))
+}
+
+func resolveDeploymentID(req *http.Request) string {
+	return firstNonEmpty(reqContextString(req, deploymentIDKey), req.Header.Get(api.DeploymentIDHeader))
+}
+
+func firstHeader(req *http.Request, names ...string) string {
+	if req == nil {
+		return ""
+	}
+	for _, name := range names {
+		if value := strings.TrimSpace(req.Header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
 
 // ctx keys — string constants; the gateway's auth middleware
 // populates these on r.Context(). We re-declare them here as

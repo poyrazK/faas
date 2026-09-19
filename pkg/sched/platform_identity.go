@@ -16,7 +16,7 @@ import (
 // must not be able to spoof an unavailable commit/tag/region by setting the
 // reserved key themselves.
 func appendPlatformIdentity(env []fcvm.APIEnvEntry, app state.App, dep state.Deployment, acct state.Account, nodeID, instanceID, region string) []fcvm.APIEnvEntry {
-	entries := make([]fcvm.APIEnvEntry, 0, len(env)+9)
+	entries := make([]fcvm.APIEnvEntry, 0, len(env)+10)
 	entries = append(entries, env...)
 	add := func(key, value string) {
 		entries = append(entries, fcvm.APIEnvEntry{Key: key, Value: value})
@@ -29,6 +29,7 @@ func appendPlatformIdentity(env []fcvm.APIEnvEntry, app state.App, dep state.Dep
 	add(api.PlatformRegionEnv, region)
 	add(api.PlatformCommitSHAEnv, dep.CommitSHA)
 	add(api.PlatformDeploymentTagEnv, dep.Tag)
+	add(api.PlatformImageDigestEnv, dep.ImageDigest)
 	createdAt := ""
 	if !dep.CreatedAt.IsZero() {
 		createdAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
