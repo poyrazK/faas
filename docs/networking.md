@@ -19,9 +19,11 @@ operation. `POST /v1/networks/{id}/peerings` with
 returns `202` with `status: "pending"`; inspect it with the sibling `GET` or
 list endpoint, and remove it with `DELETE`. Both networks must be in the same
 region and use non-overlapping IPv4 CIDRs. Pending and error peerings are
-fail-closed, so they never imply reachability; a later fabric reconciler is the
-only component allowed to mark one `ready`. A network referenced by a peering
-cannot be deleted until that peering is removed.
+fail-closed, so they never imply reachability; the provider-neutral peering
+reconciler is the only component allowed to mark one `ready`, and it does so
+only after the configured route applier accepts the complete bidirectional
+route set. A network referenced by a peering cannot be deleted until that
+peering is removed.
 
 The fabric slice persists the network definition and reserves stable member
 addresses (network+1 is reserved as the gateway; allocation starts at

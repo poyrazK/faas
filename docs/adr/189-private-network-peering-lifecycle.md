@@ -29,8 +29,11 @@ separate convergence work so Gregale keeps ownership of policy and routing.
 
 Customers get an idempotent, inspectable lifecycle and SDK coverage without a
 DigitalOcean dependency. Pending and error peerings never imply reachability,
-and the canonical pair plus account/region checks make retries safe. A future
-reconciler can consume the same rows and update status transactionally.
+and the canonical pair plus account/region checks make retries safe. The
+provider-neutral `PeeringReconciler` now consumes these rows, applies a
+complete desired route set through an explicit `PeeringRouteApplier`, and
+promotes rows only after that apply succeeds; the privileged node adapter and
+daemon wiring remain a separate deployment step.
 
 ## Rejected alternatives
 
