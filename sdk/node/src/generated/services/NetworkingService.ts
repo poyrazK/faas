@@ -177,10 +177,10 @@ export class NetworkingService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        402: `The account plan does not include private networking.`,
+        402: `Private networking is unavailable on this account plan for peering.`,
         404: `code: not_found`,
         409: `The two networks are already peered.`,
-        503: `Gregale-owned network fabric is disabled.`,
+        503: `The Gregale-owned fabric is disabled for peering creation.`,
       },
     });
   }
@@ -212,7 +212,7 @@ export class NetworkingService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Gregale-owned network fabric is disabled.`,
+        503: `The Gregale-owned fabric is disabled for peering reads.`,
       },
     });
   }
@@ -244,7 +244,7 @@ export class NetworkingService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Gregale-owned network fabric is disabled.`,
+        503: `The Gregale-owned fabric is disabled for peering deletion.`,
       },
     });
   }
