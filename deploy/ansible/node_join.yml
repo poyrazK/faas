@@ -461,13 +461,18 @@
         group: root
         mode: "0755"
 
-    - name: Stage the join bootstrap operator binary
+    # The controller already transferred this exact binary in the preceding
+    # task. Mirror it on-host instead of uploading the same payload over SSH a
+    # second time; the bootstrap path remains isolated from the later signed
+    # release promotion.
+    - name: Mirror the bootstrap operator binary for release checks
       ansible.builtin.copy:
-        src: "{{ faas_join_bootstrap_binary_source }}"
+        src: /usr/local/bin/gregalectl
         dest: /var/lib/faas/bootstrap/gregalectl
         owner: root
         group: root
         mode: "0755"
+        remote_src: true
 
     - name: Stage the release cosign verifier
       ansible.builtin.copy:
