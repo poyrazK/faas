@@ -135,3 +135,51 @@ func TestPgStorePrivateNetworkAndAttachmentLifecycle(t *testing.T) {
 		t.Fatalf("network after delete = %v, want not found", err)
 	}
 }
+
+func TestPgStorePrivateNetworkPeeringLifecycle(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, _, _ := seedLiveDeploy(t, s, ctx, "private-network-peering")
+	for _, network := range []state.PrivateNetwork{
+		{ID: "net-peering-left", AccountID: accountID, Name: "left", Region: "fra1", CIDR: netip.MustParsePrefix("10.80.0.0/28")},
+		{ID: "net-peering-right", AccountID: accountID, Name: "right", Region: "fra1", CIDR: netip.MustParsePrefix("10.80.1.0/28")},
+	} {
+		if _, err := s.CreatePrivateNetwork(ctx, network); err != nil {
+			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
+		}
+	}
+
+	created, err := s.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
+		ID: "peer-pg-left-right", AccountID: accountID, LeftNetworkID: "net-peering-right", RightNetworkID: "net-peering-left", Region: "fra1",
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering: %v", err)
+	}
+	if created.LeftNetworkID != "net-peering-left" || created.RightNetworkID != "net-peering-right" || created.Status != "pending" || created.StatusDetail == "" {
+		t.Fatalf("created peering = %+v", created)
+	}
+	listed, err := s.ListPrivateNetworkPeerings(ctx, accountID, "net-peering-left")
+	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("ListPrivateNetworkPeerings = %+v, err=%v", listed, err)
+	}
+	got, err := s.GetPrivateNetworkPeering(ctx, accountID, created.ID)
+	if err != nil || got.ID != created.ID || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("GetPrivateNetworkPeering = %+v, err=%v", got, err)
+	}
+	if _, err := s.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
+		ID: "peer-pg-reverse", AccountID: accountID, LeftNetworkID: "net-peering-left", RightNetworkID: "net-peering-right", Region: "fra1",
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate peering = %v, want conflict", err)
+	}
+	if _, err := s.GetPrivateNetworkPeering(ctx, uuid.NewString(), created.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account peering get = %v, want not found", err)
+	}
+	if err := s.DeletePrivateNetworkPeering(ctx, uuid.NewString(), created.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account peering delete = %v, want not found", err)
+	}
+	if err := s.DeletePrivateNetworkPeering(ctx, accountID, created.ID); err != nil {
+		t.Fatalf("DeletePrivateNetworkPeering: %v", err)
+	}
+	if err := s.DeletePrivateNetworkPeering(ctx, accountID, created.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("delete missing peering = %v, want not found", err)
+	}
+}
