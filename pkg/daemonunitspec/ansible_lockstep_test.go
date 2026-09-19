@@ -111,6 +111,15 @@ func TestComputeOnlyScheddUsesRemoteDatabaseUnit(t *testing.T) {
 	if !strings.Contains(unitText, "EnvironmentFile=-/etc/faas/compute-db.env") {
 		t.Fatalf("compute-only schedd must load the remote database environment")
 	}
+	canonical := UnitSchedd()
+	for directive, value := range map[string]string{
+		"MemoryHigh": canonical.MemoryHigh,
+		"MemoryMax":  canonical.MemoryMax,
+	} {
+		if !strings.Contains(unitText, directive+"="+value+"\n") {
+			t.Fatalf("compute-only schedd must keep %s in lockstep with UnitSchedd", directive)
+		}
+	}
 
 	tasksPath := filepath.Join(root, "deploy", "ansible", "roles", "compute_only_service", "tasks", "main.yml")
 	tasks, err := os.ReadFile(tasksPath)

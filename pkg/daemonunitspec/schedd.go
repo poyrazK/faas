@@ -64,8 +64,16 @@ func UnitSchedd() daemonunit.Unit {
 		Restart:    "on-failure",
 		RestartSec: "2s",
 
-		Slice:     "faas-cp.slice",
-		MemoryMax: "256M",
+		Slice: "faas-cp.slice",
+		// Layer verification streams remote OCI blobs through the shared
+		// cache. Linux charges the resulting dirty file-backed pages to
+		// schedd until XFS writes them back, even though schedd's steady-state
+		// anonymous memory is small. A production node hit the old 256M hard
+		// limit with ~221M of file cache and OOM-killed the lifecycle owner.
+		// Keep reclaim pressure at the original budget, but leave enough hard
+		// headroom for bounded layer materialisation to finish and flush.
+		MemoryHigh: "256M",
+		MemoryMax:  "1G",
 		// Read-only conntrack enumeration uses nfnetlink, which the kernel
 		// gates behind CAP_NET_ADMIN. Keep the unit and capsDecl identical.
 		CapabilityBoundingSet: []string{"CAP_NET_ADMIN"},
