@@ -9,6 +9,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
+| [`events`](#events) | Publish tenant-scoped events to the internal router |
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
@@ -237,6 +238,25 @@ List audit events
 ### audit-events get
 
 Show one audit event
+
+
+## events
+
+Publish tenant-scoped events to the internal router
+
+`gregale events [<subcommand>]`
+
+### events publish
+
+Publish one CloudEvents-shaped event
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | stable event id | required |
+| `--source <SOURCE>` | event source | required |
+| `--type <TYPE>` | event type | required |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
 
 
 ## apps
