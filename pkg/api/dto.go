@@ -8345,6 +8345,55 @@ type DebugDependencyLatencyResponse struct {
 	Dependencies        []DebugDependencyLatencyItem `json:"dependencies"`
 }
 
+// DebugCriticalPathSegment is one redacted span identity in a historical
+// critical-path signature. It intentionally contains no destinations,
+// attributes, request data, or credentials.
+type DebugCriticalPathSegment struct {
+	Type string `json:"type"`
+	Kind string `json:"kind,omitempty"`
+	Name string `json:"name"`
+}
+
+// DebugCriticalPathHistoryItem is one bounded historical critical-path
+// aggregate. Durations are weighted by collapsed request-row counts and the
+// split-window fields expose a recent regression without exporting spans.
+type DebugCriticalPathHistoryItem struct {
+	Signature            string                     `json:"signature"`
+	Segments             []DebugCriticalPathSegment `json:"segments"`
+	Calls                int64                      `json:"calls"`
+	ErrorCalls           int64                      `json:"error_calls"`
+	ErrorRatePct         float64                    `json:"error_rate_pct"`
+	P50MS                int64                      `json:"p50_ms"`
+	P95MS                int64                      `json:"p95_ms"`
+	P99MS                int64                      `json:"p99_ms"`
+	BaselineCalls        int64                      `json:"baseline_calls"`
+	CurrentCalls         int64                      `json:"current_calls"`
+	BaselineP95MS        int64                      `json:"baseline_p95_ms"`
+	CurrentP95MS         int64                      `json:"current_p95_ms"`
+	P95DeltaMS           int64                      `json:"p95_delta_ms"`
+	RegressionFactor     float64                    `json:"regression_factor"`
+	Regression           bool                       `json:"regression"`
+	BaselineErrorRatePct float64                    `json:"baseline_error_rate_pct"`
+	CurrentErrorRatePct  float64                    `json:"current_error_rate_pct"`
+	ErrorRateDeltaPct    float64                    `json:"error_rate_delta_pct"`
+}
+
+// DebugCriticalPathHistoryResponse is the bounded historical critical-path
+// view returned by GET /v1/apps/{slug}/debug/critical-paths.
+type DebugCriticalPathHistoryResponse struct {
+	AppID               string                         `json:"app_id"`
+	Since               string                         `json:"since"`
+	WindowStart         string                         `json:"window_start"`
+	WindowEnd           string                         `json:"window_end"`
+	RetentionClamped    bool                           `json:"retention_clamped"`
+	Complete            bool                           `json:"complete"`
+	Truncated           bool                           `json:"truncated"`
+	TelemetryRows       int64                          `json:"telemetry_rows"`
+	RepresentedRequests int64                          `json:"represented_requests"`
+	PathSamples         int64                          `json:"path_samples"`
+	CriticalPaths       []DebugCriticalPathHistoryItem `json:"critical_paths"`
+}
+
 // DebugEvidenceExplanation is a bounded root-cause synthesis for a request's
 // evidence. The synthesis is generated only from the already-redacted
 // debugger envelope; it never receives request bodies, headers, raw logs, or

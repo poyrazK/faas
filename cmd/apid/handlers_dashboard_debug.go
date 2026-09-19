@@ -191,12 +191,12 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	if dependencyErr != nil {
 		log.Warn("dashboard renderAppDebug: dependency latency", "account_id", acct.ID, "app_id", app.ID, "err", dependencyErr)
 	} else {
-		dependencyTruncated := len(dependencyRows) > debugDependencyHistoryMaxRows
-		if dependencyTruncated {
+		dependencyRowsTruncated := len(dependencyRows) > debugDependencyHistoryMaxRows
+		if dependencyRowsTruncated {
 			dependencyRows = dependencyRows[:debugDependencyHistoryMaxRows]
 		}
 		dependencies, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(dependencyRows, windowStart, windowEnd)
-		dependencyTruncated = dependencyTruncated || aggregationTruncated
+		dependencyTruncated := dependencyRowsTruncated || aggregationTruncated
 		data.DependencyHistory = dashboardDebugDependencyLatencyHistoryView(api.DebugDependencyLatencyResponse{
 			Since:               data.Since,
 			WindowStart:         data.WindowStart,
@@ -209,6 +209,19 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			SpanSamples:         spanSamples,
 			Dependencies:        dependencies,
 		})
+		criticalPaths, pathTruncated, pathComplete, pathRepresentedRequests, pathSamples := buildDebugCriticalPathHistory(dependencyRows, windowStart, windowEnd)
+		pathTruncated = pathTruncated || dependencyRowsTruncated
+		data.CriticalPathHistory = dashboardDebugCriticalPathHistoryView(api.DebugCriticalPathHistoryResponse{
+			Since:               data.Since,
+			WindowStart:         data.WindowStart,
+			WindowEnd:           data.WindowEnd,
+			Complete:            pathComplete && !pathTruncated,
+			Truncated:           pathTruncated,
+			TelemetryRows:       int64(len(dependencyRows)),
+			RepresentedRequests: pathRepresentedRequests,
+			PathSamples:         pathSamples,
+			CriticalPaths:       criticalPaths,
+		}, app.Slug)
 	}
 
 	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
@@ -503,6 +516,53 @@ func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLate
 			CurrentErrorRatePct:  dependency.CurrentErrorRatePct,
 			ErrorRateDeltaPct:    dependency.ErrorRateDeltaPct,
 		})
+	}
+	return view
+}
+
+func dashboardDebugCriticalPathHistoryView(response api.DebugCriticalPathHistoryResponse, slug string) *dashboard.DebugCriticalPathHistoryView {
+	view := &dashboard.DebugCriticalPathHistoryView{
+		Since:               response.Since,
+		WindowStart:         response.WindowStart,
+		WindowEnd:           response.WindowEnd,
+		Complete:            response.Complete,
+		Truncated:           response.Truncated,
+		TelemetryRows:       response.TelemetryRows,
+		RepresentedRequests: response.RepresentedRequests,
+		PathSamples:         response.PathSamples,
+		CriticalPaths:       make([]dashboard.DebugCriticalPathHistoryItemView, 0, len(response.CriticalPaths)),
+	}
+	for _, path := range response.CriticalPaths {
+		pathView := dashboard.DebugCriticalPathHistoryItemView{
+			Signature:            path.Signature,
+			Segments:             make([]dashboard.DebugCriticalPathSegmentView, 0, len(path.Segments)),
+			Calls:                path.Calls,
+			ErrorCalls:           path.ErrorCalls,
+			ErrorRatePct:         path.ErrorRatePct,
+			P50MS:                path.P50MS,
+			P95MS:                path.P95MS,
+			P99MS:                path.P99MS,
+			BaselineCalls:        path.BaselineCalls,
+			CurrentCalls:         path.CurrentCalls,
+			BaselineP95MS:        path.BaselineP95MS,
+			CurrentP95MS:         path.CurrentP95MS,
+			P95DeltaMS:           path.P95DeltaMS,
+			RegressionFactor:     path.RegressionFactor,
+			Regression:           path.Regression,
+			BaselineErrorRatePct: path.BaselineErrorRatePct,
+			CurrentErrorRatePct:  path.CurrentErrorRatePct,
+			ErrorRateDeltaPct:    path.ErrorRateDeltaPct,
+		}
+		for _, segment := range path.Segments {
+			pathView.Segments = append(pathView.Segments, dashboard.DebugCriticalPathSegmentView{
+				Type: segment.Type,
+				Kind: segment.Kind,
+				Name: segment.Name,
+			})
+		}
+		values := url.Values{"since": []string{response.Since}, "min_latency_ms": []string{strconv.FormatInt(path.CurrentP95MS, 10)}}
+		pathView.RequestsURL = "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode() + "#requests"
+		view.CriticalPaths = append(view.CriticalPaths, pathView)
 	}
 	return view
 }

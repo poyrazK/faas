@@ -65,6 +65,80 @@ func TestBuildDebugDependencyLatencyHistoryCapsGroupsAndUsesApplicationFallback(
 	}
 }
 
+func TestBuildDebugCriticalPathHistoryDetectsRecentRegression(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, 20)
+	for i := 0; i < 10; i++ {
+		rows = append(rows, criticalPathHistoryTestRow(start.Add(time.Duration(i)*time.Minute), 100, false))
+	}
+	for i := 0; i < 10; i++ {
+		rows = append(rows, criticalPathHistoryTestRow(start.Add(time.Hour+time.Duration(i)*time.Minute), 400, true))
+	}
+
+	got, truncated, complete, represented, samples := buildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
+	if truncated || !complete {
+		t.Fatalf("history state = (truncated=%v complete=%v), want (false, true)", truncated, complete)
+	}
+	if represented != 20 || samples != 20 {
+		t.Fatalf("coverage = (represented=%d samples=%d), want (20, 20)", represented, samples)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d critical paths, want one: %+v", len(got), got)
+	}
+	path := got[0]
+	if len(path.Segments) != 2 || path.Segments[0].Name != "handler" || path.Segments[1].Name != "db.query" {
+		t.Fatalf("path segments = %+v", path.Segments)
+	}
+	if path.P50MS != 100 || path.P95MS != 400 || path.P99MS != 400 {
+		t.Fatalf("full-window percentiles = %+v", path)
+	}
+	if path.BaselineCalls != 10 || path.CurrentCalls != 10 || path.BaselineP95MS != 100 || path.CurrentP95MS != 400 || path.P95DeltaMS != 300 {
+		t.Fatalf("split-window path percentiles = %+v", path)
+	}
+	if path.RegressionFactor != 4 || !path.Regression {
+		t.Fatalf("regression = %+v", path)
+	}
+	if path.ErrorRatePct != 50 || path.BaselineErrorRatePct != 0 || path.CurrentErrorRatePct != 100 || path.ErrorRateDeltaPct != 100 {
+		t.Fatalf("error rates = %+v", path)
+	}
+}
+
+func criticalPathHistoryTestRow(at time.Time, durationMS uint64, errorStatus bool) sqlc.ListRequestTelemetryDependencySpansRow {
+	start := at.UnixNano()
+	end := at.Add(time.Duration(durationMS) * time.Millisecond).UnixNano()
+	status := "ok"
+	if errorStatus {
+		status = "error"
+	}
+	raw, _ := json.Marshal([]debugEvidenceSpan{
+		{
+			SpanID:            "child",
+			ParentSpanID:      "root",
+			Name:              "db.query",
+			StartTimeUnixNano: uint64(start),
+			EndTimeUnixNano:   uint64(end),
+			DurationNanos:     durationMS * uint64(time.Millisecond),
+			Status:            status,
+			Attributes: map[string]string{
+				"gregale.dependency.type": "managed_binding",
+				"gregale.dependency.kind": "managed_postgres",
+			},
+		},
+		{
+			SpanID:            "root",
+			Name:              "handler",
+			StartTimeUnixNano: uint64(start),
+			EndTimeUnixNano:   uint64(end),
+			DurationNanos:     durationMS * uint64(time.Millisecond),
+		},
+	})
+	return sqlc.ListRequestTelemetryDependencySpansRow{
+		Count:        1,
+		ReceivedAt:   pgtype.Timestamptz{Time: at, Valid: true},
+		SpansSummary: raw,
+	}
+}
+
 func dependencyHistoryTestRow(at time.Time, durationMS uint64, status string) sqlc.ListRequestTelemetryDependencySpansRow {
 	return dependencyHistoryTestRowWithName(at, durationMS, status, "db.query")
 }

@@ -5702,6 +5702,18 @@ func (c *Client) GetAppDebugDependencyLatency(ctx context.Context, slug, since s
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugCriticalPaths returns bounded historical critical-path
+// aggregates and a split-window regression signal. The server clamps since
+// to debugger retention and returns only redacted span identities.
+func (c *Client) GetAppDebugCriticalPaths(ctx context.Context, slug, since string) (DebugCriticalPathHistoryResponse, error) {
+	var out DebugCriticalPathHistoryResponse
+	path := "/v1/apps/" + slug + "/debug/critical-paths"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppDebugRunning returns the observed scheduler explanations for why an
 // app remains resident. The response includes the newest causes, current
 // floor/idle configuration, and bounded history. It reports observations only

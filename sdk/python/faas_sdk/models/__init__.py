@@ -384,6 +384,10 @@ from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
+from .debug_critical_path_history_item import DebugCriticalPathHistoryItem
+from .debug_critical_path_history_response import DebugCriticalPathHistoryResponse
+from .debug_critical_path_segment import DebugCriticalPathSegment
+from .debug_critical_path_segment_type import DebugCriticalPathSegmentType
 from .debug_critical_path_span import DebugCriticalPathSpan
 from .debug_critical_path_span_dependency_type import DebugCriticalPathSpanDependencyType
 from .debug_dependency_latency_item import DebugDependencyLatencyItem
@@ -1668,6 +1672,10 @@ __all__ = (
     "DebugCompareRouteStats",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
+    "DebugCriticalPathHistoryItem",
+    "DebugCriticalPathHistoryResponse",
+    "DebugCriticalPathSegment",
+    "DebugCriticalPathSegmentType",
     "DebugCriticalPathSpan",
     "DebugCriticalPathSpanDependencyType",
     "DebugDependencyLatencyItem",

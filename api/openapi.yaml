@@ -5075,6 +5075,41 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/critical-paths:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugCriticalPaths
+      summary: Historical critical-path regressions.
+      description: |
+        Returns bounded canonical critical paths reconstructed from retained,
+        redacted span summaries. The result compares the newer and older
+        halves of the selected window to flag a path regression. Raw span
+        attributes, destinations, request bodies, and credentials are never
+        returned. Span evidence is sampled and the response marks row,
+        path-cardinality, and incomplete-parent coverage explicitly.
+        Plan-gated by `DebugTelemetryEnabled` and clamped to
+        `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Optional critical-path lookback; defaults to the recent 24-hour window and is bounded by plan retention."
+      responses:
+        '200':
+          description: Historical critical-path aggregates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugCriticalPathHistoryResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/running:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -31998,6 +32033,63 @@ components:
           type: array
           maxItems: 50
           items: { $ref: '#/components/schemas/DebugDependencyLatencyItem' }
+
+    DebugCriticalPathSegment:
+      type: object
+      description: "One redacted span identity in a canonical historical critical-path signature."
+      required: [type, name]
+      properties:
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
+        name: { type: string, maxLength: 256 }
+
+    DebugCriticalPathHistoryItem:
+      type: object
+      description: "Bounded historical critical-path aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
+      required: [signature, segments, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, baseline_calls, current_calls, baseline_p95_ms, current_p95_ms, p95_delta_ms, regression_factor, regression, baseline_error_rate_pct, current_error_rate_pct, error_rate_delta_pct]
+      properties:
+        signature: { type: string, maxLength: 8192 }
+        segments:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { $ref: '#/components/schemas/DebugCriticalPathSegment' }
+        calls: { type: integer, format: int64, minimum: 1 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        p50_ms: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        p99_ms: { type: integer, format: int64, minimum: 0 }
+        baseline_calls: { type: integer, format: int64, minimum: 0 }
+        current_calls: { type: integer, format: int64, minimum: 0 }
+        baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_p95_ms: { type: integer, format: int64, minimum: 0 }
+        p95_delta_ms: { type: integer, format: int64 }
+        regression_factor: { type: number, minimum: 0 }
+        regression: { type: boolean, description: "True when both path samples meet the minimum threshold and the newer p95 exceeds the older p95 by the configured factor and delta." }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_rate_delta_pct: { type: number }
+
+    DebugCriticalPathHistoryResponse:
+      type: object
+      description: "Historical critical-path aggregates for one app. Raw span attributes and destinations are never exposed."
+      required: [app_id, since, window_start, window_end, retention_clamped, complete, truncated, telemetry_rows, represented_requests, path_samples, critical_paths]
+      properties:
+        app_id: { type: string, format: uuid }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean }
+        complete: { type: boolean, description: "True only when the row, path-cardinality, span-timing, and parent-link caps were not reached." }
+        truncated: { type: boolean }
+        telemetry_rows: { type: integer, format: int64, minimum: 0 }
+        represented_requests: { type: integer, format: int64, minimum: 0 }
+        path_samples: { type: integer, format: int64, minimum: 0 }
+        critical_paths:
+          type: array
+          maxItems: 25
+          items: { $ref: '#/components/schemas/DebugCriticalPathHistoryItem' }
 
     DebugRequestDependencyLatency:
       type: object

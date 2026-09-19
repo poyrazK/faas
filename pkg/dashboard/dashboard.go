@@ -1839,6 +1839,7 @@ type DebugPageData struct {
 	ReplayPollExhausted bool
 	Coverage            *DebugCoverageView
 	DependencyHistory   *DebugDependencyLatencyHistoryView
+	CriticalPathHistory *DebugCriticalPathHistoryView
 	Running             *DebugRunningView
 	RunningError        string
 }
@@ -2146,6 +2147,49 @@ type DebugDependencyLatencyHistoryItemView struct {
 	BaselineErrorRatePct float64
 	CurrentErrorRatePct  float64
 	ErrorRateDeltaPct    float64
+}
+
+// DebugCriticalPathHistoryView is the template-safe projection of bounded
+// historical critical-path aggregates. It intentionally keeps the path as
+// redacted span identities rather than rendering raw trace attributes.
+type DebugCriticalPathHistoryView struct {
+	Since               string
+	WindowStart         string
+	WindowEnd           string
+	Complete            bool
+	Truncated           bool
+	TelemetryRows       int64
+	RepresentedRequests int64
+	PathSamples         int64
+	CriticalPaths       []DebugCriticalPathHistoryItemView
+}
+
+type DebugCriticalPathHistoryItemView struct {
+	Signature            string
+	Segments             []DebugCriticalPathSegmentView
+	Calls                int64
+	ErrorCalls           int64
+	ErrorRatePct         float64
+	P50MS                int64
+	P95MS                int64
+	P99MS                int64
+	BaselineCalls        int64
+	CurrentCalls         int64
+	BaselineP95MS        int64
+	CurrentP95MS         int64
+	P95DeltaMS           int64
+	RegressionFactor     float64
+	Regression           bool
+	BaselineErrorRatePct float64
+	CurrentErrorRatePct  float64
+	ErrorRateDeltaPct    float64
+	RequestsURL          string
+}
+
+type DebugCriticalPathSegmentView struct {
+	Type string
+	Kind string
+	Name string
 }
 
 // DebugEvidenceFindingView is the template-safe projection of one

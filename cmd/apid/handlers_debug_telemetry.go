@@ -226,12 +226,14 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 }
 
 const (
-	debugDependencyHistoryMaxRows    = 2000
-	debugDependencyHistoryMaxGroups  = 256
-	debugDependencyHistoryMaxOutput  = 50
-	debugDependencyHistoryMinCalls   = int64(5)
-	debugDependencyRegressionFactor  = 1.5
-	debugDependencyRegressionDeltaMS = int64(25)
+	debugDependencyHistoryMaxRows     = 2000
+	debugDependencyHistoryMaxGroups   = 256
+	debugDependencyHistoryMaxOutput   = 50
+	debugDependencyHistoryMinCalls    = int64(5)
+	debugDependencyRegressionFactor   = 1.5
+	debugDependencyRegressionDeltaMS  = int64(25)
+	debugCriticalPathHistoryMaxGroups = 128
+	debugCriticalPathHistoryMaxOutput = 25
 )
 
 // debugDependencyLatencyHandler — GET /v1/apps/{slug}/debug/dependencies.
@@ -296,6 +298,264 @@ func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Re
 		SpanSamples:         spanSamples,
 		Dependencies:        dependencies,
 	})
+}
+
+// debugCriticalPathHistoryHandler — GET /v1/apps/{slug}/debug/critical-paths.
+//
+// This intentionally reads the same bounded, redacted span summaries as the
+// dependency history endpoint. A path is a stable sequence of allowlisted
+// span identities; no raw span attributes or destinations cross the API.
+func (s *server) debugCriticalPathHistoryHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	since, err := parseDebugSinceStrict(sinceRaw, 24*time.Hour)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	retentionClamped := false
+	if retention > 0 && since > retention {
+		since = retention
+		retentionClamped = true
+	}
+	now := time.Now().UTC()
+	windowStart := now.Add(-since)
+	rows, err := s.store.ListRequestTelemetryDependencySpans(r.Context(), sqlc.ListRequestTelemetryDependencySpansParams{
+		AppID:        stringToPgUUID(app.ID),
+		AccountID:    stringToPgUUID(acct.ID),
+		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+		Limit:        debugDependencyHistoryMaxRows + 1,
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug critical path history"))
+		return
+	}
+	truncated := len(rows) > debugDependencyHistoryMaxRows
+	if truncated {
+		rows = rows[:debugDependencyHistoryMaxRows]
+	}
+	paths, pathsTruncated, complete, representedRequests, pathSamples := buildDebugCriticalPathHistory(rows, windowStart, now)
+	truncated = truncated || pathsTruncated
+	writeJSON(w, http.StatusOK, api.DebugCriticalPathHistoryResponse{
+		AppID:               app.ID,
+		Since:               echoDebugSince(sinceRaw, since),
+		WindowStart:         windowStart.Format(time.RFC3339Nano),
+		WindowEnd:           now.Format(time.RFC3339Nano),
+		RetentionClamped:    retentionClamped,
+		Complete:            complete && !truncated,
+		Truncated:           truncated,
+		TelemetryRows:       int64(len(rows)),
+		RepresentedRequests: representedRequests,
+		PathSamples:         pathSamples,
+		CriticalPaths:       paths,
+	})
+}
+
+type debugCriticalPathHistorySample = debugDependencyHistorySample
+
+type debugCriticalPathHistoryAggregate struct {
+	signature      string
+	segments       []api.DebugCriticalPathSegment
+	all            []debugCriticalPathHistorySample
+	baseline       []debugCriticalPathHistorySample
+	current        []debugCriticalPathHistorySample
+	calls          int64
+	errors         int64
+	baselineCalls  int64
+	currentCalls   int64
+	baselineErrors int64
+	currentErrors  int64
+}
+
+func buildDebugCriticalPathHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugCriticalPathHistoryItem, bool, bool, int64, int64) {
+	cutover := windowStart.Add(windowEnd.Sub(windowStart) / 2)
+	aggregates := make(map[string]*debugCriticalPathHistoryAggregate)
+	truncated := false
+	complete := true
+	var representedRequests int64
+	var pathSamples int64
+	for _, row := range rows {
+		weight := int64(row.Count)
+		if weight < 1 {
+			weight = 1
+		}
+		representedRequests += weight
+		spans, spanTruncated := parseDebugEvidenceSpans(row.SpansSummary)
+		if spanTruncated {
+			complete = false
+		}
+		if len(row.SpansSummary) == 0 || len(spans) == 0 {
+			complete = false
+			continue
+		}
+		path := buildDebugCriticalPath(spans)
+		if path == nil {
+			complete = false
+			continue
+		}
+		if !path.Complete {
+			complete = false
+		}
+		pathSamples++
+		signature, segments := debugCriticalPathIdentity(path)
+		if signature == "" {
+			complete = false
+			continue
+		}
+		aggregate := aggregates[signature]
+		if aggregate == nil {
+			if len(aggregates) >= debugCriticalPathHistoryMaxGroups {
+				truncated = true
+				continue
+			}
+			aggregate = &debugCriticalPathHistoryAggregate{
+				signature: signature,
+				segments:  segments,
+			}
+			aggregates[signature] = aggregate
+		}
+		sample := debugCriticalPathHistorySample{
+			durationNanos: debugCriticalPathDurationNanos(path.DurationMS),
+			weight:        weight,
+			isError:       debugCriticalPathHasError(path),
+		}
+		aggregate.all = append(aggregate.all, sample)
+		aggregate.calls += weight
+		if sample.isError {
+			aggregate.errors += weight
+		}
+		isCurrent := row.ReceivedAt.Valid && !row.ReceivedAt.Time.Before(cutover)
+		if isCurrent {
+			aggregate.current = append(aggregate.current, sample)
+			aggregate.currentCalls += weight
+			if sample.isError {
+				aggregate.currentErrors += weight
+			}
+		} else {
+			aggregate.baseline = append(aggregate.baseline, sample)
+			aggregate.baselineCalls += weight
+			if sample.isError {
+				aggregate.baselineErrors += weight
+			}
+		}
+	}
+
+	ordered := make([]*debugCriticalPathHistoryAggregate, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		ordered = append(ordered, aggregate)
+	}
+	out := make([]api.DebugCriticalPathHistoryItem, 0, len(ordered))
+	for _, aggregate := range ordered {
+		baselineP95 := debugWeightedDependencyPercentile(aggregate.baseline, 0.95)
+		currentP95 := debugWeightedDependencyPercentile(aggregate.current, 0.95)
+		p95Delta := currentP95 - baselineP95
+		factor := float64(0)
+		if baselineP95 > 0 {
+			factor = roundDebugDependencyFactor(float64(currentP95) / float64(baselineP95))
+		}
+		regression := aggregate.baselineCalls >= debugDependencyHistoryMinCalls &&
+			aggregate.currentCalls >= debugDependencyHistoryMinCalls &&
+			baselineP95 > 0 && currentP95 > 0 &&
+			factor >= debugDependencyRegressionFactor &&
+			p95Delta >= debugDependencyRegressionDeltaMS
+		baselineErrorRate := debugDependencyErrorRate(aggregate.baselineErrors, aggregate.baselineCalls)
+		currentErrorRate := debugDependencyErrorRate(aggregate.currentErrors, aggregate.currentCalls)
+		out = append(out, api.DebugCriticalPathHistoryItem{
+			Signature:            aggregate.signature,
+			Segments:             aggregate.segments,
+			Calls:                aggregate.calls,
+			ErrorCalls:           aggregate.errors,
+			ErrorRatePct:         debugDependencyErrorRate(aggregate.errors, aggregate.calls),
+			P50MS:                debugWeightedDependencyPercentile(aggregate.all, 0.50),
+			P95MS:                debugWeightedDependencyPercentile(aggregate.all, 0.95),
+			P99MS:                debugWeightedDependencyPercentile(aggregate.all, 0.99),
+			BaselineCalls:        aggregate.baselineCalls,
+			CurrentCalls:         aggregate.currentCalls,
+			BaselineP95MS:        baselineP95,
+			CurrentP95MS:         currentP95,
+			P95DeltaMS:           p95Delta,
+			RegressionFactor:     factor,
+			Regression:           regression,
+			BaselineErrorRatePct: baselineErrorRate,
+			CurrentErrorRatePct:  currentErrorRate,
+			ErrorRateDeltaPct:    currentErrorRate - baselineErrorRate,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Regression != out[j].Regression {
+			return out[i].Regression
+		}
+		if out[i].CurrentP95MS != out[j].CurrentP95MS {
+			return out[i].CurrentP95MS > out[j].CurrentP95MS
+		}
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		return out[i].Signature < out[j].Signature
+	})
+	if len(out) > debugCriticalPathHistoryMaxOutput {
+		out = out[:debugCriticalPathHistoryMaxOutput]
+		truncated = true
+	}
+	return out, truncated, complete, representedRequests, pathSamples
+}
+
+func debugCriticalPathIdentity(path *api.DebugRequestCriticalPath) (string, []api.DebugCriticalPathSegment) {
+	if path == nil || len(path.Spans) == 0 {
+		return "", nil
+	}
+	segments := make([]api.DebugCriticalPathSegment, 0, len(path.Spans))
+	parts := make([]string, 0, len(path.Spans))
+	for _, span := range path.Spans {
+		dependencyType := span.DependencyType
+		if dependencyType == "" {
+			dependencyType = "application"
+		}
+		name := span.Name
+		if name == "" {
+			name = "<unnamed>"
+		}
+		segment := api.DebugCriticalPathSegment{Type: dependencyType, Kind: span.DependencyKind, Name: name}
+		segments = append(segments, segment)
+		parts = append(parts, dependencyType+"/"+span.DependencyKind+"/"+name)
+	}
+	return strings.Join(parts, " > "), segments
+}
+
+func debugCriticalPathHasError(path *api.DebugRequestCriticalPath) bool {
+	for _, span := range path.Spans {
+		if strings.EqualFold(span.Status, "error") {
+			return true
+		}
+	}
+	return false
+}
+
+func maxInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func debugCriticalPathDurationNanos(durationMS int64) uint64 {
+	durationMS = maxInt64(durationMS)
+	maxDurationMS := int64((24 * time.Hour) / time.Millisecond)
+	if durationMS > maxDurationMS {
+		durationMS = maxDurationMS
+	}
+	return uint64(durationMS) * uint64(time.Millisecond)
 }
 
 type debugDependencyHistorySample struct {

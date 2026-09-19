@@ -211,6 +211,34 @@
         </div>
       {{end}}
 
+      {{if .Data.CriticalPathHistory}}
+        <h2 id="critical-paths">Critical-path regressions</h2>
+        <div class="coverage">
+          <p class="muted">Canonical span paths across retained requests. The regression column compares the newer half of this window with the older half; path samples are redacted and may be incomplete.</p>
+          <p><strong>{{.Data.CriticalPathHistory.RepresentedRequests}}</strong> represented requests in <strong>{{.Data.CriticalPathHistory.TelemetryRows}}</strong> telemetry rows · <strong>{{.Data.CriticalPathHistory.PathSamples}}</strong> path samples</p>
+          {{if .Data.CriticalPathHistory.CriticalPaths}}
+            <table class="coverage-table" aria-label="Historical critical path regressions">
+              <thead><tr><th>Regression</th><th>Critical path</th><th>Calls</th><th>Error rate</th><th>P50</th><th>P95</th><th>Baseline P95</th><th>Current P95</th><th>Delta</th><th></th></tr></thead>
+              <tbody>
+                {{range .Data.CriticalPathHistory.CriticalPaths}}
+                  <tr>
+                    <td>{{if .Regression}}<span class="badge regressed">yes · {{printf "%.2fx" .RegressionFactor}}</span>{{else}}<span class="badge ok">no</span>{{end}}</td>
+                    <td><code>{{range $index, $segment := .Segments}}{{if $index}} → {{end}}{{if $segment.Kind}}{{$segment.Type}}/{{$segment.Kind}}/{{$segment.Name}}{{else}}{{$segment.Type}}/{{$segment.Name}}{{end}}{{end}}</code></td>
+                    <td>{{.Calls}}</td><td>{{printf "%.2f%%" .ErrorRatePct}}</td><td>{{.P50MS}} ms</td><td>{{.P95MS}} ms</td><td>{{.BaselineP95MS}} ms</td><td>{{.CurrentP95MS}} ms</td><td>{{.P95DeltaMS}} ms</td>
+                    <td><a href="{{.RequestsURL}}">inspect requests →</a></td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p class="empty muted">No complete critical-path samples were retained in this window.</p>
+          {{end}}
+          {{if .Data.CriticalPathHistory.Truncated}}<p class="muted">Critical-path history is truncated by the bounded row, group, or output limits.</p>{{end}}
+          {{if not .Data.CriticalPathHistory.Complete}}<p class="muted">Some retained traces were missing valid timing or parent links, so this view is partial.</p>{{end}}
+          <p class="muted">API view: <code>GET /v1/apps/{{.Data.AppSlug}}/debug/critical-paths?since={{.Data.CriticalPathHistory.Since}}</code></p>
+        </div>
+      {{end}}
+
       <h2 id="regressions">Detected regressions</h2>
       {{if .Data.Regressions}}
         <p class="muted">The detector compares route latency across deployments. Open a request below to inspect the slowest recorded spans.</p>
