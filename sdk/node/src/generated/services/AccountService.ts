@@ -278,7 +278,7 @@ export class AccountService {
   }
   /**
    * Replay one account-owned dead-letter event atomically.
-   * @returns DeadLetterEvent Replay accepted.
+   * @returns DeadLetterEvent Account dead-letter replay accepted.
    * @throws ApiError
    */
   public static replayAccountDeadLetterEvent({

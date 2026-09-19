@@ -53,8 +53,8 @@ export class QueuesService {
       formData: formData,
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
-        303: `Redirect to the Failed Events inbox after replay.`,
-        400: `Invalid dashboard CSRF token for replay.`,
+        303: `Redirect to the account-wide Failed Events inbox after replay.`,
+        400: `Invalid dashboard CSRF token for account-event replay.`,
         404: `code: not_found`,
       },
     });
@@ -92,8 +92,8 @@ export class QueuesService {
       formData: formData,
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
-        303: `Redirect to the Failed Events inbox after discard.`,
-        400: `Invalid dashboard CSRF token for discard.`,
+        303: `Redirect to the account-wide Failed Events inbox after discard.`,
+        400: `Invalid dashboard CSRF token for account-event discard.`,
         404: `code: not_found`,
       },
     });
