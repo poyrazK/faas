@@ -30,7 +30,7 @@ func TestResolvePreservesExplicitProfileAndHealth(t *testing.T) {
 		t.Fatalf("explicit listener contract = %+v", got)
 	}
 	req := got.CreateRequest()
-	if req.Slug != "hello" || req.Type != "app" || req.ExecutionMode != "request" || req.ResourceProfile != "small" {
+	if req.Slug != "hello" || req.Type != "app" || req.ExecutionMode != "request" || req.ResourceProfile != "small" || req.HealthPath != "/ready" {
 		t.Fatalf("create request = %+v", req)
 	}
 }

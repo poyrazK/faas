@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
@@ -43,6 +44,22 @@ func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.Sour
 		Port:       port,
 		HealthPath: health,
 	})
+}
+
+// applySimpleAppPlanToCreateRequest keeps the real deploy path aligned with
+// `gregale deploy --plan`. The plan owns the customer-facing defaults; the
+// deploy command only adds flags that are outside the simple stateless path.
+func applySimpleAppPlanToCreateRequest(req *api.CreateAppRequest, plan simpleapp.Plan) {
+	if req == nil {
+		return
+	}
+	planned := plan.CreateRequest()
+	req.Type = planned.Type
+	req.ExecutionMode = planned.ExecutionMode
+	req.HealthPath = planned.HealthPath
+	if planned.ResourceProfile != "" {
+		req.ResourceProfile = planned.ResourceProfile
+	}
 }
 
 func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {

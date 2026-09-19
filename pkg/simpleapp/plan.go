@@ -59,6 +59,7 @@ func (p Plan) CreateRequest() api.CreateAppRequest {
 		Slug:          p.Slug,
 		Type:          "app",
 		ExecutionMode: p.ExecutionMode,
+		HealthPath:    p.HealthPath,
 	}
 	if p.ResourceProfile != "" && p.ResourceProfile != "plan-default" {
 		req.ResourceProfile = p.ResourceProfile

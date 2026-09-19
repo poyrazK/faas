@@ -980,10 +980,21 @@ func applyDeployLifecycleToCreateRequest(req *api.CreateAppRequest, executionMod
 	if req == nil {
 		return
 	}
-	req.ExecutionMode = executionMode
-	req.RestartPolicy = restartPolicy
-	req.StartupDeadlineS = startupDeadlineS
-	req.MaxRetries = maxRetries
+	// Empty lifecycle flags mean "use the resolved plan default". Preserve a
+	// simple-app plan's explicit request mode while still letting an explicit
+	// deploy flag override it.
+	if executionMode != "" {
+		req.ExecutionMode = executionMode
+	}
+	if restartPolicy != "" {
+		req.RestartPolicy = restartPolicy
+	}
+	if startupDeadlineS != 0 {
+		req.StartupDeadlineS = startupDeadlineS
+	}
+	if maxRetries != 0 {
+		req.MaxRetries = maxRetries
+	}
 }
 
 // materializeCommittedGitSource builds the HEAD archive selected by the
@@ -2617,6 +2628,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// sourceRoot is persisted only for workspace-context deploys. An empty
 	// value means the uploaded archive root and preserves the legacy wire shape.
 	var sourceRoot string
+	// resolvedSimplePlan is resolved once the selected source is authoritative. The
+	// normal deploy and `--plan` paths then share the same app defaults without
+	// affecting functions, projects, or explicit lifecycle modes.
+	var resolvedSimplePlan *simpleapp.Plan
 	var workspaceContextRoot string
 	// Issue #737 / ADR-083: explicit --function / --app on a
 	// --tarball / --template path skips the cwd detector (no cwd
@@ -3070,6 +3085,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
+	if !projectRequested && resolvedShape == shapeApp && *executionMode == "" && *restartPolicy == "" &&
+		*startupDeadlineS == 0 && *maxRetries == 0 {
+		sourceKind := simpleapp.SourceDirectory
+		if *image != "" {
+			sourceKind = simpleapp.SourceImage
+		}
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, true, false)
+		if planErr != nil {
+			return printErr("Could not resolve simple app plan", planErr)
+		}
+		resolvedSimplePlan = &plan
+	}
+
 	if client == nil {
 		var authErr error
 		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
@@ -3338,6 +3366,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	resolvedApp := api.AppResponse{}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		if resolvedSimplePlan != nil {
+			applySimpleAppPlanToCreateRequest(&createReq, *resolvedSimplePlan)
+		}
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu

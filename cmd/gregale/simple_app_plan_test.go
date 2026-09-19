@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
@@ -50,5 +51,38 @@ func TestRenderSimpleAppPlanExplainsEphemeralState(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q: %s", want, out.String())
 		}
+	}
+}
+
+func TestApplySimpleAppPlanToCreateRequestUsesResolvedDefaults(t *testing.T) {
+	plan, err := simpleapp.Resolve(simpleapp.Spec{
+		Slug:       "demo",
+		Profile:    "small",
+		HealthPath: "/ready",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := api.CreateAppRequest{Slug: "demo"}
+	applySimpleAppPlanToCreateRequest(&req, plan)
+	if req.Type != "app" || req.ExecutionMode != "request" || req.ResourceProfile != "small" || req.HealthPath != "/ready" {
+		t.Fatalf("request = %+v", req)
+	}
+}
+
+func TestApplyDeployLifecyclePreservesPlanDefaultsWhenFlagsOmitted(t *testing.T) {
+	req := api.CreateAppRequest{
+		ExecutionMode:    "request",
+		RestartPolicy:    "on-failure",
+		StartupDeadlineS: 30,
+		MaxRetries:       2,
+	}
+	applyDeployLifecycleToCreateRequest(&req, "", "", 0, 0)
+	if req.ExecutionMode != "request" || req.RestartPolicy != "on-failure" || req.StartupDeadlineS != 30 || req.MaxRetries != 2 {
+		t.Fatalf("omitted flags changed plan defaults: %+v", req)
+	}
+	applyDeployLifecycleToCreateRequest(&req, "service", "always", 45, 5)
+	if req.ExecutionMode != "service" || req.RestartPolicy != "always" || req.StartupDeadlineS != 45 || req.MaxRetries != 5 {
+		t.Fatalf("explicit flags not applied: %+v", req)
 	}
 }
