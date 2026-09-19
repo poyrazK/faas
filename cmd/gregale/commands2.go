@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/secretscan"
+	"github.com/onebox-faas/faas/pkg/simpleapp"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -2055,6 +2056,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// CreateApp, upload, deployment, or other write is allowed after the
 	// authenticated client is acquired.
 	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	// --plan is the local, no-auth preview for the simple stateless app path.
+	// Unlike --dry-run/--diff it does not compare remote state or call apid; it
+	// only resolves framework, listener, resource, and state defaults.
+	simplePlan := fs.Bool("plan", false, "show the simple stateless app plan without login, upload, or remote changes")
 	diffJSON := fs.Bool("json", false, "emit JSON output (with --diff or --dry-run)")
 	diffStrict := fs.Bool("strict", false, "exit non-zero on schema/quota/env breaks (default with --diff)")
 	diffLenient := fs.Bool("lenient", false, "exit zero even on breaks; --diff still renders them")
@@ -2091,7 +2096,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only|--safe] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2207,6 +2212,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "") {
 		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, or --repo"))
+	}
+	if *simplePlan {
+		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New("--plan cannot be combined with deploy mutation or project preview flags"))
+		}
+		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
+			return printErr("Invalid flags", errors.New("--plan supports the current directory, --path, or --image; use --dry-run for archives and repositories"))
+		}
+		if *secretsFile != "" {
+			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
+		}
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "canary-preset", "canary-stages", "rollback-on-5xx", "require-authn", "no-require-authn", "app-protocol"} {
+			if explicit[name] {
+				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
+			}
+		}
 	}
 	if projectRequested {
 		if *image != "" {
@@ -2680,6 +2701,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
+	if *simplePlan {
+		sourceKind := simpleapp.SourceDirectory
+		if *image != "" {
+			sourceKind = simpleapp.SourceImage
+		}
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		if planErr != nil {
+			return printErr("Could not resolve simple app plan", planErr)
+		}
+		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
 	}
 	// Authenticate before any zero-config source scan or archive extraction. The
 	// zero-config path can inspect the working tree, run doctor checks, and

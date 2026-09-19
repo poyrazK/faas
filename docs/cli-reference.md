@@ -876,7 +876,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -928,6 +928,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--secret-scan <on|off>` | scan .env files before packing | one of `on` · `off` |
 | `--diff` | preview what would change without deploying |  |
 | `--dry-run` | run deploy preflight without uploading or changing remote state |  |
+| `--plan` | show local stateless app defaults without login or remote changes |  |
 | `--strict` | fail on diff schema/quota/env breaks |  |
 | `--lenient` | return success even when diff has breaks |  |
 | `--server-diff` | compute deploy diff on apid |  |
