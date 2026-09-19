@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // Validity tags the freshness of a single signal on an InstanceStat
@@ -394,6 +395,29 @@ func (r *Reader) SnapshotForInstance(instanceID string) (InstanceStat, bool) {
 		}
 	}
 	return InstanceStat{}, false
+}
+
+// SnapshotActivity returns fresh scale-in safety signals keyed by instance id.
+// Stale samples are absent, not zero: interpreting an old zero as current would
+// allow the reaper to park a request that started after telemetry stopped. The
+// explicit now keeps a whole reaper snapshot on one clock edge. Building one
+// map also avoids an O(instances^2) sequence of per-instance linear lookups.
+func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivity {
+	cur := r.snap.Load()
+	if cur == nil {
+		return nil
+	}
+	out := make(map[string]sched.InstanceActivity, len(*cur))
+	for _, row := range *cur {
+		if row.InstanceID == "" || !freshSample(row.SampledAt, now) {
+			continue
+		}
+		out[row.InstanceID] = sched.InstanceActivity{
+			Inflight:    row.InflightRequests,
+			LastRequest: row.LastRequestAt,
+		}
+	}
+	return out
 }
 
 // MaxInflightForApp returns the maximum InflightRequests across

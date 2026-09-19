@@ -127,6 +127,20 @@ func TestReapIdleSkipsInstanceWithOpenConns(t *testing.T) {
 	}
 }
 
+func TestReapIdleSkipsInstanceWithInflightRequest(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		{Instance: "active", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), InflightRequests: 1},
+		{Instance: "idle", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour)},
+	}
+	got := ReapIdle(now, instances, nil, nil)
+	if !equalSet(got, []string{"idle"}) {
+		t.Fatalf("ReapIdle = %v, want [idle] (inflight request must survive)", got)
+	}
+}
+
 // TestReapIdleSkipsInstanceWithTailCount pins issue #667 / ADR-078
 // §"Reaper gate": an instance with active waitUntil tasks
 // (TailCount > 0) is alive — the runner is in the tail-host drain
@@ -517,6 +531,20 @@ func TestReapAggressive_OpenConnsProtect(t *testing.T) {
 	}
 }
 
+func TestReapAggressive_InflightRequestProtects(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		mkAggressive("app1", "oldest", time.Hour, 0, 0),
+		mkAggressive("app1", "newest", 30*time.Minute, 0, 0),
+		mkAggressive("app1", "active", 45*time.Minute, 0, 0),
+	}
+	instances[2].InflightRequests = 2
+	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	if !equalSet(got, []string{"oldest", "newest"}) {
+		t.Fatalf("got %v, want inactive instances only (inflight request must survive)", got)
+	}
+}
+
 // TestReapAggressive_MinInstanceAgeProtects: a freshly-woken
 // instance (Started = now-10s) must never be reaped by the
 // aggressive path, even if the buffer says to. This is the same
@@ -779,6 +807,24 @@ func TestReapIdleRespectsScaleInCooldownOver(t *testing.T) {
 	got := ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle-a", "idle-b"}) {
 		t.Errorf("ReapIdle (cooldown elapsed) = %v, want [idle-a idle-b]", got)
+	}
+}
+
+func TestReapersStartScaleInCooldownAtLatestScaleOut(t *testing.T) {
+	now := time.Now()
+	lastScaleIn := now.Add(-2 * time.Minute)
+	lastScaleOut := now.Add(-time.Second)
+	instances := []InstanceInfo{
+		{Instance: "a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Started: now.Add(-time.Hour), LastScaleInAt: &lastScaleIn, LastScaleOutAt: &lastScaleOut, ScaleInCooldownS: 60},
+		{Instance: "b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Started: now.Add(-time.Hour), LastScaleInAt: &lastScaleIn, LastScaleOutAt: &lastScaleOut, ScaleInCooldownS: 60},
+	}
+	if got := ReapIdle(now, instances, nil, nil); len(got) != 0 {
+		t.Fatalf("ReapIdle after scale-out = %v, want []", got)
+	}
+	if got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil); len(got) != 0 {
+		t.Fatalf("ReapAggressive after scale-out = %v, want []", got)
 	}
 }
 

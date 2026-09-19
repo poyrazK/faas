@@ -91,6 +91,8 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 		degraded             bool
 		openInstances        int
 		openConnections      int64
+		inflightInstances    int
+		inflightRequests     int64
 		flowTopology         []api.DebugRunningFlowSummary
 		flowTopologyDegraded bool
 		tailInstances        int
@@ -148,13 +150,17 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 		if in.WorkloadClass == state.WorkloadClassWorker || mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeService) || mode == string(state.InstanceModeJob) || mode == string(state.InstanceModeMirror) {
 			g.workloadModes[mode]++
 		}
-		if in.LastScaleInAt != nil && in.ScaleInCooldownS > 0 {
-			until := in.LastScaleInAt.Add(time.Duration(in.ScaleInCooldownS) * time.Second)
+		if anchor := scaleInCooldownAnchor(in); anchor != nil && in.ScaleInCooldownS > 0 {
+			until := anchor.Add(time.Duration(in.ScaleInCooldownS) * time.Second)
 			if until.After(now) && until.After(g.cooldownUntil) {
 				g.cooldownUntil = until
 			}
 		}
 
+		if in.InflightRequests > 0 {
+			g.inflightInstances++
+			g.inflightRequests += in.InflightRequests
+		}
 		if in.OpenConns > 0 {
 			g.openInstances++
 			g.openConnections += in.OpenConns
@@ -181,7 +187,7 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 			}
 		} else if in.LastRequest.IsZero() && !now.After(deadline) {
 			g.startupInstances++
-		} else if in.OpenConns == 0 && in.TailCount == 0 && !now.Before(deadline) {
+		} else if in.InflightRequests == 0 && in.OpenConns == 0 && in.TailCount == 0 && !now.Before(deadline) {
 			g.staleCandidates++
 		}
 	}
@@ -215,7 +221,14 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 				TailTasks:     g.tailTasks,
 			})
 		}
-		if g.recentInstances > 0 {
+		if g.inflightInstances > 0 {
+			causes = append(causes, runningReasonCause{
+				Code:           api.DebugRunningReasonRequestActivity,
+				Summary:        fmt.Sprintf("%d request(s) are currently executing across %d instance(s).", g.inflightRequests, g.inflightInstances),
+				InstanceCount:  g.inflightInstances,
+				LastActivityAt: g.lastActivity,
+			})
+		} else if g.recentInstances > 0 {
 			causes = append(causes, runningReasonCause{
 				Code:           api.DebugRunningReasonRequestActivity,
 				Summary:        fmt.Sprintf("%d instance(s) saw successful request activity before the idle deadline.", g.recentInstances),

@@ -1554,6 +1554,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
+		WithInstanceActivity(reader).
 		// Issue #171: shared Prometheus registry (same instance the
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.

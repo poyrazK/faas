@@ -120,6 +120,7 @@ type Loop struct {
 	migratingWatchdog     *MigratingWatchdog                  // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
 	deadNodeReconciler    *DeadNodeReconciler                 // dead-node billing-leak self-healer; nil opts out (no ticker arm)
 	instStats             InstanceStatsPoller                 // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
+	instanceActivity      InstanceActivityReader              // fresh per-instance request activity used by scale-in; nil opts out
 	scaleup               *scaleup.Trigger                    // issue #169 / #172 reactive scale-up trigger; nil opts out
 	scaleupMu             sync.Mutex                          // serializes asynchronous scale-up ticks
 	scaleupRunning        bool                                // true while one scale-up tick is in flight
@@ -338,6 +339,22 @@ type InstanceStatsPoller interface {
 	TickInterval() time.Duration
 }
 
+// InstanceActivity is the fresh, per-instance request state the reaper needs.
+// The deliberately small DTO lets the concrete stats reader publish one O(N)
+// snapshot without exposing its broader metrics model to lifecycle policy.
+type InstanceActivity struct {
+	Inflight    int64
+	LastRequest time.Time
+}
+
+// InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
+// It lives in pkg/sched to avoid a sched -> instancestats dependency. The
+// concrete *instancestats.Reader omits stale rows, so absence falls back to
+// durable timestamps rather than being misread as a current zero.
+type InstanceActivityReader interface {
+	SnapshotActivity(now time.Time) map[string]InstanceActivity
+}
+
 // WithInstanceStats attaches the per-instance metrics poller
 // (issue #170 / PR-A). Same nil-skip semantics as the heartbeat
 // ticker — production wires instancestats.NewPoller(...); tests
@@ -348,6 +365,14 @@ type InstanceStatsPoller interface {
 // (reactive scale-up trigger) will read from.
 func (l *Loop) WithInstanceStats(p InstanceStatsPoller) *Loop {
 	l.instStats = p
+	return l
+}
+
+// WithInstanceActivity attaches the reader populated by the instance-stats
+// poller. Keeping this separate from InstanceStatsPoller preserves the narrow
+// ticker contract and lets tests inject either concern independently.
+func (l *Loop) WithInstanceActivity(r InstanceActivityReader) *Loop {
+	l.instanceActivity = r
 	return l
 }
 
@@ -2025,6 +2050,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	now := l.now()
+	var activityByInstance map[string]InstanceActivity
+	if l.instanceActivity != nil {
+		activityByInstance = l.instanceActivity.SnapshotActivity(now)
+	}
 	// snapshot is a point-in-time view of every instance on the
 	// box. The three selectors below (ReapIdle, ReapAggressive,
 	// SelectEvictions) all read from this same slice. IMPORTANT:
@@ -2100,6 +2129,14 @@ func (l *Loop) runReaper(ctx context.Context) {
 			if !reaperInstanceState(state.State(ins.State)) {
 				continue
 			}
+			lastRequest := ins.LastRequestAt
+			var inflightRequests int64
+			if activity, ok := activityByInstance[ins.ID]; ok {
+				inflightRequests = activity.Inflight
+				if activity.LastRequest.After(lastRequest) {
+					lastRequest = activity.LastRequest
+				}
+			}
 			// G7 flow count (spec §17): the conntrack reader is the
 			// production source; nil/error falls back to 0 so a flow-source
 			// glitch fails open (LastRequest-only path; safe default).
@@ -2134,7 +2171,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// rows that pre-date the per-deployment column.
 				DeploymentID: ins.DeploymentID,
 				RAMMB:        ins.RAMMB,
-				LastRequest:  ins.LastRequestAt,
+				LastRequest:  lastRequest,
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
 				NodeID:       ins.NodeID,
@@ -2159,6 +2196,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				ConfiguredMinInstances: appConfiguredFloor[a.ID],
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,
+				InflightRequests:       inflightRequests,
 				FlowSummaries:          flowSummaries,
 				FlowSummaryDegraded:    flowSummaryDegraded,
 				FlowCountDegraded:      flowCountDegraded,
@@ -2174,9 +2212,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 				WorkloadClass: a.WorkloadClass,
 				// PR-C (issue #462): per-app scale-in cooldown
 				// carrier fields. Same value across all rows of
-				// one app — sourced from apps.last_scale_in_at
-				// + ScalingPolicy.ScaleInCooldownS.
+				// one app — sourced from apps.last_scale_in_at,
+				// apps.last_scale_out_at, and ScaleInCooldownS.
 				LastScaleInAt:    a.LastScaleInAt,
+				LastScaleOutAt:   a.LastScaleOutAt,
 				ScaleInCooldownS: state.ScalingPolicyOrDefault(a.ScalingPolicy).ScaleInCooldownS,
 				// Issue #475: per-app eviction tier (best_effort
 				// | reserved). Same carrier semantics as

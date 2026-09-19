@@ -27,6 +27,11 @@ func TestExplainRunningReportsSchedulerBlockers(t *testing.T) {
 			want: api.DebugRunningReasonRequestActivity,
 		},
 		{
+			name: "inflight request protects stale instance",
+			in:   []InstanceInfo{{AppID: "app", Plan: api.PlanPro, State: state.StateRunning, LastRequest: stale, Started: stale, IdleTimeoutS: 60, InflightRequests: 2}},
+			want: api.DebugRunningReasonRequestActivity,
+		},
+		{
 			name: "open connection",
 			in:   []InstanceInfo{{AppID: "app", Plan: api.PlanPro, State: state.StateRunning, LastRequest: stale, Started: stale, IdleTimeoutS: 60, OpenConns: 3}},
 			want: api.DebugRunningReasonOpenConnection,
@@ -52,6 +57,11 @@ func TestExplainRunningReportsSchedulerBlockers(t *testing.T) {
 		{
 			name: "scale-in cooldown",
 			in:   []InstanceInfo{{AppID: "app", Plan: api.PlanPro, State: state.StateRunning, LastRequest: stale, Started: stale, IdleTimeoutS: 60, LastScaleInAt: runningReasonPtrTime(now.Add(-5 * time.Second)), ScaleInCooldownS: 30}},
+			want: api.DebugRunningReasonScaleInCooldown,
+		},
+		{
+			name: "scale-out starts scale-in cooldown",
+			in:   []InstanceInfo{{AppID: "app", Plan: api.PlanPro, State: state.StateRunning, LastRequest: stale, Started: stale, IdleTimeoutS: 60, LastScaleOutAt: runningReasonPtrTime(now.Add(-5 * time.Second)), ScaleInCooldownS: 30}},
 			want: api.DebugRunningReasonScaleInCooldown,
 		},
 		{
