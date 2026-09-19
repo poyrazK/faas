@@ -350,7 +350,25 @@ jobs:
           install -m 0644 deploy/statuspage/index.html \
             "${BUNDLE_ROOT}/statuspage/index.html"
           "${BUNDLE_ROOT}/bin/deployctl" bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${RELEASE_ID}" "linux/amd64"
+          # release.tar.gz already contains every canonical daemon and runner.
+          # Avoid sending those bytes twice over the long-haul SSH path: ship
+          # the signed tarball, the two controller-only binaries, and the
+          # remaining bundle files. The upload step reconstructs the exact
+          # bundle before its existing manifest verification gate.
+          TRANSPORT_PARENT="$RUNNER_TEMP/faas-release-transport"
+          TRANSPORT_ROOT="${TRANSPORT_PARENT}/${RELEASE_ID}"
+          TRANSPORT_ARCHIVE="$RUNNER_TEMP/faas-release-${RELEASE_ID}.transport.tar.gz"
+          rm -rf -- "$TRANSPORT_ROOT"
+          mkdir -p "$TRANSPORT_PARENT"
+          cp -al "$BUNDLE_ROOT" "$TRANSPORT_ROOT"
+          rm -rf -- "${TRANSPORT_ROOT:?}/bin"
+          install -d -m 0755 "$TRANSPORT_ROOT/controller-bin"
+          install -m 0755 "$BUNDLE_ROOT/bin/deployctl" "$TRANSPORT_ROOT/controller-bin/deployctl"
+          install -m 0755 "$BUNDLE_ROOT/bin/migrate" "$TRANSPORT_ROOT/controller-bin/migrate"
+          tar --create --gzip --file "$TRANSPORT_ARCHIVE" \
+            --directory "$TRANSPORT_PARENT" "$RELEASE_ID"
           echo "BUNDLE_ROOT=${BUNDLE_ROOT}" >> "${GITHUB_ENV}"
+          echo "TRANSPORT_ARCHIVE=${TRANSPORT_ARCHIVE}" >> "${GITHUB_ENV}"
 
       # The controller (deployctl) ships and verifies the release, but
       # imaged's base-stage scanner (grype) + SBOM tool (syft) are host
@@ -526,8 +544,27 @@ jobs:
           rm -rf -- "$release_dir"
           mkdir -p -- "$release_dir"
           REMOTE
-            scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
-              "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"
+            scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+              "$TRANSPORT_ARCHIVE" \
+              "root@${{ env.CP_HOST }}:${release_dir}/.transport.tar.gz"
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+              root@${{ env.CP_HOST }} "bash -s -- '${release_dir}'" <<'REMOTE'
+          set -euo pipefail
+          release_dir="$1"
+          transport="$release_dir/.transport.tar.gz"
+          tar --extract --gzip --file "$transport" --directory "$release_dir" \
+            --strip-components=1 --no-same-owner
+          rm -f -- "$transport"
+          install -d -o root -g root -m 0755 "$release_dir/bin"
+          tar --extract --gzip --file "$release_dir/release.tar.gz" \
+            --directory "$release_dir/bin" --no-same-owner
+          rm -f -- "$release_dir/bin/release-manifest.json"
+          install -o root -g root -m 0755 \
+            "$release_dir/controller-bin/deployctl" "$release_dir/bin/deployctl"
+          install -o root -g root -m 0755 \
+            "$release_dir/controller-bin/migrate" "$release_dir/bin/migrate"
+          rm -rf -- "${release_dir:?}/controller-bin"
+          REMOTE
           fi
           # outboundd was added after the original controller-managed host
           # bootstrap. Converge its least-privilege runtime prerequisites

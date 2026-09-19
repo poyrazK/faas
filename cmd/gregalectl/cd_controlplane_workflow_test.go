@@ -73,13 +73,29 @@ func TestCDControlPlaneReusesVerifiedImmutableRelease(t *testing.T) {
 	reuse := strings.Index(workflow, `reusing verified immutable release ${RELEASE_ID}`)
 	activeGuard := strings.Index(workflow, `if [[ "$current_release" == "$release_dir" ]]`)
 	remove := strings.Index(workflow, `rm -rf -- "$release_dir"`)
-	upload := strings.Index(workflow, `"${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"`)
+	upload := strings.Index(workflow, `"root@${{ env.CP_HOST }}:${release_dir}/.transport.tar.gz"`)
+	reconstruct := strings.Index(workflow, `--directory "$release_dir/bin" --no-same-owner`)
 	activate := strings.Index(workflow, `${release_dir}/bin/deployctl deploy ${RELEASE_ID}`)
-	if verify < 0 || reuse < 0 || activeGuard < 0 || remove < 0 || upload < 0 || activate < 0 {
-		t.Fatalf("control-plane workflow is missing idempotent release handling: verify=%d reuse=%d guard=%d remove=%d upload=%d activate=%d", verify, reuse, activeGuard, remove, upload, activate)
+	if verify < 0 || reuse < 0 || activeGuard < 0 || remove < 0 || upload < 0 || reconstruct < 0 || activate < 0 {
+		t.Fatalf("control-plane workflow is missing idempotent release handling: verify=%d reuse=%d guard=%d remove=%d upload=%d reconstruct=%d activate=%d", verify, reuse, activeGuard, remove, upload, reconstruct, activate)
 	}
-	if !(verify < reuse && reuse < activeGuard && activeGuard < remove && remove < upload && upload < activate) {
-		t.Fatalf("control-plane release handling is out of order: verify=%d reuse=%d guard=%d remove=%d upload=%d activate=%d", verify, reuse, activeGuard, remove, upload, activate)
+	if !(verify < reuse && reuse < activeGuard && activeGuard < remove && remove < upload && upload < reconstruct && reconstruct < activate) {
+		t.Fatalf("control-plane release handling is out of order: verify=%d reuse=%d guard=%d remove=%d upload=%d reconstruct=%d activate=%d", verify, reuse, activeGuard, remove, upload, reconstruct, activate)
+	}
+	for _, want := range []string{
+		`rm -rf -- "${TRANSPORT_ROOT:?}/bin"`,
+		`"$BUNDLE_ROOT/bin/deployctl" "$TRANSPORT_ROOT/controller-bin/deployctl"`,
+		`"$BUNDLE_ROOT/bin/migrate" "$TRANSPORT_ROOT/controller-bin/migrate"`,
+		`"$release_dir/release.tar.gz"`,
+		`rm -f -- "$release_dir/bin/release-manifest.json"`,
+		`rm -rf -- "${release_dir:?}/controller-bin"`,
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("control-plane compact transport is missing %q", want)
+		}
+	}
+	if strings.Contains(workflow, `"${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"`) {
+		t.Fatal("control-plane workflow still uploads the unpacked canonical binaries beside release.tar.gz")
 	}
 }
 
