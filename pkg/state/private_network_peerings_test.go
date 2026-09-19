@@ -86,9 +86,11 @@ func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 	store.mu.Unlock()
 
 	invalid := []PrivateNetworkPeering{
+		{},
 		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1", Status: "bogus"},
 		{ID: "bad id", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1"},
 		{AccountID: "acct-1", LeftNetworkID: "bad id", RightNetworkID: "beta", Region: "fra1"},
+		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "bad id", Region: "fra1"},
 		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "bad region"},
 	}
 	for _, peering := range invalid {
@@ -121,6 +123,13 @@ func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 	listed, err := store.ListPrivateNetworkPeerings(ctx, "acct-1", "")
 	if err != nil || len(listed) != 2 || listed[0].LeftNetworkID != "alpha" || listed[1].LeftNetworkID != "alpha" {
 		t.Fatalf("ordered peerings = %+v, %v", listed, err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := store.CreatePrivateNetworkPeering(canceled, PrivateNetworkPeering{
+		AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1",
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled create error = %v, want context canceled", err)
 	}
 }
 
