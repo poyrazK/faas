@@ -511,7 +511,7 @@ jobs:
           release_dir="/opt/faas/releases/${RELEASE_ID}"
           if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
-            "test -x '${release_dir}/bin/deployctl' && '${release_dir}/bin/deployctl' bundle-check '${release_dir}'"; then
+            "test -x '${release_dir}/bin/deployctl' && '${release_dir}/bin/deployctl' bundle-check-installed '${release_dir}'"; then
             echo "reusing verified immutable release ${RELEASE_ID}"
           else
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \

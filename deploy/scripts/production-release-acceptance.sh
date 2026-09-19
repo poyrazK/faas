@@ -78,9 +78,10 @@ verify_receipt() {
 		--connect-timeout 3 --max-time 10 "${app_url}${health_path}" >/dev/null
 }
 
-# Two fresh customer deployments per active node prove both execution shapes.
-# Parallel submission lets the least-loaded placement policy spread them over
-# the fleet without serially adding one complete build duration per node.
+# Submit both execution shapes with enough total deployments for every active
+# node. Ownership is claimed concurrently across node-local schedulers, so the
+# verifier requires node coverage plus both shapes fleet-wide; it must not
+# assume each random claim race produces one of each shape on every node.
 pids=()
 outputs=()
 for i in $(seq 1 "$ACTIVE_NODE_COUNT"); do

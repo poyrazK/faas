@@ -230,6 +230,26 @@ func TestCmdJobsRun_NoTasks(t *testing.T) {
 	}
 }
 
+func TestCmdJobsRun_ForwardsExplicitZeroRetries(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		body = string(payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"00000000-0000-4000-8000-000000000000","job_id":"00000000-0000-4000-8000-000000000001","account_id":"00000000-0000-4000-8000-000000000002","trigger_kind":"manual","tasks":1,"parallelism":1,"retry_max":0,"task_timeout_sec":60,"aggregate_status":"pending","created_at":"2026-09-19T00:00:00Z"}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	if code := cmdJobsRun([]string{"valid-slug", "--tasks", "1", "--retries", "0"}); code != 0 {
+		t.Fatalf("cmdJobsRun = %d, want 0", code)
+	}
+	if !strings.Contains(body, `"retry_max":0`) {
+		t.Fatalf("request body = %s, want explicit retry_max zero", body)
+	}
+}
+
 // TestCmdJobsCancel_BadUUID verifies the run-id pattern check.
 func TestCmdJobsCancel_BadUUID(t *testing.T) {
 	code, captured := runWithStderr(t, func() int {

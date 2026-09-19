@@ -58,7 +58,7 @@ func TestReleaseAcceptanceRequiresExplicitMutationAcknowledgement(t *testing.T) 
 	}
 }
 
-func TestReleaseAcceptanceVerifyPlacementRequiresBothShapesOnEveryNode(t *testing.T) {
+func TestReleaseAcceptanceVerifyPlacementRequiresEveryNodeAndBothFleetShapes(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
 	account, err := ensureReleaseAcceptanceAccount(ctx, store)
@@ -73,12 +73,14 @@ func TestReleaseAcceptanceVerifyPlacementRequiresBothShapesOnEveryNode(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	slugs := []string{"app-a", "fn-a", "app-b", "fn-b"}
+	// App ownership is assigned by a distributed claim race, so a healthy
+	// batch is not guaranteed to put both shapes on every node. Require each
+	// node to execute at least one deployment and both shapes across the fleet.
+	slugs := []string{"app-a", "fn-a", "app-b"}
 	fixtures := []state.App{
 		{AccountID: account.ID, Slug: slugs[0], Type: state.AppTypeApp, NodeID: local.ID},
 		{AccountID: account.ID, Slug: slugs[1], Type: state.AppTypeFunction, NodeID: local.ID},
 		{AccountID: account.ID, Slug: slugs[2], Type: state.AppTypeApp, NodeID: node.ID},
-		{AccountID: account.ID, Slug: slugs[3], Type: state.AppTypeFunction, NodeID: node.ID},
 	}
 	for _, fixture := range fixtures {
 		if _, err := store.CreateApp(ctx, fixture); err != nil {

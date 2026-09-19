@@ -382,6 +382,12 @@ func cmdJobsRun(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	retriesProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "retries" {
+			retriesProvided = true
+		}
+	})
 	if *tasks <= 0 {
 		PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N (N > 0)", "jobs")
 		return 1
@@ -394,7 +400,11 @@ func cmdJobsRun(args []string) int {
 		p := *parallelism
 		req.Parallelism = &p
 	}
-	if *retries > 0 {
+	if retriesProvided {
+		if *retries < 0 {
+			PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N [--retries N]   (--retries must be >= 0)", "jobs")
+			return 1
+		}
 		r := *retries
 		req.RetryMax = &r
 	}

@@ -125,20 +125,27 @@ func cmdReleaseAcceptanceVerifyPlacement(args []string) int {
 		}
 	}
 	report := releaseAcceptancePlacementReport{Ready: true, Nodes: make([]releaseAcceptancePlacementNode, 0, len(nodes))}
+	fleetHasApp := false
+	fleetHasFunction := false
 	for _, node := range nodes {
 		covered := byNode[node.ID]
 		row := releaseAcceptancePlacementNode{Name: node.Name, NodeID: node.ID, HasApp: covered.app, HasFunc: covered.function}
 		report.Nodes = append(report.Nodes, row)
-		if !row.HasApp || !row.HasFunc {
+		fleetHasApp = fleetHasApp || row.HasApp
+		fleetHasFunction = fleetHasFunction || row.HasFunc
+		if !row.HasApp && !row.HasFunc {
 			report.Ready = false
 		}
+	}
+	if !fleetHasApp || !fleetHasFunction {
+		report.Ready = false
 	}
 	if err := json.NewEncoder(osStdout).Encode(report); err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: encode: %v\n", err)
 		return 1
 	}
 	if !report.Ready {
-		fmt.Fprintln(os.Stderr, "gregalectl release-acceptance verify-placement: every active node must host both an app and a function acceptance deployment")
+		fmt.Fprintln(os.Stderr, "gregalectl release-acceptance verify-placement: every active node must host an acceptance deployment and the fleet must cover both app and function shapes")
 		return 3
 	}
 	return 0

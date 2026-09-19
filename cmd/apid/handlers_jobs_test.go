@@ -84,6 +84,46 @@ func TestCreateJob_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateJob_OmittedResourcesUseSafeDefaults(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	rec := e.do(t, "POST", "/v1/jobs", api.CreateJobRequest{
+		Name:     "safe-defaults",
+		ImageRef: "docker.io/library/alpine:3.20",
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST jobs = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.JobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.RAMMB != api.JobDefaultRAMMB || resp.TaskTimeoutSec != api.JobDefaultTaskTimeoutSec ||
+		resp.MaxParallelism != api.JobDefaultParallelism || resp.RetryMax != api.JobDefaultRetryMax {
+		t.Fatalf("defaults = ram=%d timeout=%d parallelism=%d retries=%d, want %d/%d/%d/%d",
+			resp.RAMMB, resp.TaskTimeoutSec, resp.MaxParallelism, resp.RetryMax,
+			api.JobDefaultRAMMB, api.JobDefaultTaskTimeoutSec, api.JobDefaultParallelism, api.JobDefaultRetryMax)
+	}
+}
+
+func TestCreateJob_RejectsNegativeResources(t *testing.T) {
+	for name, mutate := range map[string]func(*api.CreateJobRequest){
+		"ram":         func(req *api.CreateJobRequest) { req.RAMMB = -1 },
+		"timeout":     func(req *api.CreateJobRequest) { req.TaskTimeoutSec = -1 },
+		"parallelism": func(req *api.CreateJobRequest) { req.MaxParallelism = -1 },
+		"retries":     func(req *api.CreateJobRequest) { req.RetryMax = -1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := setup(t, api.PlanScale)
+			req := api.CreateJobRequest{Name: "negative-" + name, ImageRef: "docker.io/library/alpine:3.20"}
+			mutate(&req)
+			rec := e.do(t, "POST", "/v1/jobs", req, nil)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("POST jobs = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestCreateJob_FreePlan_Forbidden pins the plan-tier gate. The
 // PlanSupportsJobs(p) helper returns false for PlanFree, so the
 // handler MUST surface 402 CodeJobsNotAllowed BEFORE the quota
