@@ -1,4 +1,5 @@
--- filename: 20260919210000001_apps_warm_pool_size.sql
+-- filename: 20260919210000002_apps_warm_pool_size.sql
+
 -- +goose Up
 -- +goose StatementBegin
 

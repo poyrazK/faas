@@ -243,6 +243,7 @@ type App struct {
 	WarmSnapshotEnabled       bool
 	WarmSnapshotMinRequests   int32
 	WarmSnapshotMinMs         int32
+	WarmPoolSize              int32
 	EvictionPriority          string
 	RequireAuthn              bool
 	ConsumerAuthMode          string
