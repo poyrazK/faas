@@ -104,6 +104,7 @@ func (p *gregaleProvider) Resources(_ context.Context) []func() resource.Resourc
 		newPrivateNetworkAttachmentResource,
 		newPrivateNetworkResource,
 		newPrivateNetworkPeeringResource,
+		newProjectEnvironmentConfigResource,
 	}
 }
 
