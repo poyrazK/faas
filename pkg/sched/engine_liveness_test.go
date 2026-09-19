@@ -208,7 +208,7 @@ func TestLiveness_NilReceiverSafe(t *testing.T) {
 // TestLiveness_ParkDeployment_RejectsStrayReason pins the
 // closed-set guard added to Engine.ParkDeployment. A stray
 // reason (one not in {liveness_exhausted, lifecycle_park,
-// admin_park}) must surface as a hard error — the
+// admin_park, security_scan_regressed}) must surface as a hard error — the
 // deployments.parked_reason CHECK constraint would reject it
 // at the SQL layer, and the silent warn-log in
 // SetDeploymentParked's caller path would mask the bug. The

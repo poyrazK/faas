@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -86,5 +87,74 @@ func TestAppendSecurityScanRegressionAudit(t *testing.T) {
 	}
 	if data["quarantine_required"] != true || data["image_digest"] != dep.ImageDigest {
 		t.Fatalf("audit data = %v, want quarantine signal for %s", data, dep.ImageDigest)
+	}
+}
+
+func TestQuarantineSecurityRegressionParksAndNotifies(t *testing.T) {
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(context.Background(), "security-quarantine@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), state.App{
+		AccountID: account.ID,
+		Slug:      "quarantine-app",
+		Status:    state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:quarantine",
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notif := &fakeNotifier{}
+	loop := &Loop{
+		store: store,
+		handler: &Handler{
+			store: store,
+			notif: notif,
+		},
+		now: func() time.Time { return time.Date(2026, 9, 19, 15, 0, 0, 0, time.UTC) },
+	}
+	if err := loop.quarantineSecurityRegression(context.Background(), app, dep); err != nil {
+		t.Fatal(err)
+	}
+	gotApp, err := store.AppByID(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotApp.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %q, want evicted_cold", gotApp.Status)
+	}
+	gotDep, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDep.ParkedReason != string(state.ParkReasonSecurityScanRegressed) {
+		t.Fatalf("parked reason = %q, want security_scan_regressed", gotDep.ParkedReason)
+	}
+	call := findNotify(notif, db.NotifyAppChanged)
+	if call == nil {
+		t.Fatal("security quarantine did not notify app_changed")
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(call.payload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["kind"] != "parked" || payload["reason"] != string(state.ParkReasonSecurityScanRegressed) {
+		t.Fatalf("notification payload = %v, want security parked event", payload)
+	}
+
+	// A retry is idempotent and preserves the first parked timestamp.
+	if err := loop.quarantineSecurityRegression(context.Background(), gotApp, gotDep); err != nil {
+		t.Fatal(err)
+	}
+	if len(notif.calls) != 2 {
+		t.Fatalf("notification calls = %d, want one per durable retry", len(notif.calls))
 	}
 }

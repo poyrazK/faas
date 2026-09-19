@@ -84,6 +84,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// SecurityQuarantined is set when the live deployment has a durable
+	// security_scan_regressed parking reason. The edge rejects requests before
+	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
+	SecurityQuarantined bool
 	// Visibility controls public edge routing. Internal apps are deliberately
 	// omitted by the public hostname resolver; service-proxy resolution uses
 	// the app store directly and remains available to authenticated callers.
@@ -5305,6 +5309,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 haveApp:
 	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
 		api.WriteProblem(w, api.ErrAccountSuspended())
+		h.observe(r, rec.status, app.ID, "", false, Target{})
+		return
+	}
+	if app.SecurityQuarantined {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeSecurityPostureBlocked, "App is security quarantined",
+			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before serving traffic"))
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}

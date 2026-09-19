@@ -19840,7 +19840,8 @@ components:
         # most-recently parked deployment for this app, or absent
         # when the app has never been parked. Operators see the
         # closed-set reason (liveness_exhausted | lifecycle_park
-        # | admin_park) + the timestamp without grepping the
+        # | admin_park | security_scan_regressed) + the timestamp
+        # without grepping the
         # audit log. Nested (not flat) so AppResponse conflates
         # app-state with deployment-state only at the explicit
         # ref — mirrors the per-deployment override pattern at
@@ -21188,14 +21189,14 @@ components:
     # ─── Deployments ──────────────────────────────────────────────────────
 
     ParkedDeploymentRef:
-      description: "Reference to a deployment that was parked (issue #554 / ADR-079 follow-up). Returned in AppResponse.parked_deployment when the app has at least one parked deployment. The `parked_reason` field is closed-set (liveness_exhausted | lifecycle_park | admin_park) — enforced at the schema layer via the deployments_parked_reason_check constraint from migration 00157."
+      description: "Reference to a deployment that was parked (issue #554 / ADR-079 follow-up). Returned in AppResponse.parked_deployment when the app has at least one parked deployment. The `parked_reason` field is closed-set (liveness_exhausted | lifecycle_park | admin_park | security_scan_regressed) — enforced at the schema layer via the deployments_parked_reason_check constraint."
       type: object
       required: [id, parked_reason, parked_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         parked_reason:
           type: string
-          enum: [liveness_exhausted, lifecycle_park, admin_park]
+          enum: [liveness_exhausted, lifecycle_park, admin_park, security_scan_regressed]
           description: "Closed-set parking reason from the schema-layer CHECK constraint."
         parked_at: { type: string, format: date-time, description: "Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles)." }
 
@@ -21384,8 +21385,8 @@ components:
           description: "Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce, the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN findings; off/warn remain advisory."
         parked_reason:
           type: [string, "null"]
-          enum: [null, liveness_exhausted, lifecycle_park, admin_park]
-          description: "Per-deployment parking reason (issue #554 / ADR-079 follow-up, migration 00157). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty."
+          enum: [null, liveness_exhausted, lifecycle_park, admin_park, security_scan_regressed]
+          description: "Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty."
         parked_at:
           type: [string, "null"]
           format: date-time

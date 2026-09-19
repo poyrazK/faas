@@ -156,7 +156,7 @@ func TestTypes_VocabularyAndErrors(t *testing.T) {
 	}
 
 	// ParkReason.IsValid: closed set.
-	for _, r := range []ParkReason{ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark} {
+	for _, r := range []ParkReason{ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark, ParkReasonSecurityScanRegressed} {
 		if !r.IsValid() {
 			t.Errorf("%s.IsValid()=false, want true", r)
 		}
