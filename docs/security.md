@@ -25,4 +25,14 @@ promoted; it does not replace dependency patching or application review.
 
 Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 
+## Quarantine recovery
+
+When an enforce-policy app is parked after a live image scan regresses,
+`GET /v1/apps/{slug}/security` reports the quarantined deployment and digest.
+After deploying a newer image, use `POST /v1/apps/{slug}/security/recover` with
+that deployment id. Recovery restores traffic only when every live canary has
+fresh, complete, digest-matched scan evidence with zero high, critical, or
+unknown findings. The operation requires deploy-write scope and MFA and emits
+an audit event when the app returns to `active`.
+
 Report a suspected vulnerability through the security contact listed in [security.txt](security.txt). Include a minimal reproduction and affected resource ids, but never include live credentials or customer data. Gregale will acknowledge receipt and coordinate a safe disclosure window.

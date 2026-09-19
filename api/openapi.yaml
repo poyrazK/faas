@@ -7374,7 +7374,12 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-              example: '{"type":"about:blank","title":"","status":403,"code":"log_archive_retention_exceeded","detail":"?date=2026-07-01 is outside the per-plan window"}'
+              example:
+                type: "about:blank"
+                title: ""
+                status: 403
+                code: "log_archive_retention_exceeded"
+                detail: "?date=2026-07-01 is outside the per-plan window"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -7677,6 +7682,44 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/AppNotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/security/recover:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [security]
+      operationId: recoverAppSecurityQuarantine
+      summary: Recover an app from image-scan quarantine.
+      description: |
+        Restores an app to active only when the selected deployment is live,
+        newer than the recorded security quarantine, uses a different image
+        digest, and carries complete digest-matched scan evidence with zero
+        HIGH, CRITICAL, or UNKNOWN findings. Every live canary deployment is
+        checked before traffic is restored. The transition is idempotent and
+        emits an audited security recovery event.
+        Requires deploy-write scope and MFA.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityQuarantineRecoveryRequest'
+      responses:
+        '200':
+          description: The app was restored to active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityQuarantineRecoveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409':
+          description: The replacement deployment is not yet eligible for recovery.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   # ADR-119: per-app static egress IP (Scale-only, BYOIP, single-node v1).
@@ -30724,7 +30767,7 @@ components:
           example: enforce
 
     AppSecurityPostureResponse:
-      description: "Read-only deterministic configuration posture for an app."
+      description: "Read-only deterministic configuration posture for an app, including an active image-scan quarantine when present."
       type: object
       required: [app_id, slug, profile, score, security_policy, findings]
       properties:
@@ -30746,6 +30789,57 @@ components:
         findings:
           type: array
           items: { $ref: '#/components/schemas/AppSecurityFinding' }
+        quarantine:
+          oneOf:
+            - $ref: '#/components/schemas/AppSecurityQuarantine'
+            - type: 'null'
+
+    AppSecurityQuarantine:
+      description: "Active image-scan quarantine details. Vulnerability findings remain on the deployment scan resource."
+      type: object
+      required: [deployment_id, image_digest, reason]
+      properties:
+        deployment_id:
+          type: string
+          description: "Deployment whose scan regression caused the quarantine."
+        image_digest:
+          type: string
+          description: "Immutable image digest that was quarantined."
+        reason:
+          type: string
+          enum: [security_scan_regressed]
+        parked_at:
+          type: [string, "null"]
+          format: date-time
+
+    SecurityQuarantineRecoveryRequest:
+      description: "The clean live deployment to use when recovering an app from image-scan quarantine."
+      type: object
+      required: [deployment_id]
+      properties:
+        deployment_id:
+          type: string
+          description: "Live replacement deployment with complete, digest-matched clean scan evidence."
+
+    SecurityQuarantineRecoveryResponse:
+      description: "The app's post-recovery active state."
+      type: object
+      required: [app_id, slug, deployment_id, image_digest, recovered_at, status]
+      properties:
+        app_id:
+          type: string
+        slug:
+          type: string
+        deployment_id:
+          type: string
+        image_digest:
+          type: string
+        recovered_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active]
 
     AppSecurityFinding:
       description: "One actionable security posture finding."

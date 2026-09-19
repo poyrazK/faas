@@ -161,6 +161,8 @@ from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
 from .app_security_posture_response_profile import AppSecurityPostureResponseProfile
 from .app_security_posture_response_security_policy import AppSecurityPostureResponseSecurityPolicy
+from .app_security_quarantine import AppSecurityQuarantine
+from .app_security_quarantine_reason import AppSecurityQuarantineReason
 from .app_security_request import AppSecurityRequest
 from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
@@ -1129,6 +1131,9 @@ from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_scan_result import SecretScanResult
+from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
+from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
+from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
 from .service_replicas import ServiceReplicas
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
@@ -1478,6 +1483,8 @@ __all__ = (
     "AppSecurityPostureResponse",
     "AppSecurityPostureResponseProfile",
     "AppSecurityPostureResponseSecurityPolicy",
+    "AppSecurityQuarantine",
+    "AppSecurityQuarantineReason",
     "AppSecurityRequest",
     "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
@@ -2410,6 +2417,9 @@ __all__ = (
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretScanResult",
+    "SecurityQuarantineRecoveryRequest",
+    "SecurityQuarantineRecoveryResponse",
+    "SecurityQuarantineRecoveryResponseStatus",
     "ServiceReplicas",
     "SessionInfo",
     "SessionListResponse",

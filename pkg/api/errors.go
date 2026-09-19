@@ -781,6 +781,10 @@ const (
 	// app's admin-enabled security policy is "enforce" and its current
 	// posture still contains one or more high-severity findings.
 	CodeSecurityPostureBlocked = "security_posture_blocked"
+	// CodeSecurityQuarantineRecoveryBlocked is returned when a recovery
+	// request cannot prove that a newer live deployment has clean,
+	// digest-matched scan evidence across the serving set.
+	CodeSecurityQuarantineRecoveryBlocked = "security_quarantine_recovery_blocked"
 	// CodeSecurityScanBlocked is persisted when an enforce-policy deployment
 	// cannot be promoted because its image scan is missing, unverifiable, or
 	// reports high-severity risk.
@@ -1825,7 +1829,8 @@ func StatusForCode(code string) int {
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
-		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale:
+		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
+		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
@@ -4239,6 +4244,14 @@ func ErrSecurityPostureBlocked(codes string) *Problem {
 		"Security posture blocks this deploy",
 		"security_policy=enforce and high-severity findings remain: "+codes+"; review GET /v1/apps/{slug}/security and remediate the findings").
 		WithDocs(docsBase + "/security#deploy-enforcement")
+}
+
+// ErrSecurityQuarantineRecoveryBlocked is returned when a quarantined app
+// does not yet have a verified replacement deployment ready to serve.
+func ErrSecurityQuarantineRecoveryBlocked(detail string) *Problem {
+	return NewProblem(http.StatusConflict, CodeSecurityQuarantineRecoveryBlocked,
+		"Security quarantine recovery is blocked", detail).
+		WithDocs(docsBase + "/security#quarantine-recovery")
 }
 
 // ErrTrustedSignerInvalid is the 400 mirror of ErrSecretInvalidKey

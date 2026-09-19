@@ -4662,6 +4662,15 @@ func (c *Client) GetAppSecurity(ctx context.Context, slug string) (AppSecurityPo
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/security", nil, &out)
 }
 
+// RecoverAppSecurityQuarantine restores a quarantined app only after the
+// selected newer live deployment and every live canary have fresh,
+// digest-matched clean scan evidence. The server performs the atomic
+// lifecycle transition and emits the corresponding audit/notification event.
+func (c *Client) RecoverAppSecurityQuarantine(ctx context.Context, slug string, req SecurityQuarantineRecoveryRequest) (SecurityQuarantineRecoveryResponse, error) {
+	var out SecurityQuarantineRecoveryResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/security/recover", req, &out)
+}
+
 // GetAppStaticEgressIP reads the per-app static egress IP pin
 // (ADR-119). Plan-agnostic — returns the current pin status even
 // when the plan doesn't allow static egress IPs (plan_allowed=false,

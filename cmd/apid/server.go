@@ -1467,6 +1467,10 @@ func (s *server) handler() http.Handler {
 	// GET is the customer-scoped, read-only security posture report;
 	// it never exposes secrets or raw policy payloads.
 	mux.HandleFunc("GET /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppSecurity))))
+	// Recovery is deploy-scoped but fail-closed: the handler requires a
+	// newer live deployment with clean, digest-matched scan evidence across
+	// every live canary row before restoring the app to active.
+	mux.HandleFunc("POST /v1/apps/{slug}/security/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverAppSecurityQuarantine)))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAppSecurity))))
 	// Issue #472 / ADR-054 — per-app cosign trusted-publisher list
 	// (admin + MFA). GET requires admin (read), PUT/DELETE require

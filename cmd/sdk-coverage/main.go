@@ -884,6 +884,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/trusted_signers/{name}": "DeleteAppTrustedSigner",
 	"GET /v1/apps/{slug}/security":                  "GetAppSecurity",
 	"PATCH /v1/apps/{slug}/security":                "UpdateAppSecurity",
+	"POST /v1/apps/{slug}/security/recover":         "RecoverAppSecurityQuarantine",
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). The
 	// SDK natural verb auto-derives to "GetAppsSlugRegistry-credentials"
 	// (dash, not the safer "RegistryCredentials") because the spec path

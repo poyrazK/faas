@@ -5631,12 +5631,41 @@ type AppSecurityResponse struct {
 // an app. Findings are deterministic configuration checks; the response never
 // includes credentials, allowlist values, or other secret material.
 type AppSecurityPostureResponse struct {
-	AppID          string               `json:"app_id"`
-	Slug           string               `json:"slug"`
-	Profile        string               `json:"profile"`
-	Score          int                  `json:"score"`
-	SecurityPolicy AppSecurityPolicy    `json:"security_policy"`
-	Findings       []AppSecurityFinding `json:"findings"`
+	AppID          string                 `json:"app_id"`
+	Slug           string                 `json:"slug"`
+	Profile        string                 `json:"profile"`
+	Score          int                    `json:"score"`
+	SecurityPolicy AppSecurityPolicy      `json:"security_policy"`
+	Findings       []AppSecurityFinding   `json:"findings"`
+	Quarantine     *AppSecurityQuarantine `json:"quarantine,omitempty"`
+}
+
+// AppSecurityQuarantine describes the active image-scan quarantine, when
+// one is present. It intentionally carries only the image digest and scan
+// timestamp needed to select a remediation deployment; vulnerability details
+// remain on the deployment scan surface.
+type AppSecurityQuarantine struct {
+	DeploymentID string     `json:"deployment_id"`
+	ImageDigest  string     `json:"image_digest"`
+	Reason       string     `json:"reason"`
+	ParkedAt     *time.Time `json:"parked_at,omitempty"`
+}
+
+// SecurityQuarantineRecoveryRequest identifies the clean live deployment
+// that should restore an app after image-scan quarantine.
+type SecurityQuarantineRecoveryRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// SecurityQuarantineRecoveryResponse is returned after the app's lifecycle
+// status is atomically restored to active.
+type SecurityQuarantineRecoveryResponse struct {
+	AppID        string    `json:"app_id"`
+	Slug         string    `json:"slug"`
+	DeploymentID string    `json:"deployment_id"`
+	ImageDigest  string    `json:"image_digest"`
+	RecoveredAt  time.Time `json:"recovered_at"`
+	Status       string    `json:"status"`
 }
 
 // AppSecurityFinding is one actionable posture finding. Severity is one of
