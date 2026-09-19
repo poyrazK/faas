@@ -7177,6 +7177,28 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 
 	terminal := terminalStateForReason(reason)
 
+	// A WAKING timeout means a snapshot restore never reached RUNNING.
+	// Retire both tiers before destroying the instance so the next request
+	// cannot select the same broken snapshot and repeat the outage. WAKING is
+	// restore-only; cold boots use COLD_BOOTING and must not invalidate a good
+	// snapshot when the application itself fails to start.
+	if reason == StuckWakingTimeout && fresh.DeploymentID != "" {
+		for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+			snap, terr := e.store.LatestSnapshotForTier(ctx, fresh.DeploymentID, tier)
+			if terr != nil || snap.ID == "" {
+				continue
+			}
+			if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
+				e.log.Warn("watchdog: mark timed-out snapshot stale",
+					"instance", instanceID,
+					"deployment", fresh.DeploymentID,
+					"snap_id", snap.ID,
+					"tier", tier,
+					"err", markErr)
+			}
+		}
+	}
+
 	// Free the ledger reservation first so a parallel Wake for the
 	// same app can admit a new instance immediately. Release is
 	// idempotent (admission.go:117).
