@@ -13,8 +13,10 @@
 // MountOverlayParent / UmountOverlayParent RPCs to vmmd.
 //
 // After DEPLOY-1 the capsDecl for imaged is:
-//   - Allow: empty. imaged is User=faas-imaged +
-//     NoNewPrivileges=yes; it does not actively USE any cap.
+//   - Allow: cap_chown. imaged is User=faas-imaged +
+//     NoNewPrivileges=yes, but OCI extraction must preserve the uid/gid
+//     declared by each layer. This is deliberately narrower than root and
+//     does not permit mount operations.
 //   - Deny: cap_sys_admin. The runtimecheck asserts the
 //     daemon does NOT have cap_sys_admin in Bnd. The matching
 //     edit in deploy/systemd/faas-imaged.service shrinks
@@ -48,7 +50,9 @@ import "github.com/onebox-faas/faas/pkg/capdecl"
 // makes the runtimecheck fail loud if a future PR silently
 // restores the cap_sys_admin ambient + bounding entry.
 var capsDecl = capdecl.Declaration{
-	Allow: nil,
+	Allow: []string{
+		"cap_chown",
+	},
 	Deny: []string{
 		// cap_sys_admin is vmmd-only (spec §11 / CLAUDE.md
 		// "vmmd is the ONLY component that mounts filesystems").

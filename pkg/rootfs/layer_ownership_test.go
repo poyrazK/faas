@@ -1,3 +1,4 @@
+// adr: 136
 // layer_ownership_test.go — M-1 (ADR-136 §Decision 2) layer ownership
 // preservation tests.
 //
@@ -19,6 +20,7 @@ package rootfs
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -417,6 +419,7 @@ func TestParseOwnershipInt(t *testing.T) {
 }
 
 func TestApplyEntryPreservesOwnershipOnSymlink(t *testing.T) {
+	requireRoot(t)
 	// os.Lchown on a symlink must target the link, not its resolution.
 	tmp := t.TempDir()
 	hdr := &tar.Header{
@@ -438,6 +441,19 @@ func TestApplyEntryPreservesOwnershipOnSymlink(t *testing.T) {
 	}
 	if target != "/bin/busybox" {
 		t.Errorf("Readlink = %q; want /bin/busybox", target)
+	}
+}
+
+func TestPreserveOwnership_LchownFailureStopsBuild(t *testing.T) {
+	want := errors.New("missing CAP_CHOWN")
+	err := preserveOwnershipUsing("/staging/home/nonroot", 65532, 65532, func(path string, uid, gid int) error {
+		if path != "/staging/home/nonroot" || uid != 65532 || gid != 65532 {
+			t.Fatalf("lchown args = (%q, %d, %d)", path, uid, gid)
+		}
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("preserveOwnershipUsing error = %v, want wrapped capability error", err)
 	}
 }
 

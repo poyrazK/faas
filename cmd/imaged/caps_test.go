@@ -1,6 +1,6 @@
 // Unit tests for cmd/imaged/caps.go. Pins the declaration
 // shape so a future PR that drops cap_sys_admin from Deny (or
-// grows Allow) trips these tests instead of silently
+// grows Allow beyond cap_chown) trips these tests instead of silently
 // regressing DEPLOY-1's "vmmd is the only root mount owner"
 // invariant.
 package main
@@ -12,15 +12,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl"
 )
 
-// TestCapsDecl_AllowsNothing: imaged is User=faas-imaged +
-// NoNewPrivileges=yes; it does not actively use any cap. The
-// Allow list is empty by intent. A future PR that adds caps
-// here MUST also extend the systemd unit's
-// CapabilityBoundingSet= AND validate the daemon can use
-// them — promote Allow entry by entry, not en masse.
-func TestCapsDecl_AllowsNothing(t *testing.T) {
-	if got := len(capsDecl.Allow); got != 0 {
-		t.Errorf("capsDecl.Allow has %d entries (%v), want 0 (imaged is unprivileged)", got, capsDecl.Allow)
+// TestCapsDecl_AllowsOnlyChown pins the one narrow capability imaged uses to
+// preserve OCI ownership while extracting layers as the unprivileged service
+// account. Mount authority remains denied and owned by vmmd.
+func TestCapsDecl_AllowsOnlyChown(t *testing.T) {
+	want := []string{"cap_chown"}
+	if !slices.Equal(capsDecl.Allow, want) {
+		t.Errorf("capsDecl.Allow = %v, want %v", capsDecl.Allow, want)
 	}
 }
 

@@ -23,6 +23,7 @@ package daemonunitspec
 // spec: §13
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -338,6 +339,9 @@ func TestUnitImaged_Shape(t *testing.T) {
 	}
 	if u.Slice != FaasCPSlice {
 		t.Errorf("imaged: Slice = %q, want %q", u.Slice, FaasCPSlice)
+	}
+	if !reflect.DeepEqual(u.AmbientCapabilities, []string{"CAP_CHOWN"}) {
+		t.Errorf("imaged: AmbientCapabilities = %v, want [CAP_CHOWN]", u.AmbientCapabilities)
 	}
 	// imaged does NOT dial /run/faas sockets — it talks to vmmd
 	// over faas-cp.slice dependency instead. Pin the FAAS_BASE_*

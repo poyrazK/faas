@@ -172,6 +172,10 @@ for rel in \
     echo "systemd-hardening-check: ${rel}: imaged startup timeout must match the 20-minute readiness ceiling" >&2
     errors=$((errors + 1))
   fi
+  if [[ -f "$file" ]] && ! grep -Fqx 'AmbientCapabilities=CAP_CHOWN' "$file"; then
+    echo "systemd-hardening-check: ${rel}: imaged must retain CAP_CHOWN to preserve OCI uid/gid metadata" >&2
+    errors=$((errors + 1))
+  fi
 done
 
 # Split-box hosts use a remote PostgreSQL instance for compute daemons, so a
