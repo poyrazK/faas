@@ -250,13 +250,16 @@ Publish tenant-scoped events to the internal router
 
 ### events publish
 
-Publish one CloudEvents-shaped event
+Publish one event. `SOURCE TYPE` may be supplied positionally; Gregale
+generates the event id unless `--id` is provided.
+
+`gregale events publish [SOURCE TYPE] --data <J|@file|-> [flags]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--id <ID>` | stable event id | required |
-| `--source <SOURCE>` | event source | required |
-| `--type <TYPE>` | event type | required |
+| `--id <ID>` | stable event id (generated when omitted) |  |
+| `--source <SOURCE>` | event source (or first positional argument) |  |
+| `--type <TYPE>` | event type (or second positional argument) |  |
 | `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
 | `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
 

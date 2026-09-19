@@ -41,8 +41,16 @@ When a delivery reaches a terminal failure, inspect and replay it through the
 app's unified dead-letter queue (`gregale dlq <app>`); its origin is shown as
 `event_subscription`.
 
-Publish an event from the CLI with an explicit event id so producers can
-retry safely:
+Publish an event from the CLI without learning the CloudEvents envelope. Gregale
+generates the stable event id for you:
+
+```bash
+gregale events publish billing.stripe invoice.paid \
+  --data '{"amount":150}'
+```
+
+Use `--id` when a producer is retrying the same logical event and needs to
+choose the idempotency key explicitly. The flag-based form remains supported:
 
 ```bash
 gregale events publish --id evt-123 --source billing.stripe --type invoice.paid \

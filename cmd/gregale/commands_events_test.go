@@ -56,6 +56,42 @@ func TestCmdEventsPublish_SendsEnvelope(t *testing.T) {
 	}
 }
 
+func TestCmdEventsPublish_PositionalSourceTypeGeneratesID(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"generated-id","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
+	if code := cmdEventsPublish([]string{
+		"billing.stripe", "invoice.paid", "--data", `{"amount":150}`,
+	}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	var got struct {
+		ID     string          `json:"id"`
+		Source string          `json:"source"`
+		Type   string          `json:"type"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID == "" {
+		t.Fatal("generated event id is empty")
+	}
+	if got.Source != "billing.stripe" || got.Type != "invoice.paid" || string(got.Data) != `{"amount":150}` {
+		t.Fatalf("body=%s", f.sawBody)
+	}
+}
+
+func TestCmdEventsPublish_RejectsPositionalFlagConflict(t *testing.T) {
+	resetJSONOut(t)
+	if code, captured := runWithStderr(t, func() int {
+		return cmdEventsPublish([]string{
+			"billing.stripe", "invoice.paid", "--source", "other", "--data", `{}`,
+		})
+	}); code != 1 || !strings.Contains(captured, "source provided both positionally") {
+		t.Fatalf("exit=%d stderr=%q", code, captured)
+	}
+}
+
 func TestCmdEventsPublish_JSONOutput(t *testing.T) {
 	resetJSONOut(t)
 	f := authedFakeAPI(t, `{"id":"evt-1","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)

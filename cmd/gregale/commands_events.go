@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,21 +35,42 @@ func cmdEvents(args []string) int {
 // account_id and accepts only JSON event data; --data follows the same
 // inline/@file/stdin convention as invoke and queue commands.
 func cmdEventsPublish(args []string) int {
+	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events publish", flag.ContinueOnError)
-	id := fs.String("id", "", "stable event id (required)")
-	source := fs.String("source", "", "event source (required)")
-	typ := fs.String("type", "", "event type (required)")
+	id := fs.String("id", "", "stable event id (defaults to a generated UUID)")
+	source := fs.String("source", "", "event source (or the first positional argument)")
+	typ := fs.String("type", "", "event type (or the second positional argument)")
 	data := fs.String("data", "", "JSON event data (inline | @file | - for stdin; required)")
 	occurredAt := fs.String("time", "", "event time (RFC3339; defaults to server time)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if len(positional) > 2 {
+		PrintUsage(os.Stderr, "usage: gregale events publish [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		return 1
+	}
+	if len(positional) >= 1 {
+		if *source != "" {
+			return printErr("Invalid arguments", fmt.Errorf("source provided both positionally and with --source"))
+		}
+		*source = positional[0]
+	}
+	if len(positional) == 2 {
+		if *typ != "" {
+			return printErr("Invalid arguments", fmt.Errorf("type provided both positionally and with --type"))
+		}
+		*typ = positional[1]
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if strings.TrimSpace(*id) == "" || strings.TrimSpace(*source) == "" || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale events publish --id ID --source SOURCE --type TYPE --data <json|@file|-> [--time RFC3339]", "events")
+	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
+		PrintUsage(os.Stderr, "usage: gregale events publish [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
+	}
+	eventID := strings.TrimSpace(*id)
+	if eventID == "" {
+		eventID = uuid.NewString()
 	}
 	body, err := resolvePayload(*data)
 	if err != nil {
@@ -71,7 +94,7 @@ func cmdEventsPublish(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	resp, err := client.PublishEvent(context.Background(), api.PublishEventRequest{
-		ID:     strings.TrimSpace(*id),
+		ID:     eventID,
 		Source: strings.TrimSpace(*source),
 		Type:   strings.TrimSpace(*typ),
 		Time:   eventTime,
