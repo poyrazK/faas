@@ -928,6 +928,10 @@ Bind a custom domain to an app
 
 Remove a custom domain binding
 
+### domains set-default
+
+Set a verified domain as the app default
+
 ### domains verify
 
 Re-verify DNS + cert for a domain

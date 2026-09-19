@@ -1,6 +1,3 @@
--- Release 1 / Deploy Confidence: durable per-app custom-domain default.
--- Keep this separate from apps so the feature does not widen the hot app row
--- or require a read-side app scan for every domain listing.
 -- +goose Up
 CREATE TABLE IF NOT EXISTS app_default_domains (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,

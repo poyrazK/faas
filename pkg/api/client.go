@@ -2120,11 +2120,17 @@ func (c *Client) VerifyDomain(ctx context.Context, domain string) (CustomDomainR
 	return out, c.do(ctx, "POST", "/v1/domains/"+domain+"/verify", nil, &out)
 }
 
-// SetDefaultDomain marks a verified custom domain as the canonical host for
-// its app. The server replaces the previous default atomically.
-func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDomainResponse, error) {
+// PostDomainsDomainDefault is the path-shaped SDK method for marking a
+// verified custom domain as the canonical host for its app. The server
+// replaces the previous default atomically.
+func (c *Client) PostDomainsDomainDefault(ctx context.Context, domain string) (CustomDomainResponse, error) {
 	var out CustomDomainResponse
 	return out, c.do(ctx, "POST", "/v1/domains/"+domain+"/default", nil, &out)
+}
+
+// SetDefaultDomain is the readable alias for PostDomainsDomainDefault.
+func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDomainResponse, error) {
+	return c.PostDomainsDomainDefault(ctx, domain)
 }
 
 // RetryDomainVerification re-arms a pending domain after its bounded polling
