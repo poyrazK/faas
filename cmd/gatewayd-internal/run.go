@@ -1337,14 +1337,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
-			instanceID, nodeID, deploymentID, wakeID, _, atCapacity, port, err := cli.AdmitInstance(ctx, appID, "", "", schedpkg.TriggerGateway)
+			var identity api.PlatformIdentity
+			var instanceID, nodeID, deploymentID, wakeID string
+			var atCapacity bool
+			var port int
+			var admitErr error
+			if rich, ok := cli.(interface {
+				AdmitInstanceWithIdentity(context.Context, string, string, string, string) (string, string, string, string, int32, bool, int, api.PlatformIdentity, error)
+			}); ok {
+				instanceID, nodeID, deploymentID, wakeID, _, atCapacity, port, identity, admitErr = rich.AdmitInstanceWithIdentity(ctx, appID, "", "", schedpkg.TriggerGateway)
+			} else {
+				instanceID, nodeID, deploymentID, wakeID, _, atCapacity, port, admitErr = cli.AdmitInstance(ctx, appID, "", "", schedpkg.TriggerGateway)
+			}
+			err = admitErr
 			if err == nil && !atCapacity {
 				backend.RecordTarget(appID, gateway.Target{
-					InstanceID:   instanceID,
-					NodeID:       nodeID,
-					DeploymentID: deploymentID,
-					WakeID:       wakeID,
-					Port:         port,
+					AppID:               appID,
+					InstanceID:          instanceID,
+					NodeID:              nodeID,
+					DeploymentID:        deploymentID,
+					WakeID:              wakeID,
+					Port:                port,
+					Region:              identity.Region,
+					CommitSHA:           identity.CommitSHA,
+					DeploymentTag:       identity.DeploymentTag,
+					DeploymentCreatedAt: identity.DeploymentCreatedAt,
+					ImageDigest:         identity.ImageDigest,
 				})
 			}
 			return err
@@ -1366,17 +1384,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			instanceID, nodeID, deploymentID, wakeID, port, err := cli.Wake(ctx, appID, "", "")
+			var identity api.PlatformIdentity
+			var instanceID, nodeID, deploymentID, wakeID string
+			var port int
+			if rich, ok := cli.(interface {
+				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
+			}); ok {
+				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, "", "")
+			} else {
+				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, "", "")
+			}
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
 			target := gateway.Target{
-				AppID:        appID,
-				InstanceID:   instanceID,
-				NodeID:       nodeID,
-				DeploymentID: deploymentID,
-				WakeID:       wakeID,
-				Port:         port,
+				AppID:               appID,
+				InstanceID:          instanceID,
+				NodeID:              nodeID,
+				DeploymentID:        deploymentID,
+				WakeID:              wakeID,
+				Port:                port,
+				Region:              identity.Region,
+				CommitSHA:           identity.CommitSHA,
+				DeploymentTag:       identity.DeploymentTag,
+				DeploymentCreatedAt: identity.DeploymentCreatedAt,
+				ImageDigest:         identity.ImageDigest,
 			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
@@ -1394,11 +1426,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			instanceID, nodeID, deploymentID, wakeID, port, err := cli.Wake(ctx, appID, "", "")
+			var identity api.PlatformIdentity
+			var instanceID, nodeID, deploymentID, wakeID string
+			var port int
+			if rich, ok := cli.(interface {
+				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
+			}); ok {
+				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, "", "")
+			} else {
+				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, "", "")
+			}
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
-			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
+			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port, Region: identity.Region, CommitSHA: identity.CommitSHA, DeploymentTag: identity.DeploymentTag, DeploymentCreatedAt: identity.DeploymentCreatedAt, ImageDigest: identity.ImageDigest}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)

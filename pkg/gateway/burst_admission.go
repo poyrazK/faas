@@ -346,6 +346,41 @@ func (b *PGBackend) AdmitBurst(ctx context.Context, appID, scope, trigger string
 	// same app's scale-out cooldown.
 	if sched, err := b.resolveSched(ctx, appID); err != nil {
 		return 0, err
+	} else if burst, ok := sched.(burstIdentityScheduler); ok {
+		var (
+			mu       sync.Mutex
+			admitted int
+			firstErr error
+		)
+		err := burst.AdmitInstancesWithIdentity(ctx, appID, scope, trigger, count,
+			func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, admitErr error) {
+				if admitErr != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = admitErr
+					}
+					mu.Unlock()
+					return
+				}
+				_, _, atCap, recordErr := b.recordAdmissionWithIdentity(ctx, appID, deploymentID, instanceID, nodeID, deploymentID, wakeID, method, atCapacity, port, identity)
+				mu.Lock()
+				defer mu.Unlock()
+				if recordErr != nil {
+					if firstErr == nil {
+						firstErr = recordErr
+					}
+					return
+				}
+				if !atCap {
+					admitted++
+				}
+			})
+		mu.Lock()
+		defer mu.Unlock()
+		if firstErr != nil {
+			return admitted, firstErr
+		}
+		return admitted, err
 	} else if burst, ok := sched.(burstScheduler); ok {
 		var (
 			mu       sync.Mutex

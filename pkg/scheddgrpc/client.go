@@ -175,6 +175,18 @@ func (c *Client) Wake(ctx context.Context, appID, deploymentID, scope string) (i
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int(resp.GetPort()), nil
 }
 
+// WakeWithIdentity is the additive provenance-aware sibling of Wake. The
+// legacy tuple remains the compatibility seam for synthetic callers while
+// newer callers can preserve the scheduler-authored deployment metadata.
+func (c *Client) WakeWithIdentity(ctx context.Context, appID, deploymentID, scope string) (instanceID, nodeID, deploymentIDOut, wakeID string, port int, identity api.PlatformIdentity, err error) {
+	ctx = withWakeCorrelation(ctx, "")
+	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope})
+	if err != nil {
+		return "", "", "", "", 0, api.PlatformIdentity{}, liftErr(err)
+	}
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil
+}
+
 // AdmitInstance (issue #168) is the schedule scale-out RPC. Distinct
 // from Wake: it skips the Phase-1 "return newest RUNNING" shortcut so
 // each call either admits a new instance or signals at_capacity=true.
@@ -215,6 +227,19 @@ func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 		return "", "", "", "", 0, false, 0, liftErr(err)
 	}
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), nil
+}
+
+// AdmitInstanceWithIdentity is the additive provenance-aware sibling of
+// AdmitInstance. The legacy tuple remains unchanged so older gateway seams
+// and test doubles continue to compile while newer callers can stamp the
+// scheduler's authoritative deployment identity on every request.
+func (c *Client) AdmitInstanceWithIdentity(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error) {
+	ctx = withWakeCorrelation(ctx, trigger)
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger})
+	if err != nil {
+		return "", "", "", "", 0, false, 0, api.PlatformIdentity{}, liftErr(err)
+	}
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil
 }
 
 // AdmitInstances carries the scheduler's bounded-burst primitive over the
@@ -275,6 +300,61 @@ func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 	return firstErr
 }
 
+// AdmitInstancesWithIdentity is the provenance-aware sibling of
+// AdmitInstances. It mirrors the same bounded first-admit plus continuation
+// protocol while exposing the identity attached to every wire response.
+func (c *Client) AdmitInstancesWithIdentity(ctx context.Context, appID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error)) error {
+	if count <= 0 {
+		return nil
+	}
+	if count > api.ScaleUpMaxBurstPerTick {
+		count = api.ScaleUpMaxBurstPerTick
+	}
+	firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, firstIdentity, err := c.AdmitInstanceWithIdentity(ctx, appID, "", scope, trigger)
+	if report != nil {
+		report(firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, firstIdentity, err)
+	}
+	if err != nil || firstAtCapacity || count == 1 {
+		return err
+	}
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+	for i := 1; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			callCtx := withWakeCorrelation(ctx, trigger)
+			resp, callErr := c.cli.AdmitInstance(callCtx, &scheddpb.AdmitInstanceRequest{
+				AppId:             appID,
+				Scope:             scope,
+				Trigger:           trigger,
+				BurstContinuation: true,
+			})
+			if callErr != nil {
+				callErr = liftErr(callErr)
+				if report != nil {
+					report("", "", "", "", 0, false, 0, api.PlatformIdentity{}, callErr)
+				}
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = callErr
+				}
+				mu.Unlock()
+				return
+			}
+			if report != nil {
+				report(resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil)
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
+}
+
 // EnsureWake (ADR-098) is the schedd-side single-flight wake entry.
 // Mirrors Engine.EnsureWake on the wire. Schedd coalesces every concurrent
 // EnsureWake for the same app into one virtual boot; followers see the
@@ -290,6 +370,18 @@ func (c *Client) EnsureWake(ctx context.Context, appID, trigger string) (instanc
 		return "", "", "", "", 0, 0, liftErr(err)
 	}
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), int(resp.GetPort()), nil
+}
+
+// EnsureWakeWithIdentity is the additive provenance-aware sibling of
+// EnsureWake. It preserves the existing Scheduler interface while exposing
+// the identity returned by schedd for the gateway target cache.
+func (c *Client) EnsureWakeWithIdentity(ctx context.Context, appID, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, identity api.PlatformIdentity, err error) {
+	ctx = withWakeCorrelation(ctx, trigger)
+	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger})
+	if err != nil {
+		return "", "", "", "", 0, 0, api.PlatformIdentity{}, liftErr(err)
+	}
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil
 }
 
 // AdmitMirrorInstance (issue #72 / ADR-124 / ADR-125 PR-A3) is

@@ -37,3 +37,25 @@ func appendPlatformIdentity(env []fcvm.APIEnvEntry, app state.App, dep state.Dep
 	add(api.PlatformDeploymentCreatedEnv, createdAt)
 	return entries
 }
+
+// platformIdentity is the shared scheduler-side projection used by both the
+// guest environment and the schedd response. It is deliberately built from
+// state rows only; request headers and manifest values are never inputs.
+func platformIdentity(app state.App, dep state.Deployment, acct state.Account, nodeID, instanceID, region string) api.PlatformIdentity {
+	createdAt := ""
+	if !dep.CreatedAt.IsZero() {
+		createdAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return api.PlatformIdentity{
+		AppID:               app.ID,
+		DeploymentID:        dep.ID,
+		TenantID:            acct.ID,
+		InstanceID:          instanceID,
+		NodeID:              nodeID,
+		Region:              region,
+		CommitSHA:           dep.CommitSHA,
+		DeploymentTag:       dep.Tag,
+		DeploymentCreatedAt: createdAt,
+		ImageDigest:         dep.ImageDigest,
+	}
+}

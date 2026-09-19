@@ -435,6 +435,22 @@ enum WakeMethod {
   WAKE_RESTORE   = 1;
 }
 
+// PlatformIdentity is the scheduler-authored identity of the workload that
+// was selected for a wake. Optional provenance fields are empty when the
+// deployment source does not provide them. Additive per ADR-016.
+message PlatformIdentity {
+  string app_id                = 1;
+  string deployment_id         = 2;
+  string tenant_id             = 3;
+  string instance_id           = 4;
+  string node_id               = 5;
+  string region                = 6;
+  string commit_sha            = 7;
+  string deployment_tag        = 8;
+  string deployment_created_at = 9;
+  string image_digest          = 10;
+}
+
 message WakeResponse {
   // instance_id is the instances.id row schedd created (or reused).
   string instance_id = 1;
@@ -484,6 +500,9 @@ message WakeResponse {
   // Additive per ADR-016 — pre-PR-C callers ignore the field and
   // observe the same wire response as before.
   string deployment_id = 7;
+  // identity carries the scheduler-authored deployment and placement
+  // metadata for the selected instance. Empty on failure.
+  PlatformIdentity identity = 8;
 }
 
 // AdmitInstanceRequest mirrors WakeRequest for the schedule scale-out
@@ -574,6 +593,9 @@ message AdmitInstanceResponse {
   // conjoined ReportActivity batch has not yet flushed. Pre-PR
   // callers ignore the field; wire is additive per ADR-016.
   int32  request_count = 9;
+  // identity carries the scheduler-authored deployment and placement
+  // metadata for the admitted instance. Empty on at-capacity.
+  PlatformIdentity identity = 10;
 }
 
 // Touch is one instance's most-recent request time.
@@ -1062,6 +1084,9 @@ message EnsureWakeResponse {
   string deployment_id = 7;
   // Independently ready siblings. Old clients retain the primary fields.
   repeated AdmitInstanceResponse additional_instances = 8;
+  // identity carries the scheduler-authored deployment and placement
+  // metadata for the primary instance. Empty on failure.
+  PlatformIdentity identity = 9;
 }
 
 message FrameworkReadyReport { string instance_id = 1; }
