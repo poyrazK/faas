@@ -1,3 +1,4 @@
+// adr: 079
 // Per-app public_auth tests (issue #477 / ADR-079).
 //
 // Pins the public-auth branch behaviour end-to-end through

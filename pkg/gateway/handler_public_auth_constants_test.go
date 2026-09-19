@@ -1,3 +1,4 @@
+// adr: 079
 package gateway
 
 // handler_public_auth_constants_test.go — gateway-side
