@@ -57,6 +57,7 @@ type sidecarPayload struct {
 	TrafficPercent *int                  `json:"traffic_percent,omitempty"`
 	Canary         *api.CanaryPresetSpec `json:"canary,omitempty"`
 	RollbackOn5xx  *bool                 `json:"rollback_on_5xx,omitempty"`
+	NoTriggers     bool                  `json:"no_triggers,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -199,13 +200,33 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	sourceAccepted := false
+	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	manifestCommitted := false
 	defer func() {
 		if !sourceAccepted {
 			_ = os.Remove(spoolPath)
 		}
 	}()
+	defer func(ctx context.Context) {
+		if manifestCommitted || !sourceRefManifestNeedsRollback(stagedManifest) {
+			return
+		}
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
+			s.log.Warn("local-tarball manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
+		}
+	}(r.Context())
 	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
 		api.WriteProblem(w, prob)
+		return
+	}
+	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !sidecar.NoTriggers)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
 		return
 	}
 
@@ -255,6 +276,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
+	manifestCommitted = true
 	sourceAccepted = true
 	uploadOutcome = "completed"
 

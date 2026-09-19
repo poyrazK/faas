@@ -220,6 +220,9 @@ func (m *MemStore) ListEnabledEventSubscriptionsForAccount(_ context.Context, ac
 	out := make([]EventSubscription, 0)
 	for _, subscription := range m.eventSubscriptions {
 		app, appExists := m.apps[subscription.AppID]
+		if !appExists {
+			app, appExists = m.apps[canonicalMemUUID(subscription.AppID)]
+		}
 		if subscription.AccountID == canonicalAccountID && subscription.Enabled && appExists && app.Status != AppDeleted {
 			out = append(out, subscription)
 		}
@@ -266,6 +269,9 @@ func (m *MemStore) ListMatchingEventSubscriptionsForAccount(_ context.Context, a
 	out := make([]EventSubscription, 0, limit)
 	for _, subscription := range m.eventSubscriptions {
 		app, appExists := m.apps[subscription.AppID]
+		if !appExists {
+			app, appExists = m.apps[canonicalMemUUID(subscription.AppID)]
+		}
 		if subscription.AccountID != canonicalAccountID || !subscription.Enabled || !appExists || app.Status == AppDeleted {
 			continue
 		}
@@ -300,8 +306,11 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	app, appExists := m.apps[canonicalMemUUID(appID)]
-	if !appExists || app.AccountID != canonicalMemUUID(accountID) {
+	app, appExists := m.apps[appID]
+	if !appExists {
+		app, appExists = m.apps[canonicalMemUUID(appID)]
+	}
+	if !appExists || !sameMemUUID(app.AccountID, accountID) {
 		return EventSubscription{}, false, ErrNotFound
 	}
 	if m.eventSubscriptions == nil {
@@ -328,6 +337,10 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	// source/type/filter without colliding in the in-memory implementation.
 	m.eventSubscriptions[subscription.AppID+"\x00"+key] = subscription
 	return subscription, true, nil
+}
+
+func sameMemUUID(left, right string) bool {
+	return left == right || canonicalMemUUID(left) == canonicalMemUUID(right)
 }
 
 func (m *MemStore) DeleteEventSubscription(_ context.Context, id, accountID, appID string) error {

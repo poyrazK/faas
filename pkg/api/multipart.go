@@ -73,6 +73,9 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.RollbackOn5xx != nil {
 		_ = w.WriteField("rollback_on_5xx", fmt.Sprintf("%t", *a.RollbackOn5xx))
 	}
+	if a.NoTriggers {
+		_ = w.WriteField("no_triggers", "true")
+	}
 	if len(a.Workflows) > 0 {
 		if raw, err := json.Marshal(a.Workflows); err == nil {
 			_ = w.WriteField("workflows", string(raw))
@@ -137,6 +140,7 @@ type DeployAnnotations struct {
 	TrafficPercent *int
 	Canary         *CanaryPresetSpec
 	RollbackOn5xx  *bool
+	NoTriggers     bool // skip manifest trigger reconciliation
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {

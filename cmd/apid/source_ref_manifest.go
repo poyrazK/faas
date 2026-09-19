@@ -44,6 +44,12 @@ type sourceRefManifestStaged struct {
 	appliedRetryPolicy    json.RawMessage
 }
 
+func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
+	return staged.scalingChanged || staged.retryPolicyChanged ||
+		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 ||
+		len(staged.eventSubscriptionIDs) > 0 || len(staged.bindingIDs) > 0
+}
+
 // loadSourceRefManifest reads the root manifest from the already validated
 // source archive. A workload-local manifest is preferred for monorepos, with
 // the repository root as a fallback for the common single-manifest layout.

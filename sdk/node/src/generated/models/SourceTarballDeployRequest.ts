@@ -16,6 +16,10 @@ export type SourceTarballDeployRequest = {
    */
   ref?: string | null;
   /**
+   * Skip reconciling trigger declarations from the uploaded gregale manifest; app defaults and event subscriptions remain unchanged by this flag.
+   */
+  no_triggers?: boolean;
+  /**
    * Registered project environment to target for this local tarball deployment.
    */
   environment?: string;

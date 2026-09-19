@@ -41,5 +41,9 @@ export type UploadDeployOptions = {
    * Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Skip reconciling trigger declarations from the uploaded gregale manifest at commit time.
+   */
+  no_triggers?: boolean;
 };
 

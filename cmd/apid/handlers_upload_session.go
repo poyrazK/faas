@@ -566,6 +566,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	manifestCommitted := false
+	defer func(ctx context.Context) {
+		if manifestCommitted || !sourceRefManifestNeedsRollback(stagedManifest) {
+			return
+		}
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
+			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
+		}
+	}(r.Context())
 	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, Sidecars: opts.Sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
@@ -650,6 +660,20 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
+	manifestApp := app
+	if opts.SourceRoot != "" {
+		manifestApp.RootDir = opts.SourceRoot
+	}
+	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
 
 	limits := api.MustLimitsFor(acct.Plan)
 
@@ -701,6 +725,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
+	manifestCommitted = true
 
 	// Record the dedupe outcome before flipping the session state so a
 	// retry after a response loss can recover the original deployment.

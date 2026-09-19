@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,31 +119,42 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var (
-		sourcePath     string
-		sourceBytes    int64
-		dockerfile     bool
-		runtime        string
-		handler        string
-		sourceRoot     string
-		sourceURL      string
-		commitSHA      string
-		scope          string
-		environment    string
-		kind           state.DeploymentKind
-		sourceAccepted bool
-		workflows      []api.WorkflowSpec
-		sidecars       api.Sidecars
-		devSource      devSourceMetadata
-		trafficPercent *int
-		canarySpec     *api.CanaryPresetSpec
-		rollbackOn5xx  *bool
-		ann            annotationForm
+		sourcePath        string
+		sourceBytes       int64
+		dockerfile        bool
+		runtime           string
+		handler           string
+		sourceRoot        string
+		sourceURL         string
+		commitSHA         string
+		scope             string
+		environment       string
+		kind              state.DeploymentKind
+		sourceAccepted    bool
+		workflows         []api.WorkflowSpec
+		sidecars          api.Sidecars
+		devSource         devSourceMetadata
+		trafficPercent    *int
+		canarySpec        *api.CanaryPresetSpec
+		rollbackOn5xx     *bool
+		noTriggers        bool
+		ann               annotationForm
+		stagedManifest    sourceRefManifestStaged
+		manifestCommitted bool
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
 			_ = os.Remove(sourcePath)
 		}
 	}()
+	defer func(ctx context.Context) {
+		if manifestCommitted || !sourceRefManifestNeedsRollback(stagedManifest) {
+			return
+		}
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
+			s.log.Warn("multipart manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
+		}
+	}(r.Context())
 
 	for {
 		part, err := mr.NextPart()
@@ -265,6 +277,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		case "rollback_on_5xx":
 			value := isFlagSet(part)
 			rollbackOn5xx = &value
+		case "no_triggers":
+			noTriggers = isFlagSet(part)
 		case "reason":
 			b, _ := io.ReadAll(io.LimitReader(part, 2048))
 			ann.Reason = string(b)
@@ -389,6 +403,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	manifestApp := app
+	if sourceRoot != "" {
+		manifestApp.RootDir = sourceRoot
+	}
+	manifest, manifestProblem := loadSourceRefManifest(sourcePath, manifestApp, acct.Plan)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !noTriggers)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
 	hasRootDockerfile, err := archiveHasRootDockerfileAtRoot(sourcePath, sourceRoot)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error()))
@@ -474,6 +502,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			s.writeDeploymentCreateError(w, err)
 			return
 		}
+		manifestCommitted = true
 		if developerSource {
 			if err := s.publishDevSource(acct, app, sourcePath, devSource.target, limits); err != nil {
 				s.log.Warn("developer source cache publish failed", "app_id", app.ID, "error", err)

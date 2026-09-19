@@ -40,6 +40,7 @@ type UploadDeployOptions struct {
 	// retry applies the same deployment safety policy as a single-shot
 	// deploy. nil/omitted keeps the server default false.
 	RollbackOn5xx *bool `json:"rollback_on_5xx,omitempty"`
+	NoTriggers    bool  `json:"no_triggers,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

@@ -3410,6 +3410,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
+			NoTriggers:     *noTriggers,
 			Sidecars:       sidecarDefs,
 		}
 		var (
@@ -3440,6 +3441,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Sidecars: sidecarDefs,
+				NoTriggers: ann.NoTriggers,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {

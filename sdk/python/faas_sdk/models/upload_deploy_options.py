@@ -41,6 +41,8 @@ class UploadDeployOptions:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
     while omitted or null keeps the default false."""
+    no_triggers: bool | Unset = UNSET
+    """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
 
     def to_dict(self) -> dict[str, Any]:
         runtime = self.runtime
@@ -87,6 +89,8 @@ class UploadDeployOptions:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        no_triggers = self.no_triggers
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -120,6 +124,8 @@ class UploadDeployOptions:
             field_dict["sidecars"] = sidecars
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
 
         return field_dict
 
@@ -180,6 +186,8 @@ class UploadDeployOptions:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        no_triggers = d.pop("no_triggers", UNSET)
+
         upload_deploy_options = cls(
             runtime=runtime,
             handler=handler,
@@ -196,6 +204,7 @@ class UploadDeployOptions:
             workflows=workflows,
             sidecars=sidecars,
             rollback_on_5xx=rollback_on_5xx,
+            no_triggers=no_triggers,
         )
 
         return upload_deploy_options

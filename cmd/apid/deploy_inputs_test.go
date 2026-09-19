@@ -14,6 +14,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,74 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestCreateDeploymentMultipart_ReconcilesManifestEventSubscriptions(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+
+	tests := []struct {
+		name       string
+		noTriggers bool
+		wantSubs   int
+	}{
+		{name: "applies", wantSubs: 1},
+		{name: "no triggers", noTriggers: true, wantSubs: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			slug := "manifest-events-" + strings.ReplaceAll(tc.name, " ", "-")
+			create := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+			if create.Code != http.StatusCreated {
+				t.Fatalf("create app status = %d (%s)", create.Code, create.Body)
+			}
+			if created, err := e.store.AppBySlug(context.Background(), slug); err != nil {
+				t.Fatalf("created app lookup: %v", err)
+			} else if created.Slug != slug {
+				t.Fatalf("created slug = %q, want %q", created.Slug, slug)
+			}
+			manifest := []byte(`event_triggers:
+  - source: billing.*
+    type: invoice.paid
+    filter: '{"data":{"amount":{"$gt":100}}}'
+`)
+			tarBytes := buildTestTarGz(t, []tar.Header{
+				{Name: "index.js"},
+				{Name: "gregale.yaml"},
+			}, map[string][]byte{
+				"index.js":     []byte("exports.handler = () => 'ok';\n"),
+				"gregale.yaml": manifest,
+			})
+			parts := map[string]multipartPart{
+				"source": {filename: "src.tar.gz", body: tarBytes},
+			}
+			if tc.noTriggers {
+				parts["no_triggers"] = multipartPart{body: []byte("true")}
+			}
+			body, ct := multipartUpload(t, parts)
+			req := httptest.NewRequest("POST", "/v1/apps/"+slug+"/deployments", body)
+			req.Header.Set("Authorization", "Bearer "+e.key)
+			req.Header.Set("Content-Type", ct)
+			req.Header.Set("Idempotency-Key", "manifest-events-"+strings.ReplaceAll(tc.name, " ", "-"))
+			rec := httptest.NewRecorder()
+			e.h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 (%s)", rec.Code, rec.Body)
+			}
+			app, err := e.store.AppBySlug(context.Background(), slug)
+			if err != nil {
+				t.Fatalf("AppBySlug: %v", err)
+			}
+			subs, err := e.store.ListEventSubscriptionsForApp(context.Background(), app.ID)
+			if err != nil {
+				t.Fatalf("ListEventSubscriptionsForApp: %v", err)
+			}
+			if len(subs) != tc.wantSubs {
+				t.Fatalf("subscriptions = %d, want %d (%+v)", len(subs), tc.wantSubs, subs)
+			}
+		})
+	}
+}
 
 // buildTestTarGz packs a flat name→content map into a gzipped tar. Files
 // are stored with mode 0644 and TypeReg unless the caller overrides

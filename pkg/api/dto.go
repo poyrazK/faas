@@ -5259,8 +5259,9 @@ type SourceRefDeployRequest struct {
 // upstream. The tarball itself is uploaded as the multipart `tarball`
 // field. See docs/adr/0XX-local-tarball-deploy-trust-root.md.
 type SourceTarballDeployRequest struct {
-	Repo string `json:"repo,omitempty"`
-	Ref  string `json:"ref,omitempty"`
+	Repo       string `json:"repo,omitempty"`
+	Ref        string `json:"ref,omitempty"`
+	NoTriggers bool   `json:"no_triggers,omitempty"`
 	// Environment selects a registered project environment for this upload.
 	Environment string `json:"environment,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are

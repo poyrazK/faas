@@ -34,6 +34,9 @@ class SourceTarballDeployRequest:
     ref: None | str | Unset = UNSET
     """40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this
     SHA."""
+    no_triggers: bool | Unset = UNSET
+    """Skip reconciling trigger declarations from the uploaded gregale manifest; app defaults and event
+    subscriptions remain unchanged by this flag."""
     environment: str | Unset = UNSET
     """Registered project environment to target for this local tarball deployment."""
     reason: str | Unset = UNSET
@@ -71,6 +74,8 @@ class SourceTarballDeployRequest:
             ref = UNSET
         else:
             ref = self.ref
+
+        no_triggers = self.no_triggers
 
         environment = self.environment
 
@@ -111,6 +116,8 @@ class SourceTarballDeployRequest:
             field_dict["repo"] = repo
         if ref is not UNSET:
             field_dict["ref"] = ref
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
         if environment is not UNSET:
             field_dict["environment"] = environment
         if reason is not UNSET:
@@ -153,6 +160,8 @@ class SourceTarballDeployRequest:
             return cast(None | str | Unset, data)
 
         ref = _parse_ref(d.pop("ref", UNSET))
+
+        no_triggers = d.pop("no_triggers", UNSET)
 
         environment = d.pop("environment", UNSET)
 
@@ -207,6 +216,7 @@ class SourceTarballDeployRequest:
         source_tarball_deploy_request = cls(
             repo=repo,
             ref=ref,
+            no_triggers=no_triggers,
             environment=environment,
             reason=reason,
             tag=tag,
