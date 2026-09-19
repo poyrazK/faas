@@ -71,6 +71,7 @@ type CreateAppRequest struct {
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	HealthPath       string           `json:"health_path,omitempty"`
 	HealthPathWakes  bool             `json:"health_path_wakes,omitempty"`
+	SessionAffinity  *bool            `json:"session_affinity,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
@@ -103,6 +104,7 @@ type UpdateAppRequest struct {
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	HealthPath       *string          `json:"health_path,omitempty"`
 	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
+	SessionAffinity  *bool            `json:"session_affinity,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -440,6 +442,9 @@ type AppResponse struct {
 	// so a customer calling CreateApp with RequireAuthn=true
 	// on the CLI just needs the token set on the client.
 	RequireAuthn bool `json:"require_authn"`
+	// SessionAffinity enables best-effort cookie-based routing to the same
+	// healthy instance while it remains available. It is disabled by default.
+	SessionAffinity bool `json:"session_affinity"`
 	// ConsumerAuthMode is the app's end-customer credential policy:
 	// "optional" accepts anonymous requests and "required" mandates
 	// a valid consumer key.

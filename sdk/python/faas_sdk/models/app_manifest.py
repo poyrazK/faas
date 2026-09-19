@@ -120,6 +120,9 @@ class AppManifest:
     """Monitor-facing health path."""
     health_path_wakes: bool | Unset = False
     """Whether health probes may wake this app."""
+    session_affinity: bool | Unset = False
+    """Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are
+    bypassed automatically."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -242,6 +245,8 @@ class AppManifest:
 
         health_path_wakes = self.health_path_wakes
 
+        session_affinity = self.session_affinity
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -291,6 +296,8 @@ class AppManifest:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
             field_dict["health_path_wakes"] = health_path_wakes
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
 
         return field_dict
 
@@ -541,6 +548,8 @@ class AppManifest:
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
 
+        session_affinity = d.pop("session_affinity", UNSET)
+
         app_manifest = cls(
             entrypoint=entrypoint,
             env=env,
@@ -564,6 +573,7 @@ class AppManifest:
             crawler_policy=crawler_policy,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
+            session_affinity=session_affinity,
         )
 
         app_manifest.additional_properties = d

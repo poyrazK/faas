@@ -1482,6 +1482,10 @@ type AppManifest struct {
 	CrawlerPolicy    string             `json:"crawler_policy,omitempty"`
 	HealthPath       string             `json:"health_path,omitempty"`
 	HealthPathWakes  bool               `json:"health_path_wakes,omitempty"`
+	// SessionAffinity enables best-effort cookie-based routing to the same
+	// running instance. It is persisted in the manifest; legacy rows remain
+	// disabled when the field is absent.
+	SessionAffinity bool `json:"session_affinity,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1506,7 +1510,7 @@ func (m AppManifest) IsZero() bool {
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {

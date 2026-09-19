@@ -114,6 +114,9 @@ class AppResponse:
     websocket_enabled: bool | Unset = UNSET
     """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Default-on for Hobby/Pro/Scale; Free customers
     always see this as false. PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed."""
+    session_affinity: bool | Unset = UNSET
+    """Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy
+    instances are bypassed automatically."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -285,6 +288,8 @@ class AppResponse:
 
         websocket_enabled = self.websocket_enabled
 
+        session_affinity = self.session_affinity
+
         route_metrics_enabled = self.route_metrics_enabled
 
         only_allow_declared_routes = self.only_allow_declared_routes
@@ -441,6 +446,8 @@ class AppResponse:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
             field_dict["websocket_enabled"] = websocket_enabled
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -638,6 +645,8 @@ class AppResponse:
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
+
+        session_affinity = d.pop("session_affinity", UNSET)
 
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
@@ -854,6 +863,7 @@ class AppResponse:
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
+            session_affinity=session_affinity,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,

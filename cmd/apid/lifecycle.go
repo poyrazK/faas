@@ -79,6 +79,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		CrawlerPolicy:    req.CrawlerPolicy,
 		HealthPath:       healthPath,
 		HealthPathWakes:  req.HealthPathWakes,
+		SessionAffinity:  req.SessionAffinity != nil && *req.SessionAffinity,
 	}
 }
 
@@ -103,6 +104,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		CrawlerPolicy:    manifest.CrawlerPolicy,
 		HealthPath:       manifest.HealthPath,
 		HealthPathWakes:  manifest.HealthPathWakes,
+		SessionAffinity:  manifest.SessionAffinity,
 	}
 }
 
@@ -127,6 +129,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		CrawlerPolicy:    manifest.CrawlerPolicy,
 		HealthPath:       manifest.HealthPath,
 		HealthPathWakes:  manifest.HealthPathWakes,
+		SessionAffinity:  manifest.SessionAffinity,
 	}
 }
 
@@ -134,7 +137,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
-		req.HealthPath != nil || req.HealthPathWakes != nil || req.Ports != nil
+		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.Ports != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -180,6 +183,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.HealthPathWakes != nil {
 		manifest.HealthPathWakes = *req.HealthPathWakes
 	}
+	if req.SessionAffinity != nil {
+		manifest.SessionAffinity = *req.SessionAffinity
+	}
 	return manifest, true
 }
 
@@ -201,5 +207,6 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.CrawlerPolicy = manifest.CrawlerPolicy
 	updated.HealthPath = manifest.HealthPath
 	updated.HealthPathWakes = manifest.HealthPathWakes
+	updated.SessionAffinity = manifest.SessionAffinity
 	return &updated, true
 }

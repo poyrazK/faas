@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
@@ -312,6 +313,10 @@ type App struct {
 	// fall through to the normal wake path for real probes.
 	HealthPath      string
 	HealthPathWakes bool
+	// SessionAffinity enables best-effort cookie-based routing to the same
+	// running instance. The picker fails open when the instance is gone or
+	// cannot accept work, so scale-out and health recovery remain intact.
+	SessionAffinity bool
 }
 
 type concurrencyAdmissionConfig struct {
@@ -684,6 +689,13 @@ type liveTargetReconciler interface {
 // that intentionally model a pick failure after admission.
 type warmPathPicker interface {
 	PickWarm(appID string) PickResult
+}
+
+// affinityPicker is the optional production seam for session affinity. The
+// cookie is only a preference: implementations must fall back to ordinary
+// routing when the preferred instance is not currently routable.
+type affinityPicker interface {
+	PickForInstance(appID, instanceID string) PickResult
 }
 
 // liveTargetValidator checks an idle-aged cached target against durable
@@ -1102,6 +1114,11 @@ type Handler struct {
 	// wake leader when the real ID becomes available.
 	wakePageMu     sync.Mutex
 	wakePageCycles map[string]*wakePageCycle
+	// sessionAffinityKey seals the opaque per-app instance cookie. It is
+	// process-local by design: a restart invalidates old hints and lets the
+	// next request receive a fresh cookie without exposing instance IDs.
+	sessionAffinityKey      [32]byte
+	sessionAffinityKeyValid bool
 }
 
 // emptyAccountWarned is the process-wide trip flag for
@@ -1179,6 +1196,10 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// flight" (admit → round-trip complete), not "admit attempts".
 		MirrorMaxConcurrentPerRule: api.MirrorMaxConcurrentPerRule,
 	}
+	// Randomness failure is not expected on a running host. If it does happen,
+	// fail closed for cookie hints rather than issuing tokens under a known key.
+	_, err := rand.Read(h.sessionAffinityKey[:])
+	h.sessionAffinityKeyValid = err == nil
 	if h.admissionQueue != nil {
 		h.admissionQueue.setPreemptSink(func(_ context.Context, event admissionPreemption) {
 			if m != nil {
@@ -5081,6 +5102,35 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 	_, _ = fmt.Fprint(w, body)
 }
 
+// pickForRequest applies the optional session-affinity hint before the normal
+// warm-path picker. A stale cookie falls through to the ordinary picker in the
+// same request, preserving availability during scale-in and restarts.
+func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult {
+	if preferredInstanceID != "" {
+		if picker, ok := h.backend.(affinityPicker); ok {
+			pick := picker.PickForInstance(app.ID, preferredInstanceID)
+			if pick.OK {
+				return pick
+			}
+		}
+	}
+	if warmPicker, ok := h.backend.(warmPathPicker); ok {
+		return warmPicker.PickWarm(app.ID)
+	}
+	return PickResult{}
+}
+
+func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string) PickResult {
+	if preferredInstanceID != "" {
+		if picker, ok := h.backend.(affinityPicker); ok {
+			if pick := picker.PickForInstance(app.ID, preferredInstanceID); pick.OK {
+				return pick
+			}
+		}
+	}
+	return h.backend.Pick(app.ID)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Managed realtime is a separate connection owner. Route it before the
 	// normal request bookkeeping and drain tracker so a quiet socket does not
@@ -5745,10 +5795,11 @@ haveApp:
 	// original ordering so their test seams and post-admission race behavior do
 	// not change. A failed warm probe still enters the existing single-flight
 	// wake path; the gate re-checks HealthyCount under its lock.
-	pick := PickResult{}
-	if warmPicker, ok := h.backend.(warmPathPicker); ok {
-		pick = warmPicker.PickWarm(app.ID)
+	preferredInstanceID := ""
+	if app.SessionAffinity {
+		preferredInstanceID = h.affinityTargetFromRequest(r, app.ID)
 	}
+	pick := h.pickForRequest(app, preferredInstanceID)
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
 		if validator, ok := h.backend.(liveTargetValidator); ok {
 			live, validateErr := validator.ValidateLiveTarget(r.Context(), app.ID, pick.Target.InstanceID)
@@ -5878,7 +5929,7 @@ haveApp:
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
 	if !pick.OK || waitedForBurst {
-		pick = h.backend.Pick(app.ID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID)
 	}
 
 	// Wake-fan-out (issue #556 / PR-C): when Pick landed on a
@@ -5916,7 +5967,7 @@ haveApp:
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
-		pick = h.backend.Pick(app.ID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID)
 	}
 	if !pick.OK {
 		// Race: every cached instance was evicted between
@@ -5967,6 +6018,11 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	if app.SessionAffinity {
+		if _, ok := h.backend.(affinityPicker); ok {
+			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
+		}
+	}
 	// This is platform-authored deployment evidence and is exposed only to an
 	// authenticated hosting smoke. Guest response headers with the same name
 	// are stripped by forwardedResponseHeader.

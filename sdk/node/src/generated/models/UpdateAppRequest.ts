@@ -79,6 +79,10 @@ export type UpdateAppRequest = {
    * Allow health probes to wake the app. Omit for no change; Pro/Scale only when true.
    */
   health_path_wakes?: boolean | null;
+  /**
+   * Toggle best-effort cookie-based routing to the same running instance. Omit for no change.
+   */
+  session_affinity?: boolean | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

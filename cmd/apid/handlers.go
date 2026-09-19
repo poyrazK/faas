@@ -748,6 +748,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			CrawlerPolicy:    a.Manifest.EffectiveCrawlerPolicy(),
 			HealthPath:       effectiveHealthPath(a.Manifest.HealthPath),
 			HealthPathWakes:  a.Manifest.HealthPathWakes,
+			SessionAffinity:  a.Manifest.SessionAffinity,
 		},
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger
@@ -764,6 +765,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// flag. Surfaced so dashboards can show "websocket on / off"
 		// alongside the streaming pill.
 		WebSocketEnabled: a.WebSocketEnabled,
+		SessionAffinity:  a.Manifest.SessionAffinity,
 		// ADR-093: per-route observability opt-in (DB round-trip).
 		// Surfaced so dashboards can show "per-route metrics on /
 		// off" alongside the streaming + websocket pills and so a

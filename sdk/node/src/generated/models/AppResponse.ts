@@ -95,6 +95,10 @@ export type AppResponse = {
    */
   websocket_enabled?: boolean;
   /**
+   * Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically.
+   */
+  session_affinity?: boolean;
+  /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;

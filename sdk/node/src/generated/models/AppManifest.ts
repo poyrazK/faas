@@ -73,5 +73,9 @@ export type AppManifest = {
    * Whether health probes may wake this app.
    */
   health_path_wakes?: boolean;
+  /**
+   * Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically.
+   */
+  session_affinity?: boolean;
 };
 

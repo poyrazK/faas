@@ -60,6 +60,8 @@ type AppManifest struct {
 	HealthPath string `json:"health_path,omitempty"`
 	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
 	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
+	// SessionAffinity enables best-effort routing to the same healthy instance.
+	SessionAffinity bool `json:"session_affinity,omitempty"`
 	// User is the unix user to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
 	// ExecutionMode selects request, replicated service, worker, or job

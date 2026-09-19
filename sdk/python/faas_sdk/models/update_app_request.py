@@ -180,6 +180,8 @@ class UpdateAppRequest:
     """Monitor-facing health path. Omit for no change; empty resets to /healthz."""
     health_path_wakes: bool | None | Unset = UNSET
     """Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."""
+    session_affinity: bool | None | Unset = UNSET
+    """Toggle best-effort cookie-based routing to the same running instance. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -421,6 +423,12 @@ class UpdateAppRequest:
         else:
             health_path_wakes = self.health_path_wakes
 
+        session_affinity: bool | None | Unset
+        if isinstance(self.session_affinity, Unset):
+            session_affinity = UNSET
+        else:
+            session_affinity = self.session_affinity
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -611,6 +619,8 @@ class UpdateAppRequest:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
             field_dict["health_path_wakes"] = health_path_wakes
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -1064,6 +1074,15 @@ class UpdateAppRequest:
 
         health_path_wakes = _parse_health_path_wakes(d.pop("health_path_wakes", UNSET))
 
+        def _parse_session_affinity(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        session_affinity = _parse_session_affinity(d.pop("session_affinity", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1369,6 +1388,7 @@ class UpdateAppRequest:
             crawler_policy=crawler_policy,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
+            session_affinity=session_affinity,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

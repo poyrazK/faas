@@ -82,6 +82,10 @@ export type CreateAppRequest = {
    */
   health_path_wakes?: boolean;
   /**
+   * Enable best-effort cookie-based routing to the same running instance. Omitted uses false.
+   */
+  session_affinity?: boolean;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

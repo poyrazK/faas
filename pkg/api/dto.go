@@ -117,6 +117,9 @@ type CreateAppRequest struct {
 	HealthPath string `json:"health_path,omitempty"`
 	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
 	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
+	// SessionAffinity enables best-effort cookie-based routing to the same
+	// running instance. It is off by default.
+	SessionAffinity *bool `json:"session_affinity,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -298,6 +301,9 @@ type UpdateAppRequest struct {
 	// HealthPathWakes controls whether health probes may wake the app. Nil is
 	// unchanged; enabling it is restricted to Pro/Scale.
 	HealthPathWakes *bool `json:"health_path_wakes,omitempty"`
+	// SessionAffinity toggles best-effort cookie-based routing to the same
+	// running instance. Nil leaves the current setting unchanged.
+	SessionAffinity *bool `json:"session_affinity,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1031,6 +1037,9 @@ type AppResponse struct {
 	// explicitly opted out via PATCH. Surfaced so dashboards can
 	// show "websocket on / off" alongside the streaming pill.
 	WebSocketEnabled bool `json:"websocket_enabled"`
+	// SessionAffinity reports whether best-effort cookie-based instance
+	// routing is enabled for this app.
+	SessionAffinity bool `json:"session_affinity"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"

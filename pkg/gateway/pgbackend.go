@@ -962,6 +962,38 @@ func (b *PGBackend) Pick(appID string) PickResult {
 	return PickResult{Target: t, OK: true, Picked: chosen}
 }
 
+// PickForInstance prefers the supplied instance when it is still routable.
+// Session affinity is deliberately best effort: a parked, failed, or
+// deployment-retired instance is ignored and ordinary weighted round-robin
+// selection resumes immediately.
+func (b *PGBackend) PickForInstance(appID, instanceID string) PickResult {
+	if b == nil {
+		return PickResult{}
+	}
+	if appID == "" || instanceID == "" {
+		return b.Pick(appID)
+	}
+	b.tgtMu.RLock()
+	picker := b.appsPicker[appID]
+	if picker != nil {
+		for _, weight := range picker.weights {
+			set := picker.sets[weight.DeploymentID]
+			if set == nil {
+				continue
+			}
+			for _, target := range set.entries {
+				if target.InstanceID == instanceID {
+					target.DeploymentID = weight.DeploymentID
+					b.tgtMu.RUnlock()
+					return PickResult{Target: target, OK: true, Picked: weight.DeploymentID}
+				}
+			}
+		}
+	}
+	b.tgtMu.RUnlock()
+	return b.Pick(appID)
+}
+
 // PickWarm is the production-only warm-path probe used by Handler. It keeps
 // the fast path explicit at the seam: a routable target is sufficient evidence
 // to skip HealthyCount and the wake gate, while an empty picker falls back to

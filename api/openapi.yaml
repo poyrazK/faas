@@ -19325,6 +19325,10 @@ components:
           description: "Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed."
           type: boolean
           example: false
+        session_affinity:
+          description: "Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically."
+          type: boolean
+          example: false
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -19858,6 +19862,10 @@ components:
           type: boolean
           default: false
           description: "Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."
+        session_affinity:
+          description: "Enable best-effort cookie-based routing to the same running instance. Omitted uses false."
+          type: boolean
+          default: false
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -20164,6 +20172,9 @@ components:
         health_path_wakes:
           type: [boolean, "null"]
           description: "Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."
+        session_affinity:
+          description: "Toggle best-effort cookie-based routing to the same running instance. Omit for no change."
+          type: [boolean, "null"]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -20656,6 +20667,10 @@ components:
           type: boolean
           default: false
           description: "Whether health probes may wake this app."
+        session_affinity:
+          description: "Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically."
+          type: boolean
+          default: false
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."

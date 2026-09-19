@@ -101,6 +101,8 @@ class CreateAppRequest:
     """Monitor-facing health path. Empty/omitted uses /healthz."""
     health_path_wakes: bool | Unset = False
     """Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."""
+    session_affinity: bool | Unset = False
+    """Enable best-effort cookie-based routing to the same running instance. Omitted uses false."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -218,6 +220,8 @@ class CreateAppRequest:
 
         health_path_wakes = self.health_path_wakes
 
+        session_affinity = self.session_affinity
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -295,6 +299,8 @@ class CreateAppRequest:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
             field_dict["health_path_wakes"] = health_path_wakes
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -444,6 +450,8 @@ class CreateAppRequest:
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
 
+        session_affinity = d.pop("session_affinity", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -500,6 +508,7 @@ class CreateAppRequest:
             crawler_policy=crawler_policy,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
+            session_affinity=session_affinity,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

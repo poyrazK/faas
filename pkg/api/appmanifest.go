@@ -168,6 +168,9 @@ type AppManifest struct {
 	HealthPath string `json:"health_path,omitempty"`
 	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
 	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
+	// SessionAffinity enables best-effort cookie-based routing to the same
+	// running instance. The gateway fails open when that instance is gone.
+	SessionAffinity bool `json:"session_affinity,omitempty"`
 }
 
 const (
