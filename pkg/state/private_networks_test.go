@@ -86,12 +86,23 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	store := NewMemStore()
 	network, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{
 		AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28"),
+		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/30")},
 	})
 	if err != nil {
 		t.Fatalf("CreatePrivateNetwork: %v", err)
 	}
 	if network.ID == "" || network.Status != api.PrivateNetworkStatusReady || network.CIDR.String() != "10.42.0.0/28" {
 		t.Fatalf("network = %+v", network)
+	}
+	if len(network.AllowedCIDRs) != 1 || network.AllowedCIDRs[0].String() != "10.42.0.0/30" {
+		t.Fatalf("network policy = %v", network.AllowedCIDRs)
+	}
+	updated, err := store.UpdatePrivateNetworkPolicy(ctx, "acct-1", network.ID, []netip.Prefix{netip.MustParsePrefix("10.42.0.4/30")})
+	if err != nil || len(updated.AllowedCIDRs) != 1 || updated.AllowedCIDRs[0].String() != "10.42.0.4/30" {
+		t.Fatalf("UpdatePrivateNetworkPolicy = %+v, err=%v", updated, err)
+	}
+	if _, err := store.UpdatePrivateNetworkPolicy(ctx, "acct-1", network.ID, []netip.Prefix{netip.MustParsePrefix("10.43.0.0/30")}); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("outside policy err = %v, want invalid argument", err)
 	}
 	if _, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.43.0.0/28")}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate name err = %v, want conflict", err)

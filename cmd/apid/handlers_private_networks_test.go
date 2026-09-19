@@ -16,7 +16,7 @@ func TestPrivateNetworkFabricLifecycle(t *testing.T) {
 	e := setup(t, api.PlanScale)
 
 	rec := e.do(t, "POST", "/v1/networks", api.CreatePrivateNetworkRequest{
-		Name: "prod", Region: "fra1", CIDR: "10.42.1.5/28",
+		Name: "prod", Region: "fra1", CIDR: "10.42.1.5/28", AllowedCIDRs: []string{"10.42.1.0/30"},
 	}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST status = %d, want 201; body=%s", rec.Code, rec.Body.String())
@@ -25,8 +25,16 @@ func TestPrivateNetworkFabricLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode POST: %v", err)
 	}
-	if created.ID == "" || created.CIDR != "10.42.1.0/28" || created.Status != api.PrivateNetworkStatusReady {
+	if created.ID == "" || created.CIDR != "10.42.1.0/28" || created.Status != api.PrivateNetworkStatusReady || len(created.AllowedCIDRs) != 1 {
 		t.Fatalf("created network = %+v", created)
+	}
+	rec = e.do(t, "PUT", "/v1/networks/"+created.ID+"/policy", api.UpdatePrivateNetworkPolicyRequest{AllowedCIDRs: []string{"10.42.1.4/30"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("policy update status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var updated api.PrivateNetwork
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil || len(updated.AllowedCIDRs) != 1 || updated.AllowedCIDRs[0] != "10.42.1.4/30" {
+		t.Fatalf("updated network = %+v, err=%v", updated, err)
 	}
 
 	rec = e.do(t, "GET", "/v1/networks", nil, nil)

@@ -475,6 +475,9 @@ from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
+from .diff_app_config_patch_execution_mode import DiffAppConfigPatchExecutionMode
+from .diff_app_config_patch_restart_policy import DiffAppConfigPatchRestartPolicy
+from .diff_app_config_patch_service_replicas_type_0 import DiffAppConfigPatchServiceReplicasType0
 from .diff_break import DiffBreak
 from .diff_break_severity import DiffBreakSeverity
 from .diff_change import DiffChange
@@ -1208,6 +1211,7 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
 )
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_private_network_policy_request import UpdatePrivateNetworkPolicyRequest
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
@@ -1732,6 +1736,9 @@ __all__ = (
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
     "DiffAppConfigPatchEvictionPriority",
+    "DiffAppConfigPatchExecutionMode",
+    "DiffAppConfigPatchRestartPolicy",
+    "DiffAppConfigPatchServiceReplicasType0",
     "DiffBreak",
     "DiffBreakSeverity",
     "DiffChange",
@@ -2437,6 +2444,7 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdatePrivateNetworkPolicyRequest",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectEnvironmentRequest",

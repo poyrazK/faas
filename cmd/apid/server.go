@@ -1243,6 +1243,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworks))))
 	mux.HandleFunc("POST /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetwork)))))
 	mux.HandleFunc("GET /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetwork))))
+	mux.HandleFunc("PUT /v1/networks/{id}/policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updatePrivateNetworkPolicy))))
 	mux.HandleFunc("DELETE /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deletePrivateNetwork))))
 	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.changePlan)))))))
 	// Billing identity is customer-owned legal metadata used on future

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/google/uuid"
@@ -71,13 +72,19 @@ func (s *server) createPrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("cidr", req.CIDR, err.Error()))
 		return
 	}
+	allowedCIDRs, err := api.ValidatePrivateNetworkPolicyCIDRs(req.AllowedCIDRs, []netip.Prefix{cidr})
+	if err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", "", err.Error()))
+		return
+	}
 	network, err := store.CreatePrivateNetwork(r.Context(), state.PrivateNetwork{
-		ID:        "net-" + uuid.NewString(),
-		AccountID: acct.ID,
-		Name:      name,
-		Region:    region,
-		CIDR:      cidr,
-		Status:    api.PrivateNetworkStatusReady,
+		ID:           "net-" + uuid.NewString(),
+		AccountID:    acct.ID,
+		Name:         name,
+		Region:       region,
+		CIDR:         cidr,
+		AllowedCIDRs: allowedCIDRs,
+		Status:       api.PrivateNetworkStatusReady,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
@@ -97,6 +104,60 @@ func (s *server) createPrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		"network_id": network.ID, "name": network.Name, "region": network.Region, "cidr": network.CIDR.String(),
 	})
 	writeJSON(w, http.StatusCreated, privateNetworkResponse(network))
+}
+
+func (s *server) updatePrivateNetworkPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	baseStore, ok := s.privateNetworkFabricStore(w, r)
+	if !ok {
+		return
+	}
+	store, ok := baseStore.(state.PrivateNetworkPolicyStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
+		return
+	}
+	if !acct.Plan.PrivateNetworkAllowed() {
+		api.WriteProblem(w, api.ErrPlanPrivateNetworkNotAllowed(acct.Plan))
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if err := api.ValidatePrivateNetworkIdentifier(id); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+		return
+	}
+	var req api.UpdatePrivateNetworkPolicyRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("body", "", "invalid JSON"))
+		return
+	}
+	network, err := store.GetPrivateNetwork(r.Context(), acct.ID, id)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read private network"))
+		return
+	}
+	allowedCIDRs, err := api.ValidatePrivateNetworkPolicyCIDRs(req.AllowedCIDRs, []netip.Prefix{network.CIDR})
+	if err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", "", err.Error()))
+		return
+	}
+	updated, err := store.UpdatePrivateNetworkPolicy(r.Context(), acct.ID, id, allowedCIDRs)
+	if err != nil {
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+		case errors.Is(err, state.ErrInvalidArgument):
+			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", "", "the network policy is not accepted"))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not update private network policy"))
+		}
+		return
+	}
+	s.audit.Emit(r.Context(), "private_network.policy_updated", &acct.ID, map[string]any{"network_id": id, "allowed_cidrs": req.AllowedCIDRs})
+	writeJSON(w, http.StatusOK, privateNetworkResponse(updated))
 }
 
 func (s *server) getPrivateNetwork(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -154,9 +215,21 @@ func privateNetworkResponse(network state.PrivateNetwork) api.PrivateNetwork {
 		Name:         network.Name,
 		Region:       network.Region,
 		CIDR:         network.CIDR.String(),
+		AllowedCIDRs: privateNetworkPolicyStrings(network.AllowedCIDRs),
 		Status:       network.Status,
 		StatusDetail: network.StatusDetail,
 		CreatedAt:    &createdAt,
 		UpdatedAt:    &updatedAt,
 	}
+}
+
+func privateNetworkPolicyStrings(prefixes []netip.Prefix) []string {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		out = append(out, prefix.String())
+	}
+	return out
 }

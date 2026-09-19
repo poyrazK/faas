@@ -74,6 +74,16 @@ the same live update as the stable member address. vmmd installs the nft
 accept/drop rules before publishing the new cached state; a failed update is
 reported as reconciliation error and never widens access.
 
+Networks can also carry a reusable, account-scoped CIDR firewall baseline. Set
+`allowed_cidrs` when creating a network or replace it with
+`PUT /v1/networks/{id}/policy`; the list is contained by the network CIDR and
+is applied to every attached workload. An attachment policy may only narrow
+that baseline, never broaden it. Updating the network policy is asynchronous:
+schedd replays the effective policy to every live node, and nftables keeps
+traffic blocked until each update succeeds. This first firewall slice is
+CIDR-based; protocol and port rules remain a follow-up once the control-plane
+contract is stable.
+
 Schedd applies a ready attachment once per live compute node and records a
 per-node convergence observation in its reconciliation logs. A partial node
 failure keeps the attachment in `error` and is retried by the next sweep;

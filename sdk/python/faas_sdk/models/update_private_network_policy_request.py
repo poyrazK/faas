@@ -6,67 +6,41 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="CreatePrivateNetworkRequest")
+T = TypeVar("T", bound="UpdatePrivateNetworkPolicyRequest")
 
 
 @_attrs_define
-class CreatePrivateNetworkRequest:
-    """POST /v1/networks body for a Gregale-owned network."""
+class UpdatePrivateNetworkPolicyRequest:
+    """PUT /v1/networks/{id}/policy body."""
 
-    name: str
-    region: str
-    cidr: str
-    allowed_cidrs: list[str] | Unset = UNSET
-    """Optional reusable CIDR allowlist contained by cidr."""
+    allowed_cidrs: list[str]
+    """CIDRs reachable by attached workloads; empty disables the policy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        name = self.name
-
-        region = self.region
-
-        cidr = self.cidr
-
-        allowed_cidrs: list[str] | Unset = UNSET
-        if not isinstance(self.allowed_cidrs, Unset):
-            allowed_cidrs = self.allowed_cidrs
+        allowed_cidrs = self.allowed_cidrs
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "name": name,
-                "region": region,
-                "cidr": cidr,
+                "allowed_cidrs": allowed_cidrs,
             }
         )
-        if allowed_cidrs is not UNSET:
-            field_dict["allowed_cidrs"] = allowed_cidrs
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        name = d.pop("name")
+        allowed_cidrs = cast(list[str], d.pop("allowed_cidrs"))
 
-        region = d.pop("region")
-
-        cidr = d.pop("cidr")
-
-        allowed_cidrs = cast(list[str], d.pop("allowed_cidrs", UNSET))
-
-        create_private_network_request = cls(
-            name=name,
-            region=region,
-            cidr=cidr,
+        update_private_network_policy_request = cls(
             allowed_cidrs=allowed_cidrs,
         )
 
-        create_private_network_request.additional_properties = d
-        return create_private_network_request
+        update_private_network_policy_request.additional_properties = d
+        return update_private_network_policy_request
 
     @property
     def additional_keys(self) -> list[str]:

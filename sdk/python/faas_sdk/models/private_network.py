@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,6 +23,8 @@ class PrivateNetwork:
     cidr: str
     """Canonical IPv4 RFC1918 range, /16 through /28."""
     status: PrivateNetworkStatus
+    allowed_cidrs: list[str] | Unset = UNSET
+    """Optional reusable CIDR allowlist for all attached workloads."""
     status_detail: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
@@ -38,6 +40,10 @@ class PrivateNetwork:
         cidr = self.cidr
 
         status: str = self.status
+
+        allowed_cidrs: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_cidrs, Unset):
+            allowed_cidrs = self.allowed_cidrs
 
         status_detail = self.status_detail
 
@@ -60,6 +66,8 @@ class PrivateNetwork:
                 "status": status,
             }
         )
+        if allowed_cidrs is not UNSET:
+            field_dict["allowed_cidrs"] = allowed_cidrs
         if status_detail is not UNSET:
             field_dict["status_detail"] = status_detail
         if created_at is not UNSET:
@@ -81,6 +89,8 @@ class PrivateNetwork:
         cidr = d.pop("cidr")
 
         status = check_private_network_status(d.pop("status"))
+
+        allowed_cidrs = cast(list[str], d.pop("allowed_cidrs", UNSET))
 
         status_detail = d.pop("status_detail", UNSET)
 
@@ -104,6 +114,7 @@ class PrivateNetwork:
             region=region,
             cidr=cidr,
             status=status,
+            allowed_cidrs=allowed_cidrs,
             status_detail=status_detail,
             created_at=created_at,
             updated_at=updated_at,

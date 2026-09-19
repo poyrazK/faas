@@ -7,6 +7,7 @@ import type { AppPrivateNetworkAttachmentResponse } from '../models/AppPrivateNe
 import type { CreatePrivateNetworkRequest } from '../models/CreatePrivateNetworkRequest.js';
 import type { PrivateNetwork } from '../models/PrivateNetwork.js';
 import type { PrivateNetworkListResponse } from '../models/PrivateNetworkListResponse.js';
+import type { UpdatePrivateNetworkPolicyRequest } from '../models/UpdatePrivateNetworkPolicyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -109,6 +110,42 @@ export class NetworkingService {
         404: `code: not_found`,
         409: `Network still has an app attachment.`,
         503: `Gregale-owned network fabric is disabled for this network deletion.`,
+      },
+    });
+  }
+  /**
+   * Replace a private network's reusable CIDR firewall policy.
+   * Replaces the network-level IPv4 CIDR allowlist used by every attached
+   * workload. An empty list disables the network policy. App-level policy
+   * may further restrict these destinations but cannot broaden them.
+   *
+   * @returns PrivateNetwork Updated private network definition.
+   * @throws ApiError
+   */
+  public static updatePrivateNetworkPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Network identifier whose reusable firewall policy is being replaced.
+     */
+    id: string,
+    requestBody: UpdatePrivateNetworkPolicyRequest,
+  }): CancelablePromise<PrivateNetwork> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/networks/{id}/policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Private networking plan required for policy updates.`,
+        404: `code: not_found`,
+        503: `Gregale-owned network fabric is disabled for this policy update.`,
       },
     });
   }

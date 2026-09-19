@@ -18,9 +18,18 @@ from ..models.diff_app_config_patch_eviction_priority import (
     DiffAppConfigPatchEvictionPriority,
     check_diff_app_config_patch_eviction_priority,
 )
+from ..models.diff_app_config_patch_execution_mode import (
+    DiffAppConfigPatchExecutionMode,
+    check_diff_app_config_patch_execution_mode,
+)
+from ..models.diff_app_config_patch_restart_policy import (
+    DiffAppConfigPatchRestartPolicy,
+    check_diff_app_config_patch_restart_policy,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.diff_app_config_patch_service_replicas_type_0 import DiffAppConfigPatchServiceReplicasType0
     from ..models.scaling_policy import ScalingPolicy
 
 
@@ -55,11 +64,22 @@ class DiffAppConfigPatch:
     app_protocol: DiffAppConfigPatchAppProtocol | Unset = UNSET
     """Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol.
     Pointer-aware: omitted → no change; non-null → set to this value."""
+    execution_mode: DiffAppConfigPatchExecutionMode | Unset = UNSET
+    """Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload."""
+    restart_policy: DiffAppConfigPatchRestartPolicy | Unset = UNSET
+    """Supervisor restart policy. Omitted → no change."""
+    startup_deadline_s: int | None | Unset = UNSET
+    """Maximum startup deadline in seconds; zero inherits the plan default."""
+    max_retries: int | None | Unset = UNSET
+    """Maximum lifecycle restart attempts; zero inherits the plan default."""
+    service_replicas: DiffAppConfigPatchServiceReplicasType0 | None | Unset = UNSET
+    """Replica policy for service mode."""
     scaling_policy: None | ScalingPolicy | Unset = UNSET
     """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.diff_app_config_patch_service_replicas_type_0 import DiffAppConfigPatchServiceReplicasType0
         from ..models.scaling_policy import ScalingPolicy
 
         ram_mb = self.ram_mb
@@ -101,6 +121,34 @@ class DiffAppConfigPatch:
         app_protocol: str | Unset = UNSET
         if not isinstance(self.app_protocol, Unset):
             app_protocol = self.app_protocol
+
+        execution_mode: str | Unset = UNSET
+        if not isinstance(self.execution_mode, Unset):
+            execution_mode = self.execution_mode
+
+        restart_policy: str | Unset = UNSET
+        if not isinstance(self.restart_policy, Unset):
+            restart_policy = self.restart_policy
+
+        startup_deadline_s: int | None | Unset
+        if isinstance(self.startup_deadline_s, Unset):
+            startup_deadline_s = UNSET
+        else:
+            startup_deadline_s = self.startup_deadline_s
+
+        max_retries: int | None | Unset
+        if isinstance(self.max_retries, Unset):
+            max_retries = UNSET
+        else:
+            max_retries = self.max_retries
+
+        service_replicas: dict[str, Any] | None | Unset
+        if isinstance(self.service_replicas, Unset):
+            service_replicas = UNSET
+        elif isinstance(self.service_replicas, DiffAppConfigPatchServiceReplicasType0):
+            service_replicas = self.service_replicas.to_dict()
+        else:
+            service_replicas = self.service_replicas
 
         scaling_policy: dict[str, Any] | None | Unset
         if isinstance(self.scaling_policy, Unset):
@@ -145,6 +193,16 @@ class DiffAppConfigPatch:
             field_dict["eviction_priority"] = eviction_priority
         if app_protocol is not UNSET:
             field_dict["app_protocol"] = app_protocol
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if restart_policy is not UNSET:
+            field_dict["restart_policy"] = restart_policy
+        if startup_deadline_s is not UNSET:
+            field_dict["startup_deadline_s"] = startup_deadline_s
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
+        if service_replicas is not UNSET:
+            field_dict["service_replicas"] = service_replicas
         if scaling_policy is not UNSET:
             field_dict["scaling_policy"] = scaling_policy
 
@@ -152,6 +210,7 @@ class DiffAppConfigPatch:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.diff_app_config_patch_service_replicas_type_0 import DiffAppConfigPatchServiceReplicasType0
         from ..models.scaling_policy import ScalingPolicy
 
         d = dict(src_dict)
@@ -202,6 +261,55 @@ class DiffAppConfigPatch:
         else:
             app_protocol = check_diff_app_config_patch_app_protocol(_app_protocol)
 
+        _execution_mode = d.pop("execution_mode", UNSET)
+        execution_mode: DiffAppConfigPatchExecutionMode | Unset
+        if isinstance(_execution_mode, Unset):
+            execution_mode = UNSET
+        else:
+            execution_mode = check_diff_app_config_patch_execution_mode(_execution_mode)
+
+        _restart_policy = d.pop("restart_policy", UNSET)
+        restart_policy: DiffAppConfigPatchRestartPolicy | Unset
+        if isinstance(_restart_policy, Unset):
+            restart_policy = UNSET
+        else:
+            restart_policy = check_diff_app_config_patch_restart_policy(_restart_policy)
+
+        def _parse_startup_deadline_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        startup_deadline_s = _parse_startup_deadline_s(d.pop("startup_deadline_s", UNSET))
+
+        def _parse_max_retries(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
+
+        def _parse_service_replicas(data: object) -> DiffAppConfigPatchServiceReplicasType0 | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                service_replicas_type_0 = DiffAppConfigPatchServiceReplicasType0.from_dict(data)
+
+                return service_replicas_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DiffAppConfigPatchServiceReplicasType0 | None | Unset, data)
+
+        service_replicas = _parse_service_replicas(d.pop("service_replicas", UNSET))
+
         def _parse_scaling_policy(data: object) -> None | ScalingPolicy | Unset:
             if data is None:
                 return data
@@ -236,6 +344,11 @@ class DiffAppConfigPatch:
             require_authn=require_authn,
             eviction_priority=eviction_priority,
             app_protocol=app_protocol,
+            execution_mode=execution_mode,
+            restart_policy=restart_policy,
+            startup_deadline_s=startup_deadline_s,
+            max_retries=max_retries,
+            service_replicas=service_replicas,
             scaling_policy=scaling_policy,
         )
 

@@ -7667,6 +7667,48 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/networks/{id}/policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Network identifier whose reusable firewall policy is being replaced.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+    put:
+      tags: [networking]
+      operationId: updatePrivateNetworkPolicy
+      summary: Replace a private network's reusable CIDR firewall policy.
+      description: |
+        Replaces the network-level IPv4 CIDR allowlist used by every attached
+        workload. An empty list disables the network policy. App-level policy
+        may further restrict these destinations but cannot broaden them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePrivateNetworkPolicyRequest' }
+      responses:
+        '200':
+          description: Updated private network definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetwork' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Private networking plan required for policy updates.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled for this policy update.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/network/private:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -30171,6 +30213,11 @@ components:
           type: string
           format: ipv4-cidr
           description: Canonical IPv4 RFC1918 range, /16 through /28.
+        allowed_cidrs:
+          type: array
+          maxItems: 64
+          description: Optional reusable CIDR allowlist for all attached workloads.
+          items: { type: string, format: ipv4-cidr }
         status:
           type: string
           enum: [ready, error]
@@ -30201,6 +30248,22 @@ components:
         cidr:
           type: string
           format: ipv4-cidr
+        allowed_cidrs:
+          type: array
+          maxItems: 64
+          description: Optional reusable CIDR allowlist contained by cidr.
+          items: { type: string, format: ipv4-cidr }
+
+    UpdatePrivateNetworkPolicyRequest:
+      description: PUT /v1/networks/{id}/policy body.
+      type: object
+      required: [allowed_cidrs]
+      properties:
+        allowed_cidrs:
+          type: array
+          maxItems: 64
+          description: CIDRs reachable by attached workloads; empty disables the policy.
+          items: { type: string, format: ipv4-cidr }
 
     AppPrivateNetworkAttachmentRequest:
       description: PUT body for /v1/apps/{slug}/network/private.

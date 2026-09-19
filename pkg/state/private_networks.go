@@ -23,6 +23,7 @@ type PrivateNetwork struct {
 	Name         string
 	Region       string
 	CIDR         netip.Prefix
+	AllowedCIDRs []netip.Prefix
 	Status       string
 	StatusDetail string
 	CreatedAt    time.Time
@@ -54,8 +55,18 @@ type PrivateNetworkStore interface {
 	ReleasePrivateNetworkAddress(context.Context, string, string, string, string) error
 }
 
+// PrivateNetworkPolicyStore is the additive extension used by the reusable
+// network firewall endpoint. Keeping it separate lets older Store adapters
+// continue serving the original network and attachment surfaces.
+type PrivateNetworkPolicyStore interface {
+	PrivateNetworkStore
+	UpdatePrivateNetworkPolicy(context.Context, string, string, []netip.Prefix) (PrivateNetwork, error)
+}
+
 var _ PrivateNetworkStore = (*MemStore)(nil)
 var _ PrivateNetworkStore = (*PgStore)(nil)
+var _ PrivateNetworkPolicyStore = (*MemStore)(nil)
+var _ PrivateNetworkPolicyStore = (*PgStore)(nil)
 
 func validatePrivateNetwork(in PrivateNetwork) (PrivateNetwork, error) {
 	in.ID = strings.TrimSpace(in.ID)
@@ -84,6 +95,15 @@ func validatePrivateNetwork(in PrivateNetwork) (PrivateNetwork, error) {
 		return PrivateNetwork{}, ErrInvalidArgument
 	}
 	in.CIDR = prefix
+	policyRaw := make([]string, 0, len(in.AllowedCIDRs))
+	for _, policy := range in.AllowedCIDRs {
+		policyRaw = append(policyRaw, policy.String())
+	}
+	policy, err := api.ValidatePrivateNetworkPolicyCIDRs(policyRaw, []netip.Prefix{in.CIDR})
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	in.AllowedCIDRs = policy
 	if in.Status == "" {
 		in.Status = api.PrivateNetworkStatusReady
 	}
@@ -93,7 +113,10 @@ func validatePrivateNetwork(in PrivateNetwork) (PrivateNetwork, error) {
 	return in, nil
 }
 
-func clonePrivateNetwork(in PrivateNetwork) PrivateNetwork { return in }
+func clonePrivateNetwork(in PrivateNetwork) PrivateNetwork {
+	in.AllowedCIDRs = append([]netip.Prefix(nil), in.AllowedCIDRs...)
+	return in
+}
 
 func clonePrivateNetworkAddress(in PrivateNetworkAddress) PrivateNetworkAddress { return in }
 
@@ -238,6 +261,30 @@ func (m *MemStore) DeletePrivateNetwork(ctx context.Context, accountID, id strin
 		}
 	}
 	return nil
+}
+
+func (m *MemStore) UpdatePrivateNetworkPolicy(ctx context.Context, accountID, id string, allowedCIDRs []netip.Prefix) (PrivateNetwork, error) {
+	if err := ctx.Err(); err != nil {
+		return PrivateNetwork{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	network, ok := m.privateNetworks[id]
+	if !ok || network.AccountID != accountID {
+		return PrivateNetwork{}, ErrNotFound
+	}
+	raw := make([]string, 0, len(allowedCIDRs))
+	for _, prefix := range allowedCIDRs {
+		raw = append(raw, prefix.String())
+	}
+	policy, err := api.ValidatePrivateNetworkPolicyCIDRs(raw, []netip.Prefix{network.CIDR})
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	network.AllowedCIDRs = policy
+	network.UpdatedAt = time.Now().UTC()
+	m.privateNetworks[id] = network
+	return clonePrivateNetwork(network), nil
 }
 
 func (m *MemStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, networkID, ownerType, ownerID string) (PrivateNetworkAddress, error) {

@@ -991,6 +991,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/networks":                       "ListPrivateNetworks",
 	"POST /v1/networks":                      "CreatePrivateNetwork",
 	"GET /v1/networks/{id}":                  "GetPrivateNetwork",
+	"PUT /v1/networks/{id}/policy":           "UpdatePrivateNetworkPolicy",
 	"DELETE /v1/networks/{id}":               "DeletePrivateNetwork",
 
 	// Issue #961 / Mega-A PR-A — zero-config deploy + domains surface.

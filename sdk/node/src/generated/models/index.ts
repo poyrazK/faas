@@ -611,6 +611,7 @@ export type { UpdateEdgeRuleRequest } from './UpdateEdgeRuleRequest.js';
 export type { UpdateJobRequest } from './UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './UpdateMirrorRuleRequest.js';
+export type { UpdatePrivateNetworkPolicyRequest } from './UpdatePrivateNetworkPolicyRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectRequest } from './UpdateProjectRequest.js';

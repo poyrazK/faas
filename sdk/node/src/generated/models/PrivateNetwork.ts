@@ -13,6 +13,10 @@ export type PrivateNetwork = {
    * Canonical IPv4 RFC1918 range, /16 through /28.
    */
   cidr: string;
+  /**
+   * Optional reusable CIDR allowlist for all attached workloads.
+   */
+  allowed_cidrs?: Array<string>;
   status: 'ready' | 'error';
   status_detail?: string;
   created_at?: string;

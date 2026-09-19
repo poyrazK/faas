@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func scanPrivateNetwork(row interface{ Scan(...any) error }) (PrivateNetwork, error) {
@@ -67,6 +68,31 @@ func privateNetworkArgs(network PrivateNetwork) (string, pgtype.UUID, string, st
 	return network.ID, mustPgUUID(network.AccountID), network.Name, network.Region, network.CIDR.String(), network.Status, network.StatusDetail
 }
 
+func privateNetworkPolicyArgs(network PrivateNetwork) []string {
+	policy := make([]string, 0, len(network.AllowedCIDRs))
+	for _, prefix := range network.AllowedCIDRs {
+		policy = append(policy, prefix.String())
+	}
+	return policy
+}
+
+func loadPrivateNetworkPolicy(ctx context.Context, row pgx.Row, network *PrivateNetwork) error {
+	var raw []string
+	if err := row.Scan(&raw); err != nil {
+		return mapErr(err)
+	}
+	policy := make([]netip.Prefix, 0, len(raw))
+	for _, value := range raw {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return err
+		}
+		policy = append(policy, prefix.Masked())
+	}
+	network.AllowedCIDRs = policy
+	return nil
+}
+
 func (s *PgStore) CreatePrivateNetwork(ctx context.Context, network PrivateNetwork) (PrivateNetwork, error) {
 	var err error
 	network, err = validatePrivateNetwork(network)
@@ -100,23 +126,32 @@ func (s *PgStore) CreatePrivateNetwork(ctx context.Context, network PrivateNetwo
 		return PrivateNetwork{}, ErrConflict
 	}
 	id, _, name, region, cidr, status, detail := privateNetworkArgs(network)
+	policy := privateNetworkPolicyArgs(network)
 	created, err := scanPrivateNetwork(tx.QueryRow(ctx, `
-		insert into private_networks (id, account_id, name, region, cidr, status, status_detail)
-		values ($1, $2, $3, $4, $5::cidr, $6, $7)
-		returning id, account_id, name, region, cidr::text, status, status_detail, created_at, updated_at`, id, accountID, name, region, cidr, status, detail))
+		insert into private_networks (id, account_id, name, region, cidr, allowed_cidrs, status, status_detail)
+		values ($1, $2, $3, $4, $5::cidr, $6::cidr[], $7, $8)
+		returning id, account_id, name, region, cidr::text, status, status_detail, created_at, updated_at`, id, accountID, name, region, cidr, policy, status, detail))
 	if err != nil {
 		return PrivateNetwork{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PrivateNetwork{}, err
 	}
+	created.AllowedCIDRs = append([]netip.Prefix(nil), network.AllowedCIDRs...)
 	return created, nil
 }
 
 func (s *PgStore) GetPrivateNetwork(ctx context.Context, accountID, id string) (PrivateNetwork, error) {
-	return scanPrivateNetwork(s.pool.QueryRow(ctx, `
+	network, err := scanPrivateNetwork(s.pool.QueryRow(ctx, `
 		select id, account_id, name, region, cidr::text, status, status_detail, created_at, updated_at
 		  from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id)))
+	if err != nil {
+		return PrivateNetwork{}, err
+	}
+	if err := loadPrivateNetworkPolicy(ctx, s.pool.QueryRow(ctx, `select allowed_cidrs::text[] from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id)), &network); err != nil {
+		return PrivateNetwork{}, err
+	}
+	return network, nil
 }
 
 func (s *PgStore) ListPrivateNetworks(ctx context.Context, accountID string) ([]PrivateNetwork, error) {
@@ -133,12 +168,40 @@ func (s *PgStore) ListPrivateNetworks(ctx context.Context, accountID string) ([]
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		if err := loadPrivateNetworkPolicy(ctx, s.pool.QueryRow(ctx, `select allowed_cidrs::text[] from private_networks where account_id = $1 and id = $2`, mustPgUUID(accountID), network.ID), &network); err != nil {
+			return nil, err
+		}
 		out = append(out, network)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, mapErr(err)
 	}
 	return out, nil
+}
+
+func (s *PgStore) UpdatePrivateNetworkPolicy(ctx context.Context, accountID, id string, allowedCIDRs []netip.Prefix) (PrivateNetwork, error) {
+	network, err := s.GetPrivateNetwork(ctx, accountID, id)
+	if err != nil {
+		return PrivateNetwork{}, err
+	}
+	raw := make([]string, 0, len(allowedCIDRs))
+	for _, prefix := range allowedCIDRs {
+		raw = append(raw, prefix.String())
+	}
+	policy, err := api.ValidatePrivateNetworkPolicyCIDRs(raw, []netip.Prefix{network.CIDR})
+	if err != nil {
+		return PrivateNetwork{}, ErrInvalidArgument
+	}
+	result, err := s.pool.Exec(ctx, `update private_networks set allowed_cidrs = $3::cidr[] where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id), raw)
+	if err != nil {
+		return PrivateNetwork{}, mapErr(err)
+	}
+	if result.RowsAffected() == 0 {
+		return PrivateNetwork{}, ErrNotFound
+	}
+	network.AllowedCIDRs = policy
+	network.UpdatedAt = time.Now().UTC()
+	return network, nil
 }
 
 func (s *PgStore) DeletePrivateNetwork(ctx context.Context, accountID, id string) error {

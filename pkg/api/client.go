@@ -4627,6 +4627,12 @@ func (c *Client) DeletePrivateNetwork(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/networks/"+id, nil, nil)
 }
 
+// UpdatePrivateNetworkPolicy replaces the reusable network-level CIDR allowlist.
+func (c *Client) UpdatePrivateNetworkPolicy(ctx context.Context, id string, req UpdatePrivateNetworkPolicyRequest) (PrivateNetwork, error) {
+	var out PrivateNetwork
+	return out, c.do(ctx, "PUT", "/v1/networks/"+id+"/policy", req, &out)
+}
+
 // SetGithubWebhookSecret sets the per-tenant webhook secret for
 // the given installation_id (PR-D / ADR-012 §7 amendment). The
 // server hex-decodes SecretHex and writes the raw bytes to

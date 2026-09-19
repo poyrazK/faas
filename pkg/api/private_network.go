@@ -30,6 +30,7 @@ type PrivateNetwork struct {
 	Name         string     `json:"name"`
 	Region       string     `json:"region"`
 	CIDR         string     `json:"cidr"`
+	AllowedCIDRs []string   `json:"allowed_cidrs,omitempty"`
 	Status       string     `json:"status"`
 	StatusDetail string     `json:"status_detail,omitempty"`
 	CreatedAt    *time.Time `json:"created_at,omitempty"`
@@ -44,9 +45,16 @@ type PrivateNetworkListResponse struct {
 // CreatePrivateNetworkRequest creates a Gregale-owned IPv4 network. The
 // region is a Gregale placement label, not a DigitalOcean region identifier.
 type CreatePrivateNetworkRequest struct {
-	Name   string `json:"name"`
-	Region string `json:"region"`
-	CIDR   string `json:"cidr"`
+	Name         string   `json:"name"`
+	Region       string   `json:"region"`
+	CIDR         string   `json:"cidr"`
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+}
+
+// UpdatePrivateNetworkPolicyRequest replaces the network-level CIDR allowlist.
+// An empty list disables the policy and preserves legacy allow-all behavior.
+type UpdatePrivateNetworkPolicyRequest struct {
+	AllowedCIDRs []string `json:"allowed_cidrs"`
 }
 
 // ValidatePrivateNetworkIdentifier validates the stable operator/provider
