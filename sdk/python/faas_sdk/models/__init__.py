@@ -396,6 +396,7 @@ from .debug_critical_path_segment import DebugCriticalPathSegment
 from .debug_critical_path_segment_type import DebugCriticalPathSegmentType
 from .debug_critical_path_span import DebugCriticalPathSpan
 from .debug_critical_path_span_dependency_type import DebugCriticalPathSpanDependencyType
+from .debug_dependency_impact_edge import DebugDependencyImpactEdge
 from .debug_dependency_latency_item import DebugDependencyLatencyItem
 from .debug_dependency_latency_item_type import DebugDependencyLatencyItemType
 from .debug_dependency_latency_response import DebugDependencyLatencyResponse
@@ -1694,6 +1695,7 @@ __all__ = (
     "DebugCriticalPathSegmentType",
     "DebugCriticalPathSpan",
     "DebugCriticalPathSpanDependencyType",
+    "DebugDependencyImpactEdge",
     "DebugDependencyLatencyItem",
     "DebugDependencyLatencyItemType",
     "DebugDependencyLatencyResponse",

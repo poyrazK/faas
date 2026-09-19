@@ -2127,26 +2127,58 @@ type DebugDependencyLatencyHistoryView struct {
 	RepresentedRequests int64
 	SpanSamples         int64
 	Dependencies        []DebugDependencyLatencyHistoryItemView
+	Edges               []DebugDependencyImpactEdgeView
 }
 
 type DebugDependencyLatencyHistoryItemView struct {
-	Type                 string
-	Kind                 string
-	Name                 string
-	Calls                int64
-	ErrorCalls           int64
-	ErrorRatePct         float64
-	P50MS                int64
-	P95MS                int64
-	P99MS                int64
-	BaselineP95MS        int64
-	CurrentP95MS         int64
-	P95DeltaMS           int64
-	RegressionFactor     float64
-	Regression           bool
-	BaselineErrorRatePct float64
-	CurrentErrorRatePct  float64
-	ErrorRateDeltaPct    float64
+	Type                   string
+	Kind                   string
+	Name                   string
+	Calls                  int64
+	ErrorCalls             int64
+	ErrorRatePct           float64
+	P50MS                  int64
+	P95MS                  int64
+	P99MS                  int64
+	ExclusiveP50MS         int64
+	ExclusiveP95MS         int64
+	ExclusiveP99MS         int64
+	BaselineP95MS          int64
+	CurrentP95MS           int64
+	P95DeltaMS             int64
+	BaselineExclusiveP95MS int64
+	CurrentExclusiveP95MS  int64
+	ExclusiveP95DeltaMS    int64
+	RegressionFactor       float64
+	Regression             bool
+	BaselineErrorRatePct   float64
+	CurrentErrorRatePct    float64
+	ErrorRateDeltaPct      float64
+}
+
+type DebugDependencyImpactEdgeView struct {
+	From                   DebugCriticalPathSegmentView
+	To                     DebugCriticalPathSegmentView
+	Calls                  int64
+	ErrorCalls             int64
+	ErrorRatePct           float64
+	P50MS                  int64
+	P95MS                  int64
+	P99MS                  int64
+	ExclusiveP50MS         int64
+	ExclusiveP95MS         int64
+	ExclusiveP99MS         int64
+	BaselineP95MS          int64
+	CurrentP95MS           int64
+	P95DeltaMS             int64
+	BaselineExclusiveP95MS int64
+	CurrentExclusiveP95MS  int64
+	ExclusiveP95DeltaMS    int64
+	RegressionFactor       float64
+	Regression             bool
+	BaselineErrorRatePct   float64
+	CurrentErrorRatePct    float64
+	ErrorRateDeltaPct      float64
 }
 
 // DebugCriticalPathHistoryView is the template-safe projection of bounded

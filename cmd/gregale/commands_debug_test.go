@@ -57,6 +57,7 @@ func TestCmdDebugDependencies_RendersRegressionAndSendsSince(t *testing.T) {
 			AppID: "app-1", Since: "24h", WindowStart: "2026-09-18T00:00:00Z", WindowEnd: "2026-09-19T00:00:00Z",
 			Complete: true, TelemetryRows: 20, RepresentedRequests: 20, SpanSamples: 20,
 			Dependencies: []api.DebugDependencyLatencyItem{{Type: "managed_binding", Kind: "managed_postgres", Name: "db.query", Calls: 20, ErrorRatePct: 5, P50MS: 100, P95MS: 300, P99MS: 300, BaselineP95MS: 100, CurrentP95MS: 300, P95DeltaMS: 200, RegressionFactor: 3, Regression: true}},
+			Edges:        []api.DebugDependencyImpactEdge{{From: api.DebugCriticalPathSegment{Type: "application", Name: "handler"}, To: api.DebugCriticalPathSegment{Type: "managed_binding", Kind: "managed_postgres", Name: "db.query"}, Calls: 20, ErrorRatePct: 5, P95MS: 300, ExclusiveP95MS: 280, CurrentExclusiveP95MS: 280, RegressionFactor: 3, Regression: true}},
 		})
 	}))
 	defer srv.Close()
@@ -75,7 +76,7 @@ func TestCmdDebugDependencies_RendersRegressionAndSendsSince(t *testing.T) {
 	if got.URL.Path != "/v1/apps/my-app/debug/dependencies" || got.URL.Query().Get("since") != "24h" {
 		t.Fatalf("request = %s?%s, want dependencies with since=24h", got.URL.Path, got.URL.RawQuery)
 	}
-	for _, want := range []string{"managed_postgres", "yes (3.00x)", "300ms", "result complete"} {
+	for _, want := range []string{"managed_postgres", "yes (3.00x)", "300ms", "Dependency impact edges", "handler", "result complete"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("dependency output missing %q:\n%s", want, stdout.String())
 		}

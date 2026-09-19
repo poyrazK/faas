@@ -108,8 +108,9 @@ def sync_detailed(
     caller owns from then on. The (metric, comparison,
     threshold, window_spec, default_cooldown_minutes)
     sextuple is pre-filled server-side; the caller supplies
-    only webhook_url + webhook_secret (the delivery channel)
-    and optional cooldown_minutes / enabled overrides.
+    webhook_url + webhook_secret (the delivery channel), an
+    optional safe-release action, and cooldown_minutes / enabled
+    overrides.
 
     Pre-loadApp gates fire in this order: 404 on missing
     preset → 400 alert_preset_disabled on disabled-in-catalog
@@ -127,7 +128,8 @@ def sync_detailed(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,8 +167,9 @@ def sync(
     caller owns from then on. The (metric, comparison,
     threshold, window_spec, default_cooldown_minutes)
     sextuple is pre-filled server-side; the caller supplies
-    only webhook_url + webhook_secret (the delivery channel)
-    and optional cooldown_minutes / enabled overrides.
+    webhook_url + webhook_secret (the delivery channel), an
+    optional safe-release action, and cooldown_minutes / enabled
+    overrides.
 
     Pre-loadApp gates fire in this order: 404 on missing
     preset → 400 alert_preset_disabled on disabled-in-catalog
@@ -184,7 +187,8 @@ def sync(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,8 +221,9 @@ async def asyncio_detailed(
     caller owns from then on. The (metric, comparison,
     threshold, window_spec, default_cooldown_minutes)
     sextuple is pre-filled server-side; the caller supplies
-    only webhook_url + webhook_secret (the delivery channel)
-    and optional cooldown_minutes / enabled overrides.
+    webhook_url + webhook_secret (the delivery channel), an
+    optional safe-release action, and cooldown_minutes / enabled
+    overrides.
 
     Pre-loadApp gates fire in this order: 404 on missing
     preset → 400 alert_preset_disabled on disabled-in-catalog
@@ -236,7 +241,8 @@ async def asyncio_detailed(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -272,8 +278,9 @@ async def asyncio(
     caller owns from then on. The (metric, comparison,
     threshold, window_spec, default_cooldown_minutes)
     sextuple is pre-filled server-side; the caller supplies
-    only webhook_url + webhook_secret (the delivery channel)
-    and optional cooldown_minutes / enabled overrides.
+    webhook_url + webhook_secret (the delivery channel), an
+    optional safe-release action, and cooldown_minutes / enabled
+    overrides.
 
     Pre-loadApp gates fire in this order: 404 on missing
     preset → 400 alert_preset_disabled on disabled-in-catalog
@@ -291,7 +298,8 @@ async def asyncio(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

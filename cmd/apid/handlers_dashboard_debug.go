@@ -195,7 +195,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		if dependencyRowsTruncated {
 			dependencyRows = dependencyRows[:debugDependencyHistoryMaxRows]
 		}
-		dependencies, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(dependencyRows, windowStart, windowEnd)
+		dependencies, edges, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(dependencyRows, windowStart, windowEnd)
 		dependencyTruncated := dependencyRowsTruncated || aggregationTruncated
 		data.DependencyHistory = dashboardDebugDependencyLatencyHistoryView(api.DebugDependencyLatencyResponse{
 			Since:               data.Since,
@@ -208,6 +208,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			RepresentedRequests: representedRequests,
 			SpanSamples:         spanSamples,
 			Dependencies:        dependencies,
+			Edges:               edges,
 		})
 		criticalPaths, pathTruncated, pathComplete, pathRepresentedRequests, pathSamples := buildDebugCriticalPathHistory(dependencyRows, windowStart, windowEnd)
 		pathTruncated = pathTruncated || dependencyRowsTruncated
@@ -495,26 +496,59 @@ func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLate
 		RepresentedRequests: response.RepresentedRequests,
 		SpanSamples:         response.SpanSamples,
 		Dependencies:        make([]dashboard.DebugDependencyLatencyHistoryItemView, 0, len(response.Dependencies)),
+		Edges:               make([]dashboard.DebugDependencyImpactEdgeView, 0, len(response.Edges)),
 	}
 	for _, dependency := range response.Dependencies {
 		view.Dependencies = append(view.Dependencies, dashboard.DebugDependencyLatencyHistoryItemView{
-			Type:                 dependency.Type,
-			Kind:                 dependency.Kind,
-			Name:                 dependency.Name,
-			Calls:                dependency.Calls,
-			ErrorCalls:           dependency.ErrorCalls,
-			ErrorRatePct:         dependency.ErrorRatePct,
-			P50MS:                dependency.P50MS,
-			P95MS:                dependency.P95MS,
-			P99MS:                dependency.P99MS,
-			BaselineP95MS:        dependency.BaselineP95MS,
-			CurrentP95MS:         dependency.CurrentP95MS,
-			P95DeltaMS:           dependency.P95DeltaMS,
-			RegressionFactor:     dependency.RegressionFactor,
-			Regression:           dependency.Regression,
-			BaselineErrorRatePct: dependency.BaselineErrorRatePct,
-			CurrentErrorRatePct:  dependency.CurrentErrorRatePct,
-			ErrorRateDeltaPct:    dependency.ErrorRateDeltaPct,
+			Type:                   dependency.Type,
+			Kind:                   dependency.Kind,
+			Name:                   dependency.Name,
+			Calls:                  dependency.Calls,
+			ErrorCalls:             dependency.ErrorCalls,
+			ErrorRatePct:           dependency.ErrorRatePct,
+			P50MS:                  dependency.P50MS,
+			P95MS:                  dependency.P95MS,
+			P99MS:                  dependency.P99MS,
+			ExclusiveP50MS:         dependency.ExclusiveP50MS,
+			ExclusiveP95MS:         dependency.ExclusiveP95MS,
+			ExclusiveP99MS:         dependency.ExclusiveP99MS,
+			BaselineP95MS:          dependency.BaselineP95MS,
+			CurrentP95MS:           dependency.CurrentP95MS,
+			P95DeltaMS:             dependency.P95DeltaMS,
+			BaselineExclusiveP95MS: dependency.BaselineExclusiveP95MS,
+			CurrentExclusiveP95MS:  dependency.CurrentExclusiveP95MS,
+			ExclusiveP95DeltaMS:    dependency.ExclusiveP95DeltaMS,
+			RegressionFactor:       dependency.RegressionFactor,
+			Regression:             dependency.Regression,
+			BaselineErrorRatePct:   dependency.BaselineErrorRatePct,
+			CurrentErrorRatePct:    dependency.CurrentErrorRatePct,
+			ErrorRateDeltaPct:      dependency.ErrorRateDeltaPct,
+		})
+	}
+	for _, edge := range response.Edges {
+		view.Edges = append(view.Edges, dashboard.DebugDependencyImpactEdgeView{
+			From:                   dashboard.DebugCriticalPathSegmentView{Type: edge.From.Type, Kind: edge.From.Kind, Name: edge.From.Name},
+			To:                     dashboard.DebugCriticalPathSegmentView{Type: edge.To.Type, Kind: edge.To.Kind, Name: edge.To.Name},
+			Calls:                  edge.Calls,
+			ErrorCalls:             edge.ErrorCalls,
+			ErrorRatePct:           edge.ErrorRatePct,
+			P50MS:                  edge.P50MS,
+			P95MS:                  edge.P95MS,
+			P99MS:                  edge.P99MS,
+			ExclusiveP50MS:         edge.ExclusiveP50MS,
+			ExclusiveP95MS:         edge.ExclusiveP95MS,
+			ExclusiveP99MS:         edge.ExclusiveP99MS,
+			BaselineP95MS:          edge.BaselineP95MS,
+			CurrentP95MS:           edge.CurrentP95MS,
+			P95DeltaMS:             edge.P95DeltaMS,
+			BaselineExclusiveP95MS: edge.BaselineExclusiveP95MS,
+			CurrentExclusiveP95MS:  edge.CurrentExclusiveP95MS,
+			ExclusiveP95DeltaMS:    edge.ExclusiveP95DeltaMS,
+			RegressionFactor:       edge.RegressionFactor,
+			Regression:             edge.Regression,
+			BaselineErrorRatePct:   edge.BaselineErrorRatePct,
+			CurrentErrorRatePct:    edge.CurrentErrorRatePct,
+			ErrorRateDeltaPct:      edge.ErrorRateDeltaPct,
 		})
 	}
 	return view

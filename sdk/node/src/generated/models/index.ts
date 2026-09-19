@@ -200,6 +200,7 @@ export type { DebugCriticalPathHistoryItem } from './DebugCriticalPathHistoryIte
 export type { DebugCriticalPathHistoryResponse } from './DebugCriticalPathHistoryResponse.js';
 export type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';
 export type { DebugCriticalPathSpan } from './DebugCriticalPathSpan.js';
+export type { DebugDependencyImpactEdge } from './DebugDependencyImpactEdge.js';
 export type { DebugDependencyLatencyItem } from './DebugDependencyLatencyItem.js';
 export type { DebugDependencyLatencyResponse } from './DebugDependencyLatencyResponse.js';
 export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';

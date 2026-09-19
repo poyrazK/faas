@@ -229,6 +229,8 @@ const (
 	debugDependencyHistoryMaxRows        = 2000
 	debugDependencyHistoryMaxGroups      = 256
 	debugDependencyHistoryMaxOutput      = 50
+	debugDependencyHistoryMaxEdgeGroups  = 512
+	debugDependencyHistoryMaxEdgeOutput  = 100
 	debugDependencyHistoryMinCalls       = int64(5)
 	debugDependencyRegressionFactor      = 1.5
 	debugDependencyRegressionDeltaMS     = int64(25)
@@ -284,7 +286,7 @@ func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Re
 	if truncated {
 		rows = rows[:debugDependencyHistoryMaxRows]
 	}
-	dependencies, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(rows, windowStart, now)
+	dependencies, edges, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(rows, windowStart, now)
 	truncated = truncated || aggregationTruncated
 	writeJSON(w, http.StatusOK, api.DebugDependencyLatencyResponse{
 		AppID:               app.ID,
@@ -298,6 +300,7 @@ func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Re
 		RepresentedRequests: representedRequests,
 		SpanSamples:         spanSamples,
 		Dependencies:        dependencies,
+		Edges:               edges,
 	})
 }
 
@@ -686,6 +689,7 @@ func debugCriticalPathDurationNanos(durationMS int64) uint64 {
 
 type debugDependencyHistorySample struct {
 	durationNanos       uint64
+	exclusiveNanos      uint64
 	weight              int64
 	isError             bool
 	requestID           string
@@ -697,10 +701,7 @@ type debugDependencyHistorySample struct {
 	dominantExclusiveMS int64
 }
 
-type debugDependencyHistoryAggregate struct {
-	dependencyType string
-	dependencyKind string
-	name           string
+type debugDependencyHistoryRollup struct {
 	all            []debugDependencyHistorySample
 	baseline       []debugDependencyHistorySample
 	current        []debugDependencyHistorySample
@@ -712,9 +713,44 @@ type debugDependencyHistoryAggregate struct {
 	currentErrors  int64
 }
 
-func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugDependencyLatencyItem, bool, int64, int64) {
+type debugDependencyHistoryAggregate struct {
+	dependencyType string
+	dependencyKind string
+	name           string
+	debugDependencyHistoryRollup
+}
+
+type debugDependencyImpactAggregate struct {
+	from api.DebugCriticalPathSegment
+	to   api.DebugCriticalPathSegment
+	debugDependencyHistoryRollup
+}
+
+type debugDependencyHistoryMetrics struct {
+	p50MS                  int64
+	p95MS                  int64
+	p99MS                  int64
+	exclusiveP50MS         int64
+	exclusiveP95MS         int64
+	exclusiveP99MS         int64
+	baselineP95MS          int64
+	currentP95MS           int64
+	p95DeltaMS             int64
+	baselineExclusiveP95MS int64
+	currentExclusiveP95MS  int64
+	exclusiveP95DeltaMS    int64
+	regressionFactor       float64
+	regression             bool
+	errorRatePct           float64
+	baselineErrorRatePct   float64
+	currentErrorRatePct    float64
+	errorRateDeltaPct      float64
+}
+
+func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugDependencyLatencyItem, []api.DebugDependencyImpactEdge, bool, int64, int64) {
 	cutover := windowStart.Add(windowEnd.Sub(windowStart) / 2)
 	aggregates := make(map[string]*debugDependencyHistoryAggregate)
+	edgeAggregates := make(map[string]*debugDependencyImpactAggregate)
 	truncated := false
 	var representedRequests int64
 	var spanSamples int64
@@ -728,51 +764,55 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 		truncated = truncated || spanTruncated
 		spanSamples += int64(len(spans))
 		isCurrent := row.ReceivedAt.Valid && !row.ReceivedAt.Time.Before(cutover)
-		for _, span := range spans {
-			dependencyType := span.DependencyType
-			if dependencyType == "" {
-				dependencyType = "application"
+		exclusives := debugDependencySpanExclusiveDurations(spans)
+		spanIndexes := make(map[string]int, len(spans))
+		for index, span := range spans {
+			if span.SpanID != "" {
+				spanIndexes[span.SpanID] = index
 			}
-			name := span.Name
-			if name == "" {
-				name = "<unnamed>"
-			}
-			key := dependencyType + "\x00" + span.DependencyKind + "\x00" + name
-			aggregate := aggregates[key]
+		}
+		for index, span := range spans {
+			to := debugDependencySegment(span)
+			nodeKey := debugDependencySegmentKey(to)
+			aggregate := aggregates[nodeKey]
 			if aggregate == nil {
 				if len(aggregates) >= debugDependencyHistoryMaxGroups {
 					truncated = true
-					continue
+				} else {
+					aggregate = &debugDependencyHistoryAggregate{
+						dependencyType: to.Type,
+						dependencyKind: to.Kind,
+						name:           to.Name,
+					}
+					aggregates[nodeKey] = aggregate
 				}
-				aggregate = &debugDependencyHistoryAggregate{
-					dependencyType: dependencyType,
-					dependencyKind: span.DependencyKind,
-					name:           name,
-				}
-				aggregates[key] = aggregate
 			}
 			sample := debugDependencyHistorySample{
-				durationNanos: minDebugDependencyDuration(span.DurationNanos),
-				weight:        weight,
-				isError:       strings.EqualFold(span.Status, "error"),
+				durationNanos:  minDebugDependencyDuration(span.DurationNanos),
+				exclusiveNanos: minDebugDependencyDuration(exclusives[index]),
+				weight:         weight,
+				isError:        strings.EqualFold(span.Status, "error"),
 			}
-			aggregate.all = append(aggregate.all, sample)
-			aggregate.calls += weight
-			if sample.isError {
-				aggregate.errors += weight
+			if aggregate != nil {
+				addDebugDependencyHistorySample(&aggregate.debugDependencyHistoryRollup, sample, isCurrent)
 			}
-			if isCurrent {
-				aggregate.current = append(aggregate.current, sample)
-				aggregate.currentCalls += weight
-				if sample.isError {
-					aggregate.currentErrors += weight
+
+			from := debugDependencyRootSegment()
+			if parentIndex, ok := spanIndexes[span.ParentSpanID]; ok && parentIndex != index {
+				from = debugDependencySegment(spans[parentIndex])
+			}
+			edgeKey := debugDependencySegmentKey(from) + "\x00" + nodeKey
+			edgeAggregate := edgeAggregates[edgeKey]
+			if edgeAggregate == nil {
+				if len(edgeAggregates) >= debugDependencyHistoryMaxEdgeGroups {
+					truncated = true
+				} else {
+					edgeAggregate = &debugDependencyImpactAggregate{from: from, to: to}
+					edgeAggregates[edgeKey] = edgeAggregate
 				}
-			} else {
-				aggregate.baseline = append(aggregate.baseline, sample)
-				aggregate.baselineCalls += weight
-				if sample.isError {
-					aggregate.baselineErrors += weight
-				}
+			}
+			if edgeAggregate != nil {
+				addDebugDependencyHistorySample(&edgeAggregate.debugDependencyHistoryRollup, sample, isCurrent)
 			}
 		}
 	}
@@ -783,38 +823,31 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 	}
 	out := make([]api.DebugDependencyLatencyItem, 0, len(ordered))
 	for _, aggregate := range ordered {
-		baselineP95 := debugWeightedDependencyPercentile(aggregate.baseline, 0.95)
-		currentP95 := debugWeightedDependencyPercentile(aggregate.current, 0.95)
-		p95Delta := currentP95 - baselineP95
-		factor := float64(0)
-		if baselineP95 > 0 {
-			factor = roundDebugDependencyFactor(float64(currentP95) / float64(baselineP95))
-		}
-		regression := aggregate.baselineCalls >= debugDependencyHistoryMinCalls &&
-			aggregate.currentCalls >= debugDependencyHistoryMinCalls &&
-			baselineP95 > 0 && currentP95 > 0 &&
-			factor >= debugDependencyRegressionFactor &&
-			p95Delta >= debugDependencyRegressionDeltaMS
-		baselineErrorRate := debugDependencyErrorRate(aggregate.baselineErrors, aggregate.baselineCalls)
-		currentErrorRate := debugDependencyErrorRate(aggregate.currentErrors, aggregate.currentCalls)
+		metrics := summarizeDebugDependencyHistory(&aggregate.debugDependencyHistoryRollup)
 		out = append(out, api.DebugDependencyLatencyItem{
-			Type:                 aggregate.dependencyType,
-			Kind:                 aggregate.dependencyKind,
-			Name:                 aggregate.name,
-			Calls:                aggregate.calls,
-			ErrorCalls:           aggregate.errors,
-			ErrorRatePct:         debugDependencyErrorRate(aggregate.errors, aggregate.calls),
-			P50MS:                debugWeightedDependencyPercentile(aggregate.all, 0.50),
-			P95MS:                debugWeightedDependencyPercentile(aggregate.all, 0.95),
-			P99MS:                debugWeightedDependencyPercentile(aggregate.all, 0.99),
-			BaselineP95MS:        baselineP95,
-			CurrentP95MS:         currentP95,
-			P95DeltaMS:           p95Delta,
-			RegressionFactor:     factor,
-			Regression:           regression,
-			BaselineErrorRatePct: baselineErrorRate,
-			CurrentErrorRatePct:  currentErrorRate,
-			ErrorRateDeltaPct:    currentErrorRate - baselineErrorRate,
+			Type:                   aggregate.dependencyType,
+			Kind:                   aggregate.dependencyKind,
+			Name:                   aggregate.name,
+			Calls:                  aggregate.calls,
+			ErrorCalls:             aggregate.errors,
+			ErrorRatePct:           metrics.errorRatePct,
+			P50MS:                  metrics.p50MS,
+			P95MS:                  metrics.p95MS,
+			P99MS:                  metrics.p99MS,
+			ExclusiveP50MS:         metrics.exclusiveP50MS,
+			ExclusiveP95MS:         metrics.exclusiveP95MS,
+			ExclusiveP99MS:         metrics.exclusiveP99MS,
+			BaselineP95MS:          metrics.baselineP95MS,
+			CurrentP95MS:           metrics.currentP95MS,
+			P95DeltaMS:             metrics.p95DeltaMS,
+			BaselineExclusiveP95MS: metrics.baselineExclusiveP95MS,
+			CurrentExclusiveP95MS:  metrics.currentExclusiveP95MS,
+			ExclusiveP95DeltaMS:    metrics.exclusiveP95DeltaMS,
+			RegressionFactor:       metrics.regressionFactor,
+			Regression:             metrics.regression,
+			BaselineErrorRatePct:   metrics.baselineErrorRatePct,
+			CurrentErrorRatePct:    metrics.currentErrorRatePct,
+			ErrorRateDeltaPct:      metrics.errorRateDeltaPct,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -839,7 +872,118 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 		out = out[:debugDependencyHistoryMaxOutput]
 		truncated = true
 	}
-	return out, truncated, representedRequests, spanSamples
+
+	edgeOut := make([]api.DebugDependencyImpactEdge, 0, len(edgeAggregates))
+	for _, aggregate := range edgeAggregates {
+		metrics := summarizeDebugDependencyHistory(&aggregate.debugDependencyHistoryRollup)
+		edgeOut = append(edgeOut, api.DebugDependencyImpactEdge{
+			From:                   aggregate.from,
+			To:                     aggregate.to,
+			Calls:                  aggregate.calls,
+			ErrorCalls:             aggregate.errors,
+			ErrorRatePct:           metrics.errorRatePct,
+			P50MS:                  metrics.p50MS,
+			P95MS:                  metrics.p95MS,
+			P99MS:                  metrics.p99MS,
+			ExclusiveP50MS:         metrics.exclusiveP50MS,
+			ExclusiveP95MS:         metrics.exclusiveP95MS,
+			ExclusiveP99MS:         metrics.exclusiveP99MS,
+			BaselineP95MS:          metrics.baselineP95MS,
+			CurrentP95MS:           metrics.currentP95MS,
+			P95DeltaMS:             metrics.p95DeltaMS,
+			BaselineExclusiveP95MS: metrics.baselineExclusiveP95MS,
+			CurrentExclusiveP95MS:  metrics.currentExclusiveP95MS,
+			ExclusiveP95DeltaMS:    metrics.exclusiveP95DeltaMS,
+			RegressionFactor:       metrics.regressionFactor,
+			Regression:             metrics.regression,
+			BaselineErrorRatePct:   metrics.baselineErrorRatePct,
+			CurrentErrorRatePct:    metrics.currentErrorRatePct,
+			ErrorRateDeltaPct:      metrics.errorRateDeltaPct,
+		})
+	}
+	sort.SliceStable(edgeOut, func(i, j int) bool {
+		if edgeOut[i].Regression != edgeOut[j].Regression {
+			return edgeOut[i].Regression
+		}
+		if edgeOut[i].CurrentP95MS != edgeOut[j].CurrentP95MS {
+			return edgeOut[i].CurrentP95MS > edgeOut[j].CurrentP95MS
+		}
+		if edgeOut[i].Calls != edgeOut[j].Calls {
+			return edgeOut[i].Calls > edgeOut[j].Calls
+		}
+		fromI := debugDependencySegmentKey(edgeOut[i].From)
+		fromJ := debugDependencySegmentKey(edgeOut[j].From)
+		if fromI != fromJ {
+			return fromI < fromJ
+		}
+		return debugDependencySegmentKey(edgeOut[i].To) < debugDependencySegmentKey(edgeOut[j].To)
+	})
+	if len(edgeOut) > debugDependencyHistoryMaxEdgeOutput {
+		edgeOut = edgeOut[:debugDependencyHistoryMaxEdgeOutput]
+		truncated = true
+	}
+	return out, edgeOut, truncated, representedRequests, spanSamples
+}
+
+func addDebugDependencyHistorySample(rollup *debugDependencyHistoryRollup, sample debugDependencyHistorySample, isCurrent bool) {
+	rollup.all = append(rollup.all, sample)
+	rollup.calls += sample.weight
+	if sample.isError {
+		rollup.errors += sample.weight
+	}
+	if isCurrent {
+		rollup.current = append(rollup.current, sample)
+		rollup.currentCalls += sample.weight
+		if sample.isError {
+			rollup.currentErrors += sample.weight
+		}
+		return
+	}
+	rollup.baseline = append(rollup.baseline, sample)
+	rollup.baselineCalls += sample.weight
+	if sample.isError {
+		rollup.baselineErrors += sample.weight
+	}
+}
+
+func summarizeDebugDependencyHistory(rollup *debugDependencyHistoryRollup) debugDependencyHistoryMetrics {
+	if rollup == nil {
+		return debugDependencyHistoryMetrics{}
+	}
+	baselineP95 := debugWeightedDependencyPercentile(rollup.baseline, 0.95)
+	currentP95 := debugWeightedDependencyPercentile(rollup.current, 0.95)
+	factor := float64(0)
+	if baselineP95 > 0 {
+		factor = roundDebugDependencyFactor(float64(currentP95) / float64(baselineP95))
+	}
+	baselineExclusiveP95 := debugWeightedDependencyExclusivePercentile(rollup.baseline, 0.95)
+	currentExclusiveP95 := debugWeightedDependencyExclusivePercentile(rollup.current, 0.95)
+	baselineErrorRate := debugDependencyErrorRate(rollup.baselineErrors, rollup.baselineCalls)
+	currentErrorRate := debugDependencyErrorRate(rollup.currentErrors, rollup.currentCalls)
+	return debugDependencyHistoryMetrics{
+		p50MS:                  debugWeightedDependencyPercentile(rollup.all, 0.50),
+		p95MS:                  debugWeightedDependencyPercentile(rollup.all, 0.95),
+		p99MS:                  debugWeightedDependencyPercentile(rollup.all, 0.99),
+		exclusiveP50MS:         debugWeightedDependencyExclusivePercentile(rollup.all, 0.50),
+		exclusiveP95MS:         debugWeightedDependencyExclusivePercentile(rollup.all, 0.95),
+		exclusiveP99MS:         debugWeightedDependencyExclusivePercentile(rollup.all, 0.99),
+		baselineP95MS:          baselineP95,
+		currentP95MS:           currentP95,
+		p95DeltaMS:             currentP95 - baselineP95,
+		baselineExclusiveP95MS: baselineExclusiveP95,
+		currentExclusiveP95MS:  currentExclusiveP95,
+		exclusiveP95DeltaMS:    currentExclusiveP95 - baselineExclusiveP95,
+		regressionFactor:       factor,
+		regression: rollup.baselineCalls >= debugDependencyHistoryMinCalls &&
+			rollup.currentCalls >= debugDependencyHistoryMinCalls &&
+			baselineP95 > 0 && currentP95 > 0 &&
+			factor >= debugDependencyRegressionFactor &&
+			currentP95-baselineP95 >= debugDependencyRegressionDeltaMS,
+		errorRatePct:         debugDependencyErrorRate(rollup.errors, rollup.calls),
+		baselineErrorRatePct: baselineErrorRate,
+		currentErrorRatePct:  currentErrorRate,
+		errorRateDeltaPct:    currentErrorRate - baselineErrorRate,
+	}
 }
 
 func minDebugDependencyDuration(duration uint64) uint64 {
@@ -848,6 +992,125 @@ func minDebugDependencyDuration(duration uint64) uint64 {
 		return maxDuration
 	}
 	return duration
+}
+
+func debugDependencySegment(span api.DebugTelemetrySpan) api.DebugCriticalPathSegment {
+	dependencyType := span.DependencyType
+	if dependencyType == "" {
+		dependencyType = "application"
+	}
+	name := span.Name
+	if name == "" {
+		name = "<unnamed>"
+	}
+	return api.DebugCriticalPathSegment{
+		Type: dependencyType,
+		Kind: span.DependencyKind,
+		Name: name,
+	}
+}
+
+func debugDependencyRootSegment() api.DebugCriticalPathSegment {
+	return api.DebugCriticalPathSegment{Type: "application", Name: "request"}
+}
+
+func debugDependencySegmentKey(segment api.DebugCriticalPathSegment) string {
+	return segment.Type + "\x00" + segment.Kind + "\x00" + segment.Name
+}
+
+type debugDependencyTimedSpan struct {
+	start int64
+	end   int64
+}
+
+type debugDependencyInterval struct {
+	start int64
+	end   int64
+}
+
+// debugDependencySpanExclusiveDurations computes wall time not covered by
+// overlapping direct children for every retained span. Invalid timestamps
+// fall back to the writer-provided duration, keeping the aggregate useful for
+// legacy evidence while the response remains explicitly sample-bounded.
+func debugDependencySpanExclusiveDurations(spans []api.DebugTelemetrySpan) []uint64 {
+	exclusive := make([]uint64, len(spans))
+	timed := make([]debugDependencyTimedSpan, len(spans))
+	valid := make([]bool, len(spans))
+	byID := make(map[string]int, len(spans))
+	for index, span := range spans {
+		exclusive[index] = minDebugDependencyDuration(span.DurationNanos)
+		start, startErr := time.Parse(time.RFC3339Nano, span.StartTime)
+		end, endErr := time.Parse(time.RFC3339Nano, span.EndTime)
+		if startErr != nil || endErr != nil || !end.After(start) {
+			continue
+		}
+		timed[index] = debugDependencyTimedSpan{start: start.UnixNano(), end: end.UnixNano()}
+		valid[index] = true
+		if span.SpanID != "" {
+			byID[span.SpanID] = index
+		}
+	}
+
+	children := make(map[int][]int, len(spans))
+	for index, span := range spans {
+		parentIndex, ok := byID[span.ParentSpanID]
+		if !ok || parentIndex == index || !valid[index] {
+			continue
+		}
+		children[parentIndex] = append(children[parentIndex], index)
+	}
+
+	for index, parent := range timed {
+		if !valid[index] {
+			continue
+		}
+		intervals := make([]debugDependencyInterval, 0, len(children[index]))
+		for _, childIndex := range children[index] {
+			if !valid[childIndex] {
+				continue
+			}
+			child := timed[childIndex]
+			start, end := child.start, child.end
+			if start < parent.start {
+				start = parent.start
+			}
+			if end > parent.end {
+				end = parent.end
+			}
+			if start < end {
+				intervals = append(intervals, debugDependencyInterval{start: start, end: end})
+			}
+		}
+		if len(intervals) == 0 {
+			exclusive[index] = minDebugDependencyDuration(uint64(parent.end - parent.start))
+			continue
+		}
+		sort.SliceStable(intervals, func(i, j int) bool {
+			if intervals[i].start != intervals[j].start {
+				return intervals[i].start < intervals[j].start
+			}
+			return intervals[i].end < intervals[j].end
+		})
+		covered := int64(0)
+		coveredStart, coveredEnd := intervals[0].start, intervals[0].end
+		for _, interval := range intervals[1:] {
+			if interval.start > coveredEnd {
+				covered += coveredEnd - coveredStart
+				coveredStart, coveredEnd = interval.start, interval.end
+				continue
+			}
+			if interval.end > coveredEnd {
+				coveredEnd = interval.end
+			}
+		}
+		covered += coveredEnd - coveredStart
+		value := parent.end - parent.start - covered
+		if value < 0 {
+			value = 0
+		}
+		exclusive[index] = minDebugDependencyDuration(uint64(value))
+	}
+	return exclusive
 }
 
 func debugWeightedDependencyPercentile(samples []debugDependencyHistorySample, quantile float64) int64 {
@@ -876,6 +1139,34 @@ func debugWeightedDependencyPercentile(samples []debugDependencyHistorySample, q
 		}
 	}
 	return int64(samples[len(samples)-1].durationNanos / uint64(time.Millisecond))
+}
+
+func debugWeightedDependencyExclusivePercentile(samples []debugDependencyHistorySample, quantile float64) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sort.SliceStable(samples, func(i, j int) bool {
+		return samples[i].exclusiveNanos < samples[j].exclusiveNanos
+	})
+	var total int64
+	for _, sample := range samples {
+		total += sample.weight
+	}
+	target := int64(float64(total) * quantile)
+	if float64(target) < float64(total)*quantile {
+		target++
+	}
+	if target < 1 {
+		target = 1
+	}
+	var cumulative int64
+	for _, sample := range samples {
+		cumulative += sample.weight
+		if cumulative >= target {
+			return int64(sample.exclusiveNanos / uint64(time.Millisecond))
+		}
+	}
+	return int64(samples[len(samples)-1].exclusiveNanos / uint64(time.Millisecond))
 }
 
 func debugDependencyErrorRate(errors, calls int64) float64 {

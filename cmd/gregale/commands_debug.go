@@ -812,17 +812,40 @@ func renderDebugDependencies(w io.Writer, resp api.DebugDependencyLatencyRespons
 	_, _ = fmt.Fprintf(w, "Dependency latency · window %s → %s\n", resp.WindowStart, resp.WindowEnd)
 	_, _ = fmt.Fprintf(w, "app %s · since %s · telemetry rows: %d · represented requests: %d · span samples: %d\n", resp.AppID, resp.Since, resp.TelemetryRows, resp.RepresentedRequests, resp.SpanSamples)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "REGRESSION\tTYPE\tKIND\tDEPENDENCY\tCALLS\tERROR_RATE\tP50\tP95\tP99\tBASE_P95\tCURRENT_P95\tDELTA")
+	_, _ = fmt.Fprintln(tw, "REGRESSION\tTYPE\tKIND\tDEPENDENCY\tCALLS\tERROR_RATE\tP50\tP95\tP99\tEXCL_P95\tCURRENT_EXCL\tEXCL_DELTA\tBASE_P95\tCURRENT_P95\tDELTA")
 	for _, dependency := range resp.Dependencies {
 		regression := ""
 		if dependency.Regression {
 			regression = fmt.Sprintf("yes (%.2fx)", dependency.RegressionFactor)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.2f%%\t%dms\t%dms\t%dms\t%dms\t%dms\t%dms\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.2f%%\t%dms\t%dms\t%dms\t%dms\t%dms\t%dms\t%dms\t%dms\t%dms\n",
 			regression, dependency.Type, dependency.Kind, dependency.Name, dependency.Calls, dependency.ErrorRatePct,
-			dependency.P50MS, dependency.P95MS, dependency.P99MS, dependency.BaselineP95MS, dependency.CurrentP95MS, dependency.P95DeltaMS)
+			dependency.P50MS, dependency.P95MS, dependency.P99MS, dependency.ExclusiveP95MS, dependency.CurrentExclusiveP95MS, dependency.ExclusiveP95DeltaMS,
+			dependency.BaselineP95MS, dependency.CurrentP95MS, dependency.P95DeltaMS)
 	}
 	_ = tw.Flush()
+	if len(resp.Edges) > 0 {
+		_, _ = fmt.Fprintln(w, "\nDependency impact edges")
+		edges := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(edges, "REGRESSION\tFROM\tTO\tCALLS\tERROR_RATE\tP95\tEXCL_P95\tCURRENT_EXCL\tEXCL_DELTA")
+		for _, edge := range resp.Edges {
+			regression := ""
+			if edge.Regression {
+				regression = fmt.Sprintf("yes (%.2fx)", edge.RegressionFactor)
+			}
+			from := edge.From.Type + "/" + edge.From.Name
+			if edge.From.Kind != "" {
+				from = from + " (" + edge.From.Kind + ")"
+			}
+			to := edge.To.Type + "/" + edge.To.Name
+			if edge.To.Kind != "" {
+				to = to + " (" + edge.To.Kind + ")"
+			}
+			_, _ = fmt.Fprintf(edges, "%s\t%s\t%s\t%d\t%.2f%%\t%dms\t%dms\t%dms\t%dms\n",
+				regression, from, to, edge.Calls, edge.ErrorRatePct, edge.P95MS, edge.ExclusiveP95MS, edge.CurrentExclusiveP95MS, edge.ExclusiveP95DeltaMS)
+		}
+		_ = edges.Flush()
+	}
 	if resp.RetentionClamped {
 		_, _ = fmt.Fprintln(w, "window clamped to the plan's telemetry retention")
 	}

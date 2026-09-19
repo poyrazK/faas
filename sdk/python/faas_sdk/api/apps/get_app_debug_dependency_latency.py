@@ -16,6 +16,7 @@ def _get_kwargs(
     *,
     since: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
+
     params: dict[str, Any] = {}
 
     json_since: None | str | Unset
@@ -98,7 +99,9 @@ def sync_detailed(
 
      Returns bounded dependency percentiles and error rates derived from
     retained, redacted span summaries. The result compares the newer and
-    older halves of the selected window to flag a dependency regression.
+    older halves of the selected window to flag a dependency regression,
+    and includes normalized parent-to-child impact edges with exclusive
+    wall-time percentiles.
     Raw span attributes, destinations, request bodies, and credentials
     are never returned. Span evidence is sampled and the response marks
     row/cardinality truncation explicitly. Plan-gated by
@@ -138,7 +141,9 @@ def sync(
 
      Returns bounded dependency percentiles and error rates derived from
     retained, redacted span summaries. The result compares the newer and
-    older halves of the selected window to flag a dependency regression.
+    older halves of the selected window to flag a dependency regression,
+    and includes normalized parent-to-child impact edges with exclusive
+    wall-time percentiles.
     Raw span attributes, destinations, request bodies, and credentials
     are never returned. Span evidence is sampled and the response marks
     row/cardinality truncation explicitly. Plan-gated by
@@ -173,7 +178,9 @@ async def asyncio_detailed(
 
      Returns bounded dependency percentiles and error rates derived from
     retained, redacted span summaries. The result compares the newer and
-    older halves of the selected window to flag a dependency regression.
+    older halves of the selected window to flag a dependency regression,
+    and includes normalized parent-to-child impact edges with exclusive
+    wall-time percentiles.
     Raw span attributes, destinations, request bodies, and credentials
     are never returned. Span evidence is sampled and the response marks
     row/cardinality truncation explicitly. Plan-gated by
@@ -211,7 +218,9 @@ async def asyncio(
 
      Returns bounded dependency percentiles and error rates derived from
     retained, redacted span summaries. The result compares the newer and
-    older halves of the selected window to flag a dependency regression.
+    older halves of the selected window to flag a dependency regression,
+    and includes normalized parent-to-child impact edges with exclusive
+    wall-time percentiles.
     Raw span attributes, destinations, request bodies, and credentials
     are never returned. Span evidence is sampled and the response marks
     row/cardinality truncation explicitly. Plan-gated by

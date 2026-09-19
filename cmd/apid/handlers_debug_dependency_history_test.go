@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -20,7 +21,7 @@ func TestBuildDebugDependencyLatencyHistoryDetectsRecentRegression(t *testing.T)
 		rows = append(rows, dependencyHistoryTestRow(start.Add(time.Hour+time.Duration(i)*time.Minute), 300, "error"))
 	}
 
-	got, truncated, represented, samples := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	got, edges, truncated, represented, samples := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
 	if truncated {
 		t.Fatal("unexpected truncation")
 	}
@@ -30,12 +31,18 @@ func TestBuildDebugDependencyLatencyHistoryDetectsRecentRegression(t *testing.T)
 	if len(got) != 1 {
 		t.Fatalf("got %d dependency groups, want one: %+v", len(got), got)
 	}
+	if len(edges) != 1 {
+		t.Fatalf("got %d dependency edges, want one root edge: %+v", len(edges), edges)
+	}
 	item := got[0]
 	if item.Type != "managed_binding" || item.Kind != "managed_postgres" {
 		t.Fatalf("dependency identity = %+v", item)
 	}
 	if item.P50MS != 100 || item.P95MS != 300 || item.P99MS != 300 {
 		t.Fatalf("full-window percentiles = %+v", item)
+	}
+	if item.ExclusiveP95MS != 300 || item.CurrentExclusiveP95MS != 300 || item.ExclusiveP95DeltaMS != 200 {
+		t.Fatalf("exclusive percentiles = %+v", item)
 	}
 	if item.BaselineP95MS != 100 || item.CurrentP95MS != 300 || item.P95DeltaMS != 200 {
 		t.Fatalf("split-window percentiles = %+v", item)
@@ -48,13 +55,82 @@ func TestBuildDebugDependencyLatencyHistoryDetectsRecentRegression(t *testing.T)
 	}
 }
 
+func TestBuildDebugDependencyLatencyHistoryBuildsNormalizedEdgesAndExclusiveTime(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	startNanos := uint64(start.UnixNano())
+	raw, err := json.Marshal([]debugEvidenceSpan{
+		{
+			SpanID:            "root",
+			Name:              "handler",
+			StartTimeUnixNano: startNanos,
+			EndTimeUnixNano:   uint64(start.Add(time.Second).UnixNano()),
+			DurationNanos:     uint64(time.Second),
+		},
+		{
+			SpanID:            "child-a",
+			ParentSpanID:      "root",
+			Name:              "service.binding",
+			StartTimeUnixNano: startNanos,
+			EndTimeUnixNano:   uint64(start.Add(600 * time.Millisecond).UnixNano()),
+			DurationNanos:     uint64(600 * time.Millisecond),
+			Attributes: map[string]string{
+				"gregale.dependency.type": "managed_binding",
+				"gregale.dependency.kind": "managed_postgres",
+			},
+		},
+		{
+			SpanID:            "child-b",
+			ParentSpanID:      "root",
+			Name:              "cache.get",
+			StartTimeUnixNano: uint64(start.Add(500 * time.Millisecond).UnixNano()),
+			EndTimeUnixNano:   uint64(start.Add(800 * time.Millisecond).UnixNano()),
+			DurationNanos:     uint64(300 * time.Millisecond),
+			Attributes: map[string]string{
+				"gregale.dependency.type": "platform_internal",
+				"gregale.dependency.kind": "kv",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := []sqlc.ListRequestTelemetryDependencySpansRow{{
+		Count:        1,
+		ReceivedAt:   pgtype.Timestamptz{Time: start.Add(time.Hour), Valid: true},
+		SpansSummary: raw,
+	}}
+
+	dependencies, edges, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if truncated || len(dependencies) != 3 || len(edges) != 3 {
+		t.Fatalf("rollup = (dependencies=%d edges=%d truncated=%v), want (3, 3, false)", len(dependencies), len(edges), truncated)
+	}
+	var handler api.DebugDependencyLatencyItem
+	for _, dependency := range dependencies {
+		if dependency.Name == "handler" {
+			handler = dependency
+		}
+	}
+	if handler.ExclusiveP95MS != 200 {
+		t.Fatalf("handler exclusive p95 = %d, want 200ms", handler.ExclusiveP95MS)
+	}
+	for _, edge := range edges {
+		if edge.From.Name == "handler" && edge.To.Name == "service.binding" {
+			if edge.ExclusiveP95MS != 600 || edge.From.Type != "application" || edge.To.Type != "managed_binding" {
+				t.Fatalf("binding edge = %+v", edge)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing normalized handler -> service.binding edge: %+v", edges)
+}
+
 func TestBuildDebugDependencyLatencyHistoryCapsGroupsAndUsesApplicationFallback(t *testing.T) {
 	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
 	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, debugDependencyHistoryMaxGroups+1)
 	for i := 0; i < debugDependencyHistoryMaxGroups+1; i++ {
 		rows = append(rows, dependencyHistoryTestRowWithName(start.Add(time.Minute), uint64(i+1), "ok", fmt.Sprintf("unique-%d", i)))
 	}
-	got, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	got, _, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
 	if !truncated || len(got) != debugDependencyHistoryMaxOutput {
 		t.Fatalf("cap = (groups=%d truncated=%v), want (%d, true)", len(got), truncated, debugDependencyHistoryMaxOutput)
 	}

@@ -5051,7 +5051,9 @@ paths:
       description: |
         Returns bounded dependency percentiles and error rates derived from
         retained, redacted span summaries. The result compares the newer and
-        older halves of the selected window to flag a dependency regression.
+        older halves of the selected window to flag a dependency regression,
+        and includes normalized parent-to-child impact edges with exclusive
+        wall-time percentiles.
         Raw span attributes, destinations, request bodies, and credentials
         are never returned. Span evidence is sampled and the response marks
         row/cardinality truncation explicitly. Plan-gated by
@@ -32202,11 +32204,45 @@ components:
         p50_ms: { type: integer, format: int64, minimum: 0 }
         p95_ms: { type: integer, format: int64, minimum: 0 }
         p99_ms: { type: integer, format: int64, minimum: 0 }
+        exclusive_p50_ms: { type: integer, format: int64, minimum: 0, description: "P50 wall time not covered by overlapping direct child spans." }
+        exclusive_p95_ms: { type: integer, format: int64, minimum: 0, description: "P95 wall time not covered by overlapping direct child spans." }
+        exclusive_p99_ms: { type: integer, format: int64, minimum: 0, description: "P99 wall time not covered by overlapping direct child spans." }
         baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
         current_p95_ms: { type: integer, format: int64, minimum: 0 }
         p95_delta_ms: { type: integer, format: int64 }
+        baseline_exclusive_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_exclusive_p95_ms: { type: integer, format: int64, minimum: 0 }
+        exclusive_p95_delta_ms: { type: integer, format: int64 }
         regression_factor: { type: number, minimum: 0 }
         regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and 25ms above baseline." }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_rate_delta_pct: { type: number }
+
+    DebugDependencyImpactEdge:
+      type: object
+      description: "Bounded normalized parent-to-child dependency edge reconstructed from retained redacted span links."
+      required: [from, to, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p50_ms, exclusive_p95_ms, exclusive_p99_ms, regression]
+      properties:
+        from: { $ref: '#/components/schemas/DebugCriticalPathSegment' }
+        to: { $ref: '#/components/schemas/DebugCriticalPathSegment' }
+        calls: { type: integer, format: int64, minimum: 1 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        p50_ms: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        p99_ms: { type: integer, format: int64, minimum: 0 }
+        exclusive_p50_ms: { type: integer, format: int64, minimum: 0 }
+        exclusive_p95_ms: { type: integer, format: int64, minimum: 0 }
+        exclusive_p99_ms: { type: integer, format: int64, minimum: 0 }
+        baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_p95_ms: { type: integer, format: int64, minimum: 0 }
+        p95_delta_ms: { type: integer, format: int64 }
+        baseline_exclusive_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_exclusive_p95_ms: { type: integer, format: int64, minimum: 0 }
+        exclusive_p95_delta_ms: { type: integer, format: int64 }
+        regression_factor: { type: number, minimum: 0 }
+        regression: { type: boolean }
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_delta_pct: { type: number }
@@ -32214,7 +32250,7 @@ components:
     DebugDependencyLatencyResponse:
       type: object
       description: "Historical dependency latency for one app. Raw span attributes and destinations are never exposed."
-      required: [app_id, since, window_start, window_end, retention_clamped, complete, truncated, telemetry_rows, represented_requests, span_samples, dependencies]
+      required: [app_id, since, window_start, window_end, retention_clamped, complete, truncated, telemetry_rows, represented_requests, span_samples, dependencies, edges]
       properties:
         app_id: { type: string, format: uuid }
         since: { type: string }
@@ -32230,6 +32266,10 @@ components:
           type: array
           maxItems: 50
           items: { $ref: '#/components/schemas/DebugDependencyLatencyItem' }
+        edges:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/DebugDependencyImpactEdge' }
 
     DebugCriticalPathSegment:
       type: object

@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
+    from ..models.debug_dependency_impact_edge import DebugDependencyImpactEdge
     from ..models.debug_dependency_latency_item import DebugDependencyLatencyItem
 
 
@@ -31,6 +32,7 @@ class DebugDependencyLatencyResponse:
     represented_requests: int
     span_samples: int
     dependencies: list[DebugDependencyLatencyItem]
+    edges: list[DebugDependencyImpactEdge]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +61,11 @@ class DebugDependencyLatencyResponse:
             dependencies_item = dependencies_item_data.to_dict()
             dependencies.append(dependencies_item)
 
+        edges = []
+        for edges_item_data in self.edges:
+            edges_item = edges_item_data.to_dict()
+            edges.append(edges_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +81,7 @@ class DebugDependencyLatencyResponse:
                 "represented_requests": represented_requests,
                 "span_samples": span_samples,
                 "dependencies": dependencies,
+                "edges": edges,
             }
         )
 
@@ -81,6 +89,7 @@ class DebugDependencyLatencyResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_dependency_impact_edge import DebugDependencyImpactEdge
         from ..models.debug_dependency_latency_item import DebugDependencyLatencyItem
 
         d = dict(src_dict)
@@ -111,6 +120,13 @@ class DebugDependencyLatencyResponse:
 
             dependencies.append(dependencies_item)
 
+        edges = []
+        _edges = d.pop("edges")
+        for edges_item_data in _edges:
+            edges_item = DebugDependencyImpactEdge.from_dict(edges_item_data)
+
+            edges.append(edges_item)
+
         debug_dependency_latency_response = cls(
             app_id=app_id,
             since=since,
@@ -123,6 +139,7 @@ class DebugDependencyLatencyResponse:
             represented_requests=represented_requests,
             span_samples=span_samples,
             dependencies=dependencies,
+            edges=edges,
         )
 
         debug_dependency_latency_response.additional_properties = d

@@ -103,7 +103,8 @@ def sync_detailed(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,7 +151,8 @@ def sync(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,7 +194,8 @@ async def asyncio_detailed(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -237,7 +240,8 @@ async def asyncio(
             presets/{name}/enable.
             The (name, metric, comparison, threshold, window_spec,
             default_cooldown_minutes) sextuple is pre-filled from the
-            catalog; the caller supplies only the delivery-side fields.
+            catalog; the caller supplies the delivery-side fields and an
+            optional safe-release action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -1,45 +1,38 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.debug_dependency_latency_item_type import (
-    DebugDependencyLatencyItemType,
-    check_debug_dependency_latency_item_type,
-)
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="DebugDependencyLatencyItem")
+if TYPE_CHECKING:
+    from ..models.debug_critical_path_segment import DebugCriticalPathSegment
+
+
+T = TypeVar("T", bound="DebugDependencyImpactEdge")
 
 
 @_attrs_define
-class DebugDependencyLatencyItem:
-    """Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from
-    sampled redacted spans.
+class DebugDependencyImpactEdge:
+    """Bounded normalized parent-to-child dependency edge reconstructed from retained redacted span links."""
 
-    """
-
-    type_: DebugDependencyLatencyItemType
-    name: str
+    from_: DebugCriticalPathSegment
+    """One redacted span identity in a canonical historical critical-path signature."""
+    to: DebugCriticalPathSegment
+    """One redacted span identity in a canonical historical critical-path signature."""
     calls: int
     error_calls: int
     error_rate_pct: float
     p50_ms: int
     p95_ms: int
     p99_ms: int
+    exclusive_p50_ms: int
+    exclusive_p95_ms: int
+    exclusive_p99_ms: int
     regression: bool
-    """True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and
-    25ms above baseline."""
-    kind: str | Unset = UNSET
-    exclusive_p50_ms: int | Unset = UNSET
-    """P50 wall time not covered by overlapping direct child spans."""
-    exclusive_p95_ms: int | Unset = UNSET
-    """P95 wall time not covered by overlapping direct child spans."""
-    exclusive_p99_ms: int | Unset = UNSET
-    """P99 wall time not covered by overlapping direct child spans."""
     baseline_p95_ms: int | Unset = UNSET
     current_p95_ms: int | Unset = UNSET
     p95_delta_ms: int | Unset = UNSET
@@ -53,9 +46,9 @@ class DebugDependencyLatencyItem:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        type_: str = self.type_
+        from_ = self.from_.to_dict()
 
-        name = self.name
+        to = self.to.to_dict()
 
         calls = self.calls
 
@@ -69,15 +62,13 @@ class DebugDependencyLatencyItem:
 
         p99_ms = self.p99_ms
 
-        regression = self.regression
-
-        kind = self.kind
-
         exclusive_p50_ms = self.exclusive_p50_ms
 
         exclusive_p95_ms = self.exclusive_p95_ms
 
         exclusive_p99_ms = self.exclusive_p99_ms
+
+        regression = self.regression
 
         baseline_p95_ms = self.baseline_p95_ms
 
@@ -103,25 +94,20 @@ class DebugDependencyLatencyItem:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
-                "name": name,
+                "from": from_,
+                "to": to,
                 "calls": calls,
                 "error_calls": error_calls,
                 "error_rate_pct": error_rate_pct,
                 "p50_ms": p50_ms,
                 "p95_ms": p95_ms,
                 "p99_ms": p99_ms,
+                "exclusive_p50_ms": exclusive_p50_ms,
+                "exclusive_p95_ms": exclusive_p95_ms,
+                "exclusive_p99_ms": exclusive_p99_ms,
                 "regression": regression,
             }
         )
-        if kind is not UNSET:
-            field_dict["kind"] = kind
-        if exclusive_p50_ms is not UNSET:
-            field_dict["exclusive_p50_ms"] = exclusive_p50_ms
-        if exclusive_p95_ms is not UNSET:
-            field_dict["exclusive_p95_ms"] = exclusive_p95_ms
-        if exclusive_p99_ms is not UNSET:
-            field_dict["exclusive_p99_ms"] = exclusive_p99_ms
         if baseline_p95_ms is not UNSET:
             field_dict["baseline_p95_ms"] = baseline_p95_ms
         if current_p95_ms is not UNSET:
@@ -147,10 +133,12 @@ class DebugDependencyLatencyItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        d = dict(src_dict)
-        type_ = check_debug_dependency_latency_item_type(d.pop("type"))
+        from ..models.debug_critical_path_segment import DebugCriticalPathSegment
 
-        name = d.pop("name")
+        d = dict(src_dict)
+        from_ = DebugCriticalPathSegment.from_dict(d.pop("from"))
+
+        to = DebugCriticalPathSegment.from_dict(d.pop("to"))
 
         calls = d.pop("calls")
 
@@ -164,15 +152,13 @@ class DebugDependencyLatencyItem:
 
         p99_ms = d.pop("p99_ms")
 
+        exclusive_p50_ms = d.pop("exclusive_p50_ms")
+
+        exclusive_p95_ms = d.pop("exclusive_p95_ms")
+
+        exclusive_p99_ms = d.pop("exclusive_p99_ms")
+
         regression = d.pop("regression")
-
-        kind = d.pop("kind", UNSET)
-
-        exclusive_p50_ms = d.pop("exclusive_p50_ms", UNSET)
-
-        exclusive_p95_ms = d.pop("exclusive_p95_ms", UNSET)
-
-        exclusive_p99_ms = d.pop("exclusive_p99_ms", UNSET)
 
         baseline_p95_ms = d.pop("baseline_p95_ms", UNSET)
 
@@ -194,20 +180,19 @@ class DebugDependencyLatencyItem:
 
         error_rate_delta_pct = d.pop("error_rate_delta_pct", UNSET)
 
-        debug_dependency_latency_item = cls(
-            type_=type_,
-            name=name,
+        debug_dependency_impact_edge = cls(
+            from_=from_,
+            to=to,
             calls=calls,
             error_calls=error_calls,
             error_rate_pct=error_rate_pct,
             p50_ms=p50_ms,
             p95_ms=p95_ms,
             p99_ms=p99_ms,
-            regression=regression,
-            kind=kind,
             exclusive_p50_ms=exclusive_p50_ms,
             exclusive_p95_ms=exclusive_p95_ms,
             exclusive_p99_ms=exclusive_p99_ms,
+            regression=regression,
             baseline_p95_ms=baseline_p95_ms,
             current_p95_ms=current_p95_ms,
             p95_delta_ms=p95_delta_ms,
@@ -220,8 +205,8 @@ class DebugDependencyLatencyItem:
             error_rate_delta_pct=error_rate_delta_pct,
         )
 
-        debug_dependency_latency_item.additional_properties = d
-        return debug_dependency_latency_item
+        debug_dependency_impact_edge.additional_properties = d
+        return debug_dependency_impact_edge
 
     @property
     def additional_keys(self) -> list[str]:

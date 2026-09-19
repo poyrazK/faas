@@ -192,19 +192,36 @@
           <p><strong>{{.Data.DependencyHistory.RepresentedRequests}}</strong> represented requests in <strong>{{.Data.DependencyHistory.TelemetryRows}}</strong> telemetry rows · <strong>{{.Data.DependencyHistory.SpanSamples}}</strong> span samples</p>
           {{if .Data.DependencyHistory.Dependencies}}
             <table class="coverage-table" aria-label="Historical dependency latency">
-              <thead><tr><th>Regression</th><th>Type</th><th>Kind</th><th>Dependency</th><th>Calls</th><th>Error rate</th><th>P50</th><th>P95</th><th>P99</th><th>Baseline P95</th><th>Current P95</th><th>Delta</th></tr></thead>
+              <thead><tr><th>Regression</th><th>Type</th><th>Kind</th><th>Dependency</th><th>Calls</th><th>Error rate</th><th>P50</th><th>P95</th><th>P99</th><th>Exclusive P95</th><th>Current exclusive</th><th>Exclusive Δ</th><th>Baseline P95</th><th>Current P95</th><th>Delta</th></tr></thead>
               <tbody>
                 {{range .Data.DependencyHistory.Dependencies}}
                   <tr>
                     <td>{{if .Regression}}<span class="badge regressed">yes · {{printf "%.2fx" .RegressionFactor}}</span>{{else}}<span class="badge ok">no</span>{{end}}</td>
                     <td>{{.Type}}</td><td>{{.Kind}}</td><td><code>{{.Name}}</code></td><td>{{.Calls}}</td><td>{{printf "%.2f%%" .ErrorRatePct}}</td>
-                    <td>{{.P50MS}} ms</td><td>{{.P95MS}} ms</td><td>{{.P99MS}} ms</td><td>{{.BaselineP95MS}} ms</td><td>{{.CurrentP95MS}} ms</td><td>{{.P95DeltaMS}} ms</td>
+                    <td>{{.P50MS}} ms</td><td>{{.P95MS}} ms</td><td>{{.P99MS}} ms</td><td>{{.ExclusiveP95MS}} ms</td><td>{{.CurrentExclusiveP95MS}} ms</td><td>{{.ExclusiveP95DeltaMS}} ms</td><td>{{.BaselineP95MS}} ms</td><td>{{.CurrentP95MS}} ms</td><td>{{.P95DeltaMS}} ms</td>
                   </tr>
                 {{end}}
               </tbody>
             </table>
           {{else}}
             <p class="empty muted">No dependency span evidence was retained in this window.</p>
+          {{end}}
+          {{if .Data.DependencyHistory.Edges}}
+            <h3>Dependency impact edges</h3>
+            <p class="muted">Normalized parent → child relationships reconstructed from retained span links. Exclusive P95 shows the child’s uncovered wall time.</p>
+            <table class="coverage-table" aria-label="Dependency impact edges">
+              <thead><tr><th>Regression</th><th>From</th><th>To</th><th>Calls</th><th>Error rate</th><th>P95</th><th>Exclusive P95</th><th>Current exclusive</th><th>Exclusive Δ</th></tr></thead>
+              <tbody>
+                {{range .Data.DependencyHistory.Edges}}
+                  <tr>
+                    <td>{{if .Regression}}<span class="badge regressed">yes · {{printf "%.2fx" .RegressionFactor}}</span>{{else}}<span class="badge ok">no</span>{{end}}</td>
+                    <td><code>{{.From.Name}}</code><br><small class="muted">{{.From.Type}}{{if .From.Kind}}/{{.From.Kind}}{{end}}</small></td>
+                    <td><code>{{.To.Name}}</code><br><small class="muted">{{.To.Type}}{{if .To.Kind}}/{{.To.Kind}}{{end}}</small></td>
+                    <td>{{.Calls}}</td><td>{{printf "%.2f%%" .ErrorRatePct}}</td><td>{{.P95MS}} ms</td><td>{{.ExclusiveP95MS}} ms</td><td>{{.CurrentExclusiveP95MS}} ms</td><td>{{.ExclusiveP95DeltaMS}} ms</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
           {{end}}
           {{if .Data.DependencyHistory.Truncated}}<p class="muted">The dependency history is truncated by the bounded row, span, or cardinality limits.</p>{{end}}
           <p class="muted">CLI view: <code>gregale debug dependencies {{.Data.AppSlug}} --since {{.Data.DependencyHistory.Since}}</code></p>
