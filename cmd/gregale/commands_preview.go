@@ -44,7 +44,7 @@ func previewSummaryFromApp(app api.AppResponse, deployment *api.DeploymentRespon
 		Kind:       "developer",
 		PRState:    app.PreviewPRState,
 		AppStatus:  app.Status,
-		URL:        app.URL,
+		URL:        canonicalAppURL(app),
 		ExpiresAt:  app.PreviewExpiresAt,
 	}
 	if item.PRNumber > 0 {

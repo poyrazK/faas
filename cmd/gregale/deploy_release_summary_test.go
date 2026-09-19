@@ -74,6 +74,34 @@ func TestRenderSuccessfulDeploymentIncludesReleaseSummary(t *testing.T) {
 	}
 }
 
+func TestRenderSuccessfulDeploymentUsesCanonicalAppURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive})
+		case "/v1/apps/my-app":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{
+				Slug: "my-app", URL: "https://my-app.gregale.dev", CanonicalURL: "https://custom.example.com",
+			})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+
+	if code := renderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive}, "my-app"); code != 0 {
+		t.Fatalf("renderSuccessfulDeployment exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "Deployed. https://custom.example.com") {
+		t.Errorf("deploy output missing canonical URL\nfull output:\n%s", out.String())
+	}
+}
+
 func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
