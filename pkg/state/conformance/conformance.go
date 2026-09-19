@@ -100,7 +100,7 @@ func Run(t *testing.T, open Open) {
 func testQueueBindingState(t *testing.T, fx *Fixture) {
 	now := time.Now().UTC()
 	for _, inv := range []state.Invocation{
-		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "orders", State: state.InvocationPending, DueAt: now, CreatedAt: now.Add(-time.Minute)},
+		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "orders", State: state.InvocationPending, Headers: []byte(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736"}`), DueAt: now, CreatedAt: now.Add(-time.Minute)},
 		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "payments", State: state.InvocationPending, DueAt: now, CreatedAt: now.Add(-2 * time.Minute)},
 		{AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue, QueueName: "orders", State: state.InvocationDeadLetter, DueAt: now, CreatedAt: now.Add(-30 * time.Second)},
 	} {
@@ -121,6 +121,13 @@ func testQueueBindingState(t *testing.T, fx *Fixture) {
 	}
 	if payments.Depth != 1 || payments.DeadLetter != 0 {
 		t.Fatalf("payments queue stats = %+v, want depth=1 dead_letter=0", payments)
+	}
+	traceRows, err := fx.Store.ListInvocationsByTraceID(fx.Ctx, fx.Account.ID, "4bf92f3577b34da6a3ce929d0e0e4736", 10)
+	if err != nil {
+		t.Fatalf("ListInvocationsByTraceID: %v", err)
+	}
+	if len(traceRows) != 1 || traceRows[0].QueueName != "orders" {
+		t.Fatalf("trace queue rows = %+v, want one orders row", traceRows)
 	}
 }
 
