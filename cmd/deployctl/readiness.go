@@ -11,18 +11,67 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
-// serviceListenConfig is the common listen portion of the vmmd/schedd TOML
-// files. Both daemons support a Unix socket for a one-box install and a TCP
-// listener for a split deployment. deployctl must probe the address the
-// daemon actually binds, not the single-box default in daemonunitspec.Registry.
+// serviceListenConfig is the common readiness-related portion of daemon TOML
+// files. vmmd/schedd support a role-specific main listener, while all four
+// compute lifecycle daemons expose dependency-aware readiness beside metrics.
+// deployctl must probe the address the daemon actually binds, not the
+// single-box default in daemonunitspec.Registry.
 type serviceListenConfig struct {
-	SocketPath string `toml:"socket_path"`
-	ListenAddr string `toml:"listen_addr"`
+	SocketPath  string `toml:"socket_path"`
+	ListenAddr  string `toml:"listen_addr"`
+	MetricsAddr string `toml:"metrics_addr"`
 }
 
 var serviceConfigPaths = map[string]string{
-	"vmmd":   "/etc/faas/vmmd.toml",
-	"schedd": "/etc/faas/schedd.toml",
+	"vmmd":     "/etc/faas/vmmd.toml",
+	"schedd":   "/etc/faas/schedd.toml",
+	"imaged":   "/etc/faas/imaged.toml",
+	"builderd": "/etc/faas/builderd.toml",
+}
+
+// configuredReadinessURLForService returns the dependency-aware readiness URL
+// that the daemon actually exposes on this host. Compute-node metrics listeners
+// bind the private fleet address rather than loopback, so the static registry
+// URL is not authoritative for these services.
+func configuredReadinessURLForService(service string) (string, bool, error) {
+	path, ok := serviceConfigPaths[service]
+	if !ok {
+		return "", false, nil
+	}
+	config := serviceListenConfig{}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read readiness config %s: %w", path, err)
+	}
+	if err := toml.Unmarshal(body, &config); err != nil {
+		return "", false, fmt.Errorf("parse readiness config %s: %w", path, err)
+	}
+	if strings.TrimSpace(config.MetricsAddr) == "" {
+		return "", false, nil
+	}
+	address, err := readinessURLForMetricsTarget(config.MetricsAddr)
+	if err != nil {
+		return "", false, fmt.Errorf("readiness config %s: %w", path, err)
+	}
+	return address, true, nil
+}
+
+func readinessURLForMetricsTarget(target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if strings.Contains(target, "://") {
+		return "", fmt.Errorf("metrics address must be host:port, got %q", target)
+	}
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", fmt.Errorf("invalid metrics address %q: %w", target, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/readyz", nil
 }
 
 // readinessProbeForService resolves the runtime probe for a daemon. Configured

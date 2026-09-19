@@ -599,6 +599,11 @@ func (r hostRuntime) waitReady(ctx context.Context, service string) error {
 	if r.waitReadyOverride != nil {
 		return r.waitReadyOverride(ctx, service)
 	}
+	if address, configured, err := configuredReadinessURLForService(service); err != nil {
+		return err
+	} else if configured {
+		return r.waitHTTP(ctx, address)
+	}
 	if entry, ok := daemonEntry(service); ok && entry.Lifecycle.ReadyzURL != "" {
 		return r.waitHTTP(ctx, entry.Lifecycle.ReadyzURL)
 	}

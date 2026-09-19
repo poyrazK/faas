@@ -7,9 +7,9 @@
 //   3. signal the cloud-specific image-rollout mechanism (hcloud /
 //      amazon-ebs / bare-metal — each is its own .sh wrapper)
 //   4. wait for the new VM to come up
-//   5. poll every Lifecycle.ReadyzURL in pkg/daemonunitspec.Registry IN
-//      ORDER; fail-closed if any dependency-aware readiness check reports
-//      not-ready past readyTimeout. Transport probes remain the fallback.
+//   5. poll every compute-role daemon in dependency order; fail-closed if
+//      any dependency-aware readiness check reports not-ready past
+//      readyTimeout. Transport probes remain the fallback.
 //   6. submit the authenticated activation intent ONLY after every probe passes
 //
 // The orchestrator runs the probe on the target box over SSH so a loopback
@@ -209,17 +209,21 @@ func runCloudRollout(ctx context.Context, a *upgradeArgs) error {
 	return cmd.Run()
 }
 
-// waitForReady polls every Lifecycle.ReadyzURL in
-// pkg/daemonunitspec.Registry IN REGISTRATION ORDER until every entry
-// reports ready. The probes run against the TARGET box (a.node),
-// not the operator's host — every probe is wrapped in an ssh hop.
+// waitForReady polls every compute-role daemon in registration order until
+// every entry reports ready. The probes run against the TARGET box (a.node),
+// not the operator's host — every probe is wrapped in an ssh hop. Control-plane
+// only daemons must not gate a compute image that does not contain them.
 //
 // Each sshExec invokes the canonical readiness check on the remote box;
 // the gate is on the box being upgraded, not the operator's box
 // (PR #929 review-fix M5).
 func waitForReady(ctx context.Context, a *upgradeArgs) error {
 	deadline := time.Now().Add(a.readyTimeout)
-	for _, entry := range daemonunitspec.Registry {
+	entries, err := upgradeReadyEntries()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ready gate: deadline exceeded before %s", entry.Name)
 		}
@@ -228,6 +232,19 @@ func waitForReady(ctx context.Context, a *upgradeArgs) error {
 		}
 	}
 	return nil
+}
+
+func upgradeReadyEntries() ([]daemonunitspec.Entry, error) {
+	names := daemonunitspec.DaemonsForRole(daemonunitspec.RoleComputeOnly)
+	entries := make([]daemonunitspec.Entry, 0, len(names))
+	for _, name := range names {
+		entry, ok := daemonEntry(name)
+		if !ok {
+			return nil, fmt.Errorf("compute readiness registry entry %q not found", name)
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 // waitOneReadyOnTarget probes entry.Lifecycle.ReadyzURL on the TARGET box
@@ -246,29 +263,9 @@ func waitOneReadyOnTarget(ctx context.Context, a *upgradeArgs, entry daemonunits
 	}
 	deadline := time.Now().Add(timeout)
 
-	var probeCmd string
-	if entry.Lifecycle.ReadyzURL != "" {
-		// Registry-owned URLs are fixed loopback endpoints, so quoting the
-		// complete URL keeps the remote shell boundary explicit without
-		// allowing a future URL edit to become shell syntax.
-		probeCmd = fmt.Sprintf("curl --fail --silent --show-error --max-time 2 %q >/dev/null", entry.Lifecycle.ReadyzURL)
-	} else {
-		switch entry.Lifecycle.Probe {
-		case daemonunitspec.ProbeUnix:
-			probeCmd = fmt.Sprintf("test -S %s", entry.Lifecycle.ProbeTarget)
-		case daemonunitspec.ProbeTCP:
-			// ProbeTarget is host:port. Re-target localhost loopback since
-			// the ssh session is already inside the box.
-			_, port, splitErr := net.SplitHostPort(entry.Lifecycle.ProbeTarget)
-			if splitErr != nil {
-				return fmt.Errorf("daemon %s: bad tcp probe %q: %w", entry.Name, entry.Lifecycle.ProbeTarget, splitErr)
-			}
-			probeCmd = fmt.Sprintf("bash -c 'echo > /dev/tcp/127.0.0.1/%s'", port)
-		case daemonunitspec.ProbeSystemd:
-			probeCmd = fmt.Sprintf("systemctl is-active faas-%s.service", entry.Name)
-		default:
-			return fmt.Errorf("unknown readiness probe for %s", entry.Name)
-		}
+	probeCmd, err := targetReadinessProbeCommand(entry)
+	if err != nil {
+		return err
 	}
 
 	for time.Now().Before(deadline) {
@@ -286,6 +283,37 @@ func waitOneReadyOnTarget(ctx context.Context, a *upgradeArgs, entry daemonunits
 		return fmt.Errorf("daemon %s /readyz not ready within %s", entry.Name, timeout)
 	}
 	return fmt.Errorf("daemon %s probe %s not ready within %s", entry.Name, entry.Lifecycle.Probe, timeout)
+}
+
+func targetReadinessProbeCommand(entry daemonunitspec.Entry) (string, error) {
+	if configPath, ok := serviceConfigPaths[entry.Name]; ok {
+		// The compute roles bind metrics/readiness to their private fleet
+		// address. Parse the same TOML the daemon consumes on the target so
+		// the gate cannot accidentally probe an unused loopback address.
+		return fmt.Sprintf(
+			`addr="$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("metrics_addr", ""))' %q)" && test -n "$addr" && curl --fail --silent --show-error --max-time 2 "http://${addr}/readyz" >/dev/null`,
+			configPath,
+		), nil
+	}
+	if entry.Lifecycle.ReadyzURL != "" {
+		return fmt.Sprintf("curl --fail --silent --show-error --max-time 2 %q >/dev/null", entry.Lifecycle.ReadyzURL), nil
+	}
+	switch entry.Lifecycle.Probe {
+	case daemonunitspec.ProbeUnix:
+		return fmt.Sprintf("test -S %s", entry.Lifecycle.ProbeTarget), nil
+	case daemonunitspec.ProbeTCP:
+		// ProbeTarget is host:port. Re-target localhost loopback since the
+		// ssh session is already inside the box.
+		_, port, err := net.SplitHostPort(entry.Lifecycle.ProbeTarget)
+		if err != nil {
+			return "", fmt.Errorf("daemon %s: bad tcp probe %q: %w", entry.Name, entry.Lifecycle.ProbeTarget, err)
+		}
+		return fmt.Sprintf("bash -c 'echo > /dev/tcp/127.0.0.1/%s'", port), nil
+	case daemonunitspec.ProbeSystemd:
+		return fmt.Sprintf("systemctl is-active faas-%s.service", entry.Name), nil
+	default:
+		return "", fmt.Errorf("unknown readiness probe for %s", entry.Name)
+	}
 }
 
 // sshProbeTarget invokes probeCmd on the target box via ssh. The
