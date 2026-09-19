@@ -102,6 +102,76 @@ func TestParseDebugEvidenceSpansMalformedIsEmpty(t *testing.T) {
 	}
 }
 
+func TestParseDebugEvidenceSpansPreservesTiming(t *testing.T) {
+	start := time.Date(2026, 9, 19, 12, 0, 0, 123000000, time.UTC)
+	end := start.Add(42 * time.Millisecond)
+	raw, err := json.Marshal([]debugEvidenceSpan{{
+		SpanID:            "timed",
+		StartTimeUnixNano: uint64(start.UnixNano()),
+		EndTimeUnixNano:   uint64(end.UnixNano()),
+		DurationNanos:     uint64(end.Sub(start)),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spans, truncated := parseDebugEvidenceSpans(raw)
+	if truncated || len(spans) != 1 {
+		t.Fatalf("timed spans = (%v, %v), want one span", spans, truncated)
+	}
+	if spans[0].StartTime != start.Format(time.RFC3339Nano) || spans[0].EndTime != end.Format(time.RFC3339Nano) {
+		t.Fatalf("timing = (%q, %q), want (%q, %q)", spans[0].StartTime, spans[0].EndTime, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))
+	}
+}
+
+func TestBuildDebugWaterfallOrdersAndNests(t *testing.T) {
+	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	spans := []api.DebugTelemetrySpan{
+		{
+			SpanID:        "child",
+			ParentSpanID:  "root",
+			Name:          "db.query",
+			StartTime:     base.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
+			EndTime:       base.Add(45 * time.Millisecond).Format(time.RFC3339Nano),
+			DurationNanos: uint64(25 * time.Millisecond),
+		},
+		{
+			SpanID:        "root",
+			Name:          "request",
+			StartTime:     base.Format(time.RFC3339Nano),
+			EndTime:       base.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+			DurationNanos: uint64(100 * time.Millisecond),
+		},
+	}
+
+	got, complete := buildDebugWaterfall(spans)
+	if !complete || len(got) != 2 {
+		t.Fatalf("waterfall = (%+v, %v), want two complete spans", got, complete)
+	}
+	if got[0].SpanID != "root" || got[1].SpanID != "child" || got[1].Depth != 1 {
+		t.Fatalf("waterfall order/depth = %+v", got)
+	}
+	if got[1].OffsetPct != "20.00" || got[1].WidthPct != "25.00" {
+		t.Fatalf("child geometry = (%q, %q), want (20.00, 25.00)", got[1].OffsetPct, got[1].WidthPct)
+	}
+}
+
+func TestBuildDebugWaterfallMarksPartialMissingTiming(t *testing.T) {
+	spans := []api.DebugTelemetrySpan{
+		{
+			SpanID:    "timed",
+			StartTime: "2026-09-19T12:00:00Z",
+			EndTime:   "2026-09-19T12:00:00.010Z",
+		},
+		{SpanID: "untimed"},
+	}
+
+	got, complete := buildDebugWaterfall(spans)
+	if complete || len(got) != 1 || got[0].SpanID != "timed" {
+		t.Fatalf("partial waterfall = (%+v, %v), want one incomplete span", got, complete)
+	}
+}
+
 func TestBuildDebugEvidenceExplanation(t *testing.T) {
 	request := api.DebugTelemetryRequestItem{Route: "/checkout"}
 	regression := &api.DebugRegressionItem{DeploymentID: "dep", Factor: "1.50", P95MS: 300, P95BaseMS: 200}

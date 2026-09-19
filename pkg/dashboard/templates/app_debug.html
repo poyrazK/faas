@@ -43,6 +43,15 @@
     .explanation { padding: 0.65rem 0.8rem; background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 4px; }
     .span-table { font-size: 0.9rem; }
     .span-table td:nth-child(3) { white-space: nowrap; }
+    .waterfall { display: grid; gap: 0.35rem; font-size: 0.85rem; }
+    .waterfall-scale, .waterfall-row { display: grid; grid-template-columns: minmax(15rem, 24rem) minmax(12rem, 1fr) 5rem; gap: 0.6rem; align-items: center; }
+    .waterfall-scale { color: #6b7280; font-size: 0.75rem; }
+    .waterfall-scale span:last-child { text-align: right; }
+    .waterfall-track { height: 1.25rem; border-radius: 4px; background: repeating-linear-gradient(90deg, transparent, transparent calc(25% - 1px), #e5e7eb calc(25% - 1px), #e5e7eb 25%); }
+    .waterfall-bar { display: block; height: 100%; min-width: 0.2rem; border-radius: 4px; background: #2563eb; }
+    .waterfall-bar.error { background: #dc2626; }
+    .waterfall-label { overflow-wrap: anywhere; }
+    .waterfall-duration { white-space: nowrap; text-align: right; }
     .empty { padding: 1rem 0; }
   </style>
 </head>
@@ -397,6 +406,25 @@
             </table>
           {{else}}
             <p class="muted">No timeline markers were retained for this request.</p>
+          {{end}}
+          <h3>Trace waterfall</h3>
+          {{if .Data.Selected.Waterfall}}
+            <p class="muted">Chronological span timing reconstructed from retained parent links. Bars are relative to the earliest retained span; red bars ended with an error.</p>
+            <div class="waterfall" aria-label="Request trace waterfall">
+              <div class="waterfall-scale"><span>earliest retained span</span><span>latest retained span</span><span></span></div>
+              {{range .Data.Selected.Waterfall}}
+                <div class="waterfall-row">
+                  <div class="waterfall-label" style="padding-left: {{.Depth}}rem"><code>{{.Name}}</code> <span class="badge">{{.Kind}}</span>{{if .ParentSpanID}} <small class="muted">parent <code>{{.ParentSpanID}}</code></small>{{end}}</div>
+                  <div class="waterfall-track"><span class="waterfall-bar{{if eq .Status "error"}} error{{end}}" style="margin-left: {{.OffsetPct}}%; width: {{.WidthPct}}%;" title="{{.StartTime}} → {{.EndTime}}"></span></div>
+                  <div class="waterfall-duration">{{.DurationMS}} ms</div>
+                </div>
+              {{end}}
+            </div>
+            {{if not .Data.Selected.WaterfallComplete}}<p class="muted">The waterfall is partial because the retained span sample was capped or one span lacked timing metadata.</p>{{end}}
+          {{else if .Data.Selected.Spans}}
+            <p class="empty muted">Span evidence was retained, but timing metadata was unavailable for the waterfall.</p>
+          {{else}}
+            <p class="empty muted">No linked OTel spans were captured for this request.</p>
           {{end}}
           <h3>Span evidence</h3>
           {{if .Data.Selected.Spans}}

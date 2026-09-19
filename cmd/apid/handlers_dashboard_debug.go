@@ -925,6 +925,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			SpanID:      span.SpanID,
 		})
 	}
+	waterfall, waterfallComplete := buildDebugWaterfall(spans)
 	dependencyLatency, dependencyLatencyTruncated := buildDebugDependencyLatency(spans)
 	dependencyViews := make([]dashboard.DebugDependencyLatencyView, 0, len(dependencyLatency))
 	for _, dependency := range dependencyLatency {
@@ -1034,6 +1035,8 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		Timeline:                   timelineViews,
 		Correlation:                correlationViews,
 		CorrelationComplete:        correlation.Complete,
+		Waterfall:                  waterfall,
+		WaterfallComplete:          waterfallComplete && !truncated,
 		DependencyLatency:          dependencyViews,
 		DependencyLatencyTruncated: dependencyLatencyTruncated,
 		Spans:                      spanViews,
@@ -1045,6 +1048,140 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		GeneratedAt:                now.Format(time.RFC3339),
 	}
 	return nil
+}
+
+func buildDebugWaterfall(spans []api.DebugTelemetrySpan) ([]dashboard.DebugWaterfallSpanView, bool) {
+	type timedSpan struct {
+		span       api.DebugTelemetrySpan
+		start      time.Time
+		end        time.Time
+		depth      int
+		offsetPct  string
+		widthPct   string
+		durationMS int64
+	}
+
+	if len(spans) == 0 {
+		return []dashboard.DebugWaterfallSpanView{}, true
+	}
+	timed := make([]timedSpan, 0, len(spans))
+	complete := true
+	for _, span := range spans {
+		start, startErr := time.Parse(time.RFC3339Nano, span.StartTime)
+		end, endErr := time.Parse(time.RFC3339Nano, span.EndTime)
+		if startErr != nil || endErr != nil || end.Before(start) {
+			complete = false
+			continue
+		}
+		duration := end.Sub(start)
+		if span.DurationNanos > 0 {
+			duration = time.Duration(span.DurationNanos)
+		}
+		if duration < 0 {
+			duration = 0
+		}
+		timed = append(timed, timedSpan{
+			span:       span,
+			start:      start,
+			end:        end,
+			durationMS: int64(duration / time.Millisecond),
+		})
+	}
+	if len(timed) == 0 {
+		return []dashboard.DebugWaterfallSpanView{}, false
+	}
+	sort.SliceStable(timed, func(i, j int) bool {
+		if !timed[i].start.Equal(timed[j].start) {
+			return timed[i].start.Before(timed[j].start)
+		}
+		if !timed[i].end.Equal(timed[j].end) {
+			return timed[i].end.After(timed[j].end)
+		}
+		return timed[i].span.SpanID < timed[j].span.SpanID
+	})
+
+	traceStart := timed[0].start
+	traceEnd := timed[0].end
+	for _, span := range timed[1:] {
+		if span.start.Before(traceStart) {
+			traceStart = span.start
+		}
+		if span.end.After(traceEnd) {
+			traceEnd = span.end
+		}
+	}
+	total := traceEnd.Sub(traceStart)
+	if total <= 0 {
+		total = time.Millisecond
+	}
+	byID := make(map[string]string, len(timed))
+	for _, span := range timed {
+		byID[span.span.SpanID] = span.span.ParentSpanID
+	}
+	for i := range timed {
+		depth := 0
+		current := timed[i].span.SpanID
+		seen := map[string]struct{}{}
+		for {
+			parent := byID[current]
+			if parent == "" {
+				break
+			}
+			if _, ok := seen[parent]; ok {
+				complete = false
+				break
+			}
+			seen[parent] = struct{}{}
+			if _, ok := byID[parent]; !ok {
+				complete = false
+				break
+			}
+			depth++
+			current = parent
+			if depth >= 32 {
+				complete = false
+				break
+			}
+		}
+		offset := timed[i].start.Sub(traceStart)
+		width := timed[i].end.Sub(timed[i].start)
+		offsetPct := float64(offset) / float64(total) * 100
+		widthPct := float64(width) / float64(total) * 100
+		if offsetPct < 0 {
+			offsetPct = 0
+		}
+		if offsetPct > 100 {
+			offsetPct = 100
+		}
+		if widthPct > 100 {
+			widthPct = 100
+		}
+		if width > 0 && widthPct < 0.5 {
+			widthPct = 0.5
+		}
+		timed[i].depth = depth
+		timed[i].offsetPct = fmt.Sprintf("%.2f", offsetPct)
+		timed[i].widthPct = fmt.Sprintf("%.2f", widthPct)
+	}
+
+	views := make([]dashboard.DebugWaterfallSpanView, 0, len(timed))
+	for _, span := range timed {
+		views = append(views, dashboard.DebugWaterfallSpanView{
+			Name:         span.span.Name,
+			Kind:         span.span.Kind,
+			Status:       span.span.Status,
+			DBStatement:  span.span.DBStatement,
+			SpanID:       span.span.SpanID,
+			ParentSpanID: span.span.ParentSpanID,
+			StartTime:    span.span.StartTime,
+			EndTime:      span.span.EndTime,
+			DurationMS:   span.durationMS,
+			Depth:        span.depth,
+			OffsetPct:    span.offsetPct,
+			WidthPct:     span.widthPct,
+		})
+	}
+	return views, complete && len(timed) == len(spans)
 }
 
 func valueOrEmpty(value *string) string {

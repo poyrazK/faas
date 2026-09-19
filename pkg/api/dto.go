@@ -8189,6 +8189,8 @@ type DebugTelemetrySpan struct {
 	ParentSpanID  string `json:"parent_span_id,omitempty"`
 	Name          string `json:"name"`
 	Kind          string `json:"kind"`
+	StartTime     string `json:"start_time,omitempty"`
+	EndTime       string `json:"end_time,omitempty"`
 	DurationNanos uint64 `json:"duration_nanos"`
 	Status        string `json:"status,omitempty"`
 	DBStatement   string `json:"db_statement,omitempty"`

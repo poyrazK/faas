@@ -693,15 +693,17 @@ func buildDebugEvidenceDegradedExplanation(spans []api.DebugTelemetrySpan) api.D
 }
 
 type debugEvidenceSpan struct {
-	TraceID       string            `json:"trace_id"`
-	SpanID        string            `json:"span_id"`
-	ParentSpanID  string            `json:"parent_span_id"`
-	Name          string            `json:"name"`
-	Kind          string            `json:"kind"`
-	DurationNanos uint64            `json:"duration_nanos"`
-	Status        string            `json:"status"`
-	DBStatement   string            `json:"db_statement"`
-	Attributes    map[string]string `json:"attributes"`
+	TraceID           string            `json:"trace_id"`
+	SpanID            string            `json:"span_id"`
+	ParentSpanID      string            `json:"parent_span_id"`
+	Name              string            `json:"name"`
+	Kind              string            `json:"kind"`
+	StartTimeUnixNano uint64            `json:"start_time_unix_nano"`
+	EndTimeUnixNano   uint64            `json:"end_time_unix_nano"`
+	DurationNanos     uint64            `json:"duration_nanos"`
+	Status            string            `json:"status"`
+	DBStatement       string            `json:"db_statement"`
+	Attributes        map[string]string `json:"attributes"`
 }
 
 // parseDebugEvidenceSpans parses the writer's JSON summary, drops sensitive
@@ -738,6 +740,8 @@ func parseDebugEvidenceSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
 			ParentSpanID:   boundDebugEvidenceText(span.ParentSpanID, debugEvidenceMaxSpanTextBytes),
 			Name:           boundDebugEvidenceText(span.Name, debugEvidenceMaxSpanTextBytes),
 			Kind:           boundDebugEvidenceText(span.Kind, debugEvidenceMaxSpanTextBytes),
+			StartTime:      debugEvidenceTime(span.StartTimeUnixNano),
+			EndTime:        debugEvidenceTime(span.EndTimeUnixNano),
 			DurationNanos:  span.DurationNanos,
 			Status:         boundDebugEvidenceText(span.Status, debugEvidenceMaxSpanTextBytes),
 			DBStatement:    sanitizeDebugDBStatement(span.DBStatement),
@@ -746,6 +750,13 @@ func parseDebugEvidenceSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
 		})
 	}
 	return out, truncated
+}
+
+func debugEvidenceTime(unixNano uint64) string {
+	if unixNano == 0 || unixNano > uint64(^uint64(0)>>1) {
+		return ""
+	}
+	return time.Unix(0, int64(unixNano)).UTC().Format(time.RFC3339Nano)
 }
 
 func sanitizeDebugDependencyType(value string) string {

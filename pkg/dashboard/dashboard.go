@@ -2061,6 +2061,8 @@ type DebugRequestDetailView struct {
 	DependencyLatency          []DebugDependencyLatencyView
 	DependencyLatencyTruncated bool
 	Timeline                   []DebugTimelineEventView
+	Waterfall                  []DebugWaterfallSpanView
+	WaterfallComplete          bool
 	Spans                      []DebugSpanView
 	SpansTruncated             bool
 	Explanation                string
@@ -2170,6 +2172,24 @@ type DebugSpanView struct {
 	DBStatement string
 	TraceID     string
 	SpanID      string
+}
+
+// DebugWaterfallSpanView is the template-safe timing projection of one
+// retained span. OffsetPct and WidthPct are precomputed so the template only
+// emits bounded numeric style values; raw span attributes never reach it.
+type DebugWaterfallSpanView struct {
+	Name         string
+	Kind         string
+	Status       string
+	DBStatement  string
+	SpanID       string
+	ParentSpanID string
+	StartTime    string
+	EndTime      string
+	DurationMS   int64
+	Depth        int
+	OffsetPct    string
+	WidthPct     string
 }
 
 // RecentInstanceItem is one row of the Recent Wakes table on the

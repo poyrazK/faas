@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
@@ -25,6 +26,10 @@ class DebugTelemetrySpan:
     kind: str
     duration_nanos: int
     parent_span_id: str | Unset = UNSET
+    start_time: datetime.datetime | Unset = UNSET
+    """Redacted span start time used for the request waterfall."""
+    end_time: datetime.datetime | Unset = UNSET
+    """Redacted span end time used for the request waterfall."""
     status: str | Unset = UNSET
     db_statement: str | Unset = UNSET
     """SQL fingerprint with literals redacted."""
@@ -46,6 +51,14 @@ class DebugTelemetrySpan:
         duration_nanos = self.duration_nanos
 
         parent_span_id = self.parent_span_id
+
+        start_time: str | Unset = UNSET
+        if not isinstance(self.start_time, Unset):
+            start_time = self.start_time.isoformat()
+
+        end_time: str | Unset = UNSET
+        if not isinstance(self.end_time, Unset):
+            end_time = self.end_time.isoformat()
 
         status = self.status
 
@@ -70,6 +83,10 @@ class DebugTelemetrySpan:
         )
         if parent_span_id is not UNSET:
             field_dict["parent_span_id"] = parent_span_id
+        if start_time is not UNSET:
+            field_dict["start_time"] = start_time
+        if end_time is not UNSET:
+            field_dict["end_time"] = end_time
         if status is not UNSET:
             field_dict["status"] = status
         if db_statement is not UNSET:
@@ -96,6 +113,20 @@ class DebugTelemetrySpan:
 
         parent_span_id = d.pop("parent_span_id", UNSET)
 
+        _start_time = d.pop("start_time", UNSET)
+        start_time: datetime.datetime | Unset
+        if isinstance(_start_time, Unset):
+            start_time = UNSET
+        else:
+            start_time = datetime.datetime.fromisoformat(_start_time)
+
+        _end_time = d.pop("end_time", UNSET)
+        end_time: datetime.datetime | Unset
+        if isinstance(_end_time, Unset):
+            end_time = UNSET
+        else:
+            end_time = datetime.datetime.fromisoformat(_end_time)
+
         status = d.pop("status", UNSET)
 
         db_statement = d.pop("db_statement", UNSET)
@@ -116,6 +147,8 @@ class DebugTelemetrySpan:
             kind=kind,
             duration_nanos=duration_nanos,
             parent_span_id=parent_span_id,
+            start_time=start_time,
+            end_time=end_time,
             status=status,
             db_statement=db_statement,
             dependency_type=dependency_type,

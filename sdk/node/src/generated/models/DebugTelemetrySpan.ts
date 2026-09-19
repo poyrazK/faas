@@ -11,6 +11,14 @@ export type DebugTelemetrySpan = {
   parent_span_id?: string;
   name: string;
   kind: string;
+  /**
+   * Redacted span start time used for the request waterfall.
+   */
+  start_time?: string;
+  /**
+   * Redacted span end time used for the request waterfall.
+   */
+  end_time?: string;
   duration_nanos: number;
   status?: string;
   /**

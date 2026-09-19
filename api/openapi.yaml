@@ -31537,6 +31537,8 @@ components:
         parent_span_id: { type: string, maxLength: 256 }
         name: { type: string, maxLength: 256 }
         kind: { type: string, maxLength: 256 }
+        start_time: { type: string, format: date-time, description: "Redacted span start time used for the request waterfall." }
+        end_time: { type: string, format: date-time, description: "Redacted span end time used for the request waterfall." }
         duration_nanos: { type: integer, format: int64, minimum: 0 }
         status: { type: string, maxLength: 256 }
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
