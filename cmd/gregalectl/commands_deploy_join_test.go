@@ -318,6 +318,33 @@ func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 	}
 }
 
+func TestNodeJoinUploadsBootstrapOperatorBinaryOnce(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	if got := strings.Count(playbook, `src: "{{ faas_join_bootstrap_binary_source }}"`); got != 1 {
+		t.Fatalf("bootstrap operator binary controller uploads = %d, want 1", got)
+	}
+	stage := strings.Index(playbook, "Stage the bootstrap operator binary")
+	mirror := strings.Index(playbook, "Mirror the bootstrap operator binary for release checks")
+	verify := strings.Index(playbook, "Verify the release-pinned kernel is present in shared storage")
+	if stage < 0 || mirror < 0 || verify < 0 || !(stage < mirror && mirror < verify) {
+		t.Fatalf("bootstrap operator staging order invalid: stage=%d mirror=%d verify=%d", stage, mirror, verify)
+	}
+	block := playbook[mirror:verify]
+	for _, token := range []string{
+		"src: /usr/local/bin/gregalectl",
+		"dest: /var/lib/faas/bootstrap/gregalectl",
+		"remote_src: true",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("on-host bootstrap operator mirror missing %q", token)
+		}
+	}
+}
+
 func TestControlPlanePeerConvergenceHasContractFastPath(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join_control_plane.yml"))
 	if err != nil {
