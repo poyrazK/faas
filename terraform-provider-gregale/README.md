@@ -20,6 +20,7 @@ The initial surface is intentionally small:
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
 - `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
+- `data.gregale_private_network` reads an existing private network for adoption and attachment composition.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -111,6 +112,25 @@ data "gregale_latest_deployment" "api" {
 
 output "preview_url" {
   value = data.gregale_latest_deployment.api.preview_url
+}
+```
+
+## Existing private network lookup
+
+Use the private network data source when a network was created by the CLI,
+dashboard, or another Terraform stack. It is read-only and exposes the current
+network policy and placement for attachment composition.
+
+```hcl
+data "gregale_private_network" "prod" {
+  network_id = var.private_network_id
+}
+
+resource "gregale_private_network_attachment" "api" {
+  app_slug   = "orders-api"
+  network_id = data.gregale_private_network.prod.id
+  region     = data.gregale_private_network.prod.region
+  cidrs      = [data.gregale_private_network.prod.cidr]
 }
 ```
 
