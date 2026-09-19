@@ -77,6 +77,13 @@ func privateNetworkPolicyArgs(network PrivateNetwork) []string {
 	return policy
 }
 
+func privateNetworkFirewallRulesJSON(rules []api.PrivateNetworkFirewallRule) ([]byte, error) {
+	if len(rules) == 0 {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(rules)
+}
+
 func loadPrivateNetworkPolicy(ctx context.Context, row pgx.Row, network *PrivateNetwork) error {
 	var raw []string
 	var rulesJSON []byte
@@ -140,7 +147,7 @@ func (s *PgStore) CreatePrivateNetwork(ctx context.Context, network PrivateNetwo
 	}
 	id, _, name, region, cidr, status, detail := privateNetworkArgs(network)
 	policy := privateNetworkPolicyArgs(network)
-	rulesJSON, err := json.Marshal(network.FirewallRules)
+	rulesJSON, err := privateNetworkFirewallRulesJSON(network.FirewallRules)
 	if err != nil {
 		return PrivateNetwork{}, err
 	}
@@ -239,7 +246,7 @@ func (s *PgStore) UpdatePrivateNetworkFirewallPolicy(ctx context.Context, accoun
 	if err != nil {
 		return PrivateNetwork{}, ErrInvalidArgument
 	}
-	rulesJSON, err := json.Marshal(validatedRules)
+	rulesJSON, err := privateNetworkFirewallRulesJSON(validatedRules)
 	if err != nil {
 		return PrivateNetwork{}, err
 	}
