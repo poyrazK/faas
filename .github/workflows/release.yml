@@ -133,7 +133,12 @@ jobs:
         run: |
           set -euo pipefail
           for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
-            test -x "/tmp/gregale-build/stage/${target}/gregale"
+            binary="/tmp/gregale-build/stage/${target}/gregale"
+            test -s "$binary"
+            # upload-artifact intentionally normalizes regular files to 0644.
+            # Restore the executable bit before vendoring and publishing the
+            # two historical bare-binary assets below.
+            chmod 0755 "$binary"
           done
           test "$(find /tmp/gregale-build/archives -maxdepth 1 -name 'gregale_*.tar.gz' -type f | wc -l)" -eq 4
           # Historical asset layout, preserved verbatim: the bare
