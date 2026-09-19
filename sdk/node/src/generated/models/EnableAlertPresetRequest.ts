@@ -14,8 +14,9 @@ export type EnableAlertPresetRequest = {
   webhook_url: string;
   webhook_secret: string;
   /**
-   * Action to run when the instantiated alert fires. Omit to use the
-   * default webhook-only behavior.
+   * Action to run when the instantiated alert fires. Omit to
+   * use the default webhook-only behavior.
+   *
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';
   /**
@@ -31,3 +32,4 @@ export type EnableAlertPresetRequest = {
    */
   enabled?: boolean;
 };
+

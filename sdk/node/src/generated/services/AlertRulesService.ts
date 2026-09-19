@@ -358,8 +358,9 @@ export class AlertRulesService {
    * caller owns from then on. The (metric, comparison,
    * threshold, window_spec, default_cooldown_minutes)
    * sextuple is pre-filled server-side; the caller supplies
-   * only webhook_url + webhook_secret (the delivery channel)
-   * and optional cooldown_minutes / enabled overrides.
+   * webhook_url + webhook_secret (the delivery channel), an
+   * optional safe-release action, and cooldown_minutes / enabled
+   * overrides.
    *
    * Pre-loadApp gates fire in this order: 404 on missing
    * preset → 400 alert_preset_disabled on disabled-in-catalog
