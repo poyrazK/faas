@@ -1515,9 +1515,11 @@ groups:
       # Thresholds (3x / 10x spike, 0.2x / 0.1x drop, for: 10m / 15m /
       # 15m / 30m) are ADR-039 decisions; the per-account rules use
       # higher thresholds and longer `for:` to suppress per-customer
-      # noise. account_id="__other__" is the bounded overflow bucket
-      # (issue #278) — drill-down on it means the customer is past the
-      # 10k admission cap and the operator must check the daemon slog.
+      # noise. Per-account signals are operator diagnostics and must not
+      # degrade the platform-wide public status. account_id="__other__" is
+      # the bounded overflow bucket (issue #278) — drill-down on it means
+      # the customer is past the 10k admission cap and the operator must
+      # check the daemon slog.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTrafficSpike
         expr: |
@@ -1572,6 +1574,7 @@ groups:
           family: traffic_anomaly
           mode: account
           direction: spike
+          public_status: internal
         annotations:
           summary: "Account {{ $labels.account_id }} traffic > 10x its 3d average"
           description: "Customer {{ $labels.account_id }} has been above 10x its 3d trailing average for 15m. Higher threshold than fleet-wide to suppress per-customer noise. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
@@ -1598,6 +1601,7 @@ groups:
           family: traffic_anomaly
           mode: account
           direction: drop
+          public_status: internal
         annotations:
           summary: "Account {{ $labels.account_id }} traffic < 0.1x its 3d average"
           description: "Customer {{ $labels.account_id }} has been below 10% of its 3d trailing average for 30m. Longer `for:` than the spike rule because quiet customers are common and 30m crosses a real outage from a normal lull. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
