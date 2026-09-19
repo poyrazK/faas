@@ -1005,6 +1005,10 @@ from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
+from .queue_binding_status_response import QueueBindingStatusResponse
+from .queue_binding_status_response_consumer_state import QueueBindingStatusResponseConsumerState
+from .queue_binding_status_response_mode import QueueBindingStatusResponseMode
+from .queue_binding_status_response_workload_class import QueueBindingStatusResponseWorkloadClass
 from .queue_dead_letter_message import QueueDeadLetterMessage
 from .queue_dead_letter_response import QueueDeadLetterResponse
 from .queue_peek_message import QueuePeekMessage
@@ -2244,6 +2248,10 @@ __all__ = (
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
+    "QueueBindingStatusResponse",
+    "QueueBindingStatusResponseConsumerState",
+    "QueueBindingStatusResponseMode",
+    "QueueBindingStatusResponseWorkloadClass",
     "QueueDeadLetterMessage",
     "QueueDeadLetterResponse",
     "QueuePeekMessage",

@@ -9,6 +9,7 @@ import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsRespons
 import type { DeadLetterPurgeResponse } from '../models/DeadLetterPurgeResponse.js';
 import type { DeadLetterReplayAllResponse } from '../models/DeadLetterReplayAllResponse.js';
 import type { QueueBindingResponse } from '../models/QueueBindingResponse.js';
+import type { QueueBindingStatusResponse } from '../models/QueueBindingStatusResponse.js';
 import type { QueueDeadLetterResponse } from '../models/QueueDeadLetterResponse.js';
 import type { QueuePeekResponse } from '../models/QueuePeekResponse.js';
 import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
@@ -319,6 +320,46 @@ export class QueuesService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/queue-bindings/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read queue binding consumer state and queue counters.
+   * Returns the durable push-consumer projection and binding-scoped
+   * queue counters. `consumer_state` is control-plane state
+   * (`active`, `paused`, `not_configured`, or `external`); it does not
+   * claim to be a broker connection liveness signal.
+   *
+   * @returns QueueBindingStatusResponse Queue binding status.
+   * @throws ApiError
+   */
+  public static getQueueBindingStatus({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<QueueBindingStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/queue-bindings/{id}/status',
       path: {
         'slug': slug,
         'id': id,

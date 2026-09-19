@@ -501,6 +501,7 @@ export type { PutAppSecretRequest } from './PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
 export type { QueueBindingResponse } from './QueueBindingResponse.js';
+export type { QueueBindingStatusResponse } from './QueueBindingStatusResponse.js';
 export type { QueueCursorBefore } from './QueueCursorBefore.js';
 export type { QueueCursorLimit } from './QueueCursorLimit.js';
 export type { QueueDeadLetterMessage } from './QueueDeadLetterMessage.js';
