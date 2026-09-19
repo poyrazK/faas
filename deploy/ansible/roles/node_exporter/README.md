@@ -26,6 +26,6 @@ same private fleet boundary as the daemon metrics ports.
 ## Override at invocation
 
 ```bash
-ansible-playbook -e node_exporter_version=1.9.0 \
+ansible-playbook -e node_exporter_version=1.12.1 \
                  -e node_exporter_release_sha256=<new-sha> bootstrap.yml
 ```

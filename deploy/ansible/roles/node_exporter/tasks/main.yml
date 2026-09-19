@@ -62,6 +62,7 @@
     group: root
     mode: "0755"
     remote_src: true
+  notify: restart node_exporter
 
 - name: node_exporter — install systemd unit
   ansible.builtin.template:
@@ -98,6 +99,12 @@
       node_exporter.service still contains a Jinja placeholder; refusing to
       enable a unit that will enter a restart loop.
 
+# The binary copy is independent of the unit template. Flush here so a version
+# bump is running before the scrape validation below instead of leaving the old
+# inode alive until the end of the play.
+- name: node_exporter — apply binary and unit handlers before validation
+  ansible.builtin.meta: flush_handlers
+
 - name: node_exporter — enable + start
   ansible.builtin.service:
     name: node_exporter
@@ -110,11 +117,23 @@
   ansible.builtin.uri:
     url: "http://{{ node_exporter_listen_addr }}/metrics"
     status_code: 200
+    return_content: true
   register: ne_metrics
   failed_when: false
   retries: 5
   delay: 2
   until: ne_metrics is succeeded
+
+- name: node_exporter — verify the XFS collector parses the host kernel format
+  ansible.builtin.assert:
+    that:
+      - >-
+        'node_scrape_collector_success{collector="xfs"} 1'
+        in (ne_metrics.content | default(''))
+    fail_msg: >-
+      node_exporter responds, but its XFS collector cannot parse this kernel's
+      /proc/fs/xfs/stat format; disk telemetry would be incomplete.
+  when: ne_metrics.status | default(0) == 200
 
 # Cleanup: same pattern as the prometheus role — keep /tmp tidy
 # after install. On EX44 (tmpfs) this is moot, but on long-lived

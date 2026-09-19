@@ -7,7 +7,9 @@
 # can scrape them. nftables restricts TCP/9100 to the configured control-plane
 # CIDRs. Control-plane and single-box hosts remain loopback-only.
 
-node_exporter_version: "1.8.2"
-# SHA-256 of node_exporter-1.8.2.linux-amd64.tar.gz from the upstream release.
-node_exporter_release_sha256: "6809dd0b3ec45fd6e992c19071d6b5253aed3ead7bf0686885a51d85c6643c66"
+node_exporter_version: "1.12.1"
+# SHA-256 of node_exporter-1.12.1.linux-amd64.tar.gz from the upstream release.
+# This release includes prometheus/procfs v0.21.1, which understands the
+# Linux 7.0 XFS `xpc` and `gc xpc` statistics emitted by production kernels.
+node_exporter_release_sha256: "b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63"
 node_exporter_listen_addr: "127.0.0.1:9100"
