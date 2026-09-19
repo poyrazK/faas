@@ -1761,12 +1761,18 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			}(p.AppID, p.WakeID)
 			return
 		}
-		if p.LifecycleChanged && p.AppID != "" {
-			go func(appID string) {
+		if p.AppID != "" {
+			appID, lifecycleChanged := p.AppID, p.LifecycleChanged
+			go func(appID string, lifecycleChanged bool) {
 				reconcileCtx := context.WithoutCancel(ctx)
-				l.engine.ReconcileServiceApp(reconcileCtx, appID)
-				l.engine.ReconcileWorkerApp(reconcileCtx, appID)
-			}(p.AppID)
+				if lifecycleChanged {
+					l.engine.ReconcileServiceApp(reconcileCtx, appID)
+					l.engine.ReconcileWorkerApp(reconcileCtx, appID)
+				}
+				if err := l.engine.ReconcileWarmPool(reconcileCtx, appID); err != nil {
+					l.log.Warn("sched: warm pool reconcile", "app", appID, "err", err)
+				}
+			}(appID, lifecycleChanged)
 		}
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
@@ -1800,10 +1806,16 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			// Live activates the new mode. Failed/superseded/cancelled signals
 			// drain a worker that may have proved readiness immediately before
 			// activation failed, while preserving the prior live generation.
+			appID := p.AppID
 			go func(id string) {
 				reconcileCtx := context.WithoutCancel(ctx)
 				l.engine.ReconcileServiceDeployment(reconcileCtx, id)
 				l.engine.ReconcileWorkerDeployment(reconcileCtx, id)
+				if appID != "" {
+					if err := l.engine.ReconcileWarmPool(reconcileCtx, appID); err != nil {
+						l.log.Warn("sched: warm pool reconcile after deployment", "app", appID, "deployment", id, "err", err)
+					}
+				}
 			}(deploymentID)
 		}
 		l.log.Debug("deployment_changed", "payload", n.Payload)
@@ -1951,6 +1963,19 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 		if acted, err := l.engine.ParkApp(ctx, app.ID); err != nil {
 			l.log.Warn("reaper: parked app reconcile", "app", app.ID, "acted", acted, "err", err)
+		}
+	}
+	// Warm-pool capacity is a durable desired count, so a missed app_changed
+	// notification must not leave an app below its configured resident pool.
+	// Apps with a zero target are handled by the notification path when the
+	// setting is disabled; skipping them here avoids an extra per-app query on
+	// every reaper tick.
+	for _, app := range apps {
+		if app.WarmPoolSize <= 0 {
+			continue
+		}
+		if err := l.engine.ReconcileWarmPool(ctx, app.ID); err != nil {
+			l.log.Warn("reaper: warm pool reconcile", "app", app.ID, "err", err)
 		}
 	}
 	// G7 conntrack warm (spec §17): if the FlowCounter is also a Warm-able
@@ -2108,6 +2133,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// is billed for 3 warm instances but reaped to 0
 				// — a paid warm/park flap on every tick.
 				MinInstances:           appDeploymentFloor[a.ID],
+				WarmPoolSize:           a.WarmPoolSize,
 				ConfiguredMinInstances: appConfiguredFloor[a.ID],
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,

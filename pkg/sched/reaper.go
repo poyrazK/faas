@@ -115,6 +115,11 @@ type InstanceInfo struct {
 	// snapshot walk in loop.go first stamps the app-floor value, then
 	// post-enriches after seeing each instance's DeploymentID.
 	MinInstances int
+	// WarmPoolSize is the desired paused warm-pool size. Unlike
+	// MinInstances, this applies only to WARM rows and is independent of
+	// serving concurrency. The reaper may reclaim stale warm rows only
+	// above this bound; the warm-pool reconciler handles deliberate scale-in.
+	WarmPoolSize int
 	// ConfiguredMinInstances preserves the app-level floor before
 	// deployment/prewarm overlays so the debugger can explain the source
 	// of an effective floor. It is informational to the selectors.
@@ -255,6 +260,8 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 	type appGroup struct {
 		running         int            // total RUNNING instances of this app
 		floor           int            // app.MinInstances
+		warm            int            // total resident WARM rows for this app
+		warmPoolSize    int            // desired resident warm rows
 		cands           []InstanceInfo // idle-eligible RUNNING rows
 		warmCands       []InstanceInfo // idle-eligible paused warm-pool rows
 		lastScaleInAt   *time.Time     // carrier (PR-C): from first row seen
@@ -279,11 +286,15 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		if !ok {
 			g = &appGroup{
 				floor:           in.MinInstances,
+				warmPoolSize:    in.WarmPoolSize,
 				lastScaleInAt:   in.LastScaleInAt,
 				scaleInCooldown: time.Duration(in.ScaleInCooldownS) * time.Second,
 				appID:           in.AppID,
 			}
 			byApp[in.AppID] = g
+		}
+		if in.State == state.StateWarm {
+			g.warm++
 		}
 		// PR-C (issue #462): per-app scale-in cooldown consult. When
 		// now - *LastScaleInAt < ScaleInCooldownS, the entire app is
@@ -406,6 +417,17 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			}
 			return g.warmCands[a].Instance < g.warmCands[b].Instance
 		})
+		// A configured warm pool is a resident-capacity floor, not a
+		// serving floor. Keep the freshest paused rows needed to satisfy
+		// it; deliberate desired-count scale-in is handled by the warm-pool
+		// reconciler, while this idle path removes only stale surplus.
+		warmAllowed := g.warm - g.warmPoolSize
+		if warmAllowed < 0 {
+			warmAllowed = 0
+		}
+		if len(g.warmCands) > warmAllowed {
+			g.warmCands = g.warmCands[:warmAllowed]
+		}
 		// Sort candidates oldest-activity-first so trimming the
 		// front keeps the freshest (most-recently-served) alive. If
 		// activity timestamps tie (rare; sub-second precision), the instance

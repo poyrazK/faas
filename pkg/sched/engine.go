@@ -6261,12 +6261,21 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			if nodeID == "" {
 				nodeID = e.defaultLocalNodeID
 			}
+			kind := KindWake
+			if state.State(ins.State) == state.StateWarm {
+				// Warm rows are resident capacity but not serving
+				// concurrency. Rebuild the same reservation shape used by
+				// the warm-pool reconciler so a schedd restart cannot lose
+				// their RAM accounting or count them toward max_concurrency.
+				kind = KindWarmPool
+			}
 			if err := e.ledger.Admit(Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
 				NodeID:        nodeID,
 				NodeCeilingMB: loadCeiling(ctx, nodeID),
 				VCPUBudget:    loadVCPUBudget(ctx, nodeID),
+				Kind:          kind,
 			}); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
 				continue
