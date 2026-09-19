@@ -825,11 +825,9 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // The scan reads the per-app layer ext4 (appsRoot/<slug>/<depID>.ext4)
 // and writes scan_result + scan_status + scanned_at via
 // state.Store.UpsertDeploymentScanResult. The method is
-// best-effort — both the grype runner error path and the SQL
-// write error path log at WARN and return so the deploy's
-// snapshotting transition fires regardless (AC #4: CRITICAL-CVE
-// images deploy successfully; AC #1: scan lands within 5 min
-// via this hook, well under the SLA).
+// best-effort for off/warn apps. For security_policy=enforce,
+// every scan uncertainty and every high/critical/unknown result is
+// returned to the caller so the deployment fails before snapshotting.
 //
 // Runs synchronously in the deploy-complete path (post
 // SetDeploymentRootfs, pre snapshotting transition). Grype's
@@ -838,10 +836,9 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // aboveBaseLayers + the snapshot prime; the scan is one more
 // step in a pipeline that's already gated by build cold-boot.
 //
-// On a retry-exhausted grype failure, status='failed' is
-// stamped with the error in scan_result's Error field. The
-// dashboard renders a "scan failed" chip; the deploy itself
-// is unaffected.
+// On a retry-exhausted grype failure, status='failed' is stamped
+// with the error in scan_result's Error field. Off/warn deployments
+// continue; enforce deployments are marked failed by the caller.
 //
 // stageScanExt4 resolves the scan-source ext4 for the per-deploy
 // grype scan. The grype subprocess takes `grype dir:<path>` where
@@ -943,14 +940,14 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 // materializes the bytes to a tempdir so the grype subprocess
 // has a filesystem path to scan. The legacy appsRootPath is
 // preserved as the SetDeploymentRootfs DB column, untouched.
-func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.Deployment) {
+func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.Deployment) error {
 	if h.store == nil || h.log == nil {
 		// Defensive: tests that build a Handler without wiring
 		// store/log skip the scan entirely (no row to write, no
 		// log channel). Production wires both at line 87+195
 		// of cmd/imaged/main.go, so the nil branches are
 		// unreachable in prod.
-		return
+		return verifiedScanFailure(app.SecurityPolicy, "scan handler is not wired")
 	}
 	start := time.Now()
 	be, err := h.storageFor()
@@ -961,10 +958,10 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		// daemon wires WithStorage at cmd/imaged/main.go:239).
 		h.log.Warn("imaged: per-deploy scan skipped, storageFor",
 			"deployment", dep.ID, "app", app.Slug, "err", err)
-		failedResult := &ScanResult{Error: "storageFor: " + err.Error()}
+		failedResult := &ScanResult{ImageDigest: dep.ImageDigest, Error: "storageFor: " + err.Error()}
 		b, mErr := json.Marshal(failedResult)
 		if mErr != nil {
-			return
+			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
 		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
 			h.log.Warn("imaged: stamp scan_status=failed",
@@ -972,7 +969,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		}
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
-		return
+		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	scanDir, cleanup, err := h.stageScanExt4(ctx, be, app, dep)
 	if err != nil {
@@ -983,10 +980,10 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		// ADR-075: don't block the deploy).
 		h.log.Warn("imaged: per-deploy scan skipped, stage",
 			"deployment", dep.ID, "app", app.Slug, "err", err)
-		failedResult := &ScanResult{Error: err.Error()}
+		failedResult := &ScanResult{ImageDigest: dep.ImageDigest, Error: err.Error()}
 		b, mErr := json.Marshal(failedResult)
 		if mErr != nil {
-			return
+			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
 		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
 			h.log.Warn("imaged: stamp scan_status=failed",
@@ -994,7 +991,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		}
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
-		return
+		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
 	result, err := h.runGrype(ctx, scanDir)
@@ -1003,12 +1000,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		// so the operator sees the underlying cause.
 		h.log.Warn("imaged: per-deploy grype scan failed",
 			"deployment", dep.ID, "app", app.Slug, "err", err)
-		failedResult := &ScanResult{Error: err.Error()}
+		failedResult := &ScanResult{ImageDigest: dep.ImageDigest, Error: err.Error()}
 		b, mErr := json.Marshal(failedResult)
 		if mErr != nil {
 			h.log.Warn("imaged: marshal failed scan result",
 				"deployment", dep.ID, "err", mErr)
-			return
+			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
 		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
 			h.log.Warn("imaged: stamp scan_status=failed",
@@ -1021,18 +1018,25 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		// the grype runner returns quickly.
 		h.ops.ObserveDeployScanDuration(app.Slug, "failed", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "failed")
-		return
+		return verifiedScanFailure(app.SecurityPolicy, "grype scan failed: "+err.Error())
 	}
+	if result == nil {
+		return verifiedScanFailure(app.SecurityPolicy, "grype returned an empty scan result")
+	}
+	// The deployment reference is the identity carried through the existing
+	// scan API. Persist it in the evidence payload so enforce mode can reject
+	// stale or cross-deployment results instead of trusting severity counts.
+	result.ImageDigest = dep.ImageDigest
 	b, mErr := json.Marshal(result)
 	if mErr != nil {
 		h.log.Warn("imaged: marshal scan result",
 			"deployment", dep.ID, "err", mErr)
-		return
+		return verifiedScanFailure(app.SecurityPolicy, "marshal scan result failed: "+mErr.Error())
 	}
 	if err := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "complete"); err != nil {
 		h.log.Warn("imaged: stamp scan_status=complete",
 			"deployment", dep.ID, "err", err)
-		return
+		return verifiedScanFailure(app.SecurityPolicy, "persist complete scan failed: "+err.Error())
 	}
 	// ADR-075: stamped-clean. Record wall-clock duration +
 	// per-severity counts so the §12 dashboard panel can graph
@@ -1052,6 +1056,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown)
+	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
 // errImageSecretDetected is the typed sentinel runDeployLayerSecretScan
@@ -1639,14 +1644,13 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	// (buildImageLayer/buildFunctionLayer both stamped
 	// SetDeploymentRootfs above) and BEFORE the
 	// pending→snapshotting transition. The scan is
-	// best-effort observability — a grype runner error or
-	// SQL write failure is logged at WARN and dropped; the
-	// deploy's snapshotting transition still fires so the
-	// customer contract (AC #4: CRITICAL-CVE images deploy
-	// successfully) holds. The scan lands on the deployment
-	// row within seconds of the layer publish (well inside
-	// the 5-min SLA from AC #1).
-	h.runDeployScan(ctx, app, dep)
+	// Off/warn apps keep the historical best-effort behavior. In
+	// enforce mode, runDeployScan returns before this transition on
+	// an unavailable, mismatched, or unsafe result.
+	if scanErr := h.runDeployScan(ctx, app, dep); scanErr != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, scanErr, "verified image scan gate")
+		return scanErr
+	}
 	// Runtime bases are staged on demand so a fresh bare-metal node can
 	// become ready without building every supported runtime at startup.
 	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
@@ -1657,10 +1661,7 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	// and open image_build. The 3 transition sites that previously
 	// went dep_restore → image_build now go dep_restore →
 	// security_scan; this is the seam that closes security_scan
-	// after runDeployScan completes (best-effort — a scan
-	// failure logs Warn in runDeployScan itself, the stage
-	// transition still fires so the customer's ticker sees the
-	// image_build row).
+	// only after runDeployScan has produced an enforceable result.
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageImageBuild, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
@@ -3206,7 +3207,10 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// The snapshot_boot path doesn't go through
 	// handleDeploySourceChanged, so it owns the scan and closes the
 	// security_scan stage here.
-	h.runDeployScan(ctx, app, dep)
+	if scanErr := h.runDeployScan(ctx, app, dep); scanErr != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, scanErr, "verified image scan gate")
+		return scanErr
+	}
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
@@ -3375,6 +3379,9 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 // deployments.error.
 func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error, prefix string) error {
 	code, _ := oci.SentinelToCode(err)
+	if errors.Is(err, errSecurityScanBlocked) {
+		code = api.CodeSecurityScanBlocked
+	}
 	detail := err.Error()
 	if prefix != "" {
 		detail = prefix + ": " + detail

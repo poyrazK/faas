@@ -17,6 +17,12 @@ policy through the same MFA-protected surface (or with
 - `enforce` rejects new deploys while high-severity findings remain, such as
   anonymous access or credentialed wildcard CORS.
 
+For `enforce` apps, an image promotion also requires a fresh, complete scan
+whose recorded image reference matches the deployment. Failed, incomplete,
+unmatched, or high/critical/unknown-severity scan results fail the deployment
+before snapshotting. This proves that the scanned artifact is the one being
+promoted; it does not replace dependency patching or application review.
+
 Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 
 Report a suspected vulnerability through the security contact listed in [security.txt](security.txt). Include a minimal reproduction and affected resource ids, but never include live credentials or customer data. Gregale will acknowledge receipt and coordinate a safe disclosure window.

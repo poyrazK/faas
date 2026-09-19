@@ -8952,12 +8952,12 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ─── Per-deploy grype CVE scan drill-down (issue #464 / ADR-055) ──────
-  # Surface, don't enforce. The scan lands within seconds of the per-app
-  # layer ext4 build (well under the AC #1 5-min SLA). The route is the
-  # canonical read path; the dashboard deploy detail page and the
-  # `gregale deployment <id> --show-scan` CLI flag both consume this
-  # endpoint. CRITICAL-CVE images deploy successfully (AC #4) — the
-  # scan is observational.
+  # The scan lands within seconds of the per-app layer ext4 build (well under
+  # the AC #1 5-min SLA). The route is the canonical read path; the dashboard
+  # deploy detail page and the `gregale deployment <id> --show-scan` CLI flag
+  # both consume this endpoint. security_policy=off|warn remains advisory;
+  # security_policy=enforce fails promotion unless the scan is complete,
+  # digest-matched, and free of HIGH/CRITICAL/UNKNOWN findings.
 
   # ─── Per-deployment audit timeline (issue #976 / ADR-122 / SAFE-RELEASES-E.2) ──
   # Production-leveling Stream A drill-down: the dashboard's
@@ -21242,7 +21242,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/ScanResult'
             - type: 'null'
-          description: "Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any of the {pending, complete, failed, skipped} states. The customer can deploy a CRITICAL-CVE image; the dashboard shows it; that is the contract (no enforcement at the deploy gate)."
+          description: "Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce, the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN findings; off/warn remain advisory."
         parked_reason:
           type: [string, "null"]
           enum: [null, liveness_exhausted, lifecycle_park, admin_park]
@@ -22723,8 +22723,9 @@ components:
         on GET /v1/deployments/{id}/scan (the dedicated drill-down route).
         The dashboard renders the severity counts and the top 10 CVEs;
         `gregale deployment <id> --show-scan` prints the full payload.
-        Surface, never enforce — an image with CRITICAL CVEs deploys
-        successfully; the dashboard shows it; that is the contract.
+        Surface for off/warn apps. With security_policy=enforce, the
+        deployment is promoted only after a complete, digest-matched scan
+        with no HIGH, CRITICAL, or UNKNOWN findings.
       type: object
       required: [status, severity_counts, vulnerabilities]
       properties:
@@ -22746,7 +22747,7 @@ components:
           description: Grype binary version that produced the scan (e.g. "grype 0.78.0"). Captured once at imaged startup via `grype version` and stamped on every ScanResult payload.
         image_digest:
           type: [string, "null"]
-          description: OCI image digest at the time of the scan. Sourced from deployments.image_digest, not re-inspected. Empty on the pre-feature backfill (status = "skipped" with no image to stamp).
+          description: OCI image reference recorded at the time of the scan. In security_policy=enforce, this must exactly match deployments.image_digest before promotion. Empty on the pre-feature backfill (status = "skipped" with no image to stamp).
         severity_counts:
           $ref: '#/components/schemas/SeverityCounts'
         vulnerabilities:

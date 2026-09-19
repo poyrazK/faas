@@ -311,6 +311,10 @@ func vulnPaths(locs []grypeLocation) []string {
 // client validator rejects null. Empty-slice vs nil is the
 // distinction the wire contract relies on.
 type ScanResult struct {
+	// ImageDigest identifies the exact deployment reference the scan was
+	// attached to. Enforce-mode promotion compares it with the deployment row
+	// before allowing the snapshot handoff.
+	ImageDigest    string         `json:"image_digest,omitempty"`
 	SeverityCounts SeverityCounts `json:"severity_counts"`
 	// Vulnerabilities is the full typed CVE list, ALWAYS
 	// present (no omitempty). For a zero-finding scan

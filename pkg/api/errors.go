@@ -781,6 +781,10 @@ const (
 	// app's admin-enabled security policy is "enforce" and its current
 	// posture still contains one or more high-severity findings.
 	CodeSecurityPostureBlocked = "security_posture_blocked"
+	// CodeSecurityScanBlocked is persisted when an enforce-policy deployment
+	// cannot be promoted because its image scan is missing, unverifiable, or
+	// reports high-severity risk.
+	CodeSecurityScanBlocked = "security_scan_blocked"
 	// CodeTrustedSignerInvalid is returned when the PUT body fails
 	// the PEM-shape validation (size 64..1024 bytes after
 	// base64-decode, ECDSA P-256 SPKI per ADR-038). 400 with the
@@ -1832,7 +1836,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
