@@ -15,7 +15,7 @@
 //   - /healthz, /readyz, /metrics on loopback FAAS_PUBLIC_CONTROL_ADDR
 //     (default 127.0.0.1:9092 — ADR-070; the legacy gatewayd daemon
 //     owns :9090 and must not collide on the same node)
-//   - Drain semantics: SIGTERM → flip /readyz → wait in-flight → Shutdown
+//   - Drain semantics: SIGTERM → flip /readyz → stop accepts → wait in-flight
 //
 // It does NOT own:
 //   - hostname→app routing (gatewayd-internal does)
@@ -789,53 +789,55 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 	return publicSrv, controlSrv
 }
 
-// runDrain blocks on (ctx, SIGTERM, listener error). On SIGTERM it
-// flips /readyz probes to not-ready, sleeps up to
-// GatewayDrainGraceSeconds (cancellable on a second SIGTERM), then
-// Shutdowns both servers. The PG signal is stopped FIRST so the
-// probe stays 503 during the entire drain (caller pauses LB after
-// observing 503, then in-flight requests finish).
+// runDrain blocks on SIGTERM or a listener error. On SIGTERM it flips
+// /readyz probes to not-ready and immediately starts a bounded graceful
+// shutdown. The systemd-owned public socket remains open while this process's
+// duplicate listener closes, so new connections queue for the replacement
+// process instead of extending the old process's drain.
 //
 // The order matches the ADR-068 spec:
 //
 //  1. SIGTERM → flip probe bits to false. /readyz=503 immediately.
-//  2. Stop the PG ping signal so a wedged connection can't stall
-//     the drain (default 30 s TimeoutStopSec vs 25 s grace + 5 s
-//     Shutdown).
-//  3. Sleep GatewayDrainGraceSeconds (cancellable on a second
-//     SIGTERM — the signal channel has capacity 1, so the second
-//     signal is dropped at the OS layer; we use a select with a
-//     1s ticker to make the sleep effectively cancellable).
-//  4. Shutdown both servers with a 5 s grace.
-//  5. pgStop() (already done above; kept here as a no-op safety net).
+//  2. Stop the PG ping signal so a wedged connection cannot make the
+//     readiness probe healthy again during the drain.
+//  3. Shutdown the public server, then the control server, inside one
+//     GatewayDrainGraceSeconds budget. Closing the public listener first
+//     prevents new requests from racing the in-flight barrier.
+//  4. Wait for tracked requests and hijacked streams within the remainder of
+//     that same budget. A second SIGTERM cancels the drain immediately.
+//  5. The caller's deferred pgStop runs again as an idempotent safety net.
 func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
+	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer forceCancel()
+	drainComplete := make(chan struct{})
+	defer close(drainComplete)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
+		select {
+		case <-sigCh:
+		case <-drainComplete:
+			return
+		}
 		log.Info("gatewayd-public: SIGTERM received; draining")
 		pgProbeSig.Set(false, "draining")
-		// Stop the PG ping signal BEFORE the grace sleep so the
+		// Stop the PG ping signal BEFORE shutting down so the
 		// probe stays 503 during the entire drain. The PG signal
 		// goroutine may otherwise be stuck in pool.Ping and add
 		// up to every/2 to the drain time.
 		pgStop()
-		// Cancellable sleep — a second SIGTERM short-circuits the
-		// grace period and runs Shutdown immediately.
-		grace := time.Duration(api.GatewayDrainGraceSeconds) * time.Second
-		t := time.NewTicker(1 * time.Second)
-		defer t.Stop()
-		deadline := time.NewTimer(grace)
-		defer deadline.Stop()
-		select {
-		case <-deadline.C:
-		case <-sigCh:
-			log.Warn("gatewayd-public: second SIGTERM received; skipping drain grace")
-		}
 		cancelDrain()
+		// A second signal is the operator's force-stop request. Cancel the
+		// shared shutdown context so Shutdown and Tracker.Drain both exit.
+		select {
+		case <-sigCh:
+			log.Warn("gatewayd-public: second SIGTERM received; forcing shutdown")
+			forceCancel()
+		case <-drainComplete:
+		}
 	}()
 
 	// Start the listeners.
@@ -864,31 +866,61 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	case err := <-errc:
 		return err
 	}
-	// Issue #587 / PR-A: wait for the per-request drain tracker
-	// to flush BEFORE Shutdown closes the listeners. Done first
-	// so we never race a Begin against srv.Shutdown's refusal to
-	// accept new connections. Shutdown itself has a 5s grace
-	// (next block) which is bounded by drain.DrainGrace
-	// below — the two together stay inside systemd's
-	// TimeoutStopSec=30s with 5s of headroom for the kernel.
-	//
-	// Exit-code discipline (systemd Restart=on-failure contract,
-	// pkg/deploycontroller/controller.go:43-115):
-	//   clean drain → return nil (no restart)
-	//   deadline_exceeded / ctx_cancelled → return ctx.Err()
-	//     so systemd restarts the daemon
-	// Pre-PR-A this path returned nil unconditionally, which hid
-	// second-SIGTERM force-exit bugs from operators.
+	grace := time.Duration(api.GatewayDrainGraceSeconds) * time.Second
+	if err := shutdownGatewayServers(forceCtx, log, publicSrv, controlSrv, drainTracker, gMetrics, grace); err != nil {
+		return err
+	}
+	// Flush any in-flight spans from the BatchSpanProcessor. forceCtx is
+	// independent of wire.Daemon's first-signal cancellation, but a second
+	// signal still cuts this best-effort flush short.
+	if traceSetup != nil {
+		flushCtx, cancel := context.WithTimeout(forceCtx, 5*time.Second)
+		if err := traceSetup.Shutdown(flushCtx); err != nil {
+			log.Warn("gatewayd-public: trace shutdown", "err", err)
+		}
+		cancel()
+	}
+	return nil
+}
+
+// shutdownGatewayServers closes both listeners before arming the request
+// barrier. http.Server.Shutdown waits for ordinary HTTP handlers; Tracker then
+// covers anything outside that envelope, notably hijacked stream pumps. Every
+// phase shares one deadline so an idle gateway exits immediately and a busy
+// gateway cannot accidentally spend the full grace budget twice.
+func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, grace time.Duration) error {
+	if grace <= 0 {
+		grace = drain.DrainGrace
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, grace)
+	defer cancel()
+	drainStart := time.Now()
+
+	var shutdownErr error
+	if err := publicSrv.Shutdown(shutdownCtx); err != nil {
+		log.Warn("gatewayd-public: public Shutdown", "err", err)
+		shutdownErr = fmt.Errorf("gatewayd-public: public shutdown: %w", err)
+	}
+	if err := controlSrv.Shutdown(shutdownCtx); err != nil {
+		log.Warn("gatewayd-public: control Shutdown", "err", err)
+		if shutdownErr == nil {
+			shutdownErr = fmt.Errorf("gatewayd-public: control shutdown: %w", err)
+		}
+	}
+
 	if drainTracker != nil {
-		drainStart := time.Now()
-		drainCtxInner, cancelDrainInner := context.WithTimeout(context.WithoutCancel(ctx), drain.DrainGrace)
-		outcome, drainErr := drainTracker.Drain(drainCtxInner, drain.DrainGrace)
-		cancelDrainInner()
+		outcome, drainErr := drainTracker.Drain(shutdownCtx, grace)
 		drainElapsed := time.Since(drainStart).Seconds()
-		// Issue #587 / PR-A: record the per-daemon drain
-		// histogram on every shutdown so the operator
-		// dashboard can spot a pattern of forced exits.
-		gMetrics.ObserveDrainWait("gatewayd-public", string(outcome), drainElapsed)
+		observedOutcome := outcome
+		if shutdownErr != nil && outcome == drain.OutcomeClean {
+			observedOutcome = drain.OutcomeDeadlineExceeded
+			if errors.Is(shutdownErr, context.Canceled) {
+				observedOutcome = drain.OutcomeCancelled
+			}
+		}
+		if gMetrics != nil {
+			gMetrics.ObserveDrainWait("gatewayd-public", string(observedOutcome), drainElapsed)
+		}
 		if drainErr != nil {
 			log.Warn("gatewayd-public: drain exited non-clean",
 				"outcome", string(outcome),
@@ -900,39 +932,10 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 			log.Warn("gatewayd-public: drain exited non-clean",
 				"outcome", string(outcome),
 				"max_inflight", drainTracker.MaxInflight())
-			return ctx.Err()
+			return fmt.Errorf("gatewayd-public: drain exited %s", outcome)
 		}
 	}
-	// Shutdown both servers gracefully. 5 s grace.
-	// context.WithoutCancel detaches from the parent's cancellation
-	// so a SIGTERM-driven parent cancel can't short-circuit the
-	// grace period before in-flight requests finish (golangci-lint
-	// v8 contextcheck: `Background` would lose any deadline set by
-	// the wire.Daemon harness; WithoutCancel keeps the deadline
-	// without inheriting the parent cancel).
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := publicSrv.Shutdown(sctx); err != nil {
-		log.Warn("gatewayd-public: public Shutdown", "err", err)
-	}
-	if err := controlSrv.Shutdown(sctx); err != nil {
-		log.Warn("gatewayd-public: control Shutdown", "err", err)
-	}
-	// Flush any in-flight spans from the BatchSpanProcessor.
-	// WithoutCancel detaches from the daemon's cancelled ctx so the
-	// SDK shutdown can flush its full batch; the 5s upper bound
-	// matches the public-server shutdown grace so a slow collector
-	// doesn't stall the daemon drain. (Issue #555 review: the
-	// previous revision used context.Background(), discarding any
-	// deadline the wire.Daemon harness set on ctx.)
-	if traceSetup != nil {
-		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		if err := traceSetup.Shutdown(flushCtx); err != nil {
-			log.Warn("gatewayd-public: trace shutdown", "err", err)
-		}
-		cancel()
-	}
-	return nil
+	return shutdownErr
 }
 
 // publicListener consumes the single socket passed by

@@ -55,10 +55,9 @@ import (
 )
 
 // DrainGrace is the default shutdown grace budget. The daemon's
-// systemd unit declares TimeoutStopSec=30s; 25s leaves a 5s headroom
-// for the kernel to reap the process after a clean drain. Override at
-// the call site by passing a different deadline to Drain. Exposed as
-// `api.GatewayDrainGrace` so dashboards + tests can read it.
+// gateway uses it inside a shared server-shutdown budget, leaving time
+// for telemetry flush and process teardown. Override at the call site by
+// passing a different deadline to Drain.
 const DrainGrace = 25 * time.Second
 
 // DrainOutcome is the labelled result of a Drain call. Surfaced as

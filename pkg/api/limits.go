@@ -4052,11 +4052,10 @@ const (
 	// Tier A7 (edge split — gatewayd-public / gatewayd-internal,
 	// ADR-070): drain + replica registry + warm-hint-cache tunables.
 	//
-	// GatewayDrainGraceSeconds is the upper bound on the in-flight
-	// request window after SIGTERM before http.Server.Shutdown
-	// returns. Tuned to be 5s shorter than the systemd unit's
-	// TimeoutStopSec (60s) so the daemon exits cleanly inside the
-	// unit's grace. Tunable via FAAS_GATEWAY_DRAIN_GRACE_SECONDS.
+	// GatewayDrainGraceSeconds is the upper bound on graceful server and
+	// in-flight request shutdown after SIGTERM. The 25s shared deadline leaves
+	// time for telemetry flush and process teardown inside the service manager's
+	// stop budget.
 	//
 	// ReplicaHeartbeatIntervalSeconds is the cadence at which an
 	// internal daemon re-asserts its presence to the public daemon
