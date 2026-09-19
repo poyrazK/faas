@@ -123,6 +123,49 @@ func TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts(t *testing.T) {
 	if len(otherAccount) != 0 {
 		t.Fatalf("cross-account app received %d invocations, want 0", len(otherAccount))
 	}
+
+	// Force the matched delivery through the terminal path. PostgreSQL's
+	// unified-DLQ trigger must preserve the event-subscription origin and the
+	// existing app replay endpoint must reset the invocation for redelivery.
+	if _, err := h.Pool.Exec(ctx, `
+		update invocations
+		   set state = 'dead_letter', outcome = 'dead_letter',
+		       last_error = 'event delivery failed', attempts = 3,
+		       completed_at = now()
+		 where id = $1`, matched[0].ID); err != nil {
+		t.Fatalf("force invocation dead letter: %v", err)
+	}
+	body, status = doReq(t, h, keyA, http.MethodGet, "/v1/apps/"+appA.Slug+"/dlq", nil)
+	if status != http.StatusOK {
+		t.Fatalf("event DLQ status=%d want 200: %s", status, body)
+	}
+	var dlq api.DeadLetterEventsResponse
+	if err := json.Unmarshal(body, &dlq); err != nil {
+		t.Fatalf("decode event DLQ: %v; body=%s", err, body)
+	}
+	if len(dlq.Events) != 1 || dlq.Events[0].Origin != "event_subscription" || dlq.Events[0].SourceID != matched[0].ID {
+		t.Fatalf("event DLQ=%+v want one event_subscription row for %s", dlq.Events, matched[0].ID)
+	}
+	body, status = doReq(t, h, keyA, http.MethodPost,
+		"/v1/apps/"+appA.Slug+"/dlq/"+dlq.Events[0].ID+"/replay", nil,
+		map[string]string{"Idempotency-Key": "event-fanout-replay-1"})
+	if status != http.StatusAccepted {
+		t.Fatalf("event replay status=%d want 202: %s", status, body)
+	}
+	var replayed api.DeadLetterEvent
+	if err := json.Unmarshal(body, &replayed); err != nil {
+		t.Fatalf("decode event replay: %v; body=%s", err, body)
+	}
+	if replayed.ReplayedAt == nil {
+		t.Fatal("event replay replayed_at is nil")
+	}
+	invocations, err := store.ListInvocationsForApp(ctx, appA.ID)
+	if err != nil {
+		t.Fatalf("ListInvocationsForApp after event replay: %v", err)
+	}
+	if len(invocations) != 1 || invocations[0].State != state.InvocationPending || invocations[0].Attempts != 0 {
+		t.Fatalf("invocation after event replay=%+v want pending/0", invocations)
+	}
 }
 
 func createEventFanoutApp(t *testing.T, h *e2etest.Harness, key, slug string) state.App {

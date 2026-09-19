@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -34,6 +35,20 @@ type EventSubscriptionStore interface {
 	ListEnabledEventSubscriptionsForAccount(context.Context, string) ([]EventSubscription, error)
 	UpsertEventSubscription(context.Context, string, string, string, string, json.RawMessage) (EventSubscription, bool, error)
 	DeleteEventSubscription(context.Context, string, string, string) error
+}
+
+// EventSubscriptionMatcherStore exposes the bounded candidate lookup used by
+// schedd fan-out. Implementations keep the legacy account-wide reader above
+// for compatibility with older callers and test doubles.
+type EventSubscriptionMatcherStore interface {
+	ListMatchingEventSubscriptionsForAccount(context.Context, string, string, string, EventSubscriptionCursor, int) ([]EventSubscription, error)
+}
+
+// EventSubscriptionCursor is the stable keyset cursor for candidate pages.
+// A zero cursor requests the first page.
+type EventSubscriptionCursor struct {
+	CreatedAt time.Time
+	ID        string
 }
 
 func normalizeEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
@@ -94,6 +109,35 @@ func (s *PgStore) ListEventSubscriptionsForApp(ctx context.Context, appID string
 
 func (s *PgStore) ListEnabledEventSubscriptionsForAccount(ctx context.Context, accountID string) ([]EventSubscription, error) {
 	rows, err := sqlc.New().ListEnabledEventSubscriptionsForAccount(ctx, s.pool, mustPgUUID(accountID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EventSubscription, len(rows))
+	for i, row := range rows {
+		out[i] = eventSubscriptionFromSQL(row)
+	}
+	return out, nil
+}
+
+// ListMatchingEventSubscriptionsForAccount returns enabled subscriptions whose
+// source/type patterns could match the supplied event. Filter JSON is still
+// evaluated by the scheduler's authoritative matcher after this candidate
+// lookup. Results are keyset paged in creation order.
+func (s *PgStore) ListMatchingEventSubscriptionsForAccount(ctx context.Context, accountID, source, typ string, cursor EventSubscriptionCursor, limit int) ([]EventSubscription, error) {
+	if limit <= 0 {
+		limit = 256
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := sqlc.New().ListMatchingEventSubscriptionsForAccount(ctx, s.pool, sqlc.ListMatchingEventSubscriptionsForAccountParams{
+		AccountID:       mustPgUUID(accountID),
+		Source:          source,
+		Type:            typ,
+		CursorCreatedAt: pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: !cursor.CreatedAt.IsZero()},
+		CursorID:        mustPgUUID(cursor.ID),
+		Limit:           int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +230,62 @@ func (m *MemStore) ListEnabledEventSubscriptionsForAccount(_ context.Context, ac
 		}
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
+	return out, nil
+}
+
+func eventSubscriptionPatternMatches(pattern, value string) bool {
+	if pattern == "*" {
+		return true
+	}
+	leading, trailing := strings.HasPrefix(pattern, "*"), strings.HasSuffix(pattern, "*")
+	core := strings.Trim(pattern, "*")
+	switch {
+	case leading && trailing:
+		return strings.Contains(value, core)
+	case leading:
+		return strings.HasSuffix(value, core)
+	case trailing:
+		return strings.HasPrefix(value, core)
+	default:
+		return value == pattern
+	}
+}
+
+// ListMatchingEventSubscriptionsForAccount mirrors the SQL candidate lookup
+// in memory, preserving stable keyset ordering and bounded pages.
+func (m *MemStore) ListMatchingEventSubscriptionsForAccount(_ context.Context, accountID, source, typ string, cursor EventSubscriptionCursor, limit int) ([]EventSubscription, error) {
+	if limit <= 0 {
+		limit = 256
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	canonicalAccountID := canonicalMemUUID(accountID)
+	out := make([]EventSubscription, 0, limit)
+	for _, subscription := range m.eventSubscriptions {
+		app, appExists := m.apps[subscription.AppID]
+		if subscription.AccountID != canonicalAccountID || !subscription.Enabled || !appExists || app.Status == AppDeleted {
+			continue
+		}
+		if !eventSubscriptionPatternMatches(subscription.Source, source) || !eventSubscriptionPatternMatches(subscription.Type, typ) {
+			continue
+		}
+		if !cursor.CreatedAt.IsZero() && (subscription.CreatedAt.Before(cursor.CreatedAt) || (subscription.CreatedAt.Equal(cursor.CreatedAt) && subscription.ID <= cursor.ID)) {
+			continue
+		}
+		out = append(out, subscription)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

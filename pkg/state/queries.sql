@@ -272,6 +272,43 @@ join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
 order by s.created_at asc, s.id asc;
 
+-- name: ListMatchingEventSubscriptionsForAccount :many
+-- Candidate lookup for schedd fan-out. The final JSON filter matcher remains
+-- in pkg/events; these predicates only prune source/type patterns and page
+-- through the tenant's enabled subscriptions without an unbounded scan.
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
+       s.created_at, s.updated_at
+from event_subscriptions s
+join apps a on a.id = s.app_id
+where s.account_id = sqlc.arg('account_id')::uuid
+  and s.enabled
+  and a.status <> 'deleted'
+  and case
+        when s.source = '*' then true
+        when left(s.source, 1) = '*' and right(s.source, 1) = '*' then
+          position(substring(s.source, 2, greatest(length(s.source) - 2, 0)) in sqlc.arg('source')::text) > 0
+        when left(s.source, 1) = '*' then
+          right(sqlc.arg('source')::text, greatest(length(s.source) - 1, 0)) = right(s.source, greatest(length(s.source) - 1, 0))
+        when right(s.source, 1) = '*' then
+          left(sqlc.arg('source')::text, greatest(length(s.source) - 1, 0)) = left(s.source, greatest(length(s.source) - 1, 0))
+        else s.source = sqlc.arg('source')::text
+      end
+  and case
+        when s.type = '*' then true
+        when left(s.type, 1) = '*' and right(s.type, 1) = '*' then
+          position(substring(s.type, 2, greatest(length(s.type) - 2, 0)) in sqlc.arg('type')::text) > 0
+        when left(s.type, 1) = '*' then
+          right(sqlc.arg('type')::text, greatest(length(s.type) - 1, 0)) = right(s.type, greatest(length(s.type) - 1, 0))
+        when right(s.type, 1) = '*' then
+          left(sqlc.arg('type')::text, greatest(length(s.type) - 1, 0)) = left(s.type, greatest(length(s.type) - 1, 0))
+        else s.type = sqlc.arg('type')::text
+      end
+  and (sqlc.arg('cursor_created_at')::timestamptz is null
+       or (s.created_at, s.id) > (sqlc.arg('cursor_created_at')::timestamptz,
+                                  sqlc.arg('cursor_id')::uuid))
+order by s.created_at asc, s.id asc
+limit sqlc.arg('limit')::int;
+
 -- name: UpsertEventSubscription :one
 -- (xmax = 0) distinguishes a declaration first installed by this deploy from
 -- an idempotent replay of the same manifest row.

@@ -37,6 +37,9 @@ single-app deploy and is bound to the target application during source-ref
 reconciliation. Event-only projects may use the equivalent TOML form,
 `[[triggers.event]]`. Both forms use the same source/type/filter validation;
 matching deliveries inherit the router's retry and dead-letter behavior.
+When a delivery reaches a terminal failure, inspect and replay it through the
+app's unified dead-letter queue (`gregale dlq <app>`); its origin is shown as
+`event_subscription`.
 
 Publish an event from the CLI with an explicit event id so producers can
 retry safely:

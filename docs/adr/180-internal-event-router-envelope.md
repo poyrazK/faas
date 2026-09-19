@@ -31,10 +31,9 @@ appends the canonical JSON to the existing durable `events` ledger as
 An optional `Idempotency-Key` uses the existing API replay middleware. The
 endpoint returns `202 Accepted` only after the ledger write succeeds.
 
-The ledger row is the durable ingress seam for the next router increment. It
-is not a claim that matching or delivery already exists: those consumers will
-be added in follow-up work and will preserve the account subject when they
-fan out events. No endpoint accepts a caller-selected account or writes an
+The ledger row is the durable ingress seam for the router. The schedd consumer
+preserves the account subject while it selects and fans out matching
+subscriptions; no endpoint accepts a caller-selected account or writes an
 event for another tenant.
 
 ## Consequences
@@ -45,7 +44,7 @@ without changing producers. Existing outbound CloudEvents delivery remains a
 separate contract; this ingress uses Gregale's public `data_content_type`
 spelling and account extension consistently with EPIC #1278.
 
-The current implementation does not declare subscriptions, evaluate filters,
-wake workloads, or route terminal failures to the DLQ. Those concerns remain
-explicit follow-ups so the ingress contract can ship and be reviewed in
-isolation.
+Subscription declarations and filter evaluation are implemented by the
+event-trigger manifest path and schedd fan-out. Delivery remains an ordinary
+async invocation, so existing retry/dead-letter/replay behavior applies; the
+unified DLQ labels these rows as `event_subscription` for operators.

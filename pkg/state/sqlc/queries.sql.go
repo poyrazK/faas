@@ -6015,6 +6015,90 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 	return items, nil
 }
 
+const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
+       s.created_at, s.updated_at
+from event_subscriptions s
+join apps a on a.id = s.app_id
+where s.account_id = $1::uuid
+  and s.enabled
+  and a.status <> 'deleted'
+  and case
+        when s.source = '*' then true
+        when left(s.source, 1) = '*' and right(s.source, 1) = '*' then
+          position(substring(s.source, 2, greatest(length(s.source) - 2, 0)) in $2::text) > 0
+        when left(s.source, 1) = '*' then
+          right($2::text, greatest(length(s.source) - 1, 0)) = right(s.source, greatest(length(s.source) - 1, 0))
+        when right(s.source, 1) = '*' then
+          left($2::text, greatest(length(s.source) - 1, 0)) = left(s.source, greatest(length(s.source) - 1, 0))
+        else s.source = $2::text
+      end
+  and case
+        when s.type = '*' then true
+        when left(s.type, 1) = '*' and right(s.type, 1) = '*' then
+          position(substring(s.type, 2, greatest(length(s.type) - 2, 0)) in $3::text) > 0
+        when left(s.type, 1) = '*' then
+          right($3::text, greatest(length(s.type) - 1, 0)) = right(s.type, greatest(length(s.type) - 1, 0))
+        when right(s.type, 1) = '*' then
+          left($3::text, greatest(length(s.type) - 1, 0)) = left(s.type, greatest(length(s.type) - 1, 0))
+        else s.type = $3::text
+      end
+  and ($4::timestamptz is null
+       or (s.created_at, s.id) > ($4::timestamptz,
+                                  $5::uuid))
+order by s.created_at asc, s.id asc
+limit $6::int
+`
+
+type ListMatchingEventSubscriptionsForAccountParams struct {
+	AccountID       pgtype.UUID
+	Source          string
+	Type            string
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	Limit           int32
+}
+
+// Candidate lookup for schedd fan-out. The final JSON filter matcher remains
+// in pkg/events; these predicates only prune source/type patterns and page
+// through the tenant's enabled subscriptions without an unbounded scan.
+func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, db DBTX, arg ListMatchingEventSubscriptionsForAccountParams) ([]EventSubscription, error) {
+	rows, err := db.Query(ctx, listMatchingEventSubscriptionsForAccount,
+		arg.AccountID,
+		arg.Source,
+		arg.Type,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscription{}
+	for rows.Next() {
+		var i EventSubscription
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Source,
+			&i.Type,
+			&i.Filter,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOIDCTrustPoliciesForAccount = `-- name: ListOIDCTrustPoliciesForAccount :many
 select account_id, issuer_url, jwks_url, audience,
        coalesce(subject_pattern, '') as subject_pattern,

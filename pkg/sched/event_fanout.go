@@ -17,6 +17,7 @@ const eventInvocationMethod = "POST"
 const eventInvocationPath = "/"
 const eventFanoutRecoveryWindow = 10 * time.Minute
 const eventFanoutRecoveryBatch = 1000
+const eventFanoutSubscriptionBatch = 256
 
 // routePublishedEvent is the schedd-side fanout seam for the internal event
 // fabric. The publish endpoint persists the canonical envelope before sending
@@ -35,16 +36,12 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 	if err := envelope.Validate(); err != nil {
 		return fmt.Errorf("sched: validate event.published payload: %w", err)
 	}
-	store, ok := l.engine.store.(state.EventSubscriptionStore)
+	store, ok := l.engine.store.(state.EventSubscriptionMatcherStore)
 	if !ok {
-		// Older test stores and mixed-version boxes have no subscription
-		// reader yet. The persisted event remains available for a later
-		// recovery sweep, so this notification is intentionally a no-op.
+		// Older test stores and mixed-version boxes have no bounded candidate
+		// reader yet. The persisted event remains available for a later recovery
+		// sweep, so this notification is intentionally a no-op.
 		return nil
-	}
-	subscriptions, err := store.ListEnabledEventSubscriptionsForAccount(ctx, envelope.AccountID)
-	if err != nil {
-		return fmt.Errorf("sched: list event subscriptions: %w", err)
 	}
 	eventPayload, err := json.Marshal(envelope)
 	if err != nil {
@@ -52,52 +49,64 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 	}
 	now := time.Now().UTC()
 	var routeErrs []error
-	for _, row := range subscriptions {
-		matched, matchErr := (events.Subscription{
-			ID:        row.ID,
-			AccountID: row.AccountID,
-			Source:    row.Source,
-			Type:      row.Type,
-			Filter:    row.Filter,
-		}).Match(envelope)
-		if matchErr != nil {
-			routeErrs = append(routeErrs, fmt.Errorf("subscription %s: %w", row.ID, matchErr))
-			continue
+	cursor := state.EventSubscriptionCursor{}
+	for {
+		subscriptions, listErr := store.ListMatchingEventSubscriptionsForAccount(ctx, envelope.AccountID, envelope.Source, envelope.Type, cursor, eventFanoutSubscriptionBatch)
+		if listErr != nil {
+			return fmt.Errorf("sched: list matching event subscriptions: %w", listErr)
 		}
-		if !matched {
-			continue
+		for _, row := range subscriptions {
+			matched, matchErr := (events.Subscription{
+				ID:        row.ID,
+				AccountID: row.AccountID,
+				Source:    row.Source,
+				Type:      row.Type,
+				Filter:    row.Filter,
+			}).Match(envelope)
+			if matchErr != nil {
+				routeErrs = append(routeErrs, fmt.Errorf("subscription %s: %w", row.ID, matchErr))
+				continue
+			}
+			if !matched {
+				continue
+			}
+			invocationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:event:"+envelope.ID+"\x00"+row.ID)).String()
+			headers, marshalErr := json.Marshal(map[string]string{
+				"x-gregale-event-id":     envelope.ID,
+				"x-gregale-event-source": envelope.Source,
+				"x-gregale-event-type":   envelope.Type,
+			})
+			if marshalErr != nil {
+				routeErrs = append(routeErrs, marshalErr)
+				continue
+			}
+			_, enqueueErr := l.engine.store.EnqueueInvocation(ctx, state.Invocation{
+				ID:        invocationID,
+				AppID:     row.AppID,
+				AccountID: row.AccountID,
+				Source:    state.InvocationAsyncInvoke,
+				State:     state.InvocationPending,
+				Method:    eventInvocationMethod,
+				Path:      eventInvocationPath,
+				Payload:   eventPayload,
+				Headers:   headers,
+				DueAt:     now,
+				CreatedAt: now,
+			})
+			if enqueueErr != nil && !errors.Is(enqueueErr, state.ErrConflict) {
+				routeErrs = append(routeErrs, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, enqueueErr))
+				continue
+			}
+			if enqueueErr == nil && l.pool != nil {
+				_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
+					fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocationID, row.AppID, state.InvocationAsyncInvoke))
+			}
 		}
-		invocationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:event:"+envelope.ID+"\x00"+row.ID)).String()
-		headers, marshalErr := json.Marshal(map[string]string{
-			"x-gregale-event-id":     envelope.ID,
-			"x-gregale-event-source": envelope.Source,
-			"x-gregale-event-type":   envelope.Type,
-		})
-		if marshalErr != nil {
-			routeErrs = append(routeErrs, marshalErr)
-			continue
+		if len(subscriptions) < eventFanoutSubscriptionBatch {
+			break
 		}
-		_, enqueueErr := l.engine.store.EnqueueInvocation(ctx, state.Invocation{
-			ID:        invocationID,
-			AppID:     row.AppID,
-			AccountID: row.AccountID,
-			Source:    state.InvocationAsyncInvoke,
-			State:     state.InvocationPending,
-			Method:    eventInvocationMethod,
-			Path:      eventInvocationPath,
-			Payload:   eventPayload,
-			Headers:   headers,
-			DueAt:     now,
-			CreatedAt: now,
-		})
-		if enqueueErr != nil && !errors.Is(enqueueErr, state.ErrConflict) {
-			routeErrs = append(routeErrs, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, enqueueErr))
-			continue
-		}
-		if enqueueErr == nil && l.pool != nil {
-			_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
-				fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocationID, row.AppID, state.InvocationAsyncInvoke))
-		}
+		last := subscriptions[len(subscriptions)-1]
+		cursor = state.EventSubscriptionCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 	}
 	return errors.Join(routeErrs...)
 }

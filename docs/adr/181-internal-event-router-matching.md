@@ -36,8 +36,10 @@ then apply `Subscription.Match` as the authoritative final predicate.
 
 ## Consequences
 
-The publish ingress now has a reviewable, unit-tested matching seam without
-coupling it to scheduler wake or delivery mechanics. Subscription persistence,
-manifest decoding, candidate indexing, batching, and DLQ handling remain later
-increments. This keeps a malformed filter from silently broadening a tenant's
-fan-out while those layers are added.
+The publish ingress and manifest path now feed the schedd router. Schedd uses
+an account-scoped, source/type candidate query with keyset pagination and a
+bounded batch, then applies `Subscription.Match` as the authoritative filter
+check before enqueueing deterministic async invocation ids. Terminal delivery
+rows retain the `event_subscription` origin in the unified DLQ and use the
+existing replay path. This keeps a malformed filter from silently broadening
+a tenant's fan-out while bounding scheduler work for large subscription sets.

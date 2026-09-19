@@ -22042,7 +22042,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			AppID:         inv.AppID,
 			Source:        "invocation",
 			SourceID:      inv.ID,
-			Origin:        string(inv.Source),
+			Origin:        invocationDeadLetterOrigin(inv),
 			Payload:       append(json.RawMessage(nil), inv.Payload...),
 			Headers:       append(json.RawMessage(nil), inv.Headers...),
 			ErrorKind:     errorKind,
