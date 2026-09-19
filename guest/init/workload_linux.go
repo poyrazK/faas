@@ -316,7 +316,17 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
 	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
 	for _, sc := range roster.Sidecars {
-		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy, workloadEnv), state: newWorkloadDependencyState()}
+		sup := newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy, workloadEnv)
+		if baked, found, manifestErr := sidecarManifestForRuntime(sc.Name); manifestErr != nil {
+			return fmt.Errorf("workload %q: load sidecar runtime manifest: %w", sc.Name, manifestErr)
+		} else if found {
+			// Sidecar image metadata is immutable and stays outside the
+			// deployment roster. Project the OCI stop contract onto the
+			// supervisor before it can receive a shutdown signal.
+			sup.stopSignal = parseStopSignal(baked.StopSignal)
+			sup.stopGrace = stopGraceForManifest(baked.StopGracePeriod)
+		}
+		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: sup, state: newWorkloadDependencyState()}
 	}
 	orderedNames, err := workloadStartOrder(roster, deps)
 	if err != nil {
@@ -514,28 +524,46 @@ func hydrateSidecarPortMetadata(roster *workloadRoster) error {
 		if len(spec.Ports) > 0 || spec.Port != 0 {
 			continue
 		}
-		directRoot, err := fullRootfsSidecarRoot(spec.Name)
+		baked, found, err := sidecarManifestForRuntime(spec.Name)
 		if err != nil {
-			return fmt.Errorf("workload %q: resolve sidecar root: %w", spec.Name, err)
+			return fmt.Errorf("workload %q: load sidecar manifest: %w", spec.Name, err)
 		}
-		var baked api.AppManifest
-		if directRoot != "" {
-			baked, err = loadSidecarManifestAt(directRoot, spec.Name)
-		} else {
-			baked, err = loadSidecarManifest(spec.Name)
-		}
-		if err == nil {
+		if found {
 			spec.Ports = append([]api.WorkloadPort(nil), baked.Ports...)
 			if len(spec.Ports) == 0 && baked.Port != 0 {
 				spec.Ports = []api.WorkloadPort{{Port: baked.Port, Protocol: api.WorkloadPortTCP}}
 			}
-			continue
-		}
-		if !isNotExist(err) {
-			return fmt.Errorf("workload %q: load sidecar manifest: %w", spec.Name, err)
 		}
 	}
 	return nil
+}
+
+// sidecarManifestForRuntime loads the immutable image manifest used to
+// configure lifecycle semantics before a sidecar supervisor starts. A legacy
+// sidecar layer without a baked manifest is valid and returns found=false.
+func sidecarManifestForRuntime(name string) (api.AppManifest, bool, error) {
+	return sidecarManifestForRuntimeAt("/", name)
+}
+
+func sidecarManifestForRuntimeAt(root, name string) (api.AppManifest, bool, error) {
+	var zero api.AppManifest
+	directRoot, err := fullRootfsSidecarRootAt(root, name)
+	if err != nil {
+		return zero, false, fmt.Errorf("resolve sidecar root: %w", err)
+	}
+	var manifest api.AppManifest
+	if directRoot != "" {
+		manifest, err = loadSidecarManifestAt(directRoot, name)
+	} else {
+		manifest, err = loadSidecarManifestAt(root, name)
+	}
+	if isNotExist(err) {
+		return zero, false, nil
+	}
+	if err != nil {
+		return zero, false, err
+	}
+	return manifest, true, nil
 }
 
 // newSupervisorForMain builds the main workload's supervisor

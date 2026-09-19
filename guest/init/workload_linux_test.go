@@ -295,6 +295,46 @@ func TestLoadSidecarManifestAt_DirectRoot(t *testing.T) {
 	}
 }
 
+func TestSidecarManifestForRuntime_ProjectsStopContract(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "etc", "faas", "workloads", "metrics", "workload.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := api.AppManifest{
+		Entrypoint:      []string{"/bin/metrics"},
+		StopSignal:      "SIGUSR2",
+		StopGracePeriod: 11 * time.Second,
+	}
+	var buf bytes.Buffer
+	if err := api.WriteManifest(&buf, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := sidecarManifestForRuntimeAt(root, "metrics")
+	if err != nil {
+		t.Fatalf("sidecarManifestForRuntimeAt: %v", err)
+	}
+	if !found {
+		t.Fatal("sidecarManifestForRuntimeAt found=false, want true")
+	}
+	if got.StopSignal != want.StopSignal || got.StopGracePeriod != want.StopGracePeriod {
+		t.Fatalf("stop contract = signal %q grace %s, want signal %q grace %s", got.StopSignal, got.StopGracePeriod, want.StopSignal, want.StopGracePeriod)
+	}
+}
+
+func TestSidecarManifestForRuntime_LegacyLayer(t *testing.T) {
+	manifest, found, err := sidecarManifestForRuntimeAt(t.TempDir(), "metrics")
+	if err != nil {
+		t.Fatalf("sidecarManifestForRuntimeAt: %v", err)
+	}
+	if found {
+		t.Fatalf("legacy sidecar manifest found = %#v, want absent", manifest)
+	}
+}
+
 func TestLoadSidecarManifestAt_RejectsSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
