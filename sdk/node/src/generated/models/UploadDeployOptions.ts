@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * Deployment metadata persisted with the upload session and applied at commit.
@@ -32,6 +33,10 @@ export type UploadDeployOptions = {
   deployed_by?: string;
   pr_number?: number;
   workflows?: Array<WorkflowSpec>;
+  /**
+   * Up to 2 stateless sidecars (1 init + 1 sidecar) carried across the resumable upload session.
+   */
+  sidecars?: Array<Sidecar>;
   /**
    * Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false.
    */
