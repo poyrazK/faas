@@ -32,6 +32,35 @@ func TestCDComputeWorkflowRequiresExplicitFleetPreflightSkip(t *testing.T) {
 	}
 }
 
+func TestCDComputeWorkflowDownloadsCanonicalAssetsFromOneLookupInParallel(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "- name: Download and verify the canonical release")
+	end := strings.Index(workflow, "- name: Assemble the standard join artifact directory")
+	if start < 0 || end < 0 || start >= end {
+		t.Fatal("cannot isolate the canonical release download step")
+	}
+	download := workflow[start:end]
+	for _, want := range []string{
+		`-o "$release_json" "$release_api"`,
+		`jq -er --arg asset "$asset"`,
+		`download_asset "$asset" &`,
+		`download_pids+=("$!")`,
+		`if ! wait "$pid"; then`,
+		"one or more canonical release assets failed to download",
+	} {
+		if !strings.Contains(download, want) {
+			t.Errorf("parallel canonical release download is missing %q", want)
+		}
+	}
+	if got := strings.Count(download, "/releases/tags/${RELEASE_TAG}"); got != 1 {
+		t.Fatalf("canonical release metadata lookups = %d, want 1", got)
+	}
+}
+
 func TestCDComputeWorkflowUsesInfrastructureHealthHost(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {
