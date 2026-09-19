@@ -218,6 +218,11 @@ type Metrics struct {
 	// one of {success, error} — a 2-element closed set; expanding it
 	// requires a new metric (the apply-error mix is its own surface).
 	edgeRuleApply *prometheus.CounterVec
+	// publicAuthConfigErrors counts requests fenced because the app's
+	// public-auth mode is missing or outside the closed set. The reason
+	// label is deliberately closed so a malformed database value cannot
+	// create unbounded metric cardinality.
+	publicAuthConfigErrors *prometheus.CounterVec
 	// edgeRuleValidateFailures (issue #975 #3 / Mega-Foundation #979-a):
 	// counter of kind=validate body mismatches, labelled by
 	// {mode, reason}. `mode` is the rule's validate_mode
@@ -841,6 +846,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_rule_apply_total",
 			Help: "Edge-rule apply-path outcomes (success|error), labelled by kind. ADR-091 hardening PR-A.",
 		}, []string{"kind", "result"}),
+		publicAuthConfigErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_public_auth_config_errors_total",
+			Help: "Requests rejected because an app public-auth mode is empty or unknown, labelled by a closed reason set.",
+		}, []string{"reason"}),
 		// Issue #975 #3 / Mega-Foundation #979-a — kind=validate body
 		// mismatches, labelled by {mode, reason}. The schema-side
 		// counter is the (app, rule_id) tuple from rule load. Tagged
@@ -1587,6 +1596,9 @@ func NewMetrics() *Metrics {
 		}
 		m.edgeRuleCompileError.WithLabelValues(kind)
 	}
+	for _, reason := range []string{"empty_mode", "unknown_mode"} {
+		m.publicAuthConfigErrors.WithLabelValues(reason)
+	}
 	// ADR-091 amendment — pre-instantiate the closed (plan) set on
 	// the coarse-gate counter so the §12 dashboard panel "apps in
 	// maintenance by plan" surfaces from boot. Closed set mirrors
@@ -1631,7 +1643,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -2430,6 +2442,21 @@ func (m *Metrics) ObserveEdgeRuleApply(kind, result string) {
 		return
 	}
 	m.edgeRuleApply.WithLabelValues(kind, result).Inc()
+}
+
+// ObservePublicAuthConfigError increments the bounded counter for a request
+// rejected because its public-auth mode is not safe to interpret. Unknown
+// reasons collapse into the closed "unknown_mode" bucket.
+func (m *Metrics) ObservePublicAuthConfigError(reason string) {
+	if m == nil || m.publicAuthConfigErrors == nil {
+		return
+	}
+	switch reason {
+	case "empty_mode", "unknown_mode":
+	default:
+		reason = "unknown_mode"
+	}
+	m.publicAuthConfigErrors.WithLabelValues(reason).Inc()
 }
 
 // ObserveEdgeRuleValidateFailure (issue #975 #3 / Mega-Foundation #979-a

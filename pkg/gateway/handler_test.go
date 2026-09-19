@@ -32,14 +32,17 @@ import (
 // the per-app target set (issue #168) so tests can assert fan-out
 // behavior end-to-end without a real cluster.
 type fakeBackend struct {
-	mu        sync.Mutex
-	app       App
-	host      string
-	upstream  string // address the proxy connects to (the "node id" on the legacy path)
-	running   bool   // legacy: pre-#168 single-target mode
-	wakeErr   error
-	admits    int32
-	wakeIDOut string // value Admit() returns; empty → "fake-wake-id"
+	mu       sync.Mutex
+	app      App
+	host     string
+	upstream string // address the proxy connects to (the "node id" on the legacy path)
+	// preservePublicAuthMode lets public-auth tests exercise an empty mode;
+	// ordinary gateway fixtures model the database default ('open').
+	preservePublicAuthMode bool
+	running                bool // legacy: pre-#168 single-target mode
+	wakeErr                error
+	admits                 int32
+	wakeIDOut              string // value Admit() returns; empty → "fake-wake-id"
 	// targets holds cached per-instance entries (issue #168). Populated
 	// by Admit when admits > 0; Pick returns them round-robin via a
 	// local counter. Tests seed via AddTarget to simulate a pre-warm
@@ -144,7 +147,11 @@ func (b *fakeBackend) AddTarget(t Target) {
 
 func (b *fakeBackend) Lookup(_ context.Context, host string) (App, bool) {
 	if host == b.host {
-		return b.app, true
+		app := b.app
+		if app.PublicAuth.Mode == "" && !b.preservePublicAuthMode {
+			app.PublicAuth.Mode = publicAuthModeOpen
+		}
+		return app, true
 	}
 	return App{}, false
 }

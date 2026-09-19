@@ -234,7 +234,7 @@ type App struct {
 	// optional for legacy/fake app rows; required rejects anonymous traffic.
 	ConsumerAuthMode string
 	// PublicAuth (issue #477 / ADR-079) is the per-app
-	// public-URL auth mode (open|bearer|basic). When
+	// public-URL auth mode (open|bearer|basic|ip_allowlist|internal_only). When
 	// mode='open' (the pre-#477 default), ServeHTTP
 	// pass-throughs anonymous traffic. When mode='bearer',
 	// ServeHTTP demands an Authorization: Bearer header
@@ -245,10 +245,8 @@ type App struct {
 	// compares the unsealed creds (BasicSealed from the
 	// apps row, sealed under the APP_BASIC_AUTH
 	// secretbox namespace). Plumbed through pgRouter.toApp
-	// from the apps row; default zero value (Mode="" →
-	// treated as "open" by enforcePublicAuth) preserves
-	// the pre-#477 customer behaviour in fakeBackend unit
-	// tests.
+	// from the apps row; an empty mode is invalid and fails closed
+	// before auth, wake, or proxy work.
 	PublicAuth PublicAuthConfig
 	// Scope (issue #272 / ADR-095 PR-B) is the per-lookup scope
 	// label that the gateway forwards to schedd on the wake /
@@ -348,12 +346,12 @@ type DeclaredRouteMatcher interface {
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
 // per-app public-URL auth mode bundle plumbed onto App. Mode is
 // the canonical text from apps.public_auth_mode CHECK enum
-// ('open'|'bearer'|'basic'|'ip_allowlist'); empty Mode is
-// treated as 'open' by enforcePublicAuth so a fakeBackend unit
-// test that doesn't populate the column keeps working.
+// ('open'|'bearer'|'basic'|'ip_allowlist'|'internal_only'); an
+// empty Mode is invalid and is rejected before any request can
+// reach the wake or proxy path.
 // BasicSealed is the secretbox-sealed bytea from
 // apps.public_auth_basic, only set when Mode='basic' (nil for
-// open/bearer/ip_allowlist). The unsealed shape is
+// open/bearer/ip_allowlist/internal_only). The unsealed shape is
 // {username_env, password_env} env-var reference names; the
 // plaintext credentials live in app_secrets (ADR-045) and are
 // loopback-mounted at boot.
@@ -4229,7 +4227,7 @@ func bearerTokenFromHeader(h string) string {
 // enforcePublicAuth (issue #477 / ADR-079) is the per-app
 // public-URL auth gate. Returns true when the request is
 // authorised to proceed (either the routed app has
-// mode='open' OR the caller presented valid credentials
+// mode='open'/'ip_allowlist'/'internal_only' OR the caller presented valid credentials
 // for the active mode); returns false after writing the
 // deny response and the metrics observation. The boolean
 // keeps the call-site in ServeHTTP at one line (mirrors
@@ -4283,27 +4281,30 @@ func bearerTokenFromHeader(h string) string {
 //	instances.public_auth_scope     403 path, mode='bearer'
 //	                                cross-account key.
 //
-// All three audit rows carry app_id + slug + (mode =
+// The credential audit rows carry app_id + slug + (mode =
 // 'bearer'|'basic') + (mode='bearer' → key_id when known).
 // The subject pointer is the account ID for scope, nil for
 // missing/invalid (no principal to stamp). Best-effort — a
 // failed emit never blocks the deny response (matches
 // emitAuthnAudit's contract).
 func (h *Handler) enforcePublicAuth(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
+	// Validate the mode before the deployment-smoke bypass. A malformed
+	// configuration must never turn into an implicit open path, even for
+	// requests carrying the deployment challenge.
+	if !h.enforcePublicAuthConfig(w, r, rec, app) {
+		return false
+	}
 	// Platform deployment smoke is independently authenticated by the cached,
 	// app-and-deployment-bound challenge. Requiring customer bearer/basic auth
 	// here would make every protected app impossible to deploy.
 	if h.authorizedDeploymentSmoke(r, app) {
 		return true
 	}
-	// Open (or unknown) → pass-through. Unknown / empty Mode
-	// is treated as 'open' so the pre-#477 customer behaviour
-	// is preserved (a fakeBackend unit test that doesn't
-	// populate PublicAuthMode gets the same path as a real
-	// open-mode app). No audit row is emitted — open traffic
-	// is the default; only denials are interesting.
+	// Open → pass-through. The mode validator above keeps this switch
+	// limited to the closed set; ip_allowlist and internal_only have
+	// already been applied by their earlier ingress gates.
 	mode := app.PublicAuth.Mode
-	if mode == "" || mode == publicAuthModeOpen {
+	if mode == publicAuthModeOpen {
 		return true
 	}
 	switch mode {
@@ -4311,23 +4312,52 @@ func (h *Handler) enforcePublicAuth(w http.ResponseWriter, r *http.Request, rec 
 		return h.enforcePublicAuthBearer(w, r, rec, app)
 	case publicAuthModeBasic:
 		return h.enforcePublicAuthBasic(w, r, rec, app)
-	default:
-		// Fail-open on unknown mode (ADR-079 §Consequences).
-		// Distinct from the two adjacent nil-check branches
-		// (requireAuthnAuthn == nil, publicAuthUnsealer == nil)
-		// which fail-closed (500) — those are deploy-failure
-		// signals ("the daemon isn't wired"), while an unknown
-		// mode is a data-event signal ("a row landed with a
-		// value the schema doesn't recognize"). The SQL CHECK
-		// constraint apps_public_auth_mode_chk is the canonical
-		// data-integrity backstop; a row that bypassed it is a
-		// code-path bug we want to surface, not a deploy failure
-		// we want to amplify. The per-mode warn-then-dedup keeps
-		// the diagnostic surface bounded (one log line per
-		// distinct mode value across the process lifetime).
-		h.warnUnknownPublicAuthMode(mode)
+	case publicAuthModeIPAllowlist, publicAuthModeInternalOnly:
+		// These modes are enforced by the ingress gates earlier in
+		// ServeHTTP; there is no bearer/basic credential to check here.
 		return true
+	default:
+		// enforcePublicAuthConfig above makes this unreachable. Keep the
+		// default fail-closed for callers that evolve the switch without
+		// extending the validator in the same change.
+		return false
 	}
+}
+
+const (
+	publicAuthConfigReasonEmpty   = "empty_mode"
+	publicAuthConfigReasonUnknown = "unknown_mode"
+)
+
+// enforcePublicAuthConfig rejects a missing or unknown public-auth mode
+// before require_authn, wake admission, or proxying. The response and audit
+// payload intentionally omit the invalid value; it is untrusted database
+// state and has no place on the customer wire.
+func (h *Handler) enforcePublicAuthConfig(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
+	mode := app.PublicAuth.Mode
+	reason := ""
+	switch mode {
+	case publicAuthModeOpen, publicAuthModeBearer, publicAuthModeBasic, publicAuthModeIPAllowlist, publicAuthModeInternalOnly:
+		return true
+	case "":
+		reason = publicAuthConfigReasonEmpty
+	default:
+		reason = publicAuthConfigReasonUnknown
+	}
+
+	h.warnInvalidPublicAuthConfig(reason, app)
+	if h.metrics != nil {
+		h.metrics.ObservePublicAuthConfigError(reason)
+	}
+	h.emitAuthnAudit(r, app, nil, "instances.public_auth_config_invalid", map[string]any{
+		"app_id": app.ID,
+		"slug":   r.Host,
+		"reason": reason,
+	})
+	rec.status = http.StatusServiceUnavailable
+	api.WriteProblem(w, api.ErrPublicAuthConfigInvalid())
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+	return false
 }
 
 // enforcePublicAuthBearer is the bearer-mode branch of
@@ -4533,27 +4563,20 @@ func basicCredsFromHeader(h string) (username, password string, ok bool) {
 	return user, pass, true
 }
 
-// unknownPublicAuthModeWarned is the process-wide trip flag
-// for warnUnknownPublicAuthMode (issue #477). An unrecognised
-// mode should be impossible thanks to the CHECK constraint;
-// the warning is genuinely a code-path bug (or a rebase
-// race that left an old row behind) and one log line per
-// mode is enough to surface it.
-var unknownPublicAuthModeWarned sync.Map // map[string]struct{}
+// invalidPublicAuthConfigWarned is the process-wide trip flag for operator
+// diagnostics. The key is a closed reason, never the untrusted mode value.
+var invalidPublicAuthConfigWarned sync.Map // map[string]struct{}
 
-// warnUnknownPublicAuthMode logs a warning the first time
-// enforcePublicAuth sees an unrecognised PublicAuth.Mode.
-// Subsequent occurrences are silent (per-mode dedup, not
-// per-process, so two distinct legacy modes each surface
-// once). The atomic map is process-scoped, not per-Handler,
-// because the warning is genuinely a code-path bug.
-func (h *Handler) warnUnknownPublicAuthMode(mode string) {
-	if _, seen := unknownPublicAuthModeWarned.LoadOrStore(mode, struct{}{}); seen {
+// warnInvalidPublicAuthConfig logs one bounded diagnostic per invalid reason.
+// Every request still increments the metric and emits an audit row; only the
+// potentially noisy structured log is deduplicated.
+func (h *Handler) warnInvalidPublicAuthConfig(reason string, app App) {
+	if _, seen := invalidPublicAuthConfigWarned.LoadOrStore(reason, struct{}{}); seen {
 		return
 	}
 	if h.log != nil {
-		h.log.Warn("gateway: unknown PublicAuth.Mode; passing through as open",
-			"mode", mode, "note", "apps_public_auth_mode_chk should reject this; check migration 00151")
+		h.log.Warn("gateway: invalid PublicAuth.Mode; refusing request",
+			"app_id", app.ID, "reason", reason)
 	}
 }
 
@@ -5427,6 +5450,12 @@ haveApp:
 	// metric + audit + slog path).
 	if h.applyEdgeRuleGeo(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// Public-auth configuration is validated before either auth gate. This
+	// keeps an empty or unknown mode from being masked by a 401 and ensures
+	// no malformed configuration can reach wake admission or proxying.
+	if !h.enforcePublicAuthConfig(w, r, rec, app) {
 		return
 	}
 

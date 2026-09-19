@@ -23,10 +23,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakePublicAuthUnsealer is the test seam for the basic-auth
@@ -94,8 +96,9 @@ func newPublicAuthTestHandler(t *testing.T, mode string, accountID string) (*Han
 				BasicSealed: []byte("sealed-blob-A"),
 			},
 		},
-		host:     "jane-api.apps.dom",
-		upstream: upstream.Listener.Addr().String(),
+		host:                   "jane-api.apps.dom",
+		upstream:               upstream.Listener.Addr().String(),
+		preservePublicAuthMode: true,
 	}
 	b.setLegacyHot()
 
@@ -127,17 +130,61 @@ func publicAuthReqFor(t *testing.T, authHeader string) *http.Request {
 
 // TestPublicAuth_OpenMode_AllowsAnonymous pins the
 // regression: mode='open' is the pre-#477 default and must
-// pass through anonymous traffic. mode=” (a fakeBackend
-// that didn't populate the column) is also open.
+// pass through anonymous traffic.
 func TestPublicAuth_OpenMode_AllowsAnonymous(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"open", ""} {
-		h, _, _, _, _ := newPublicAuthTestHandler(t, mode, "acct-1")
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, publicAuthReqFor(t, ""))
-		if rr.Code != http.StatusOK {
-			t.Errorf("mode=%q: status = %d, want 200", mode, rr.Code)
-		}
+	h, _, _, _, _ := newPublicAuthTestHandler(t, "open", "acct-1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, publicAuthReqFor(t, ""))
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rr.Code)
+	}
+}
+
+// TestPublicAuth_InvalidMode_FailsClosed pins the security boundary: empty
+// and unknown modes return a stable 503 before auth, wake admission, or the
+// upstream proxy. The wire response and audit payload do not echo the bad
+// mode value.
+func TestPublicAuth_InvalidMode_FailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		mode   string
+		reason string
+	}{
+		{name: "empty", mode: "", reason: publicAuthConfigReasonEmpty},
+		{name: "unknown", mode: "not-a-mode", reason: publicAuthConfigReasonUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, b, authn, _, audit := newPublicAuthTestHandler(t, tc.mode, "acct-1")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, publicAuthReqFor(t, ""))
+
+			if rr.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", rr.Code)
+			}
+			if !strings.Contains(rr.Body.String(), api.CodePublicAuthConfigInvalid) {
+				t.Fatalf("body = %q, want code %q", rr.Body.String(), api.CodePublicAuthConfigInvalid)
+			}
+			if tc.mode != "" && strings.Contains(rr.Body.String(), tc.mode) {
+				t.Fatalf("body echoed invalid mode %q: %q", tc.mode, rr.Body.String())
+			}
+			if got := atomic.LoadInt32(b.Admits()); got != 0 {
+				t.Errorf("wake admits = %d, want 0", got)
+			}
+			if got := authn.calls.Load(); got != 0 {
+				t.Errorf("auth calls = %d, want 0", got)
+			}
+			if got := audit.counts["instances.public_auth_config_invalid"]; got != 1 {
+				t.Errorf("invalid-config audit count = %d, want 1", got)
+			}
+			if got := audit.lastData["reason"]; got != tc.reason {
+				t.Errorf("audit reason = %v, want %q", got, tc.reason)
+			}
+			if got := testutil.ToFloat64(h.metrics.publicAuthConfigErrors.WithLabelValues(tc.reason)); got != 1 {
+				t.Errorf("metric reason=%q = %v, want 1", tc.reason, got)
+			}
+		})
 	}
 }
 

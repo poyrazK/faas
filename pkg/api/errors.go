@@ -1360,6 +1360,13 @@ const (
 	// the PATCH-time shape checks).
 	CodeInvalidPublicAuthIPAllowlist = "invalid_public_auth_ip_allowlist"
 
+	// CodePublicAuthConfigInvalid (security hardening) is a 503 for a
+	// gateway that cannot safely interpret an app's public-auth mode.
+	// The gateway fails closed rather than treating an empty or unknown
+	// mode as open; the caller should retry after the operator repairs
+	// the app configuration.
+	CodePublicAuthConfigInvalid = "public_auth_config_invalid"
+
 	// Issue #462 / ADR-058 — per-app scaling policy (PR-A). Three
 	// new codes, mirroring the existing autoscale shape (one
 	// plan-gate 403 + two shape 422's). The codes are clustered
@@ -1765,7 +1772,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
-		CodePrivateNetworkNotEnabled:
+		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -2337,6 +2344,16 @@ func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
 		WithDocs("https://gregale.dev/status")
+}
+
+// ErrPublicAuthConfigInvalid reports an app whose public-auth mode is
+// missing or outside the gateway's closed set. The detail is intentionally
+// generic: the invalid value is an operator-only diagnostic and must not be
+// reflected to the caller.
+func ErrPublicAuthConfigInvalid() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePublicAuthConfigInvalid,
+		"Public authentication unavailable",
+		"This app's public authentication configuration is invalid; contact the operator.")
 }
 
 // ErrDebugRegressionUnavailable reports a debugger data dependency failure.

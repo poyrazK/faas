@@ -199,42 +199,17 @@ queue Q3) — the substring check is the seed.
   reviewer adding any new field on the audit row MUST
   extend the substring list with a fresh plaintext
   fixture so the invariant stays pinned.
-- **Unknown-mode fail-open posture.** The
-  `enforcePublicAuth` default-branch in `pkg/gateway/handler.go`
-  treats an unrecognised `public_auth_mode` as `open` and
-  logs a single warning per distinct mode value (the
-  sync.Map dedup at `unknownPublicAuthModeWarned` keeps
-  the diagnostic surface bounded). This is in deliberate
-  contrast to the two adjacent nil-check branches
-  (`requireAuthnAuthn == nil` and `publicAuthUnsealer == nil`)
-  which return 500 — those are deploy-failure signals
-  ("the daemon isn't wired"), while an unknown mode is a
-  data-event signal ("a row landed with a value the
-  schema doesn't recognize"). The asymmetry is:
-  - **Fail-closed (500)** on daemon misconfiguration —
-    a customer who flipped mode='bearer' expects the
-    gate to fire; a silent pass-through would be a
-    security regression.
-  - **Fail-open (treat as open, log a warning)** on data
-    drift — the SQL CHECK constraint is the canonical
-    data-integrity backstop, and a row that bypassed it
-    is a code-path bug we want to surface, not a deploy
-    failure we want to amplify. The two adjacent
-    branches are categorically different because they
-    fire when the daemon is misconfigured, not when the
-    data is.
-  - The `unknownPublicAuthModeWarned` per-mode dedup
-    guarantees the warning line is emitted at most once
-    per distinct mode value across the process
-    lifetime, so a noisy storm of stale rows doesn't
-    drown the log. A future contributor who wants
-    fail-closed semantics should add a new mode to the
-    apps_public_auth_mode_chk CHECK constraint AND
-    extend the closed-enum constants in
-    `pkg/api/public_auth.go` and `pkg/state/types.go` in
-    the same commit — the test at
-    `pkg/api/public_auth_test.go::TestPublicAuthModeConstantsAgree`
-    pins the two surfaces equal at compile time.
+- **Invalid-mode fail-closed posture.** The gateway validates
+  `public_auth_mode` before either customer-auth gate and before
+  wake admission. Empty or unrecognised values return `503` with
+  the stable code `public_auth_config_invalid`; the invalid value
+  is omitted from the response, audit row, metric labels, and
+  structured log fields. A bounded
+  `gateway_public_auth_config_errors_total{reason}` counter and
+  `instances.public_auth_config_invalid` audit row give operators
+  visibility without turning database drift into an anonymous
+  access path. Valid `open`, `bearer`, `basic`, `ip_allowlist`, and
+  `internal_only` modes retain their existing behavior.
 
 ## Verification
 
