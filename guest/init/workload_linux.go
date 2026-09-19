@@ -64,6 +64,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -131,6 +132,12 @@ const workloadRosterPath = "/etc/faas/workloads.json"
 type workloadRoster struct {
 	Main     workloadSpec   `json:"main"`
 	Sidecars []workloadSpec `json:"sidecars"`
+}
+
+type workloadRuntime struct {
+	spec  workloadSpec
+	sup   *Supervisor
+	state *workloadDependencyState
 }
 
 // discoverRoster reads the workload roster from the merged
@@ -305,11 +312,6 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 		return err
 	}
 
-	type workloadRuntime struct {
-		spec  workloadSpec
-		sup   *Supervisor
-		state *workloadDependencyState
-	}
 	runtimes := make(map[string]*workloadRuntime, 1+len(roster.Sidecars))
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
 	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
@@ -334,14 +336,90 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	var wg sync.WaitGroup
 	var resultMu sync.Mutex
 	var mainErr error
-	stopAll := func() {
-		for _, rt := range runtimes {
-			rt.sup.RequestStop()
-			if err := rt.sup.ForwardSignal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				log.Debug("runWorkloads: stop signal forwarding failed", "name", rt.spec.Name, "err", err)
+	var stopOnce sync.Once
+	stopAll := func(reason string) {
+		stopOnce.Do(func() {
+			log.Info("runWorkloads: stopping workload set", "reason", reason)
+			var stopWg sync.WaitGroup
+			for _, rt := range runtimes {
+				rt := rt
+				stopWg.Add(1)
+				go func() {
+					defer stopWg.Done()
+					sig := rt.sup.stopSignal
+					if sig == 0 {
+						sig = defaultStopSignal
+					}
+					grace := stopGraceForManifest(rt.sup.stopGrace)
+					if err := rt.sup.Stop(context.Background(), sig, grace); err != nil && !errors.Is(err, os.ErrProcessDone) {
+						log.Debug("runWorkloads: graceful stop failed", "name", rt.spec.Name, "signal", sig.String(), "grace", grace.String(), "err", err)
+					}
+				}()
+			}
+			stopWg.Wait()
+		})
+	}
+
+	// runWorkloads is the PID-1 path for multi-workload deployments. Install
+	// the same signal bridge as the legacy single-workload path so a shutdown
+	// reaches every main/sidecar process, not just the process tracked by the
+	// first supervisor.
+	sigCh := make(chan os.Signal, 8)
+	signal.Notify(sigCh,
+		defaultStopSignal,
+		syscall.SIGINT,
+		syscall.SIGQUIT,
+		syscall.SIGHUP,
+		syscall.SIGUSR1,
+		syscall.SIGUSR2,
+		syscall.SIGCHLD,
+	)
+	signalDone := make(chan struct{})
+	go func() {
+		defer close(signalDone)
+		for {
+			select {
+			case <-coordCtx.Done():
+				return
+			case sig := <-sigCh:
+				if sig == syscall.SIGCHLD {
+					reapOne(log)
+					continue
+				}
+				ss, ok := sig.(syscall.Signal)
+				if !ok {
+					continue
+				}
+				configuredStop := false
+				for _, rt := range runtimes {
+					if rt.sup.stopSignal == ss {
+						configuredStop = true
+						break
+					}
+				}
+				if ss == defaultStopSignal || configuredStop {
+					cancel()
+					stopAll("external-signal")
+					return
+				}
+				for _, rt := range runtimes {
+					if err := rt.sup.ForwardSignal(ss); err != nil && !errors.Is(err, os.ErrProcessDone) {
+						log.Debug("runWorkloads: signal forwarding failed", "name", rt.spec.Name, "signal", ss.String(), "err", err)
+					}
+				}
+				if ss == syscall.SIGINT || ss == syscall.SIGQUIT {
+					cancel()
+					stopAll("external-signal")
+					return
+				}
 			}
 		}
-	}
+	}()
+	defer func() {
+		cancel()
+		<-signalDone
+		signal.Stop(sigCh)
+	}()
 	for _, name := range orderedNames {
 		rt := runtimes[name]
 		name, rt := name, rt
@@ -358,7 +436,7 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 						}
 						resultMu.Unlock()
 						cancel()
-						stopAll()
+						stopAll("dependency-failure")
 					}
 					return
 				}
@@ -411,7 +489,7 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 					}
 					resultMu.Unlock()
 					cancel()
-					stopAll()
+					stopAll("workload-exit")
 				}
 			}
 		}()
@@ -469,7 +547,12 @@ func hydrateSidecarPortMetadata(roster *workloadRoster) error {
 // the merged env).
 func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger, workloadEnvOpt ...map[string]string) *Supervisor {
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
-	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
+	supRef := &Supervisor{
+		Max:        maxRestarts,
+		Policy:     policy,
+		stopSignal: parseStopSignal(manifest.StopSignal),
+		stopGrace:  stopGraceForManifest(manifest.StopGracePeriod),
+	}
 	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
 	supRef.Start = func() error {
 		return runAppWithRAMAndWorkloadEnv(manifest, secrets, apiEnv, supRef, spec.RamMB, workloadEnv, spec.CPUMillicores)
@@ -497,7 +580,12 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 	if spec.Type == "init" || !spec.Essential {
 		maxRestarts = 0 // init and non-essential sidecars do not restart
 	}
-	supRef := &Supervisor{Max: maxRestarts, Policy: api.RestartPolicyOnFailure}
+	supRef := &Supervisor{
+		Max:        maxRestarts,
+		Policy:     api.RestartPolicyOnFailure,
+		stopSignal: defaultStopSignal,
+		stopGrace:  MaxAppManifestStopGracePeriodFallback,
+	}
 	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
 	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, workloadEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
