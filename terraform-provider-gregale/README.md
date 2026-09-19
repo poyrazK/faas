@@ -17,6 +17,7 @@ The initial surface is intentionally small:
 - `gregale_static_egress_ip` pins a stable public IPv4 address for an app's outbound traffic.
 - `gregale_private_network` manages a Gregale-owned provider-neutral private network.
 - `gregale_private_network_attachment` manages an app's provider-neutral private-network attachment and reconciliation state.
+- `gregale_private_network_peering` manages a provider-neutral peering between two Gregale private networks.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
 - `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
@@ -189,6 +190,23 @@ output "private_address" {
 `allowed_cidrs` is optional. When set, it narrows private traffic to the
 listed IPv4 ranges, which must be contained by the network CIDR; changing the
 policy updates the network in place. Omit it to preserve allow-all behavior.
+
+## Private-network peering
+
+Connect two Gregale-owned private networks in the same account and region.
+Peering is symmetric and converges asynchronously; Terraform exposes the
+`pending`, `ready`, or `error` status reported by the fabric.
+
+```hcl
+resource "gregale_private_network_peering" "app_data" {
+  network_id      = gregale_private_network.app.id
+  peer_network_id = gregale_private_network.data.id
+}
+
+output "peering_status" {
+  value = gregale_private_network_peering.app_data.status
+}
+```
 
 ## Alert rule
 

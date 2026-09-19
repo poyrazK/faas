@@ -355,6 +355,21 @@ type privateNetworkResponse struct {
 	UpdatedAt    *string  `json:"updated_at,omitempty"`
 }
 
+type privateNetworkPeeringRequest struct {
+	PeerNetworkID string `json:"peer_network_id"`
+}
+
+type privateNetworkPeeringResponse struct {
+	ID            string  `json:"id"`
+	NetworkID     string  `json:"network_id"`
+	PeerNetworkID string  `json:"peer_network_id"`
+	Region        string  `json:"region"`
+	Status        string  `json:"status"`
+	StatusDetail  string  `json:"status_detail,omitempty"`
+	CreatedAt     *string `json:"created_at,omitempty"`
+	UpdatedAt     *string `json:"updated_at,omitempty"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -747,4 +762,23 @@ func (c *client) updatePrivateNetworkPolicy(ctx context.Context, networkID strin
 	path := "/v1/networks/" + escapePath(networkID) + "/policy"
 	err := c.request(ctx, http.MethodPut, path, req, &out, true)
 	return out, err
+}
+
+func (c *client) createPrivateNetworkPeering(ctx context.Context, networkID string, req privateNetworkPeeringRequest) (privateNetworkPeeringResponse, error) {
+	var out privateNetworkPeeringResponse
+	path := "/v1/networks/" + escapePath(networkID) + "/peerings"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) getPrivateNetworkPeering(ctx context.Context, networkID, peeringID string) (privateNetworkPeeringResponse, error) {
+	var out privateNetworkPeeringResponse
+	path := "/v1/networks/" + escapePath(networkID) + "/peerings/" + escapePath(peeringID)
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) deletePrivateNetworkPeering(ctx context.Context, networkID, peeringID string) error {
+	path := "/v1/networks/" + escapePath(networkID) + "/peerings/" + escapePath(peeringID)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, true)
 }

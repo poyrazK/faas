@@ -797,3 +797,61 @@ func TestClientPrivateNetworkLifecycleUsesPublicContract(t *testing.T) {
 		t.Fatalf("deletePrivateNetwork: %v", err)
 	}
 }
+
+func TestClientPrivateNetworkPeeringLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/networks/app-vpc/peerings":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("private network peering create request did not include an idempotency key")
+			}
+			var request privateNetworkPeeringRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode private network peering request: %v", err)
+			}
+			if request.PeerNetworkID != "data-vpc" {
+				t.Fatalf("private network peering request = %+v", request)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"app-data-peer","network_id":"app-vpc","peer_network_id":"data-vpc","region":"fra1","status":"pending","status_detail":"waiting for route convergence","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/networks/app-vpc/peerings/app-data-peer":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("private network peering lookup included an idempotency key")
+			}
+			_, _ = w.Write([]byte(`{"id":"app-data-peer","network_id":"app-vpc","peer_network_id":"data-vpc","region":"fra1","status":"ready","status_detail":"private network routes active","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:02:00Z"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/networks/app-vpc/peerings/app-data-peer":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("private network peering delete request did not include an idempotency key")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	created, err := client.createPrivateNetworkPeering(context.Background(), "app-vpc", privateNetworkPeeringRequest{PeerNetworkID: "data-vpc"})
+	if err != nil {
+		t.Fatalf("createPrivateNetworkPeering: %v", err)
+	}
+	if created.ID != "app-data-peer" || created.Status != "pending" || created.PeerNetworkID != "data-vpc" {
+		t.Fatalf("created private network peering = %+v", created)
+	}
+
+	read, err := client.getPrivateNetworkPeering(context.Background(), "app-vpc", "app-data-peer")
+	if err != nil {
+		t.Fatalf("getPrivateNetworkPeering: %v", err)
+	}
+	if read.Status != "ready" || read.Region != "fra1" || read.StatusDetail != "private network routes active" {
+		t.Fatalf("read private network peering = %+v", read)
+	}
+
+	if err := client.deletePrivateNetworkPeering(context.Background(), "app-vpc", "app-data-peer"); err != nil {
+		t.Fatalf("deletePrivateNetworkPeering: %v", err)
+	}
+}
