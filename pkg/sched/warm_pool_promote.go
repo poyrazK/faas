@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // promoteWarmInstanceLocked resumes one resident warm-pool VM for a request.
@@ -28,12 +30,18 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: list promotion candidates: %w", err)
 	}
 	candidates := make([]state.Instance, 0, len(instances))
+	warmCount := 0
 	for _, ins := range instances {
-		if state.State(ins.State) != state.StateWarm || ins.DeploymentID != dep.ID || !instanceModeMatchesApp(app, ins) {
+		if state.State(ins.State) != state.StateWarm {
+			continue
+		}
+		warmCount++
+		if ins.DeploymentID != dep.ID || !instanceModeMatchesApp(app, ins) {
 			continue
 		}
 		candidates = append(candidates, ins)
 	}
+	defer func() { e.setWarmPoolSizeGauge(acct.Plan, warmCount) }()
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].StartedAt.Equal(candidates[j].StartedAt) {
 			return candidates[i].ID < candidates[j].ID
@@ -60,7 +68,9 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		// A paused row without runtime identity cannot be resumed safely;
 		// destroy and park it so it cannot consume resident capacity forever.
 		if warm.Netns == "" || warm.HostIP == "" {
-			e.discardWarmPromotion(ctx, warm, "runtime_identity_missing")
+			if e.discardWarmPromotion(ctx, warm, "runtime_identity_missing") {
+				warmCount--
+			}
 			e.observeWarmResume("stale")
 			continue
 		}
@@ -74,22 +84,29 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 				RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
 				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, Kind: KindWarmPool,
 			}); admitErr != nil {
-				e.discardWarmPromotion(ctx, warm, "ledger_repair_failed")
+				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {
+					warmCount--
+				}
 				e.observeWarmResume("stale")
 				continue
 			}
 		}
 
+		resumeStartedAt := time.Now()
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
 		resumeErr := resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
 		cancel()
 		if resumeErr != nil {
-			e.discardWarmPromotion(ctx, warm, "resume_failed")
+			if e.discardWarmPromotion(ctx, warm, "resume_failed") {
+				warmCount--
+			}
 			e.observeWarmResume("stale")
 			continue
 		}
 		if !e.ledger.PromoteWarm(warm.ID) {
-			e.discardWarmPromotion(ctx, warm, "ledger_promotion_failed")
+			if e.discardWarmPromotion(ctx, warm, "ledger_promotion_failed") {
+				warmCount--
+			}
 			e.observeWarmResume("stale")
 			continue
 		}
@@ -98,9 +115,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		if publishErr != nil {
 			e.ledger.Release(warm.ID)
 			if !errors.Is(publishErr, state.ErrConflict) {
-				e.discardWarmPromotion(ctx, warm, "record_runtime_failed")
+				if e.discardWarmPromotion(ctx, warm, "record_runtime_failed") {
+					warmCount--
+				}
 			} else if current, loadErr := e.store.InstanceByID(ctx, warm.ID); loadErr == nil && state.State(current.State) == state.StateWarm {
-				e.discardWarmPromotion(ctx, warm, "state_conflict")
+				if e.discardWarmPromotion(ctx, warm, "state_conflict") {
+					warmCount--
+				}
 			}
 			e.observeWarmResume("stale")
 			continue
@@ -108,6 +129,8 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 
 		e.recordCommittedInstanceTransition(ctx, fresh, state.StateWarm, state.StateRunning, app.ID, "warm_pool_resume", "")
 		e.clearSnapshotBackoffAfterWake(ctx, dep.ID)
+		e.observeWarmResumeDuration(app.ID, warm.WakeID, time.Since(resumeStartedAt))
+		warmCount--
 		e.observeWarmResume("success")
 		return WakeResult{
 			InstanceID:   fresh.ID,
@@ -131,7 +154,7 @@ func (e *Engine) observeWarmResume(outcome string) {
 // discardWarmPromotion destroys a paused lease and moves its row back to
 // PARKED. The conditional state write prevents a stale cleanup from parking a
 // row that another scheduler transition has already claimed.
-func (e *Engine) discardWarmPromotion(ctx context.Context, warm state.Instance, reason string) {
+func (e *Engine) discardWarmPromotion(ctx context.Context, warm state.Instance, reason string) bool {
 	cleanupCtx := context.WithoutCancel(ctx)
 	if err := e.timedDestroy(cleanupCtx, warm.NodeID, warm.ID, DestroyTimeout); err != nil {
 		e.log.Warn("sched: warm pool: destroy stale promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
@@ -141,7 +164,23 @@ func (e *Engine) discardWarmPromotion(ctx context.Context, warm state.Instance, 
 		if !errors.Is(err, state.ErrConflict) {
 			e.log.Warn("sched: warm pool: park stale promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
 		}
-		return
+		return false
 	}
 	e.recordCommittedInstanceTransition(cleanupCtx, warm, state.StateWarm, state.StateParked, warm.AppID, "warm_pool_resume_failed", reason)
+	return true
+}
+
+func (e *Engine) observeWarmResumeDuration(appID, wakeID string, duration time.Duration) {
+	if e == nil || e.ops == nil {
+		return
+	}
+	obs, ok := e.ops.WakeRPCDuration(appID, "resume").(prometheus.ExemplarObserver)
+	if !ok {
+		return
+	}
+	exemplar := prometheus.Labels{}
+	if wakeID != "" {
+		exemplar["wake_id"] = wakeID
+	}
+	obs.ObserveWithExemplar(duration.Seconds(), exemplar)
 }

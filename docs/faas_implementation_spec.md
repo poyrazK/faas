@@ -1082,13 +1082,14 @@ gateway-to-instance bridge hop. Rows created before September 2026 used the
 proxy-only interval in `latency_ms` and do not contain `proxy_latency_ms`;
 historical rows are not rewritten.
 
-The schedd-side wake path is decomposed into three `schedd_wake_rpc_duration_seconds{app, phase}` histograms (ADR-097, P1B) so operators can attribute a p95 regression to a specific phase without re-running the wake under a profiler:
+The schedd-side wake path is decomposed into four `schedd_wake_rpc_duration_seconds{app, phase}` histograms (ADR-097, P1B) so operators can attribute a p95 regression to a specific phase without re-running the wake under a profiler:
 
 | schedd-side phase | Bucket range | What it covers |
 |---|---|---|
 | `admit_to_rpc` | 0.01–5 s | gRPC handler → `Engine.admitGate` → `NodeLedger.Admit` → placement → `vmmd` RPC start. Lock + admission + ledger + placement. |
 | `rpc_call` | 0.01–5 s | vmmd `CreateFromSnapshot` / `CreateColdBoot` round trip. Cross-process boundary, the only phase that crosses a node-local socket. |
 | `rpc_to_running` | 0.01–5 s | RPC return → `e.transition(ctx, ..., state.StateRunning)`. Boot-input re-read + `SetInstanceRuntime` + audit emit. |
+| `resume` | 0.01–5 s | vmmd in-place resume of a paused warm-pool VM before the durable `WARM → RUNNING` promotion. |
 
 `wake_id` is attached as a `prometheus.Exemplar` on every observation so an operator can join the histogram to `gateway_wake_latency_seconds` on the gateway side and to the `events` table — no `wake_id` label is added to the histogram (cardinality blow-up). Bucket set is spec §6.3 verbatim plus a 0.01 s low-end bucket for `admit_to_rpc`. ADR-097.
 
@@ -1639,7 +1640,7 @@ see "did the box scale, and why" without correlating instances:
 |---|---|---|---|
 | `schedd_scale_up_decisions_total` | `app`, `outcome` | `pkg/wire.OpsMetrics.ObserveScaleUp` (per tick, per app that ran the trigger) | `admit` (signal above target, admitted an instance), `reject_at_cap` (signal above target but at `max_concurrency`), `no_signal` (trigger had no RPS/CPU data for this app yet), `cooldown_held` (per-app scale-out cooldown consult in `Engine.admitGate` skipped the wake — issue #462), `min_floor_already` (per-app `ScalingPolicy.MinInstances` already met and no traffic signal — issue #462, PR-C), `overage_cap_reached` (account overage cap reached — issue #561, `pkg/sched/engine.go:4876-4888`) |
 | `schedd_scale_down_decisions_total` | `app`, `outcome` | `pkg/wire.OpsMetrics.ObserveScaleDown` (per tick, per app that ran the aggressive reaper) | `park` (≥ 1 instance parked above `max(min_instances, desired + 1)`), `keep` (signal said the running set is fine OR said "park to floor" and the floor matches the running count exactly), `min_floor_already` (per-app `ScalingPolicy.MinInstances` already met — issue #462, PR-C; semantic upgrade over `keep`), `cooldown_held` (per-app scale-in cooldown consult in `ReapAggressive` skipped the entire app — P1C; also emitted by the idle reaper branch since P1D — `ReapIdle` is the canonical emitter, `ReapAggressive` consults the shared `cooldownHeldByApp` set and skips its emission when the idle branch already recorded the same app in the same tick) |
-| `schedd_wake_rpc_duration_seconds` | `app`, `phase` | `pkg/wire.OpsMetrics.WakeRPCDuration` (per successful wake, on the cold-boot / restore success path only — error branches emit `events.BootFailed` instead) | `admit_to_rpc` (gRPC handler → vmmd RPC start), `rpc_call` (vmmd `Create{FromSnapshot,ColdBoot}` round trip), `rpc_to_running` (RPC return → `state.StateRunning` transition). `wake_id` is attached as a `prometheus.Exemplar` on every observation so operators can join to `gateway_wake_latency_seconds` and to the `events` table. Bucket set is spec §6.3 verbatim plus a 0.01 s low-end bucket for `admit_to_rpc`. Empty-app sentinel rows are pre-instantiated for all three phases so the §12 wake-latency-decomposition panel surfaces zero rows from boot. ADR-097 (P1B). |
+| `schedd_wake_rpc_duration_seconds` | `app`, `phase` | `pkg/wire.OpsMetrics.WakeRPCDuration` (per successful wake; cold-boot/restore paths emit the first three phases, warm-pool promotion emits `resume`) | `admit_to_rpc` (gRPC handler → vmmd RPC start), `rpc_call` (vmmd `Create{FromSnapshot,ColdBoot}` round trip), `rpc_to_running` (RPC return → `state.StateRunning` transition), `resume` (vmmd in-place warm-pool resume). `wake_id` is attached as a `prometheus.Exemplar` on every observation so operators can join to `gateway_wake_latency_seconds` and to the `events` table. Bucket set is spec §6.3 verbatim plus a 0.01 s low-end bucket for `admit_to_rpc`. Empty-app sentinel rows are pre-instantiated for all four phases so the §12 wake-latency-decomposition panel surfaces zero rows from boot. ADR-097 (P1B). |
 
 Both counters are per-daemon (the `schedd_` prefix is supplied by
 `wire.NewOpsMetrics("schedd")`); the metric name is the operator-facing

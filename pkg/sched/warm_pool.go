@@ -44,6 +44,13 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 	if !e.ownsApp(app) {
 		return nil
 	}
+	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return fmt.Errorf("sched: warm pool: load account: %w", err)
+	}
+	// Keep the plan-labelled gauge aligned with durable WARM rows even when
+	// reconciliation exits early (disabled pool, plan gate, or no snapshot).
+	defer e.refreshWarmPoolSizeGauge(ctx, acct.Plan, appID)
 	instances, err := e.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: list instances: %w", err)
@@ -74,10 +81,6 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		return e.reclaimWarmPool(ctx, warm, desired)
 	}
 
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
-	if err != nil {
-		return fmt.Errorf("sched: warm pool: load account: %w", err)
-	}
 	if !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return e.reclaimWarmPool(ctx, warm, 0)
 	}
@@ -143,6 +146,40 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		}
 	}
 	return nil
+}
+
+// refreshWarmPoolSizeGauge projects durable resident WARM rows into the
+// plan-labelled operator gauge. It deliberately counts rows rather than the
+// configured target: capacity pressure, stale cleanup, and a just-completed
+// promotion are visible as the actual resident pool size.
+func (e *Engine) refreshWarmPoolSizeGauge(ctx context.Context, plan api.Plan, appID string) {
+	if e == nil || e.store == nil || e.ops == nil || appID == "" {
+		return
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		if e.log != nil {
+			e.log.Warn("sched: warm pool: refresh size gauge", "app", appID, "err", err)
+		}
+		return
+	}
+	count := 0
+	for _, ins := range instances {
+		if state.State(ins.State) == state.StateWarm {
+			count++
+		}
+	}
+	e.ops.WarmPoolSize(plan).Set(float64(count))
+}
+
+func (e *Engine) setWarmPoolSizeGauge(plan api.Plan, count int) {
+	if e == nil || e.ops == nil {
+		return
+	}
+	if count < 0 {
+		count = 0
+	}
+	e.ops.WarmPoolSize(plan).Set(float64(count))
 }
 
 func (e *Engine) reclaimWarmPool(ctx context.Context, warm []state.Instance, desired int) error {

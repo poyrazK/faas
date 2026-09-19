@@ -5,9 +5,13 @@
   ADR-096 (customer-facing error grouping, PR #863 PR-A — reserves the slot
   for PR-C's `docs/adr/096-customer-error-grouping.md`))
 - **Date:** 2026-08-12
+- **Addendum (2026-09-19):** The closed phase set now also includes
+  `resume`, covering vmmd's in-place resume of a paused warm-pool VM before
+  the scheduler commits `WARM → RUNNING`. The existing histogram, buckets,
+  exemplar contract, and bounded-cardinality posture are unchanged.
 - **Decision:** Add a single new Prometheus HistogramVec
   `schedd_wake_rpc_duration_seconds{app, phase}` on schedd, with closed-set
-  `phase ∈ {admit_to_rpc, rpc_call, rpc_to_running}`. Bucket set reuses the
+  `phase ∈ {admit_to_rpc, rpc_call, rpc_to_running, resume}`. Bucket set reuses the
   spec §6.3 wake-latency budget (`0.05`–`5` seconds) with one extra low-end
   bucket (`0.01`) for the admit-to-RPC phase, which is dominated by
   lock-acquire + ledger consult and rarely exceeds a few milliseconds. Each
@@ -77,7 +81,7 @@
     `client_golang` 1.x. No registry changes needed. If the exemplar
     observer is not wired in a given process (e.g. test binaries), the
     exemplar is silently dropped — the histogram count is unaffected.
-  - **Cardinality.** Per schedd, `O(autoscale-enabled apps × 3)` new
+  - **Cardinality.** Per schedd, `O(autoscale-enabled apps × 4)` new
     series. Comparable to the existing
     `schedd_guest_init_duration_seconds{app, runner}` precedent. Within
     the spec §12 budget.
@@ -88,10 +92,11 @@
     schedd phase corresponds to which histogram row. Spec §12.1 (the
     metric catalogue at line 788) gets a new table row for
     `schedd_wake_rpc_duration_seconds`.
-  - **No behaviour change.** All three observations are
+  - **No behaviour change.** The phase observations are
     `prometheus.Observer.Observe(seconds)` calls — pure telemetry, no
     conditional branches on the value. The new `time.Now()` calls are
-    constant overhead (< 1 µs each, three per wake).
+    constant overhead (< 1 µs each; warm-pool promotion records only its
+    `resume` observation).
   - **No new ADR sibling.** This is a metric-surface ADR only. The wake
     state-machine, admit-gate, ledger, and vmmd RPC shapes are unchanged.
 
@@ -99,7 +104,7 @@
 
 - **Spec §6.3** (`docs/faas_implementation_spec.md:616-625`) — the 5-phase
   budget decomposition this ADR decomposes on the schedd side. The new
-  histograms observe three schedd phases; the gateway-side
+  histograms observe four schedd phase values; the gateway-side
   `gateway_wake_latency_seconds` observes the end-to-end sum.
 - **`schedd_guest_init_duration_seconds`** (`pkg/wire/metrics.go:1172-1177`) —
   the HistogramVec pattern + nil-safe `ObserveGuestInit` accessor + closed-set
@@ -123,9 +128,9 @@ introduces:
 - **`pkg/wire/metrics.go`** — new `wakePhaseDuration` HistogramVec,
   field on `OpsMetrics` struct, nil-safe `WakePhaseDuration(app, phase
   string) prometheus.Observer` accessor. Pre-instantiates empty-app ×
-  3 phase rows in the constructor's closed-set section (next to the
+  4 phase rows in the constructor's closed-set section (next to the
   existing scale-up / scale-down / floor loops at metrics.go:2352-2406).
-- **`pkg/sched/engine.go`** — three new `time.Now()` captures and three
+- **`pkg/sched/engine.go`** — phase timing captures and observations
   new histogram observations (one per phase). All sites are inside the
   existing `Engine.Wake` / `Engine.AdmitInstance` paths; no new
   exported functions.
@@ -135,7 +140,8 @@ introduces:
 - **`pkg/sched/engine_test.go`** — `TestEngineWake_PhaseHistograms_Recorded`
   using the existing `fakeVMM{sleepFor: …}` fixture
   (`engine_test.go:52-53`) with a 50 ms sleep, asserting non-zero
-  observation count for all three phases after a single wake.
+  observation count for every closed-set phase after the corresponding wake
+  path (cold/restore emits three; warm-pool promotion emits `resume`).
 - **`docs/faas_implementation_spec.md`** — §6.3 paragraph + §12.1 row.
 - **`docs/adr/097-schedd-wake-phase-telemetry.md`** — this file.
 

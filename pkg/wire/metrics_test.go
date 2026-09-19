@@ -597,7 +597,7 @@ func TestOpsMetrics_ObserveScaleUpClosedSet(t *testing.T) {
 
 // TestOpsMetrics_ObserveWakePhase (ADR-097, P1B) — the schedd-side
 // wake-phase histogram vector is pre-instantiated at boot with the
-// closed 3-phase label set under the empty-app sentinel so the §12
+// closed 4-phase label set under the empty-app sentinel so the §12
 // wake-latency-decomposition panel surfaces zero rows from an idle
 // daemon (the PR #826 closed-set contract). WakeRPCDuration accessor
 // returns a real prometheus.Observer for each (app, phase) pair so
@@ -609,11 +609,12 @@ func TestOpsMetrics_ObserveScaleUpClosedSet(t *testing.T) {
 func TestOpsMetrics_ObserveWakePhase(t *testing.T) {
 	m := wire.NewOpsMetrics("schedd")
 
-	// Observe on three phase values for one app. The empty-app
+	// Observe on four phase values for one app. The empty-app
 	// sentinel rows remain at 0.
 	m.WakeRPCDuration("app-1", "admit_to_rpc").Observe(0.045)
 	m.WakeRPCDuration("app-1", "rpc_call").Observe(0.250)
 	m.WakeRPCDuration("app-1", "rpc_to_running").Observe(0.012)
+	m.WakeRPCDuration("app-1", "resume").Observe(0.020)
 
 	body := render(t, m)
 	for _, want := range []string{
@@ -621,9 +622,10 @@ func TestOpsMetrics_ObserveWakePhase(t *testing.T) {
 		`schedd_wake_rpc_duration_seconds_count{app="app-1",phase="admit_to_rpc"} 1`,
 		`schedd_wake_rpc_duration_seconds_count{app="app-1",phase="rpc_call"} 1`,
 		`schedd_wake_rpc_duration_seconds_count{app="app-1",phase="rpc_to_running"} 1`,
+		`schedd_wake_rpc_duration_seconds_count{app="app-1",phase="resume"} 1`,
 		// Pre-instantiated empty-app sentinel rows for the closed set.
 		// P1B / ADR-097: the closed set is {admit_to_rpc, rpc_call,
-		// rpc_to_running}; every value must surface from boot so the
+		// rpc_to_running, resume}; every value must surface from boot so the
 		// dashboard panel has zero rows at idle (PR #826 precedent).
 		// Metric name is *_wake_rpc_duration_seconds (not the
 		// existing *_wake_phase_duration_seconds owned by the
@@ -631,6 +633,7 @@ func TestOpsMetrics_ObserveWakePhase(t *testing.T) {
 		`schedd_wake_rpc_duration_seconds_count{app="",phase="admit_to_rpc"} 0`,
 		`schedd_wake_rpc_duration_seconds_count{app="",phase="rpc_call"} 0`,
 		`schedd_wake_rpc_duration_seconds_count{app="",phase="rpc_to_running"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="resume"} 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing line %q in:\n%s", want, body)

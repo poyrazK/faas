@@ -1387,12 +1387,16 @@ func TestEngineWake_PhaseHistograms_Recorded(t *testing.T) {
 		t.Fatalf("Wake: %v", err)
 	}
 
-	// Per-app rows must have count == 1 for every phase.
+	// Per-app rows must have count == 1 for every cold/restore phase; the
+	// warm-pool resume phase remains zero on this ordinary cold wake.
 	for _, phase := range []string{"admit_to_rpc", "rpc_call", "rpc_to_running"} {
 		got := readWakeRPC(t, ops, app.ID, phase, "count")
 		if got != 1 {
 			t.Errorf("phase %q: count = %v, want 1", phase, got)
 		}
+	}
+	if got := readWakeRPC(t, ops, app.ID, "resume", "count"); got != 0 {
+		t.Errorf("phase resume: count = %v, want 0 on a cold wake", got)
 	}
 
 	// rpc_call sum must show the 50ms sleepFor with tolerance.
@@ -1404,7 +1408,7 @@ func TestEngineWake_PhaseHistograms_Recorded(t *testing.T) {
 	}
 
 	// Empty-app sentinel rows must stay at 0 — closed-set contract.
-	for _, phase := range []string{"admit_to_rpc", "rpc_call", "rpc_to_running"} {
+	for _, phase := range []string{"admit_to_rpc", "rpc_call", "rpc_to_running", "resume"} {
 		got := readWakeRPC(t, ops, "", phase, "count")
 		if got != 0 {
 			t.Errorf("empty-app sentinel %q: count = %v, want 0", phase, got)

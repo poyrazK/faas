@@ -243,8 +243,9 @@ type OpsMetrics struct {
 	// for each wake phase: admit_to_rpc (gRPC handler → vmmd RPC
 	// start), rpc_call (vmmd Create{FromSnapshot,ColdBoot} round
 	// trip), rpc_to_running (RPC return → WAKING/COLD_BOOTING → RUNNING
-	// transition). Labelled by {app, phase} — phase is closed-set
-	// {admit_to_rpc, rpc_call, rpc_to_running}. The empty-app
+	// transition), and resume (paused warm-pool VM → RUNNING). Labelled by
+	// {app, phase} — phase is closed-set
+	// {admit_to_rpc, rpc_call, rpc_to_running, resume}. The empty-app
 	// sentinel is pre-instantiated for every phase value so the §12
 	// wake-latency decomposition dashboard panel surfaces a zero row
 	// from boot. Bucket set reuses the spec §6.3 wake-latency budget
@@ -257,7 +258,7 @@ type OpsMetrics struct {
 	// gateway side and to the events table (BootStarted / BootCompleted
 	// rows in pkg/sched/events.go) — exemplar attachment does NOT
 	// add a wake_id label, so cardinality stays O(autoscale-enabled
-	// apps × 3 phase values).
+	// apps × 4 phase values).
 	wakeRPCDuration *prometheus.HistogramVec
 	// gatewayDrainWaitSeconds (issue #587 / PR-A) — histogram
 	// for the per-daemon graceful-shutdown drain. Closed label
@@ -2161,7 +2162,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"app", "runner"})
 	guestInitDuration.WithLabelValues("", "")
 	// ADR-097 (P1B): schedd-side wake RPC duration histogram. Phase
-	// ∈ {admit_to_rpc, rpc_call, rpc_to_running}. Bucket set is spec
+	// ∈ {admit_to_rpc, rpc_call, rpc_to_running, resume}. Bucket set is spec
 	// §6.3 verbatim plus a 0.01 low-end bucket for admit_to_rpc.
 	// Empty-app sentinel rows are pre-instantiated for every phase
 	// value so the wake-latency decomposition dashboard surfaces a
@@ -2179,12 +2180,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// break the wake-latency panel that ships to day-1.
 	wakeRPCDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_rpc_duration_seconds",
-		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {admit_to_rpc, rpc_call, rpc_to_running}; app label is apps.id. admit_to_rpc covers the gRPC handler → vmmd RPC start window (lock + admitGate + ledger + placement). rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
+		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. admit_to_rpc covers the gRPC handler → vmmd RPC start window (lock + admitGate + ledger + placement). rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 0.8, 1, 1.5, 3, 5},
 	}, []string{"app", "phase"})
 	wakeRPCDuration.WithLabelValues("", "admit_to_rpc")
 	wakeRPCDuration.WithLabelValues("", "rpc_call")
 	wakeRPCDuration.WithLabelValues("", "rpc_to_running")
+	wakeRPCDuration.WithLabelValues("", "resume")
 	// Issue #470 / PR C / ADR-074: wake tier mix counter.
 	wakeSnapshotTier := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_snapshot_tier_total",
@@ -5641,7 +5643,7 @@ func (m *OpsMetrics) GuestInitDuration(app, runner string) prometheus.Observer {
 
 // WakeRPCDuration (ADR-097, P1B) returns the {(app, phase)}-labeled
 // histogram observer for schedd-side wake-phase duration. phase is
-// the closed set {admit_to_rpc, rpc_call, rpc_to_running}; callers
+// the closed set {admit_to_rpc, rpc_call, rpc_to_running, resume}; callers
 // attach wake_id as a prometheus.Exemplar via ObserveWithExemplar
 // on the returned observer. The accessor is nil-safe — returns nil
 // on a nil receiver so Engine unit tests that construct the engine
