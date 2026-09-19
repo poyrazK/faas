@@ -46,6 +46,15 @@
     group: root
     mode: "0755"
 
+- name: gatewayd_public_service — render raw TCP ingress environment
+  notify: restart faas-gatewayd-public
+  ansible.builtin.template:
+    src: tcpd.env.j2
+    dest: /etc/faas/tcpd.env
+    owner: root
+    group: faas
+    mode: "0640"
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into the gatewayd-public unit (env-only — no config.go).
 # Drop-in mirrors deploy/ansible/roles/control_plane_service/

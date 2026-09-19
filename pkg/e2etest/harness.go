@@ -100,9 +100,11 @@ type Harness struct {
 	// SignKeyPath is the PRIVATE half of the cosign keypair whose public half
 	// schedd verifies with. imaged must sign with this exact key; see
 	// writeScheddSignPub.
-	SignKeyPath       string
-	GatewayURL        string
-	GatewayControlURL string // /metrics + /healthz, loopback only
+	SignKeyPath             string
+	GatewayURL              string
+	GatewayControlURL       string // /metrics + /healthz, loopback only
+	GatewayPublicURL        string
+	GatewayPublicControlURL string
 	// gatewayPublicAddr and gatewayControlAddr are reserved before schedd
 	// starts so its RPS scale-up scraper can be pointed at the real
 	// gatewayd-internal control listener. Keeping the addresses on the
@@ -307,6 +309,12 @@ kernel_path = %q
 	if which&Gatewayd != 0 {
 		startGatewayd(t, h, bin, dbURL, nil)
 	}
+	if which&GatewaydPublic != 0 {
+		if which&Gatewayd == 0 {
+			t.Fatal("e2etest: GatewaydPublic requires Gatewayd")
+		}
+		startGatewaydPublic(t, h, bin, dbURL, nil)
+	}
 
 	if which&Imaged != 0 {
 		// guest/init lives at repo root in dev; tests don't run a real guest,
@@ -428,6 +436,7 @@ const (
 	VMMD
 	Imaged
 	Gatewayd
+	GatewaydPublic
 	Meterd
 	Builderd
 	// GatewaySynthStub serves a successful invocation-dispatch response on
@@ -839,6 +848,12 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if which&Gatewayd != 0 {
 		startGatewayd(t, h, bin, dbURL, extraEnv)
 	}
+	if which&GatewaydPublic != 0 {
+		if which&Gatewayd == 0 {
+			t.Fatal("e2etest: GatewaydPublic requires Gatewayd")
+		}
+		startGatewaydPublic(t, h, bin, dbURL, extraEnv)
+	}
 	h.requireDaemonsAlive(t)
 	t.Cleanup(h.stop)
 	return h
@@ -1009,6 +1024,35 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	waitTCP(t, controlAddr, 10*time.Second)
 }
 
+// startGatewaydPublic boots the public edge next to gatewayd-internal. It is
+// opt-in because most metal tests only need the internal HTTP path; the raw
+// TCP acceptance test needs the real gatewayd-public/tcpd composition.
+func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
+	t.Helper()
+	if h.ScheddSock == "" {
+		t.Fatal("e2etest: gatewayd-public requires schedd")
+	}
+	publicAddr := freeTCPAddr(t)
+	controlAddr := freeTCPAddr(t)
+	for controlAddr == publicAddr {
+		controlAddr = freeTCPAddr(t)
+	}
+	internalSocket := filepath.Join(h.SockDir, "gatewayd-internal.sock")
+	env := append(testEnvCommon(dbURL),
+		"FAAS_PUBLIC_LISTEN_ADDR="+publicAddr,
+		"FAAS_PUBLIC_CONTROL_ADDR="+controlAddr,
+		"FAAS_INTERNAL_SOCKET="+internalSocket,
+		"FAAS_OTEL_SPANS_WRITER_ENABLED=false",
+		"FAAS_TCPD_SCHEDD_TARGET=unix://"+h.ScheddSock,
+		"FAAS_APPS_DOMAIN="+testDomain,
+	)
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, bin, "gatewayd-public", env))
+	h.GatewayPublicURL = "http://" + publicAddr
+	h.GatewayPublicControlURL = "http://" + controlAddr
+	waitTCP(t, controlAddr, 15*time.Second)
+}
+
 // reserveGatewayAddresses chooses the public and control ports before
 // schedd's TOML is rendered. freeTCPAddr closes its probe listener, so the
 // later daemon bind still gets the usual race-resistant availability check;
@@ -1170,6 +1214,9 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	env := append(testEnvCommon(dbURL),
 		"FAAS_VMMD_CONFIG="+cfgPath,
 	)
+	if currentHarness != nil {
+		env = append(env, "FAAS_VMMD_TCP_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-tcp-bridge"))
+	}
 	if scheddSock != "" {
 		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
 	}
@@ -1469,9 +1516,9 @@ func (h *Harness) RestartSchedd() error {
 // the subset they launch via Which.
 //
 // Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone (its source
-// moved into cmd/gatewayd-internal/). gatewayd-public is not in this list
-// because no e2e boots the public edge yet.
-var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "meterd", "builderd"}
+// moved into cmd/gatewayd-internal/). gatewayd-public and the TCP bridge are
+// included so the raw-TCP metal acceptance can boot the production path.
+var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-tcp-bridge"}
 
 // StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
 // because they execute inside a jailer chroot that contains no dynamic loader

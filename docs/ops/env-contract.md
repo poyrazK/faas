@@ -364,7 +364,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TAIL_PIPE_PATH` | guest | `guest` |  |  | `` |  |
 | `FAAS_TAIL_WAIT_SEC` | guest | `guest` |  |  | `` |  |
 | `FAAS_TCPD_BIND_HOST` | gatewayd-public | `default` |  |  | `` | raw TCP ingress bind host; used only when FAAS_TCPD_ENABLED is true |
-| `FAAS_TCPD_ENABLED` | gatewayd-public | `default` |  |  | `` | opt-in raw TCP ingress runtime; disabled until firewall/systemd exposure is deployed |
+| `FAAS_TCPD_ENABLED` | gatewayd-public | `default` |  |  | `` | opt-in raw TCP ingress runtime; enable only with the reserved-range firewall rules |
 | `FAAS_TCPD_MAX_BYTES` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_MAX_CONNECTIONS` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_REFRESH_INTERVAL` | gatewayd-public | `default` |  |  | `` |  |

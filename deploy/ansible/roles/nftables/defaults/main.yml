@@ -61,6 +61,11 @@ faas_control_plane_allowed_ports:
   - 9105
   - 9107
 
+# Raw TCP app listeners are opt-in and fail closed. When enabled, only the
+# explicitly listed client CIDRs can reach the reserved public range.
+faas_tcpd_enabled: false
+faas_tcpd_allowed_cidrs: []
+
 # Public control-plane origins behind Cloudflare set this true. The role then
 # loads Cloudflare's checked-in IPv4/IPv6 ranges and admits TCP/80+443 only
 # from those sources. Loopback remains available for local health checks and

@@ -12,6 +12,11 @@ The edge is two services:
 - `faas-gatewayd-internal.service` owns routing, wake coordination, and proxying
   on the node-local socket.
 
+`faas-gatewayd-public.service` also loads the optional
+`/etc/faas/tcpd.env`. Set `FAAS_TCPD_ENABLED=1` there only alongside the
+nftables rule that admits the reserved 40000–49999 listener range; the Ansible
+role renders this file from the `faas_tcpd_*` variables.
+
 The remaining units are installed by their owning role: `apid`, `schedd`,
 `vmmd`, `builderd`, `imaged`, `meterd`, `outboundd`, and `realtimed`, plus the
 PostgreSQL backup and WAL-prune timers. The control-plane and compute-only
