@@ -132,7 +132,10 @@ func TestHandler_WakeFanOut_WakesLandedDeployment(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &wakefanoutBackend{
-		app:            gateway.App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: gateway.App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: gateway.PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:           "jane-api.apps.dom",
 		upstreamAddr:   upstream.Listener.Addr().String(),
 		admitsByDeploy: map[string]int32{},
@@ -197,7 +200,10 @@ func TestHandler_WakeFanOut_AdmitsOnceEvenIfRetryStillCold(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &wakefanoutBackend{
-		app:            gateway.App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: gateway.App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: gateway.PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:           "jane-api.apps.dom",
 		upstreamAddr:   upstream.Listener.Addr().String(),
 		admitsByDeploy: map[string]int32{},
@@ -238,7 +244,10 @@ func TestHandler_WakeFanOut_WakesColdBucketDespiteWarmFallback(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &wakefanoutBackend{
-		app:            gateway.App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: gateway.App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: gateway.PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:           "jane-api.apps.dom",
 		upstreamAddr:   upstream.Listener.Addr().String(),
 		admitsByDeploy: map[string]int32{},
@@ -297,7 +306,10 @@ func TestHandler_WakeFanOut_NotTriggeredOnWarmPick(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &wakefanoutBackend{
-		app:            gateway.App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: gateway.App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: gateway.PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:           "jane-api.apps.dom",
 		upstreamAddr:   upstream.Listener.Addr().String(),
 		admitsByDeploy: map[string]int32{},
