@@ -1,3 +1,4 @@
+// adr: 097 — warm-pool wake telemetry and resident-capacity observability.
 package sched
 
 import (
