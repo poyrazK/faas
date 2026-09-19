@@ -80,7 +80,9 @@ on:
         type: boolean
 
 concurrency:
-  group: cd-platform-${{ inputs.release_tag }}
+  # Keep this key release-independent. Two tags must never mutate the single
+  # production control plane or fleet at the same time.
+  group: production-platform-rollout
   cancel-in-progress: false
 
 permissions:
@@ -285,15 +287,33 @@ jobs:
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"
           echo "ACTIVE_NODE_COUNT=$active_node_count" >> "$GITHUB_ENV"
 
-      - name: Verify public platform liveness and readiness
+      - name: Verify control-plane origin liveness and readiness
         run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" 'bash -s' <<'REMOTE'
           set -euo pipefail
           for endpoint in healthz readyz; do
             curl --fail --silent --show-error \
               --retry 12 --retry-delay 5 --retry-all-errors \
               --connect-timeout 3 --max-time 10 \
-              "https://api.gregale.dev/${endpoint}" >/dev/null
+              "http://127.0.0.1:9092/${endpoint}" >/dev/null
           done
+          REMOTE
+
+      - name: Verify public customer API path
+        run: |
+          set -euo pipefail
+          status_file="$RUNNER_TEMP/public-platform-status.json"
+          curl --fail --silent --show-error --location \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --connect-timeout 3 --max-time 10 \
+            --header 'Cache-Control: no-cache' \
+            "https://api.gregale.dev/v1/status?rollout_probe=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            > "$status_file"
+          jq -e '
+            .data_status == "fresh" and
+            (.updated_at | type == "string" and length > 0)
+          ' "$status_file" >/dev/null
 
       - name: Verify full-fleet metrics and metering convergence
         run: |

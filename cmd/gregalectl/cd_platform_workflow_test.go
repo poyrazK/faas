@@ -57,6 +57,20 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 	}
 }
 
+func TestCDPlatformSerializesProductionAcrossReleaseTags(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	if !strings.Contains(workflow, "group: production-platform-rollout") || !strings.Contains(workflow, "cancel-in-progress: false") {
+		t.Fatal("platform workflow must serialize every production rollout without cancelling an active deployment")
+	}
+	if strings.Contains(workflow, "group: cd-platform-${{ inputs.release_tag }}") {
+		t.Fatal("platform rollout lock must not allow different release tags to overlap")
+	}
+}
+
 // This pins the incident from #2348: a successful control-plane stage followed
 // by a failed compute stage still runs the observer, records desired/observed
 // node releases, and leaves the top-level workflow failed.
@@ -92,16 +106,17 @@ func TestCDPlatformRequiresPublicReadinessAndProductionDeployments(t *testing.T)
 	}
 	workflow := string(body)
 	releaseGate := strings.Index(workflow, "compute-nodes release-status --desired-release")
-	publicReadiness := strings.Index(workflow, "https://api.gregale.dev/${endpoint}")
+	originReadiness := strings.Index(workflow, "http://127.0.0.1:9092/${endpoint}")
+	publicReadiness := strings.Index(workflow, "https://api.gregale.dev/v1/status?rollout_probe=")
 	metricsGate := strings.Index(workflow, "Verify full-fleet metrics and metering convergence")
 	deployGate := strings.Index(workflow, "production-release-acceptance.sh")
-	if releaseGate < 0 || publicReadiness < 0 || metricsGate < 0 || deployGate < 0 {
-		t.Fatalf("production gates missing: release=%d readiness=%d metrics=%d deploy=%d", releaseGate, publicReadiness, metricsGate, deployGate)
+	if releaseGate < 0 || originReadiness < 0 || publicReadiness < 0 || metricsGate < 0 || deployGate < 0 {
+		t.Fatalf("production gates missing: release=%d origin=%d public=%d metrics=%d deploy=%d", releaseGate, originReadiness, publicReadiness, metricsGate, deployGate)
 	}
-	if !(releaseGate < publicReadiness && publicReadiness < metricsGate && metricsGate < deployGate) {
-		t.Fatalf("production gates out of order: release=%d readiness=%d metrics=%d deploy=%d", releaseGate, publicReadiness, metricsGate, deployGate)
+	if !(releaseGate < originReadiness && originReadiness < publicReadiness && publicReadiness < metricsGate && metricsGate < deployGate) {
+		t.Fatalf("production gates out of order: release=%d origin=%d public=%d metrics=%d deploy=%d", releaseGate, originReadiness, publicReadiness, metricsGate, deployGate)
 	}
-	for _, required := range []string{"ACTIVE_NODE_COUNT", "healthz readyz", "RELEASE_SHA='${DESIRED_RELEASE}'"} {
+	for _, required := range []string{"ACTIVE_NODE_COUNT", "healthz readyz", `.data_status == "fresh"`, "RELEASE_SHA='${DESIRED_RELEASE}'"} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("production deployment gate missing %q", required)
 		}

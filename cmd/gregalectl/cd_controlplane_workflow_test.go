@@ -29,6 +29,20 @@ func TestCDControlPlanePromotesActiveReleaseCLI(t *testing.T) {
 	}
 }
 
+func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	observer := strings.Index(workflow, "scripts/ci/observe_rollout_availability.sh")
+	publicPath := strings.Index(workflow, "https://api.gregale.dev/v1/status")
+	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	if observer < 0 || publicPath < 0 || activate < 0 || !(observer <= publicPath && publicPath < activate) {
+		t.Fatalf("customer-path observer must wrap activation: observer=%d public=%d activate=%d", observer, publicPath, activate)
+	}
+}
+
 func TestCDControlPlaneVerifiesSBOMBeforeActivationAndAcceptsAfterHealth(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

@@ -633,7 +633,12 @@ jobs:
             exit 1
           }
           REMOTE
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+          # Observe the public, unauthenticated customer path throughout the
+          # mutating activation window. This is deliberately diagnostic: the
+          # orchestrator's post-rollout origin and public checks remain gates.
+          scripts/ci/observe_rollout_availability.sh \
+            "https://api.gregale.dev/v1/status" -- \
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
              if test ! -s /opt/faas/releases/sbom-baseline.json; then
