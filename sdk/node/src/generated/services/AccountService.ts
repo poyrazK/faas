@@ -11,6 +11,7 @@ import type { AccountExportResponse } from '../models/AccountExportResponse.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
+import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
@@ -327,6 +328,49 @@ export class AccountService {
       url: '/v1/account/rate-limits',
       errors: {
         401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Look up one distributed trace across the account.
+   * Returns retained request telemetry, bounded span evidence, and
+   * durable queue lifecycle rows linked by the platform trace id. Request
+   * payloads and arbitrary invocation headers are never returned.
+   *
+   * @returns AccountTraceLookupResponse Account-scoped trace correlation result.
+   * @throws ApiError
+   */
+  public static getAccountTrace({
+    traceId,
+    limit = 100,
+  }: {
+    /**
+     * Canonical 32-character lowercase W3C trace identifier.
+     */
+    traceId: string,
+    /**
+     * Maximum queue lifecycle rows to include in the lookup.
+     */
+    limit?: number,
+  }): CancelablePromise<AccountTraceLookupResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/traces/{trace_id}',
+      path: {
+        'trace_id': traceId,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

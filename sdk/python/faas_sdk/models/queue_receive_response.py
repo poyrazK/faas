@@ -23,6 +23,9 @@ class QueueReceiveResponse:
     id: str
     payload: QueueReceiveResponsePayload
     result: QueueReceiveResponseResult | Unset = UNSET
+    trace_id: str | Unset = UNSET
+    traceparent: str | Unset = UNSET
+    """W3C traceparent propagated from the producer."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +37,10 @@ class QueueReceiveResponse:
         if not isinstance(self.result, Unset):
             result = self.result.to_dict()
 
+        trace_id = self.trace_id
+
+        traceparent = self.traceparent
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -44,6 +51,10 @@ class QueueReceiveResponse:
         )
         if result is not UNSET:
             field_dict["result"] = result
+        if trace_id is not UNSET:
+            field_dict["trace_id"] = trace_id
+        if traceparent is not UNSET:
+            field_dict["traceparent"] = traceparent
 
         return field_dict
 
@@ -64,10 +75,16 @@ class QueueReceiveResponse:
         else:
             result = QueueReceiveResponseResult.from_dict(_result)
 
+        trace_id = d.pop("trace_id", UNSET)
+
+        traceparent = d.pop("traceparent", UNSET)
+
         queue_receive_response = cls(
             id=id,
             payload=payload,
             result=result,
+            trace_id=trace_id,
+            traceparent=traceparent,
         )
 
         queue_receive_response.additional_properties = d

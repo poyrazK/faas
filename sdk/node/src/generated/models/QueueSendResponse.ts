@@ -7,5 +7,9 @@
  */
 export type QueueSendResponse = {
   id: string;
+  /**
+   * Canonical platform trace id when the request carried a valid trace context.
+   */
+  trace_id?: string;
 };
 

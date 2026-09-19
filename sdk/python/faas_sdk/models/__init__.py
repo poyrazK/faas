@@ -21,6 +21,10 @@ from .account_response_status import AccountResponseStatus
 from .account_slo_response import AccountSLOResponse
 from .account_slo_response_wake_queue_sample_status import AccountSLOResponseWakeQueueSampleStatus
 from .account_slo_response_window import AccountSLOResponseWindow
+from .account_trace_invocation import AccountTraceInvocation
+from .account_trace_lookup_error import AccountTraceLookupError
+from .account_trace_lookup_response import AccountTraceLookupResponse
+from .account_trace_match import AccountTraceMatch
 from .account_usage_response import AccountUsageResponse
 from .add_tenant_hostname_request import AddTenantHostnameRequest
 from .add_trusted_signer_request import AddTrustedSignerRequest
@@ -1328,6 +1332,10 @@ __all__ = (
     "AccountSLOResponse",
     "AccountSLOResponseWakeQueueSampleStatus",
     "AccountSLOResponseWindow",
+    "AccountTraceInvocation",
+    "AccountTraceLookupError",
+    "AccountTraceLookupResponse",
+    "AccountTraceMatch",
     "AccountUsageResponse",
     "AddTenantHostnameRequest",
     "AddTrustedSignerRequest",

@@ -1,56 +1,59 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
+if TYPE_CHECKING:
+    from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
-T = TypeVar("T", bound="QueueSendResponse")
+
+T = TypeVar("T", bound="AccountTraceMatch")
 
 
 @_attrs_define
-class QueueSendResponse:
-    """201 — body of a freshly-enqueued queue row."""
+class AccountTraceMatch:
+    """One retained request-telemetry match for the trace."""
 
-    id: str
-    trace_id: str | Unset = UNSET
-    """Canonical platform trace id when the request carried a valid trace context."""
+    app: str
+    request: DebugTelemetryRequestItem
+    """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
+        app = self.app
 
-        trace_id = self.trace_id
+        request = self.request.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
+                "app": app,
+                "request": request,
             }
         )
-        if trace_id is not UNSET:
-            field_dict["trace_id"] = trace_id
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
+
         d = dict(src_dict)
-        id = d.pop("id")
+        app = d.pop("app")
 
-        trace_id = d.pop("trace_id", UNSET)
+        request = DebugTelemetryRequestItem.from_dict(d.pop("request"))
 
-        queue_send_response = cls(
-            id=id,
-            trace_id=trace_id,
+        account_trace_match = cls(
+            app=app,
+            request=request,
         )
 
-        queue_send_response.additional_properties = d
-        return queue_send_response
+        account_trace_match.additional_properties = d
+        return account_trace_match
 
     @property
     def additional_keys(self) -> list[str]:

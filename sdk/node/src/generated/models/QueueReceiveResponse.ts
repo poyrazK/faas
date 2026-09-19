@@ -9,5 +9,10 @@ export type QueueReceiveResponse = {
   id: string;
   payload: Record<string, any>;
   result?: Record<string, any>;
+  trace_id?: string;
+  /**
+   * W3C traceparent propagated from the producer.
+   */
+  traceparent?: string;
 };
 
