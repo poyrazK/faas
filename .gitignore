@@ -64,3 +64,6 @@ gha-creds-*.json
 # Python tooling bytecode
 __pycache__/
 *.py[cod]
+
+# Cloudflare Worker deploy copies (the pinned values live in wrangler.toml.example)
+deploy/cloudflare/*/wrangler.toml
