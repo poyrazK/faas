@@ -889,9 +889,6 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 // phase shares one deadline so an idle gateway exits immediately and a busy
 // gateway cannot accidentally spend the full grace budget twice.
 func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, grace time.Duration) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if grace <= 0 {
 		grace = drain.DrainGrace
 	}
