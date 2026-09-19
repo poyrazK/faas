@@ -17,6 +17,14 @@ func (c *Client) GetQueueBinding(ctx context.Context, slug, id string) (QueueBin
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/queue-bindings/"+id, nil, &out)
 }
 
+// GetQueueBindingStatus returns the binding's durable consumer projection and
+// lease-aware queue counters. ConsumerState is control-plane state, not a
+// broker connection liveness guarantee.
+func (c *Client) GetQueueBindingStatus(ctx context.Context, slug, id string) (QueueBindingStatusResponse, error) {
+	var out QueueBindingStatusResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/queue-bindings/"+id+"/status", nil, &out)
+}
+
 func (c *Client) UpdateQueueBinding(ctx context.Context, slug, id string, req UpdateQueueBindingRequest) (QueueBindingResponse, error) {
 	var out QueueBindingResponse
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/queue-bindings/"+id, req, &out)

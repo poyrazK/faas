@@ -2043,6 +2043,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listQueueBindings))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createQueueBinding)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBinding))))
+	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingStatus))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteQueueBinding))))
 

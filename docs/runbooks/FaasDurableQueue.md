@@ -20,6 +20,13 @@ The unified EPIC #1278 ledger exposes cross-source operator signals:
 The corresponding audit kinds are `app.dlq.event_routed`,
 `app.dlq.event_replayed`, and `app.dlq.purged`.
 
+For a binding-scoped control-plane snapshot, use
+`GET /v1/apps/{slug}/queue-bindings/{id}/status`. It combines the binding's
+push projection (`consumer_state` is `active`, `paused`, `not_configured`, or
+`external`) with depth, live leases, dead letters, and oldest-pending age.
+This is configuration/readiness state rather than a broker connection
+liveness check; use the schedd metrics for liveness and lag alerting.
+
 `FaasDurableQueueStalled` means work is present but the oldest pending item
 has been waiting for more than five minutes. Check queue-depth scaling,
 worker admission capacity, and the schedd lease-recovery log. A non-zero

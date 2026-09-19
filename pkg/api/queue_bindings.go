@@ -23,6 +23,28 @@ type QueueBindingResponse struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
+// QueueBindingStatusResponse is the read-only control-plane projection for a
+// queue binding. ConsumerState describes the durable push-consumer projection
+// (it is not a broker connection liveness signal); queue counters come from
+// the same lease-aware queue view used by the autoscaler.
+type QueueBindingStatusResponse struct {
+	BindingID               string     `json:"binding_id"`
+	Name                    string     `json:"name"`
+	QueueName               string     `json:"queue_name"`
+	Mode                    string     `json:"mode"`
+	WorkloadClass           string     `json:"workload_class"`
+	Enabled                 bool       `json:"enabled"`
+	ConsumerState           string     `json:"consumer_state"`
+	ConsumerStateReason     string     `json:"consumer_state_reason,omitempty"`
+	TriggerID               string     `json:"trigger_id,omitempty"`
+	Depth                   int        `json:"depth"`
+	InFlight                int        `json:"in_flight"`
+	DeadLetter              int        `json:"dead_letter"`
+	OldestPendingAt         *time.Time `json:"oldest_pending_at,omitempty"`
+	OldestPendingAgeSeconds *int64     `json:"oldest_pending_age_seconds,omitempty"`
+	GeneratedAt             time.Time  `json:"generated_at"`
+}
+
 type CreateQueueBindingRequest struct {
 	Name           string          `json:"name"`
 	QueueName      string          `json:"queue_name"`

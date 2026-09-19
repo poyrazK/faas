@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -210,6 +211,80 @@ func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct 
 		out = append(out, queueBindingResponse(row))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// getQueueBindingStatus returns the durable consumer projection together with
+// binding-scoped queue counters. It deliberately reports configuration state,
+// not process liveness: broker/worker liveness remains observable through the
+// schedd metrics and alerts documented in FaasDurableQueue.
+func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	binding, err := s.store.QueueBindingByID(r.Context(), acct.ID, app.ID, r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Queue binding not found", "no queue binding exists with that id"))
+			return
+		}
+		api.WriteProblem(w, api.ErrInternal("could not load queue binding status"))
+		return
+	}
+	stats, err := s.store.QueueStateForQueue(r.Context(), app.ID, binding.QueueName)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load queue binding queue state"))
+		return
+	}
+
+	resp := api.QueueBindingStatusResponse{
+		BindingID:     binding.ID,
+		Name:          binding.Name,
+		QueueName:     binding.QueueName,
+		Mode:          binding.Mode,
+		WorkloadClass: string(binding.WorkloadClass),
+		Enabled:       binding.Enabled,
+		ConsumerState: "external",
+		GeneratedAt:   time.Now().UTC(),
+		Depth:         stats.Depth,
+		InFlight:      stats.InFlight,
+		DeadLetter:    stats.DeadLetter,
+	}
+	if !stats.OldestPendingAt.IsZero() {
+		oldest := stats.OldestPendingAt
+		age := int64(resp.GeneratedAt.Sub(oldest).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		resp.OldestPendingAt = &oldest
+		resp.OldestPendingAgeSeconds = &age
+	}
+
+	if binding.Mode == "push" {
+		resp.ConsumerState = "not_configured"
+		resp.ConsumerStateReason = "push_consumer_not_provisioned"
+		triggerID, triggerErr := queueBindingTriggerID(r.Context(), s.store, app.ID, binding.ID)
+		if triggerErr != nil {
+			api.WriteProblem(w, api.ErrInternal("could not load queue consumer status"))
+			return
+		}
+		if triggerID != "" {
+			resp.TriggerID = triggerID
+			trigger, triggerErr := s.store.TriggerByID(r.Context(), triggerID)
+			if triggerErr != nil {
+				api.WriteProblem(w, api.ErrInternal("could not load queue consumer status"))
+				return
+			}
+			if binding.Enabled && trigger.Enabled {
+				resp.ConsumerState = "active"
+				resp.ConsumerStateReason = "push_consumer_enabled"
+			} else {
+				resp.ConsumerState = "paused"
+				resp.ConsumerStateReason = "push_consumer_disabled"
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {

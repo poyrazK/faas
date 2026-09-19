@@ -269,11 +269,12 @@ var methodRouteMap = map[string]string{
 	// First-class queue bindings use a hyphenated path segment. Pin the
 	// noun-oriented Go SDK names instead of the fallback's literal
 	// "Queue-bindings" spelling.
-	"GET /v1/apps/{slug}/queue-bindings":         "ListQueueBindings",
-	"POST /v1/apps/{slug}/queue-bindings":        "CreateQueueBinding",
-	"GET /v1/apps/{slug}/queue-bindings/{id}":    "GetQueueBinding",
-	"PATCH /v1/apps/{slug}/queue-bindings/{id}":  "UpdateQueueBinding",
-	"DELETE /v1/apps/{slug}/queue-bindings/{id}": "DeleteQueueBinding",
+	"GET /v1/apps/{slug}/queue-bindings":             "ListQueueBindings",
+	"POST /v1/apps/{slug}/queue-bindings":            "CreateQueueBinding",
+	"GET /v1/apps/{slug}/queue-bindings/{id}":        "GetQueueBinding",
+	"GET /v1/apps/{slug}/queue-bindings/{id}/status": "GetQueueBindingStatus",
+	"PATCH /v1/apps/{slug}/queue-bindings/{id}":      "UpdateQueueBinding",
+	"DELETE /v1/apps/{slug}/queue-bindings/{id}":     "DeleteQueueBinding",
 
 	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":            "RevokeInvitation",
 	"GET /v1/github/repos":                                          "ListGitHubRepositories",

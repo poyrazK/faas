@@ -13625,6 +13625,29 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/queue-bindings/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [queues]
+      operationId: getQueueBindingStatus
+      summary: Read queue binding consumer state and queue counters.
+      description: |
+        Returns the durable push-consumer projection and binding-scoped
+        queue counters. `consumer_state` is control-plane state
+        (`active`, `paused`, `not_configured`, or `external`); it does not
+        claim to be a broker connection liveness signal.
+      responses:
+        '200':
+          description: Queue binding status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/queues/receive:
     post:
       tags: [queues]
@@ -29267,6 +29290,28 @@ components:
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    QueueBindingStatusResponse:
+      description: Read-only queue binding consumer projection and queue counters.
+      type: object
+      required: [binding_id, name, queue_name, mode, workload_class, enabled,
+                 consumer_state, depth, in_flight, dead_letter, generated_at]
+      properties:
+        binding_id: { type: string }
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push] }
+        workload_class: { type: string, enum: [worker, job] }
+        enabled: { type: boolean }
+        consumer_state: { type: string, enum: [active, paused, not_configured, external] }
+        consumer_state_reason: { type: string }
+        trigger_id: { type: string }
+        depth: { type: integer, minimum: 0 }
+        in_flight: { type: integer, minimum: 0 }
+        dead_letter: { type: integer, minimum: 0 }
+        oldest_pending_at: { type: [string, "null"], format: date-time }
+        oldest_pending_age_seconds: { type: [integer, "null"], minimum: 0 }
+        generated_at: { type: string, format: date-time }
 
     RetryPolicyDTO:
       description: |
