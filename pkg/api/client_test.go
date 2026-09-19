@@ -681,6 +681,24 @@ func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	}
 }
 
+func TestGetAccountTraceUsesDurableEndpoint(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","matches":[],"invocations":[],"spans":[],"spans_truncated":false}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.GetAccountTrace(context.Background(), "4bf92f3577b34da6a3ce929d0e0e4736"); err != nil {
+		t.Fatalf("GetAccountTrace: %v", err)
+	}
+	if gotPath != "/v1/account/traces/4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("path = %q", gotPath)
+	}
+}
+
 func TestListAppDebugRequestsAll_WalksCursor(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

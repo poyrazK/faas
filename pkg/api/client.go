@@ -5784,6 +5784,15 @@ func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID str
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAccountTrace returns the durable tenant-scoped trace correlation view.
+// The server joins retained debugger evidence with queue invocation lifecycle
+// rows so callers do not need to fan out across every app in the account.
+func (c *Client) GetAccountTrace(ctx context.Context, traceID string) (AccountTraceLookupResponse, error) {
+	var out AccountTraceLookupResponse
+	path := "/v1/account/traces/" + url.PathEscape(traceID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ListAppDebugRegressions returns the active regression
 // observations for an app (ADR-127 / PR-B). Ordered by
 // regression_factor DESC, last_detected_at DESC (worst first).

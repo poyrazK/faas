@@ -1943,6 +1943,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/account/traces/{trace_id}:
+    get:
+      tags: [account]
+      operationId: getAccountTrace
+      summary: Look up one distributed trace across the account.
+      description: |
+        Returns retained request telemetry, bounded span evidence, and
+        durable queue lifecycle rows linked by the platform trace id. Request
+        payloads and arbitrary invocation headers are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          description: Canonical 32-character lowercase W3C trace identifier.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: limit
+          in: query
+          required: false
+          description: Maximum queue lifecycle rows to include in the lookup.
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Account-scoped trace correlation result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountTraceLookupResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/plan:
     patch:
       tags: [account]
@@ -29417,6 +29450,7 @@ components:
       required: [id]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
       description: "200 — a dequeued row (the long-poll hit). 204 (no body) on timeout."
@@ -29426,6 +29460,63 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
+        trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
+
+    AccountTraceLookupResponse:
+      type: object
+      description: "Tenant-scoped distributed-trace correlation envelope."
+      required: [trace_id, generated_at, limit, matches, invocations, spans, spans_truncated]
+      properties:
+        trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        generated_at: { type: string, format: date-time }
+        limit: { type: integer, minimum: 1, maximum: 500 }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/AccountTraceMatch' }
+        invocations:
+          type: array
+          items: { $ref: '#/components/schemas/AccountTraceInvocation' }
+        spans:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/DebugTelemetrySpan' }
+        spans_truncated: { type: boolean }
+        partial: { type: boolean }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/AccountTraceLookupError' }
+
+    AccountTraceMatch:
+      type: object
+      description: "One retained request-telemetry match for the trace."
+      required: [app, request]
+      properties:
+        app: { type: string }
+        request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+
+    AccountTraceInvocation:
+      type: object
+      description: "Safe queue lifecycle projection linked to the trace."
+      required: [app, id, source, state, attempts, created_at]
+      properties:
+        app: { type: string }
+        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        source: { type: string }
+        queue_name: { type: string }
+        state: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        traceparent: { type: string }
+
+    AccountTraceLookupError:
+      type: object
+      description: "Non-fatal enrichment error for one app in the lookup."
+      required: [app, detail]
+      properties:
+        app: { type: string }
+        detail: { type: string }
 
     QueueStateResponse:
       description: "200 — queue depth / in-flight / oldest-pending stats. Read-only."

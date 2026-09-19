@@ -1072,7 +1072,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "trace",
 		DocSlug:     "trace",
-		Short:       "Look up a W3C trace across account apps",
+		Short:       "Look up a W3C trace through the account trace index",
 		Positionals: []string{"<trace-id>"},
 	},
 	{

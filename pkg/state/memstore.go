@@ -11093,6 +11093,43 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
+// ListInvocationsByTraceID mirrors PgStore's account-scoped queue correlation
+// query. MemStore keeps the full invocation envelope for scheduler tests, but
+// this read only inspects the canonical platform trace header.
+func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AccountID != accountID || inv.Source != InvocationQueue {
+			continue
+		}
+		var headers map[string]string
+		if len(inv.Headers) == 0 || json.Unmarshal(inv.Headers, &headers) != nil {
+			continue
+		}
+		if headers["X-Gregale-Trace-Id"] == traceID {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListCronRunsForCron is the per-cron run-history read (issue #791).
 // Mirrors ListInvocationsForAccount's ordering and cursor semantics
 // with a CronID predicate instead of an account one. MemStore is

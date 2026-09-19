@@ -26,8 +26,8 @@ This page is the operator's quick-start; the spec contract is in
 - **Response correlation**: the public edge returns
   `X-Gregale-Trace-Id` with the canonical 32-character trace id and sends the
   same platform-owned header to the guest. Use that value with
-  `gregale trace <trace-id>` to search retained, redacted evidence across the
-  apps in your account.
+  `gregale trace <trace-id>` to query the account trace index for retained,
+  redacted evidence across the apps in your account.
 - **Lifetime**: the trace_id is minted at the gateway (or carried
   in from the inbound `traceparent`); the span_id identifies the
   specific request's `gateway.handler` span. A warm instance receives
@@ -213,6 +213,13 @@ small capped set of additional record contexts as span links when a batch mixes
 producers. If a broker record has no valid W3C context, the platform still emits
 the trigger spans from the scheduler cycle. Event payloads, item identifiers,
 header values, and credentials are not span attributes.
+
+Queue messages sent through `POST /v1/apps/{slug}/queues/send` also carry the
+producer's W3C context and the canonical `X-Gregale-Trace-Id` in the durable
+invocation envelope. A delivery restores that context before dispatch, so the
+queue hop remains part of the same trace. `GET /v1/account/traces/{trace_id}`
+returns the retained request evidence plus a safe queue lifecycle projection;
+`gregale trace <trace-id>` renders both views without client-side app fan-out.
 
 ## Platform-to-guest transport
 

@@ -4116,15 +4116,59 @@ type InvokeResponse struct {
 // 201 Created with the new id; the customer pairs this with the
 // /receive long-poll.
 type QueueSendResponse struct {
-	ID string `json:"id"`
+	ID      string `json:"id"`
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
 // 200 with the dequeued row's payload + result; 204 on timeout.
 type QueueReceiveResponse struct {
-	ID      string          `json:"id"`
-	Payload json.RawMessage `json:"payload"`
-	Result  json.RawMessage `json:"result,omitempty"`
+	ID          string          `json:"id"`
+	Payload     json.RawMessage `json:"payload"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	TraceID     string          `json:"trace_id,omitempty"`
+	Traceparent string          `json:"traceparent,omitempty"`
+}
+
+// AccountTraceLookupResponse is the tenant-scoped correlation envelope used
+// by `gregale trace`. It combines retained request evidence with durable queue
+// lifecycle rows without exposing request payloads or raw headers.
+type AccountTraceLookupResponse struct {
+	TraceID        string                    `json:"trace_id"`
+	GeneratedAt    time.Time                 `json:"generated_at"`
+	Limit          int                       `json:"limit"`
+	Matches        []AccountTraceMatch       `json:"matches"`
+	Invocations    []AccountTraceInvocation  `json:"invocations"`
+	Spans          []DebugTelemetrySpan      `json:"spans"`
+	SpansTruncated bool                      `json:"spans_truncated"`
+	Partial        bool                      `json:"partial,omitempty"`
+	Errors         []AccountTraceLookupError `json:"errors,omitempty"`
+}
+
+// AccountTraceMatch is one retained request-telemetry match for the trace.
+type AccountTraceMatch struct {
+	App     string                    `json:"app"`
+	Request DebugTelemetryRequestItem `json:"request"`
+}
+
+// AccountTraceInvocation is a safe queue lifecycle projection. Payloads,
+// result bodies, and arbitrary invocation headers are intentionally absent.
+type AccountTraceInvocation struct {
+	App         string `json:"app"`
+	ID          string `json:"id"`
+	Source      string `json:"source"`
+	QueueName   string `json:"queue_name,omitempty"`
+	State       string `json:"state"`
+	Attempts    int    `json:"attempts"`
+	CreatedAt   string `json:"created_at"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
+}
+
+// AccountTraceLookupError is a non-fatal enrichment error for one app.
+type AccountTraceLookupError struct {
+	App    string `json:"app"`
+	Detail string `json:"detail"`
 }
 
 // DelayedTaskResponse is the create/get shape for delayed tasks.

@@ -42,7 +42,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
-| [`trace`](#trace) | Look up a W3C trace across account apps |
+| [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
@@ -1333,7 +1333,7 @@ Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;request
 
 ## trace
 
-Look up a W3C trace across account apps
+Look up a W3C trace through the account trace index
 
 `gregale trace <trace-id>`
 

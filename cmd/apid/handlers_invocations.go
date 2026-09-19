@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
 
 // --- decodeJSONLimit --------------------------------------------------------
@@ -331,12 +332,18 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, problem)
 		return
 	}
+	traceHeaders, err := json.Marshal(pkgtrace.InjectHeaders(r.Context()))
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("encode queue trace context"))
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		AppID:           app.ID,
 		AccountID:       acct.ID,
 		Source:          state.InvocationQueue,
 		QueueName:       queueName,
 		Payload:         req.Payload,
+		Headers:         traceHeaders,
 		DueAt:           time.Now().UTC(),
 		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, req.RetryPolicy),
 	})
@@ -344,7 +351,12 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("enqueue queue send"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.QueueSendResponse{ID: inv.ID})
+	var traceHeaderValues map[string]string
+	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
+	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
+		ID:      inv.ID,
+		TraceID: traceHeaderValues[api.TraceIDHeader],
+	})
 }
 
 // queueReceive long-polls on invocation_done scoped to this app; when
@@ -395,10 +407,16 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrInvocationNotFound(invID))
 		return
 	}
+	var traceHeaders map[string]string
+	if len(inv.Headers) > 0 {
+		_ = json.Unmarshal(inv.Headers, &traceHeaders)
+	}
 	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{
-		ID:      inv.ID,
-		Payload: inv.Payload,
-		Result:  inv.Result,
+		ID:          inv.ID,
+		Payload:     inv.Payload,
+		Result:      inv.Result,
+		TraceID:     traceHeaders[api.TraceIDHeader],
+		Traceparent: traceHeaders["traceparent"],
 	})
 }
 

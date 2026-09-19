@@ -3897,6 +3897,11 @@ type Store interface {
 	// Move 2 cursor change: was time.Time (drifted across equal-second
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
+	// ListInvocationsByTraceID returns bounded, metadata-only invocation rows
+	// linked to a platform trace. The account predicate is mandatory; the
+	// implementation reads only the canonical platform trace header and never
+	// returns payloads through the account trace API.
+	ListInvocationsByTraceID(ctx context.Context, accountID, traceID string, limit int) ([]Invocation, error)
 	// ListInvocationsForApp is the per-app filtered variant used by
 	// deleteApp's GC sweep (cancel every pending/dispatching row before
 	// the app row goes away). Index-backed by `invocations_app_pending_idx`

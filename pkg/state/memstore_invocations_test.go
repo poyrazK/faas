@@ -51,6 +51,35 @@ func TestInvocationEnqueueAndLookup(t *testing.T) {
 	}
 }
 
+func TestInvocationListByTraceIDIsAccountScoped(t *testing.T) {
+	m, appID, acctID := seedInvocationApp(t)
+	otherAcct, err := m.CreateAccount(context.Background(), "other-inv@localhost", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount other: %v", err)
+	}
+	otherApp, err := m.CreateApp(context.Background(), App{ID: newID(), Slug: "other-inv-app", AccountID: otherAcct.ID, RAMMB: 256, Runtime: "node22"})
+	if err != nil {
+		t.Fatalf("CreateApp other: %v", err)
+	}
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	for _, row := range []Invocation{
+		{ID: newID(), AppID: appID, AccountID: acctID, Source: InvocationQueue, Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736"}`), CreatedAt: time.Now().Add(-time.Minute)},
+		{ID: newID(), AppID: otherApp.ID, AccountID: otherAcct.ID, Source: InvocationQueue, Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736"}`), CreatedAt: time.Now()},
+		{ID: newID(), AppID: appID, AccountID: acctID, Source: InvocationQueue, Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), CreatedAt: time.Now()},
+	} {
+		if _, err := m.EnqueueInvocation(context.Background(), row); err != nil {
+			t.Fatalf("EnqueueInvocation: %v", err)
+		}
+	}
+	rows, err := m.ListInvocationsByTraceID(context.Background(), acctID, traceID, 10)
+	if err != nil {
+		t.Fatalf("ListInvocationsByTraceID: %v", err)
+	}
+	if len(rows) != 1 || rows[0].AccountID != acctID {
+		t.Fatalf("rows = %+v, want one row from account %s", rows, acctID)
+	}
+}
+
 // Enqueue must reject for an unknown app id; otherwise the dashboard
 // cap check could land on rows with no parent.
 func TestInvocationEnqueueRejectsUnknownApp(t *testing.T) {

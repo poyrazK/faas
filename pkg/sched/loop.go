@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/state"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -3118,6 +3119,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 			return inv, 0, fmt.Errorf("sched: invocation headers: %w", err)
 		}
 	}
+	dispatchCtx := pkgtrace.ExtractHeaders(ctx, headers)
 	dispatch := map[string]any{
 		"invocation_id": inv.ID,
 		"app_id":        appID,
@@ -3139,11 +3141,14 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		return inv, 0, fmt.Errorf("sched: invocation marshal: %w", err)
 	}
 	url := h.basePrefix + "/v1/invocations:dispatch"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(dispatchCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return inv, 0, fmt.Errorf("sched: invocation request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range pkgtrace.InjectHeaders(dispatchCtx) {
+		req.Header.Set(key, value)
+	}
 	// Durable workflow steps are an authenticated internal delivery
 	// surface even when the customer app's public_auth_mode is open. The
 	// synth socket is DAC-protected, but the workflow contract also needs a
