@@ -188,7 +188,10 @@ func TestHandler_MirrorFanout_SpawnsGoroutine(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &mirrorFakeBackend{
-		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:         "jane-api.apps.dom",
 		upstreamAddr: upstream.Listener.Addr().String(),
 		mirrorRules: []MirrorRuleRow{
@@ -241,7 +244,10 @@ func TestHandler_MirrorFanout_PreservesSourceRequestBody(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &mirrorFakeBackend{
-		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:         "jane-api.apps.dom",
 		upstreamAddr: upstream.Listener.Addr().String(),
 		mirrorRules: []MirrorRuleRow{
@@ -277,7 +283,10 @@ func TestHandler_MirrorFanout_PreservesSourceRequestBody(t *testing.T) {
 
 func TestHandler_MirrorFanout_ForwardsToAdmittedMirrorTarget(t *testing.T) {
 	base := &mirrorFakeBackend{
-		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:         "jane-api.apps.dom",
 		upstreamAddr: "source-node",
 		mirrorRules: []MirrorRuleRow{
@@ -356,7 +365,10 @@ func TestHandler_MirrorFanout_PercentZero(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &mirrorFakeBackend{
-		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:         "jane-api.apps.dom",
 		upstreamAddr: upstream.Listener.Addr().String(),
 		mirrorRules: []MirrorRuleRow{
@@ -402,7 +414,10 @@ func TestHandler_MirrorFanout_CacheMissNoFanout(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	b := &mirrorFakeBackend{
-		app:          App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
 		host:         "jane-api.apps.dom",
 		upstreamAddr: upstream.Listener.Addr().String(),
 		// mirrorRules empty → LookupMirrorRules returns (nil, false).
