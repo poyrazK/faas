@@ -21,16 +21,16 @@ func TestMigrationRepairLegacyJobArtifacts(t *testing.T) {
 	legacyKey := "apps/legacy-job/00000000-0000-4000-8000-000000000123.ext4"
 	var legacyID, ociID string
 	if err := pool.QueryRow(ctx, `
-		insert into jobs (account_id, kind, name, image_ref, ram_mb,
+		insert into jobs (account_id, kind, name, image_ref, command, ram_mb,
 		                  task_timeout_s, max_parallelism, retry_max)
-		values ($1, 'batch', 'legacy-artifact', $2, 256, 60, 1, 0)
+		values ($1, 'batch', 'legacy-artifact', $2, array['/bin/true'], 256, 60, 1, 0)
 		returning id`, accountID, legacyKey).Scan(&legacyID); err != nil {
 		t.Fatalf("seed legacy job: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
-		insert into jobs (account_id, kind, name, image_ref, ram_mb,
+		insert into jobs (account_id, kind, name, image_ref, command, ram_mb,
 		                  task_timeout_s, max_parallelism, retry_max)
-		values ($1, 'batch', 'oci-reference', 'docker.io/library/alpine:3.20', 256, 60, 1, 0)
+		values ($1, 'batch', 'oci-reference', 'docker.io/library/alpine:3.20', array['/bin/true'], 256, 60, 1, 0)
 		returning id`, accountID).Scan(&ociID); err != nil {
 		t.Fatalf("seed OCI job: %v", err)
 	}
