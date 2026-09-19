@@ -1278,13 +1278,22 @@ var cliCommands = []cliCommand{
 		Short:   "Inspect queues and manage first-class queue bindings",
 		Subcommands: []cliSub{
 			{Name: "tail", Short: "Tail the wake queue"},
-			{Name: "send", Short: "Enqueue a wake request"},
+			{Name: "send", Short: "Enqueue a wake request", Flags: []cliFlag{
+				{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J"},
+				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
+			}},
 			{Name: "receive", Short: "Receive a wake request"},
 			{Name: "state", Short: "Show queue state"},
 			{Name: statusLiteral, Short: "Alias for queue state"},
 			{Name: "peek", Short: "Peek at the next wake"},
 			{Name: "dead-letter", Short: "Inspect the dead-letter queue"},
 			{Name: "ack", Short: "Ack a wake"},
+			{Name: "setup", Short: "Configure a simple push workload with queue-depth scaling", Flags: []cliFlag{
+				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
+				{Name: "target-depth", Short: "messages per worker before scaling out", Value: "N"},
+				{Name: "max-concurrency", Short: "maximum concurrent deliveries per worker", Value: "N"},
+				{Name: "force", Short: "replace an existing default binding on another queue"},
+			}},
 			{Name: "bindings", Short: "Manage queue bindings"},
 		},
 	},
