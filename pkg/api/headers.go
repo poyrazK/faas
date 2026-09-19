@@ -1,6 +1,9 @@
 package api
 
-import "strings"
+import (
+	"net/http"
+	"strings"
+)
 
 // Request-scoped response headers shared by the gateway and optional edge
 // adapters. Keep these names stable: a CDN/Worker may need to recover a
@@ -31,6 +34,9 @@ const (
 	DeploymentTagHeader = "X-Faas-Deployment-Tag"
 	// DeploymentCreatedAtHeader carries the deployment creation timestamp.
 	DeploymentCreatedAtHeader = "X-Faas-Deployment-Created-At"
+	// ImageDigestHeader carries the immutable image/artifact digest when the
+	// deployment was built from an OCI image.
+	ImageDigestHeader = "X-Faas-Image-Digest"
 	// InvocationIDHeader carries the durable invocation id for synthetic work
 	// and the public request id for direct HTTP function calls.
 	InvocationIDHeader = "X-Faas-Invocation-Id"
@@ -39,6 +45,77 @@ const (
 	// from a genuine CDN/origin failure.
 	ErrorCodeHeader = "X-Faas-Error-Code"
 )
+
+// PlatformIdentity is the immutable identity of the workload that is about
+// to receive a request. It is intentionally transport-neutral: the gateway
+// renders it as HTTP headers, while the scheduler renders the equivalent
+// FAAS_* environment variables. Keeping the shape here prevents each daemon
+// from growing a subtly different list of deployment fields.
+//
+// Optional provenance fields are left empty when the deployment source does
+// not provide them (for example, an image deploy has no Git commit). Callers
+// must never fill an unavailable value from customer-controlled input.
+type PlatformIdentity struct {
+	RequestID           string
+	AppID               string
+	DeploymentID        string
+	TenantID            string
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+}
+
+// ApplyGuestHeaders clears any inbound platform claims and stamps the
+// authoritative identity. It also preserves the legacy short headers used by
+// the vmmd bridge (x-faas-app/instance/node); those are transport hints, not
+// customer-visible identity fields.
+func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
+	if h == nil {
+		return
+	}
+	ClearGuestIdentityHeaders(h)
+	set := func(name, value string) {
+		if value != "" {
+			h.Set(name, value)
+		}
+	}
+	set(RequestIDHeader, i.RequestID)
+	set(AppIDHeader, i.AppID)
+	set(DeploymentIDHeader, i.DeploymentID)
+	set(TenantIDHeader, i.TenantID)
+	set(InstanceIDHeader, i.InstanceID)
+	set(NodeIDHeader, i.NodeID)
+	set(RegionHeader, i.Region)
+	set(CommitSHAHeader, i.CommitSHA)
+	set(DeploymentTagHeader, i.DeploymentTag)
+	set(DeploymentCreatedAtHeader, i.DeploymentCreatedAt)
+	set(ImageDigestHeader, i.ImageDigest)
+	set("X-Faas-App", i.AppID)
+	set("X-Faas-Instance", i.InstanceID)
+	set("X-Faas-Node", i.NodeID)
+}
+
+// ClearGuestIdentityHeaders removes every reserved identity header before a
+// request crosses a trust boundary. RequestID is included because it is
+// platform-authored too; callers that need to preserve it should copy it into
+// PlatformIdentity.RequestID and call ApplyGuestHeaders afterwards.
+func ClearGuestIdentityHeaders(h http.Header) {
+	if h == nil {
+		return
+	}
+	for name := range h {
+		if IsGuestIdentityHeader(name) {
+			h.Del(name)
+		}
+	}
+	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node"} {
+		h.Del(name)
+	}
+}
 
 // IsGuestIdentityHeader reports whether a platform-authored identity header
 // may cross the gateway→guest boundary. The handler overwrites these values
@@ -49,7 +126,7 @@ func IsGuestIdentityHeader(name string) bool {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
 		"x-faas-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
-		"x-faas-deployment-created-at":
+		"x-faas-deployment-created-at", "x-faas-image-digest":
 		return true
 	default:
 		return false
@@ -69,6 +146,7 @@ const (
 	PlatformCommitSHAEnv         = "FAAS_COMMIT_SHA"
 	PlatformDeploymentTagEnv     = "FAAS_DEPLOYMENT_TAG"
 	PlatformDeploymentCreatedEnv = "FAAS_DEPLOYMENT_CREATED_AT"
+	PlatformImageDigestEnv       = "FAAS_IMAGE_DIGEST"
 )
 
 // IsPlatformIdentityEnvKey identifies keys that are owned by Gregale rather
@@ -79,7 +157,7 @@ func IsPlatformIdentityEnvKey(key string) bool {
 	case PlatformAppIDEnv, PlatformDeploymentIDEnv, PlatformTenantIDEnv,
 		PlatformInstanceIDEnv, PlatformNodeIDEnv, PlatformRegionEnv,
 		PlatformCommitSHAEnv, PlatformDeploymentTagEnv,
-		PlatformDeploymentCreatedEnv:
+		PlatformDeploymentCreatedEnv, PlatformImageDigestEnv:
 		return true
 	default:
 		return false

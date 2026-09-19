@@ -445,6 +445,7 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 		WakeId:       res.WakeID,
 		Port:         int32(res.Port),
 		DeploymentId: res.DeploymentID,
+		Identity:     platformIdentityToProto(wakeResultIdentity(res)),
 	}, nil
 }
 
@@ -509,6 +510,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 			WakeId:       res.WakeID,
 			DeploymentId: res.DeploymentID,
 			Port:         int32(res.Port),
+			Identity:     platformIdentityToProto(wakeResultIdentity(res)),
 		}, nil
 	}
 	// PR-B (issue #272): scope threaded through AdmitInstance the
@@ -546,6 +548,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		// is read after the Ledger admit and stamped on the
 		// wire for the gateway's per-instance cache.
 		RequestCount: int32(res.RequestCount),
+		Identity:     platformIdentityToProto(wakeResultIdentity(res)),
 	}, nil
 }
 
@@ -608,6 +611,7 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 		WakeId:       out.Instance.WakeID,
 		Port:         out.Instance.Port,
 		DeploymentId: out.Instance.DeploymentID,
+		Identity:     platformIdentityToProto(out.Instance.Identity),
 	}
 	for _, instance := range out.Additional {
 		if instance != nil {
@@ -615,6 +619,7 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 				InstanceId: instance.InstanceID, NodeId: instance.NodeID,
 				DeploymentId: instance.DeploymentID, WakeId: instance.WakeID,
 				Port: instance.Port, Method: coordMethodToWakeMethod(instance),
+				Identity: platformIdentityToProto(instance.Identity),
 			})
 		}
 	}

@@ -185,7 +185,11 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 	capped := h.setupBufferedCapWriter(cw, app, app.Plan.MaxResponseBodyBytes())
 	request := r.Clone(ctx)
 	request.Body = http.NoBody
-	request.Header.Set("x-faas-instance", target.InstanceID)
+	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(request))
+	if identity.AppID == "" {
+		identity.AppID = app.ID
+	}
+	identity.ApplyGuestHeaders(request.Header)
 	request.Header.Set("x-faas-protocol", decideProtocol(app))
 	if h.proxyByNode != nil {
 		h.proxyByNode(target).ServeHTTP(capped, request)

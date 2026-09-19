@@ -565,6 +565,34 @@ type Target struct {
 	// today's single-targetSet behaviour when DeploymentID is empty
 	// (one app, one targetSet, round-robin within it).
 	DeploymentID string
+	// The remaining fields are optional provenance carried by newer scheduler
+	// implementations. Empty values preserve compatibility with older
+	// schedulers while allowing the gateway to stamp a complete identity when
+	// the metadata is available.
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+}
+
+// PlatformIdentity returns the canonical request identity for this target.
+// Keeping construction here means normal, synthetic, streaming, and upgrade
+// paths all use the same field mapping once a scheduler supplies provenance.
+func (t Target) PlatformIdentity(tenantID, requestID string) api.PlatformIdentity {
+	return api.PlatformIdentity{
+		RequestID:           requestID,
+		AppID:               t.AppID,
+		DeploymentID:        t.DeploymentID,
+		TenantID:            tenantID,
+		InstanceID:          t.InstanceID,
+		NodeID:              t.NodeID,
+		Region:              t.Region,
+		CommitSHA:           t.CommitSHA,
+		DeploymentTag:       t.DeploymentTag,
+		DeploymentCreatedAt: t.DeploymentCreatedAt,
+		ImageDigest:         t.ImageDigest,
+	}
 }
 
 // Backend is the seam between the edge and the rest of the platform (in
@@ -6142,6 +6170,16 @@ haveApp:
 	// bounds the guest forward path and all propagated downstream calls.
 	h.applyEdgeRuleBudget(w, r, app)
 
+	// Stamp the per-instance identity on the request BEFORE proxying so
+	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
+	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
+	// customer-supplied claims, then stamps the scheduler-selected identity.
+	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
+	if identity.AppID == "" {
+		identity.AppID = app.ID
+	}
+	identity.ApplyGuestHeaders(r.Header)
+
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and
 	// the guest-side bridge remain children of this span. Stable identifiers
@@ -6154,6 +6192,24 @@ haveApp:
 		attribute.String("protocol", decideProtocol(app)),
 		attribute.Bool("cold", cold),
 	)
+	if identity.TenantID != "" {
+		forwardSpan.SetAttributes(attribute.String("tenant_id", identity.TenantID))
+	}
+	if identity.Region != "" {
+		forwardSpan.SetAttributes(attribute.String("region", identity.Region))
+	}
+	if identity.CommitSHA != "" {
+		forwardSpan.SetAttributes(attribute.String("commit_sha", identity.CommitSHA))
+	}
+	if identity.DeploymentTag != "" {
+		forwardSpan.SetAttributes(attribute.String("deployment_tag", identity.DeploymentTag))
+	}
+	if identity.DeploymentCreatedAt != "" {
+		forwardSpan.SetAttributes(attribute.String("deployment_created_at", identity.DeploymentCreatedAt))
+	}
+	if identity.ImageDigest != "" {
+		forwardSpan.SetAttributes(attribute.String("image_digest", identity.ImageDigest))
+	}
 	r = r.WithContext(forwardCtx)
 	defer func() {
 		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
@@ -6217,22 +6273,6 @@ haveApp:
 		}
 	}
 
-	// Stamp the per-instance identity on the request BEFORE proxying so
-	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
-	// the HTTP bytes to this exact instance. Overwrites any inbound
-	// x-faas-instance so an attacker can't steer the proxy to an
-	// arbitrary instance by setting the header (issue #168 trust model).
-	r.Header.Set("x-faas-instance", target.InstanceID)
-	r.Header.Set("x-faas-app", app.ID)
-	// Request identity is platform-authored at the final target boundary.
-	// These headers are reserved and the forwarder allowlists them for the
-	// guest, so application middleware can correlate a request without
-	// trusting customer-supplied x-faas-* values.
-	r.Header.Set(api.AppIDHeader, app.ID)
-	r.Header.Set(api.DeploymentIDHeader, target.DeploymentID)
-	r.Header.Set(api.TenantIDHeader, app.AccountID)
-	r.Header.Set(api.InstanceIDHeader, target.InstanceID)
-	r.Header.Set(api.NodeIDHeader, target.NodeID)
 	// Customer workloads get one unambiguous client address. The inbound
 	// x-faas-client-ip value is never trusted; stampTrustedClientIP derives
 	// it from the already-sanitized public-to-internal X-Forwarded-For hop.

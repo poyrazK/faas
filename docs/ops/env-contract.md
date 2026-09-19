@@ -175,6 +175,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
+| `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SOCKET` | gatewayd-public | `default` |  |  | `` |  |

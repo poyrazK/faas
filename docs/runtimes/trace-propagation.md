@@ -46,13 +46,16 @@ image environment variable, app env row, or secret:
 
 `FAAS_APP_ID`, `FAAS_DEPLOYMENT_ID`, `FAAS_TENANT_ID`,
 `FAAS_INSTANCE_ID`, `FAAS_NODE_ID`, `FAAS_REGION`, `FAAS_COMMIT_SHA`,
-`FAAS_DEPLOYMENT_TAG`, and `FAAS_DEPLOYMENT_CREATED_AT` (RFC 3339).
+`FAAS_DEPLOYMENT_TAG`, `FAAS_DEPLOYMENT_CREATED_AT` (RFC 3339), and
+`FAAS_IMAGE_DIGEST` when the deployment has an immutable image/artifact
+digest.
 
 The gateway also forwards the request-scoped `X-Faas-Request-Id`, app,
-deployment, tenant, instance, and node headers. Combine those headers with
-the W3C context above in application middleware. Platform request telemetry,
-errors, traces, and streamed/log-drain records retain the same deployment
-identity automatically.
+deployment, tenant, instance, node, region, commit, deployment-tag,
+deployment-created-at, and image-digest headers when those values are
+available. Combine those headers with the W3C context above in application
+middleware. Platform request telemetry, errors, traces, and streamed/log-drain
+records retain the same deployment identity automatically.
 
 You do not need to read or write `TRACEPARENT` for the platform's
 own spans to work — the platform's `sched.wake`, `vmmd.create_*`,

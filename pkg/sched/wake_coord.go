@@ -115,6 +115,9 @@ type CoordInstance struct {
 	// ColdBoot is true on a cold boot; false on a snapshot restore or
 	// on the already-running fast path.
 	ColdBoot bool
+	// Identity is the scheduler-authored deployment and placement metadata
+	// shared with EnsureWake followers.
+	Identity api.PlatformIdentity
 }
 
 // WakeFanout bounds how far a single burst may scale an app out.

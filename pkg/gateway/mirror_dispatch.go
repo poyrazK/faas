@@ -241,8 +241,9 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		//nolint:contextcheck // ctx is detached (ADR-098)
 		resp, err = rt.RoundTripMirror(ctx, mirrorTargetURL(&mirrorTarget), mirrorReq)
 	} else if h.proxyByNode != nil {
-		mirrorReq.Header.Set("x-faas-instance", mirrorTarget.InstanceID)
-		mirrorReq.Header.Set("x-faas-app", rule.AppID)
+		identity := mirrorTarget.PlatformIdentity("", mirrorReq.Header.Get(api.RequestIDHeader))
+		identity.AppID = rule.AppID
+		identity.ApplyGuestHeaders(mirrorReq.Header)
 		capture := newMirrorResponseCapture()
 		h.proxyByNode(mirrorTarget).ServeHTTP(capture, mirrorReq)
 		resp = capture.response()

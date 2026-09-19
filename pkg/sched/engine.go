@@ -1519,6 +1519,10 @@ type WakeResult struct {
 	// Mirrors AdmitInstanceResponse.request_count (tag 9) on the
 	// wire — additive per ADR-016, pre-PR callers see 0.
 	RequestCount int64
+	// Identity is the scheduler-authored deployment and placement metadata
+	// for the selected instance. Optional provenance fields remain empty when
+	// the deployment source does not provide them.
+	Identity api.PlatformIdentity
 }
 
 // Wake ensures a running instance for appID and returns its address (spec §4.3
@@ -1639,6 +1643,16 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			if resolvedDeploymentID == "" {
 				resolvedDeploymentID = dep.ID
 			}
+			// A caller-supplied deployment hint wins routing selection. If
+			// it differs from the newest live row used for the legacy port
+			// lookup, reload the hinted deployment before projecting commit,
+			// tag, digest, and creation time; otherwise provenance could be
+			// attributed to the wrong deployment.
+			if deploymentID != "" && dep.ID != deploymentID {
+				if hinted, hintedErr := e.store.DeploymentByID(ctx, deploymentID); hintedErr == nil {
+					dep = hinted
+				}
+			}
 		} else {
 			e.log.Warn("sched: wake: live deployment lookup for port/deployment_id failed; falling through with caller hint (or empty)",
 				"app", appID, "caller_deployment_id", deploymentID, "scope", scope, "err", depErr)
@@ -1650,7 +1664,25 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		// brought the instance up; an operator tailing a warm request
 		// can still pin it back to the schedd slog line that stamped
 		// it (gaps analysis 2026-07-23 review finding #1).
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount}, nil
+		identity := api.PlatformIdentity{
+			AppID:         appID,
+			DeploymentID:  resolvedDeploymentID,
+			InstanceID:    ins.ID,
+			NodeID:        ins.NodeID,
+			CommitSHA:     dep.CommitSHA,
+			DeploymentTag: dep.Tag,
+			ImageDigest:   dep.ImageDigest,
+		}
+		if !dep.CreatedAt.IsZero() {
+			identity.DeploymentCreatedAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if app, appErr := e.store.AppByID(ctx, appID); appErr == nil {
+			identity.TenantID = app.AccountID
+		}
+		if node, nodeErr := e.store.ComputeNodeByID(ctx, ins.NodeID); nodeErr == nil {
+			identity.Region = stringValue(node.Region)
+		}
+		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount, Identity: identity}, nil
 	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
@@ -3033,8 +3065,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
-		nodeID: placement.NodeID,
-		spec:   spec,
+		nodeID:   placement.NodeID,
+		identity: platformIdentity(app, dep, acct, placement.NodeID, ins.ID, placement.Region),
+		spec:     spec,
 		// wakeID is the per-wake-attempt correlation handle (gaps
 		// analysis 2026-07-23). Carried across the unlocked Phase 3
 		// window so the vmmd-failure log path, the state-stolen abort
@@ -3527,7 +3560,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		})
 	}
 
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount}, nil
+	bootInput.identity.InstanceID = fresh.ID
+	bootInput.identity.NodeID = fresh.NodeID
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
 }
 
 // markRuntimeArtifactMissing closes a live deployment that cannot ever boot
@@ -3580,7 +3615,10 @@ type bootInput struct {
 	// best-effort-destroy path on error so the destroy hits the
 	// same vmmd instance the boot landed on.
 	nodeID string
-	spec   AppSpec
+	// identity is captured under the admission lock and returned with the
+	// wake result so downstream gateways do not need a deployment lookup.
+	identity api.PlatformIdentity
+	spec     AppSpec
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the

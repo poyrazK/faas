@@ -132,6 +132,10 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		e.observeWarmResumeDuration(app.ID, warm.WakeID, time.Since(resumeStartedAt))
 		warmCount--
 		e.observeWarmResume("success")
+		region := ""
+		if node, nodeErr := e.store.ComputeNodeByID(ctx, fresh.NodeID); nodeErr == nil {
+			region = stringValue(node.Region)
+		}
 		return WakeResult{
 			InstanceID:   fresh.ID,
 			NodeID:       fresh.NodeID,
@@ -140,6 +144,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			Port:         deploymentRuntimePort(dep),
 			DeploymentID: dep.ID,
 			RequestCount: fresh.RequestCount,
+			Identity:     platformIdentity(app, dep, acct, fresh.NodeID, fresh.ID, region),
 		}, true, nil
 	}
 	return WakeResult{}, false, nil

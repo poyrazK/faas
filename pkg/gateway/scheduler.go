@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // WakeMethod is the narrow gateway-facing mirror of the on-the-wire
@@ -245,6 +247,13 @@ type Scheduler interface {
 // once for each bounded continuation, including an error result.
 type burstScheduler interface {
 	AdmitInstances(ctx context.Context, appID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, err error)) error
+}
+
+// burstIdentityScheduler is the additive provenance-aware sibling of
+// burstScheduler. Older schedulers continue to use the legacy callback while
+// newer schedd clients preserve deployment metadata for every sibling target.
+type burstIdentityScheduler interface {
+	AdmitInstancesWithIdentity(ctx context.Context, appID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error)) error
 }
 
 // ErrSchedulerUnconfigured is returned by NoopScheduler.AdmitInstance.

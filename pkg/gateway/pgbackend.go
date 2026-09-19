@@ -11,8 +11,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"golang.org/x/sync/singleflight"
 )
+
+// These additive seams let newer schedd clients return authoritative
+// deployment provenance without widening Scheduler's long-standing tuple
+// methods (which are implemented by older test doubles and integrations).
+type provenanceAdmitter interface {
+	AdmitInstanceWithIdentity(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error)
+}
+
+type provenanceEnsurer interface {
+	EnsureWakeWithIdentity(ctx context.Context, appID, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, identity api.PlatformIdentity, err error)
+}
 
 // WarmHintFunc is the sticky-warm affinity source for the picker
 // (placement scheduler PR, ADR-025). It returns the compute_node.id
@@ -559,7 +571,15 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		return "", WakeMethodUnspecified, false, err
 	}
 	markWakeAdmissionStarted(ctx)
-	instanceID, nodeID, deploymentID, wakeID, rawMethod, port, err := sched.EnsureWake(ctx, appID, trigger)
+	var identity api.PlatformIdentity
+	var instanceID, nodeID, deploymentID, wakeID string
+	var rawMethod int32
+	var port int
+	if rich, ok := sched.(provenanceEnsurer); ok {
+		instanceID, nodeID, deploymentID, wakeID, rawMethod, port, identity, err = rich.EnsureWakeWithIdentity(ctx, appID, trigger)
+	} else {
+		instanceID, nodeID, deploymentID, wakeID, rawMethod, port, err = sched.EnsureWake(ctx, appID, trigger)
+	}
 	markWakeSchedulerComplete(ctx)
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
@@ -567,12 +587,21 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 	if instanceID == "" || nodeID == "" {
 		return "", WakeMethodUnspecified, true, nil
 	}
+	if identity.DeploymentID != "" {
+		deploymentID = identity.DeploymentID
+	}
 	b.RecordTarget(appID, Target{
-		NodeID:       nodeID,
-		InstanceID:   instanceID,
-		WakeID:       wakeID,
-		Port:         port,
-		DeploymentID: deploymentID,
+		NodeID:              nodeID,
+		InstanceID:          instanceID,
+		WakeID:              wakeID,
+		Port:                port,
+		DeploymentID:        deploymentID,
+		AppID:               appID,
+		Region:              identity.Region,
+		CommitSHA:           identity.CommitSHA,
+		DeploymentTag:       identity.DeploymentTag,
+		DeploymentCreatedAt: identity.DeploymentCreatedAt,
+		ImageDigest:         identity.ImageDigest,
 	})
 	markWakeTargetPublished(ctx)
 	return wakeID, scheddWakeMethodToGateway(rawMethod), false, nil
@@ -1226,7 +1255,16 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	// to schedd's default (newest live deployment) — the legacy
 	// single-deployment path.
 	markWakeAdmissionStarted(ctx)
-	instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, err := sched.AdmitInstance(ctx, appID, deploymentID, scope, trigger)
+	var identity api.PlatformIdentity
+	var instanceID, nodeID, returnedDeploymentID, wakeID string
+	var rawMethod int32
+	var atCapacity bool
+	var port int
+	if rich, ok := sched.(provenanceAdmitter); ok {
+		instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, identity, err = rich.AdmitInstanceWithIdentity(ctx, appID, deploymentID, scope, trigger)
+	} else {
+		instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, err = sched.AdmitInstance(ctx, appID, deploymentID, scope, trigger)
+	}
 	markWakeSchedulerComplete(ctx)
 	// NOTE: ADR-098's `EnsureWake(ctx, appID)` is the new single-flight
 	// hot-path primitive on the gateway's Wake flow (pkg/gateway/pgbackend.go
@@ -1238,7 +1276,7 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
 	}
-	return b.recordAdmission(ctx, appID, deploymentID, instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port)
+	return b.recordAdmissionWithIdentity(ctx, appID, deploymentID, instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, identity)
 }
 
 // recordAdmission applies one successful schedd result to the gateway's
@@ -1246,11 +1284,27 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 // burst path reuse the exact same cache and deployment-bucket semantics as a
 // normal Admit call.
 func (b *PGBackend) recordAdmission(ctx context.Context, appID, deploymentID, instanceID, nodeID, returnedDeploymentID, wakeID string, rawMethod int32, atCapacity bool, port int) (string, WakeMethod, bool, error) {
+	return b.recordAdmissionWithIdentity(ctx, appID, deploymentID, instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, api.PlatformIdentity{})
+}
+
+func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, deploymentID, instanceID, nodeID, returnedDeploymentID, wakeID string, rawMethod int32, atCapacity bool, port int, identity api.PlatformIdentity) (string, WakeMethod, bool, error) {
 	// Use the deploymentID schedd actually used (matches the
 	// bucket the picker will route to); fall through to the
 	// caller's hint if schedd returned "".
 	if returnedDeploymentID != "" {
 		deploymentID = returnedDeploymentID
+	}
+	if identity.AppID == "" {
+		identity.AppID = appID
+	}
+	if identity.DeploymentID != "" {
+		deploymentID = identity.DeploymentID
+	}
+	if identity.InstanceID == "" {
+		identity.InstanceID = instanceID
+	}
+	if identity.NodeID == "" {
+		identity.NodeID = nodeID
 	}
 	method := scheddWakeMethodToGateway(rawMethod)
 	// AdmitInstance carries atCapacity as a dedicated field
@@ -1313,13 +1367,18 @@ func (b *PGBackend) recordAdmission(ctx context.Context, appID, deploymentID, in
 		picker.cum = []int{100}
 	}
 	set.add(Target{
-		AppID:        appID,
-		NodeID:       nodeID,
-		InstanceID:   instanceID,
-		WakeID:       wakeID,
-		AddedAt:      time.Now(),
-		Port:         port,
-		DeploymentID: deploymentID,
+		AppID:               appID,
+		NodeID:              nodeID,
+		InstanceID:          instanceID,
+		WakeID:              wakeID,
+		AddedAt:             time.Now(),
+		Port:                port,
+		DeploymentID:        deploymentID,
+		Region:              identity.Region,
+		CommitSHA:           identity.CommitSHA,
+		DeploymentTag:       identity.DeploymentTag,
+		DeploymentCreatedAt: identity.DeploymentCreatedAt,
+		ImageDigest:         identity.ImageDigest,
 	})
 	b.tgtMu.Unlock()
 	markWakeTargetPublished(ctx)
