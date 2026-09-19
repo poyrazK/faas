@@ -88,6 +88,10 @@ func spoolRoot() string {
 // lives inside store.CreateDeployment (PR-A: SELECT 1 FROM apps
 // WHERE id=$1 AND status='active' FOR UPDATE).
 func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, developerSource bool) {
+	if p := s.enforceSecurityPostureGate(r.Context(), app); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	hostingFlow := "first_deploy"
 	if developerSource || state.IsDeveloperApp(app) {

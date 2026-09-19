@@ -156,8 +156,11 @@ from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
 from .app_security_posture_response_profile import AppSecurityPostureResponseProfile
+from .app_security_posture_response_security_policy import AppSecurityPostureResponseSecurityPolicy
 from .app_security_request import AppSecurityRequest
+from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
+from .app_security_response_security_policy import AppSecurityResponseSecurityPolicy
 from .app_slo_response import AppSLOResponse
 from .app_slo_response_wake_queue_sample_status import AppSLOResponseWakeQueueSampleStatus
 from .app_slo_response_window import AppSLOResponseWindow
@@ -1449,8 +1452,11 @@ __all__ = (
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
     "AppSecurityPostureResponseProfile",
+    "AppSecurityPostureResponseSecurityPolicy",
     "AppSecurityRequest",
+    "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
+    "AppSecurityResponseSecurityPolicy",
     "AppSLOResponse",
     "AppSLOResponseWakeQueueSampleStatus",
     "AppSLOResponseWindow",

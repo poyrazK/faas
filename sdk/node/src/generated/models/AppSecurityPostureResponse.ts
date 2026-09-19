@@ -11,6 +11,10 @@ export type AppSecurityPostureResponse = {
   slug: string;
   profile: 'public' | 'authenticated' | 'internal';
   score: number;
+  /**
+   * The app's deploy-time response to high-severity posture findings.
+   */
+  security_policy: 'off' | 'warn' | 'enforce';
   findings: Array<AppSecurityFinding>;
 };
 

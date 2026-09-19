@@ -3708,7 +3708,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 			   workload_class = case when $70 then $71::text else workload_class end,
 			   visibility = case when $72 then $73::text else visibility end,
 			   warm_pool_size = case when $74 then $75 else warm_pool_size end,
-			   retry_policy = case when $76 then $77::jsonb else retry_policy end
+			   retry_policy = case when $76 then $77::jsonb else retry_policy end,
+			   security_policy = case when $78 then $79::text else security_policy end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3836,7 +3837,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass),
 		p.SetVisibility, string(api.NormalizeAppVisibility(derefAppVisibility(p.Visibility))),
 		p.SetWarmPoolSize, intOrZero(p.WarmPoolSize),
-		p.SetRetryPolicy, retryPolicyBytes)
+		p.SetRetryPolicy, retryPolicyBytes,
+		p.SetSecurityPolicy, appSecurityPolicyValue(p.SecurityPolicy))
 	return scanApp(row)
 }
 
@@ -3889,6 +3891,13 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func appSecurityPolicyValue(p *api.AppSecurityPolicy) string {
+	if p == nil || !p.Valid() {
+		return string(api.AppSecurityPolicyOff)
+	}
+	return string(*p)
 }
 
 func derefAppVisibility(v *api.AppVisibility) api.AppVisibility {
@@ -21620,6 +21629,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	var onlyAllowDeclaredRoutes bool
 	var declaredRoutesBytes []byte
 	var visibility string
+	var securityPolicy string
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
 		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText,
 		&publicAuthIPAllowlistText,
@@ -21729,7 +21739,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
-		&a.RetryPolicyJSON); err != nil {
+		&a.RetryPolicyJSON, &securityPolicy); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -21747,6 +21757,10 @@ func scanAppInto(a *App, row pgx.Row) error {
 	a.CORSDefaultEnabled = &corsDefaultEnabled
 	a.OnlyAllowDeclaredRoutes = onlyAllowDeclaredRoutes
 	a.Visibility = api.NormalizeAppVisibility(api.AppVisibility(visibility))
+	a.SecurityPolicy = api.AppSecurityPolicy(securityPolicy)
+	if !a.SecurityPolicy.Valid() {
+		a.SecurityPolicy = api.AppSecurityPolicyOff
+	}
 	if len(declaredRoutesBytes) > 0 {
 		_ = json.Unmarshal(declaredRoutesBytes, &a.DeclaredRoutes)
 		// Keep the empty contract canonical across the PG and memory
@@ -21913,7 +21927,10 @@ const appsSelectColumns = `
 	coalesce(visibility, 'public'),
 	-- ADR-134 follow-up: app-level retry default. Appended to preserve
 	-- every existing positional scan while old rows project as '{}'.
-	coalesce(retry_policy, '{}'::jsonb)`
+	coalesce(retry_policy, '{}'::jsonb),
+	-- Security posture enforcement is appended so existing positional
+	-- app columns remain stable for every caller of this projection.
+	coalesce(security_policy, 'off')`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

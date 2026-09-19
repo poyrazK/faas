@@ -10,6 +10,10 @@ from ..models.app_security_posture_response_profile import (
     AppSecurityPostureResponseProfile,
     check_app_security_posture_response_profile,
 )
+from ..models.app_security_posture_response_security_policy import (
+    AppSecurityPostureResponseSecurityPolicy,
+    check_app_security_posture_response_security_policy,
+)
 
 if TYPE_CHECKING:
     from ..models.app_security_finding import AppSecurityFinding
@@ -26,6 +30,8 @@ class AppSecurityPostureResponse:
     slug: str
     profile: AppSecurityPostureResponseProfile
     score: int
+    security_policy: AppSecurityPostureResponseSecurityPolicy
+    """The app's deploy-time response to high-severity posture findings."""
     findings: list[AppSecurityFinding]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -37,6 +43,8 @@ class AppSecurityPostureResponse:
         profile: str = self.profile
 
         score = self.score
+
+        security_policy: str = self.security_policy
 
         findings = []
         for findings_item_data in self.findings:
@@ -51,6 +59,7 @@ class AppSecurityPostureResponse:
                 "slug": slug,
                 "profile": profile,
                 "score": score,
+                "security_policy": security_policy,
                 "findings": findings,
             }
         )
@@ -70,6 +79,8 @@ class AppSecurityPostureResponse:
 
         score = d.pop("score")
 
+        security_policy = check_app_security_posture_response_security_policy(d.pop("security_policy"))
+
         findings = []
         _findings = d.pop("findings")
         for findings_item_data in _findings:
@@ -82,6 +93,7 @@ class AppSecurityPostureResponse:
             slug=slug,
             profile=profile,
             score=score,
+            security_policy=security_policy,
             findings=findings,
         )
 

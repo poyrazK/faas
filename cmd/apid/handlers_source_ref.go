@@ -61,6 +61,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return
 	}
+	if p := s.enforceSecurityPostureGate(r.Context(), app); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	var req api.SourceRefDeployRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,

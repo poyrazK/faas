@@ -1,5 +1,5 @@
 // handlers_security.go — apid admin-gated handlers for per-app
-// signature-enforcement controls (issue #472 / ADR-054).
+// signature and deploy-posture controls (issue #472 / ADR-054).
 //
 // Route (registered in cmd/apid/server.go::handler with the admin+MFA
 // chain — see the mount block):
@@ -7,7 +7,7 @@
 //	GET   /v1/apps/{slug}/security  → getAppSecurity
 //	PATCH /v1/apps/{slug}/security  → patchAppSecurity
 //
-// Why a dedicated endpoint (instead of folding RequireSigned into
+// Why a dedicated endpoint (instead of folding these controls into
 // updateApp):
 //
 //   - Signature enforcement is an operator control, NOT a customer
@@ -18,11 +18,11 @@
 //     admin scope (ScopesAdminOnly), matching the trusted-signer
 //     surface below.
 //
-//   - The wire is intentionally narrow: only RequireSigned is
-//     settable today. Future admin-only knobs (e.g. an allow-list
-//     of trusted registries, a customer-side key-rotation policy)
-//     land here so the PATCH /v1/apps/{slug} endpoint stays a
-//     customer-safe surface.
+//   - The wire is intentionally narrow: only signature enforcement and
+//     deploy-posture policy are settable today. Future admin-only knobs
+//     (e.g. an allow-list of trusted registries, a customer-side
+//     key-rotation policy) land here so the PATCH /v1/apps/{slug}
+//     endpoint stays a customer-safe surface.
 //
 //   - The mount-time chain (authLimited → requireMFA →
 //     requireScope(api.ScopesAdminOnly...)) mirrors
@@ -32,18 +32,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
-	postureSeverityHigh   = "high"
-	postureSeverityMedium = "medium"
-	postureSeverityLow    = "low"
+	postureSeverityCritical = "critical"
+	postureSeverityHigh     = "high"
+	postureSeverityMedium   = "medium"
+	postureSeverityLow      = "low"
 )
 
 // AppSecurityRequest is the body of PATCH /v1/apps/{slug}/security.
@@ -57,8 +60,8 @@ const (
 //   - See api.AppSecurityResponse.
 //
 // patchAppSecurity applies admin-scoped per-app security knobs.
-// Today this is just the require_signed toggle; future knobs land
-// here so the customer PATCH surface stays admin-free.
+// Signature enforcement and deploy-posture policy are admin-only; future
+// security knobs land here so the customer PATCH surface stays admin-free.
 //
 // Hand-rolled phases (resolve app → validate body → persist →
 // notify → audit), not a helper, because the line budget is well
@@ -84,13 +87,21 @@ func (s *server) patchAppSecurity(w http.ResponseWriter, r *http.Request, acct s
 	// empty-body probe from the dashboard's "Save" button (with no
 	// fields changed) doesn't fail. A future field here that has
 	// required values can override this branch.
-	if req.RequireSigned == nil {
-		writeJSON(w, http.StatusOK, api.AppSecurityResponse{RequireSigned: app.RequireSigned})
+	if req.RequireSigned == nil && req.SecurityPolicy == nil {
+		writeJSON(w, http.StatusOK, api.AppSecurityResponse{
+			RequireSigned: app.RequireSigned, SecurityPolicy: normalizedAppSecurityPolicy(app.SecurityPolicy),
+		})
+		return
+	}
+	if req.SecurityPolicy != nil && !req.SecurityPolicy.Valid() {
+		api.WriteProblem(w, api.ErrValidation("security_policy must be one of: off, warn, enforce"))
 		return
 	}
 	updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{
-		RequireSigned:    req.RequireSigned,
-		SetRequireSigned: true,
+		RequireSigned:     req.RequireSigned,
+		SetRequireSigned:  req.RequireSigned != nil,
+		SecurityPolicy:    req.SecurityPolicy,
+		SetSecurityPolicy: req.SecurityPolicy != nil,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update app security"))
@@ -109,12 +120,16 @@ func (s *server) patchAppSecurity(w http.ResponseWriter, r *http.Request, acct s
 	// signature-related config changes separately from generic
 	// app.updated.
 	s.audit.Emit(r.Context(), "app.security_updated", &acct.ID, map[string]any{
-		"app_id":      updated.ID,
-		"slug":        updated.Slug,
-		"old_require": app.RequireSigned,
-		"new_require": updated.RequireSigned,
+		"app_id":              updated.ID,
+		"slug":                updated.Slug,
+		"old_require":         app.RequireSigned,
+		"new_require":         updated.RequireSigned,
+		"old_security_policy": normalizedAppSecurityPolicy(app.SecurityPolicy),
+		"new_security_policy": normalizedAppSecurityPolicy(updated.SecurityPolicy),
 	})
-	writeJSON(w, http.StatusOK, api.AppSecurityResponse{RequireSigned: updated.RequireSigned})
+	writeJSON(w, http.StatusOK, api.AppSecurityResponse{
+		RequireSigned: updated.RequireSigned, SecurityPolicy: normalizedAppSecurityPolicy(updated.SecurityPolicy),
+	})
 }
 
 // getAppSecurity returns a deterministic, read-only posture report. It is
@@ -125,10 +140,25 @@ func (s *server) getAppSecurity(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
-	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
+	posture, err := s.appSecurityPosture(r.Context(), app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load app security posture"))
 		return
+	}
+	writeJSON(w, http.StatusOK, posture)
+}
+
+func normalizedAppSecurityPolicy(policy api.AppSecurityPolicy) api.AppSecurityPolicy {
+	if !policy.Valid() {
+		return api.AppSecurityPolicyOff
+	}
+	return policy
+}
+
+func (s *server) appSecurityPosture(ctx context.Context, app state.App) (api.AppSecurityPostureResponse, error) {
+	rules, err := s.store.ListEdgeRulesForApp(ctx, app.ID)
+	if err != nil {
+		return api.AppSecurityPostureResponse{}, err
 	}
 
 	profile := "public"
@@ -233,9 +263,33 @@ func (s *server) getAppSecurity(w http.ResponseWriter, r *http.Request, acct sta
 	if score < 0 {
 		score = 0
 	}
-	writeJSON(w, http.StatusOK, api.AppSecurityPostureResponse{
-		AppID: app.ID, Slug: app.Slug, Profile: profile, Score: score, Findings: findings,
-	})
+	return api.AppSecurityPostureResponse{
+		AppID: app.ID, Slug: app.Slug, Profile: profile, Score: score,
+		SecurityPolicy: normalizedAppSecurityPolicy(app.SecurityPolicy), Findings: findings,
+	}, nil
+}
+
+// enforceSecurityPostureGate rejects image deploys when an app has opted into
+// enforcement and the current configuration contains a high-severity finding.
+// Warn and off remain non-blocking so customers can stage the policy safely.
+func (s *server) enforceSecurityPostureGate(ctx context.Context, app state.App) *api.Problem {
+	if normalizedAppSecurityPolicy(app.SecurityPolicy) != api.AppSecurityPolicyEnforce {
+		return nil
+	}
+	posture, err := s.appSecurityPosture(ctx, app)
+	if err != nil {
+		return api.ErrCapacity("could not load app security posture")
+	}
+	codes := make([]string, 0, len(posture.Findings))
+	for _, finding := range posture.Findings {
+		if finding.Severity == postureSeverityHigh || finding.Severity == postureSeverityCritical {
+			codes = append(codes, finding.Code)
+		}
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	return api.ErrSecurityPostureBlocked(strings.Join(codes, ", "))
 }
 
 func postureSeverityRank(severity string) int {

@@ -1,5 +1,5 @@
 // commands_app_security.go — Tier D audit-gap close.
-// `gregale app <slug> security [--posture|--require-signed=true|false]`
+// `gregale app <slug> security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]`
 // (PATCH /v1/apps/{slug}/security, issue #472 / ADR-054).
 //
 // Mirrors cmdAlertUpdate (commands_alerts.go:245-313) exactly: same
@@ -62,16 +62,15 @@ const subRoutes = "routes"
 // (golangci-lint v2.4.0) stops flagging the three repeated string
 // literals in the gate below.
 const (
-	requireSignedTrue  = "true"
-	requireSignedFalse = "false"
+	requireSignedTrue     = "true"
+	requireSignedFalse    = "false"
+	securityPolicyOff     = "off"
+	securityPolicyWarn    = "warn"
+	securityPolicyEnforce = "enforce"
 )
 
 // cmdAppSecurity implements `gregale app <slug> security
-// [--require-signed=true|false]`. The only flag for now is
-// require_signed (ADR-054 §Decision 2); future per-app security
-// bits (trusted-publisher allowlist mutation, deploy-time SBOM
-// enforcement) extend the AppSecurityRequest DTO + this leaf's
-// flag set together. Don't grow the leaf until the DTO grows.
+// [--require-signed=true|false|--security-policy=off|warn|enforce]`.
 //
 // Signature mirrors cmdAppScale / cmdAppRename: slug is the first
 // positional, threaded in by cmdAppDispatch (commands5.go:607) so
@@ -79,7 +78,7 @@ const (
 // (slug, args[2:]).
 func cmdAppSecurity(slug string, args []string) int {
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--posture|--require-signed=true|false]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]", "apps")
 		return 1
 	}
 	// splitArgsForFlags: Go's flag.Parse halts at the first non-flag
@@ -90,16 +89,17 @@ func cmdAppSecurity(slug string, args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("app security", flag.ContinueOnError)
 	requireSigned := fs.String("require-signed", "", "require signed images on deploy (true|false)")
+	securityPolicy := fs.String("security-policy", "", "deploy posture policy (off|warn|enforce)")
 	posture := fs.Bool("posture", false, "show the read-only security posture")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--posture|--require-signed=true|false]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]", "apps")
 		return 1
 	}
-	if *posture && *requireSigned != "" {
-		return printErr("Invalid app security flags", fmt.Errorf("--posture cannot be combined with --require-signed"))
+	if *posture && (*requireSigned != "" || *securityPolicy != "") {
+		return printErr("Invalid app security flags", fmt.Errorf("--posture cannot be combined with mutation flags"))
 	}
 	// --require-signed is parsed as a string so the strict literal
 	// "true" / "false" gate can run before strconv.ParseBool (which
@@ -107,6 +107,9 @@ func cmdAppSecurity(slug string, args []string) int {
 	// the server-side enum gate).
 	if *requireSigned != "" && *requireSigned != requireSignedTrue && *requireSigned != requireSignedFalse {
 		return printErr("Invalid --require-signed", fmt.Errorf("must be \"true\" or \"false\"; got %q", *requireSigned))
+	}
+	if *securityPolicy != "" && *securityPolicy != securityPolicyOff && *securityPolicy != securityPolicyWarn && *securityPolicy != securityPolicyEnforce {
+		return printErr("Invalid --security-policy", fmt.Errorf("must be \"off\", \"warn\", or \"enforce\"; got %q", *securityPolicy))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -131,6 +134,10 @@ func cmdAppSecurity(slug string, args []string) int {
 		v, _ := strconv.ParseBool(*requireSigned)
 		req.RequireSigned = &v
 	}
+	if *securityPolicy != "" {
+		v := api.AppSecurityPolicy(*securityPolicy)
+		req.SecurityPolicy = &v
+	}
 	resp, err := client.UpdateAppSecurity(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Update failed", err)
@@ -140,5 +147,6 @@ func cmdAppSecurity(slug string, args []string) int {
 	}
 	PrintOK(osStdout, "App %s security updated.", slug)
 	_, _ = fmt.Fprintf(osStdout, "  require_signed: %t\n", resp.RequireSigned)
+	_, _ = fmt.Fprintf(osStdout, "  security_policy: %s\n", resp.SecurityPolicy)
 	return 0
 }

@@ -583,6 +583,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := s.enforceSecurityPostureGate(r.Context(), app); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	overrides, p := validateOverrides(&req, limits)
 	if p != nil {
 		api.WriteProblem(w, p)

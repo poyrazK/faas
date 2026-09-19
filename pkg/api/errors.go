@@ -777,6 +777,10 @@ const (
 	// REJECTED at accept time, distinct from CodeSigInvalid's 503
 	// (which fires on the cold-boot layer-verify path).
 	CodeDeploySignatureInvalid = "deploy_signature_invalid"
+	// CodeSecurityPostureBlocked is returned at deploy acceptance when an
+	// app's admin-enabled security policy is "enforce" and its current
+	// posture still contains one or more high-severity findings.
+	CodeSecurityPostureBlocked = "security_posture_blocked"
 	// CodeTrustedSignerInvalid is returned when the PUT body fails
 	// the PEM-shape validation (size 64..1024 bytes after
 	// base64-decode, ECDSA P-256 SPKI per ADR-038). 400 with the
@@ -1830,7 +1834,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
-	case CodeDeploySignatureInvalid:
+	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
 		// CodeSigInvalid's 503 (which fires on the cold-boot layer-verify
 		// path). See CodeDeploySignatureInvalid declaration above.
@@ -4222,6 +4226,15 @@ func ErrDeploySignatureInvalid(detail string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeDeploySignatureInvalid,
 		"Signed-image enforcement rejected the deploy", detail).
 		WithDocs(docsBase + "/deploys#signed-images")
+}
+
+// ErrSecurityPostureBlocked is returned when the app's explicit security
+// policy prevents a deploy until its high-severity findings are remediated.
+func ErrSecurityPostureBlocked(codes string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeSecurityPostureBlocked,
+		"Security posture blocks this deploy",
+		"security_policy=enforce and high-severity findings remain: "+codes+"; review GET /v1/apps/{slug}/security and remediate the findings").
+		WithDocs(docsBase + "/security#deploy-enforcement")
 }
 
 // ErrTrustedSignerInvalid is the 400 mirror of ErrSecretInvalidKey

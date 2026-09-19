@@ -1083,6 +1083,11 @@ type App struct {
 	// before flipping the flag — empty trust list + require_signed=true
 	// is fail-closed (every deploy is rejected).
 	RequireSigned bool
+	// SecurityPolicy controls the deploy-time response to high-severity
+	// findings from the app security posture report. Off preserves the
+	// historical behavior; warn is advisory; enforce rejects new deploys
+	// while a high-severity finding remains.
+	SecurityPolicy api.AppSecurityPolicy
 	// StartCommand overrides the OCI image's CMD when present.
 	// Phase 3 writes it from compose/Procfile declarations; Phase
 	// 1 carries the column through but the apid handler does not
@@ -5020,6 +5025,10 @@ type UpdateAppParams struct {
 	// deploys are unaffected.
 	RequireSigned    *bool
 	SetRequireSigned bool
+	// SecurityPolicy controls the deploy-time posture guard. It is an
+	// admin+MFA-only setting on the dedicated security endpoint.
+	SecurityPolicy    *api.AppSecurityPolicy
+	SetSecurityPolicy bool
 	// WarmSnapshotEnabled (issue #470 / ADR-055) toggles the
 	// two-tier snapshot path. SetWarmSnapshotEnabled distinguishes
 	// "unset" (don't touch) from "explicit false" (disable warm

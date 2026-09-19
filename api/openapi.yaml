@@ -7545,11 +7545,8 @@ paths:
   # signal. env:write is NOT MFA-gated because env vars are explicitly
   # non-sensitive runtime config — credentials stay on /secrets.
 
-  # Issue #472 / ADR-054: per-app cosign signature-enforcement surface.
-  # Three admin-scoped routes (require MFA + ScopesAdminOnly) plus
-  # one PATCH endpoint for the require_signed toggle itself. The
-  # customer PATCH /v1/apps/{slug} endpoint silently drops
-  # require_signed so the gate can't be flipped by the customer.
+  # Per-app security posture and deploy-enforcement surface. GET is
+  # customer-scoped and read-only; PATCH is admin+MFA protected.
 
   /v1/apps/{slug}/security:
     parameters:
@@ -7575,16 +7572,17 @@ paths:
     patch:
       tags: [security]
       operationId: patchAppSecurity
-      summary: Toggle the require_signed flag for an app (admin + MFA).
+      summary: Configure app security enforcement (admin + MFA).
       description: |
         Operator-only surface for the per-app cosign signature-enforcement
-        flag (issue #472 / ADR-054). Mounted with `authLimited → requireMFA →
-        requireScope(ScopesAdminOnly...)`. The customer PATCH /v1/apps/{slug}
-        endpoint silently drops the field — flipping it through that surface
-        is a no-op — so the only path that persists `require_signed=true` is
-        this one.
+        flag and deploy-time posture policy. Mounted with
+        `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
+        `security_policy=enforce` rejects new deploys while high-severity
+        posture findings remain; `warn` is advisory and `off` preserves
+        historical behavior.
 
-        `nil` = no field set (no-op 200). Non-nil = atomic overwrite.
+        Each field is optional; omitted fields are unchanged and supplied
+        fields are applied atomically.
 
         Audit event: `app.security_updated` carries old/new values.
       requestBody:
@@ -30378,31 +30376,40 @@ components:
 
     AppSecurityRequest:
       description: |
-        PATCH body for `/v1/apps/{slug}/security`. `require_signed` is a
-        pointer so the wire form can distinguish "don't touch" (nil) from
-        "explicit true/false" — the same Set-bit convention the broader
-        UpdateAppRequest uses (issue #471 streaming flag precedent).
+        PATCH body for `/v1/apps/{slug}/security`. Both fields are optional
+        so an operator can change signature enforcement and deploy posture
+        independently.
       type: object
       properties:
         require_signed:
           type: [boolean, "null"]
           description: "Operator-only toggle. nil = no change. *true = opt in to signature enforcement (requires the trust list to be non-empty). *false = opt out."
           example: true
+        security_policy:
+          type: [string, "null"]
+          enum: [off, warn, enforce]
+          description: "Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated."
+          example: enforce
 
     AppSecurityResponse:
-      description: "PATCH /v1/apps/{slug}/security response body — the updated flag state."
+      description: "PATCH /v1/apps/{slug}/security response body — the updated security controls."
       type: object
-      required: [require_signed]
+      required: [require_signed, security_policy]
       properties:
         require_signed:
           type: boolean
           description: "The current state of the require_signed flag after the patch."
           example: true
+        security_policy:
+          type: string
+          enum: [off, warn, enforce]
+          description: "The current deploy-time posture policy after the patch."
+          example: enforce
 
     AppSecurityPostureResponse:
       description: "Read-only deterministic configuration posture for an app."
       type: object
-      required: [app_id, slug, profile, score, findings]
+      required: [app_id, slug, profile, score, security_policy, findings]
       properties:
         app_id:
           type: string
@@ -30415,6 +30422,10 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        security_policy:
+          type: string
+          enum: [off, warn, enforce]
+          description: "The app's deploy-time response to high-severity posture findings."
         findings:
           type: array
           items: { $ref: '#/components/schemas/AppSecurityFinding' }

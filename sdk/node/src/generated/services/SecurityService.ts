@@ -49,15 +49,16 @@ export class SecurityService {
     });
   }
   /**
-   * Toggle the require_signed flag for an app (admin + MFA).
+   * Configure app security enforcement (admin + MFA).
    * Operator-only surface for the per-app cosign signature-enforcement
-   * flag (issue #472 / ADR-054). Mounted with `authLimited → requireMFA →
-   * requireScope(ScopesAdminOnly...)`. The customer PATCH /v1/apps/{slug}
-   * endpoint silently drops the field — flipping it through that surface
-   * is a no-op — so the only path that persists `require_signed=true` is
-   * this one.
+   * flag and deploy-time posture policy. Mounted with
+   * `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
+   * `security_policy=enforce` rejects new deploys while high-severity
+   * posture findings remain; `warn` is advisory and `off` preserves
+   * historical behavior.
    *
-   * `nil` = no field set (no-op 200). Non-nil = atomic overwrite.
+   * Each field is optional; omitted fields are unchanged and supplied
+   * fields are applied atomically.
    *
    * Audit event: `app.security_updated` carries old/new values.
    *

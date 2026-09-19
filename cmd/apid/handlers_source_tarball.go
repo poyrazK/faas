@@ -72,6 +72,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	if p := s.enforceSecurityPostureGate(r.Context(), app); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	uploadStarted := time.Now()
 	uploadOutcome := "failed"
 	defer func() {

@@ -3,10 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * PATCH body for `/v1/apps/{slug}/security`. `require_signed` is a
- * pointer so the wire form can distinguish "don't touch" (nil) from
- * "explicit true/false" — the same Set-bit convention the broader
- * UpdateAppRequest uses (issue #471 streaming flag precedent).
+ * PATCH body for `/v1/apps/{slug}/security`. Both fields are optional
+ * so an operator can change signature enforcement and deploy posture
+ * independently.
  *
  */
 export type AppSecurityRequest = {
@@ -14,5 +13,9 @@ export type AppSecurityRequest = {
    * Operator-only toggle. nil = no change. *true = opt in to signature enforcement (requires the trust list to be non-empty). *false = opt out.
    */
   require_signed?: boolean | null;
+  /**
+   * Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated.
+   */
+  security_policy?: 'off' | 'warn' | 'enforce';
 };
 

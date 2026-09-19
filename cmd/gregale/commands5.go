@@ -947,7 +947,7 @@ func cmdAppRestart(slug string, args []string) int {
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--posture|--require-signed=true|false]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
 		return 1
 	}
 	slug := args[0]

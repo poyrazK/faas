@@ -5552,24 +5552,29 @@ type AddTrustedSignerRequest struct {
 // /v1/apps/{slug} silently drops require_signed).
 type AppSecurityRequest struct {
 	RequireSigned *bool `json:"require_signed,omitempty"`
+	// SecurityPolicy controls deploy-time handling of high-severity posture
+	// findings. It is admin+MFA protected and accepts off, warn, or enforce.
+	SecurityPolicy *AppSecurityPolicy `json:"security_policy,omitempty"`
 }
 
 // AppSecurityResponse is the success body of PATCH
 // /v1/apps/{slug}/security. Mirrors the AppResponse RequireSigned
 // field so the CLI can render the new state without a follow-up GET.
 type AppSecurityResponse struct {
-	RequireSigned bool `json:"require_signed"`
+	RequireSigned  bool              `json:"require_signed"`
+	SecurityPolicy AppSecurityPolicy `json:"security_policy"`
 }
 
 // AppSecurityPostureResponse is the read-only security posture projection for
 // an app. Findings are deterministic configuration checks; the response never
 // includes credentials, allowlist values, or other secret material.
 type AppSecurityPostureResponse struct {
-	AppID    string               `json:"app_id"`
-	Slug     string               `json:"slug"`
-	Profile  string               `json:"profile"`
-	Score    int                  `json:"score"`
-	Findings []AppSecurityFinding `json:"findings"`
+	AppID          string               `json:"app_id"`
+	Slug           string               `json:"slug"`
+	Profile        string               `json:"profile"`
+	Score          int                  `json:"score"`
+	SecurityPolicy AppSecurityPolicy    `json:"security_policy"`
+	Findings       []AppSecurityFinding `json:"findings"`
 }
 
 // AppSecurityFinding is one actionable posture finding. Severity is one of

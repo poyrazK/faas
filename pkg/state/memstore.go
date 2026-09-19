@@ -3399,6 +3399,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
 	}
+	if !app.SecurityPolicy.Valid() {
+		app.SecurityPolicy = api.AppSecurityPolicyOff
+	}
 	if len(app.RetryPolicyJSON) == 0 {
 		app.RetryPolicyJSON = json.RawMessage(`{}`)
 	} else {
@@ -3486,6 +3489,9 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	}
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
+	}
+	if !app.SecurityPolicy.Valid() {
+		app.SecurityPolicy = api.AppSecurityPolicyOff
 	}
 	if len(app.RetryPolicyJSON) == 0 {
 		app.RetryPolicyJSON = json.RawMessage(`{}`)
@@ -5023,6 +5029,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	// write. imaged reads this at buildImageLayer time.
 	if p.SetRequireSigned {
 		a.RequireSigned = boolOrFalse(p.RequireSigned)
+	}
+	if p.SetSecurityPolicy && p.SecurityPolicy != nil && p.SecurityPolicy.Valid() {
+		a.SecurityPolicy = *p.SecurityPolicy
 	}
 	// Issue #470 / ADR-055: per-app warm-snapshot knobs. Same Set-bit
 	// convention as require_signed / streaming_enabled — the Set bit
