@@ -49,24 +49,24 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
 	if jsonMode {
 		return jsonOut(writeJSONTo(w, plan))
 	}
-	fmt.Fprintf(w, "Simple app plan for %s\n", plan.Slug)
-	fmt.Fprintf(w, "  source:             %s\n", plan.Source)
+	_, _ = fmt.Fprintf(w, "Simple app plan for %s\n", plan.Slug)
+	_, _ = fmt.Fprintf(w, "  source:             %s\n", plan.Source)
 	if plan.Framework != "" {
-		fmt.Fprintf(w, "  framework:          %s\n", plan.Framework)
+		_, _ = fmt.Fprintf(w, "  framework:          %s\n", plan.Framework)
 	}
-	fmt.Fprintf(w, "  resources:          %s\n", plan.ResourceProfile)
+	_, _ = fmt.Fprintf(w, "  resources:          %s\n", plan.ResourceProfile)
 	if plan.MemoryMB > 0 {
-		fmt.Fprintf(w, "  memory/cpu:         %d MB / %d millicores\n", plan.MemoryMB, plan.CPUMillicores)
+		_, _ = fmt.Fprintf(w, "  memory/cpu:         %d MB / %d millicores\n", plan.MemoryMB, plan.CPUMillicores)
 	}
-	fmt.Fprintf(w, "  listener:           :%d %s\n", plan.Port, plan.HealthPath)
-	fmt.Fprintf(w, "  execution:          %s\n", plan.ExecutionMode)
-	fmt.Fprintf(w, "  scaling:            scale to zero\n")
-	fmt.Fprintf(w, "  local storage:      %s\n", plan.LocalStorage)
-	fmt.Fprintf(w, "  durable state:      %s (bind a database/object store)\n", plan.DurableState)
-	fmt.Fprintln(w, "  defaults applied:")
+	_, _ = fmt.Fprintf(w, "  listener:           :%d %s\n", plan.Port, plan.HealthPath)
+	_, _ = fmt.Fprintf(w, "  execution:          %s\n", plan.ExecutionMode)
+	_, _ = fmt.Fprintf(w, "  scaling:            scale to zero\n")
+	_, _ = fmt.Fprintf(w, "  local storage:      %s\n", plan.LocalStorage)
+	_, _ = fmt.Fprintf(w, "  durable state:      %s (bind a database/object store)\n", plan.DurableState)
+	_, _ = fmt.Fprintln(w, "  defaults applied:")
 	for _, applied := range plan.DefaultsApplied {
-		fmt.Fprintf(w, "    - %s\n", applied)
+		_, _ = fmt.Fprintf(w, "    - %s\n", applied)
 	}
-	fmt.Fprintln(w, "No remote state changed. Run `gregale deploy` to apply this plan.")
+	_, _ = fmt.Fprintln(w, "No remote state changed. Run `gregale deploy` to apply this plan.")
 	return 0
 }
