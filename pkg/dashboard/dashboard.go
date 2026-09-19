@@ -2058,6 +2058,7 @@ type DebugRequestDetailView struct {
 	Regression                 *DebugRegressionView
 	Correlation                []DebugCorrelationStageView
 	CorrelationComplete        bool
+	CriticalPath               *DebugCriticalPathView
 	DependencyLatency          []DebugDependencyLatencyView
 	DependencyLatencyTruncated bool
 	Timeline                   []DebugTimelineEventView
@@ -2070,6 +2071,33 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+}
+
+// DebugCriticalPathView is the template-safe projection of the selected
+// causal span path. Exclusive time is the uncovered portion of a span after
+// overlapping direct children are removed.
+type DebugCriticalPathView struct {
+	DurationMS         int64
+	Complete           bool
+	SpanCount          int
+	SlowestSpanID      string
+	SlowestSpanName    string
+	SlowestExclusiveMS int64
+	Spans              []DebugCriticalPathSpanView
+}
+
+type DebugCriticalPathSpanView struct {
+	SpanID         string
+	ParentSpanID   string
+	Name           string
+	Kind           string
+	DependencyType string
+	DependencyKind string
+	Status         string
+	StartTime      string
+	EndTime        string
+	DurationMS     int64
+	ExclusiveMS    int64
 }
 
 // DebugDependencyLatencyView is the template-safe projection of one

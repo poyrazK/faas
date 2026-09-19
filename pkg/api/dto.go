@@ -8200,6 +8200,35 @@ type DebugTelemetrySpan struct {
 	DependencyKind string `json:"dependency_kind,omitempty"`
 }
 
+// DebugRequestCriticalPath is the bounded causal path reconstructed from
+// retained span timing and parent links. ExclusiveMS identifies the portion
+// of each span not covered by its direct child spans; it is a diagnostic
+// attribution, not an additive request-latency total when spans overlap.
+type DebugRequestCriticalPath struct {
+	DurationMS         int64                   `json:"duration_ms"`
+	Complete           bool                    `json:"complete"`
+	SpanCount          int                     `json:"span_count"`
+	SlowestSpanID      string                  `json:"slowest_span_id,omitempty"`
+	SlowestSpanName    string                  `json:"slowest_span_name,omitempty"`
+	SlowestExclusiveMS int64                   `json:"slowest_exclusive_ms,omitempty"`
+	Spans              []DebugCriticalPathSpan `json:"spans"`
+}
+
+// DebugCriticalPathSpan is one redacted span on the selected causal path.
+type DebugCriticalPathSpan struct {
+	SpanID         string `json:"span_id"`
+	ParentSpanID   string `json:"parent_span_id,omitempty"`
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	DependencyType string `json:"dependency_type,omitempty"`
+	DependencyKind string `json:"dependency_kind,omitempty"`
+	Status         string `json:"status,omitempty"`
+	StartTime      string `json:"start_time"`
+	EndTime        string `json:"end_time"`
+	DurationMS     int64  `json:"duration_ms"`
+	ExclusiveMS    int64  `json:"exclusive_ms"`
+}
+
 // DebugRequestDependencyLatency is a bounded aggregation of retained spans
 // for one request. TotalDurationMS is not a critical-path sum: child spans
 // can overlap. The response remains useful for identifying the slowest
@@ -8348,6 +8377,7 @@ type DebugRequestEvidenceResponse struct {
 	Regression                 *DebugRegressionItem            `json:"regression,omitempty"`
 	Timeline                   []DebugTimelineEvent            `json:"timeline"`
 	Correlation                DebugRequestCorrelation         `json:"correlation"`
+	CriticalPath               *DebugRequestCriticalPath       `json:"critical_path,omitempty"`
 	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
 	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
 	Spans                      []DebugTelemetrySpan            `json:"spans"`

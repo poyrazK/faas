@@ -52,6 +52,8 @@
     .waterfall-bar.error { background: #dc2626; }
     .waterfall-label { overflow-wrap: anywhere; }
     .waterfall-duration { white-space: nowrap; text-align: right; }
+    .critical-path-summary { padding: 0.65rem 0.8rem; background: #f8fafc; border-left: 4px solid #7c3aed; border-radius: 4px; }
+    .critical-path-table td:nth-child(2), .critical-path-table td:nth-child(3) { white-space: nowrap; }
     .empty { padding: 1rem 0; }
   </style>
 </head>
@@ -406,6 +408,26 @@
             </table>
           {{else}}
             <p class="muted">No timeline markers were retained for this request.</p>
+          {{end}}
+          <h3>Critical path</h3>
+          {{if .Data.Selected.CriticalPath}}
+            <div class="critical-path-summary">
+              <strong>{{.Data.Selected.CriticalPath.DurationMS}} ms</strong> longest retained causal path across {{.Data.Selected.CriticalPath.SpanCount}} spans.
+              {{if .Data.Selected.CriticalPath.SlowestSpanName}} Largest uncovered segment: <code>{{.Data.Selected.CriticalPath.SlowestSpanName}}</code> ({{.Data.Selected.CriticalPath.SlowestExclusiveMS}} ms).{{end}}
+            </div>
+            <table class="span-table critical-path-table" aria-label="Critical request path">
+              <thead><tr><th>Path span</th><th>Duration</th><th>Uncovered</th><th>Dependency</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.CriticalPath.Spans}}
+                <tr><td><code>{{.Name}}</code><br><small class="muted"><code>{{.SpanID}}</code>{{if .ParentSpanID}} · parent <code>{{.ParentSpanID}}</code>{{end}}</small></td><td>{{.DurationMS}} ms</td><td>{{.ExclusiveMS}} ms</td><td>{{if .DependencyKind}}<span class="badge">{{.DependencyKind}}</span>{{else if .Kind}}{{.Kind}}{{else}}—{{end}}</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+            {{if not .Data.Selected.CriticalPath.Complete}}<p class="muted">The critical path is partial because the retained span sample was capped or one parent link/timing value was unavailable.</p>{{end}}
+          {{else if .Data.Selected.Spans}}
+            <p class="empty muted">Span evidence was retained, but complete timing metadata was unavailable for critical-path attribution.</p>
+          {{else}}
+            <p class="empty muted">No linked OTel spans were captured for this request.</p>
           {{end}}
           <h3>Trace waterfall</h3>
           {{if .Data.Selected.Waterfall}}

@@ -657,6 +657,10 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	correlation := buildDebugRequestCorrelation(request, timeline, spans)
+	criticalPath := buildDebugCriticalPath(spans)
+	if criticalPath != nil && truncated {
+		criticalPath.Complete = false
+	}
 	dependencyLatency, dependencyLatencyTruncated := buildDebugDependencyLatency(spans)
 
 	explanation := buildDebugEvidenceExplanation(request, regression, spans)
@@ -669,6 +673,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		Regression:                 regression,
 		Timeline:                   timeline,
 		Correlation:                correlation,
+		CriticalPath:               criticalPath,
 		DependencyLatency:          dependencyLatency,
 		DependencyLatencyTruncated: dependencyLatencyTruncated,
 		Spans:                      spans,

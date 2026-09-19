@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.debug_evidence_explanation import DebugEvidenceExplanation
     from ..models.debug_regression_item import DebugRegressionItem
     from ..models.debug_request_correlation import DebugRequestCorrelation
+    from ..models.debug_request_critical_path import DebugRequestCriticalPath
     from ..models.debug_request_dependency_latency import DebugRequestDependencyLatency
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
     from ..models.debug_telemetry_span import DebugTelemetrySpan
@@ -41,6 +42,8 @@ class DebugRequestEvidenceResponse:
     """Bounded root-cause synthesis generated from the safe evidence payload."""
     generated_at: datetime.datetime
     regression: DebugRegressionItem | None | Unset = UNSET
+    critical_path: DebugRequestCriticalPath | Unset = UNSET
+    """Bounded causal path reconstructed from retained span timing and parent links."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +84,10 @@ class DebugRequestEvidenceResponse:
         else:
             regression = self.regression
 
+        critical_path: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.critical_path, Unset):
+            critical_path = self.critical_path.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -98,6 +105,8 @@ class DebugRequestEvidenceResponse:
         )
         if regression is not UNSET:
             field_dict["regression"] = regression
+        if critical_path is not UNSET:
+            field_dict["critical_path"] = critical_path
 
         return field_dict
 
@@ -106,6 +115,7 @@ class DebugRequestEvidenceResponse:
         from ..models.debug_evidence_explanation import DebugEvidenceExplanation
         from ..models.debug_regression_item import DebugRegressionItem
         from ..models.debug_request_correlation import DebugRequestCorrelation
+        from ..models.debug_request_critical_path import DebugRequestCriticalPath
         from ..models.debug_request_dependency_latency import DebugRequestDependencyLatency
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
         from ..models.debug_telemetry_span import DebugTelemetrySpan
@@ -162,6 +172,13 @@ class DebugRequestEvidenceResponse:
 
         regression = _parse_regression(d.pop("regression", UNSET))
 
+        _critical_path = d.pop("critical_path", UNSET)
+        critical_path: DebugRequestCriticalPath | Unset
+        if isinstance(_critical_path, Unset):
+            critical_path = UNSET
+        else:
+            critical_path = DebugRequestCriticalPath.from_dict(_critical_path)
+
         debug_request_evidence_response = cls(
             request=request,
             timeline=timeline,
@@ -173,6 +190,7 @@ class DebugRequestEvidenceResponse:
             explanation=explanation,
             generated_at=generated_at,
             regression=regression,
+            critical_path=critical_path,
         )
 
         debug_request_evidence_response.additional_properties = d

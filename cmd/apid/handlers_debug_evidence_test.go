@@ -172,6 +172,73 @@ func TestBuildDebugWaterfallMarksPartialMissingTiming(t *testing.T) {
 	}
 }
 
+func TestBuildDebugCriticalPathAttributesExclusiveTime(t *testing.T) {
+	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	spans := []api.DebugTelemetrySpan{
+		{
+			SpanID:    "root",
+			Name:      "request",
+			StartTime: base.Format(time.RFC3339Nano),
+			EndTime:   base.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+		},
+		{
+			SpanID:         "binding",
+			ParentSpanID:   "root",
+			Name:           "service.binding",
+			Kind:           "client",
+			DependencyType: "managed_binding",
+			DependencyKind: "managed_postgres",
+			StartTime:      base.Add(10 * time.Millisecond).Format(time.RFC3339Nano),
+			EndTime:        base.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+		},
+		{
+			SpanID:       "query",
+			ParentSpanID: "binding",
+			Name:         "db.query",
+			StartTime:    base.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
+			EndTime:      base.Add(80 * time.Millisecond).Format(time.RFC3339Nano),
+		},
+	}
+
+	got := buildDebugCriticalPath(spans)
+	if got == nil || !got.Complete || got.DurationMS != 100 || got.SpanCount != 2 {
+		t.Fatalf("critical path = %+v, want complete 100ms path with two spans", got)
+	}
+	if got.Spans[0].SpanID != "root" || got.Spans[1].SpanID != "binding" {
+		t.Fatalf("critical path order = %+v", got.Spans)
+	}
+	if got.SlowestSpanName != "service.binding" || got.SlowestExclusiveMS != 30 {
+		t.Fatalf("slowest exclusive segment = (%q, %d), want (service.binding, 30)", got.SlowestSpanName, got.SlowestExclusiveMS)
+	}
+	if got.Spans[1].DependencyKind != "managed_postgres" || got.Spans[1].ExclusiveMS != 30 {
+		t.Fatalf("binding attribution = %+v", got.Spans[1])
+	}
+}
+
+func TestBuildDebugCriticalPathMarksMissingParentPartial(t *testing.T) {
+	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	spans := []api.DebugTelemetrySpan{
+		{
+			SpanID:    "root",
+			Name:      "request",
+			StartTime: base.Format(time.RFC3339Nano),
+			EndTime:   base.Add(50 * time.Millisecond).Format(time.RFC3339Nano),
+		},
+		{
+			SpanID:       "orphan",
+			ParentSpanID: "evicted-parent",
+			Name:         "db.query",
+			StartTime:    base.Add(10 * time.Millisecond).Format(time.RFC3339Nano),
+			EndTime:      base.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
+		},
+	}
+
+	got := buildDebugCriticalPath(spans)
+	if got == nil || got.Complete {
+		t.Fatalf("critical path = %+v, want partial path", got)
+	}
+}
+
 func TestBuildDebugEvidenceExplanation(t *testing.T) {
 	request := api.DebugTelemetryRequestItem{Route: "/checkout"}
 	regression := &api.DebugRegressionItem{DeploymentID: "dep", Factor: "1.50", P95MS: 300, P95BaseMS: 200}
