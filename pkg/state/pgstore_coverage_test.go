@@ -249,6 +249,18 @@ func TestPg_CoverageDomainsAndCrons(t *testing.T) {
 	if err := s.MarkDomainVerified(ctx, "pg.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if got, err := s.IsDefaultCustomDomain(ctx, app.ID, "pg.example.com"); err != nil || got {
+		t.Fatalf("default domain before set = %v, %v", got, err)
+	}
+	if err := s.SetDefaultCustomDomain(ctx, app.ID, "pg.example.com"); err != nil {
+		t.Fatalf("set default domain: %v", err)
+	}
+	if got, err := s.IsDefaultCustomDomain(ctx, app.ID, "pg.example.com"); err != nil || !got {
+		t.Fatalf("default domain after set = %v, %v", got, err)
+	}
+	if err := s.SetDefaultCustomDomain(ctx, uuid.NewString(), "pg.example.com"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-app default domain = %v", err)
+	}
 	if err := s.DeleteCustomDomain(ctx, "pg.example.com"); err != nil {
 		t.Fatal(err)
 	}

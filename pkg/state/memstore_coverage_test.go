@@ -218,6 +218,18 @@ func TestMemStoreCoverageDomainsAndCrons(t *testing.T) {
 	if got, _ := m.DomainByName(ctx, domain.Domain); !got.Verified() {
 		t.Fatal("domain should be verified")
 	}
+	if got, err := m.IsDefaultCustomDomain(ctx, app.ID, domain.Domain); err != nil || got {
+		t.Fatalf("default domain before set = %v, %v", got, err)
+	}
+	if err := m.SetDefaultCustomDomain(ctx, app.ID, domain.Domain); err != nil {
+		t.Fatalf("set default domain: %v", err)
+	}
+	if got, err := m.IsDefaultCustomDomain(ctx, app.ID, domain.Domain); err != nil || !got {
+		t.Fatalf("default domain after set = %v, %v", got, err)
+	}
+	if err := m.SetDefaultCustomDomain(ctx, "missing-app", domain.Domain); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-app default domain = %v", err)
+	}
 	if got, err := m.ListDomainsForAccount(ctx, account.ID); err != nil || len(got) != 1 {
 		t.Fatalf("account domains = %+v, %v", got, err)
 	}
