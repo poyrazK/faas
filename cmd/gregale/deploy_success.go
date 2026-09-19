@@ -59,11 +59,26 @@ func deploymentWithReleaseSummary(ctx context.Context, c *Client, appSlug, deplo
 	return summary, true
 }
 
+// deploymentAppURL resolves the customer-facing URL for terminal deploy
+// output. The lookup is deliberately best-effort so a metadata read cannot
+// turn an already successful deployment into a failed command.
+func deploymentAppURL(ctx context.Context, c *Client, appSlug string) string {
+	if c != nil && appSlug != "" {
+		readCtx, cancel := context.WithTimeout(ctx, deploymentReceiptFetchTimeout)
+		defer cancel()
+		if app, err := c.GetApp(readCtx, appSlug); err == nil {
+			return canonicalAppURL(app)
+		}
+	}
+	return deployedAppURL(appSlug)
+}
+
 // renderSuccessfulDeployment prints the existing success/cold-wake copy and
 // appends the verified zero-config profile and smoke evidence when the API has
 // persisted a hosting receipt.
 func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
 	final := deploymentWithReceipt(ctx, c, dep)
+	appURL := deploymentAppURL(ctx, c, appSlug)
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
@@ -78,11 +93,11 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 		if step > final.CanaryTotalSteps {
 			step = final.CanaryTotalSteps
 		}
-		PrintOK(osStdout, "Candidate live. %s", deployedAppURL(appSlug))
+		PrintOK(osStdout, "Candidate live. %s", appURL)
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
 	} else {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
+		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
 	printDeployColdWakeSentence()
 	if cache := formatBuildCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
