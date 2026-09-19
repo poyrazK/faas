@@ -2950,6 +2950,14 @@ func (s *server) handler() http.Handler {
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardQueueDeadLetterReplay))))
+	// Unified customer failure inbox. These actions use the same named CSRF
+	// envelope and source transition as the app-scoped JSON DLQ endpoints.
+	mux.Handle("POST /dashboard/failed-events/{slug}/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventAction(w, r, "replay")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/{slug}/{id}/discard", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventAction(w, r, "discard")
+	}))))
 	// ADR-127 — debugger replay. The form uses a dedicated named CSRF
 	// envelope and redirects back to the selected request so the customer can
 	// inspect the durable mirror invocation status without leaving the page.

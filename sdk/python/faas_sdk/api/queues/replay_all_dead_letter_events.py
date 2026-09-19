@@ -93,9 +93,10 @@ def sync_detailed(
 ) -> Response[DeadLetterReplayAllResponse | Problem]:
     """Replay pending dead-letter events for an app.
 
-     Atomically resets up to `limit` pending queue invocation and broker
-    trigger records to pending and stamps each ledger row with replayed_at.
-    Concurrent operators claim disjoint rows.
+     Atomically resets up to `limit` pending queue invocation, broker
+    trigger, and outbound webhook delivery records to pending and stamps
+    each ledger row with replayed_at. Concurrent operators claim disjoint
+    rows.
 
     Args:
         slug (str):
@@ -132,9 +133,10 @@ def sync(
 ) -> DeadLetterReplayAllResponse | Problem | None:
     """Replay pending dead-letter events for an app.
 
-     Atomically resets up to `limit` pending queue invocation and broker
-    trigger records to pending and stamps each ledger row with replayed_at.
-    Concurrent operators claim disjoint rows.
+     Atomically resets up to `limit` pending queue invocation, broker
+    trigger, and outbound webhook delivery records to pending and stamps
+    each ledger row with replayed_at. Concurrent operators claim disjoint
+    rows.
 
     Args:
         slug (str):
@@ -166,9 +168,10 @@ async def asyncio_detailed(
 ) -> Response[DeadLetterReplayAllResponse | Problem]:
     """Replay pending dead-letter events for an app.
 
-     Atomically resets up to `limit` pending queue invocation and broker
-    trigger records to pending and stamps each ledger row with replayed_at.
-    Concurrent operators claim disjoint rows.
+     Atomically resets up to `limit` pending queue invocation, broker
+    trigger, and outbound webhook delivery records to pending and stamps
+    each ledger row with replayed_at. Concurrent operators claim disjoint
+    rows.
 
     Args:
         slug (str):
@@ -203,9 +206,10 @@ async def asyncio(
 ) -> DeadLetterReplayAllResponse | Problem | None:
     """Replay pending dead-letter events for an app.
 
-     Atomically resets up to `limit` pending queue invocation and broker
-    trigger records to pending and stamps each ledger row with replayed_at.
-    Concurrent operators claim disjoint rows.
+     Atomically resets up to `limit` pending queue invocation, broker
+    trigger, and outbound webhook delivery records to pending and stamps
+    each ledger row with replayed_at. Concurrent operators claim disjoint
+    rows.
 
     Args:
         slug (str):

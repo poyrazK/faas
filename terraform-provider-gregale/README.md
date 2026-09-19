@@ -13,6 +13,8 @@ The initial surface is intentionally small:
 - `gregale_env` manages scoped app environment variables without storing values in state.
 - `gregale_secret` manages scoped app secrets without storing plaintext in state.
 - `gregale_deployment` deploys a digest-pinned OCI image or GitHub source ref and exposes lifecycle and preview metadata.
+- `gregale_tcp_listener` manages a stable public raw TCP listener for an app.
+- `gregale_static_egress_ip` pins a stable public IPv4 address for an app's outbound traffic.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
 - `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
@@ -121,6 +123,37 @@ resource "gregale_domain" "api" {
 output "domain_txt_record" {
   value     = gregale_domain.api.txt_record
   sensitive = true
+}
+```
+
+## Raw TCP listener
+
+Expose a declared app TCP port through a stable public Gregale port. Gregale
+allocates a port from `40000`–`49999` when `public_port` is omitted; the port
+survives instance wake, migration, and redeployment.
+
+```hcl
+resource "gregale_tcp_listener" "postgres" {
+  app_slug   = gregale_app.api.slug
+  name       = "postgres"
+  guest_port = 5432
+}
+
+output "postgres_public_port" {
+  value = gregale_tcp_listener.postgres.public_port
+}
+```
+
+## Static egress IP
+
+Pin a provisioned public IPv4 address so databases and third-party APIs can
+allowlist the app's outbound traffic. Static egress IPs require a plan that
+supports the feature and survive app scale-to-zero.
+
+```hcl
+resource "gregale_static_egress_ip" "api" {
+  app_slug = gregale_app.api.slug
+  ip       = var.api_egress_ip
 }
 ```
 

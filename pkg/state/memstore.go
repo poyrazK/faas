@@ -22044,6 +22044,34 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		}
 		out = append(out, ev)
 	}
+	for _, delivery := range m.appWebhookDeliveries {
+		if delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {
+			continue
+		}
+		eventID := unifiedDeadLetterEventID("webhook_delivery", delivery.ID)
+		if _, purged := m.deadLetterPurged[eventID]; purged {
+			continue
+		}
+		failedAt := delivery.UpdatedAt
+		if failedAt.IsZero() {
+			failedAt = delivery.CreatedAt
+		}
+		errorKind := "delivery_failed"
+		if delivery.LastResponseCode > 0 {
+			errorKind = fmt.Sprintf("http_%d", delivery.LastResponseCode)
+		}
+		detail, _ := json.Marshal(map[string]any{
+			"last_error":         delivery.LastError,
+			"last_response_code": delivery.LastResponseCode,
+		})
+		out = append(out, DeadLetterEvent{
+			ID: eventID, AccountID: delivery.AccountID, AppID: delivery.AppID,
+			Source: "webhook_delivery", SourceID: delivery.ID, Origin: string(delivery.Event),
+			Payload: append(json.RawMessage(nil), delivery.Payload...), Headers: json.RawMessage(`{}`),
+			ErrorKind: errorKind, ErrorDetail: detail, RetryCount: delivery.Attempt,
+			FirstFailedAt: failedAt, LastFailedAt: failedAt, CreatedAt: delivery.CreatedAt,
+		})
+	}
 	seen := make(map[string]struct{}, len(out))
 	for _, ev := range out {
 		seen[ev.ID] = struct{}{}
@@ -22156,6 +22184,18 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 			}
 		}
 		m.triggerDeadLetters = filtered
+	case "webhook_delivery":
+		delivery, ok := m.appWebhookDeliveries[event.SourceID]
+		if !ok || delivery.AccountID != accountID || delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		delivery.Status = AppWebhookDeliveryPending
+		delivery.Attempt = 0
+		delivery.LastError = ""
+		delivery.LastResponseCode = 0
+		delivery.NextAttemptAt = now
+		delivery.UpdatedAt = now
+		m.appWebhookDeliveries[event.SourceID] = delivery
 	default:
 		return DeadLetterEvent{}, ErrNotFound
 	}

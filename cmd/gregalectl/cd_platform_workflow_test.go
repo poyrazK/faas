@@ -15,7 +15,7 @@ func TestCDPlatformOrchestratesControlComputeAndFleetGate(t *testing.T) {
 	workflow := string(body)
 	control := strings.Index(workflow, "uses: ./.github/workflows/cd-controlplane.yml")
 	compute := strings.Index(workflow, "uses: ./.github/workflows/cd-compute.yml")
-	computeNeedsControl := strings.Index(workflow, "needs: control")
+	computeNeedsControl := strings.Index(workflow, "needs: [control, plan]")
 	verify := strings.Index(workflow, "name: Report fleet release convergence")
 	gate := strings.Index(workflow, "compute-nodes release-status --desired-release")
 	if control < 0 || compute < 0 || computeNeedsControl < 0 || verify < 0 || gate < 0 {
@@ -32,6 +32,31 @@ func TestCDPlatformOrchestratesControlComputeAndFleetGate(t *testing.T) {
 	}
 }
 
+func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	for _, required := range []string{
+		"compute_targets:",
+		"name: Validate compute rollout targets",
+		"target: ${{ fromJSON(needs.plan.outputs.targets) }}",
+		"fail-fast: false",
+		"max-parallel: 1",
+		"node: ${{ matrix.target.node }}",
+		"ssh_host: ${{ matrix.target.ssh_host }}",
+		"needs: [control, compute, plan]",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("platform workflow is missing fleet-matrix contract %q", required)
+		}
+	}
+	if strings.Contains(workflow, "node: ${{ inputs.node }}\n      ssh_host: ${{ inputs.ssh_host }}") {
+		t.Fatal("compute stage still rolls only the legacy single-node inputs")
+	}
+}
+
 // This pins the incident from #2348: a successful control-plane stage followed
 // by a failed compute stage still runs the observer, records desired/observed
 // node releases, and leaves the top-level workflow failed.
@@ -43,11 +68,12 @@ func TestCDPlatformControlSuccessThenComputeFailureIsVisible(t *testing.T) {
 	workflow := string(body)
 	for _, required := range []string{
 		"if: always()",
-		"needs: [control, compute]",
+		"needs: [control, compute, plan]",
+		"PLAN_RESULT: ${{ needs.plan.result }}",
 		"CONTROL_RESULT: ${{ needs.control.result }}",
 		"COMPUTE_RESULT: ${{ needs.compute.result }}",
-		`if [[ "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then`,
-		`if [[ "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
+		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then`,
+		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
 		"active-node-gate=${gate_exit}",
 	} {
 		if !strings.Contains(workflow, required) {

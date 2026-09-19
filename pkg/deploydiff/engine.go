@@ -351,6 +351,7 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 		baseScaling = base.ScalingPolicy
 	}
 	diffScalingPolicy(out, baseScaling, p.ScalingPolicy)
+	diffLifecycleConfig(out, base, p)
 	if base == nil {
 		// Fresh app: every non-nil Pending field is a new-value
 		// Change. We still emit them so the customer sees what
@@ -551,6 +552,54 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 			Field: "egress_allowlist", Kind: ChangeModify,
 			Before: AsAny(base.EgressAllowlist), After: AsAny(*p.EgressAllowlist),
 		})
+	}
+}
+
+func diffLifecycleConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
+	var current api.AppManifest
+	if base != nil {
+		current = base.Manifest
+	}
+	add := func(field string, value any) {
+		out.Changes = append(out.Changes, Change{Field: field, Kind: ChangeAdd, After: AsAny(value)})
+	}
+	modify := func(field string, before, after any) {
+		out.Changes = append(out.Changes, Change{Field: field, Kind: ChangeModify, Before: AsAny(before), After: AsAny(after)})
+	}
+	if p.ExecutionMode != nil && (base == nil || *p.ExecutionMode != current.ExecutionMode) {
+		if base == nil {
+			add("execution_mode", *p.ExecutionMode)
+		} else {
+			modify("execution_mode", current.ExecutionMode, *p.ExecutionMode)
+		}
+	}
+	if p.RestartPolicy != nil && (base == nil || *p.RestartPolicy != current.RestartPolicy) {
+		if base == nil {
+			add("restart_policy", *p.RestartPolicy)
+		} else {
+			modify("restart_policy", current.RestartPolicy, *p.RestartPolicy)
+		}
+	}
+	if p.StartupDeadlineS != nil && (base == nil || *p.StartupDeadlineS != current.StartupDeadlineS) {
+		if base == nil {
+			add("startup_deadline_s", *p.StartupDeadlineS)
+		} else {
+			modify("startup_deadline_s", current.StartupDeadlineS, *p.StartupDeadlineS)
+		}
+	}
+	if p.MaxRetries != nil && (base == nil || *p.MaxRetries != current.MaxRetries) {
+		if base == nil {
+			add("max_retries", *p.MaxRetries)
+		} else {
+			modify("max_retries", current.MaxRetries, *p.MaxRetries)
+		}
+	}
+	if p.ServiceReplicas != nil && (base == nil || !reflect.DeepEqual(p.ServiceReplicas, current.ServiceReplicas)) {
+		if base == nil {
+			add("service_replicas", *p.ServiceReplicas)
+		} else {
+			modify("service_replicas", current.ServiceReplicas, *p.ServiceReplicas)
+		}
 	}
 }
 

@@ -59,6 +59,33 @@ type QuotaConfig struct {
 func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Break {
 	limits := cfg.Limits
 	out := []Break{}
+	if pending.AppConfig.ExecutionMode != nil || pending.AppConfig.RestartPolicy != nil ||
+		pending.AppConfig.StartupDeadlineS != nil || pending.AppConfig.MaxRetries != nil ||
+		pending.AppConfig.ServiceReplicas != nil {
+		lifecycle := api.AppManifest{}
+		if baseline.App != nil {
+			lifecycle = baseline.App.Manifest
+		}
+		if pending.AppConfig.ExecutionMode != nil {
+			lifecycle.ExecutionMode = *pending.AppConfig.ExecutionMode
+		}
+		if pending.AppConfig.RestartPolicy != nil {
+			lifecycle.RestartPolicy = *pending.AppConfig.RestartPolicy
+		}
+		if pending.AppConfig.StartupDeadlineS != nil {
+			lifecycle.StartupDeadlineS = *pending.AppConfig.StartupDeadlineS
+		}
+		if pending.AppConfig.MaxRetries != nil {
+			lifecycle.MaxRetries = *pending.AppConfig.MaxRetries
+		}
+		if pending.AppConfig.ServiceReplicas != nil {
+			lifecycle.ServiceReplicas = pending.AppConfig.ServiceReplicas
+		}
+		if err := lifecycle.ValidateLifecyclePlan(p); err != nil {
+			out = append(out, Break{Code: api.CodeValidation, Severity: SeverityError,
+				Reason: err.Error(), Field: "lifecycle", Observed: AsAny(err.Error())})
+		}
+	}
 
 	// A preview for a missing slug creates one app slot. Existing-app
 	// previews do not consume another slot, even when the account is already

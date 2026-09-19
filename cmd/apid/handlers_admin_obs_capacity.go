@@ -14,8 +14,8 @@ import (
 )
 
 // obsCapacity handles GET /v1/admin/obs/capacity. The store projection is
-// already aggregate-shaped, so this handler only folds the bounded node rows
-// into fleet totals for the operator UI.
+// already aggregate-shaped for node capacity; this handler adds a bounded
+// profile roll-up without exposing raw app or instance rows.
 func (s *server) obsCapacity(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
@@ -26,13 +26,24 @@ func (s *server) obsCapacity(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrCapacity("could not aggregate fleet capacity"))
 		return
 	}
+	apps, err := s.store.ListAllApps(r.Context())
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load app resource profiles"))
+		return
+	}
+	instances, err := s.store.ListAllInstances(r.Context())
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load instance resource profiles"))
+		return
+	}
 	response := api.ObsCapacityResponse{
 		GeneratedAt: time.Now().UTC(),
 		Summary: api.ObsCapacitySummary{
-			TotalNodes:   len(snapshot.Nodes),
-			AppsTotal:    snapshot.AppsTotal,
-			TenantsTotal: snapshot.TenantsTotal,
-			UnplacedApps: snapshot.UnplacedApps,
+			TotalNodes:       len(snapshot.Nodes),
+			AppsTotal:        snapshot.AppsTotal,
+			TenantsTotal:     snapshot.TenantsTotal,
+			UnplacedApps:     snapshot.UnplacedApps,
+			ResourceProfiles: buildObsCapacityProfiles(apps, instances),
 		},
 		Nodes: make([]api.ObsCapacityNode, 0, len(snapshot.Nodes)),
 	}
@@ -143,12 +154,15 @@ func projectObsTenantUsage(r *http.Request, st state.Store, acct state.Account, 
 		return api.ObsTenantUsage{}, err
 	}
 	slugs := make(map[string]string, len(apps))
+	appByID := make(map[string]state.App, len(apps))
 	for _, app := range apps {
 		slugs[app.ID] = app.Slug
+		appByID[app.ID] = app
 	}
 	usage := api.ObsTenantUsage{
-		Month: monthText,
-		Apps:  make([]api.ObsTenantUsageApp, 0, len(rows)),
+		Month:    monthText,
+		Apps:     make([]api.ObsTenantUsageApp, 0, len(rows)),
+		Profiles: buildObsTenantUsageProfiles(rows, appByID),
 	}
 	var mbSeconds, cpuUsec int64
 	for _, row := range rows {
@@ -159,16 +173,21 @@ func projectObsTenantUsage(r *http.Request, st state.Store, acct state.Account, 
 		usage.UsedEgressGB += float64(row.NetTxBytes) / (1024 * 1024 * 1024)
 		usage.UsedIngressGB += float64(row.NetRxBytes) / (1024 * 1024 * 1024)
 		usage.ColdBootTotal += row.ColdBootCount
+		app, found := appByID[row.AppID]
+		shape := obsProfileShapeForApp(app, found)
 		usage.Apps = append(usage.Apps, api.ObsTenantUsageApp{
-			AppID:      row.AppID,
-			AppSlug:    slugs[row.AppID],
-			MBSeconds:  row.MBSeconds,
-			CPUUsec:    row.CPUUsec,
-			Requests:   row.Requests,
-			TXBytes:    row.TXBytes,
-			NetTxBytes: row.NetTxBytes,
-			NetRxBytes: row.NetRxBytes,
-			ColdBoots:  row.ColdBootCount,
+			AppID:           row.AppID,
+			AppSlug:         slugs[row.AppID],
+			ResourceProfile: shape.label,
+			MemoryMB:        shape.memoryMB,
+			CPUMillicores:   shape.cpuMillicores,
+			MBSeconds:       row.MBSeconds,
+			CPUUsec:         row.CPUUsec,
+			Requests:        row.Requests,
+			TXBytes:         row.TXBytes,
+			NetTxBytes:      row.NetTxBytes,
+			NetRxBytes:      row.NetRxBytes,
+			ColdBoots:       row.ColdBootCount,
 		})
 	}
 	usage.UsedGBHours = meter.GBHours(mbSeconds)

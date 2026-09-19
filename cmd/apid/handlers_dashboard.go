@@ -74,6 +74,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
+//	GET /dashboard/failed-events    → unified customer failure inbox
 //	GET /dashboard/developers       → active remote developer environments
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
@@ -99,6 +100,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/jobs":
 			s.renderJobsQueues(w, r, log, acct, r.URL.Query().Get("app"))
+		case path == "/dashboard/failed-events":
+			s.renderFailedEvents(w, r, log, acct)
 		case path == "/dashboard/apps/new":
 			// Issue #961 / Mega-B PR-3 — thin dashboard deploy
 			// wizard. The CLI's `gregale connect repo <owner>/<name>`

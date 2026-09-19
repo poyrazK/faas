@@ -27592,6 +27592,13 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		if err == nil {
 			_, err = tx.Exec(ctx, `delete from trigger_dead_letter where record_id = $1`, ev.SourceID)
 		}
+	case "webhook_delivery":
+		tag, err = tx.Exec(ctx, `
+			update app_webhook_deliveries
+			   set status = 'pending', attempt = 0, last_error = '',
+			       last_response_code = null, next_attempt_at = now(), updated_at = now()
+			 where id = $1 and account_id = $2 and app_id = $3 and status = 'dead'`,
+			ev.SourceID, accountID, appID)
 	default:
 		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}

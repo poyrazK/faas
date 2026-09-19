@@ -51,20 +51,31 @@ host.
 
 ### Step 4: Deploy the Signed Release to the Fleet
 
-Use the CD workflows for production installation. The control-plane workflow
-downloads and verifies the signed assets, checks the embedded release identity,
-installs the immutable bundle, runs migrations, and activates the release:
+Use the canonical platform workflow for production installation. It verifies
+and activates the control plane, rolls every declared compute target, then
+requires full-fleet release convergence and production acceptance. Pass the
+complete active fleet as one JSON array:
 
 ```bash
 RELEASE_TAG=v0.1.18-rc.1
-gh workflow run cd-controlplane.yml --ref main --field release_tag="$RELEASE_TAG"
+COMPUTE_TARGETS="$(jq -cn \
+  --arg fsn2 "$FSN_2_SSH_HOST" --arg fsn2_key "$FSN_2_SSH_HOST_KEY_SHA256" \
+  --arg fsn3 "$FSN_3_SSH_HOST" --arg fsn3_key "$FSN_3_SSH_HOST_KEY_SHA256" \
+  '[
+    {node:"fsn-2",ssh_host:$fsn2,ssh_user:"root",ssh_host_key_sha256:$fsn2_key},
+    {node:"fsn-3",ssh_host:$fsn3,ssh_user:"root",ssh_host_key_sha256:$fsn3_key}
+  ]')"
+gh workflow run cd-platform.yml --ref main \
+  --field release_tag="$RELEASE_TAG" \
+  --field compute_targets="$COMPUTE_TARGETS"
 ```
 
-After the control plane is healthy, dispatch `cd-compute.yml` once for each
-compute node that should be active. Prefer a signed fleet enrollment bundle or
-a checked-in `ComputeNodeClaim`. For a legacy rollout of an already-enrolled
-node, provide the current provider address and its pinned SSH host-key
-fingerprint:
+Each target may instead provide a checked-in `claim_file` or signed fleet
+enrollment bundle fields. The single-node inputs remain available for repair
+runs and backward compatibility. `cd-controlplane.yml` and `cd-compute.yml`
+are independently dispatchable repair workflows; running only one is not a
+successful production platform rollout. For example, to repair one already
+enrolled node:
 
 ```bash
 gh workflow run cd-compute.yml --ref main \

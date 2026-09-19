@@ -55,7 +55,7 @@ func TestCDControlPlaneReusesVerifiedImmutableRelease(t *testing.T) {
 	}
 	workflow := string(body)
 
-	verify := strings.Index(workflow, `test -x '${release_dir}/bin/deployctl' && '${release_dir}/bin/deployctl' bundle-check '${release_dir}'`)
+	verify := strings.Index(workflow, `test -x '${release_dir}/bin/deployctl' && '${release_dir}/bin/deployctl' bundle-check-installed '${release_dir}'`)
 	reuse := strings.Index(workflow, `reusing verified immutable release ${RELEASE_ID}`)
 	activeGuard := strings.Index(workflow, `if [[ "$current_release" == "$release_dir" ]]`)
 	remove := strings.Index(workflow, `rm -rf -- "$release_dir"`)

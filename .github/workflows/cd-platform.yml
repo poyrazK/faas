@@ -13,6 +13,11 @@ on:
         description: "Existing signed pre-1.0 release tag"
         required: true
         type: string
+      compute_targets:
+        description: "JSON array of compute targets; required for a multi-node fleet"
+        required: false
+        default: "[]"
+        type: string
       claim_file:
         description: "Path to the active node's ComputeNodeClaim (preferred)"
         required: false
@@ -86,6 +91,76 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    name: Validate compute rollout targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+    env:
+      COMPUTE_TARGETS: ${{ inputs.compute_targets }}
+      CLAIM_FILE: ${{ inputs.claim_file }}
+      FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
+      FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
+      FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
+      NODE: ${{ inputs.node }}
+      SSH_HOST: ${{ inputs.ssh_host }}
+      SSH_USER: ${{ inputs.ssh_user }}
+      SSH_PORT: ${{ inputs.ssh_port }}
+      SSH_HOST_KEY_SHA256: ${{ inputs.ssh_host_key_sha256 }}
+      STORAGE_DEVICE: ${{ inputs.storage_device }}
+      FORMAT_STORAGE: ${{ inputs.format_storage }}
+      SKIP_FLEET_PREFLIGHT: ${{ inputs.skip_fleet_preflight }}
+    steps:
+      - id: matrix
+        name: Build validated compute matrix
+        run: |
+          set -euo pipefail
+          targets_file="$RUNNER_TEMP/compute-targets.json"
+          if [[ -n "$COMPUTE_TARGETS" && "$COMPUTE_TARGETS" != "[]" ]]; then
+            printf '%s' "$COMPUTE_TARGETS" > "$targets_file"
+          else
+            if [[ -z "$CLAIM_FILE" && -z "$FLEET_BUNDLE_URL" && ( -z "$NODE" || -z "$SSH_HOST" || -z "$SSH_HOST_KEY_SHA256" ) ]]; then
+              echo "::error::provide compute_targets for the fleet, or a complete single-node claim/bundle/legacy target" >&2
+              exit 1
+            fi
+            jq -cn \
+              --arg claim_file "$CLAIM_FILE" \
+              --arg fleet_bundle_url "$FLEET_BUNDLE_URL" \
+              --arg fleet_bundle_signature_url "$FLEET_BUNDLE_SIGNATURE_URL" \
+              --arg fleet_bundle_sha256 "$FLEET_BUNDLE_SHA256" \
+              --arg node "$NODE" --arg ssh_host "$SSH_HOST" \
+              --arg ssh_user "$SSH_USER" --arg ssh_port "$SSH_PORT" \
+              --arg ssh_host_key_sha256 "$SSH_HOST_KEY_SHA256" \
+              --arg storage_device "$STORAGE_DEVICE" \
+              --argjson format_storage "$FORMAT_STORAGE" \
+              --argjson skip_fleet_preflight "$SKIP_FLEET_PREFLIGHT" \
+              '[{$claim_file,$fleet_bundle_url,$fleet_bundle_signature_url,$fleet_bundle_sha256,$node,$ssh_host,$ssh_user,$ssh_port,$ssh_host_key_sha256,$storage_device,$format_storage,$skip_fleet_preflight}]' \
+              > "$targets_file"
+          fi
+          targets="$(jq -ce '
+            if type != "array" or length == 0 then error("compute_targets must be a non-empty JSON array") else . end
+            | map(
+                if type != "object" then error("each compute target must be an object") else . end
+                | {
+                    claim_file: (.claim_file // ""),
+                    fleet_bundle_url: (.fleet_bundle_url // ""),
+                    fleet_bundle_signature_url: (.fleet_bundle_signature_url // ""),
+                    fleet_bundle_sha256: (.fleet_bundle_sha256 // ""),
+                    node: (.node // ""),
+                    ssh_host: (.ssh_host // ""),
+                    ssh_user: (.ssh_user // "root"),
+                    ssh_port: ((.ssh_port // "22") | tostring),
+                    ssh_host_key_sha256: (.ssh_host_key_sha256 // ""),
+                    storage_device: (.storage_device // ""),
+                    format_storage: (.format_storage // false),
+                    skip_fleet_preflight: (.skip_fleet_preflight // false)
+                  }
+                | if (.claim_file == "" and .fleet_bundle_url == "" and (.node == "" or .ssh_host == "" or .ssh_host_key_sha256 == ""))
+                  then error("each target needs claim_file, fleet_bundle_url, or complete node/ssh_host/ssh_host_key_sha256 fields")
+                  else . end
+              )' "$targets_file")"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
   control:
     name: Control-plane stage
     uses: ./.github/workflows/cd-controlplane.yml
@@ -94,29 +169,34 @@ jobs:
     secrets: inherit
 
   compute:
-    name: Required compute stage
-    needs: control
+    name: Compute stage (${{ matrix.target.node || matrix.target.claim_file }})
+    needs: [control, plan]
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
     uses: ./.github/workflows/cd-compute.yml
     with:
       release_tag: ${{ inputs.release_tag }}
-      claim_file: ${{ inputs.claim_file }}
-      fleet_bundle_url: ${{ inputs.fleet_bundle_url }}
-      fleet_bundle_signature_url: ${{ inputs.fleet_bundle_signature_url }}
-      fleet_bundle_sha256: ${{ inputs.fleet_bundle_sha256 }}
-      node: ${{ inputs.node }}
-      ssh_host: ${{ inputs.ssh_host }}
-      ssh_user: ${{ inputs.ssh_user }}
-      ssh_port: ${{ inputs.ssh_port }}
-      ssh_host_key_sha256: ${{ inputs.ssh_host_key_sha256 }}
-      storage_device: ${{ inputs.storage_device }}
-      format_storage: ${{ inputs.format_storage }}
-      skip_fleet_preflight: ${{ inputs.skip_fleet_preflight }}
+      claim_file: ${{ matrix.target.claim_file }}
+      fleet_bundle_url: ${{ matrix.target.fleet_bundle_url }}
+      fleet_bundle_signature_url: ${{ matrix.target.fleet_bundle_signature_url }}
+      fleet_bundle_sha256: ${{ matrix.target.fleet_bundle_sha256 }}
+      node: ${{ matrix.target.node }}
+      ssh_host: ${{ matrix.target.ssh_host }}
+      ssh_user: ${{ matrix.target.ssh_user }}
+      ssh_port: ${{ matrix.target.ssh_port }}
+      ssh_host_key_sha256: ${{ matrix.target.ssh_host_key_sha256 }}
+      storage_device: ${{ matrix.target.storage_device }}
+      format_storage: ${{ matrix.target.format_storage }}
+      skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
     secrets: inherit
 
   verify:
     name: Report fleet release convergence
     if: always()
-    needs: [control, compute]
+    needs: [control, compute, plan]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -125,6 +205,7 @@ jobs:
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       CONTROL_RESULT: ${{ needs.control.result }}
       COMPUTE_RESULT: ${{ needs.compute.result }}
+      PLAN_RESULT: ${{ needs.plan.result }}
       RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - uses: actions/checkout@v7
@@ -161,7 +242,7 @@ jobs:
           # behind another wait. A successful stage gets two heartbeat periods
           # to publish its final release and liveness state.
           gate_timeout=2m
-          if [[ "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
@@ -175,7 +256,8 @@ jobs:
             echo "| Stage | Result |"
             echo "| --- | --- |"
             echo "| Control plane | ${CONTROL_RESULT} |"
-            echo "| Compute | ${COMPUTE_RESULT} |"
+            echo "| Compute target plan | ${PLAN_RESULT} |"
+            echo "| Compute fleet matrix | ${COMPUTE_RESULT} |"
             echo "| Active-node release gate | exit ${gate_exit} |"
             echo
             echo '```json'
@@ -196,8 +278,8 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
-            echo "::error::platform rollout failed: control=${CONTROL_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"

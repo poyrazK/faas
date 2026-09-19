@@ -161,6 +161,25 @@ single-app deploy reads the block from the uploaded source.
 `concurrency_overflow: drop` returns HTTP 429 immediately when the app's
 concurrency boundary is saturated; `queue` preserves bounded waiting.
 
+## Declarative worker lifecycle
+
+Use `lifecycle` to make a long-running container a first-class worker. Workers
+do not need an HTTP listener, are exempt from idle reaping, and can be paired
+with queue bindings and `queue_depth` scaling:
+
+```yaml
+lifecycle:
+  execution_mode: worker
+  restart_policy: always
+  startup_deadline_s: 30
+  max_retries: 5
+```
+
+The equivalent one-off override is `gregale deploy --execution-mode worker`.
+Lifecycle settings are applied idempotently after the app is created; plan and
+mode compatibility checks remain server-authoritative. Project deploys reject
+single-app lifecycle flags.
+
 For a decomposed monorepo deploy (one CLI invocation, N apps), opt into
 project apply with `--project`. The project slug defaults to `--name`, the
 selected `--path`, the tarball basename, or the current directory (in that

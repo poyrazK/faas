@@ -21,7 +21,7 @@ T = TypeVar("T", bound="DeadLetterEvent")
 
 @_attrs_define
 class DeadLetterEvent:
-    """One unified queue invocation or broker trigger dead-letter event."""
+    """One unified queue invocation, broker trigger, or outbound webhook delivery dead-letter event."""
 
     id: str
     source: DeadLetterEventSource

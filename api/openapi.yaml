@@ -12091,6 +12091,76 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Dashboard form-POST siblings of the unified failed-events API. These
+  # routes use the named dashboard CSRF cookie and redirect back to the inbox.
+  /dashboard/failed-events/{slug}/{id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Unified failed-event identifier to replay.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      tags: [queues]
+      operationId: dashboardReplayFailedEvent
+      summary: Replay a failed event from the dashboard.
+      description: Resets the source event to pending and redirects to the Failed Events inbox.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '303': { description: Redirect to the Failed Events inbox after replay. }
+        '400':
+          description: Invalid dashboard CSRF token for replay.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /dashboard/failed-events/{slug}/{id}/discard:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Unified failed-event identifier to discard.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      tags: [queues]
+      operationId: dashboardDiscardFailedEvent
+      summary: Discard a failed event from the dashboard.
+      description: Removes the ledger projection and redirects to the Failed Events inbox.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '303': { description: Redirect to the Failed Events inbox after discard. }
+        '400':
+          description: Invalid dashboard CSRF token for discard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert"
   # (test-fire the customer's instantiated preset against their
   # configured webhook URL). The body is empty (the rule already
@@ -13716,8 +13786,9 @@ paths:
       operationId: listDeadLetterEvents
       summary: List dead-letter events for an app.
       description: |
-        Returns queue invocation and broker trigger failures in one durable,
-        newest-first ledger. The source row is not leased or mutated.
+        Returns queue invocation, broker trigger, and outbound webhook
+        delivery failures in one durable, newest-first ledger. The source row
+        is not leased or mutated.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/QueueCursorLimit'
@@ -13757,9 +13828,10 @@ paths:
       operationId: replayAllDeadLetterEvents
       summary: Replay pending dead-letter events for an app.
       description: |
-        Atomically resets up to `limit` pending queue invocation and broker
-        trigger records to pending and stamps each ledger row with replayed_at.
-        Concurrent operators claim disjoint rows.
+        Atomically resets up to `limit` pending queue invocation, broker
+        trigger, and outbound webhook delivery records to pending and stamps
+        each ledger row with replayed_at. Concurrent operators claim disjoint
+        rows.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/QueueCursorLimit'
@@ -13813,8 +13885,9 @@ paths:
       operationId: replayDeadLetterEvent
       summary: Replay one dead-letter event atomically.
       description: |
-        Resets the source invocation or trigger record to pending, clears its
-        retry error, and records replayed_at on the unified ledger.
+        Resets the source invocation, trigger record, or outbound webhook
+        delivery to pending, clears its retry error, and records replayed_at
+        on the unified ledger.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/Id32'
@@ -24160,6 +24233,29 @@ components:
           type: [string, "null"]
           enum: [http1, http2, grpc]
           example: http1
+        execution_mode:
+          type: [string, "null"]
+          enum: [request, service, worker, job]
+          description: "Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload."
+        restart_policy:
+          type: [string, "null"]
+          enum: [no, on-failure, always, unless-stopped]
+          description: "Supervisor restart policy. Omitted → no change."
+        startup_deadline_s:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Maximum startup deadline in seconds; zero inherits the plan default."
+        max_retries:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Maximum lifecycle restart attempts; zero inherits the plan default."
+        service_replicas:
+          type: [object, "null"]
+          description: "Replica policy for service mode."
+          properties:
+            min: { type: integer, minimum: 0 }
+            max: { type: integer, minimum: 0 }
+            desired: { type: integer, minimum: 0 }
         scaling_policy:
           description: "Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy."
           oneOf:
@@ -28827,14 +28923,14 @@ components:
         next_before: { type: string, pattern: '^[a-f0-9]{32}$', description: "Cursor for the previous page; absent on the final page." }
 
     DeadLetterEvent:
-      description: "One unified queue invocation or broker trigger dead-letter event."
+      description: "One unified queue invocation, broker trigger, or outbound webhook delivery dead-letter event."
       type: object
       required: [id, source, source_id, payload, headers, error_kind,
                  error_detail, retry_count, first_failed_at, last_failed_at,
                  created_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        source: { type: string, enum: [invocation, trigger_record] }
+        source: { type: string, enum: [invocation, trigger_record, webhook_delivery] }
         source_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         origin: { type: string, description: "Invocation source or trigger kind." }
         trigger_id: { type: string, pattern: '^[a-f0-9]{32}$' }

@@ -210,6 +210,12 @@ var routeExclude = map[string]bool{
 	// ReplayAppDebugRequest in the Bearer-auth SDK.
 	"POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay": true,
 
+	// Unified Failed Events actions are dashboard-only form posts protected
+	// by the session cookie and CSRF token. The public SDK does not model
+	// browser form surfaces; these routes intentionally have no SDK twin.
+	"POST /dashboard/failed-events/{slug}/{id}/discard": true,
+	"POST /dashboard/failed-events/{slug}/{id}/replay":  true,
+
 	// ADR-127 PR-D: OTLP sidecar protocol — not a REST endpoint
 	// consumed by the generated SDK. OTel SDKs speak OTLP/HTTP
 	// directly; the SDK would never mint IngestOtlpSpans as a

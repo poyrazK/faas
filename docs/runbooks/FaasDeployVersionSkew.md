@@ -35,10 +35,11 @@ skew to a host and exact commit. A deployment that is actively rolling out
 may legitimately trigger this alert; it should clear once every scrape
 target reports the same release.
 
-Use the `cd-platform` workflow for production releases. It runs the
-control-plane stage, then the required compute stage, and always publishes the
-`release-status` report in the workflow summary. A successful stage workflow
-alone is not a successful platform rollout.
+Use the `cd-platform` workflow for production releases and pass every active
+compute node in its `compute_targets` JSON array. It runs the control-plane
+stage, fans the compute stage out across the complete fleet, and always
+publishes the `release-status` report in the workflow summary. A successful
+stage workflow alone is not a successful platform rollout.
 
 ## Recover
 

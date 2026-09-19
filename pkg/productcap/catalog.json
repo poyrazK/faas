@@ -135,6 +135,16 @@
       "acceptance_test": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
     },
     {
+      "id": "worker-pools",
+      "name": "Worker pools",
+      "category": "async",
+      "description": "Run long-lived non-HTTP OCI workers with queue bindings and queue-depth scaling.",
+      "maturity": "preview",
+      "plans": ["hobby", "pro", "scale"],
+      "docs_url": "/docs/cli/deploy",
+      "acceptance_test": "pkg/api/appmanifest_test.go::TestAppManifestWorkerMode"
+    },
+    {
       "id": "workflows-and-jobs",
       "name": "Jobs and workflows",
       "category": "async",

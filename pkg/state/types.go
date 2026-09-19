@@ -3391,10 +3391,11 @@ type Invocation struct {
 	OnFailureDestinationID string `json:"on_failure_destination_id,omitempty"`
 }
 
-// DeadLetterEvent is the app-scoped projection shared by invocation queues
-// and broker trigger records. The source row remains authoritative for
-// lifecycle state; this durable projection keeps the original payload,
-// failure classification, and replay timestamp in one read surface.
+// DeadLetterEvent is the app-scoped projection shared by invocation queues,
+// broker trigger records, and outbound webhook deliveries. The source row
+// remains authoritative for lifecycle state; this durable projection keeps
+// the original payload, failure classification, and replay timestamp in one
+// read surface.
 type DeadLetterEvent struct {
 	ID            string
 	AccountID     string

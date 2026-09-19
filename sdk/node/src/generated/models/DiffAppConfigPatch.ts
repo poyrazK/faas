@@ -32,6 +32,26 @@ export type DiffAppConfigPatch = {
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
   /**
+   * Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload.
+   */
+  execution_mode?: 'request' | 'service' | 'worker' | 'job';
+  /**
+   * Supervisor restart policy. Omitted → no change.
+   */
+  restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  /**
+   * Maximum startup deadline in seconds; zero inherits the plan default.
+   */
+  startup_deadline_s?: number | null;
+  /**
+   * Maximum lifecycle restart attempts; zero inherits the plan default.
+   */
+  max_retries?: number | null;
+  /**
+   * Replica policy for service mode.
+   */
+  service_replicas?: any | null;
+  /**
    * Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy.
    */
   scaling_policy?: (null | ScalingPolicy);

@@ -471,6 +471,36 @@ func TestMemStoreAppWebhookDelivery_MarkDead(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDelivery_DeadLetterProjectionAndReplay(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	delivery, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "dead-letter"))
+	if err := m.MarkAppWebhookDeliveryDead(ctx, delivery.ID, delivery.Attempt, "receiver unavailable"); err != nil {
+		t.Fatalf("MarkDead: %v", err)
+	}
+	events, err := m.ListDeadLetterEvents(ctx, app.ID, 20, "")
+	if err != nil {
+		t.Fatalf("ListDeadLetterEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Source != "webhook_delivery" || events[0].SourceID != delivery.ID {
+		t.Fatalf("events = %+v, want one webhook delivery event", events)
+	}
+	replayed, err := m.ReplayDeadLetterEvent(ctx, acct.ID, app.ID, events[0].ID)
+	if err != nil {
+		t.Fatalf("ReplayDeadLetterEvent: %v", err)
+	}
+	if replayed.ReplayedAt == nil {
+		t.Fatal("replayed_at = nil, want timestamp")
+	}
+	got, err := m.AppWebhookDeliveryByID(ctx, delivery.ID)
+	if err != nil {
+		t.Fatalf("AppWebhookDeliveryByID: %v", err)
+	}
+	if got.Status != AppWebhookDeliveryPending || got.Attempt != 0 {
+		t.Fatalf("delivery after replay = status %q attempt %d, want pending/0", got.Status, got.Attempt)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ResetFromDead(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))

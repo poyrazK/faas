@@ -73,9 +73,9 @@ const (
 // §D, ADR-137 §Decision 3). M-2 lays the schema + admission; full
 // rolling deploy / rollback semantics land in M-4 workstream E.
 type ServiceReplicas struct {
-	Min     int `json:"min"`
-	Max     int `json:"max"`
-	Desired int `json:"desired"`
+	Min     int `json:"min" yaml:"min"`
+	Max     int `json:"max" yaml:"max"`
+	Desired int `json:"desired" yaml:"desired"`
 }
 
 // AppManifest is the /etc/faas/app.json contract: the single handoff from the

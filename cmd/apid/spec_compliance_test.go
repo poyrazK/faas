@@ -196,6 +196,11 @@ var routeExclude = map[string]bool{
 	// POST /v1/apps/{slug}/debug/requests/{req_id}/replay instead.
 	// Mirror cmd/sdk-coverage/main.go::routeExclude.
 	"POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay": true,
+	// Unified Failed Events actions are dashboard-only form posts protected
+	// by the session cookie and CSRF token. The public SDK does not model
+	// browser form surfaces; mirror cmd/sdk-coverage/main.go::routeExclude.
+	"POST /dashboard/failed-events/{slug}/{id}/discard": true,
+	"POST /dashboard/failed-events/{slug}/{id}/replay":  true,
 	// ADR-124 affected-workloads preview. Dashboard HTML form endpoints
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the
@@ -413,6 +418,7 @@ var dtoExclude = map[string]bool{
 	// snapshot shapes — same admin-only posture as the other
 	// Obs* DTOs above; not registered in api/openapi.yaml.
 	"ObsCapacityNode":     true,
+	"ObsCapacityProfile":  true,
 	"ObsCapacityResponse": true,
 	"ObsCapacitySummary":  true,
 	"ObsDeploymentRow":    true,
@@ -433,6 +439,7 @@ var dtoExclude = map[string]bool{
 	"ObsTenantBilling":          true,
 	"ObsTenantUsage":            true,
 	"ObsTenantUsageApp":         true,
+	"ObsTenantUsageProfile":     true,
 	// Operator job-run incident projections are intentionally absent from the
 	// public customer OpenAPI and generated SDKs.
 	"OperatorJobRun":                     true,

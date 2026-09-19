@@ -82,8 +82,9 @@ def sync_detailed(
 ) -> Response[DeadLetterEvent | Problem]:
     """Replay one dead-letter event atomically.
 
-     Resets the source invocation or trigger record to pending, clears its
-    retry error, and records replayed_at on the unified ledger.
+     Resets the source invocation, trigger record, or outbound webhook
+    delivery to pending, clears its retry error, and records replayed_at
+    on the unified ledger.
 
     Args:
         slug (str):
@@ -120,8 +121,9 @@ def sync(
 ) -> DeadLetterEvent | Problem | None:
     """Replay one dead-letter event atomically.
 
-     Resets the source invocation or trigger record to pending, clears its
-    retry error, and records replayed_at on the unified ledger.
+     Resets the source invocation, trigger record, or outbound webhook
+    delivery to pending, clears its retry error, and records replayed_at
+    on the unified ledger.
 
     Args:
         slug (str):
@@ -153,8 +155,9 @@ async def asyncio_detailed(
 ) -> Response[DeadLetterEvent | Problem]:
     """Replay one dead-letter event atomically.
 
-     Resets the source invocation or trigger record to pending, clears its
-    retry error, and records replayed_at on the unified ledger.
+     Resets the source invocation, trigger record, or outbound webhook
+    delivery to pending, clears its retry error, and records replayed_at
+    on the unified ledger.
 
     Args:
         slug (str):
@@ -189,8 +192,9 @@ async def asyncio(
 ) -> DeadLetterEvent | Problem | None:
     """Replay one dead-letter event atomically.
 
-     Resets the source invocation or trigger record to pending, clears its
-    retry error, and records replayed_at on the unified ledger.
+     Resets the source invocation, trigger record, or outbound webhook
+    delivery to pending, clears its retry error, and records replayed_at
+    on the unified ledger.
 
     Args:
         slug (str):

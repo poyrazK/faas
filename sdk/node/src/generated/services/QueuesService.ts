@@ -21,6 +21,84 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class QueuesService {
   /**
+   * Replay a failed event from the dashboard.
+   * Resets the source event to pending and redirects to the Failed Events inbox.
+   * @returns void
+   * @throws ApiError
+   */
+  public static dashboardReplayFailedEvent({
+    slug,
+    id,
+    formData,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Unified failed-event identifier to replay.
+     */
+    id: string,
+    formData: {
+      csrf_token: string;
+    },
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/dashboard/failed-events/{slug}/{id}/replay',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      formData: formData,
+      mediaType: 'application/x-www-form-urlencoded',
+      errors: {
+        303: `Redirect to the Failed Events inbox after replay.`,
+        400: `Invalid dashboard CSRF token for replay.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Discard a failed event from the dashboard.
+   * Removes the ledger projection and redirects to the Failed Events inbox.
+   * @returns void
+   * @throws ApiError
+   */
+  public static dashboardDiscardFailedEvent({
+    slug,
+    id,
+    formData,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Unified failed-event identifier to discard.
+     */
+    id: string,
+    formData: {
+      csrf_token: string;
+    },
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/dashboard/failed-events/{slug}/{id}/discard',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      formData: formData,
+      mediaType: 'application/x-www-form-urlencoded',
+      errors: {
+        303: `Redirect to the Failed Events inbox after discard.`,
+        400: `Invalid dashboard CSRF token for discard.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Enqueue a row on the per-app FIFO queue.
    * Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
    * Scale 100). The drain re-checks at dispatch tick.
@@ -517,8 +595,9 @@ export class QueuesService {
   }
   /**
    * List dead-letter events for an app.
-   * Returns queue invocation and broker trigger failures in one durable,
-   * newest-first ledger. The source row is not leased or mutated.
+   * Returns queue invocation, broker trigger, and outbound webhook
+   * delivery failures in one durable, newest-first ledger. The source row
+   * is not leased or mutated.
    *
    * @returns DeadLetterEventsResponse A page of unified dead-letter events.
    * @throws ApiError
@@ -612,9 +691,10 @@ export class QueuesService {
   }
   /**
    * Replay pending dead-letter events for an app.
-   * Atomically resets up to `limit` pending queue invocation and broker
-   * trigger records to pending and stamps each ledger row with replayed_at.
-   * Concurrent operators claim disjoint rows.
+   * Atomically resets up to `limit` pending queue invocation, broker
+   * trigger, and outbound webhook delivery records to pending and stamps
+   * each ledger row with replayed_at. Concurrent operators claim disjoint
+   * rows.
    *
    * @returns DeadLetterReplayAllResponse Number of events accepted for replay.
    * @throws ApiError
@@ -745,8 +825,9 @@ export class QueuesService {
   }
   /**
    * Replay one dead-letter event atomically.
-   * Resets the source invocation or trigger record to pending, clears its
-   * retry error, and records replayed_at on the unified ledger.
+   * Resets the source invocation, trigger record, or outbound webhook
+   * delivery to pending, clears its retry error, and records replayed_at
+   * on the unified ledger.
    *
    * @returns DeadLetterEvent Replay accepted.
    * @throws ApiError

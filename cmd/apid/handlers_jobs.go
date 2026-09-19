@@ -532,10 +532,10 @@ func (s *server) getJobTaskLogs(w http.ResponseWriter, r *http.Request, acct sta
 //
 // Defaults:
 //   - kind       → "batch" when empty
-//   - RAMMB      → api.JobRAMMB[plan] when 0
-//   - TaskTimeoutS → api.JobTaskTimeoutSec[plan] when 0
-//   - MaxParallelism → api.JobMaxParallelismPerRun[plan] when 0
-//   - RetryMax   → api.JobMaxRetries[plan] when 0
+//   - RAMMB      → api.JobDefaultRAMMB when 0
+//   - TaskTimeoutS → api.JobDefaultTaskTimeoutSec when 0
+//   - MaxParallelism → api.JobDefaultParallelism when 0
+//   - RetryMax   → api.JobDefaultRetryMax when 0
 //
 // Clamps:
 //   - RAMMB / TaskTimeoutS / MaxParallelism / RetryMax cannot
@@ -567,28 +567,44 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 	idx := acct.Plan.PlanIndex()
 	ramMB := req.RAMMB
 	if ramMB == 0 {
-		ramMB = api.JobRAMMB[idx]
+		ramMB = api.JobDefaultRAMMB
+	}
+	if ramMB < 0 {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid ram_mb", "ram_mb must be positive")
 	}
 	if cap := api.JobRAMMB[idx]; ramMB > cap {
 		return state.Job{}, api.ErrJobQuota(acct.Plan, "ram_mb", cap, ramMB)
 	}
 	taskTimeoutS := req.TaskTimeoutSec
 	if taskTimeoutS == 0 {
-		taskTimeoutS = api.JobTaskTimeoutSec[idx]
+		taskTimeoutS = api.JobDefaultTaskTimeoutSec
+	}
+	if taskTimeoutS < 0 {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid task_timeout_s", "task_timeout_s must be positive")
 	}
 	if cap := api.JobTaskTimeoutSec[idx]; taskTimeoutS > cap {
 		return state.Job{}, api.ErrJobQuota(acct.Plan, "task_timeout_s", cap, taskTimeoutS)
 	}
 	maxParallelism := req.MaxParallelism
 	if maxParallelism == 0 {
-		maxParallelism = api.JobMaxParallelismPerRun[idx]
+		maxParallelism = api.JobDefaultParallelism
+	}
+	if maxParallelism < 0 {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid max_parallelism", "max_parallelism must be positive")
 	}
 	if cap := api.JobMaxParallelismPerRun[idx]; maxParallelism > cap {
 		return state.Job{}, api.ErrJobQuota(acct.Plan, "max_parallelism", cap, maxParallelism)
 	}
 	retryMax := req.RetryMax
 	if retryMax == 0 {
-		retryMax = api.JobMaxRetries[idx]
+		retryMax = api.JobDefaultRetryMax
+	}
+	if retryMax < 0 {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid retry_max", "retry_max must be non-negative")
 	}
 	if cap := api.JobMaxRetries[idx]; retryMax > cap {
 		return state.Job{}, api.ErrJobQuota(acct.Plan, "retry_max", cap, retryMax)
@@ -730,24 +746,44 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// customer can raise a field above the previous value.
 	idx := acct.Plan.PlanIndex()
 	if req.RAMMB != nil {
+		if *req.RAMMB <= 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid ram_mb", "ram_mb must be positive"))
+			return
+		}
 		if cap := api.JobRAMMB[idx]; *req.RAMMB > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "ram_mb", cap, *req.RAMMB))
 			return
 		}
 	}
 	if req.TaskTimeoutSec != nil {
+		if *req.TaskTimeoutSec <= 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid task_timeout_s", "task_timeout_s must be positive"))
+			return
+		}
 		if cap := api.JobTaskTimeoutSec[idx]; *req.TaskTimeoutSec > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "task_timeout_s", cap, *req.TaskTimeoutSec))
 			return
 		}
 	}
 	if req.MaxParallelism != nil {
+		if *req.MaxParallelism <= 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid max_parallelism", "max_parallelism must be positive"))
+			return
+		}
 		if cap := api.JobMaxParallelismPerRun[idx]; *req.MaxParallelism > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "max_parallelism", cap, *req.MaxParallelism))
 			return
 		}
 	}
 	if req.RetryMax != nil {
+		if *req.RetryMax < 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid retry_max", "retry_max must be non-negative"))
+			return
+		}
 		if cap := api.JobMaxRetries[idx]; *req.RetryMax > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "retry_max", cap, *req.RetryMax))
 			return
@@ -879,18 +915,33 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	// non-nil override is clamped against the plan cap so a
 	// single PATCH can't escalate above the plan ceiling.
 	if req.Parallelism != nil {
+		if *req.Parallelism <= 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid max_parallelism", "parallelism must be positive"))
+			return
+		}
 		if cap := api.JobMaxParallelismPerRun[idx]; *req.Parallelism > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "max_parallelism", cap, *req.Parallelism))
 			return
 		}
 	}
 	if req.TaskTimeoutSec != nil {
+		if *req.TaskTimeoutSec <= 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid task_timeout_s", "task_timeout_s must be positive"))
+			return
+		}
 		if cap := api.JobTaskTimeoutSec[idx]; *req.TaskTimeoutSec > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "task_timeout_s", cap, *req.TaskTimeoutSec))
 			return
 		}
 	}
 	if req.RetryMax != nil {
+		if *req.RetryMax < 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid retry_max", "retry_max must be non-negative"))
+			return
+		}
 		if cap := api.JobMaxRetries[idx]; *req.RetryMax > cap {
 			api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "retry_max", cap, *req.RetryMax))
 			return

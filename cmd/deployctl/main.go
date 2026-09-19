@@ -12,7 +12,9 @@
 //	diff [dirs...]        like check, but prints the result to stdout
 //	bundle-create <root> <release-id> <commit-sha> <target>
 //	                      write and verify an immutable release manifest
-//	bundle-check <root>   verify the manifest and every release file
+//	bundle-check <root>   strictly verify the manifest and every release file
+//	bundle-check-installed <root>
+//	                      verify an installed release plus owned sidecars
 //	migration-dry-run <release-id>
 //	                      report host migration actions without mutating state
 //	legacy-import <release-id> <commit-sha>
@@ -38,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/deploycontroller"
 	"github.com/onebox-faas/faas/pkg/releasebundle"
+	"github.com/onebox-faas/faas/pkg/releaseinstall"
 )
 
 func main() {
@@ -71,6 +74,11 @@ func main() {
 	case "bundle-check":
 		if err := runBundleCheck(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl bundle-check:", err)
+			os.Exit(1)
+		}
+	case "bundle-check-installed":
+		if err := runInstalledBundleCheck(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl bundle-check-installed:", err)
 			os.Exit(1)
 		}
 	case "deploy":
@@ -260,6 +268,24 @@ func runBundleCheck(args []string) error {
 		return err
 	}
 	fmt.Printf("release bundle %s verified (%d files)\n", manifest.ReleaseID, len(manifest.Files))
+	return nil
+}
+
+func runInstalledBundleCheck(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: deployctl bundle-check-installed <root>")
+	}
+	manifest, err := releasebundle.Read(args[0])
+	if err != nil {
+		return err
+	}
+	// KGV acceptance writes this host-owned baseline after activation. A
+	// rollout retry must apply the same installed-release policy as the
+	// deploy controller instead of rejecting its own lifecycle sidecar.
+	if err := releasebundle.VerifyWithAllowedFiles(args[0], manifest, releaseinstall.SBOMBaselineName); err != nil {
+		return err
+	}
+	fmt.Printf("installed release bundle %s verified (%d files)\n", manifest.ReleaseID, len(manifest.Files))
 	return nil
 }
 

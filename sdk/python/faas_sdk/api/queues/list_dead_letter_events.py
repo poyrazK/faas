@@ -86,8 +86,9 @@ def sync_detailed(
 ) -> Response[DeadLetterEventsResponse | Problem]:
     """List dead-letter events for an app.
 
-     Returns queue invocation and broker trigger failures in one durable,
-    newest-first ledger. The source row is not leased or mutated.
+     Returns queue invocation, broker trigger, and outbound webhook
+    delivery failures in one durable, newest-first ledger. The source row
+    is not leased or mutated.
 
     Args:
         slug (str):
@@ -124,8 +125,9 @@ def sync(
 ) -> DeadLetterEventsResponse | Problem | None:
     """List dead-letter events for an app.
 
-     Returns queue invocation and broker trigger failures in one durable,
-    newest-first ledger. The source row is not leased or mutated.
+     Returns queue invocation, broker trigger, and outbound webhook
+    delivery failures in one durable, newest-first ledger. The source row
+    is not leased or mutated.
 
     Args:
         slug (str):
@@ -157,8 +159,9 @@ async def asyncio_detailed(
 ) -> Response[DeadLetterEventsResponse | Problem]:
     """List dead-letter events for an app.
 
-     Returns queue invocation and broker trigger failures in one durable,
-    newest-first ledger. The source row is not leased or mutated.
+     Returns queue invocation, broker trigger, and outbound webhook
+    delivery failures in one durable, newest-first ledger. The source row
+    is not leased or mutated.
 
     Args:
         slug (str):
@@ -193,8 +196,9 @@ async def asyncio(
 ) -> DeadLetterEventsResponse | Problem | None:
     """List dead-letter events for an app.
 
-     Returns queue invocation and broker trigger failures in one durable,
-    newest-first ledger. The source row is not leased or mutated.
+     Returns queue invocation, broker trigger, and outbound webhook
+    delivery failures in one durable, newest-first ledger. The source row
+    is not leased or mutated.
 
     Args:
         slug (str):
