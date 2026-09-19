@@ -203,7 +203,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			WindowEnd:           data.WindowEnd,
 			RetentionClamped:    data.WindowClamped,
 			Complete:            !dependencyTruncated,
-			Truncated:            dependencyTruncated,
+			Truncated:           dependencyTruncated,
 			TelemetryRows:       int64(len(dependencyRows)),
 			RepresentedRequests: representedRequests,
 			SpanSamples:         spanSamples,
