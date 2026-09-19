@@ -3,11 +3,19 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One unified queue invocation, broker trigger, or outbound webhook delivery dead-letter event.
+ * One unified queue invocation, broker trigger, outbound webhook, job run, or workflow run dead-letter event.
  */
 export type DeadLetterEvent = {
   id: string;
-  source: 'invocation' | 'trigger_record' | 'webhook_delivery';
+  /**
+   * Owning app when the event is app-scoped.
+   */
+  app_id?: string;
+  /**
+   * Owning app slug when the event is app-scoped.
+   */
+  app_slug?: string;
+  source: 'invocation' | 'trigger_record' | 'webhook_delivery' | 'job_run' | 'workflow_run';
   source_id: string;
   /**
    * Invocation source or trigger kind.

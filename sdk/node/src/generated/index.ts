@@ -9,6 +9,9 @@ export type { OpenAPIConfig } from './core/OpenAPI.js';
 
 export type { AccountAppSecretResponse } from './models/AccountAppSecretResponse.js';
 export type { AccountCreditResponse } from './models/AccountCreditResponse.js';
+export type { AccountDeadLetterEventsResponse } from './models/AccountDeadLetterEventsResponse.js';
+export type { AccountDeadLetterPurgeResponse } from './models/AccountDeadLetterPurgeResponse.js';
+export type { AccountDeadLetterReplayAllResponse } from './models/AccountDeadLetterReplayAllResponse.js';
 export type { AccountDeletionResponse } from './models/AccountDeletionResponse.js';
 export type { AccountDeployRateLimit } from './models/AccountDeployRateLimit.js';
 export type { AccountEgressAllowlistExtraResponse } from './models/AccountEgressAllowlistExtraResponse.js';

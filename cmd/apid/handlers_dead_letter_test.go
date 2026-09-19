@@ -168,3 +168,95 @@ func TestUnifiedDeadLetter_ReplayAllAndPurge(t *testing.T) {
 	_ = first
 	_ = second // retain named sources to make the two-row setup explicit.
 }
+
+func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "account-dlq-app")
+	eventSourceID := seedDeadLetterRow(t, e, appID, "account-scoped")
+
+	list := e.do(t, http.MethodGet, "/v1/account/dlq", nil, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("account list status = %d; body=%s", list.Code, list.Body.String())
+	}
+	var page api.AccountDeadLetterEventsResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode account list: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].AppSlug != "account-dlq-app" {
+		t.Fatalf("account events = %+v, want one app-owned event", page.Events)
+	}
+	eventID := page.Events[0].ID
+
+	inspect := e.do(t, http.MethodGet, "/v1/account/dlq/"+eventID, nil, nil)
+	if inspect.Code != http.StatusOK {
+		t.Fatalf("account inspect status = %d; body=%s", inspect.Code, inspect.Body.String())
+	}
+
+	replay := e.do(t, http.MethodPost, "/v1/account/dlq/"+eventID+"/replay", nil,
+		map[string]string{"Idempotency-Key": "account-dlq-replay-1"})
+	if replay.Code != http.StatusAccepted {
+		t.Fatalf("account replay status = %d; body=%s", replay.Code, replay.Body.String())
+	}
+	var replayed api.DeadLetterEvent
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayed); err != nil {
+		t.Fatalf("decode account replay: %v", err)
+	}
+	if replayed.ReplayedAt == nil || replayed.AppSlug != "account-dlq-app" {
+		t.Fatalf("account replay = %+v, want replay timestamp and app slug", replayed)
+	}
+	inv, err := e.store.InvocationByID(t.Context(), eventSourceID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if inv.State != state.InvocationPending {
+		t.Fatalf("source after account replay = %q, want pending", inv.State)
+	}
+
+	delete := e.do(t, http.MethodDelete, "/v1/account/dlq/"+eventID, nil,
+		map[string]string{"Idempotency-Key": "account-dlq-delete-1"})
+	if delete.Code != http.StatusNoContent {
+		t.Fatalf("account delete status = %d; body=%s", delete.Code, delete.Body.String())
+	}
+	missing := e.do(t, http.MethodGet, "/v1/account/dlq/"+eventID, nil, nil)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("deleted account event status = %d, want 404", missing.Code)
+	}
+
+	seedDeadLetterRow(t, e, appID, "account-batch-1")
+	seedDeadLetterRow(t, e, appID, "account-batch-2")
+	replayAll := e.do(t, http.MethodPost, "/v1/account/dlq:replay_all?limit=1", nil,
+		map[string]string{"Idempotency-Key": "account-dlq-replay-all-1"})
+	if replayAll.Code != http.StatusAccepted {
+		t.Fatalf("account replay-all status = %d; body=%s", replayAll.Code, replayAll.Body.String())
+	}
+	var replayBatch api.AccountDeadLetterReplayAllResponse
+	if err := json.Unmarshal(replayAll.Body.Bytes(), &replayBatch); err != nil || replayBatch.Replayed != 1 {
+		t.Fatalf("account replay-all = %+v, err=%v", replayBatch, err)
+	}
+	purgeAll := e.do(t, http.MethodDelete, "/v1/account/dlq?limit=10", nil,
+		map[string]string{"Idempotency-Key": "account-dlq-purge-all-1"})
+	if purgeAll.Code != http.StatusOK {
+		t.Fatalf("account purge-all status = %d; body=%s", purgeAll.Code, purgeAll.Body.String())
+	}
+	var purgeBatch api.AccountDeadLetterPurgeResponse
+	if err := json.Unmarshal(purgeAll.Body.Bytes(), &purgeBatch); err != nil || purgeBatch.Purged != 2 {
+		t.Fatalf("account purge-all = %+v, err=%v", purgeBatch, err)
+	}
+}
+
+func TestAccountUnifiedDeadLetter_PreventsCrossAccountRead(t *testing.T) {
+	owner := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, owner, "account-dlq-owner")
+	seedDeadLetterRow(t, owner, appID, "owner-only")
+	page := owner.do(t, http.MethodGet, "/v1/account/dlq", nil, nil)
+	var events api.AccountDeadLetterEventsResponse
+	if err := json.Unmarshal(page.Body.Bytes(), &events); err != nil || len(events.Events) != 1 {
+		t.Fatalf("owner account events = %+v, err=%v", events.Events, err)
+	}
+
+	foreign := setup(t, api.PlanPro)
+	probe := foreign.do(t, http.MethodGet, "/v1/account/dlq/"+events.Events[0].ID, nil, nil)
+	if probe.Code != http.StatusNotFound {
+		t.Fatalf("cross-account account DLQ status = %d, want 404; body=%s", probe.Code, probe.Body.String())
+	}
+}

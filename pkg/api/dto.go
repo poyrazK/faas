@@ -4426,6 +4426,8 @@ type QueueDeadLetterResponse struct {
 // delivery.
 type DeadLetterEvent struct {
 	ID            string          `json:"id"`
+	AppID         string          `json:"app_id,omitempty"`
+	AppSlug       string          `json:"app_slug,omitempty"`
 	Source        string          `json:"source"`
 	SourceID      string          `json:"source_id"`
 	Origin        string          `json:"origin,omitempty"`
@@ -4458,6 +4460,24 @@ type DeadLetterReplayAllResponse struct {
 type DeadLetterPurgeResponse struct {
 	AppSlug string `json:"app_slug"`
 	Purged  int    `json:"purged"`
+}
+
+// AccountDeadLetterEventsResponse is the account-wide failed-events page.
+// Unlike the app-scoped response it has no single app_slug because a page can
+// contain app-owned events as well as account-owned job runs.
+type AccountDeadLetterEventsResponse struct {
+	Events     []DeadLetterEvent `json:"events"`
+	NextBefore string            `json:"next_before,omitempty"`
+}
+
+// AccountDeadLetterReplayAllResponse reports account-wide replay progress.
+type AccountDeadLetterReplayAllResponse struct {
+	Replayed int `json:"replayed"`
+}
+
+// AccountDeadLetterPurgeResponse reports account-wide purge progress.
+type AccountDeadLetterPurgeResponse struct {
+	Purged int `json:"purged"`
 }
 
 // --- IAM-4 (ADR-035) — auth audit event surface -----------------------------

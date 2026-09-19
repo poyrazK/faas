@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountDeadLetterEventsResponse } from '../models/AccountDeadLetterEventsResponse.js';
+import type { AccountDeadLetterPurgeResponse } from '../models/AccountDeadLetterPurgeResponse.js';
+import type { AccountDeadLetterReplayAllResponse } from '../models/AccountDeadLetterReplayAllResponse.js';
 import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.js';
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
@@ -10,6 +13,7 @@ import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
+import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
@@ -89,6 +93,225 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+      },
+    });
+  }
+  /**
+   * List dead-letter events for the account.
+   * @returns AccountDeadLetterEventsResponse Account-wide unified dead-letter events, newest first.
+   * @throws ApiError
+   */
+  public static listAccountDeadLetterEvents({
+    limit = 20,
+    before,
+  }: {
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Cursor — the last id from the previous page (omit for the first page).
+     */
+    before?: string,
+  }): CancelablePromise<AccountDeadLetterEventsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/dlq',
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Purge dead-letter events from the account ledger.
+   * @returns AccountDeadLetterPurgeResponse Number of account-wide ledger events purged.
+   * @throws ApiError
+   */
+  public static purgeAccountDeadLetterEvents({
+    limit = 20,
+    idempotencyKey,
+  }: {
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AccountDeadLetterPurgeResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/dlq',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Replay pending dead-letter events for the account.
+   * @returns AccountDeadLetterReplayAllResponse Number of account-wide events accepted for replay.
+   * @throws ApiError
+   */
+  public static replayAllAccountDeadLetterEvents({
+    limit = 20,
+    idempotencyKey,
+  }: {
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AccountDeadLetterReplayAllResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/dlq:replay_all',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get one dead-letter event for the account.
+   * @returns DeadLetterEvent The account-owned dead-letter event.
+   * @throws ApiError
+   */
+  public static getAccountDeadLetterEvent({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<DeadLetterEvent> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/dlq/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Purge one account-owned dead-letter event.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAccountDeadLetterEvent({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/dlq/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Replay one account-owned dead-letter event atomically.
+   * @returns DeadLetterEvent Replay accepted.
+   * @throws ApiError
+   */
+  public static replayAccountDeadLetterEvent({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeadLetterEvent> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/dlq/{id}/replay',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
       },
     });
   }

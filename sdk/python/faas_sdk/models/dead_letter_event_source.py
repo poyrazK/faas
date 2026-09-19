@@ -1,11 +1,13 @@
 from typing import Literal
 
-DeadLetterEventSource = Literal["invocation", "trigger_record", "webhook_delivery"]
+DeadLetterEventSource = Literal["invocation", "job_run", "trigger_record", "webhook_delivery", "workflow_run"]
 
 DEAD_LETTER_EVENT_SOURCE_VALUES: set[DeadLetterEventSource] = {
     "invocation",
+    "job_run",
     "trigger_record",
     "webhook_delivery",
+    "workflow_run",
 }
 
 

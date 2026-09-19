@@ -215,6 +215,8 @@ var routeExclude = map[string]bool{
 	// browser form surfaces; these routes intentionally have no SDK twin.
 	"POST /dashboard/failed-events/{slug}/{id}/discard": true,
 	"POST /dashboard/failed-events/{slug}/{id}/replay":  true,
+	"POST /dashboard/failed-events/account/{id}/discard": true,
+	"POST /dashboard/failed-events/account/{id}/replay":  true,
 
 	// ADR-127 PR-D: OTLP sidecar protocol — not a REST endpoint
 	// consumed by the generated SDK. OTel SDKs speak OTLP/HTTP
@@ -635,6 +637,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/dlq/{id}":                        "GetAppsSlugDlqId",
 	"DELETE /v1/apps/{slug}/dlq/{id}":                     "DeleteAppsSlugDlqId",
 	"POST /v1/apps/{slug}/dlq/{id}/replay":                "PostAppsSlugDlqIdReplay",
+	"POST /v1/account/dlq:replay_all":                     "PostAccountDlqReplayAll",
+	"GET /v1/account/dlq":                                 "GetAccountDlq",
+	"DELETE /v1/account/dlq":                              "DeleteAccountDlq",
+	"GET /v1/account/dlq/{id}":                            "GetAccountDlqId",
+	"DELETE /v1/account/dlq/{id}":                         "DeleteAccountDlqId",
+	"POST /v1/account/dlq/{id}/replay":                    "PostAccountDlqIdReplay",
 	"POST /v1/apps/{slug}/delayed-tasks":                  "CreateDelayedTask",
 	"GET /v1/delayed-tasks/{id}":                          "GetDelayedTask",
 	"DELETE /v1/delayed-tasks/{id}":                       "CancelDelayedTask",

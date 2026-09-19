@@ -1171,6 +1171,14 @@ func (s *server) handler() http.Handler {
 	// /v1/account carries the method default (read or admin).
 	mux.HandleFunc("GET /v1/capabilities", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCapabilities)))
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
+	// Issue #1278: account-wide unified failed-events ledger. This includes
+	// app-owned failures plus account-owned job/workflow runs.
+	mux.HandleFunc("GET /v1/account/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountDeadLetterEvents))))
+	mux.HandleFunc("POST /v1/account/dlq:replay_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayAllAccountDeadLetterEvents)))))
+	mux.HandleFunc("DELETE /v1/account/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.purgeAccountDeadLetterEvents)))))
+	mux.HandleFunc("GET /v1/account/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountDeadLetterEvent))))
+	mux.HandleFunc("DELETE /v1/account/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteAccountDeadLetterEvent)))))
+	mux.HandleFunc("POST /v1/account/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayAccountDeadLetterEvent)))))
 	mux.HandleFunc("GET /v1/account/rate-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountRateLimits))))
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
@@ -2959,6 +2967,12 @@ func (s *server) handler() http.Handler {
 	}))))
 	mux.Handle("POST /dashboard/failed-events/{slug}/{id}/discard", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventAction(w, r, "discard")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/account/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardAccountFailedEventAction(w, r, "replay")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/account/{id}/discard", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardAccountFailedEventAction(w, r, "discard")
 	}))))
 	// ADR-127 — debugger replay. The form uses a dedicated named CSRF
 	// envelope and redirects back to the selected request so the customer can

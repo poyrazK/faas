@@ -68,7 +68,7 @@
         <tbody>
           {{range .Data.Events}}
             <tr>
-              <td><a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a><br><small class="muted"><code>{{.ID}}</code></small></td>
+              <td>{{if .AppSlug}}<a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a>{{else}}<span class="muted">Account job</span>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
               <td><code>{{.Source}}</code>{{if .Origin}}<br><small class="muted">{{.Origin}}</small>{{end}}</td>
               <td><code>{{.ErrorKind}}</code></td>
               <td>{{.RetryCount}}</td>
@@ -83,8 +83,13 @@
               </td>
               <td class="actions">
                 {{if eq .Status "open"}}
-                  <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
-                  <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
+                  {{if .AppSlug}}
+                    <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
+                    <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
+                  {{else}}
+                    <form method="POST" action="/dashboard/failed-events/account/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
+                    <form method="POST" action="/dashboard/failed-events/account/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
+                  {{end}}
                 {{else}}—{{end}}
               </td>
             </tr>

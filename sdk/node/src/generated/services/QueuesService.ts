@@ -99,6 +99,72 @@ export class QueuesService {
     });
   }
   /**
+   * Replay an account-owned failed event from the dashboard.
+   * Resets an account-scoped source event to pending and redirects to the Failed Events inbox.
+   * @returns void
+   * @throws ApiError
+   */
+  public static dashboardReplayAccountFailedEvent({
+    id,
+    formData,
+  }: {
+    /**
+     * Account-wide unified failed-event identifier to replay.
+     */
+    id: string,
+    formData: {
+      csrf_token: string;
+    },
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/dashboard/failed-events/account/{id}/replay',
+      path: {
+        'id': id,
+      },
+      formData: formData,
+      mediaType: 'application/x-www-form-urlencoded',
+      errors: {
+        303: `Redirect to the Failed Events inbox after replay.`,
+        400: `Invalid dashboard CSRF token for replay.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Discard an account-owned failed event from the dashboard.
+   * Removes the account-wide ledger projection and redirects to the Failed Events inbox.
+   * @returns void
+   * @throws ApiError
+   */
+  public static dashboardDiscardAccountFailedEvent({
+    id,
+    formData,
+  }: {
+    /**
+     * Account-wide unified failed-event identifier to discard.
+     */
+    id: string,
+    formData: {
+      csrf_token: string;
+    },
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/dashboard/failed-events/account/{id}/discard',
+      path: {
+        'id': id,
+      },
+      formData: formData,
+      mediaType: 'application/x-www-form-urlencoded',
+      errors: {
+        303: `Redirect to the Failed Events inbox after discard.`,
+        400: `Invalid dashboard CSRF token for discard.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Enqueue a row on the per-app FIFO queue.
    * Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
    * Scale 100). The drain re-checks at dispatch tick.

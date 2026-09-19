@@ -3069,6 +3069,89 @@ func (c *Client) DeleteAppsSlugDlq(ctx context.Context, slug string, limit int) 
 	return c.PurgeDeadLetterEvents(ctx, slug, limit)
 }
 
+// ListAccountDeadLetterEvents returns the account-wide failed-events ledger,
+// including app-owned events and account-owned job/workflow failures.
+func (c *Client) ListAccountDeadLetterEvents(ctx context.Context, limit int, before string) (AccountDeadLetterEventsResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/account/dlq"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out AccountDeadLetterEventsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) GetAccountDeadLetterEvent(ctx context.Context, eventID string) (DeadLetterEvent, error) {
+	var out DeadLetterEvent
+	return out, c.do(ctx, "GET", "/v1/account/dlq/"+eventID, nil, &out)
+}
+
+func (c *Client) ReplayAccountDeadLetterEvent(ctx context.Context, eventID string) (DeadLetterEvent, error) {
+	var out DeadLetterEvent
+	return out, c.do(ctx, "POST", "/v1/account/dlq/"+eventID+"/replay", nil, &out)
+}
+
+func (c *Client) ReplayAllAccountDeadLetterEvents(ctx context.Context, limit int) (AccountDeadLetterReplayAllResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/account/dlq:replay_all"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out AccountDeadLetterReplayAllResponse
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
+func (c *Client) DeleteAccountDeadLetterEvent(ctx context.Context, eventID string) error {
+	return c.do(ctx, "DELETE", "/v1/account/dlq/"+eventID, nil, nil)
+}
+
+func (c *Client) PurgeAccountDeadLetterEvents(ctx context.Context, limit int) (AccountDeadLetterPurgeResponse, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/account/dlq"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out AccountDeadLetterPurgeResponse
+	return out, c.do(ctx, "DELETE", path, nil, &out)
+}
+
+// Generated-name compatibility helpers for account-wide DLQ routes.
+func (c *Client) GetAccountDlq(ctx context.Context, limit int, before string) (AccountDeadLetterEventsResponse, error) {
+	return c.ListAccountDeadLetterEvents(ctx, limit, before)
+}
+
+func (c *Client) GetAccountDlqId(ctx context.Context, eventID string) (DeadLetterEvent, error) {
+	return c.GetAccountDeadLetterEvent(ctx, eventID)
+}
+
+func (c *Client) PostAccountDlqIdReplay(ctx context.Context, eventID string) (DeadLetterEvent, error) {
+	return c.ReplayAccountDeadLetterEvent(ctx, eventID)
+}
+
+func (c *Client) PostAccountDlqReplayAll(ctx context.Context, limit int) (AccountDeadLetterReplayAllResponse, error) {
+	return c.ReplayAllAccountDeadLetterEvents(ctx, limit)
+}
+
+func (c *Client) DeleteAccountDlqId(ctx context.Context, eventID string) error {
+	return c.DeleteAccountDeadLetterEvent(ctx, eventID)
+}
+
+func (c *Client) DeleteAccountDlq(ctx context.Context, limit int) (AccountDeadLetterPurgeResponse, error) {
+	return c.PurgeAccountDeadLetterEvents(ctx, limit)
+}
+
 // CreateDelayedTask schedules a delayed-task row to fire at the
 // given future timestamp. Cap-checked against MaxDelayedTasksPerApp.
 func (c *Client) CreateDelayedTask(ctx context.Context, slug string, req DelayedTaskRequest) (DelayedTaskResponse, error) {

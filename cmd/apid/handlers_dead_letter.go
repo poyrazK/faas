@@ -14,6 +14,7 @@ const deadLetterEventsMaxLimit = 200
 func deadLetterEventResponse(ev state.DeadLetterEvent) api.DeadLetterEvent {
 	return api.DeadLetterEvent{
 		ID:            ev.ID,
+		AppID:         ev.AppID,
 		Source:        ev.Source,
 		SourceID:      ev.SourceID,
 		Origin:        ev.Origin,
@@ -28,6 +29,12 @@ func deadLetterEventResponse(ev state.DeadLetterEvent) api.DeadLetterEvent {
 		ReplayedAt:    ev.ReplayedAt,
 		CreatedAt:     ev.CreatedAt,
 	}
+}
+
+func deadLetterEventResponseForApp(ev state.DeadLetterEvent, appSlug string) api.DeadLetterEvent {
+	out := deadLetterEventResponse(ev)
+	out.AppSlug = appSlug
+	return out
 }
 
 func deadLetterNotFound(id string) *api.Problem {
@@ -53,7 +60,7 @@ func (s *server) listDeadLetterEvents(w http.ResponseWriter, r *http.Request, ac
 	}
 	out := api.DeadLetterEventsResponse{AppSlug: app.Slug, Events: make([]api.DeadLetterEvent, 0, len(events))}
 	for _, ev := range events {
-		out.Events = append(out.Events, deadLetterEventResponse(ev))
+		out.Events = append(out.Events, deadLetterEventResponseForApp(ev, app.Slug))
 	}
 	if len(events) == limit && len(events) > 0 {
 		out.NextBefore = events[len(events)-1].ID
@@ -75,7 +82,7 @@ func (s *server) getDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("dead-letter event"))
 		return
 	}
-	writeJSON(w, http.StatusOK, deadLetterEventResponse(ev))
+	writeJSON(w, http.StatusOK, deadLetterEventResponseForApp(ev, app.Slug))
 }
 
 func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -98,7 +105,7 @@ func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 	s.audit.Emit(r.Context(), "app.dlq.event_replayed", &acct.ID, map[string]any{
 		"app_id": app.ID, "event_id": ev.ID, "source": ev.Source, "source_id": ev.SourceID,
 	})
-	writeJSON(w, http.StatusAccepted, deadLetterEventResponse(ev))
+	writeJSON(w, http.StatusAccepted, deadLetterEventResponseForApp(ev, app.Slug))
 }
 
 func (s *server) replayAllDeadLetterEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {

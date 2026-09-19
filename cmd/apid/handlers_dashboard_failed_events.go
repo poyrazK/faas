@@ -31,33 +31,31 @@ func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log 
 	}
 	selected := strings.TrimSpace(r.URL.Query().Get("app"))
 	data := dashboard.FailedEventsData{SelectedApp: selected, Action: failedEventsActionFlash(r)}
+	appIDs := make(map[string]string, len(apps))
+	appSlugs := make(map[string]string, len(apps))
 	for _, app := range apps {
+		appIDs[app.Slug] = app.ID
+		appSlugs[app.ID] = app.Slug
 		data.Apps = append(data.Apps, dashboard.AppListItem{
 			Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain),
 		})
-		if selected != "" && app.Slug != selected {
-			continue
-		}
-		events, listErr := s.store.ListDeadLetterEvents(ctx, app.ID, dashboardFailedEventsPerApp, "")
-		if listErr != nil {
-			log.Warn("dashboard failed events: list app events", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
-			continue
-		}
-		for _, event := range events {
-			data.Events = append(data.Events, projectFailedEvent(app.Slug, event))
-		}
 	}
 	if selected != "" {
-		found := false
-		for _, app := range data.Apps {
-			if app.Slug == selected {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, found := appIDs[selected]; !found {
 			http.NotFound(w, r)
 			return
+		}
+	}
+	events, listErr := s.store.ListDeadLetterEventsForAccount(ctx, acct.ID, dashboardFailedEventsMax, "")
+	if listErr != nil {
+		log.Warn("dashboard failed events: list account events", "account_id", acct.ID, "err", listErr)
+	} else {
+		for _, event := range events {
+			appSlug := appSlugs[event.AppID]
+			if selected != "" && appSlug != selected {
+				continue
+			}
+			data.Events = append(data.Events, projectFailedEvent(appSlug, event))
 		}
 	}
 	sort.SliceStable(data.Events, func(i, j int) bool {
@@ -158,6 +156,45 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		flash = "error"
 	}
 	http.Redirect(w, r, failedEventsRedirect(slug, flash), http.StatusSeeOther)
+}
+
+func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *http.Request, action string) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	eventID := r.PathValue("id")
+	if eventID == "" || strings.Contains(eventID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	event, err := s.store.DeadLetterEventByAccountID(r.Context(), acct.ID, eventID)
+	if err != nil || event.ReplayedAt != nil {
+		http.Redirect(w, r, failedEventsRedirect("", "error"), http.StatusSeeOther)
+		return
+	}
+	switch action {
+	case "replay":
+		_, err = s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
+	case "discard":
+		err = s.store.DeleteDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		s.log.Warn("dashboard account failed event action", "action", action, "account_id", acct.ID, "event_id", eventID, "err", err)
+	}
+	flash := action + "ed"
+	if err != nil {
+		flash = "error"
+	}
+	http.Redirect(w, r, failedEventsRedirect("", flash), http.StatusSeeOther)
 }
 
 func failedEventsRedirect(slug, action string) string {

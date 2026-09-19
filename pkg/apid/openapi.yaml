@@ -1827,6 +1827,106 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
+  # Issue #1278 — account-wide failed-events inbox. This surface includes
+  # app-owned queue/trigger/webhook failures and account-owned job runs.
+  /v1/account/dlq:
+    get:
+      tags: [account]
+      operationId: listAccountDeadLetterEvents
+      summary: List dead-letter events for the account.
+      parameters:
+        - $ref: '#/components/parameters/QueueCursorLimit'
+        - $ref: '#/components/parameters/QueueCursorBefore'
+      responses:
+        '200':
+          description: Account-wide unified dead-letter events, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountDeadLetterEventsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [account]
+      operationId: purgeAccountDeadLetterEvents
+      summary: Purge dead-letter events from the account ledger.
+      parameters:
+        - $ref: '#/components/parameters/QueueCursorLimit'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Number of account-wide ledger events purged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountDeadLetterPurgeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/dlq:replay_all:
+    post:
+      tags: [account]
+      operationId: replayAllAccountDeadLetterEvents
+      summary: Replay pending dead-letter events for the account.
+      parameters:
+        - $ref: '#/components/parameters/QueueCursorLimit'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Number of account-wide events accepted for replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountDeadLetterReplayAllResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/dlq/{id}:
+    get:
+      tags: [account]
+      operationId: getAccountDeadLetterEvent
+      summary: Get one dead-letter event for the account.
+      parameters:
+        - $ref: '#/components/parameters/Id32'
+      responses:
+        '200':
+          description: The account-owned dead-letter event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [account]
+      operationId: deleteAccountDeadLetterEvent
+      summary: Purge one account-owned dead-letter event.
+      parameters:
+        - $ref: '#/components/parameters/Id32'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Dead-letter event purged. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/dlq/{id}/replay:
+    post:
+      tags: [account]
+      operationId: replayAccountDeadLetterEvent
+      summary: Replay one account-owned dead-letter event atomically.
+      parameters:
+        - $ref: '#/components/parameters/Id32'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Replay accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLetterEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/rate-limits:
     get:
       tags: [account]
@@ -12218,6 +12318,72 @@ paths:
       operationId: dashboardDiscardFailedEvent
       summary: Discard a failed event from the dashboard.
       description: Removes the ledger projection and redirects to the Failed Events inbox.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '303': { description: Redirect to the Failed Events inbox after discard. }
+        '400':
+          description: Invalid dashboard CSRF token for discard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /dashboard/failed-events/account/{id}/replay:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Account-wide unified failed-event identifier to replay.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      tags: [queues]
+      operationId: dashboardReplayAccountFailedEvent
+      summary: Replay an account-owned failed event from the dashboard.
+      description: Resets an account-scoped source event to pending and redirects to the Failed Events inbox.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '303': { description: Redirect to the Failed Events inbox after replay. }
+        '400':
+          description: Invalid dashboard CSRF token for replay.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /dashboard/failed-events/account/{id}/discard:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Account-wide unified failed-event identifier to discard.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      tags: [queues]
+      operationId: dashboardDiscardAccountFailedEvent
+      summary: Discard an account-owned failed event from the dashboard.
+      description: Removes the account-wide ledger projection and redirects to the Failed Events inbox.
       requestBody:
         required: true
         content:
@@ -28998,14 +29164,16 @@ components:
         next_before: { type: string, pattern: '^[a-f0-9]{32}$', description: "Cursor for the previous page; absent on the final page." }
 
     DeadLetterEvent:
-      description: "One unified queue invocation, broker trigger, or outbound webhook delivery dead-letter event."
+      description: "One unified queue invocation, broker trigger, outbound webhook, job run, or workflow run dead-letter event."
       type: object
       required: [id, source, source_id, payload, headers, error_kind,
                  error_detail, retry_count, first_failed_at, last_failed_at,
                  created_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        source: { type: string, enum: [invocation, trigger_record, webhook_delivery] }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Owning app when the event is app-scoped." }
+        app_slug: { type: string, description: "Owning app slug when the event is app-scoped." }
+        source: { type: string, enum: [invocation, trigger_record, webhook_delivery, job_run, workflow_run] }
         source_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         origin: { type: string, description: "Invocation source or trigger kind." }
         trigger_id: { type: string, pattern: '^[a-f0-9]{32}$' }
@@ -29044,6 +29212,30 @@ components:
       required: [app_slug, purged]
       properties:
         app_slug: { type: string }
+        purged: { type: integer, minimum: 0 }
+
+    AccountDeadLetterEventsResponse:
+      description: "A page of account-wide unified dead-letter events ordered newest-first."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/DeadLetterEvent' }
+        next_before: { type: string, pattern: '^[a-f0-9]{32}$' }
+
+    AccountDeadLetterReplayAllResponse:
+      description: "Count of account-wide dead-letter events accepted for replay."
+      type: object
+      required: [replayed]
+      properties:
+        replayed: { type: integer, minimum: 0 }
+
+    AccountDeadLetterPurgeResponse:
+      description: "Count of account-wide unified dead-letter ledger rows purged."
+      type: object
+      required: [purged]
+      properties:
         purged: { type: integer, minimum: 0 }
 
     DelayedTaskResponse:

@@ -21,7 +21,7 @@ T = TypeVar("T", bound="DeadLetterEvent")
 
 @_attrs_define
 class DeadLetterEvent:
-    """One unified queue invocation, broker trigger, or outbound webhook delivery dead-letter event."""
+    """One unified queue invocation, broker trigger, outbound webhook, job run, or workflow run dead-letter event."""
 
     id: str
     source: DeadLetterEventSource
@@ -34,6 +34,10 @@ class DeadLetterEvent:
     first_failed_at: datetime.datetime
     last_failed_at: datetime.datetime
     created_at: datetime.datetime
+    app_id: str | Unset = UNSET
+    """Owning app when the event is app-scoped."""
+    app_slug: str | Unset = UNSET
+    """Owning app slug when the event is app-scoped."""
     origin: str | Unset = UNSET
     """Invocation source or trigger kind."""
     trigger_id: str | Unset = UNSET
@@ -62,6 +66,10 @@ class DeadLetterEvent:
         last_failed_at = self.last_failed_at.isoformat()
 
         created_at = self.created_at.isoformat()
+
+        app_id = self.app_id
+
+        app_slug = self.app_slug
 
         origin = self.origin
 
@@ -92,6 +100,10 @@ class DeadLetterEvent:
                 "created_at": created_at,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
+        if app_slug is not UNSET:
+            field_dict["app_slug"] = app_slug
         if origin is not UNSET:
             field_dict["origin"] = origin
         if trigger_id is not UNSET:
@@ -130,6 +142,10 @@ class DeadLetterEvent:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        app_id = d.pop("app_id", UNSET)
+
+        app_slug = d.pop("app_slug", UNSET)
+
         origin = d.pop("origin", UNSET)
 
         trigger_id = d.pop("trigger_id", UNSET)
@@ -163,6 +179,8 @@ class DeadLetterEvent:
             first_failed_at=first_failed_at,
             last_failed_at=last_failed_at,
             created_at=created_at,
+            app_id=app_id,
+            app_slug=app_slug,
             origin=origin,
             trigger_id=trigger_id,
             replayed_at=replayed_at,

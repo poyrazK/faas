@@ -201,6 +201,8 @@ var routeExclude = map[string]bool{
 	// browser form surfaces; mirror cmd/sdk-coverage/main.go::routeExclude.
 	"POST /dashboard/failed-events/{slug}/{id}/discard": true,
 	"POST /dashboard/failed-events/{slug}/{id}/replay":  true,
+	"POST /dashboard/failed-events/account/{id}/discard": true,
+	"POST /dashboard/failed-events/account/{id}/replay":  true,
 	// ADR-124 affected-workloads preview. Dashboard HTML form endpoints
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the

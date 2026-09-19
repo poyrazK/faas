@@ -574,9 +574,9 @@ type JobsQueuesData struct {
 	ErrorMessage string
 }
 
-// FailedEventsData backs the account-level Failed Events inbox. The source
-// ledger is currently app-scoped, so the handler aggregates bounded pages from
-// each app and sorts them newest-first before rendering.
+// FailedEventsData backs the account-level Failed Events inbox. The handler
+// reads the account-wide ledger so app-owned and account-owned failures share
+// one bounded, newest-first view.
 type FailedEventsData struct {
 	Events       []FailedEventPageItem
 	Apps         []AppListItem
