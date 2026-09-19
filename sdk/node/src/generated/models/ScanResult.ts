@@ -10,8 +10,9 @@ import type { Vulnerability } from './Vulnerability.js';
  * on GET /v1/deployments/{id}/scan (the dedicated drill-down route).
  * The dashboard renders the severity counts and the top 10 CVEs;
  * `gregale deployment <id> --show-scan` prints the full payload.
- * Surface, never enforce — an image with CRITICAL CVEs deploys
- * successfully; the dashboard shows it; that is the contract.
+ * Surface for off/warn apps. With security_policy=enforce, the
+ * deployment is promoted only after a complete, digest-matched scan
+ * with no HIGH, CRITICAL, or UNKNOWN findings.
  *
  */
 export type ScanResult = {
@@ -33,7 +34,7 @@ export type ScanResult = {
    */
   scanner_version?: string | null;
   /**
-   * OCI image digest at the time of the scan. Sourced from deployments.image_digest, not re-inspected. Empty on the pre-feature backfill (status = "skipped" with no image to stamp).
+   * OCI image reference recorded at the time of the scan. In security_policy=enforce, this must exactly match deployments.image_digest before promotion. Empty on the pre-feature backfill (status = "skipped" with no image to stamp).
    */
   image_digest?: string | null;
   severity_counts: SeverityCounts;
