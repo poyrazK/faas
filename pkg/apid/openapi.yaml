@@ -1904,7 +1904,7 @@ paths:
         - $ref: '#/components/parameters/Id32'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
-        '204': { description: Dead-letter event purged. }
+        '204': { description: Account dead-letter event removed from the ledger. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -1919,7 +1919,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Replay accepted.
+          description: Account dead-letter replay accepted.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeadLetterEvent' }
@@ -12294,9 +12294,9 @@ paths:
               properties:
                 csrf_token: { type: string }
       responses:
-        '303': { description: Redirect to the Failed Events inbox after replay. }
+        '303': { description: Redirect to the account-wide Failed Events inbox after replay. }
         '400':
-          description: Invalid dashboard CSRF token for replay.
+          description: Invalid dashboard CSRF token for account-event replay.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -12328,9 +12328,9 @@ paths:
               properties:
                 csrf_token: { type: string }
       responses:
-        '303': { description: Redirect to the Failed Events inbox after discard. }
+        '303': { description: Redirect to the account-wide Failed Events inbox after discard. }
         '400':
-          description: Invalid dashboard CSRF token for discard.
+          description: Invalid dashboard CSRF token for account-event discard.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
