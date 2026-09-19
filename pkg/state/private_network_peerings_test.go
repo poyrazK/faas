@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,58 @@ func TestMemStorePrivateNetworkPeeringRejectsUnsafeRelationships(t *testing.T) {
 	}
 	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{ID: "peer-foreign", AccountID: "acct-2", LeftNetworkID: "left", RightNetworkID: "right", Region: "fra1"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-account error = %v, want not found", err)
+	}
+}
+
+func TestMemStorePrivateNetworkPeeringReadsAndGuards(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	for _, network := range []PrivateNetwork{
+		{ID: "alpha", AccountID: "acct-1", Name: "alpha", Region: "fra1", CIDR: netip.MustParsePrefix("10.60.0.0/20")},
+		{ID: "beta", AccountID: "acct-1", Name: "beta", Region: "fra1", CIDR: netip.MustParsePrefix("10.60.16.0/20")},
+	} {
+		if _, err := store.CreatePrivateNetwork(ctx, network); err != nil {
+			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
+		}
+	}
+	created, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		AccountID: "acct-1", LeftNetworkID: "beta", RightNetworkID: "alpha", Region: "fra1",
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering generated ID: %v", err)
+	}
+	if !strings.HasPrefix(created.ID, "peer-") || created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
+		t.Fatalf("generated peering = %+v, want ID and timestamps", created)
+	}
+	got, err := store.GetPrivateNetworkPeering(ctx, "acct-1", created.ID)
+	if err != nil || got.ID != created.ID {
+		t.Fatalf("GetPrivateNetworkPeering = %+v, %v", got, err)
+	}
+	all, err := store.ListPrivateNetworkPeerings(ctx, "acct-1", "")
+	if err != nil || len(all) != 1 || all[0].LeftNetworkID != "alpha" {
+		t.Fatalf("ListPrivateNetworkPeerings(all) = %+v, %v", all, err)
+	}
+	if _, err := store.GetPrivateNetworkPeering(ctx, "acct-1", "peer-missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing peering error = %v, want not found", err)
+	}
+	if err := store.DeletePrivateNetworkPeering(ctx, "acct-1", "peer-missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete missing peering error = %v, want not found", err)
+	}
+	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+		ID: "peer-self", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "alpha", Region: "fra1",
+	}); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("self peering error = %v, want invalid argument", err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := store.ListPrivateNetworkPeerings(canceled, "acct-1", ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled list error = %v, want context canceled", err)
+	}
+	if _, err := store.GetPrivateNetworkPeering(canceled, "acct-1", created.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled get error = %v, want context canceled", err)
+	}
+	if err := store.DeletePrivateNetworkPeering(canceled, "acct-1", created.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled delete error = %v, want context canceled", err)
 	}
 }

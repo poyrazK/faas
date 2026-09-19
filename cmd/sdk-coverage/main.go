@@ -998,14 +998,18 @@ var methodRouteMap = map[string]string{
 	// Provider-neutral private-network attachment intent. Keep the explicit
 	// operation names aligned with the Go client helpers; auto-derivation would
 	// retain the `network/private` path separators and produce awkward names.
-	"GET /v1/apps/{slug}/network/private":    "GetAppPrivateNetworkAttachment",
-	"PUT /v1/apps/{slug}/network/private":    "SetAppPrivateNetworkAttachment",
-	"DELETE /v1/apps/{slug}/network/private": "ClearAppPrivateNetworkAttachment",
-	"GET /v1/networks":                       "ListPrivateNetworks",
-	"POST /v1/networks":                      "CreatePrivateNetwork",
-	"GET /v1/networks/{id}":                  "GetPrivateNetwork",
-	"PUT /v1/networks/{id}/policy":           "UpdatePrivateNetworkPolicy",
-	"DELETE /v1/networks/{id}":               "DeletePrivateNetwork",
+	"GET /v1/apps/{slug}/network/private":         "GetAppPrivateNetworkAttachment",
+	"PUT /v1/apps/{slug}/network/private":         "SetAppPrivateNetworkAttachment",
+	"DELETE /v1/apps/{slug}/network/private":      "ClearAppPrivateNetworkAttachment",
+	"GET /v1/networks":                            "ListPrivateNetworks",
+	"POST /v1/networks":                           "CreatePrivateNetwork",
+	"GET /v1/networks/{id}":                       "GetPrivateNetwork",
+	"PUT /v1/networks/{id}/policy":                "UpdatePrivateNetworkPolicy",
+	"DELETE /v1/networks/{id}":                    "DeletePrivateNetwork",
+	"GET /v1/networks/{id}/peerings":              "ListPrivateNetworkPeerings",
+	"POST /v1/networks/{id}/peerings":             "CreatePrivateNetworkPeering",
+	"GET /v1/networks/{id}/peerings/{peer_id}":    "GetPrivateNetworkPeering",
+	"DELETE /v1/networks/{id}/peerings/{peer_id}": "DeletePrivateNetworkPeering",
 
 	// Issue #961 / Mega-A PR-A — zero-config deploy + domains surface.
 	// The auto-derivation produces names with literal hyphens for the
