@@ -199,8 +199,8 @@ var routeExclude = map[string]bool{
 	// Unified Failed Events actions are dashboard-only form posts protected
 	// by the session cookie and CSRF token. The public SDK does not model
 	// browser form surfaces; mirror cmd/sdk-coverage/main.go::routeExclude.
-	"POST /dashboard/failed-events/{slug}/{id}/discard": true,
-	"POST /dashboard/failed-events/{slug}/{id}/replay":  true,
+	"POST /dashboard/failed-events/{slug}/{id}/discard":  true,
+	"POST /dashboard/failed-events/{slug}/{id}/replay":   true,
 	"POST /dashboard/failed-events/account/{id}/discard": true,
 	"POST /dashboard/failed-events/account/{id}/replay":  true,
 	// ADR-124 affected-workloads preview. Dashboard HTML form endpoints
