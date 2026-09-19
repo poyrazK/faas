@@ -2159,6 +2159,7 @@ type DebugDependencyLatencyHistoryItemView struct {
 type DebugDependencyImpactEdgeView struct {
 	From                   DebugCriticalPathSegmentView
 	To                     DebugCriticalPathSegmentView
+	Exemplars              []DebugDependencyImpactExemplarView
 	Calls                  int64
 	ErrorCalls             int64
 	ErrorRatePct           float64
@@ -2179,6 +2180,18 @@ type DebugDependencyImpactEdgeView struct {
 	BaselineErrorRatePct   float64
 	CurrentErrorRatePct    float64
 	ErrorRateDeltaPct      float64
+}
+
+type DebugDependencyImpactExemplarView struct {
+	RequestID  string
+	RequestURL string
+	TraceID    string
+	Window     string
+	ReceivedAt string
+	DurationMS int64
+	HTTPStatus int
+	Error      bool
+	Count      int64
 }
 
 // DebugCriticalPathHistoryView is the template-safe projection of bounded

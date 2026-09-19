@@ -5053,7 +5053,10 @@ paths:
         retained, redacted span summaries. The result compares the newer and
         older halves of the selected window to flag a dependency regression,
         and includes normalized parent-to-child impact edges with exclusive
-        wall-time percentiles.
+        wall-time percentiles. Each edge includes up to three representative
+        request identifiers for the current slowest sample, baseline slowest
+        sample, and an error sample when available; use them with the request
+        evidence endpoint for drill-down.
         Raw span attributes, destinations, request bodies, and credentials
         are never returned. Span evidence is sampled and the response marks
         row/cardinality truncation explicitly. Plan-gated by
@@ -32243,10 +32246,15 @@ components:
     DebugDependencyImpactEdge:
       type: object
       description: "Bounded normalized parent-to-child dependency edge reconstructed from retained redacted span links."
-      required: [from, to, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p50_ms, exclusive_p95_ms, exclusive_p99_ms, regression]
+      required: [from, to, exemplars, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p50_ms, exclusive_p95_ms, exclusive_p99_ms, regression]
       properties:
         from: { $ref: '#/components/schemas/DebugCriticalPathSegment' }
         to: { $ref: '#/components/schemas/DebugCriticalPathSegment' }
+        exemplars:
+          type: array
+          maxItems: 3
+          description: "Bounded current, baseline, and error representatives. Each request_id resolves only to redacted debugger evidence."
+          items: { $ref: '#/components/schemas/DebugDependencyImpactExemplar' }
         calls: { type: integer, format: int64, minimum: 1 }
         error_calls: { type: integer, format: int64, minimum: 0 }
         error_rate_pct: { type: number, minimum: 0, maximum: 100 }
@@ -32267,6 +32275,20 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_delta_pct: { type: number }
+
+    DebugDependencyImpactExemplar:
+      type: object
+      description: "Bounded representative request for a historical dependency edge. Request identifiers resolve only to retained redacted debugger evidence."
+      required: [request_id, window, received_at, duration_ms, http_status, error, count]
+      properties:
+        request_id: { type: string, maxLength: 128 }
+        trace_id: { type: string, maxLength: 128 }
+        window: { type: string, enum: [baseline, current] }
+        received_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        http_status: { type: integer, minimum: 0, maximum: 999 }
+        error: { type: boolean }
+        count: { type: integer, format: int64, minimum: 1 }
 
     DebugDependencyLatencyResponse:
       type: object

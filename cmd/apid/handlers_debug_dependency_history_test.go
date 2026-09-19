@@ -124,6 +124,42 @@ func TestBuildDebugDependencyLatencyHistoryBuildsNormalizedEdgesAndExclusiveTime
 	t.Fatalf("missing normalized handler -> service.binding edge: %+v", edges)
 }
 
+func TestBuildDebugDependencyLatencyHistoryIncludesEdgeExemplars(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := []sqlc.ListRequestTelemetryDependencySpansRow{
+		criticalPathHistoryTestRowWithIdentity(start.Add(10*time.Minute), 100, 200, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(70*time.Minute), 300, 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(80*time.Minute), 250, 500, "cccccccccccccccccccccccccccccccc"),
+	}
+
+	_, edges, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if truncated {
+		t.Fatal("unexpected truncation")
+	}
+	var edge *api.DebugDependencyImpactEdge
+	for i := range edges {
+		if edges[i].From.Name == "handler" && edges[i].To.Name == "db.query" {
+			edge = &edges[i]
+			break
+		}
+	}
+	if edge == nil {
+		t.Fatalf("missing handler -> db.query edge: %+v", edges)
+	}
+	if len(edge.Exemplars) != 3 {
+		t.Fatalf("exemplars = %+v, want three bounded representatives", edge.Exemplars)
+	}
+	if edge.Exemplars[0].RequestID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || edge.Exemplars[0].Window != "current" || edge.Exemplars[0].DurationMS != 300 {
+		t.Fatalf("current exemplar = %+v", edge.Exemplars[0])
+	}
+	if edge.Exemplars[1].RequestID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || edge.Exemplars[1].Window != "baseline" {
+		t.Fatalf("baseline exemplar = %+v", edge.Exemplars[1])
+	}
+	if edge.Exemplars[2].RequestID != "cccccccccccccccccccccccccccccccc" || !edge.Exemplars[2].Error || edge.Exemplars[2].HTTPStatus != 500 {
+		t.Fatalf("error exemplar = %+v", edge.Exemplars[2])
+	}
+}
+
 func TestBuildDebugDependencyLatencyHistoryCapsGroupsAndUsesApplicationFallback(t *testing.T) {
 	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
 	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, debugDependencyHistoryMaxGroups+1)

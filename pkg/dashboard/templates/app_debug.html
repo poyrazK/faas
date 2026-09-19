@@ -210,7 +210,7 @@
             <h3>Dependency impact edges</h3>
             <p class="muted">Normalized parent → child relationships reconstructed from retained span links. Exclusive P95 shows the child’s uncovered wall time.</p>
             <table class="coverage-table" aria-label="Dependency impact edges">
-              <thead><tr><th>Regression</th><th>From</th><th>To</th><th>Calls</th><th>Error rate</th><th>P95</th><th>Exclusive P95</th><th>Current exclusive</th><th>Exclusive Δ</th></tr></thead>
+              <thead><tr><th>Regression</th><th>From</th><th>To</th><th>Calls</th><th>Error rate</th><th>P95</th><th>Exclusive P95</th><th>Current exclusive</th><th>Exclusive Δ</th><th>Examples</th></tr></thead>
               <tbody>
                 {{range .Data.DependencyHistory.Edges}}
                   <tr>
@@ -218,6 +218,7 @@
                     <td><code>{{.From.Name}}</code><br><small class="muted">{{.From.Type}}{{if .From.Kind}}/{{.From.Kind}}{{end}}</small></td>
                     <td><code>{{.To.Name}}</code><br><small class="muted">{{.To.Type}}{{if .To.Kind}}/{{.To.Kind}}{{end}}</small></td>
                     <td>{{.Calls}}</td><td>{{printf "%.2f%%" .ErrorRatePct}}</td><td>{{.P95MS}} ms</td><td>{{.ExclusiveP95MS}} ms</td><td>{{.CurrentExclusiveP95MS}} ms</td><td>{{.ExclusiveP95DeltaMS}} ms</td>
+                    <td>{{if .Exemplars}}{{range .Exemplars}}<a href="{{.RequestURL}}"><span class="badge {{if .Error}}regressed{{else}}ok{{end}}">{{.Window}} · {{.DurationMS}} ms{{if .HTTPStatus}} · {{.HTTPStatus}}{{end}}</span></a><br>{{end}}{{else}}—{{end}}</td>
                   </tr>
                 {{end}}
               </tbody>

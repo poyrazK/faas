@@ -827,7 +827,7 @@ func renderDebugDependencies(w io.Writer, resp api.DebugDependencyLatencyRespons
 	if len(resp.Edges) > 0 {
 		_, _ = fmt.Fprintln(w, "\nDependency impact edges")
 		edges := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(edges, "REGRESSION\tFROM\tTO\tCALLS\tERROR_RATE\tP95\tEXCL_P95\tCURRENT_EXCL\tEXCL_DELTA")
+		_, _ = fmt.Fprintln(edges, "REGRESSION\tFROM\tTO\tCALLS\tERROR_RATE\tP95\tEXCL_P95\tCURRENT_EXCL\tEXCL_DELTA\tEXAMPLES")
 		for _, edge := range resp.Edges {
 			regression := ""
 			if edge.Regression {
@@ -841,8 +841,12 @@ func renderDebugDependencies(w io.Writer, resp api.DebugDependencyLatencyRespons
 			if edge.To.Kind != "" {
 				to = to + " (" + edge.To.Kind + ")"
 			}
-			_, _ = fmt.Fprintf(edges, "%s\t%s\t%s\t%d\t%.2f%%\t%dms\t%dms\t%dms\t%dms\n",
-				regression, from, to, edge.Calls, edge.ErrorRatePct, edge.P95MS, edge.ExclusiveP95MS, edge.CurrentExclusiveP95MS, edge.ExclusiveP95DeltaMS)
+			examples := make([]string, 0, len(edge.Exemplars))
+			for _, exemplar := range edge.Exemplars {
+				examples = append(examples, exemplar.Window+":"+exemplar.RequestID)
+			}
+			_, _ = fmt.Fprintf(edges, "%s\t%s\t%s\t%d\t%.2f%%\t%dms\t%dms\t%dms\t%dms\t%s\n",
+				regression, from, to, edge.Calls, edge.ErrorRatePct, edge.P95MS, edge.ExclusiveP95MS, edge.CurrentExclusiveP95MS, edge.ExclusiveP95DeltaMS, strings.Join(examples, ","))
 		}
 		_ = edges.Flush()
 	}

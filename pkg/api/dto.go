@@ -8351,28 +8351,44 @@ type DebugDependencyLatencyItem struct {
 // from retained redacted span links. From and To are normalized identities;
 // raw span IDs and destinations never cross this surface.
 type DebugDependencyImpactEdge struct {
-	From                   DebugCriticalPathSegment `json:"from"`
-	To                     DebugCriticalPathSegment `json:"to"`
-	Calls                  int64                    `json:"calls"`
-	ErrorCalls             int64                    `json:"error_calls"`
-	ErrorRatePct           float64                  `json:"error_rate_pct"`
-	P50MS                  int64                    `json:"p50_ms"`
-	P95MS                  int64                    `json:"p95_ms"`
-	P99MS                  int64                    `json:"p99_ms"`
-	ExclusiveP50MS         int64                    `json:"exclusive_p50_ms"`
-	ExclusiveP95MS         int64                    `json:"exclusive_p95_ms"`
-	ExclusiveP99MS         int64                    `json:"exclusive_p99_ms"`
-	BaselineP95MS          int64                    `json:"baseline_p95_ms,omitempty"`
-	CurrentP95MS           int64                    `json:"current_p95_ms,omitempty"`
-	P95DeltaMS             int64                    `json:"p95_delta_ms,omitempty"`
-	BaselineExclusiveP95MS int64                    `json:"baseline_exclusive_p95_ms,omitempty"`
-	CurrentExclusiveP95MS  int64                    `json:"current_exclusive_p95_ms,omitempty"`
-	ExclusiveP95DeltaMS    int64                    `json:"exclusive_p95_delta_ms,omitempty"`
-	RegressionFactor       float64                  `json:"regression_factor,omitempty"`
-	Regression             bool                     `json:"regression"`
-	BaselineErrorRatePct   float64                  `json:"baseline_error_rate_pct,omitempty"`
-	CurrentErrorRatePct    float64                  `json:"current_error_rate_pct,omitempty"`
-	ErrorRateDeltaPct      float64                  `json:"error_rate_delta_pct,omitempty"`
+	From                   DebugCriticalPathSegment        `json:"from"`
+	To                     DebugCriticalPathSegment        `json:"to"`
+	Exemplars              []DebugDependencyImpactExemplar `json:"exemplars"`
+	Calls                  int64                           `json:"calls"`
+	ErrorCalls             int64                           `json:"error_calls"`
+	ErrorRatePct           float64                         `json:"error_rate_pct"`
+	P50MS                  int64                           `json:"p50_ms"`
+	P95MS                  int64                           `json:"p95_ms"`
+	P99MS                  int64                           `json:"p99_ms"`
+	ExclusiveP50MS         int64                           `json:"exclusive_p50_ms"`
+	ExclusiveP95MS         int64                           `json:"exclusive_p95_ms"`
+	ExclusiveP99MS         int64                           `json:"exclusive_p99_ms"`
+	BaselineP95MS          int64                           `json:"baseline_p95_ms,omitempty"`
+	CurrentP95MS           int64                           `json:"current_p95_ms,omitempty"`
+	P95DeltaMS             int64                           `json:"p95_delta_ms,omitempty"`
+	BaselineExclusiveP95MS int64                           `json:"baseline_exclusive_p95_ms,omitempty"`
+	CurrentExclusiveP95MS  int64                           `json:"current_exclusive_p95_ms,omitempty"`
+	ExclusiveP95DeltaMS    int64                           `json:"exclusive_p95_delta_ms,omitempty"`
+	RegressionFactor       float64                         `json:"regression_factor,omitempty"`
+	Regression             bool                            `json:"regression"`
+	BaselineErrorRatePct   float64                         `json:"baseline_error_rate_pct,omitempty"`
+	CurrentErrorRatePct    float64                         `json:"current_error_rate_pct,omitempty"`
+	ErrorRateDeltaPct      float64                         `json:"error_rate_delta_pct,omitempty"`
+}
+
+// DebugDependencyImpactExemplar is one bounded representative request for a
+// historical dependency edge. It carries only the identifiers accepted by
+// the debugger request-detail surface; raw span attributes and destinations
+// never cross this boundary.
+type DebugDependencyImpactExemplar struct {
+	RequestID  string `json:"request_id"`
+	TraceID    string `json:"trace_id,omitempty"`
+	Window     string `json:"window"`
+	ReceivedAt string `json:"received_at"`
+	DurationMS int64  `json:"duration_ms"`
+	HTTPStatus int    `json:"http_status"`
+	Error      bool   `json:"error"`
+	Count      int64  `json:"count"`
 }
 
 // DebugDependencyLatencyResponse is the bounded historical dependency view

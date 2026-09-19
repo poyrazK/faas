@@ -1462,7 +1462,10 @@ export class AppsService {
    * retained, redacted span summaries. The result compares the newer and
    * older halves of the selected window to flag a dependency regression,
    * and includes normalized parent-to-child impact edges with exclusive
-   * wall-time percentiles.
+   * wall-time percentiles. Each edge includes up to three representative
+   * request identifiers for the current slowest sample, baseline slowest
+   * sample, and an error sample when available; use them with the request
+   * evidence endpoint for drill-down.
    * Raw span attributes, destinations, request bodies, and credentials
    * are never returned. Span evidence is sampled and the response marks
    * row/cardinality truncation explicitly. Plan-gated by

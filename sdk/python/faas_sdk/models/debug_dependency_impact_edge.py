@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.debug_critical_path_segment import DebugCriticalPathSegment
+    from ..models.debug_dependency_impact_exemplar import DebugDependencyImpactExemplar
 
 
 T = TypeVar("T", bound="DebugDependencyImpactEdge")
@@ -23,6 +24,9 @@ class DebugDependencyImpactEdge:
     """One redacted span identity in a canonical historical critical-path signature."""
     to: DebugCriticalPathSegment
     """One redacted span identity in a canonical historical critical-path signature."""
+    exemplars: list[DebugDependencyImpactExemplar]
+    """Bounded current, baseline, and error representatives. Each request_id resolves only to redacted debugger
+    evidence."""
     calls: int
     error_calls: int
     error_rate_pct: float
@@ -49,6 +53,11 @@ class DebugDependencyImpactEdge:
         from_ = self.from_.to_dict()
 
         to = self.to.to_dict()
+
+        exemplars = []
+        for exemplars_item_data in self.exemplars:
+            exemplars_item = exemplars_item_data.to_dict()
+            exemplars.append(exemplars_item)
 
         calls = self.calls
 
@@ -96,6 +105,7 @@ class DebugDependencyImpactEdge:
             {
                 "from": from_,
                 "to": to,
+                "exemplars": exemplars,
                 "calls": calls,
                 "error_calls": error_calls,
                 "error_rate_pct": error_rate_pct,
@@ -134,11 +144,19 @@ class DebugDependencyImpactEdge:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.debug_critical_path_segment import DebugCriticalPathSegment
+        from ..models.debug_dependency_impact_exemplar import DebugDependencyImpactExemplar
 
         d = dict(src_dict)
         from_ = DebugCriticalPathSegment.from_dict(d.pop("from"))
 
         to = DebugCriticalPathSegment.from_dict(d.pop("to"))
+
+        exemplars = []
+        _exemplars = d.pop("exemplars")
+        for exemplars_item_data in _exemplars:
+            exemplars_item = DebugDependencyImpactExemplar.from_dict(exemplars_item_data)
+
+            exemplars.append(exemplars_item)
 
         calls = d.pop("calls")
 
@@ -183,6 +201,7 @@ class DebugDependencyImpactEdge:
         debug_dependency_impact_edge = cls(
             from_=from_,
             to=to,
+            exemplars=exemplars,
             calls=calls,
             error_calls=error_calls,
             error_rate_pct=error_rate_pct,

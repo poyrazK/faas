@@ -3,12 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';
+import type { DebugDependencyImpactExemplar } from './DebugDependencyImpactExemplar.js';
 /**
  * Bounded normalized parent-to-child dependency edge reconstructed from retained redacted span links.
  */
 export type DebugDependencyImpactEdge = {
   from: DebugCriticalPathSegment;
   to: DebugCriticalPathSegment;
+  /**
+   * Bounded current, baseline, and error representatives. Each request_id resolves only to redacted debugger evidence.
+   */
+  exemplars: Array<DebugDependencyImpactExemplar>;
   calls: number;
   error_calls: number;
   error_rate_pct: number;

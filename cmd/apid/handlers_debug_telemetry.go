@@ -792,6 +792,11 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 				exclusiveNanos: minDebugDependencyDuration(exclusives[index]),
 				weight:         weight,
 				isError:        strings.EqualFold(span.Status, "error"),
+				requestID:      debugCriticalPathRequestID(row),
+				traceID:        textFromPg(row.TraceID),
+				receivedAt:     row.ReceivedAt,
+				httpStatus:     int(row.Status),
+				isCurrent:      isCurrent,
 			}
 			if aggregate != nil {
 				addDebugDependencyHistorySample(&aggregate.debugDependencyHistoryRollup, sample, isCurrent)
@@ -879,6 +884,7 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 		edgeOut = append(edgeOut, api.DebugDependencyImpactEdge{
 			From:                   aggregate.from,
 			To:                     aggregate.to,
+			Exemplars:              debugDependencyHistoryExemplars(&aggregate.debugDependencyHistoryRollup),
 			Calls:                  aggregate.calls,
 			ErrorCalls:             aggregate.errors,
 			ErrorRatePct:           metrics.errorRatePct,
@@ -923,6 +929,85 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 		truncated = true
 	}
 	return out, edgeOut, truncated, representedRequests, spanSamples
+}
+
+const debugDependencyImpactMaxExemplars = 3
+
+func debugDependencyHistoryExemplars(rollup *debugDependencyHistoryRollup) []api.DebugDependencyImpactExemplar {
+	if rollup == nil {
+		return nil
+	}
+	candidates := make([]debugDependencyHistorySample, 0, debugDependencyImpactMaxExemplars)
+	if current := debugDependencyHistorySlowestSample(rollup.current); current != nil {
+		candidates = append(candidates, *current)
+	}
+	if baseline := debugDependencyHistorySlowestSample(rollup.baseline); baseline != nil {
+		candidates = append(candidates, *baseline)
+	}
+	failure := debugDependencyHistorySlowestErrorSample(rollup.current)
+	if failure == nil {
+		failure = debugDependencyHistorySlowestErrorSample(rollup.baseline)
+	}
+	if failure != nil {
+		candidates = append(candidates, *failure)
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	exemplars := make([]api.DebugDependencyImpactExemplar, 0, debugDependencyImpactMaxExemplars)
+	for _, sample := range candidates {
+		if sample.requestID == "" || len(exemplars) >= debugDependencyImpactMaxExemplars {
+			continue
+		}
+		if _, ok := seen[sample.requestID]; ok {
+			continue
+		}
+		seen[sample.requestID] = struct{}{}
+		window := "baseline"
+		if sample.isCurrent {
+			window = "current"
+		}
+		exemplars = append(exemplars, api.DebugDependencyImpactExemplar{
+			RequestID:  sample.requestID,
+			TraceID:    sample.traceID,
+			Window:     window,
+			ReceivedAt: timeFromPg(sample.receivedAt),
+			DurationMS: int64(sample.durationNanos / uint64(time.Millisecond)),
+			HTTPStatus: sample.httpStatus,
+			Error:      sample.isError,
+			Count:      sample.weight,
+		})
+	}
+	return exemplars
+}
+
+func debugDependencyHistorySlowestSample(samples []debugDependencyHistorySample) *debugDependencyHistorySample {
+	var best *debugDependencyHistorySample
+	for index := range samples {
+		candidate := &samples[index]
+		if candidate.requestID == "" {
+			continue
+		}
+		if best == nil || candidate.durationNanos > best.durationNanos ||
+			(candidate.durationNanos == best.durationNanos && candidate.receivedAt.Time.After(best.receivedAt.Time)) {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func debugDependencyHistorySlowestErrorSample(samples []debugDependencyHistorySample) *debugDependencyHistorySample {
+	var best *debugDependencyHistorySample
+	for index := range samples {
+		candidate := &samples[index]
+		if !candidate.isError || candidate.requestID == "" {
+			continue
+		}
+		if best == nil || candidate.durationNanos > best.durationNanos ||
+			(candidate.durationNanos == best.durationNanos && candidate.receivedAt.Time.After(best.receivedAt.Time)) {
+			best = candidate
+		}
+	}
+	return best
 }
 
 func addDebugDependencyHistorySample(rollup *debugDependencyHistoryRollup, sample debugDependencyHistorySample, isCurrent bool) {

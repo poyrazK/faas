@@ -209,7 +209,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			SpanSamples:         spanSamples,
 			Dependencies:        dependencies,
 			Edges:               edges,
-		})
+		}, app.Slug)
 		criticalPaths, pathTruncated, pathComplete, pathRepresentedRequests, pathSamples := buildDebugCriticalPathHistory(dependencyRows, windowStart, windowEnd)
 		pathTruncated = pathTruncated || dependencyRowsTruncated
 		data.CriticalPathHistory = dashboardDebugCriticalPathHistoryView(api.DebugCriticalPathHistoryResponse{
@@ -485,7 +485,7 @@ func dashboardDebugCoverageSignalView(rows, requests, total int64) dashboard.Deb
 	return dashboard.DebugCoverageSignalView{Rows: rows, Requests: requests, RatePct: rate}
 }
 
-func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLatencyResponse) *dashboard.DebugDependencyLatencyHistoryView {
+func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLatencyResponse, slug string) *dashboard.DebugDependencyLatencyHistoryView {
 	view := &dashboard.DebugDependencyLatencyHistoryView{
 		Since:               response.Since,
 		WindowStart:         response.WindowStart,
@@ -526,9 +526,10 @@ func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLate
 		})
 	}
 	for _, edge := range response.Edges {
-		view.Edges = append(view.Edges, dashboard.DebugDependencyImpactEdgeView{
+		edgeView := dashboard.DebugDependencyImpactEdgeView{
 			From:                   dashboard.DebugCriticalPathSegmentView{Type: edge.From.Type, Kind: edge.From.Kind, Name: edge.From.Name},
 			To:                     dashboard.DebugCriticalPathSegmentView{Type: edge.To.Type, Kind: edge.To.Kind, Name: edge.To.Name},
+			Exemplars:              make([]dashboard.DebugDependencyImpactExemplarView, 0, len(edge.Exemplars)),
 			Calls:                  edge.Calls,
 			ErrorCalls:             edge.ErrorCalls,
 			ErrorRatePct:           edge.ErrorRatePct,
@@ -549,7 +550,22 @@ func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLate
 			BaselineErrorRatePct:   edge.BaselineErrorRatePct,
 			CurrentErrorRatePct:    edge.CurrentErrorRatePct,
 			ErrorRateDeltaPct:      edge.ErrorRateDeltaPct,
-		})
+		}
+		for _, exemplar := range edge.Exemplars {
+			values := url.Values{"since": []string{response.Since}, "request_id": []string{exemplar.RequestID}}
+			edgeView.Exemplars = append(edgeView.Exemplars, dashboard.DebugDependencyImpactExemplarView{
+				RequestID:  exemplar.RequestID,
+				RequestURL: "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode() + "#request-detail",
+				TraceID:    exemplar.TraceID,
+				Window:     exemplar.Window,
+				ReceivedAt: exemplar.ReceivedAt,
+				DurationMS: exemplar.DurationMS,
+				HTTPStatus: exemplar.HTTPStatus,
+				Error:      exemplar.Error,
+				Count:      exemplar.Count,
+			})
+		}
+		view.Edges = append(view.Edges, edgeView)
 	}
 	return view
 }
