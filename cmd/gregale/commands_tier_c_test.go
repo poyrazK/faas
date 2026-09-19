@@ -128,6 +128,21 @@ func TestTierC_AlertsAdd_BadMetricExitsOne(t *testing.T) {
 	}
 }
 
+func TestTierC_AlertsAdd_BadActionExitsOne(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, "", http.StatusOK)
+	if code := cmdAlertAdd([]string{
+		"--app", "demo", "--name", "r", "--metric", "error_rate_pct",
+		"--comparison", "gt", "--threshold", "1", "--window-spec", "5m",
+		"--action", "explode", "--webhook-url", "https://x", "--webhook-secret", "s",
+	}); code != 1 {
+		t.Fatalf("bad action exit = %d, want 1", code)
+	}
+	if f.sawMethod != "" {
+		t.Fatalf("bad action should be rejected before network; saw %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
 func TestTierC_AlertsAdd_HappyPath(t *testing.T) {
 	resetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","name":"r","metric":"error_rate_pct","window_spec":"5m","threshold":1.5,"comparison":"gt","enabled":true}`
@@ -135,12 +150,19 @@ func TestTierC_AlertsAdd_HappyPath(t *testing.T) {
 	if code := cmdAlertAdd([]string{
 		"--app", "demo", "--name", "r", "--metric", "error_rate_pct",
 		"--comparison", "gt", "--threshold", "1.5",
-		"--window-spec", "5m", "--webhook-url", "https://x", "--webhook-secret", "s",
+		"--window-spec", "5m", "--action", "rollback", "--webhook-url", "https://x", "--webhook-secret", "s",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/alerts" {
 		t.Errorf("route = %s %s, want POST /v1/apps/demo/alerts", f.sawMethod, f.sawPath)
+	}
+	var request api.CreateAlertRuleRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if request.Action == nil || *request.Action != "rollback" {
+		t.Fatalf("action = %v, want rollback", request.Action)
 	}
 }
 
@@ -201,6 +223,25 @@ func TestTierC_AlertsUpdate_NameOnlyDoesNotResendEnabledOrCooldown(t *testing.T)
 	}
 	if _, ok := got["cooldown_minutes"]; ok {
 		t.Errorf("cooldown_minutes present in body; must be omitted on rename-only update (got %v)", got["cooldown_minutes"])
+	}
+}
+
+func TestTierC_AlertsUpdate_Action(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"id":"0123456789abcdef0123456789abcdef","name":"r","action":"demote"}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	if code := cmdAlertUpdate([]string{
+		"--app", "demo", "--action", "demote",
+		"0123456789abcdef0123456789abcdef",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	}
+	if got["action"] != "demote" {
+		t.Errorf("action = %v, want demote", got["action"])
 	}
 }
 

@@ -325,10 +325,12 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
 			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
+				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "webhook-secret-stdin", Short: "read the webhook secret from stdin"},
 			}},
 			{Name: "info", Short: "Show one alert rule"},
 			{Name: "update", Short: "Update one alert rule", Flags: []cliFlag{
+				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
 			}},
 			{Name: "rm", Short: "Delete one alert rule"},

@@ -10,8 +10,8 @@
 // Tier B admin consume-credits 403 hint pattern, commands_admin.go:140-150).
 //
 // Closed-set drift test (commands_webhooks.go:127-134 mirrored): all
-// four enum-typed flags --metric / --comparison / --window-spec /
-// --failure-source are validated against the pkg/api.AllowedAlertRule*
+// five enum-typed flags --metric / --comparison / --window-spec /
+// --failure-source / --action are validated against the pkg/api.AllowedAlertRule*
 // slices BEFORE the network round-trip. A CLI typo costs zero latency.
 
 package main
@@ -38,6 +38,7 @@ import (
 const (
 	flagNameEnabled         = "enabled"
 	flagNameCooldownMinutes = "cooldown-minutes"
+	flagNameAction          = "action"
 )
 
 func cmdAlerts(args []string) int {
@@ -119,6 +120,7 @@ func cmdAlertAdd(args []string) int {
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke) — required iff --metric=failed_invocations")
+	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
@@ -136,7 +138,7 @@ func cmdAlertAdd(args []string) int {
 	if code, ok := requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret, threshold, cooldown); !ok {
 		return code
 	}
-	if !validateAlertClosedSets(metric, comparison, windowSpec, failureSource) {
+	if !validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action) {
 		return 1
 	}
 	if !api.IsFiniteFloat(*threshold) {
@@ -154,6 +156,7 @@ func cmdAlertAdd(args []string) int {
 		Threshold:       *threshold,
 		WindowSpec:      *windowSpec,
 		FailureSource:   *failureSource,
+		Action:          ptrIfNonEmpty(*action),
 		WebhookURL:      *webhookURL,
 		WebhookSecret:   *webhookSecret,
 		CooldownMinutes: cooldown,
@@ -177,7 +180,7 @@ func cmdAlertAdd(args []string) int {
 func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret *string, threshold *float64, cooldown *int) (int, bool) {
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
 		*windowSpec == "" || *webhookURL == "" || *webhookSecret == "" || math.IsNaN(*threshold) {
-		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> --webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) [--failure-source <s>] [--cooldown-minutes N] [--enabled=false]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> --webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
 	if *cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes {
@@ -186,11 +189,11 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 	return 0, true
 }
 
-// validateAlertClosedSets checks the four closed-set enums shared by
+// validateAlertClosedSets checks the five closed-set enums shared by
 // alerts add + update. Fires the APIError-style printErr on the
 // first failure (consistent with the other leaves). On failure
 // returns false; the caller returns 1.
-func validateAlertClosedSets(metric, comparison, windowSpec, failureSource *string) bool {
+func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action *string) bool {
 	if !api.AllowedAlertRuleMetric(*metric) {
 		return printErr("Invalid metric", fmt.Errorf("--metric %q is not in the closed set", *metric)) == 0
 	}
@@ -207,6 +210,9 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource *stri
 		if !api.AllowedAlertRuleFailureSource(*failureSource) {
 			return printErr("Invalid failure-source", fmt.Errorf("--failure-source %q must be any|cron|queue|delayed_task|async_invoke", *failureSource)) == 0
 		}
+	}
+	if *action != "" && !api.AllowedAlertRuleAction(*action) {
+		return printErr("Invalid action", fmt.Errorf("--action %q must be webhook|rollback|demote|promote", *action)) == 0
 	}
 	return true
 }
@@ -248,6 +254,7 @@ func cmdAlertInfo(args []string) int {
 	if resp.FailureSource != "" {
 		fmt.Printf("failure_source: %s\n", resp.FailureSource)
 	}
+	fmt.Printf("action:       %s\n", resp.Action)
 	fmt.Printf("webhook_url:  %s\n", resp.WebhookURL)
 	fmt.Printf("state:        %s\n", resp.State)
 	fmt.Printf("cooldown:     %d minutes\n", resp.CooldownMinutes)
@@ -272,6 +279,7 @@ func cmdAlertUpdate(args []string) int {
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
+	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the replacement webhook secret from stdin")
@@ -280,7 +288,7 @@ func cmdAlertUpdate(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1
 	}
 	if *webhookSecretStdin || *webhookSecret != "" {
@@ -292,7 +300,7 @@ func cmdAlertUpdate(args []string) int {
 	if !alertIDPattern.MatchString(id) {
 		return printErr("Invalid alert id", fmt.Errorf("must be a 32-hex-char UUID; got %q", id))
 	}
-	if !validateAlertUpdateFlags(metric, comparison, windowSpec, threshold, cooldown) {
+	if !validateAlertUpdateFlags(metric, comparison, windowSpec, action, threshold, cooldown) {
 		return 1
 	}
 	// UpdateAlertRuleRequest is pointer-everything (pkg/api/alerts.go:124-134):
@@ -316,6 +324,7 @@ func cmdAlertUpdate(args []string) int {
 		Comparison:    ptrIfNonEmpty(*comparison),
 		Threshold:     thrIfFinite(*threshold),
 		WindowSpec:    ptrIfNonEmpty(*windowSpec),
+		Action:        ptrIfNonEmpty(*action),
 		WebhookURL:    ptrIfNonEmpty(*webhookURL),
 		WebhookSecret: ptrIfNonEmpty(*webhookSecret),
 	}
@@ -345,7 +354,7 @@ func cmdAlertUpdate(args []string) int {
 // non-empty (omitted != invalid), and the threshold finite-check
 // is gated on non-NaN (the unset sentinel from flag.Float64).
 // Extracted so cmdAlertUpdate stays under the 50-line handler cap.
-func validateAlertUpdateFlags(metric, comparison, windowSpec *string, threshold *float64, cooldown *int) bool {
+func validateAlertUpdateFlags(metric, comparison, windowSpec, action *string, threshold *float64, cooldown *int) bool {
 	if *metric != "" && !api.AllowedAlertRuleMetric(*metric) {
 		return printErr("Invalid metric", fmt.Errorf("--metric %q is not in the closed set", *metric)) == 0
 	}
@@ -354,6 +363,9 @@ func validateAlertUpdateFlags(metric, comparison, windowSpec *string, threshold 
 	}
 	if *windowSpec != "" && !api.AllowedAlertRuleWindowSpec(*windowSpec) {
 		return printErr("Invalid window-spec", fmt.Errorf("--window-spec %q must be 5m|15m|1h|6h|24h|7d|15d", *windowSpec)) == 0
+	}
+	if *action != "" && !api.AllowedAlertRuleAction(*action) {
+		return printErr("Invalid action", fmt.Errorf("--action %q must be webhook|rollback|demote|promote", *action)) == 0
 	}
 	if !math.IsNaN(*threshold) && !api.IsFiniteFloat(*threshold) {
 		return printErr("Invalid threshold", fmt.Errorf("--threshold must be a finite number; got %v", *threshold)) == 0

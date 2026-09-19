@@ -90,7 +90,16 @@ gregale deploy --safe --dry-run --json | jq '.diff.safe_release'
 The preview shows the next rollout step, the actionable alert-gate status,
 and the previous deployment that would be the rollback target. If no enabled
 `rollback` or `demote` alert rule exists, the preview warns that the rollout
-has no actionable health gate.
+has no actionable health gate. Create one from the CLI with `--action`, for
+example:
+
+```bash
+gregale alerts add --app APP_ID --name release-errors \
+  --metric error_rate_pct --comparison gt --threshold 5 \
+  --window-spec 5m --action rollback \
+  --webhook-url https://example.com/hooks/gregale \
+  --webhook-secret-stdin
+```
 
 The existing deploy default remains unchanged. For an explicitly configured
 canary, a normal deploy returns once the candidate is live; inspect or wait

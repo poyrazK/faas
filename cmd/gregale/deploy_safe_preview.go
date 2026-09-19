@@ -50,7 +50,7 @@ func addSafeReleasePreview(ctx context.Context, client *api.Client, opts diffCLI
 	}
 	preview.HealthGate = safeReleaseHealthGate(rules)
 	if preview.HealthGate.Status == deploydiff.SafeReleaseHealthNotConfigured {
-		addSafeReleaseHealthWarning(d, "safe_release_health_gate_missing", "no enabled rollback/demote alert rule is configured; the safe rollout can advance without an actionable health gate")
+		addSafeReleaseHealthWarning(d, "safe_release_health_gate_missing", "no enabled rollback/demote alert rule is configured; add one with `gregale alerts add --action rollback ...` before rollout")
 	}
 	d.SafeRelease = preview
 }
