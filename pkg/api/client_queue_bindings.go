@@ -2,6 +2,14 @@ package api
 
 import "context"
 
+// ConfigureQueueWorkload converges the app's simple queue workload profile.
+// The PUT is idempotent and expands server-side into the binding, push
+// consumer projection, and queue-depth scaling policy.
+func (c *Client) ConfigureQueueWorkload(ctx context.Context, slug string, req QueueWorkloadProfileRequest) (QueueWorkloadProfileResponse, error) {
+	var out QueueWorkloadProfileResponse
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/queue-workload", req, &out)
+}
+
 func (c *Client) ListQueueBindings(ctx context.Context, slug string) ([]QueueBindingResponse, error) {
 	var out []QueueBindingResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/queue-bindings", nil, &out)

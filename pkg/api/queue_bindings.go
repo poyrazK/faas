@@ -72,6 +72,27 @@ type UpdateQueueBindingRequest struct {
 	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
 }
 
+// QueueWorkloadProfileRequest configures the common queue worker profile in
+// one idempotent control-plane operation. Zero-valued fields use platform
+// defaults; advanced binding and scaling APIs remain available separately.
+type QueueWorkloadProfileRequest struct {
+	QueueName      string          `json:"queue_name,omitempty"`
+	WorkloadClass  string          `json:"workload_class,omitempty"`
+	MaxConcurrency int             `json:"max_concurrency,omitempty"`
+	TargetDepth    float64         `json:"target_depth,omitempty"`
+	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Force          bool            `json:"force,omitempty"`
+}
+
+// QueueWorkloadProfileResponse is the converged queue binding and scaling
+// policy returned by the simple queue workload endpoint.
+type QueueWorkloadProfileResponse struct {
+	App           AppResponse          `json:"app"`
+	Binding       QueueBindingResponse `json:"binding"`
+	ScalingPolicy *ScalingPolicy       `json:"scaling_policy"`
+	Created       bool                 `json:"created"`
+}
+
 // QueueBindingResponseFromRow maps the state row without importing pkg/state
 // into pkg/api. Invalid persisted retry JSON is treated as an empty policy;
 // the write path and database CHECK keep production rows object-shaped.

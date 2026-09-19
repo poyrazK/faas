@@ -16,6 +16,8 @@ import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
 import type { QueueSendRequest } from '../models/QueueSendRequest.js';
 import type { QueueSendResponse } from '../models/QueueSendResponse.js';
 import type { QueueStateResponse } from '../models/QueueStateResponse.js';
+import type { QueueWorkloadProfileRequest } from '../models/QueueWorkloadProfileRequest.js';
+import type { QueueWorkloadProfileResponse } from '../models/QueueWorkloadProfileResponse.js';
 import type { UpdateQueueBindingRequest } from '../models/UpdateQueueBindingRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -204,6 +206,47 @@ export class QueuesService {
       errors: {
         403: `code: plan_queue_depth — per-app queue at the plan's MaxQueueDepth.`,
         413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Configure the simple queue workload profile.
+   * Idempotently creates or updates the app's default push queue
+   * binding, consumer projection, and queue-depth scaling policy.
+   * Zero-valued request fields use platform defaults; advanced
+   * resources remain available through the individual APIs.
+   *
+   * @returns QueueWorkloadProfileResponse Existing profile converged.
+   * @throws ApiError
+   */
+  public static configureQueueWorkload({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: QueueWorkloadProfileRequest,
+  }): CancelablePromise<QueueWorkloadProfileResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/queue-workload',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

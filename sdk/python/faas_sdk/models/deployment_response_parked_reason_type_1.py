@@ -1,11 +1,14 @@
 from typing import Literal
 
-DeploymentResponseParkedReasonType1 = Literal["admin_park", "lifecycle_park", "liveness_exhausted"]
+DeploymentResponseParkedReasonType1 = Literal[
+    "admin_park", "lifecycle_park", "liveness_exhausted", "security_scan_regressed"
+]
 
 DEPLOYMENT_RESPONSE_PARKED_REASON_TYPE_1_VALUES: set[DeploymentResponseParkedReasonType1] = {
     "admin_park",
     "lifecycle_park",
     "liveness_exhausted",
+    "security_scan_regressed",
 }
 
 

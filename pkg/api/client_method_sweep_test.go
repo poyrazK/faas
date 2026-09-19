@@ -307,6 +307,14 @@ func TestSweep_QueueSend(t *testing.T) {
 	}
 }
 
+func TestSweep_ConfigureQueueWorkload(t *testing.T) {
+	srv, _ := newSweepServer(t, 200, `{"created":false}`)
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ConfigureQueueWorkload(context.Background(), "myapp", QueueWorkloadProfileRequest{QueueName: "default"}); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestSweep_QueueReceive(t *testing.T) {
 	srv, _ := newSweepServer(t, 200, `{"items":[{"id":"q_1","body":"msg"}]}`)
 	c := NewClient(srv.URL, "fp_test")

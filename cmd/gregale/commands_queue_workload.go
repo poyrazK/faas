@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -11,130 +10,35 @@ import (
 )
 
 const (
-	defaultQueueWorkloadBindingName = "default"
 	defaultQueueWorkloadQueueName   = "default"
 	defaultQueueWorkloadTargetDepth = 10.0
 	defaultQueueWorkloadConcurrency = 1
 )
 
-// queueWorkloadClient is the existing control-plane surface composed by the
-// simple queue profile. Keeping this seam narrow makes the reconciliation
-// logic testable without introducing a second queue configuration API.
+// queueWorkloadClient is the single server-side control-plane surface used by
+// the simple queue profile. Keeping the CLI thin prevents it from having to
+// recreate binding/scaling reconciliation and rollback rules.
 type queueWorkloadClient interface {
-	GetApp(context.Context, string) (api.AppResponse, error)
-	UpdateApp(context.Context, string, api.UpdateAppRequest) (api.AppResponse, error)
-	ListQueueBindings(context.Context, string) ([]api.QueueBindingResponse, error)
-	CreateQueueBinding(context.Context, string, api.CreateQueueBindingRequest) (api.QueueBindingResponse, error)
-	UpdateQueueBinding(context.Context, string, string, api.UpdateQueueBindingRequest) (api.QueueBindingResponse, error)
+	ConfigureQueueWorkload(context.Context, string, api.QueueWorkloadProfileRequest) (api.QueueWorkloadProfileResponse, error)
 }
 
-type queueWorkloadSetupResult struct {
-	App           api.AppResponse          `json:"app"`
-	Binding       api.QueueBindingResponse `json:"binding"`
-	ScalingPolicy *api.ScalingPolicy       `json:"scaling_policy"`
-	Created       bool                     `json:"created"`
-}
-
-var errQueueWorkloadBindingConflict = errors.New("default queue binding already points at another queue")
-
-// setupQueueWorkload reconciles the opinionated worker profile used by
-// `gregale queue setup`. It deliberately composes first-class bindings and
-// app scaling rather than creating a parallel queue runtime or persistence
-// model. Re-running it converges on the same binding and policy.
-func setupQueueWorkload(ctx context.Context, client queueWorkloadClient, slug, queueName string, targetDepth float64, maxConcurrency int, force bool) (queueWorkloadSetupResult, error) {
+func setupQueueWorkload(ctx context.Context, client queueWorkloadClient, slug, queueName string, targetDepth float64, maxConcurrency int, force bool) (api.QueueWorkloadProfileResponse, error) {
 	if queueName == "" {
 		queueName = defaultQueueWorkloadQueueName
 	}
 	if targetDepth <= 0 {
-		return queueWorkloadSetupResult{}, fmt.Errorf("target depth must be greater than zero")
+		return api.QueueWorkloadProfileResponse{}, fmt.Errorf("target depth must be greater than zero")
 	}
 	if maxConcurrency < 1 {
-		return queueWorkloadSetupResult{}, fmt.Errorf("max concurrency must be at least one")
+		return api.QueueWorkloadProfileResponse{}, fmt.Errorf("max concurrency must be at least one")
 	}
-
-	app, err := client.GetApp(ctx, slug)
+	result, err := client.ConfigureQueueWorkload(ctx, slug, api.QueueWorkloadProfileRequest{
+		QueueName: queueName, TargetDepth: targetDepth, MaxConcurrency: maxConcurrency, Force: force,
+	})
 	if err != nil {
-		return queueWorkloadSetupResult{}, fmt.Errorf("read app before queue setup: %w", err)
+		return api.QueueWorkloadProfileResponse{}, fmt.Errorf("configure queue workload: %w", err)
 	}
-	workloadClass := app.WorkloadClass
-	if workloadClass != "worker" && workloadClass != "job" {
-		return queueWorkloadSetupResult{}, fmt.Errorf("queue setup requires an app with workload_class worker or job; found %q", workloadClass)
-	}
-	bindings, err := client.ListQueueBindings(ctx, slug)
-	if err != nil {
-		return queueWorkloadSetupResult{}, fmt.Errorf("list queue bindings before queue setup: %w", err)
-	}
-
-	var existing *api.QueueBindingResponse
-	for i := range bindings {
-		if bindings[i].Name != defaultQueueWorkloadBindingName {
-			continue
-		}
-		if existing != nil {
-			return queueWorkloadSetupResult{}, fmt.Errorf("multiple %q queue bindings exist; reconcile them with `gregale queue bindings` first", defaultQueueWorkloadBindingName)
-		}
-		existing = &bindings[i]
-	}
-	if existing != nil && existing.QueueName != queueName && !force {
-		return queueWorkloadSetupResult{}, fmt.Errorf("%w: %q (use --force to replace it)", errQueueWorkloadBindingConflict, existing.QueueName)
-	}
-
-	enabled := true
-	mode := "push"
-	var binding api.QueueBindingResponse
-	created := false
-	if existing == nil {
-		binding, err = client.CreateQueueBinding(ctx, slug, api.CreateQueueBindingRequest{
-			Name: defaultQueueWorkloadBindingName, QueueName: queueName,
-			Mode: mode, WorkloadClass: workloadClass, Enabled: &enabled,
-			MaxConcurrency: maxConcurrency,
-		})
-		created = true
-	} else {
-		binding, err = client.UpdateQueueBinding(ctx, slug, existing.ID, api.UpdateQueueBindingRequest{
-			QueueName: &queueName, Mode: &mode, WorkloadClass: &workloadClass,
-			Enabled: &enabled, MaxConcurrency: &maxConcurrency,
-		})
-	}
-	if err != nil {
-		return queueWorkloadSetupResult{}, fmt.Errorf("reconcile default queue binding: %w", err)
-	}
-
-	policy := queueWorkloadScalingPolicy(app, targetDepth)
-	if !scalingPolicyEqual(app.ScalingPolicy, policy) || app.MinInstances != policy.MinInstances {
-		updatedApp, updateErr := client.UpdateApp(ctx, slug, api.UpdateAppRequest{ScalingPolicy: policy})
-		if updateErr != nil {
-			return queueWorkloadSetupResult{}, fmt.Errorf("apply queue-depth scaling policy: %w", updateErr)
-		}
-		app = updatedApp
-	}
-	return queueWorkloadSetupResult{App: app, Binding: binding, ScalingPolicy: policy, Created: created}, nil
-}
-
-func queueWorkloadScalingPolicy(app api.AppResponse, targetDepth float64) *api.ScalingPolicy {
-	policy := &api.ScalingPolicy{
-		MinInstances:      0,
-		ScaleOutCooldownS: 5,
-		ScaleInCooldownS:  60,
-		Target:            &api.ScalingTarget{Metric: "queue_depth", Value: targetDepth},
-	}
-	if app.ScalingPolicy != nil {
-		copyPolicy := *app.ScalingPolicy
-		if app.ScalingPolicy.Target != nil {
-			target := *app.ScalingPolicy.Target
-			copyPolicy.Target = &target
-		}
-		policy = &copyPolicy
-		policy.MinInstances = 0
-		if policy.ScaleOutCooldownS == 0 {
-			policy.ScaleOutCooldownS = 5
-		}
-		if policy.ScaleInCooldownS == 0 {
-			policy.ScaleInCooldownS = 60
-		}
-		policy.Target = &api.ScalingTarget{Metric: "queue_depth", Value: targetDepth}
-	}
-	return policy
+	return result, nil
 }
 
 func cmdQueueSetup(args []string) int {

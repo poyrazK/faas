@@ -1,11 +1,14 @@
 from typing import Literal
 
-ParkedDeploymentRefParkedReason = Literal["admin_park", "lifecycle_park", "liveness_exhausted"]
+ParkedDeploymentRefParkedReason = Literal[
+    "admin_park", "lifecycle_park", "liveness_exhausted", "security_scan_regressed"
+]
 
 PARKED_DEPLOYMENT_REF_PARKED_REASON_VALUES: set[ParkedDeploymentRefParkedReason] = {
     "admin_park",
     "lifecycle_park",
     "liveness_exhausted",
+    "security_scan_regressed",
 }
 
 

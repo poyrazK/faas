@@ -14019,6 +14019,41 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/queue-workload:
+    put:
+      tags: [queues]
+      operationId: configureQueueWorkload
+      summary: Configure the simple queue workload profile.
+      description: |
+        Idempotently creates or updates the app's default push queue
+        binding, consumer projection, and queue-depth scaling policy.
+        Zero-valued request fields use platform defaults; advanced
+        resources remain available through the individual APIs.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueWorkloadProfileRequest' }
+      responses:
+        '200':
+          description: Existing profile converged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueWorkloadProfileResponse' }
+        '201':
+          description: New profile created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueWorkloadProfileResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/queue-bindings:
     get:
       tags: [queues]
@@ -29911,6 +29946,33 @@ components:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
           description: Optional per-message retry curve override.
+
+    QueueWorkloadProfileRequest:
+      description: |
+        Declarative setup for the common queue worker profile. The server
+        reconciles the default push binding, consumer projection, and
+        queue-depth scaling policy as one idempotent operation.
+      type: object
+      properties:
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', default: default }
+        workload_class: { type: string, enum: [worker, job], description: Defaults to the app workload class. }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000, default: 1 }
+        target_depth: { type: number, exclusiveMinimum: 0, default: 10 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: Optional per-binding retry curve.
+        force: { type: boolean, default: false, description: Replace an existing default binding that points at another queue. }
+
+    QueueWorkloadProfileResponse:
+      description: The converged queue binding and queue-depth scaling policy.
+      type: object
+      required: [app, binding, scaling_policy, created]
+      properties:
+        app: { $ref: '#/components/schemas/AppResponse' }
+        binding: { $ref: '#/components/schemas/QueueBindingResponse' }
+        scaling_policy: { $ref: '#/components/schemas/ScalingPolicy' }
+        created: { type: boolean, description: True when the default binding was created by this request. }
 
     CreateQueueBindingRequest:
       description: Durable mapping from a logical queue to a worker/job workload.

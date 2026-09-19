@@ -1061,6 +1061,9 @@ from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
 from .queue_state_response import QueueStateResponse
 from .queue_state_response_plan import QueueStateResponsePlan
+from .queue_workload_profile_request import QueueWorkloadProfileRequest
+from .queue_workload_profile_request_workload_class import QueueWorkloadProfileRequestWorkloadClass
+from .queue_workload_profile_response import QueueWorkloadProfileResponse
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
 from .record_dev_sync_request import RecordDevSyncRequest
@@ -2344,6 +2347,9 @@ __all__ = (
     "QueueSendResponse",
     "QueueStateResponse",
     "QueueStateResponsePlan",
+    "QueueWorkloadProfileRequest",
+    "QueueWorkloadProfileRequestWorkloadClass",
+    "QueueWorkloadProfileResponse",
     "QuotaBlock",
     "RaiseOverageCapRequest",
     "RecordDevSyncRequest",

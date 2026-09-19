@@ -535,6 +535,8 @@ export type { QueueReceiveResponse } from './QueueReceiveResponse.js';
 export type { QueueSendRequest } from './QueueSendRequest.js';
 export type { QueueSendResponse } from './QueueSendResponse.js';
 export type { QueueStateResponse } from './QueueStateResponse.js';
+export type { QueueWorkloadProfileRequest } from './QueueWorkloadProfileRequest.js';
+export type { QueueWorkloadProfileResponse } from './QueueWorkloadProfileResponse.js';
 export type { QuotaBlock } from './QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './RaiseOverageCapRequest.js';
 export type { RateLimitPlain } from './RateLimitPlain.js';

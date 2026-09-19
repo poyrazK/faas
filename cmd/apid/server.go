@@ -2060,6 +2060,7 @@ func (s *server) handler() http.Handler {
 	// Queue bindings are the durable app-scoped contract consumed by push
 	// workers and queue-depth autoscaling. The message ledger remains under
 	// /queues/*; these routes manage only binding configuration.
+	mux.HandleFunc("PUT /v1/apps/{slug}/queue-workload", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.configureQueueWorkload))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listQueueBindings))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createQueueBinding)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBinding))))
