@@ -359,7 +359,7 @@ func TestEnqueue_GithubDeliveryRetryReturnsExistingWork(t *testing.T) {
 	}
 }
 
-func TestEnqueue_HappyPath_SecondDeploy_FiresSupersede(t *testing.T) {
+func TestEnqueue_SecondDeploy_KeepsLivePredecessor(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)
 	notif := &recordingNotifier{}
@@ -380,6 +380,9 @@ func TestEnqueue_HappyPath_SecondDeploy_FiresSupersede(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Enqueue: %v", err)
 	}
+	if err := st.MarkDeploymentLive(context.Background(), first.DeploymentID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
 
 	// Second deploy against the same app.
 	notif.mu.Lock()
@@ -398,24 +401,53 @@ func TestEnqueue_HappyPath_SecondDeploy_FiresSupersede(t *testing.T) {
 		t.Fatalf("second Enqueue: %v", err)
 	}
 
-	// Two notifies this time: build_queued + deployment_changed.
+	// The replacement is only building. The live predecessor remains serving,
+	// so enqueue must not synthesize a superseded event that makes schedd park
+	// it before the candidate is ready.
+	if got := notif.callCount(); got != 1 {
+		t.Fatalf("notify calls: got %d want 1 (build_queued only)", got)
+	}
+	old, err := st.DeploymentByID(context.Background(), first.DeploymentID)
+	if err != nil {
+		t.Fatalf("load predecessor: %v", err)
+	}
+	if old.Status != state.DeployLive {
+		t.Fatalf("predecessor status = %q, want live", old.Status)
+	}
+	if second.DeploymentID == first.DeploymentID {
+		t.Fatalf("expected new deployment id, got duplicate %q", second.DeploymentID)
+	}
+}
+
+func TestEnqueue_NotifiesActuallySupersededPendingPredecessor(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	pending, err := st.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("seed pending deployment: %v", err)
+	}
+	notif := &recordingNotifier{}
+	srcPath, srcBytes := stageSource(t, t.TempDir())
+
+	if _, err := Enqueue(context.Background(), st, notif, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+		SourcePath: srcPath, SourceBytes: srcBytes,
+		LogSpool: t.TempDir(), Log: quietLogger(),
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
 	if got := notif.callCount(); got != 2 {
-		t.Fatalf("notify calls: got %d want 2 (build_queued + supersede)", got)
+		t.Fatalf("notify calls: got %d want 2 (build_queued + real supersede)", got)
 	}
 	notif.mu.Lock()
 	sup := notif.calls[1]
 	notif.mu.Unlock()
-	if sup.channel != db.NotifyDeploymentChanged {
-		t.Fatalf("supersede channel: got %q want %q", sup.channel, db.NotifyDeploymentChanged)
-	}
-	if !strings.Contains(sup.payload, `"status":"superseded"`) {
-		t.Fatalf("supersede payload: %s", sup.payload)
-	}
-	if !strings.Contains(sup.payload, `"deployment_id":"`+first.DeploymentID+`"`) {
-		t.Fatalf("supersede payload missing prev deployment id: %s", sup.payload)
-	}
-	if second.DeploymentID == first.DeploymentID {
-		t.Fatalf("expected new deployment id, got duplicate %q", second.DeploymentID)
+	if sup.channel != db.NotifyDeploymentChanged ||
+		!strings.Contains(sup.payload, `"status":"superseded"`) ||
+		!strings.Contains(sup.payload, `"deployment_id":"`+pending.ID+`"`) {
+		t.Fatalf("supersede notification = channel:%q payload:%s", sup.channel, sup.payload)
 	}
 }
 

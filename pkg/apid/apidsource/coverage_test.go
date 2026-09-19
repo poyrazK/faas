@@ -519,7 +519,7 @@ func (t *teeStore) CreateBuildWithID(ctx context.Context, id, deploymentID strin
 }
 
 func TestEnqueue_SupersedeNotifyError_Swallowed(t *testing.T) {
-	// The 2nd deploy triggers a supersede notify; if that notify
+	// Replacing an actually-pending deployment triggers a supersede notify; if it
 	// fails the helper must Warn and continue (the durable net is
 	// the build row).
 	st := state.NewMemStore()
@@ -528,15 +528,12 @@ func TestEnqueue_SupersedeNotifyError_Swallowed(t *testing.T) {
 	srcDir := t.TempDir()
 	srcPath, srcBytes := stageSource(t, srcDir)
 
-	// First deploy to establish a prev.
-	if _, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
-		AppID: app.ID, Kind: state.DeploymentKindTarball,
-		SourcePath: srcPath, SourceBytes: srcBytes,
-		LogSpool: spoolDir, Log: quietLogger(),
+	if _, err := st.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployPending,
 	}); err != nil {
-		t.Fatalf("first: %v", err)
+		t.Fatalf("seed pending deployment: %v", err)
 	}
-	// Second deploy with a notifier that fails on the supersede
+	// The notifier fails on the supersede
 	// (second call) but succeeds on the build_queued (first call).
 	notif := &selectiveErrNotifier{failAt: 2}
 	res, err := Enqueue(context.Background(), st, notif, EnqueueParams{
@@ -569,8 +566,7 @@ func (s *selectiveErrNotifier) Notify(_ context.Context, _, _ string) error {
 }
 
 // --- TestEnqueue_FirstDeploySourceOmitted confirms that on the
-// FIRST deploy (no prev), no superseded notify fires — pins the
-// "prev.ID == ”" skip path at line 374.
+// FIRST deploy (no prev), no superseded notify fires.
 func TestEnqueue_FirstDeploySourceOmitted_NoSupersede(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)

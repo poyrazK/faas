@@ -2128,8 +2128,9 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // deploymentID (issue #556 / PR-C): the optional per-deployment
 // wake hint for the wake-fan-out path. Empty falls through to
 // the newest live deployment — the legacy single-deployment
-// behaviour. Non-empty asks the engine to admit on that specific
-// live deployment. Additive per ADR-016.
+// behaviour. Non-empty normally asks the engine to admit on that specific
+// live deployment. The authenticated deployment-smoke trigger is the sole
+// exception: it may target a snapshotting candidate before cutover.
 //
 // scope (PR-B / issue #272): the preview scope ("pr-{N}") the
 // gateway derived from the inbound Host header. Empty = prod
@@ -2362,11 +2363,10 @@ var ErrMirrorSlotAtCapacity = errors.New("sched: mirror slot at capacity")
 // admits a specific deployment (issue #557 closure / ADR-074).
 // The signature differs from AdmitInstance by accepting an explicit
 // deploymentID; the floor trigger's per-deployment sweep threads the
-// deployment it wants woke. The wake path's per-request target is
-// still resolved by admitAndDispatch's `resolveApp` (LiveDeployment),
-// which guarantees the wake and the floor admit land on the same
-// deployment id — passing an out-of-band id here would race the
-// customer's next deploy.
+// deployment it wants woke. Ordinary explicit callers are constrained to a
+// live deployment. The authenticated deployment-smoke trigger may target a
+// snapshotting candidate so it can prove readiness before the live pointer
+// moves; no other trigger receives that exception.
 //
 // The empty-deploymentID case is the legacy AdmitInstance path: the
 // caller falls through to AdmitInstance (which resolves the live
@@ -2395,9 +2395,10 @@ func (e *Engine) AdmitInstanceForDeployment(ctx context.Context, appID, deployme
 // admitAndDispatchForDeployment mirrors admitAndDispatch but threads
 // a specific deploymentID through to the ledger. Resolution of the
 // app + account + limits still happens via resolveApp; only the
-// deployment is overridden. If the override deployment is no longer
-// live (a newer deploy happened mid-tick), the call returns
-// {AtCapacity: true} — the trigger's next sweep re-evaluates.
+// deployment is overridden. If the override deployment is not eligible, the
+// call returns {AtCapacity: true} — the trigger's next sweep re-evaluates.
+// Deployment smoke is allowed to select a snapshotting candidate before its
+// atomic promotion; every other caller still requires a live row.
 //
 // P1A asymmetry note: this path (the floor trigger / fan-out /
 // per-deployment wake) bypasses Engine.admitGate by design. The
@@ -2455,7 +2456,24 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
 	// ── Phase 2: admit window, under appMu ──────────────────
 	release := e.lockApp(appID)
-	app, acct, limits, dep, err := e.resolveApp(ctx, appID)
+	var (
+		app    state.App
+		acct   state.Account
+		limits api.Limits
+		dep    state.Deployment
+		err    error
+	)
+	deploymentSmoke := deploymentID != "" && trigger == TriggerDeploymentSmoke
+	if deploymentSmoke {
+		// The authenticated post-readiness smoke runs before the atomic live
+		// pointer swap. A first deployment therefore has no live row yet, and a
+		// redeploy must continue resolving the old live row for customer traffic.
+		// Load only the app/account envelope here; the explicit candidate below
+		// is the deployment this private verification request may wake.
+		app, acct, limits, err = e.resolveAppForDeploy(ctx, appID)
+	} else {
+		app, acct, limits, dep, err = e.resolveApp(ctx, appID)
+	}
 	if err != nil {
 		release()
 		return WakeResult{}, err
@@ -2470,7 +2488,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			}
 			return WakeResult{}, fmt.Errorf("sched: resolve explicit deployment: %w", depErr)
 		}
-		if explicitDep.AppID != appID || explicitDep.Status != state.DeployLive {
+		smokeCandidate := deploymentSmoke && explicitDep.Status == state.DeploySnapshotting
+		if explicitDep.AppID != appID || (explicitDep.Status != state.DeployLive && !smokeCandidate) {
 			release()
 			e.IncAtCapacity(appID, "admit")
 			return WakeResult{AtCapacity: true}, nil

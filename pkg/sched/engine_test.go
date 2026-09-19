@@ -1035,6 +1035,54 @@ func TestAdmitInstanceForDeployment_DispatchesBoot(t *testing.T) {
 	}
 }
 
+func TestAdmitInstanceForDeployment_SmokeCanWakeSnapshottingCandidate(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	stableWake, err := e.Wake(context.Background(), app.ID, "", "", TriggerGateway)
+	if err != nil {
+		t.Fatalf("Wake stable deployment: %v", err)
+	}
+	if stableWake.DeploymentID != stable.ID {
+		t.Fatalf("stable wake deployment = %q, want %q", stableWake.DeploymentID, stable.ID)
+	}
+	candidate, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:candidate", Status: state.DeploySnapshotting,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(candidate): %v", err)
+	}
+
+	rejected, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, candidate.ID, "", TriggerFloorDep)
+	if err != nil {
+		t.Fatalf("ordinary candidate admission: %v", err)
+	}
+	if !rejected.AtCapacity {
+		t.Fatal("ordinary trigger admitted a non-live candidate")
+	}
+
+	verified, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, candidate.ID, "", TriggerDeploymentSmoke)
+	if err != nil {
+		t.Fatalf("deployment smoke admission: %v", err)
+	}
+	if verified.AtCapacity || verified.InstanceID == "" || verified.DeploymentID != candidate.ID {
+		t.Fatalf("deployment smoke result = %+v, want running candidate", verified)
+	}
+	if got := e.Ledger().Concurrency(app.ID); got != 2 {
+		t.Fatalf("ledger concurrency = %d, want stable plus candidate overlap", got)
+	}
+	live, err := store.LiveDeployment(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("LiveDeployment: %v", err)
+	}
+	if live.ID != stable.ID {
+		t.Fatalf("live deployment moved during smoke: got %q want %q", live.ID, stable.ID)
+	}
+}
+
 // TestCooldownSRemaining pins the cooldownSRemaining helper's
 // floor/nil-stamp/zero-cooldown/remaining branches with
 // deterministic clock injections. The helper is the wire source

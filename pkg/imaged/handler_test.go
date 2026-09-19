@@ -386,10 +386,11 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	}
 }
 
-// TestHandleSnapshotWritten_HostingSmokeRunsAfterLive protects the public
-// routing contract: the smoke verifier must see a live deployment, and the
-// resulting evidence must be durable on the deployment row.
-func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
+// TestHandleSnapshotWritten_HostingSmokeRunsBeforeCutover protects the public
+// routing contract: the pinned smoke verifier proves the snapshotting
+// candidate before the live pointer moves, and the evidence is durable on the
+// deployment row before promotion.
+func TestHandleSnapshotWritten_HostingSmokeRunsBeforeCutover(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -400,14 +401,14 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	})
 	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
 
-	var sawLive, sawRouteNotification bool
+	var sawSnapshotting, sawRouteBeforeSmoke bool
 	notif := &fakeNotifier{}
 	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
 		func(ctx context.Context, _ state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			sawRouteNotification = findNotify(notif, db.NotifyDeploymentChanged) != nil
+			sawRouteBeforeSmoke = findNotify(notif, db.NotifyDeploymentChanged) != nil
 			got, err := store.DeploymentByID(ctx, dep.ID)
 			if err == nil {
-				sawLive = got.Status == state.DeployLive
+				sawSnapshotting = got.Status == state.DeploySnapshotting
 			}
 			return apihostingreceipt.SmokeResult{
 				Status:     apihostingreceipt.SmokeVerified,
@@ -429,11 +430,11 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeploymentByID: %v", err)
 	}
-	if !sawLive {
-		t.Fatal("hosting smoke ran before deployment became live")
+	if !sawSnapshotting {
+		t.Fatal("hosting smoke did not run against the snapshotting candidate")
 	}
-	if !sawRouteNotification {
-		t.Fatal("hosting smoke ran before the gateway route notification")
+	if sawRouteBeforeSmoke {
+		t.Fatal("candidate route was published before hosting smoke completed")
 	}
 	var deploymentEvents []map[string]any
 	for _, call := range notif.calls {
@@ -467,7 +468,7 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	}
 }
 
-func TestHandleSnapshotWritten_FailedSmokeRestoresPreviousLive(t *testing.T) {
+func TestHandleSnapshotWritten_FailedSmokeKeepsPreviousLive(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -482,8 +483,11 @@ func TestHandleSnapshotWritten_FailedSmokeRestoresPreviousLive(t *testing.T) {
 		Scope: state.DefaultEnvScope,
 	})
 	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	var previousStayedLive bool
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
-		func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+		func(ctx context.Context, _ state.App, _ state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			live, liveErr := store.LiveDeploymentForScope(ctx, app.ID, state.DefaultEnvScope)
+			previousStayedLive = liveErr == nil && live.ID == previous.ID
 			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, StatusCode: http.StatusBadGateway}, errors.New("candidate unhealthy")
 		},
 	)
@@ -498,12 +502,66 @@ func TestHandleSnapshotWritten_FailedSmokeRestoresPreviousLive(t *testing.T) {
 	if failed.Status != state.DeployFailed {
 		t.Fatalf("candidate status = %s, want failed", failed.Status)
 	}
+	if !previousStayedLive {
+		t.Fatal("previous deployment was not live while candidate smoke ran")
+	}
 	live, err := store.LiveDeploymentForScope(context.Background(), app.ID, state.DefaultEnvScope)
 	if err != nil {
 		t.Fatalf("LiveDeploymentForScope: %v", err)
 	}
 	if live.ID != previous.ID {
 		t.Fatalf("live deployment = %s, want previous %s", live.ID, previous.ID)
+	}
+}
+
+func TestHandleSnapshotWritten_DrainsPredecessorOnlyAfterVerifiedCutover(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-cutover", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	notif := &fakeNotifier{}
+	var previousWasLiveDuringSmoke bool
+	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+		func(ctx context.Context, _ state.App, _ state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			live, err := store.LiveDeploymentForScope(ctx, app.ID, state.DefaultEnvScope)
+			previousWasLiveDuringSmoke = err == nil && live.ID == previous.ID
+			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeVerified, StatusCode: http.StatusOK}, nil
+		},
+	)
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	if !previousWasLiveDuringSmoke {
+		t.Fatal("predecessor was not live during candidate verification")
+	}
+	old, err := store.DeploymentByID(context.Background(), previous.ID)
+	if err != nil || old.Status != state.DeploySuperseded {
+		t.Fatalf("predecessor after cutover = %+v err=%v, want superseded", old, err)
+	}
+	var sawSuperseded bool
+	for _, call := range notif.calls {
+		if call.channel == db.NotifyDeploymentChanged &&
+			strings.Contains(call.payload, `"deployment_id":"`+previous.ID+`"`) &&
+			strings.Contains(call.payload, `"status":"superseded"`) {
+			sawSuperseded = true
+		}
+	}
+	if !sawSuperseded {
+		t.Fatal("verified cutover did not notify schedd to drain the superseded predecessor")
 	}
 }
 
