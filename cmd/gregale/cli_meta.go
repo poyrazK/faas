@@ -378,7 +378,7 @@ var cliCommands = []cliCommand{
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
 			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
-			{Name: "security", Short: "Toggle require_signed on deploys"},
+			{Name: "security", Short: "Show posture or toggle require_signed on deploys"},
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
 			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},

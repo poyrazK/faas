@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AddTrustedSignerRequest } from '../models/AddTrustedSignerRequest.js';
+import type { AppSecurityPostureResponse } from '../models/AppSecurityPostureResponse.js';
 import type { AppSecurityRequest } from '../models/AppSecurityRequest.js';
 import type { AppSecurityResponse } from '../models/AppSecurityResponse.js';
 import type { AppStaticEgressIPResponse } from '../models/AppStaticEgressIPResponse.js';
@@ -13,6 +14,40 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class SecurityService {
+  /**
+   * Read the app security posture.
+   * Customer-scoped, read-only configuration checks for an app. The
+   * report never includes credentials, raw IP ranges, or edge-rule
+   * action payloads. Findings are deterministic and include remediation
+   * guidance suitable for CI and dashboards.
+   *
+   * @returns AppSecurityPostureResponse The app security posture.
+   * @throws ApiError
+   */
+  public static getAppSecurity({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppSecurityPostureResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/security',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
   /**
    * Toggle the require_signed flag for an app (admin + MFA).
    * Operator-only surface for the per-app cosign signature-enforcement

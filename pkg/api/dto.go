@@ -5523,6 +5523,27 @@ type AppSecurityResponse struct {
 	RequireSigned bool `json:"require_signed"`
 }
 
+// AppSecurityPostureResponse is the read-only security posture projection for
+// an app. Findings are deterministic configuration checks; the response never
+// includes credentials, allowlist values, or other secret material.
+type AppSecurityPostureResponse struct {
+	AppID    string               `json:"app_id"`
+	Slug     string               `json:"slug"`
+	Profile  string               `json:"profile"`
+	Score    int                  `json:"score"`
+	Findings []AppSecurityFinding `json:"findings"`
+}
+
+// AppSecurityFinding is one actionable posture finding. Severity is one of
+// critical, high, medium, low, or info.
+type AppSecurityFinding struct {
+	Code        string `json:"code"`
+	Severity    string `json:"severity"`
+	Title       string `json:"title"`
+	Detail      string `json:"detail"`
+	Remediation string `json:"remediation"`
+}
+
 // AppStaticEgressIPResponse is the body of GET
 // /v1/apps/{slug}/static-egress-ip (ADR-119). IP / SetAt are
 // pointers so the wire shape is stable: a Scale customer with no

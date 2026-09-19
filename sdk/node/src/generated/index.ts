@@ -85,6 +85,8 @@ export type { AppRoutesResponse } from './models/AppRoutesResponse.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretResponse } from './models/AppSecretResponse.js';
+export type { AppSecurityFinding } from './models/AppSecurityFinding.js';
+export type { AppSecurityPostureResponse } from './models/AppSecurityPostureResponse.js';
 export type { AppSecurityRequest } from './models/AppSecurityRequest.js';
 export type { AppSecurityResponse } from './models/AppSecurityResponse.js';
 export type { AppSLOResponse } from './models/AppSLOResponse.js';

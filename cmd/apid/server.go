@@ -1449,6 +1449,9 @@ func (s *server) handler() http.Handler {
 	// enforcement on their own app. The customer PATCH surface above
 	// silently drops a customer-set require_signed — see
 	// handlers_ext.go::updateApp for the rationale.
+	// GET is the customer-scoped, read-only security posture report;
+	// it never exposes secrets or raw policy payloads.
+	mux.HandleFunc("GET /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppSecurity))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAppSecurity))))
 	// Issue #472 / ADR-054 — per-app cosign trusted-publisher list
 	// (admin + MFA). GET requires admin (read), PUT/DELETE require

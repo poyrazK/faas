@@ -4554,6 +4554,14 @@ func (c *Client) UpdateAppSecurity(ctx context.Context, slug string, req AppSecu
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/security", req, &out)
 }
 
+// GetAppSecurity returns the read-only configuration posture for an app.
+// The report is deterministic and contains no credential or raw allowlist
+// material, so it is safe for customer automation and dashboards.
+func (c *Client) GetAppSecurity(ctx context.Context, slug string) (AppSecurityPostureResponse, error) {
+	var out AppSecurityPostureResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/security", nil, &out)
+}
+
 // GetAppStaticEgressIP reads the per-app static egress IP pin
 // (ADR-119). Plan-agnostic — returns the current pin status even
 // when the plan doesn't allow static egress IPs (plan_allowed=false,

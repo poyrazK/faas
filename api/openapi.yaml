@@ -211,9 +211,9 @@ tags:
       stored as-is and applied on next wake.
   - name: security
     description: |
-      Operator-only per-app security knobs (issue #472 / ADR-058):
-      PATCH /v1/apps/{slug}/security (admin + MFA) flips the
-      require_signed flag; trusted_signers CRUD manages the
+      Per-app security surfaces: the customer-scoped GET posture report,
+      plus operator-only PATCH /v1/apps/{slug}/security (admin + MFA)
+      for the require_signed flag and trusted_signers CRUD for the
       per-app cosign trusted-publisher list.
   - name: internal
     description: |
@@ -7454,6 +7454,24 @@ paths:
   /v1/apps/{slug}/security:
     parameters:
       - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [security]
+      operationId: getAppSecurity
+      summary: Read the app security posture.
+      description: |
+        Customer-scoped, read-only configuration checks for an app. The
+        report never includes credentials, raw IP ranges, or edge-rule
+        action payloads. Findings are deterministic and include remediation
+        guidance suitable for CI and dashboards.
+      responses:
+        '200':
+          description: The app security posture.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecurityPostureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     patch:
       tags: [security]
       operationId: patchAppSecurity
@@ -30147,6 +30165,43 @@ components:
           type: boolean
           description: "The current state of the require_signed flag after the patch."
           example: true
+
+    AppSecurityPostureResponse:
+      description: "Read-only deterministic configuration posture for an app."
+      type: object
+      required: [app_id, slug, profile, score, findings]
+      properties:
+        app_id:
+          type: string
+        slug:
+          type: string
+        profile:
+          type: string
+          enum: [public, authenticated, internal]
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        findings:
+          type: array
+          items: { $ref: '#/components/schemas/AppSecurityFinding' }
+
+    AppSecurityFinding:
+      description: "One actionable security posture finding."
+      type: object
+      required: [code, severity, title, detail, remediation]
+      properties:
+        code:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        title:
+          type: string
+        detail:
+          type: string
+        remediation:
+          type: string
 
     AppStaticEgressIPResponse:
       description: |

@@ -77,6 +77,8 @@ export type { AppSLOResponse } from './AppSLOResponse.js';
 export type { AppSecretExportResponse } from './AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './AppSecretListResponse.js';
 export type { AppSecretResponse } from './AppSecretResponse.js';
+export type { AppSecurityFinding } from './AppSecurityFinding.js';
+export type { AppSecurityPostureResponse } from './AppSecurityPostureResponse.js';
 export type { AppSecurityRequest } from './AppSecurityRequest.js';
 export type { AppSecurityResponse } from './AppSecurityResponse.js';
 export type { AppStaticEgressIPResponse } from './AppStaticEgressIPResponse.js';

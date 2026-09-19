@@ -296,6 +296,18 @@ func TestTierD_AppSecurity_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierD_AppSecurity_PostureReadOnly(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"app_id":"a1","slug":"demo","profile":"public","score":45,"findings":[{"code":"anonymous_access","severity":"high","title":"open","detail":"open","remediation":"set auth"}]}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	if code := cmdAppSecurity("demo", []string{"--posture"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/security" {
+		t.Errorf("route = %s %s, want GET /v1/apps/demo/security", f.sawMethod, f.sawPath)
+	}
+}
+
 // TestTierD_AppSecurity_FalseFlagWorks pins the literal-string gate:
 // `--require-signed=false` (lowercase) must parse to bool(false), not
 // fail closed. strconv.ParseBool's looseness (accepts "1", "t", "T",

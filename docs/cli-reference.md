@@ -311,7 +311,7 @@ Park and wake from a fresh snapshot
 
 ### app security
 
-Toggle require_signed on deploys
+Show posture or toggle require_signed on deploys
 
 ### app egress-allowlist
 

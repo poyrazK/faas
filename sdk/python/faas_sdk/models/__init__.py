@@ -149,6 +149,10 @@ from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
 from .app_secret_response import AppSecretResponse
+from .app_security_finding import AppSecurityFinding
+from .app_security_finding_severity import AppSecurityFindingSeverity
+from .app_security_posture_response import AppSecurityPostureResponse
+from .app_security_posture_response_profile import AppSecurityPostureResponseProfile
 from .app_security_request import AppSecurityRequest
 from .app_security_response import AppSecurityResponse
 from .app_slo_response import AppSLOResponse
@@ -1429,6 +1433,10 @@ __all__ = (
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
     "AppSecretResponse",
+    "AppSecurityFinding",
+    "AppSecurityFindingSeverity",
+    "AppSecurityPostureResponse",
+    "AppSecurityPostureResponseProfile",
     "AppSecurityRequest",
     "AppSecurityResponse",
     "AppSLOResponse",

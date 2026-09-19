@@ -1,5 +1,5 @@
 // commands_app_security.go — Tier D audit-gap close.
-// `gregale app <slug> security [--require-signed=true|false]`
+// `gregale app <slug> security [--posture|--require-signed=true|false]`
 // (PATCH /v1/apps/{slug}/security, issue #472 / ADR-054).
 //
 // Mirrors cmdAlertUpdate (commands_alerts.go:245-313) exactly: same
@@ -79,7 +79,7 @@ const (
 // (slug, args[2:]).
 func cmdAppSecurity(slug string, args []string) int {
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--require-signed=true|false]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--posture|--require-signed=true|false]", "apps")
 		return 1
 	}
 	// splitArgsForFlags: Go's flag.Parse halts at the first non-flag
@@ -90,12 +90,16 @@ func cmdAppSecurity(slug string, args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("app security", flag.ContinueOnError)
 	requireSigned := fs.String("require-signed", "", "require signed images on deploy (true|false)")
+	posture := fs.Bool("posture", false, "show the read-only security posture")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--require-signed=true|false]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--posture|--require-signed=true|false]", "apps")
 		return 1
+	}
+	if *posture && *requireSigned != "" {
+		return printErr("Invalid app security flags", fmt.Errorf("--posture cannot be combined with --require-signed"))
 	}
 	// --require-signed is parsed as a string so the strict literal
 	// "true" / "false" gate can run before strconv.ParseBool (which
@@ -107,6 +111,20 @@ func cmdAppSecurity(slug string, args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *posture {
+		resp, err := client.GetAppSecurity(context.Background(), slug)
+		if err != nil {
+			return printErr("Security posture failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(resp))
+		}
+		PrintOK(osStdout, "App %s security posture: %s (score %d/100)", slug, resp.Profile, resp.Score)
+		for _, finding := range resp.Findings {
+			_, _ = fmt.Fprintf(osStdout, "  [%s] %s: %s\n", finding.Severity, finding.Title, finding.Remediation)
+		}
+		return 0
 	}
 	req := api.AppSecurityRequest{}
 	if *requireSigned != "" {
