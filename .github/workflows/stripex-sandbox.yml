@@ -41,7 +41,7 @@ jobs:
       FATEST_STRIPE_SUB_ITEM: ${{ secrets.FATEST_STRIPE_SUB_ITEM }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
       - name: stripex sandbox live POST
