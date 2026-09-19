@@ -2105,6 +2105,9 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // WithScope so resolveApp / loadAPIEnv read the same value.
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	ctx = WithScope(ctx, scope)
+	if trigger == TriggerDeploymentSmoke && deploymentID == "" {
+		return WakeResult{}, errors.New("sched: deployment smoke requires deployment_id")
+	}
 	if deploymentID == "" {
 		return e.admitAndDispatch(ctx, appID, trigger, true)
 	}
@@ -2778,9 +2781,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-		NodeID:        placement.NodeID,
-		NodeCeilingMB: placement.CeilingMB,
-		VCPUBudget:    placement.VCPUBudget,
+		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke,
+		NodeID:                  placement.NodeID,
+		NodeCeilingMB:           placement.CeilingMB,
+		VCPUBudget:              placement.VCPUBudget,
 	}); err != nil {
 		// Admit failed (capacity / concurrency). The two rejection
 		// modes differ in how loudly the engine surfaces them:
@@ -6282,10 +6286,15 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			if err := e.ledger.Admit(Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-				NodeID:        nodeID,
-				NodeCeilingMB: loadCeiling(ctx, nodeID),
-				VCPUBudget:    loadVCPUBudget(ctx, nodeID),
-				Kind:          kind,
+				// Recovery must account for the one candidate/stable overlap
+				// that deployment smoke may have admitted before a restart.
+				// This does not authorize new capacity: the rows are already
+				// resident, and the reconstructed count blocks normal admits.
+				AllowConcurrencyOverlap: true,
+				NodeID:                  nodeID,
+				NodeCeilingMB:           loadCeiling(ctx, nodeID),
+				VCPUBudget:              loadVCPUBudget(ctx, nodeID),
+				Kind:                    kind,
 			}); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
 				continue

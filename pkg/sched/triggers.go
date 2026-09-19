@@ -17,6 +17,11 @@ const (
 	// from §6.3 applies.
 	TriggerGateway = "gateway"
 
+	// TriggerDeploymentSmoke is the authenticated post-readiness verifier.
+	// It targets one candidate deployment and may overlap the current stable
+	// instance, while remaining subject to node RAM and vCPU admission.
+	TriggerDeploymentSmoke = "deployment.smoke"
+
 	// TriggerFloor — pkg/sched/floor per-app tick (legacy pre-#555).
 	// Stamped on the cold-start drift repair path.
 	TriggerFloor = "floor"

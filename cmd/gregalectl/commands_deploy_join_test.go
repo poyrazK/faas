@@ -294,6 +294,46 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	}
 }
 
+func TestNodeJoinRepairsCacheBeforeRuntimePrestage(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	repair := strings.Index(playbook, "Repair shared OCI cache directory permissions before pre-stage")
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	if repair < 0 || prestage < 0 || repair >= prestage {
+		t.Fatalf("cache repair must precede runtime pre-stage: repair=%d prestage=%d", repair, prestage)
+	}
+	block := playbook[repair:prestage]
+	for _, token := range []string{"chgrp faas /var/lib/faas/cache", "chmod 2770 /var/lib/faas/cache", "find /var/lib/faas/cache -mindepth 1 -type d"} {
+		if !strings.Contains(block, token) {
+			t.Errorf("cache repair is missing %q", token)
+		}
+	}
+}
+
+func TestNodeJoinConvergesAndWaitsForGuestServiceProxy(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	converge := strings.Index(playbook, "Converge the guest service proxy listener on managed compute nodes")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	wait := strings.Index(playbook, "Wait for the guest service proxy listener")
+	dnsWait := strings.Index(playbook, "Wait for the guest DNS TCP listener")
+	afterWait := strings.Index(playbook, "Require every compute-only service to be active")
+	if converge < 0 || restart < 0 || wait < 0 || dnsWait < 0 || afterWait < 0 || !(converge < restart && restart < wait && wait < dnsWait && dnsWait < afterWait) {
+		t.Fatalf("guest service proxy convergence order invalid: converge=%d restart=%d wait=%d dns=%d after=%d", converge, restart, wait, dnsWait, afterWait)
+	}
+	for _, token := range []string{"/etc/faas/gatewayd-internal.toml", "^service_proxy_listen", "10.100.0.1:10080", "port: 10080", "port: 53"} {
+		if !strings.Contains(playbook[converge:afterWait], token) {
+			t.Errorf("guest service proxy convergence is missing %q", token)
+		}
+	}
+}
+
 func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {

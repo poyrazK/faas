@@ -243,7 +243,7 @@ func TestAcquireVMTargetMovesWaiterToNewSibling(t *testing.T) {
 	defer cancel()
 	done := make(chan result, 1)
 	go func() {
-		pick, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1)
+		pick, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "")
 		done <- result{pick: pick, release: release, waited: waited, err: err}
 	}()
 

@@ -3,6 +3,7 @@
 package sched
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -297,6 +298,46 @@ func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
 	l.Release("replacement-prime")
 	if got := l.Concurrency(request.AppID); got != 1 {
 		t.Fatalf("serving concurrency after prime release = %d, want 1", got)
+	}
+}
+
+func TestAdmitDeploymentSmokeAllowsOneCountedRolloutOverlap(t *testing.T) {
+	l := NewLedger()
+	request := Request{
+		AppID: "app-1", Plan: api.PlanFree, RAMMB: 128, VCPU: 1,
+		MaxConcurrency: 1, NodeID: "node-a", NodeCeilingMB: 100000,
+		VCPUBudget: 160,
+	}
+	request.Instance = "stable"
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit stable instance: %v", err)
+	}
+	request.Instance = "candidate-smoke"
+	request.DeploymentID = "dep-candidate"
+	request.AllowConcurrencyOverlap = true
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit deployment smoke alongside maxed app: %v", err)
+	}
+	if got := l.Concurrency(request.AppID); got != 2 {
+		t.Fatalf("serving concurrency = %d, want stable plus candidate", got)
+	}
+	if got := l.ResidentRAMForNode(request.NodeID); got != 2*(request.RAMMB+api.PerVMOverheadMB) {
+		t.Fatalf("resident RAM = %d, want stable plus verification instance", got)
+	}
+	request.Instance = "candidate-smoke-2"
+	if err := l.Admit(request); err == nil {
+		t.Fatal("second rollout overlap was admitted")
+	}
+	l.Release("stable")
+	if got := l.Concurrency(request.AppID); got != 1 {
+		t.Fatalf("serving concurrency after stable release = %d, want candidate counted", got)
+	}
+}
+
+func TestDeploymentSmokeAdmissionRequiresExplicitDeployment(t *testing.T) {
+	engine := &Engine{}
+	if _, err := engine.AdmitInstance(context.Background(), "app-1", "", "", TriggerDeploymentSmoke); err == nil {
+		t.Fatal("deployment smoke without deployment_id was accepted")
 	}
 }
 

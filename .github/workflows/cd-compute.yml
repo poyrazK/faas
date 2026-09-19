@@ -870,7 +870,24 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
             "${SSH_USER}@${SSH_HOST}" \
-            "sudo -n bash -ceu 'mountpoint -q /var/lib/faas/cache; test \"\$(stat -c %d /var/lib/faas/cache)\" = \"\$(stat -c %d /srv/fc)\"; test \"\$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)\" = xfs; xfs_info /srv/fc | grep -Eq \"(^|[[:space:]])reflink=1(\$|[[:space:]])\"'"
+            "sudo -n bash -ceu 'mountpoint -q /var/lib/faas/cache; test \"\$(stat -c %d /var/lib/faas/cache)\" = \"\$(stat -c %d /srv/fc)\"; test \"\$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)\" = xfs; xfs_info /srv/fc | grep -Eq \"(^|[[:space:]])reflink=1(\$|[[:space:]])\"; test -z \"\$(find /var/lib/faas/cache -type d \( ! -group faas -o ! -perm -g+w -o ! -perm -2000 \) -print -quit)\"'"
+
+      - name: Verify guest service proxy listener after activation
+        run: |
+          set -euo pipefail
+          ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
+            "${SSH_USER}@${SSH_HOST}" 'sudo -n bash -s' <<'REMOTE'
+          set -euo pipefail
+          grep -Eq '^service_proxy_listen[[:space:]]*=[[:space:]]*"10\.100\.0\.1:10080"$' \
+            /etc/faas/gatewayd-internal.toml
+          ss -ltnH | awk '$4 == "10.100.0.1:10080" { found=1 } END { exit !found }'
+          ss -ltnH | awk '$4 == "10.100.0.1:53" { found=1 } END { exit !found }'
+          ss -lunH | awk '$4 == "10.100.0.1:53" { found=1 } END { exit !found }'
+          REMOTE
 
       - name: Verify imaged public-smoke tenant routing after activation
         run: |

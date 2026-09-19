@@ -233,7 +233,7 @@ func (m *vmConcurrencyManager) acquire(ctx context.Context, instanceID, plan str
 // instance is saturated. While every routable VM is full, it periodically
 // picks again so a request queued behind the first restored VM can move to a
 // sibling as soon as that sibling becomes ready.
-func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, perVM int) (PickResult, func(), bool, error) {
+func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, perVM int, deploymentID string) (PickResult, func(), bool, error) {
 	if h == nil || h.backend == nil || h.vmConcurrency == nil || perVM <= 0 || !pick.OK || pick.Target.InstanceID == "" {
 		return pick, func() {}, false, nil
 	}
@@ -252,7 +252,16 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 			attempts = 16
 		}
 		for i := 0; i < attempts; i++ {
-			candidate := h.backend.Pick(app.ID)
+			var candidate PickResult
+			if deploymentID != "" {
+				picker, ok := h.backend.(deploymentTargetPicker)
+				if !ok {
+					continue
+				}
+				candidate = picker.PickForDeployment(app.ID, deploymentID)
+			} else {
+				candidate = h.backend.Pick(app.ID)
+			}
 			if !candidate.OK || candidate.Target.InstanceID == "" {
 				continue
 			}

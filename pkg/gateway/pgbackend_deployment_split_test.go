@@ -149,6 +149,29 @@ func TestPGBackend_PickWeighted_AcrossTwoDeployments(t *testing.T) {
 	}
 }
 
+func TestPGBackend_PickForDeploymentNeverFallsBackAcrossWeights(t *testing.T) {
+	sched := gateway.NewFakeScheduler("node-A").WithDeploymentID("dep-stable")
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil).
+		WithStore(&fakeWeightsStore{rows: map[string][]gateway.DeploymentWeightsRow{
+			"app-1": {
+				{ID: "dep-stable", TrafficPercent: 75},
+				{ID: "dep-candidate", TrafficPercent: 25},
+			},
+		}})
+	if err := b.RefreshDeploymentWeights(context.Background(), "app-1"); err != nil {
+		t.Fatalf("RefreshDeploymentWeights: %v", err)
+	}
+	if _, _, _, err := b.Admit(context.Background(), "app-1", "dep-stable", "", "", 2); err != nil {
+		t.Fatalf("seed stable: %v", err)
+	}
+	if got := b.PickForDeployment("app-1", "dep-candidate"); got.OK || got.ColdBucket != "dep-candidate" {
+		t.Fatalf("cold candidate pick = %+v, want exact cold bucket", got)
+	}
+	if got := b.PickForDeployment("app-1", "dep-stable"); !got.OK || got.Target.DeploymentID != "dep-stable" {
+		t.Fatalf("stable exact pick = %+v", got)
+	}
+}
+
 // TestPGBackend_PickRoundRobin_WithinDeployment (PR-B / issue #556):
 // 1000 calls against a single deployment with 3 instances
 // distribute evenly (each instance seen 333±2 times). The

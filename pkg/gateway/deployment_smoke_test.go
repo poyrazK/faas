@@ -2,13 +2,26 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
+
+type deploymentSmokeRoutingBackend struct {
+	*fakeBackend
+	deploymentID string
+	token        string
+}
+
+func (b *deploymentSmokeRoutingBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) bool {
+	return appID == b.app.ID && deploymentID == b.deploymentID && token == b.token
+}
 
 func TestDeploymentSmokeChallengeIsBoundAndExpires(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)
@@ -83,5 +96,68 @@ func TestAuthorizedDeploymentSmokeBypassesCustomerAuthGates(t *testing.T) {
 				t.Fatalf("authorized platform smoke was rejected with status %d", recorder.Code)
 			}
 		})
+	}
+}
+
+func TestAuthorizedDeploymentSmokeWakesAndPinsCandidate(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(upstream.Close)
+
+	fake := &fakeBackend{
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree,
+			MaxConcurrency: 1, HealthPath: "/healthz",
+		},
+		host:     "demo.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	fake.AddTarget(Target{
+		NodeID: upstream.Listener.Addr().String(), InstanceID: "stable-1", DeploymentID: "dep-stable",
+	})
+	backend := &deploymentSmokeRoutingBackend{fakeBackend: fake, deploymentID: "dep-candidate", token: "secret"}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://demo.apps.dom/healthz", nil)
+	req.Host = "demo.apps.dom"
+	req.Header.Set(apihostingreceipt.PlatformSmokeHeader, "1")
+	req.Header.Set(apihostingreceipt.PlatformSmokeDeploymentHeader, backend.deploymentID)
+	req.Header.Set(apihostingreceipt.PlatformSmokeTokenHeader, backend.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(api.DeploymentIDHeader); got != backend.deploymentID {
+		t.Fatalf("deployment header = %q, want %q", got, backend.deploymentID)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.lastAdmitDeployment != backend.deploymentID || fake.lastAdmitTrigger != sched.TriggerDeploymentSmoke {
+		t.Fatalf("admit target=(%q, %q), want (%q, %q)", fake.lastAdmitDeployment, fake.lastAdmitTrigger, backend.deploymentID, sched.TriggerDeploymentSmoke)
+	}
+	if fake.lastAdmitMax != 2 {
+		t.Fatalf("admit max = %d, want one stable plus one candidate", fake.lastAdmitMax)
+	}
+}
+
+func TestDeploymentSmokeCandidatePickerDoesNotUseStableSibling(t *testing.T) {
+	fake := &fakeBackend{app: App{ID: "app-1"}}
+	fake.AddTarget(Target{InstanceID: "stable-1", DeploymentID: "dep-stable"})
+	backend := &deploymentSmokeRoutingBackend{fakeBackend: fake, deploymentID: "dep-candidate", token: "secret"}
+	h := &Handler{backend: backend}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://demo/healthz", nil)
+	req.Header.Set(apihostingreceipt.PlatformSmokeHeader, "1")
+	req.Header.Set(apihostingreceipt.PlatformSmokeDeploymentHeader, backend.deploymentID)
+	req.Header.Set(apihostingreceipt.PlatformSmokeTokenHeader, backend.token)
+
+	deploymentID, ok := h.authorizedDeploymentSmokeTarget(req, fake.app)
+	if !ok || deploymentID != backend.deploymentID {
+		t.Fatalf("authorized target = (%q, %v)", deploymentID, ok)
+	}
+	if pick := backend.PickForDeployment(fake.app.ID, deploymentID); pick.OK {
+		t.Fatalf("candidate picker fell back to stable target: %+v", pick)
 	}
 }

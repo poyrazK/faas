@@ -700,6 +700,13 @@ type affinityPicker interface {
 	PickForInstance(appID, instanceID string) PickResult
 }
 
+// deploymentTargetPicker is the authenticated deployment-smoke seam. Unlike
+// Pick, it never applies rollout weights and never falls back to a sibling
+// deployment: verification must either reach the requested candidate or fail.
+type deploymentTargetPicker interface {
+	PickForDeployment(appID, deploymentID string) PickResult
+}
+
 // liveTargetValidator checks an idle-aged cached target against durable
 // instance state. It is called only on the first request after an idle window,
 // keeping normal warm traffic entirely in memory.
@@ -5317,6 +5324,7 @@ haveApp:
 		attribute.String("app_plan", string(app.Plan)),
 	)
 	triggerClass := ClassifyWakeTrigger(r)
+	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -5745,7 +5753,12 @@ haveApp:
 	// (production joins always populate it via pgRouter.toApp) — pass
 	// through unmetered and log once per process so the test suite
 	// keeps working without flooding logs.
-	if app.AccountID == "" {
+	if deploymentSmoke {
+		// The verifier is authenticated with a short-lived app-and-deployment
+		// challenge. Customer rate buckets must not make a healthy deployment
+		// fail promotion, and platform verification must not consume customer
+		// quota.
+	} else if app.AccountID == "" {
 		h.warnEmptyAccountOnce()
 	} else if !h.accountLimiter.AllowAccount(r.Context(), app.AccountID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
 		w.Header().Set("Retry-After", "1")
@@ -5766,7 +5779,7 @@ haveApp:
 	}
 
 	// Per-app rate limit (spec §4.1). Over-limit → 429.
-	if !h.limiter.Allow(r.Context(), app.ID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
+	if !deploymentSmoke && !h.limiter.Allow(r.Context(), app.ID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "app")
 		// 429 path: write the post-decrement bucket snapshot so
@@ -5789,7 +5802,9 @@ haveApp:
 	// headers we set here). Allow already consumed one token above; the
 	// Peek snapshot therefore reflects "tokens left after this
 	// request" which is the standard X-RateLimit-Remaining contract.
-	h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
+	if !deploymentSmoke {
+		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
+	}
 
 	// Receive and bound the complete request body before wake admission. The
 	// upload has a plan-sized deadline and spills large bodies to disk; it does
@@ -5832,7 +5847,46 @@ haveApp:
 	if app.SessionAffinity {
 		preferredInstanceID = h.affinityTargetFromRequest(r, app.ID)
 	}
-	pick := h.pickForRequest(app, preferredInstanceID)
+	var pick PickResult
+	if deploymentSmoke {
+		picker, ok := h.backend.(deploymentTargetPicker)
+		if !ok {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+				"Deployment verification unavailable", "the gateway cannot select a candidate deployment directly"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+		pick = picker.PickForDeployment(app.ID, smokeDeploymentID)
+		if !pick.OK {
+			// A snapshot candidate is parked before this public verification
+			// runs. Admit one deployment-scoped verification instance outside
+			// the customer's serving-concurrency count; node RAM/vCPU limits
+			// remain authoritative in schedd.
+			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
+			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
+				r.Context(), app.ID, smokeDeploymentID, app.Scope,
+				sched.TriggerDeploymentSmoke, maxInstances+1,
+			)
+			if admitErr != nil || atCapacity {
+				if admitErr == nil {
+					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, h.backend.HealthyCount(app.ID))
+				}
+				writeWakeError(w, admitErr)
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
+			cold, wakeID, wakeMethod = true, admittedWakeID, method
+			pick = picker.PickForDeployment(app.ID, smokeDeploymentID)
+			if !pick.OK {
+				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+					"Deployment verification unavailable", "the candidate became unavailable after admission"))
+				h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+				return
+			}
+		}
+	} else {
+		pick = h.pickForRequest(app, preferredInstanceID)
+	}
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
 		if validator, ok := h.backend.(liveTargetValidator); ok {
 			live, validateErr := validator.ValidateLiveTarget(r.Context(), app.ID, pick.Target.InstanceID)
@@ -5845,6 +5899,12 @@ haveApp:
 				pick = PickResult{}
 			}
 		}
+	}
+	if deploymentSmoke && !pick.OK {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Deployment verification unavailable", "the candidate deployment has no routable target"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+		return
 	}
 	if !pick.OK {
 		// This is the canonical platform-only boundary. Authentication,
@@ -5961,7 +6021,7 @@ haveApp:
 	// would send every queued request to the first guest even after waiting
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
-	if !pick.OK || waitedForBurst {
+	if !deploymentSmoke && (!pick.OK || waitedForBurst) {
 		pick = h.pickAfterCapacity(app, preferredInstanceID)
 	}
 
@@ -6029,7 +6089,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, smokeDeploymentID)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),

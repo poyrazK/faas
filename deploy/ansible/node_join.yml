@@ -645,6 +645,20 @@
         executable: /bin/bash
       changed_when: false
 
+    # Managed-host rollouts may skip the full bootstrap roles when their OS
+    # contract is current. Cache shards are mutable host state, so repair the
+    # shared group contract on every release before imaged pre-stages bases.
+    - name: Repair shared OCI cache directory permissions before pre-stage
+      ansible.builtin.shell: |
+        set -euo pipefail
+        chgrp faas /var/lib/faas/cache
+        chmod 2770 /var/lib/faas/cache
+        find /var/lib/faas/cache -mindepth 1 -type d \
+          -exec chgrp faas {} + -exec chmod 2770 {} +
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Detect the legacy imaged environment file
       ansible.builtin.stat:
         path: /etc/faas/oci-e2e.env
@@ -968,6 +982,22 @@
           - --pki-trust-only
       changed_when: true
 
+    # The release-only fast path intentionally skips role templates. Keep the
+    # tenant-bridge service proxy converged anyway: guest DNS resolves through
+    # this listener, and an omitted key leaves every microVM without egress
+    # name resolution even though gatewayd itself is healthy.
+    - name: Converge the guest service proxy listener on managed compute nodes
+      ansible.builtin.lineinfile:
+        path: /etc/faas/gatewayd-internal.toml
+        regexp: '^service_proxy_listen\s*='
+        insertafter: '^apps_domain\s*='
+        line: >-
+          service_proxy_listen = "{{ faas_gatewayd_service_proxy_listen |
+          default('10.100.0.1:10080', true) }}"
+        owner: root
+        group: faas
+        mode: "0640"
+
     - name: Remove the legacy vmmd schedd target override
       ansible.builtin.file:
         path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf
@@ -1155,6 +1185,22 @@
       ansible.builtin.wait_for:
         host: 127.0.0.1
         port: 8080
+        timeout: 60
+
+    - name: Wait for the guest service proxy listener
+      ansible.builtin.wait_for:
+        host: >-
+          {{ (faas_gatewayd_service_proxy_listen |
+          default('10.100.0.1:10080', true)).split(':')[0] }}
+        port: 10080
+        timeout: 60
+
+    - name: Wait for the guest DNS TCP listener
+      ansible.builtin.wait_for:
+        host: >-
+          {{ (faas_gatewayd_service_proxy_listen |
+          default('10.100.0.1:10080', true)).split(':')[0] }}
+        port: 53
         timeout: 60
 
     - name: Require every compute-only service to be active  # noqa: command-instead-of-module (read-only query / no module equivalent)

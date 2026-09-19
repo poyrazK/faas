@@ -72,9 +72,30 @@ func TestCDComputeWorkflowVerifiesFastCacheAfterActivation(t *testing.T) {
 		"findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache",
 		"xfs_info /srv/fc",
 		"reflink=1",
+		"! -group faas",
+		"! -perm -g+w",
+		"! -perm -2000",
 	} {
 		if !strings.Contains(workflow[cacheGate:gatewayGate], want) {
 			t.Errorf("fast-cache post gate is missing %q", want)
+		}
+	}
+}
+
+func TestCDComputeWorkflowVerifiesGuestServiceProxyAfterActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	join := strings.Index(workflow, `"$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"`)
+	proxyGate := strings.Index(workflow, "Verify guest service proxy listener after activation")
+	if join < 0 || proxyGate < 0 || join >= proxyGate {
+		t.Fatalf("guest service proxy gate must follow activation: join=%d gate=%d", join, proxyGate)
+	}
+	for _, want := range []string{"service_proxy_listen", `10\.100\.0\.1:10080`, "10.100.0.1:53", "ss -ltnH", "ss -lunH"} {
+		if !strings.Contains(workflow[proxyGate:], want) {
+			t.Errorf("guest service proxy gate is missing %q", want)
 		}
 	}
 }

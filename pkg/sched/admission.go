@@ -153,6 +153,12 @@ type Request struct {
 	SidecarMBs     []int
 	VCPU           int // vcpus for this instance
 	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
+	// AllowConcurrencyOverlap permits exactly one counted serving instance
+	// above MaxConcurrency. It is reserved for the authenticated deployment
+	// verifier so a candidate can overlap the stable revision during rollout,
+	// and by startup recovery to reconstruct that already-running pair; node
+	// RAM/vCPU limits and the max+1 bound still apply.
+	AllowConcurrencyOverlap bool
 	// Kind discriminates the reservation shape (see Kind doc). Zero
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
@@ -277,7 +283,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 			maxConc = limits.MaxConcurrency
 		}
-		if have := l.perApp[r.AppID]; have >= maxConc {
+		if have := l.perApp[r.AppID]; have >= maxConc && (!r.AllowConcurrencyOverlap || have >= maxConc+1) {
 			return api.ErrPlanLimitConcurrencyAt(limits, maxConc, have)
 		}
 	}

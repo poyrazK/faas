@@ -962,6 +962,33 @@ func (b *PGBackend) Pick(appID string) PickResult {
 	return PickResult{Target: t, OK: true, Picked: chosen}
 }
 
+// PickForDeployment selects only from deploymentID's routable target set.
+// It is intentionally separate from the weighted customer picker: an
+// authenticated promotion smoke must never verify a stable sibling by chance.
+func (b *PGBackend) PickForDeployment(appID, deploymentID string) PickResult {
+	if b == nil || appID == "" || deploymentID == "" {
+		return PickResult{}
+	}
+	b.tgtMu.RLock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		b.tgtMu.RUnlock()
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	set := picker.sets[deploymentID]
+	if set == nil {
+		b.tgtMu.RUnlock()
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	target, ok := set.pick("")
+	b.tgtMu.RUnlock()
+	if !ok {
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	target.DeploymentID = deploymentID
+	return PickResult{Target: target, OK: true, Picked: deploymentID}
+}
+
 // PickForInstance prefers the supplied instance when it is still routable.
 // Session affinity is deliberately best effort: a parked, failed, or
 // deployment-retired instance is ignored and ordinary weighted round-robin

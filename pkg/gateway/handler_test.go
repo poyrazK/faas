@@ -59,7 +59,10 @@ type fakeBackend struct {
 	// what every existing test expects. Set to WakeMethodSnapshotRestore
 	// to drive the wake-locality classifier down the local_snapshot
 	// branch (PR scale-out readiness).
-	wakeMethodOut WakeMethod
+	wakeMethodOut       WakeMethod
+	lastAdmitDeployment string
+	lastAdmitTrigger    string
+	lastAdmitMax        int
 	// failNextPick forces the next Pick call to return !ok so the
 	// handler hits the "every cached instance was evicted between
 	// admit and pick" branch. The handler surfaces that as a 503
@@ -184,6 +187,18 @@ func (b *fakeBackend) Pick(_ string) PickResult {
 	return PickResult{}
 }
 
+func (b *fakeBackend) PickForDeployment(_ string, deploymentID string) PickResult {
+	b.pickCalls.Add(1)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, target := range b.targets {
+		if target.DeploymentID == deploymentID {
+			return PickResult{Target: target, OK: true, Picked: deploymentID}
+		}
+	}
+	return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+}
+
 func (b *fakeBackend) HealthyCount(_ string) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -196,7 +211,7 @@ func (b *fakeBackend) HealthyCount(_ string) int {
 	return 0
 }
 
-func (b *fakeBackend) Admit(ctx context.Context, _, _, _, _ string, maxConcurrency int) (string, WakeMethod, bool, error) {
+func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
 	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
 	// must be serialized. The fakeBackend takes b.mu for the whole
 	// call so concurrent Admit callers cannot collectively exceed
@@ -205,6 +220,9 @@ func (b *fakeBackend) Admit(ctx context.Context, _, _, _, _ string, maxConcurren
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
+	b.lastAdmitDeployment = deploymentID
+	b.lastAdmitTrigger = trigger
+	b.lastAdmitMax = maxConcurrency
 	if len(b.targets) >= maxConcurrency {
 		// Already at the cap — the production semantics here are
 		// "schedule atomically refused", surfaced as atCapacity.
@@ -227,7 +245,7 @@ func (b *fakeBackend) Admit(ctx context.Context, _, _, _, _ string, maxConcurren
 	}
 	// Match the production contract: the cached VM and admission result
 	// refer to the same wake, including when a test pins a UUID.
-	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: wakeID}
+	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: wakeID, DeploymentID: deploymentID}
 	b.targets = append(b.targets, t)
 	// Pick the WakeMethod the test pinned (zero value = ColdBoot, so
 	// every existing test continues to drive the cold-boot chokepoint).

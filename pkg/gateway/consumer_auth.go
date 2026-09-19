@@ -104,6 +104,9 @@ func (t *consumerKeyToucher) touch(store ConsumerAuthStore, keyID string) {
 // unambiguous `Bearer ck_...` consumer-key shape; application-owned Basic,
 // Token, and other Authorization schemes pass through unchanged.
 func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
+	if h.authorizedDeploymentSmoke(r, app) {
+		return true
+	}
 	mode := app.ConsumerAuthMode
 	if mode == "" {
 		// An empty mode is the zero value used by legacy/fake App rows
