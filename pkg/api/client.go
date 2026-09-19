@@ -71,6 +71,11 @@ const cookieOnlyAdminStatusPath = "/v1/admin/status/incidents"
 const (
 	maxResponseBodyBytes  = int64(4 << 20)
 	maxAccountExportBytes = int64(1 << 30)
+	// rollbackRequestTimeout covers the server-side durability check for a
+	// historical rootfs. On an OCI cache miss apid downloads and hashes the
+	// signed layer before accepting the rollback; the normal 30s JSON timeout
+	// can cancel that healthy verification midway through materialization.
+	rollbackRequestTimeout = time.Duration(OCIPullTimeoutSeconds+30) * time.Second
 )
 
 // ResponseTooLargeError reports a response that exceeded the explicit SDK
@@ -220,6 +225,14 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 // caller-supplied key. Safe-release actions use a rollout-scoped key so two
 // alert rules cannot repeat the same mutation after a meterd race.
 func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, body, out any, idempotencyKey string) error {
+	return c.doWithClientAndIdempotencyKey(ctx, c.http, method, path, body, out, idempotencyKey)
+}
+
+// doWithClientAndIdempotencyKey is the shared JSON request path for methods
+// whose server-side work has a deliberately different transport deadline.
+// Most calls use c.http; rollback uses rollbackHTTP because its integrity gate
+// may need one complete OCI artifact fetch on a cold cache.
+func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -269,7 +282,16 @@ func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.doReq(c.http, req, out)
+	return c.doReq(cli, req, out)
+}
+
+func (c *Client) rollbackHTTP() *http.Client {
+	if c.http == nil || c.http.Timeout == 0 || c.http.Timeout >= rollbackRequestTimeout {
+		return c.http
+	}
+	copy := *c.http
+	copy.Timeout = rollbackRequestTimeout
+	return &copy
 }
 
 // doReq executes a prepared request against the given *http.Client
@@ -1901,7 +1923,7 @@ func (c *Client) GetStatusSLO(ctx context.Context) (StatusPage, error) {
 // Rollback re-promotes the most recent superseded deployment.
 func (c *Client) Rollback(ctx context.Context, slug string) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", nil, &out)
+	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", nil, &out, "")
 }
 
 // RollbackTo is the SAFE-RELEASES-G (issue #976) variant of Rollback.
@@ -1919,10 +1941,10 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 		// superseded" path. Avoids wire noise and keeps the
 		// DisallowUnknownFields handler happy when fields are added
 		// to RollbackRequest later.
-		return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", nil, &out)
+		return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", nil, &out, "")
 	}
 	body := RollbackRequest{TargetDeploymentID: &targetDeploymentID}
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out)
+	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", body, &out, "")
 }
 
 // RollbackToWithRule (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
@@ -1959,7 +1981,7 @@ func (c *Client) RollbackToWithRuleAndIdempotencyKey(ctx context.Context, slug, 
 	if alertRuleID != "" {
 		body.AlertRuleID = &alertRuleID
 	}
-	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out, idempotencyKey)
+	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", body, &out, idempotencyKey)
 }
 
 // ListDeploymentAudit returns the deployment_audit timeline for

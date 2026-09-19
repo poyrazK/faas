@@ -2085,11 +2085,15 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	if err == nil {
 		return nil
 	}
+	s.log.Warn("rollback artifact verification failed",
+		"deployment", target.ID,
+		"rootfs_key", target.RootfsKey,
+		"err", err)
 	var problem *api.Problem
 	if artifactstorage.IsNotFound(err) || (errors.As(err, &problem) && problem.Code == api.CodeSigInvalid) {
 		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", target.ID))
 	}
-	return api.ErrCapacity("could not verify rollback target artifact")
+	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }
 
 // parkApp marks the app evicted_cold; schedd reacts and tears down live

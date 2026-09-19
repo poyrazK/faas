@@ -106,6 +106,32 @@ func TestNewClientWithDeployTimeout(t *testing.T) {
 	})
 }
 
+func TestRollbackUsesArtifactVerificationTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/demo/rollback" {
+			t.Errorf("request = %s %s, want POST /v1/apps/demo/rollback", r.Method, r.URL.Path)
+		}
+		time.Sleep(20 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(DeploymentResponse{ID: "dep-old", Status: "snapshotting"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "token")
+	// Model the production bug without making the test wait 30 seconds: the
+	// ordinary JSON deadline expires while rollback's cold-cache verification
+	// is still running.
+	c.HTTPClient().Timeout = time.Millisecond
+	got, err := c.RollbackTo(context.Background(), "demo", "dep-old")
+	if err != nil {
+		t.Fatalf("RollbackTo: %v", err)
+	}
+	if got.ID != "dep-old" || got.Status != "snapshotting" {
+		t.Fatalf("rollback response = %+v", got)
+	}
+}
+
 // --- Problem / APIError -------------------------------------------------------
 
 // TestAPIError_Error_SingleLine locks the SDK contract: APIError is
