@@ -65,9 +65,109 @@ type PrivateNetworkFabricTransportRouter interface {
 // own its live instances. vmmd itself fans that update out to all of its local
 // instances, so schedd only sends one update per node.
 type PrivateNetworkRouteApplier struct {
-	store  state.Store
-	router PrivateNetworkRouter
-	log    *slog.Logger
+	store        state.Store
+	router       PrivateNetworkRouter
+	peeringStore state.PrivateNetworkPeeringReconcileStore
+	log          *slog.Logger
+}
+
+// PrivateNetworkPeeringRouteApplier translates the provider-neutral peering
+// route set into the existing app-netns route update path. Peering routes are
+// derived state: the attachment's persisted CIDRs remain the base network
+// routes, while every sweep replaces the effective set and therefore removes
+// routes for deleted or blocked peerings as well.
+type PrivateNetworkPeeringRouteApplier struct {
+	attachments PrivateNetworkAttachmentState
+	routes      *PrivateNetworkRouteApplier
+	log         *slog.Logger
+}
+
+// PrivateNetworkAttachmentState is the combined store surface required by
+// Gregale-owned peering route convergence.
+type PrivateNetworkAttachmentState interface {
+	state.Store
+	state.AppPrivateNetworkAttachmentReconcileStore
+}
+
+func NewPrivateNetworkPeeringRouteApplier(store PrivateNetworkAttachmentState, router PrivateNetworkRouter, log *slog.Logger) *PrivateNetworkPeeringRouteApplier {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PrivateNetworkPeeringRouteApplier{
+		attachments: store,
+		routes:      NewPrivateNetworkRouteApplier(store, router, log),
+		log:         log,
+	}
+}
+
+// NewPrivateNetworkPeeringRouteApplierWithRouteApplier shares the route
+// applier used by the attachment reconciler. This is important because the
+// attachment worker also replays ready rows; sharing the overlay keeps a
+// peering route from being overwritten by a later base-CIDR replay.
+func NewPrivateNetworkPeeringRouteApplierWithRouteApplier(store PrivateNetworkAttachmentState, routes *PrivateNetworkRouteApplier, log *slog.Logger) *PrivateNetworkPeeringRouteApplier {
+	if log == nil {
+		log = slog.Default()
+	}
+	if routes == nil {
+		routes = NewPrivateNetworkRouteApplier(store, nil, log)
+	}
+	return &PrivateNetworkPeeringRouteApplier{attachments: store, routes: routes, log: log}
+}
+
+// Apply replaces all effective routes for attachments in one account and
+// region. An empty routes slice is meaningful: it restores each attachment's
+// base CIDRs and clears stale peering destinations from every live node.
+func (a *PrivateNetworkPeeringRouteApplier) Apply(ctx context.Context, accountID, region string, routes []privatenetwork.PeeringRoute) error {
+	if a == nil || a.attachments == nil || a.routes == nil {
+		return errors.New("private network peering route applier is not configured")
+	}
+	attachments, err := a.attachments.ListAppPrivateNetworkAttachments(ctx, []string{api.PrivateNetworkAttachmentStatusReady}, 1000)
+	if err != nil {
+		return fmt.Errorf("list ready private network attachments: %w", err)
+	}
+	destinations := make(map[string][]netip.Prefix)
+	for _, route := range routes {
+		if !route.DestinationCIDR.IsValid() || route.FromNetworkID == "" {
+			return fmt.Errorf("invalid private network peering route for %q", route.FromNetworkID)
+		}
+		destinations[route.FromNetworkID] = append(destinations[route.FromNetworkID], route.DestinationCIDR)
+	}
+
+	var errs []error
+	for _, attachment := range attachments {
+		if attachment.AccountID != accountID || attachment.Region != region {
+			continue
+		}
+		effective := append([]netip.Prefix(nil), attachment.CIDRs...)
+		effective = append(effective, destinations[attachment.NetworkID]...)
+		effective = canonicalPrivateNetworkPrefixes(effective)
+		attachment.CIDRs = effective
+		if _, applyErr := a.routes.ApplyAttachmentWithReport(ctx, attachment); applyErr != nil {
+			err := fmt.Errorf("app %s: %w", attachment.AppID, applyErr)
+			errs = append(errs, err)
+			a.log.Warn("schedd: private network peering routes update failed", "account", accountID, "region", region, "app", attachment.AppID, "err", applyErr)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func canonicalPrivateNetworkPrefixes(prefixes []netip.Prefix) []netip.Prefix {
+	seen := make(map[string]struct{}, len(prefixes))
+	out := make([]netip.Prefix, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if !prefix.IsValid() {
+			continue
+		}
+		prefix = prefix.Masked()
+		key := prefix.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, prefix)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
 }
 
 func NewPrivateNetworkRouteApplier(store state.Store, router PrivateNetworkRouter, log *slog.Logger) *PrivateNetworkRouteApplier {
@@ -75,6 +175,14 @@ func NewPrivateNetworkRouteApplier(store state.Store, router PrivateNetworkRoute
 		log = slog.Default()
 	}
 	return &PrivateNetworkRouteApplier{store: store, router: router, log: log}
+}
+
+// WithPeeringStore enables the ready-peering overlay for attachment replays.
+// The overlay is optional so provider-only and legacy route-only deployments
+// retain the original route applier behavior.
+func (a *PrivateNetworkRouteApplier) WithPeeringStore(store state.PrivateNetworkPeeringReconcileStore) *PrivateNetworkRouteApplier {
+	a.peeringStore = store
+	return a
 }
 
 func (a *PrivateNetworkRouteApplier) Apply(ctx context.Context, appID string, cidrs []netip.Prefix) error {
@@ -91,6 +199,13 @@ func (a *PrivateNetworkRouteApplier) ApplyWithReport(ctx context.Context, appID 
 }
 
 func (a *PrivateNetworkRouteApplier) ApplyAttachmentWithReport(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (privatenetwork.RouteApplyReport, error) {
+	if a.peeringStore != nil {
+		effective, err := a.withReadyPeeringRoutes(ctx, attachment)
+		if err != nil {
+			return privatenetwork.RouteApplyReport{}, err
+		}
+		attachment = effective
+	}
 	if api.PrivateNetworkFabricEnabled() {
 		if fabric, ok := a.store.(state.PrivateNetworkStore); ok {
 			if _, err := fabric.GetPrivateNetwork(ctx, attachment.AccountID, attachment.NetworkID); err == nil {
@@ -108,6 +223,50 @@ func (a *PrivateNetworkRouteApplier) ApplyAttachmentWithReport(ctx context.Conte
 		}
 	}
 	return a.applyWithReport(ctx, attachment.AppID, attachment.CIDRs, attachment.AllowedCIDRs, attachment.FirewallRules, "", netip.Addr{})
+}
+
+func (a *PrivateNetworkRouteApplier) withReadyPeeringRoutes(ctx context.Context, attachment state.AppPrivateNetworkAttachment) (state.AppPrivateNetworkAttachment, error) {
+	networkStore, ok := a.store.(state.PrivateNetworkStore)
+	if !ok {
+		return state.AppPrivateNetworkAttachment{}, errors.New("private network peering route overlay requires private network state")
+	}
+	rows, err := a.peeringStore.ListPrivateNetworkPeeringsForReconcile(ctx, []string{api.PrivateNetworkPeeringStatusReady}, 1000)
+	if err != nil {
+		return state.AppPrivateNetworkAttachment{}, fmt.Errorf("list ready private network peerings: %w", err)
+	}
+	specs := make([]privatenetwork.PeeringSpec, 0, len(rows))
+	for _, row := range rows {
+		if row.AccountID != attachment.AccountID || row.Region != attachment.Region {
+			continue
+		}
+		left, leftErr := networkStore.GetPrivateNetwork(ctx, row.AccountID, row.LeftNetworkID)
+		right, rightErr := networkStore.GetPrivateNetwork(ctx, row.AccountID, row.RightNetworkID)
+		if leftErr != nil || rightErr != nil {
+			if leftErr != nil {
+				return state.AppPrivateNetworkAttachment{}, fmt.Errorf("private network peering left network lookup: %w", leftErr)
+			}
+			return state.AppPrivateNetworkAttachment{}, fmt.Errorf("private network peering right network lookup: %w", rightErr)
+		}
+		specs = append(specs, privatenetwork.PeeringSpec{
+			ID: row.ID, AccountID: row.AccountID, Region: row.Region,
+			Left:  privatenetwork.FabricSpec{AccountID: left.AccountID, NetworkID: left.ID, Region: left.Region, CIDR: left.CIDR},
+			Right: privatenetwork.FabricSpec{AccountID: right.AccountID, NetworkID: right.ID, Region: right.Region, CIDR: right.CIDR},
+		})
+	}
+	if len(specs) == 0 {
+		return attachment, nil
+	}
+	routes, err := privatenetwork.BuildPeeringRoutes(specs)
+	if err != nil {
+		return state.AppPrivateNetworkAttachment{}, fmt.Errorf("build ready private network peering routes: %w", err)
+	}
+	for _, route := range routes {
+		if route.FromNetworkID == attachment.NetworkID {
+			attachment.CIDRs = append(attachment.CIDRs, route.DestinationCIDR)
+		}
+	}
+	attachment.CIDRs = canonicalPrivateNetworkPrefixes(attachment.CIDRs)
+	return attachment, nil
 }
 
 func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, networkID string, address netip.Addr) (privatenetwork.RouteApplyReport, error) {

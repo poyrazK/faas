@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -211,6 +212,96 @@ func TestPrivateNetworkRouteApplierReportsPerNodeHealth(t *testing.T) {
 	}
 	if report.Nodes[1].Detail != wantErr.Error() {
 		t.Fatalf("node-b detail = %q, want %q", report.Nodes[1].Detail, wantErr)
+	}
+}
+
+func TestPrivateNetworkPeeringRouteApplierReplacesDerivedRoutes(t *testing.T) {
+	t.Setenv("FAAS_PRIVATE_NETWORK_FABRIC_ENABLED", "")
+	ctx := context.Background()
+	const (
+		accountID = "acct-private"
+		region    = "fra1"
+		appID     = "app-private-peering"
+	)
+	baseCIDR := netip.MustParsePrefix("10.42.0.0/16")
+	peerCIDR := netip.MustParsePrefix("10.84.0.0/16")
+	store := newPrivateNetworkInstanceStore(t, appID, struct{ state, node string }{string(state.StateRunning), "node-a"})
+	if _, err := store.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
+		AccountID: accountID, AppID: appID, NetworkID: "net-left", Region: region,
+		CIDRs: []netip.Prefix{baseCIDR}, Status: api.PrivateNetworkAttachmentStatusReady,
+	}); err != nil {
+		t.Fatalf("UpsertAppPrivateNetworkAttachment: %v", err)
+	}
+	router := &privateNetworkRouterFake{errByNode: map[string]error{}}
+	applier := NewPrivateNetworkPeeringRouteApplier(store, router, nil)
+	routes := []privatenetwork.PeeringRoute{{
+		FromNetworkID: "net-left", DestinationNetwork: "net-right", DestinationCIDR: peerCIDR,
+	}}
+
+	if err := applier.Apply(ctx, accountID, region, routes); err != nil {
+		t.Fatalf("Apply peering routes: %v", err)
+	}
+	if err := applier.Apply(ctx, accountID, region, nil); err != nil {
+		t.Fatalf("Apply empty peering route set: %v", err)
+	}
+
+	calls := router.callsSnapshot()
+	if len(calls) != 2 {
+		t.Fatalf("route calls = %d, want 2: %+v", len(calls), calls)
+	}
+	if got, want := calls[0].cidrs, []netip.Prefix{baseCIDR, peerCIDR}; !equalPrefixes(got, want) {
+		t.Fatalf("effective CIDRs = %v, want %v", got, want)
+	}
+	if got, want := calls[1].cidrs, []netip.Prefix{baseCIDR}; !equalPrefixes(got, want) {
+		t.Fatalf("stale-cleanup CIDRs = %v, want %v", got, want)
+	}
+}
+
+func TestPrivateNetworkRouteApplierRetainsReadyPeeringRoutesOnAttachmentReplay(t *testing.T) {
+	t.Setenv("FAAS_PRIVATE_NETWORK_FABRIC_ENABLED", "")
+	ctx := context.Background()
+	const accountID = "acct-private"
+	const region = "fra1"
+	baseCIDR := netip.MustParsePrefix("10.42.0.0/16")
+	peerCIDR := netip.MustParsePrefix("10.84.0.0/16")
+	store := newPrivateNetworkInstanceStore(t, "app-private-peering-replay", struct{ state, node string }{string(state.StateRunning), "node-a"})
+	for _, network := range []state.PrivateNetwork{
+		{ID: "net-left", AccountID: accountID, Name: "left", Region: region, CIDR: baseCIDR},
+		{ID: "net-right", AccountID: accountID, Name: "right", Region: region, CIDR: peerCIDR},
+	} {
+		if _, err := store.CreatePrivateNetwork(ctx, network); err != nil {
+			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
+		}
+	}
+	peering, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
+		ID: "peer-ready", AccountID: accountID, LeftNetworkID: "net-left", RightNetworkID: "net-right", Region: region,
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering: %v", err)
+	}
+	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, accountID, peering.ID, api.PrivateNetworkPeeringStatusReady, "routes active"); err != nil {
+		t.Fatalf("UpdatePrivateNetworkPeeringStatus: %v", err)
+	}
+	if _, err := store.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
+		AccountID: accountID, AppID: "app-private-peering-replay", NetworkID: "net-left", Region: region,
+		CIDRs: []netip.Prefix{baseCIDR}, Status: api.PrivateNetworkAttachmentStatusReady,
+	}); err != nil {
+		t.Fatalf("UpsertAppPrivateNetworkAttachment: %v", err)
+	}
+	router := &privateNetworkRouterFake{errByNode: map[string]error{}}
+	applier := NewPrivateNetworkRouteApplier(store, router, nil).WithPeeringStore(store)
+	if _, err := applier.ApplyAttachmentWithReport(ctx, state.AppPrivateNetworkAttachment{
+		AccountID: accountID, AppID: "app-private-peering-replay", NetworkID: "net-left", Region: region,
+		CIDRs: []netip.Prefix{baseCIDR}, Status: api.PrivateNetworkAttachmentStatusReady,
+	}); err != nil {
+		t.Fatalf("ApplyAttachmentWithReport: %v", err)
+	}
+	calls := router.callsSnapshot()
+	if len(calls) != 1 {
+		t.Fatalf("route calls = %d, want 1: %+v", len(calls), calls)
+	}
+	if got, want := calls[0].cidrs, []netip.Prefix{baseCIDR, peerCIDR}; !equalPrefixes(got, want) {
+		t.Fatalf("replayed CIDRs = %v, want %v", got, want)
 	}
 }
 
@@ -418,6 +509,18 @@ func TestPrivateNetworkCIDRsForFailsClosedUntilReady(t *testing.T) {
 }
 
 func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalPrefixes(a, b []netip.Prefix) bool {
 	if len(a) != len(b) {
 		return false
 	}

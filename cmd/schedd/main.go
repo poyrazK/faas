@@ -1081,6 +1081,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("schedd: private network reconciler skipped; connector unavailable")
 			} else {
 				applier := sched.NewPrivateNetworkRouteApplier(store, vmmRouter, log)
+				var peeringStore state.PrivateNetworkPeeringReconcileStore
+				var peeringStoreOK bool
+				if api.PrivateNetworkFabricEnabled() {
+					peeringStore, peeringStoreOK = any(store).(state.PrivateNetworkPeeringReconcileStore)
+					if peeringStoreOK {
+						// Attachment replays must retain routes from peerings that
+						// have already converged; otherwise the two workers could
+						// race and a base-CIDR replay would withdraw them.
+						applier.WithPeeringStore(peeringStore)
+					}
+				}
 				reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
 					Logger: log,
 					Fabric: fabricApplier,
@@ -1115,6 +1126,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						log.Warn("schedd: private network reconciler stopped", "err", err)
 					}
 				}()
+				if api.PrivateNetworkFabricEnabled() {
+					if !peeringStoreOK {
+						log.Warn("schedd: private network peering reconciler unavailable; state store lacks peering extension")
+					} else {
+						peeringApplier := sched.NewPrivateNetworkPeeringRouteApplierWithRouteApplier(store, applier, log)
+						peeringReconciler, peeringErr := privatenetwork.NewPeeringReconciler(peeringStore, peeringApplier, privatenetwork.PeeringReconcilerOptions{
+							Logger: log,
+							Observe: func(obs privatenetwork.PeeringReconcileObservation) {
+								log.Debug("private network peering reconciliation", "account", obs.AccountID, "region", obs.Region, "outcome", obs.Outcome, "duration", obs.Duration, "peerings", obs.Peerings, "routes", obs.Routes, "failed", obs.Failed)
+							},
+						})
+						if peeringErr != nil {
+							return peeringErr
+						}
+						go func() {
+							if err := peeringReconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+								log.Warn("schedd: private network peering reconciler stopped", "err", err)
+							}
+						}()
+						log.Info("schedd: private network peering reconciler enabled")
+					}
+				}
 				// Use the loop's existing LISTEN connection for the live detach
 				// fast path and the durable outbox worker below for replay. This
 				// keeps both the operator-managed registry and Gregale's own

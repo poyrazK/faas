@@ -18,17 +18,17 @@ overlapping IPv4 CIDRs, and produces a canonical two-way desired route set.
 Route plans are sorted and safe to replay; duplicate peerings or duplicate
 network-to-network routes are rejected before a host mutation is attempted.
 
-The planner does not call DigitalOcean or execute `ip route`. A subsequent
-state/API slice will persist peering intent, and a node adapter will apply the
-desired routes through the existing fabric while retaining each network's
-firewall policy and fail-closed readiness semantics.
+The planner does not call DigitalOcean or execute `ip route`. Durable peering
+intent is reconciled by schedd, and the route applier uses the existing vmmd
+app-netns attachment update to apply desired routes through the fabric while
+retaining each network's firewall policy and fail-closed readiness semantics.
 
 ## Consequences
 
 Peering behavior is stable across local and cloud-backed deployments, and
-control-plane retries cannot accumulate stale one-way routes. The current
-slice is intentionally a foundation: there is no customer-facing endpoint or
-provider connector until durable lifecycle and node convergence are added.
+control-plane retries cannot accumulate stale one-way routes. The customer
+surface remains provider-neutral and dark-launched behind the private-network
+fabric flag; no DigitalOcean peering API or provider connector is required.
 
 ## Rejected alternatives
 

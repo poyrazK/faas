@@ -22,8 +22,11 @@ region and use non-overlapping IPv4 CIDRs. Pending and error peerings are
 fail-closed, so they never imply reachability; the provider-neutral peering
 reconciler is the only component allowed to mark one `ready`, and it does so
 only after the configured route applier accepts the complete bidirectional
-route set. A network referenced by a peering cannot be deleted until that
-peering is removed.
+route set. In Gregale-owned fabric mode, schedd applies that set through the
+existing vmmd app-netns attachment update, once per ready attachment and live
+compute node; each replay replaces the complete effective CIDR set, so stale
+peering destinations are withdrawn. A network referenced by a peering cannot
+be deleted until that peering is removed.
 
 The fabric slice persists the network definition and reserves stable member
 addresses (network+1 is reserved as the gateway; allocation starts at

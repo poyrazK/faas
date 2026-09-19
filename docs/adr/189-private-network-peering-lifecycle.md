@@ -22,18 +22,22 @@ message. Peering rows block deletion of either referenced network until the
 peering is explicitly removed.
 
 The endpoint is dark-launched behind the existing private-network fabric flag.
-It persists intent only; node route mutation and provider integration remain
-separate convergence work so Gregale keeps ownership of policy and routing.
+Schedd's peering worker consumes the durable rows and applies the complete
+desired route set through the existing vmmd app-netns attachment update. The
+same route overlay is replayed by attachment reconciliation, so a base-CIDR
+replay cannot silently withdraw a ready peering while Gregale keeps ownership
+of policy and routing.
 
 ## Consequences
 
 Customers get an idempotent, inspectable lifecycle and SDK coverage without a
 DigitalOcean dependency. Pending and error peerings never imply reachability,
 and the canonical pair plus account/region checks make retries safe. The
-provider-neutral `PeeringReconciler` now consumes these rows, applies a
-complete desired route set through an explicit `PeeringRouteApplier`, and
-promotes rows only after that apply succeeds; the privileged node adapter and
-daemon wiring remain a separate deployment step.
+provider-neutral `PeeringReconciler` consumes these rows, applies a complete
+desired route set through an explicit `PeeringRouteApplier`, and promotes rows
+only after that apply succeeds. The privileged operation reuses the existing
+vmmd attachment RPC and fans out across live nodes, avoiding a second
+provider-specific route protocol.
 
 ## Rejected alternatives
 
