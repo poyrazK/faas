@@ -512,9 +512,7 @@ func (c Config) NftCommands() [][]string {
 		// DNAT'd private ingress is now addressed to the guest tap IP;
 		// admit only the published application port on the private side.
 		if len(c.PrivateNetworkFirewallRules) > 0 {
-			for _, rule := range c.privateFirewallIngressRules(nft) {
-				cmds = append(cmds, rule)
-			}
+			cmds = append(cmds, c.privateFirewallIngressRules(nft)...)
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")
 		} else {
 			args := []string{"add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}

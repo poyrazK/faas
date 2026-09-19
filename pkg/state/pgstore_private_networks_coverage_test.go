@@ -29,19 +29,31 @@ func TestPg_PrivateNetworkCoverage(t *testing.T) {
 		Name:      "net-" + suffix,
 		Region:    "fra1",
 		CIDR:      netip.MustParsePrefix("10.80.0.0/28"),
+		FirewallRules: []api.PrivateNetworkFirewallRule{{
+			Direction: "ingress",
+			Protocol:  "tcp",
+			CIDRs:     []string{"10.80.0.0/28"},
+			Ports:     []string{"443"},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("CreatePrivateNetwork: %v", err)
 	}
-	if network.Status != api.PrivateNetworkStatusReady || network.CIDR.String() != "10.80.0.0/28" {
+	if network.Status != api.PrivateNetworkStatusReady || network.CIDR.String() != "10.80.0.0/28" || len(network.FirewallRules) != 1 {
 		t.Fatalf("created network = %+v", network)
 	}
 
-	if got, err := s.GetPrivateNetwork(ctx, acct.ID, network.ID); err != nil || got.ID != network.ID {
+	if got, err := s.GetPrivateNetwork(ctx, acct.ID, network.ID); err != nil || got.ID != network.ID || len(got.FirewallRules) != 1 || got.FirewallRules[0].Ports[0] != "443" {
 		t.Fatalf("GetPrivateNetwork = %+v, %v", got, err)
 	}
-	if got, err := s.ListPrivateNetworks(ctx, acct.ID); err != nil || len(got) != 1 || got[0].ID != network.ID {
+	if got, err := s.ListPrivateNetworks(ctx, acct.ID); err != nil || len(got) != 1 || got[0].ID != network.ID || len(got[0].FirewallRules) != 1 {
 		t.Fatalf("ListPrivateNetworks = %+v, %v", got, err)
+	}
+	updated, err := s.UpdatePrivateNetworkFirewallPolicy(ctx, acct.ID, network.ID,
+		[]netip.Prefix{netip.MustParsePrefix("10.80.0.0/28")},
+		[]api.PrivateNetworkFirewallRule{{Direction: "egress", Protocol: "udp", Ports: []string{"53"}}})
+	if err != nil || len(updated.FirewallRules) != 1 || updated.FirewallRules[0].Direction != "egress" {
+		t.Fatalf("UpdatePrivateNetworkFirewallPolicy = %+v, %v", updated, err)
 	}
 
 	if _, err := s.CreatePrivateNetwork(ctx, state.PrivateNetwork{
