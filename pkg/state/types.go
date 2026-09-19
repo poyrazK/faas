@@ -4510,7 +4510,7 @@ type AuditLog struct {
 // kind the meterd orchestrator (Mega PR #2) or the apid CreateDeployment
 // path emits must be one of these constants.
 //
-// Closed set (8 kinds):
+// Closed set (14 kinds):
 //   - DeployCreated:     apid CreateDeployment path + 90-day backfill
 //     rename of legacy app.deployed.
 //   - DeploySourceRef:   apid source-ref path.
@@ -4549,6 +4549,12 @@ const (
 	// rule-scoped stamp).
 	DeployCanaryStepAdvanced DeploymentAuditKind = "deploy.canary_step_advanced"
 	DeployAlertRuleFired     DeploymentAuditKind = "deploy.alert_rule_fired"
+	// DeployScanRegressed is emitted by imaged's periodic security
+	// re-scan when a live enforce-mode image transitions from verified
+	// clean evidence to blocking findings or unavailable evidence. The
+	// payload is the durable quarantine signal; traffic controllers may
+	// consume it without making the scanner own instance teardown.
+	DeployScanRegressed DeploymentAuditKind = "deploy.scan_regressed"
 )
 
 // DeploymentAudit is one row of the deployment_audit table
