@@ -41,6 +41,26 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	if observer < 0 || publicPath < 0 || activate < 0 || !(observer <= publicPath && publicPath < activate) {
 		t.Fatalf("customer-path observer must wrap activation: observer=%d public=%d activate=%d", observer, publicPath, activate)
 	}
+	scriptBody, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(scriptBody)
+	for _, required := range []string{
+		"ROLLOUT_BASELINE_SAMPLE_COUNT",
+		"sample baseline",
+		"Baseline: **",
+		"Rollout attribution is **inconclusive**",
+		"HTTP status counts:",
+		"customer path lost after a healthy pre-rollout baseline",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("customer-path observer is missing baseline diagnostic %q", required)
+		}
+	}
+	if strings.Contains(script, `--user-agent "gregale-rollout-observer/`) {
+		t.Fatal("customer-path observer must use the same edge identity as the final public gate")
+	}
 }
 
 func TestCDControlPlaneVerifiesSBOMBeforeActivationAndAcceptsAfterHealth(t *testing.T) {

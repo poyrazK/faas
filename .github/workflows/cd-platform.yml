@@ -174,7 +174,10 @@ jobs:
     name: Compute stage (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, plan]
     strategy:
-      fail-fast: false
+      # max-parallel keeps the fleet serialized; fail-fast prevents the next
+      # queued node from starting after the current node fails its post-rollout
+      # gates. Continuing would risk mutating the last healthy fallback.
+      fail-fast: true
       max-parallel: 1
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}

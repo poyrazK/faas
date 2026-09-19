@@ -101,13 +101,18 @@ func TestCDComputeWorkflowVerifiesFastCacheAfterActivation(t *testing.T) {
 		"findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache",
 		"xfs_info /srv/fc",
 		"reflink=1",
+		"test -g /var/lib/faas/cache",
+		"-mindepth 1",
 		"! -group faas",
 		"! -perm -g+w",
-		"! -perm -2000",
+		"cache permission contract violation",
 	} {
 		if !strings.Contains(workflow[cacheGate:gatewayGate], want) {
 			t.Errorf("fast-cache post gate is missing %q", want)
 		}
+	}
+	if strings.Contains(workflow[cacheGate:gatewayGate], "! -perm -2000") {
+		t.Fatal("fast-cache post gate must not require setgid on restricted-daemon child directories")
 	}
 }
 

@@ -42,7 +42,7 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 		"compute_targets:",
 		"name: Validate compute rollout targets",
 		"target: ${{ fromJSON(needs.plan.outputs.targets) }}",
-		"fail-fast: false",
+		"fail-fast: true",
 		"max-parallel: 1",
 		"node: ${{ matrix.target.node }}",
 		"ssh_host: ${{ matrix.target.ssh_host }}",
@@ -51,6 +51,9 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("platform workflow is missing fleet-matrix contract %q", required)
 		}
+	}
+	if strings.Contains(workflow, "fail-fast: false\n      max-parallel: 1") {
+		t.Fatal("serialized production matrix must stop before mutating the next node after a failure")
 	}
 	if strings.Contains(workflow, "node: ${{ inputs.node }}\n      ssh_host: ${{ inputs.ssh_host }}") {
 		t.Fatal("compute stage still rolls only the legacy single-node inputs")
