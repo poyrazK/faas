@@ -335,6 +335,7 @@ func (s *server) updatePrivateNetworkPolicy(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
+	_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network","account_id":"%s","network_id":"%s","region":"%s","status":"policy_updated"}`, acct.ID, updated.ID, updated.Region))
 	s.audit.Emit(r.Context(), "private_network.policy_updated", &acct.ID, map[string]any{"network_id": id, "allowed_cidrs": req.AllowedCIDRs, "firewall_rules": req.FirewallRules})
 	writeJSON(w, http.StatusOK, privateNetworkResponse(updated))
 }

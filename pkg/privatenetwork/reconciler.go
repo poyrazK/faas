@@ -165,12 +165,43 @@ func NewReconciler(store state.AppPrivateNetworkAttachmentReconcileStore, connec
 }
 
 func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
-	var summary ReconcileSummary
 	rows, err := r.store.ListAppPrivateNetworkAttachments(ctx,
 		[]string{api.PrivateNetworkAttachmentStatusPending, api.PrivateNetworkAttachmentStatusReady, api.PrivateNetworkAttachmentStatusError}, r.batchSize)
 	if err != nil {
-		return summary, err
+		return ReconcileSummary{}, err
 	}
+	return r.sweepRows(ctx, rows)
+}
+
+// SweepNetwork immediately converges attachments for one account/network after
+// a network policy mutation. The periodic sweep remains the safety net for
+// missed notifications; this path keeps firewall changes from waiting for the
+// next global batch and avoids touching unrelated accounts or networks.
+func (r *Reconciler) SweepNetwork(ctx context.Context, accountID, networkID string) (ReconcileSummary, error) {
+	accountID = strings.TrimSpace(accountID)
+	networkID = strings.TrimSpace(networkID)
+	if accountID == "" || networkID == "" {
+		return ReconcileSummary{}, errors.New("privatenetwork: account_id and network_id are required")
+	}
+	rows, err := r.store.ListAppPrivateNetworkAttachments(ctx, []string{
+		api.PrivateNetworkAttachmentStatusPending,
+		api.PrivateNetworkAttachmentStatusReady,
+		api.PrivateNetworkAttachmentStatusError,
+	}, 1000)
+	if err != nil {
+		return ReconcileSummary{}, err
+	}
+	filtered := make([]state.AppPrivateNetworkAttachment, 0, len(rows))
+	for _, row := range rows {
+		if row.AccountID == accountID && row.NetworkID == networkID {
+			filtered = append(filtered, row)
+		}
+	}
+	return r.sweepRows(ctx, filtered)
+}
+
+func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetworkAttachment) (ReconcileSummary, error) {
+	var summary ReconcileSummary
 	summary.Discovered = len(rows)
 	var sweepErrs []error
 	for _, attachment := range rows {

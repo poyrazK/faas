@@ -130,6 +130,7 @@ type Loop struct {
 	livenessWindow        *LivenessWindow                     // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
 	appDelete             *AppDeleteSubscriber                // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
 	privateNetwork        *PrivateNetworkAttachmentSubscriber // durable private-route detach handler; nil = no-op dispatch
+	privateNetworkPolicy  *PrivateNetworkPolicySubscriber     // durable network policy convergence handler; nil = no-op dispatch
 	privateNetworkPeering *PrivateNetworkPeeringSubscriber    // durable peering withdrawal/replay handler; nil = no-op dispatch
 	reaperAggressive      bool                                // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
 	reaperParkCap         int                                 // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
@@ -289,6 +290,14 @@ func (l *Loop) WithAppDeleteSubscriber(d *AppDeleteSubscriber) *Loop {
 // is used by the outbox replay worker, so a failed cleanup remains retryable.
 func (l *Loop) WithPrivateNetworkAttachmentSubscriber(s *PrivateNetworkAttachmentSubscriber) *Loop {
 	l.privateNetwork = s
+	return l
+}
+
+// WithPrivateNetworkPolicySubscriber attaches the durable network policy
+// convergence handler to the loop's existing LISTEN connection and replay
+// worker.
+func (l *Loop) WithPrivateNetworkPolicySubscriber(s *PrivateNetworkPolicySubscriber) *Loop {
+	l.privateNetworkPolicy = s
 	return l
 }
 
@@ -625,7 +634,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyAppDelete,                       // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
 		db.NotifyJobChanged,                      // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
 		db.NotifyPrivateNetworkAttachmentChanged, // durable detach cleanup; replayed if this LISTEN delivery is missed.
-		db.NotifyPrivateNetworkChanged,           // durable peering activation/withdrawal; replayed if this LISTEN delivery is missed.
+		db.NotifyPrivateNetworkChanged,           // durable network policy/peering mutation; replayed if this LISTEN delivery is missed.
 		db.NotifyEventPublished,                  // Workstream B event matcher/fanout wakeup.
 		// PR #1099 P2 redesign: multiplexed onto the existing
 		// LISTEN. Same zero-cost pattern as NotifyCronRunNow +
@@ -1697,6 +1706,11 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 		return l.privateNetwork.Handle(ctx, n)
 	}
 	if n.Channel == db.NotifyPrivateNetworkChanged {
+		if l.privateNetworkPolicy != nil {
+			if err := l.privateNetworkPolicy.Handle(ctx, n); err != nil {
+				return err
+			}
+		}
 		if l.privateNetworkPeering == nil {
 			return nil
 		}

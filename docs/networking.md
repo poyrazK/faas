@@ -98,8 +98,9 @@ and TCP/UDP rules carry ports such as `443` or `8000-8080`. Rule CIDRs are
 sources for ingress and destinations for egress; an omitted list means the
 whole network CIDR. An attachment policy may only narrow the CIDR baseline,
 never broaden it. Updating the network policy is asynchronous: schedd
-replays the effective policy to every live node, and nftables keeps traffic
-blocked until each update succeeds. Empty rule lists preserve the legacy
+replays the effective policy to every live node immediately after the durable
+mutation wakeup, with the periodic sweep as a recovery backstop, and nftables
+keeps traffic blocked until each update succeeds. Empty rule lists preserve the legacy
 CIDR-only behavior; the PUT body replaces both lists, so include a list when
 you intend to retain an existing restriction.
 

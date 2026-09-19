@@ -52,6 +52,42 @@ func TestReconcilerTransitionsReadyOnlyAfterRouteActivation(t *testing.T) {
 	}
 }
 
+func TestReconcilerSweepNetworkTargetsOnlyAffectedAttachments(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	for _, attachment := range []state.AppPrivateNetworkAttachment{
+		{AccountID: "acct-1", AppID: "app-target", NetworkID: "vpc-1", Region: "nyc3", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")}, Status: api.PrivateNetworkAttachmentStatusReady},
+		{AccountID: "acct-1", AppID: "app-other-network", NetworkID: "vpc-2", Region: "nyc3", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.43.0.0/16")}, Status: api.PrivateNetworkAttachmentStatusReady},
+		{AccountID: "acct-2", AppID: "app-other-account", NetworkID: "vpc-1", Region: "nyc3", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.44.0.0/16")}, Status: api.PrivateNetworkAttachmentStatusReady},
+	} {
+		if _, err := store.UpsertAppPrivateNetworkAttachment(ctx, attachment); err != nil {
+			t.Fatalf("UpsertAppPrivateNetworkAttachment(%s): %v", attachment.AppID, err)
+		}
+	}
+	connector, err := NewConfiguredConnector([]ConfiguredNetwork{
+		{ID: "vpc-1", Region: "nyc3", Ready: true},
+		{ID: "vpc-2", Region: "nyc3", Ready: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var applied []string
+	reconciler, err := NewReconciler(store, connector, FuncRouteApplier(func(_ context.Context, appID string, _ []netip.Prefix) error {
+		applied = append(applied, appID)
+		return nil
+	}), ReconcilerOptions{Interval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := reconciler.SweepNetwork(ctx, "acct-1", "vpc-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Discovered != 1 || len(applied) != 1 || applied[0] != "app-target" {
+		t.Fatalf("summary=%+v applied=%v, want only app-target", summary, applied)
+	}
+}
+
 func TestReconcilerKeepsUnreadyAttachmentPending(t *testing.T) {
 	store := state.NewMemStore()
 	_, err := store.UpsertAppPrivateNetworkAttachment(context.Background(), state.AppPrivateNetworkAttachment{

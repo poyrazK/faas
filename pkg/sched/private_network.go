@@ -480,6 +480,57 @@ type PrivateNetworkPeeringSweeper interface {
 	SweepAccountRegion(context.Context, string, string) (privatenetwork.PeeringReconcileSummary, error)
 }
 
+// PrivateNetworkPolicySweeper is the event-driven subset of the attachment
+// reconciler. Network policy changes target one account/network and leave the
+// periodic global sweep as the recovery path for missed notifications.
+type PrivateNetworkPolicySweeper interface {
+	SweepNetwork(context.Context, string, string) (privatenetwork.ReconcileSummary, error)
+}
+
+// PrivateNetworkPolicySubscriber turns durable network policy mutations into
+// immediate attachment convergence across the affected live workloads.
+type PrivateNetworkPolicySubscriber struct {
+	sweeper PrivateNetworkPolicySweeper
+	log     *slog.Logger
+}
+
+func NewPrivateNetworkPolicySubscriber(sweeper PrivateNetworkPolicySweeper, log *slog.Logger) *PrivateNetworkPolicySubscriber {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PrivateNetworkPolicySubscriber{sweeper: sweeper, log: log}
+}
+
+func (s *PrivateNetworkPolicySubscriber) Handle(ctx context.Context, n db.Notification) error {
+	if n.Channel != db.NotifyPrivateNetworkChanged {
+		return nil
+	}
+	var payload struct {
+		Kind      string `json:"kind"`
+		AccountID string `json:"account_id"`
+		NetworkID string `json:"network_id"`
+		Region    string `json:"region"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+		return fmt.Errorf("decode private network policy change: %w", err)
+	}
+	if payload.Kind != "private_network" {
+		return nil
+	}
+	if strings.TrimSpace(payload.AccountID) == "" || strings.TrimSpace(payload.NetworkID) == "" {
+		return errors.New("private network policy change requires account_id and network_id")
+	}
+	if s.sweeper == nil {
+		return errors.New("private network policy subscriber is not configured")
+	}
+	if _, err := s.sweeper.SweepNetwork(ctx, payload.AccountID, payload.NetworkID); err != nil {
+		return err
+	}
+	s.log.Debug("schedd: private network policy mutation converged", "account", payload.AccountID, "network", payload.NetworkID, "region", payload.Region, "status", payload.Status)
+	return nil
+}
+
 // PrivateNetworkPeeringSubscriber turns network mutation notifications into
 // immediate account/region convergence. The periodic reconciler remains the
 // safety net when a notification is missed.
