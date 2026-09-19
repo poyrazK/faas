@@ -259,6 +259,30 @@ func TestRunHealthcheckPoll_NONEShapeReturnsNil(t *testing.T) {
 	}
 }
 
+func TestMonitorSidecarHealth_StopsAfterRetryBudget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	manifest := api.AppManifest{
+		Entrypoint: []string{"/bin/sleep", "10"},
+		Healthcheck: &api.AppManifestHealthcheck{
+			Test:      []string{"CMD", "/bin/false"},
+			IntervalS: 1,
+			TimeoutS:  1,
+			Retries:   2,
+		},
+	}
+	failed := make(chan error, 1)
+	go monitorSidecarHealth(ctx, manifest, nil, "", "", 0, nil, func(err error) { failed <- err }, nil)
+	select {
+	case err := <-failed:
+		if err == nil {
+			t.Fatal("monitorSidecarHealth callback returned nil error")
+		}
+	case <-ctx.Done():
+		t.Fatalf("monitorSidecarHealth did not exhaust retries: %v", ctx.Err())
+	}
+}
+
 // TestRunHealthcheckPoll_ShortIntervalSendsReport pins the
 // happy path: a manifest with Test=["CMD", "/bin/true"] and
 // IntervalS=1 spawns a goroutine that fires a pass report

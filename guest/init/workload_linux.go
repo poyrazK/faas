@@ -798,6 +798,27 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		}
 		sup.markHealthy()
 	}
+	var healthCancel context.CancelFunc
+	var healthDone <-chan struct{}
+	healthErrCh := make(chan error, 1)
+	if manifestErr == nil {
+		healthCtx, cancelHealth := context.WithCancel(context.Background())
+		healthCancel = cancelHealth
+		done := make(chan struct{})
+		healthDone = done
+		go func() {
+			defer close(done)
+			monitorSidecarHealth(healthCtx, baked, env, cmd.Dir, directRoot, lookupUID(baked.EffectiveUser()), cmd.SysProcAttr, func(err error) {
+				select {
+				case healthErrCh <- err:
+				default:
+				}
+				if killErr := cmd.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+					slog.Default().Debug("runSidecar: healthcheck kill failed", "name", spec.Name, "err", killErr)
+				}
+			}, slog.Default())
+		}()
+	}
 	// Issue #463 / ADR-069 / PR-B AC #4: place the
 	// forked child into the cgroup leaf so the OOM
 	// killer scopes to the leaf (not the workload's
@@ -806,8 +827,18 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	if leaf != "" {
 		placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
 	}
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
+	runErr := cmd.Wait()
+	if healthCancel != nil {
+		healthCancel()
+		<-healthDone
+	}
+	select {
+	case healthErr := <-healthErrCh:
+		return fmt.Errorf("run sidecar %s: %w", spec.Name, healthErr)
+	default:
+	}
+	if runErr != nil {
+		return fmt.Errorf("run sidecar %s: %w", spec.Name, runErr)
 	}
 	return nil
 }
