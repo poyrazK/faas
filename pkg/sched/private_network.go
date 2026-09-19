@@ -2,6 +2,7 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -470,6 +471,57 @@ type PrivateNetworkAttachmentSubscriber struct {
 	applier *PrivateNetworkRouteApplier
 	log     *slog.Logger
 	pool    *pgxpool.Pool
+}
+
+// PrivateNetworkPeeringSweeper is the event-driven subset of the durable
+// peering reconciler. Keeping this seam small makes notification handling
+// testable without coupling schedd's loop to the reconciler implementation.
+type PrivateNetworkPeeringSweeper interface {
+	SweepAccountRegion(context.Context, string, string) (privatenetwork.PeeringReconcileSummary, error)
+}
+
+// PrivateNetworkPeeringSubscriber turns network mutation notifications into
+// immediate account/region convergence. The periodic reconciler remains the
+// safety net when a notification is missed.
+type PrivateNetworkPeeringSubscriber struct {
+	sweeper PrivateNetworkPeeringSweeper
+	log     *slog.Logger
+}
+
+func NewPrivateNetworkPeeringSubscriber(sweeper PrivateNetworkPeeringSweeper, log *slog.Logger) *PrivateNetworkPeeringSubscriber {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PrivateNetworkPeeringSubscriber{sweeper: sweeper, log: log}
+}
+
+func (s *PrivateNetworkPeeringSubscriber) Handle(ctx context.Context, n db.Notification) error {
+	if n.Channel != db.NotifyPrivateNetworkChanged {
+		return nil
+	}
+	var payload struct {
+		Kind      string `json:"kind"`
+		AccountID string `json:"account_id"`
+		Region    string `json:"region"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+		return fmt.Errorf("decode private network change: %w", err)
+	}
+	if payload.Kind != "private_network_peering" {
+		return nil
+	}
+	if strings.TrimSpace(payload.AccountID) == "" || strings.TrimSpace(payload.Region) == "" {
+		return errors.New("private network change requires account_id and region")
+	}
+	if s.sweeper == nil {
+		return errors.New("private network peering subscriber is not configured")
+	}
+	if _, err := s.sweeper.SweepAccountRegion(ctx, payload.AccountID, payload.Region); err != nil {
+		return err
+	}
+	s.log.Debug("schedd: private network peering mutation converged", "account", payload.AccountID, "region", payload.Region, "status", payload.Status)
+	return nil
 }
 
 func NewPrivateNetworkAttachmentSubscriber(applier *PrivateNetworkRouteApplier, log *slog.Logger) *PrivateNetworkAttachmentSubscriber {

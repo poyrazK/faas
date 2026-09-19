@@ -121,10 +121,43 @@ func (r *PeeringReconciler) Sweep(ctx context.Context) (PeeringReconcileSummary,
 		api.PrivateNetworkPeeringStatusReady,
 		api.PrivateNetworkPeeringStatusError,
 	}, r.batchSize)
-	var summary PeeringReconcileSummary
 	if err != nil {
-		return summary, err
+		return PeeringReconcileSummary{}, err
 	}
+	return r.sweepRows(ctx, rows)
+}
+
+// SweepAccountRegion immediately converges one account/region after a
+// network mutation. Unlike the bounded periodic sweep, it loads the full
+// peering surface so a deleted row can still withdraw routes even though it
+// is no longer discoverable in the durable table.
+func (r *PeeringReconciler) SweepAccountRegion(ctx context.Context, accountID, region string) (PeeringReconcileSummary, error) {
+	accountID = strings.TrimSpace(accountID)
+	region = strings.TrimSpace(region)
+	if accountID == "" || region == "" {
+		return PeeringReconcileSummary{}, errors.New("privatenetwork: account_id and region are required")
+	}
+	rows, err := r.store.ListPrivateNetworkPeerings(ctx, accountID, "")
+	if err != nil {
+		return PeeringReconcileSummary{}, err
+	}
+	filtered := make([]state.PrivateNetworkPeering, 0, len(rows))
+	for _, row := range rows {
+		if row.AccountID == accountID && row.Region == region {
+			filtered = append(filtered, row)
+		}
+	}
+	if len(filtered) == 0 {
+		if err := r.applier.Apply(ctx, accountID, region, nil); err != nil {
+			return PeeringReconcileSummary{Failed: 1}, err
+		}
+		return PeeringReconcileSummary{}, nil
+	}
+	return r.sweepRows(ctx, filtered)
+}
+
+func (r *PeeringReconciler) sweepRows(ctx context.Context, rows []state.PrivateNetworkPeering) (PeeringReconcileSummary, error) {
+	var summary PeeringReconcileSummary
 	summary.Discovered = len(rows)
 	groups := make(map[string]*peeringRouteGroup)
 	var sweepErrs []error

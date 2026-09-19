@@ -1034,6 +1034,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Gregale-owned networks use the durable network store directly, while the
 	// legacy operator registry remains available for external/provider attachments.
 	var privateNetworkSubscriber *sched.PrivateNetworkAttachmentSubscriber
+	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
 	if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
@@ -1140,6 +1141,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						if peeringErr != nil {
 							return peeringErr
 						}
+						privateNetworkPeeringSubscriber = sched.NewPrivateNetworkPeeringSubscriber(peeringReconciler, log)
 						go func() {
 							if err := peeringReconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 								log.Warn("schedd: private network peering reconciler stopped", "err", err)
@@ -1538,6 +1540,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	loop := sched.NewLoop(pool, engine, log).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
+		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithTriggerSecretIdentities(hostAgeIdentities).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
@@ -1977,12 +1980,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
-	if privateNetworkSubscriber != nil {
+	if privateNetworkSubscriber != nil || privateNetworkPeeringSubscriber != nil {
 		// Detach cleanup has its own durable channel because the attachment
-		// row is deleted and cannot be rediscovered by the normal sweep.
+		// row is deleted and peering withdrawal carries the affected region so
+		// it can converge even after the peering row is gone.
 		go func() {
 			err := db.RunNotificationOutbox(ctx, pool, "schedd-private-network",
-				[]string{db.NotifyPrivateNetworkAttachmentChanged}, privateNetworkSubscriber.Handle, log)
+				[]string{db.NotifyPrivateNetworkAttachmentChanged, db.NotifyPrivateNetworkChanged}, loop.HandleDurableNotification, log)
 			if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 				log.Warn("schedd: private network detach replay exited", "err", err)
 			}

@@ -89,6 +89,46 @@ func TestPeeringReconcilerPromotesPendingAfterCompleteRouteApply(t *testing.T) {
 	}
 }
 
+func TestPeeringReconcilerSweepAccountRegionWithdrawsDeletedPeering(t *testing.T) {
+	ctx := context.Background()
+	store, peering, applier := newPeeringReconcilerFixture(t)
+	if _, err := store.CreatePrivateNetwork(ctx, state.PrivateNetwork{
+		ID: "third", AccountID: "acct-1", Name: "third", Region: "fra1", CIDR: netip.MustParsePrefix("10.44.0.0/24"),
+	}); err != nil {
+		t.Fatalf("CreatePrivateNetwork(third): %v", err)
+	}
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
+		ID: "peer-right-third", AccountID: "acct-1", LeftNetworkID: "right", RightNetworkID: "third", Region: "fra1",
+	}); err != nil {
+		t.Fatalf("CreatePrivateNetworkPeering(second): %v", err)
+	}
+	reconciler, err := NewPeeringReconciler(store, applier, PeeringReconcilerOptions{})
+	if err != nil {
+		t.Fatalf("NewPeeringReconciler: %v", err)
+	}
+	if _, err := reconciler.Sweep(ctx); err != nil {
+		t.Fatalf("initial Sweep: %v", err)
+	}
+	if err := store.DeletePrivateNetworkPeering(ctx, peering.AccountID, peering.ID); err != nil {
+		t.Fatalf("DeletePrivateNetworkPeering: %v", err)
+	}
+	if _, err := reconciler.SweepAccountRegion(ctx, peering.AccountID, peering.Region); err != nil {
+		t.Fatalf("SweepAccountRegion: %v", err)
+	}
+	if len(applier.calls) != 2 {
+		t.Fatalf("applier calls = %d, want activation plus withdrawal", len(applier.calls))
+	}
+	got := applier.calls[1].routes
+	if len(got) != 2 {
+		t.Fatalf("withdrawal routes = %v, want remaining complete set", got)
+	}
+	for _, route := range got {
+		if route.FromNetworkID == "left" || route.DestinationNetwork == "left" {
+			t.Fatalf("withdrawal routes still contain deleted peering: %v", got)
+		}
+	}
+}
+
 func TestPeeringReconcilerFailsClosedOnApplierErrorAndRetries(t *testing.T) {
 	ctx := context.Background()
 	store, peering, applier := newPeeringReconcilerFixture(t)

@@ -455,7 +455,11 @@ const (
 	// app_changed stream, this channel is replayed so a schedd restart or
 	// LISTEN gap cannot leave stale private routes on a live VM.
 	NotifyPrivateNetworkAttachmentChanged = "private_network_attachment_changed"
-	NotifyDeploymentChanged               = "deployment_changed"
+	// NotifyPrivateNetworkChanged wakes schedd after a Gregale-owned peering
+	// mutation. The payload carries account/region identity so a deleted
+	// peering can withdraw routes even though its row is gone.
+	NotifyPrivateNetworkChanged = "private_network_changed"
+	NotifyDeploymentChanged     = "deployment_changed"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
 	// from imaged to every public gateway. It is deliberately separate from
 	// deployment_changed: account SSE subscribers must never receive the token.

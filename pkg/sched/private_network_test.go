@@ -29,6 +29,18 @@ type privateNetworkRouterFake struct {
 	errByNode map[string]error
 }
 
+type privateNetworkPeeringSweeperFake struct {
+	accountID string
+	region    string
+	err       error
+}
+
+func (f *privateNetworkPeeringSweeperFake) SweepAccountRegion(_ context.Context, accountID, region string) (privatenetwork.PeeringReconcileSummary, error) {
+	f.accountID = accountID
+	f.region = region
+	return privatenetwork.PeeringReconcileSummary{}, f.err
+}
+
 type privateNetworkFabricCall struct {
 	nodeID    string
 	accountID string
@@ -445,6 +457,31 @@ func TestPrivateNetworkAttachmentSubscriberClearsDetachedRoutes(t *testing.T) {
 		if len(call.cidrs) != 0 {
 			t.Errorf("detach call for %s carried CIDRs %v, want empty cleanup set", call.nodeID, call.cidrs)
 		}
+	}
+}
+
+func TestPrivateNetworkPeeringSubscriberSweepsAffectedRegion(t *testing.T) {
+	sweeper := &privateNetworkPeeringSweeperFake{}
+	subscriber := NewPrivateNetworkPeeringSubscriber(sweeper, nil)
+	err := subscriber.Handle(context.Background(), db.Notification{
+		Channel: db.NotifyPrivateNetworkChanged,
+		Payload: `{"kind":"private_network_peering","account_id":"acct-1","region":"fra1","status":"deleted"}`,
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if sweeper.accountID != "acct-1" || sweeper.region != "fra1" {
+		t.Fatalf("sweep target = %q/%q, want acct-1/fra1", sweeper.accountID, sweeper.region)
+	}
+}
+
+func TestPrivateNetworkPeeringSubscriberRejectsIncompletePayload(t *testing.T) {
+	subscriber := NewPrivateNetworkPeeringSubscriber(&privateNetworkPeeringSweeperFake{}, nil)
+	if err := subscriber.Handle(context.Background(), db.Notification{
+		Channel: db.NotifyPrivateNetworkChanged,
+		Payload: `{"kind":"private_network_peering","account_id":"acct-1","status":"deleted"}`,
+	}); err == nil {
+		t.Fatal("Handle succeeded for payload without region")
 	}
 }
 

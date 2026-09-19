@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -134,7 +135,7 @@ func (s *server) createPrivateNetworkPeering(w http.ResponseWriter, r *http.Requ
 		}
 		return
 	}
-	_ = s.notif.Notify(r.Context(), "private_network_changed", fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","status":"%s"}`, acct.ID, peering.ID, peering.Status))
+	_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","region":"%s","left_network_id":"%s","right_network_id":"%s","status":"%s"}`, acct.ID, peering.ID, peering.Region, peering.LeftNetworkID, peering.RightNetworkID, peering.Status))
 	s.audit.Emit(r.Context(), "private_network.peering_created", &acct.ID, map[string]any{"peering_id": peering.ID, "network_id": networkID, "peer_network_id": peerNetworkID, "status": peering.Status})
 	converted := privateNetworkPeeringResponse(peering, networkID)
 	writeJSON(w, http.StatusAccepted, converted)
@@ -183,7 +184,7 @@ func (s *server) deletePrivateNetworkPeering(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrCapacity("could not delete private network peering"))
 		return
 	}
-	_ = s.notif.Notify(r.Context(), "private_network_changed", fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","status":"deleted"}`, acct.ID, peeringID))
+	_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","region":"%s","left_network_id":"%s","right_network_id":"%s","status":"deleted"}`, acct.ID, peeringID, peering.Region, peering.LeftNetworkID, peering.RightNetworkID))
 	s.audit.Emit(r.Context(), "private_network.peering_deleted", &acct.ID, map[string]any{"peering_id": peeringID, "network_id": networkID})
 	w.WriteHeader(http.StatusNoContent)
 }
