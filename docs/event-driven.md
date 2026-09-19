@@ -19,3 +19,29 @@ after completion; the failure destination receives the same envelope when the
 invocation permanently fails or exhausts its retry budget. Webhook delivery
 has its own retry and dead-letter lifecycle, so a downstream outage does not
 change the invocation result.
+
+## Internal event subscriptions
+
+Applications can subscribe to events published through Gregale's internal
+event router. A YAML deployment declares subscriptions with `event_triggers`:
+
+```yaml
+event_triggers:
+  - source: billing.*
+    type: invoice.paid
+    filter: '{"data":{"amount":{"$gt":100}}}'
+```
+
+The filter is a JSON object encoded as a string. `app` is optional for a
+single-app deploy and is bound to the target application during source-ref
+reconciliation. Event-only projects may use the equivalent TOML form,
+`[[triggers.event]]`. Both forms use the same source/type/filter validation;
+matching deliveries inherit the router's retry and dead-letter behavior.
+
+Publish an event from the CLI with an explicit event id so producers can
+retry safely:
+
+```bash
+gregale events publish --id evt-123 --source billing.stripe --type invoice.paid \
+  --data '{"amount":150}'
+```

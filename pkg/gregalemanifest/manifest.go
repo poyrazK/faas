@@ -14,8 +14,9 @@
 //
 // File discovery: the loader takes a project dir and looks for
 // `gregale.yaml` first, then `gregale.yml`, and finally `gregale.toml`.
-// YAML remains the full deployment manifest; TOML is strict and accepts
-// event subscriptions plus extension declarations.
+// YAML remains the full deployment manifest, including the `event_triggers`
+// declaration; TOML is strict and accepts event subscriptions plus extension
+// declarations.
 //
 // Why a shared package, not `cmd/gregale/manifest.go`: the long-term
 // plan (per the plan's "loader location" section) is to also validate
@@ -89,8 +90,8 @@ const (
 // EventTrigger is a content-based internal event subscription declaration.
 // The app is optional while parsing because a single-app deploy can bind the
 // declaration to its target slug; project reconciliation must supply it before
-// persistence. Filter is a JSON object encoded as a TOML string so the same
-// matcher contract is shared by YAML-adjacent tooling and the event router.
+// persistence. Filter is a JSON object encoded as a string so the same matcher
+// contract is shared by YAML/TOML manifests and the event router.
 type EventTrigger struct {
 	App    string `yaml:"app,omitempty" toml:"app"`
 	Source string `yaml:"source" toml:"source"`
@@ -826,13 +827,13 @@ func (d BucketDependency) EffectiveLabel() string {
 	return d.Label
 }
 
-// Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root. The supported top-level
-// declarations are `schema_version`, `hosting`, `function`, `lifecycle`, `scaling`,
-// `retry_policy`,
-// `queue_bindings`, `triggers`, `extensions`, `workflows`, `databases`, and `buckets`; other keys are
-// validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
-// `trigger:` (singular) surfaces as a load-time error rather than silently
-// shipping a no-op deploy.
+// Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
+// The supported top-level declarations are `schema_version`, `hosting`,
+// `function`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
+// `triggers`, `event_triggers`, `extensions`, `workflows`, `databases`, and
+// `buckets`; other keys are validated strictly (yaml.Decoder.KnownFields(true))
+// so a typo like `trigger:` (singular) surfaces as a load-time error rather
+// than silently shipping a no-op deploy.
 type Manifest struct {
 	// SchemaVersion is optional for backward compatibility. New manifests may
 	// set it to 1; a future incompatible manifest requires a new version.
@@ -846,10 +847,11 @@ type Manifest struct {
 	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
 	QueueBindings []QueueBinding     `yaml:"queue_bindings,omitempty"`
 	Triggers      []Trigger          `yaml:"triggers"`
-	// EventTriggers is populated from [[triggers.event]] in gregale.toml.
-	// YAML trigger entries remain in Triggers for backward compatibility; the
-	// separate slice keeps the TOML event table from changing that wire shape.
-	EventTriggers []EventTrigger       `yaml:"-"`
+	// EventTriggers is populated from `event_triggers` in YAML and
+	// [[triggers.event]] in gregale.toml. YAML trigger entries remain in
+	// Triggers for backward compatibility; the separate slice keeps event
+	// subscriptions from changing that wire shape.
+	EventTriggers []EventTrigger       `yaml:"event_triggers,omitempty"`
 	Extensions    []ExtensionSpec      `yaml:"extensions,omitempty"`
 	Workflows     []api.WorkflowSpec   `yaml:"workflows,omitempty"`
 	Databases     []DatabaseDependency `yaml:"databases,omitempty"`

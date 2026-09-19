@@ -238,6 +238,53 @@ filter = '{ "data": { "amount": { "$gt": 100 } } }'
 	}
 }
 
+func TestLoad_YAMLEventSubscriptions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`event_triggers:
+  - app: billing-api
+    source: billing.*
+    type: invoice.paid
+    filter: '{"data":{"amount":{"$gt":100}}}'
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || len(m.EventTriggers) != 1 {
+		t.Fatalf("manifest = %+v, want one event trigger", m)
+	}
+	trigger := m.EventTriggers[0]
+	if trigger.App != "billing-api" || trigger.Source != "billing.*" || trigger.Type != "invoice.paid" {
+		t.Fatalf("event trigger = %+v", trigger)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	subscription, err := trigger.AsSubscription("00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatalf("AsSubscription: %v", err)
+	}
+	if subscription.Source != trigger.Source || string(subscription.Filter) != trigger.Filter {
+		t.Fatalf("subscription = %+v, want source/filter from declaration", subscription)
+	}
+}
+
+func TestLoad_YAMLEventSubscriptionsAreStrict(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`event_triggers:
+  - source: billing.*
+    typee: invoice.paid
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "field typee not found") {
+		t.Fatalf("err = %v, want unknown event trigger field", err)
+	}
+}
+
 func TestLoad_TOMLExtensionPreset(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte(`[[extensions]]
