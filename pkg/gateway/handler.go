@@ -6704,6 +6704,13 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					consumerID = parsed.String()
 				}
 			}
+			requestTraceID := traceIDForTelemetry(r.Context())
+			if requestTraceID == "" {
+				// Keep the legacy request-id fallback for deployments where the
+				// OTel provider is disabled. Traced requests always use the real
+				// W3C trace id so cross-service lookup is unambiguous.
+				requestTraceID = telemetryTraceID(requestID)
+			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
 				AccountID:       acctUUID,
 				AppID:           appUUID,
@@ -6713,7 +6720,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				Status:          status,
 				LatencyMS:       int(elapsed / time.Millisecond),
 				ColdBoot:        cold,
-				TraceID:         telemetryTraceID(requestID),
+				TraceID:         requestTraceID,
 				ReceivedAt:      time.Now(),
 				WakeID:          target.WakeID,
 				InstanceID:      target.InstanceID,
@@ -6737,6 +6744,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 func traceIDFromContext(ctx context.Context) string {
 	sc := pkgtrace.SpanFromContext(ctx).SpanContext()
 	if !sc.IsValid() || !sc.IsSampled() {
+		return ""
+	}
+	return sc.TraceID().String()
+}
+
+// traceIDForTelemetry returns the valid W3C trace id even when the span is
+// unsampled. Retained request evidence is the lookup surface for a customer;
+// sampling must not make an otherwise correlated request undiscoverable.
+func traceIDForTelemetry(ctx context.Context) string {
+	sc := pkgtrace.SpanFromContext(ctx).SpanContext()
+	if !sc.IsValid() {
 		return ""
 	}
 	return sc.TraceID().String()

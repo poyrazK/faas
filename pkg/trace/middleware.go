@@ -20,6 +20,8 @@ import (
 	"net/http"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // HTTPHandler (cluster E commit 16) wraps a net/http.Handler
@@ -30,4 +32,16 @@ import (
 // main.go's http.Server.Handler.
 func HTTPHandler(serviceName string, h http.Handler) http.Handler {
 	return otelhttp.NewHandler(h, serviceName)
+}
+
+// WithTraceIDHeader exposes the canonical OTel trace id on the response.
+// It must be placed inside an OTel HTTP handler so the request context already
+// carries the server span. Invalid/noop contexts deliberately omit the header.
+func WithTraceIDHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if spanContext := SpanFromContext(r.Context()).SpanContext(); spanContext.IsValid() {
+			w.Header().Set(api.TraceIDHeader, spanContext.TraceID().String())
+		}
+		next.ServeHTTP(w, r)
+	})
 }

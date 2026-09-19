@@ -542,10 +542,14 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		if strings.EqualFold(k, edgeOriginalStatusHeader) {
 			continue
 		}
-		// The public request-id middleware stamps the response before the
-		// internal hop returns. These headers are singleton edge metadata;
-		// replace the pre-existing value instead of emitting duplicates when
-		// gatewayd-internal echoes them back.
+		// The public request-id and trace-id middleware stamp the response
+		// before the internal hop returns. These headers are singleton edge
+		// metadata; replace request-id/error-code values when the internal
+		// daemon echoes them back, but never let a guest-supplied trace id
+		// override the public edge's canonical value.
+		if strings.EqualFold(k, api.TraceIDHeader) {
+			continue
+		}
 		if strings.EqualFold(k, api.RequestIDHeader) || strings.EqualFold(k, api.ErrorCodeHeader) {
 			if len(vv) > 0 {
 				w.Header().Set(k, vv[0])

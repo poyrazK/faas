@@ -100,6 +100,9 @@ func TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders(t *testin
 	if got["traceparent"] != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
 		t.Errorf("traceparent = %q, want W3C child context", got["traceparent"])
 	}
+	if got[strings.ToLower(api.TraceIDHeader)] != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("%s = %q, want canonical trace id", api.TraceIDHeader, got[strings.ToLower(api.TraceIDHeader)])
+	}
 	if got["tracestate"] != "vendor=value" {
 		t.Errorf("tracestate = %q, want vendor=value", got["tracestate"])
 	}

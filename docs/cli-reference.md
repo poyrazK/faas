@@ -42,6 +42,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
+| [`trace`](#trace) | Look up a W3C trace across account apps |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
@@ -1328,6 +1329,13 @@ Per-route deployment-vs-deployment compare
 ### debug bundle
 
 Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;request-id-or-row-id&gt; [--output PATH])
+
+
+## trace
+
+Look up a W3C trace across account apps
+
+`gregale trace <trace-id>`
 
 
 ## invitations

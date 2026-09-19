@@ -130,7 +130,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions":
+	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -1068,6 +1068,12 @@ var cliCommands = []cliCommand{
 			{Name: "bundle", Short: "Export a redacted incident bundle with coverage (bundle <slug> <request-id-or-row-id> [--output PATH])"},
 		},
 		Positionals: []string{"[flags]", "<slug>", "[<request-id>]"},
+	},
+	{
+		Name:        "trace",
+		DocSlug:     "trace",
+		Short:       "Look up a W3C trace across account apps",
+		Positionals: []string{"<trace-id>"},
 	},
 	{
 		Name:    "invitations",

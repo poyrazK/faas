@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 func TestHTTPHandler_WrapsHandler(t *testing.T) {
@@ -59,5 +61,29 @@ func TestHTTPHandler_NoopPath(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("noop-path status: got %d, want 204", rec.Code)
+	}
+}
+
+func TestWithTraceIDHeader_UsesContextTraceID(t *testing.T) {
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := oteltrace.ContextWithSpanContext(
+		httptest.NewRequest(http.MethodGet, "/trace", nil).Context(),
+		oteltrace.NewSpanContext(oteltrace.SpanContextConfig{TraceID: traceID, SpanID: spanID}),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/trace", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	pkgtrace.WithTraceIDHeader(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
+
+	if got := rec.Header().Get(api.TraceIDHeader); got != traceID.String() {
+		t.Fatalf("trace header = %q, want %q", got, traceID.String())
 	}
 }

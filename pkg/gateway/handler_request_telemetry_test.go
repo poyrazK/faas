@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // makeTestRecorder constructs a production-shaped recorder with the
@@ -212,6 +213,34 @@ func TestHandlerTelemetryAcceptsCustomRequestIDs(t *testing.T) {
 				t.Fatal("caller request ID mutated")
 			}
 		})
+	}
+}
+
+func TestHandlerTelemetryUsesOTelTraceID(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r.Header.Set(api.RequestIDHeader, "legacy-request-id")
+	r = r.WithContext(oteltrace.ContextWithSpanContext(r.Context(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID: traceID,
+		SpanID:  spanID,
+	})))
+	r = withAppAndAccount(r, uuid.New(), uuid.New())
+
+	h.observe(r, http.StatusOK, "app", string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("request record count = %d, want 1", len(rows))
+	}
+	if rows[0].TraceID != traceID.String() {
+		t.Fatalf("trace ID = %q, want OTel trace %q", rows[0].TraceID, traceID.String())
 	}
 }
 

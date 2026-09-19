@@ -396,6 +396,7 @@ func TestInternalReverseProxy_ReplacesSingletonEdgeHeaders(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(api.RequestIDHeader, "upstream-request")
 		w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
+		w.Header().Set(api.TraceIDHeader, "guest-spoof")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
@@ -406,6 +407,7 @@ func TestInternalReverseProxy_ReplacesSingletonEdgeHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
 	rr.Header().Set(api.RequestIDHeader, "public-request")
 	rr.Header().Set(api.ErrorCodeHeader, "stale")
+	rr.Header().Set(api.TraceIDHeader, "public-trace")
 	p.ServeHTTP(rr, req)
 
 	if got := rr.Header().Values(api.RequestIDHeader); len(got) != 1 || got[0] != "upstream-request" {
@@ -413,6 +415,9 @@ func TestInternalReverseProxy_ReplacesSingletonEdgeHeaders(t *testing.T) {
 	}
 	if got := rr.Header().Values(api.ErrorCodeHeader); len(got) != 1 || got[0] != api.CodeRequestBudgetExceeded {
 		t.Fatalf("error code headers = %v, want one upstream value", got)
+	}
+	if got := rr.Header().Values(api.TraceIDHeader); len(got) != 1 || got[0] != "public-trace" {
+		t.Fatalf("trace id headers = %v, want one public edge value", got)
 	}
 }
 

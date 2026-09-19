@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -27,6 +29,9 @@ const (
 func injectGuestTraceContext(ctx context.Context, headers http.Header) {
 	carrier := propagation.HeaderCarrier(headers)
 	propagation.TraceContext{}.Inject(ctx, carrier)
+	if spanContext := pkgtrace.SpanFromContext(ctx).SpanContext(); spanContext.IsValid() {
+		headers.Set(api.TraceIDHeader, spanContext.TraceID().String())
+	}
 	if len(headers.Get("tracestate")) > maxGuestTraceStateBytes {
 		headers.Del("tracestate")
 	}

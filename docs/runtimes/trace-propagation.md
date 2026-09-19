@@ -23,6 +23,11 @@ This page is the operator's quick-start; the spec contract is in
   each request on a warm instance. Format is
   `00-<trace_id 32 hex>-<span_id 16 hex>-<flags 2 hex>`, e.g.
   `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`.
+- **Response correlation**: the public edge returns
+  `X-Gregale-Trace-Id` with the canonical 32-character trace id and sends the
+  same platform-owned header to the guest. Use that value with
+  `gregale trace <trace-id>` to search retained, redacted evidence across the
+  apps in your account.
 - **Lifetime**: the trace_id is minted at the gateway (or carried
   in from the inbound `traceparent`); the span_id identifies the
   specific request's `gateway.handler` span. A warm instance receives

@@ -471,6 +471,10 @@ func run(args []string) (status int) {
 		// watch, deployment compare, safe replay, and incident bundles).
 		// Mirrors `invocations` for dispatcher shape.
 		return cmdDebug(args[1:])
+	case "trace":
+		// Account-scoped W3C trace lookup composed from redacted debugger
+		// evidence for each app.
+		return cmdTrace(args[1:])
 	case "billing":
 		// Issue #253: dashboard's "Open Stripe billing portal"
 		// button has a CLI twin. Subcommands live in

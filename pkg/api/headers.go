@@ -8,6 +8,10 @@ import "strings"
 const (
 	// RequestIDHeader carries the platform correlation id for every request.
 	RequestIDHeader = "X-Faas-Request-Id"
+	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
+	// RequestIDHeader, this value is always the 32-character lowercase OTel
+	// trace id when tracing is active.
+	TraceIDHeader = "X-Gregale-Trace-Id"
 	// AppIDHeader identifies the application selected by the gateway.
 	AppIDHeader = "X-Faas-App-Id"
 	// DeploymentIDHeader identifies the deployment selected by the gateway.
