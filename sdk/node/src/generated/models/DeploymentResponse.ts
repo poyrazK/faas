@@ -111,9 +111,9 @@ export type DeploymentResponse = {
    */
   scan?: (ScanResult | null);
   /**
-   * Per-deployment parking reason (issue #554 / ADR-079 follow-up, migration 00157). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty.
+   * Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty.
    */
-  parked_reason?: 'liveness_exhausted' | 'lifecycle_park' | 'admin_park';
+  parked_reason?: 'liveness_exhausted' | 'lifecycle_park' | 'admin_park' | 'security_scan_regressed';
   /**
    * Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles). nil for never-parked deployments.
    */
