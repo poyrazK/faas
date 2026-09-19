@@ -16,6 +16,7 @@ package main
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -34,6 +35,56 @@ func TestAppResponseSurfacesMaintenanceMode(t *testing.T) {
 	got := s.appResponse(state.App{MaintenanceMode: true}, api.PlanHobby)
 	if !got.MaintenanceMode {
 		t.Fatal("MaintenanceMode = false, want persisted true value")
+	}
+}
+
+func TestAppResponseUsesVerifiedDefaultDomain(t *testing.T) {
+	store := state.NewMemStore()
+	const appID = "app-canonical"
+	if _, err := store.CreateCustomDomain(context.Background(), "api.example.com", appID, "token"); err != nil {
+		t.Fatalf("CreateCustomDomain: %v", err)
+	}
+	if err := store.MarkDomainVerified(context.Background(), "api.example.com"); err != nil {
+		t.Fatalf("MarkDomainVerified: %v", err)
+	}
+	if err := store.SetDefaultCustomDomain(context.Background(), appID, "api.example.com"); err != nil {
+		t.Fatalf("SetDefaultCustomDomain: %v", err)
+	}
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	got := srv.appResponseWithContext(context.Background(), state.App{ID: appID, Slug: "canonical-app"}, api.PlanHobby)
+	if got.URL != "https://canonical-app.gregale.dev" {
+		t.Fatalf("platform URL = %q, want platform hostname", got.URL)
+	}
+	if got.DefaultDomain != "api.example.com" {
+		t.Fatalf("default_domain = %q, want api.example.com", got.DefaultDomain)
+	}
+	if got.CanonicalURL != "https://api.example.com" {
+		t.Fatalf("canonical_url = %q, want https://api.example.com", got.CanonicalURL)
+	}
+}
+
+func TestAppResponseFallsBackWhenDefaultDomainIsRemoved(t *testing.T) {
+	store := state.NewMemStore()
+	const appID = "app-fallback"
+	if _, err := store.CreateCustomDomain(context.Background(), "api.example.com", appID, "token"); err != nil {
+		t.Fatalf("CreateCustomDomain: %v", err)
+	}
+	if err := store.MarkDomainVerified(context.Background(), "api.example.com"); err != nil {
+		t.Fatalf("MarkDomainVerified: %v", err)
+	}
+	if err := store.SetDefaultCustomDomain(context.Background(), appID, "api.example.com"); err != nil {
+		t.Fatalf("SetDefaultCustomDomain: %v", err)
+	}
+	if err := store.DeleteCustomDomain(context.Background(), "api.example.com"); err != nil {
+		t.Fatalf("DeleteCustomDomain: %v", err)
+	}
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	got := srv.appResponseWithContext(context.Background(), state.App{ID: appID, Slug: "fallback-app"}, api.PlanHobby)
+	if got.DefaultDomain != "" {
+		t.Fatalf("default_domain = %q, want empty after delete", got.DefaultDomain)
+	}
+	if got.CanonicalURL != got.URL || got.CanonicalURL != "https://fallback-app.gregale.dev" {
+		t.Fatalf("canonical URL = %q, platform URL = %q; want platform fallback", got.CanonicalURL, got.URL)
 	}
 }
 

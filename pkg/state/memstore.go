@@ -9434,7 +9434,7 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.AppID != appID || !d.Verified() {
+	if !ok || d.AppID != appID || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return ErrNotFound
 	}
 	if m.defaultDomains == nil {
@@ -9447,7 +9447,24 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 func (m *MemStore) IsDefaultCustomDomain(_ context.Context, appID, domain string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.defaultDomains[appID] == domain, nil
+	return m.defaultDomains[appID] == domain && !IsWildcardCustomDomain(domain), nil
+}
+
+// DefaultCustomDomain returns the selected verified custom domain for an app.
+// A deleted or unverified target is treated as unset so URL consumers can
+// safely fall back to the platform hostname.
+func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	domain := m.defaultDomains[appID]
+	if domain == "" {
+		return "", ErrNotFound
+	}
+	d, ok := m.domains[domain]
+	if !ok || !d.Verified() || IsWildcardCustomDomain(domain) {
+		return "", ErrNotFound
+	}
+	return domain, nil
 }
 
 // WildcardDomainForHost returns the most-specific wildcard custom domain that

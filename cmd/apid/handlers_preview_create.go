@@ -55,7 +55,7 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 		})
 		s.emitAppCreated(r.Context(), created)
 	}
-	resp := s.appResponse(created, acct.Plan)
+	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
 	if isNew {
 		resp.Status = api.AppStatusUndeployed
 	}

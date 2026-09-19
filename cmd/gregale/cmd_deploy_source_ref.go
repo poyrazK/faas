@@ -104,9 +104,11 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	// Source-ref is a first-deploy transport as well as a redeploy transport.
 	// Probe first so an existing app can redeploy even when the account is at
 	// its app cap; create only after the account-scoped lookup returns 404.
-	if err := ensureSourceRefApp(ctx, client, slug); err != nil {
+	app, err := ensureSourceRefApp(ctx, client, slug)
+	if err != nil {
 		return printErr("Could not create or fetch app", err)
 	}
+	appURL := canonicalAppURL(app)
 	req := api.SourceRefDeployRequest{
 		Repo:           repo,
 		Ref:            ref,
@@ -149,43 +151,44 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		// client-side tarball bytes (server pulls the codeload
 		// tarball via the GitHub App install token) and no git
 		// detection (prov == nil), so the receipt's only delta
-		// over the bare DeploymentResponse is app_url. URL is
-		// built from the CLI-known slug (not the 32-hex AppID)
-		// so the customer-facing URL is actually routable.
+		// over the bare DeploymentResponse is app_url. Prefer the
+		// server-resolved canonical URL, falling back to the CLI-known
+		// slug (not the 32-hex AppID) so the URL remains routable.
 		// Commit pinning for the source-ref path is captured
 		// server-side; see docs/source-ref.md reproducibility
 		// section.
-		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
+		return jsonOut(writeJSON(newDeployReceipt(dep, nil, appURL, "")))
 	}
 	if !waitForDeploy {
-		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
+		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, appURL)
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, deployedAppURL(slug), "", slug, waitTimeout, waitForRollout)
+		return writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, waitTimeout, waitForRollout)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout})
 }
 
-func ensureSourceRefApp(ctx context.Context, client *Client, slug string) error {
-	if _, err := client.GetApp(ctx, slug); err == nil {
-		return nil
+func ensureSourceRefApp(ctx context.Context, client *Client, slug string) (api.AppResponse, error) {
+	if app, err := client.GetApp(ctx, slug); err == nil {
+		return app, nil
 	} else if !isNotFound(err) {
-		return err
+		return api.AppResponse{}, err
 	}
-	if _, err := client.CreateApp(ctx, buildCreateRequest(slug, shapeApp, "", nil, nil)); err == nil {
-		return nil
+	if app, err := client.CreateApp(ctx, buildCreateRequest(slug, shapeApp, "", nil, nil)); err == nil {
+		return app, nil
 	} else {
 		var ae *APIError
 		if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
-			return err
+			return api.AppResponse{}, err
 		}
 	}
 	// A peer may have reserved the same account-owned slug between the GET
 	// miss and CreateApp. Retry once; an IDOR-shaped 404 means another account
 	// owns it and the caller should choose a different name.
-	if _, err := client.GetApp(ctx, slug); err != nil {
-		return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return api.AppResponse{}, fmt.Errorf("slug %q is already in use; pick a different --name", slug)
 	}
-	return nil
+	return app, nil
 }

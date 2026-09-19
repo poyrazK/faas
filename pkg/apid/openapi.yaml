@@ -19564,7 +19564,7 @@ components:
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, vcpu, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, build_cache_hit_rate_pct, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, vcpu, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, build_cache_hit_rate_pct, url, canonical_url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
@@ -19612,7 +19612,17 @@ components:
           description: "Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window."
         deleted_at: { type: [string, "null"], format: date-time }
         delete_grace_until: { type: [string, "null"], format: date-time }
-        url: { type: string, format: uri }
+        url:
+          type: string
+          format: uri
+          description: "Stable platform hostname for the app (for example, https://my-app.gregale.dev)."
+        canonical_url:
+          type: string
+          format: uri
+          description: "Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the platform URL."
+        default_domain:
+          type: string
+          description: "Verified custom domain selected as the app's canonical host, when configured."
         preview_of_slug:
           type: string
           description: "Parent app slug for a pull-request or developer preview. Absent for production apps."

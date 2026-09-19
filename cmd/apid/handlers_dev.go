@@ -113,7 +113,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 			return
 		}
 		writeJSON(w, http.StatusOK, api.DevSessionResponse{
-			App: s.appResponse(refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+			App: s.appResponseWithContext(r.Context(), refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
 		})
 		return
 	} else if !errors.Is(err, state.ErrNotFound) {
@@ -156,7 +156,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				return
 			}
 			writeJSON(w, http.StatusOK, api.DevSessionResponse{
-				App: s.appResponse(refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+				App: s.appResponseWithContext(r.Context(), refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
 			})
 			return
 		default:
@@ -176,7 +176,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.DevSessionResponse{
-		App: s.appResponse(created, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+		App: s.appResponseWithContext(r.Context(), created, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
 	})
 }
 

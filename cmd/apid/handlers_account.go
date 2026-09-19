@@ -538,7 +538,7 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 	}
 	if err := out.array("apps", func(emit func(any) error) error {
 		for _, app := range apps {
-			if err := emit(s.appResponse(app, acct.Plan)); err != nil {
+			if err := emit(s.appResponseWithContext(ctx, app, acct.Plan)); err != nil {
 				return err
 			}
 		}

@@ -51,7 +51,7 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if !ok {
 		return
 	}
-	resp := s.appResponse(app, acct.Plan)
+	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 	if _, err := s.store.LatestDeployment(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
 		resp.Status = api.AppStatusUndeployed
 	} else if err != nil {
@@ -1536,7 +1536,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"new":    string(api.NormalizeAppVisibility(updated.Visibility)),
 		})
 	}
-	resp := s.appResponse(updated, acct.Plan)
+	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
 }
 
@@ -1658,7 +1658,7 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 		"app_id": restored.ID,
 		"slug":   restored.Slug,
 	})
-	resp := s.appResponse(restored, acct.Plan)
+	resp := s.appResponseWithContext(r.Context(), restored, acct.Plan)
 	// RestoreApp persists the storage state as active, but the customer-facing
 	// read model calls an app with no deployments "undeployed". Keep this
 	// mutation response consistent with GET /v1/apps/{slug} and listApps so
@@ -2307,7 +2307,7 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.NewSlug == oldSlug {
 		// Idempotent no-op: skip the DB round-trip and return the
 		// current app shape so retries don't 4xx.
-		resp := s.appResponse(app, acct.Plan)
+		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
@@ -2341,7 +2341,7 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
-	resp := s.appResponse(updated, acct.Plan)
+	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
 }
 
@@ -2595,6 +2595,11 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if !d.Verified() {
 		api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
+		return
+	}
+	if state.IsWildcardCustomDomain(d.Domain) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Wildcard domain cannot be default", "select a concrete verified custom domain as the app's default host"))
 		return
 	}
 	type defaultSetter interface {

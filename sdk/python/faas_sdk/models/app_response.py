@@ -65,6 +65,10 @@ class AppResponse:
     """Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
     decision was recorded in the window."""
     url: str
+    """Stable platform hostname for the app (for example, https://my-app.gregale.dev)."""
+    canonical_url: str
+    """Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the
+    platform URL."""
     manifest: AppManifest
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
     as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings)
@@ -96,6 +100,8 @@ class AppResponse:
     idle_timeout_s: int | None | Unset = UNSET
     deleted_at: datetime.datetime | None | Unset = UNSET
     delete_grace_until: datetime.datetime | None | Unset = UNSET
+    default_domain: str | Unset = UNSET
+    """Verified custom domain selected as the app's canonical host, when configured."""
     preview_of_slug: str | Unset = UNSET
     """Parent app slug for a pull-request or developer preview. Absent for production apps."""
     preview_pr_number: int | Unset = UNSET
@@ -223,6 +229,8 @@ class AppResponse:
 
         url = self.url
 
+        canonical_url = self.canonical_url
+
         manifest = self.manifest.to_dict()
 
         autoscale_target_rps = self.autoscale_target_rps
@@ -266,6 +274,8 @@ class AppResponse:
             delete_grace_until = self.delete_grace_until.isoformat()
         else:
             delete_grace_until = self.delete_grace_until
+
+        default_domain = self.default_domain
 
         preview_of_slug = self.preview_of_slug
 
@@ -418,6 +428,7 @@ class AppResponse:
                 "status": status,
                 "build_cache_hit_rate_pct": build_cache_hit_rate_pct,
                 "url": url,
+                "canonical_url": canonical_url,
                 "manifest": manifest,
                 "autoscale_target_rps": autoscale_target_rps,
                 "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
@@ -437,6 +448,8 @@ class AppResponse:
             field_dict["deleted_at"] = deleted_at
         if delete_grace_until is not UNSET:
             field_dict["delete_grace_until"] = delete_grace_until
+        if default_domain is not UNSET:
+            field_dict["default_domain"] = default_domain
         if preview_of_slug is not UNSET:
             field_dict["preview_of_slug"] = preview_of_slug
         if preview_pr_number is not UNSET:
@@ -542,6 +555,8 @@ class AppResponse:
 
         url = d.pop("url")
 
+        canonical_url = d.pop("canonical_url")
+
         manifest = AppManifest.from_dict(d.pop("manifest"))
 
         autoscale_target_rps = d.pop("autoscale_target_rps")
@@ -618,6 +633,8 @@ class AppResponse:
             return cast(datetime.datetime | None | Unset, data)
 
         delete_grace_until = _parse_delete_grace_until(d.pop("delete_grace_until", UNSET))
+
+        default_domain = d.pop("default_domain", UNSET)
 
         preview_of_slug = d.pop("preview_of_slug", UNSET)
 
@@ -855,6 +872,7 @@ class AppResponse:
             status=status,
             build_cache_hit_rate_pct=build_cache_hit_rate_pct,
             url=url,
+            canonical_url=canonical_url,
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
@@ -865,6 +883,7 @@ class AppResponse:
             idle_timeout_s=idle_timeout_s,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,
+            default_domain=default_domain,
             preview_of_slug=preview_of_slug,
             preview_pr_number=preview_pr_number,
             preview_pr_state=preview_pr_state,

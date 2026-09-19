@@ -121,7 +121,7 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 	}
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
-		resp := s.appResponse(a, acct.Plan)
+		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
@@ -203,7 +203,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"visibility":       string(created.Visibility),
 	})
 	s.emitAppCreated(r.Context(), created)
-	resp := s.appResponse(created, acct.Plan)
+	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
 	resp.Status = api.AppStatusUndeployed
 	writeJSON(w, http.StatusCreated, s.withParkedDeploymentRef(r.Context(), resp, created))
 }
@@ -713,15 +713,29 @@ func (s *server) loadAppAndPreflight(w http.ResponseWriter, r *http.Request, acc
 	return app, true, api.MustLimitsFor(acct.Plan)
 }
 
-// appResponse converts a state.App row into the wire DTO. The plan
-// is threaded through so the DTO can surface plan-derived caps
-// (issue #559: ConcurrencyPerVMBound) without re-looking-up the
-// account store. Mirrors how loadAppAndPreflight (above) threads
-// (state.App, api.Limits) — every caller has acct in scope.
+// appResponse converts a state.App row into the wire DTO using a background
+// context for compatibility with non-request callers and older tests.
 func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
+	return s.appResponseWithContext(context.Background(), a, plan)
+}
+
+// appResponseWithContext converts a state.App row into the wire DTO. The plan
+// is threaded through so the DTO can surface plan-derived caps
+// (issue #559: ConcurrencyPerVMBound) without re-looking-up the account store.
+// Request handlers should use the request context so the optional canonical
+// domain lookup is cancelled with the request.
+func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
 	consumerAuthMode := string(a.ConsumerAuthMode)
 	if consumerAuthMode == "" {
 		consumerAuthMode = api.ConsumerAuthModeOptional
+	}
+	platformURL := appURLForDomain(a.Slug, s.domain)
+	canonicalURL, defaultDomain := platformURL, ""
+	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
+		if domain, err := resolver.DefaultCustomDomain(ctx, a.ID); err == nil && domain != "" {
+			defaultDomain = domain
+			canonicalURL = "https://" + domain
+		}
 	}
 	// EgressAllowlist is materialised as a non-nil empty slice so
 	// the JSON shape is `[]` (never `null`) regardless of plan /
@@ -751,7 +765,9 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		MinInstances: a.MinInstances,
 		Status:       string(a.Status), DeletedAt: a.DeletedAt,
 		DeleteGraceUntil: a.DeleteGraceUntil,
-		URL:              appURLForDomain(a.Slug, s.domain),
+		URL:              platformURL,
+		CanonicalURL:     canonicalURL,
+		DefaultDomain:    defaultDomain,
 		PreviewOfSlug:    a.PreviewOfSlug,
 		PreviewPRNumber:  a.PreviewPrNumber,
 		PreviewPRState:   a.PreviewPrState,

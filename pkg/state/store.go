@@ -6315,6 +6315,14 @@ type Store interface {
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error)
 }
 
+// DefaultCustomDomainStore resolves the verified custom domain selected as an
+// app's canonical host. It is intentionally a small optional capability so
+// callers can preserve the Store interface for lightweight test doubles and
+// older operator implementations.
+type DefaultCustomDomainStore interface {
+	DefaultCustomDomain(context.Context, string) (string, error)
+}
+
 // CustomerEventFilter is the tenant-safe query contract for the customer audit
 // timeline. Subjectless events are included only when their app, deployment,
 // build, or instance metadata resolves to an app owned by AccountID.

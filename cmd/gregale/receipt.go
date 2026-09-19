@@ -9,8 +9,8 @@
 // cli_test.go:760).
 //
 // Receipt-only fields:
-//   - app_url:        customer-facing URL derived from the CLI-known
-//                     app slug via FAAS_APPS_DOMAIN (deployedAppURL).
+//   - app_url:        customer-facing canonical URL resolved by the API,
+//                     with the CLI platform URL as a fallback.
 //                     Empty when the slug is empty.
 //   - commit_sha:     HEAD SHA from zeroConfigProvenance.SHA. Empty on
 //                     non-git cwd-auto-pack, image, and source-ref
@@ -63,8 +63,8 @@ type DeployReceipt struct {
 // commit_sha and dirty at their zero values (matches the "no git
 // detection ran" image / source-ref / non-git fallback paths).
 //
-// appURL is built from the CLI-known slug via deployedAppURL
-// (commands2.go:3497); the receipt deliberately does NOT use
+// appURL is resolved from the app response when available, with the
+// CLI-known slug as a fallback; the receipt deliberately does NOT use
 // dep.AppID because the wire's app_id is the 32-char hex PK
 // (per openapi.yaml:12053, `pattern: '^[a-f0-9]{32}$'`), and the
 // gateway routes on slug — a hex-keyed URL never resolves. When

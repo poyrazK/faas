@@ -56,7 +56,18 @@ export type AppResponse = {
   build_cache_hit_rate_pct: number;
   deleted_at?: string | null;
   delete_grace_until?: string | null;
+  /**
+   * Stable platform hostname for the app (for example, https://my-app.gregale.dev).
+   */
   url: string;
+  /**
+   * Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the platform URL.
+   */
+  canonical_url: string;
+  /**
+   * Verified custom domain selected as the app's canonical host, when configured.
+   */
+  default_domain?: string;
   /**
    * Parent app slug for a pull-request or developer preview. Absent for production apps.
    */

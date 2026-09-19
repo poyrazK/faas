@@ -10846,6 +10846,7 @@ func (s *PgStore) SetDefaultCustomDomain(ctx context.Context, appID, domain stri
 		 where domain = $2
 		   and app_id = $1
 		   and verified_at is not null
+		   and domain not like '*.%'
 		on conflict (app_id) do update
 		   set domain = excluded.domain, updated_at = now()
 		 returning 1`, appID, domain).Scan(&marker)
@@ -10863,9 +10864,31 @@ func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain strin
 	err := s.pool.QueryRow(ctx, `
 		select exists(
 			select 1 from app_default_domains
-			 where app_id = $1 and domain = $2
+			 where app_id = $1 and domain = $2 and domain not like '*.%'
 		)`, appID, domain).Scan(&isDefault)
 	return isDefault, err
+}
+
+// DefaultCustomDomain returns the app's selected canonical host when the
+// pointer still targets a verified custom domain. The verification predicate
+// makes URL consumers fall back to the platform hostname if a domain is
+// removed or its verification is cleared by an operator migration.
+func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
+	var domain string
+	err := s.pool.QueryRow(ctx, `
+		select d.domain
+		  from app_default_domains ad
+		  join custom_domains d on d.domain = ad.domain
+		 where ad.app_id = $1
+		   and d.verified_at is not null
+		   and d.domain not like '*.%'`, appID).Scan(&domain)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return domain, nil
 }
 
 // WildcardDomainForHost returns the most-specific wildcard row whose

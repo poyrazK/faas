@@ -202,7 +202,7 @@ func (s *server) buildDiffBaseline(ctx context.Context, app state.App, acct stat
 		return deploydiff.EmptyBaseline(), nil
 	}
 	out := deploydiff.Baseline{
-		App:        appResponsePtr(s.appResponse(app, acct.Plan)),
+		App:        appResponsePtr(s.appResponseWithContext(ctx, app, acct.Plan)),
 		EnvByScope: map[string][]string{},
 	}
 	// Latest deployment: single call (no pagination needed).

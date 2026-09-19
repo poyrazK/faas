@@ -140,7 +140,7 @@ func loadAppNetworkSnapshot(ctx context.Context, client *Client, slug string) (a
 	}
 
 	snapshot := appNetworkSnapshot{
-		App:             appNetworkApp{ID: app.ID, Slug: app.Slug, Status: app.Status, URL: app.URL},
+		App:             appNetworkApp{ID: app.ID, Slug: app.Slug, Status: app.Status, URL: canonicalAppURL(app)},
 		EgressAllowlist: append([]string{}, app.EgressAllowlist...),
 		ServiceDiscovery: appNetworkServiceDiscovery{
 			Enabled:      true,

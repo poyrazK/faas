@@ -992,7 +992,14 @@ type AppResponse struct {
 	// for live apps.
 	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
 	DeleteGraceUntil *time.Time `json:"delete_grace_until,omitempty"`
-	URL              string     `json:"url"`
+	// URL is the platform hostname and remains stable even when an app has a
+	// verified custom domain selected as its canonical host.
+	URL string `json:"url"`
+	// CanonicalURL is the URL customers should share. It uses the selected
+	// verified custom domain when one exists and falls back to URL otherwise.
+	CanonicalURL string `json:"canonical_url"`
+	// DefaultDomain is the selected verified custom domain, when configured.
+	DefaultDomain string `json:"default_domain,omitempty"`
 	// Preview metadata is present only for preview/developer apps. Keeping
 	// this on the existing app response lets CLI and API consumers discover
 	// previews without parsing slugs or making a dashboard-only request.

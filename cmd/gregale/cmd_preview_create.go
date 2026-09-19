@@ -86,10 +86,7 @@ func cmdPreviewCreate(args []string) int {
 	if err != nil {
 		return printErr("Could not create preview", err)
 	}
-	previewURL := previewApp.URL
-	if previewURL == "" {
-		previewURL = deployedAppURL(previewApp.Slug)
-	}
+	previewURL := canonicalAppURL(previewApp)
 
 	deployCtx := context.Background()
 	if *idempotencyKey != "" {
