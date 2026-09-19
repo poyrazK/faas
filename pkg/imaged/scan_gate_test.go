@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -13,6 +14,18 @@ import (
 func TestCheckVerifiedScanGate(t *testing.T) {
 	const digest = "ghcr.io/example/api@sha256:abc"
 	dep := state.Deployment{ImageDigest: digest}
+	complete := func() *ScanResult {
+		now := time.Now().UTC()
+		return &ScanResult{
+			ImageDigest:      digest,
+			ArtifactDigest:   "sha256:" + strings.Repeat("a", 64),
+			ScannedAt:        now.Format(time.RFC3339Nano),
+			ScannerVersion:   "0.78.0",
+			ScannerDBStatus:  "valid",
+			ScannerDBVersion: "2026-09-19",
+			ScannerDBBuiltAt: now.Add(-time.Hour).Format(time.RFC3339Nano),
+		}
+	}
 
 	tests := []struct {
 		name    string
@@ -31,7 +44,7 @@ func TestCheckVerifiedScanGate(t *testing.T) {
 			name:   "warn allows high finding",
 			policy: api.AppSecurityPolicyWarn,
 			status: "complete",
-			result: &ScanResult{ImageDigest: digest, SeverityCounts: SeverityCounts{High: 1}},
+			result: func() *ScanResult { r := complete(); r.SeverityCounts.High = 1; return r }(),
 		},
 		{
 			name:    "enforce blocks incomplete",
@@ -57,21 +70,21 @@ func TestCheckVerifiedScanGate(t *testing.T) {
 			name:    "enforce blocks critical",
 			policy:  api.AppSecurityPolicyEnforce,
 			status:  "complete",
-			result:  &ScanResult{ImageDigest: digest, SeverityCounts: SeverityCounts{Critical: 1}},
+			result:  func() *ScanResult { r := complete(); r.SeverityCounts.Critical = 1; return r }(),
 			wantErr: "found 1 critical and 0 high",
 		},
 		{
 			name:    "enforce blocks unknown severity",
 			policy:  api.AppSecurityPolicyEnforce,
 			status:  "complete",
-			result:  &ScanResult{ImageDigest: digest, SeverityCounts: SeverityCounts{Unknown: 1}},
+			result:  func() *ScanResult { r := complete(); r.SeverityCounts.Unknown = 1; return r }(),
 			wantErr: "unknown-severity",
 		},
 		{
 			name:   "enforce allows clean matching scan",
 			policy: api.AppSecurityPolicyEnforce,
 			status: "complete",
-			result: &ScanResult{ImageDigest: digest, SeverityCounts: SeverityCounts{Medium: 3, Low: 2}},
+			result: func() *ScanResult { r := complete(); r.SeverityCounts = SeverityCounts{Medium: 3, Low: 2}; return r }(),
 		},
 	}
 
@@ -121,5 +134,26 @@ func TestMarkDeployFailedSecurityScanCode(t *testing.T) {
 	}
 	if got.ErrorCode != api.CodeSecurityScanBlocked {
 		t.Fatalf("ErrorCode = %q, want %q", got.ErrorCode, api.CodeSecurityScanBlocked)
+	}
+}
+
+func TestCheckVerifiedScanGateRejectsStaleEvidence(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	result := &ScanResult{
+		ImageDigest:      "ghcr.io/example/api@sha256:abc",
+		ArtifactDigest:   "sha256:" + strings.Repeat("b", 64),
+		ScannedAt:        now.Add(-verifiedScanMaxAge - time.Second).Format(time.RFC3339Nano),
+		ScannerVersion:   "0.78.0",
+		ScannerDBStatus:  "valid",
+		ScannerDBVersion: "2026-09-19",
+		ScannerDBBuiltAt: now.Add(-time.Hour).Format(time.RFC3339Nano),
+	}
+	err := checkVerifiedScanGateAt(
+		api.AppSecurityPolicyEnforce,
+		state.Deployment{ImageDigest: result.ImageDigest},
+		"complete", result, now,
+	)
+	if err == nil || !strings.Contains(err.Error(), "older than") {
+		t.Fatalf("checkVerifiedScanGateAt() error = %v, want stale-evidence error", err)
 	}
 }

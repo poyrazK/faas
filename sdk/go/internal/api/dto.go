@@ -1615,13 +1615,17 @@ type ScanVulnerability struct {
 // Err is populated only when Status="failed"; grype exit message
 // is the value.
 type ScanResult struct {
-	Status          string              `json:"status"`
-	ScannedAt       string              `json:"scanned_at,omitempty"`
-	ScannerVersion  string              `json:"scanner_version,omitempty"`
-	ImageDigest     string              `json:"image_digest,omitempty"`
-	SeverityCounts  ScanSeverityCounts  `json:"severity_counts"`
-	Vulnerabilities []ScanVulnerability `json:"vulnerabilities"`
-	Err             string              `json:"error,omitempty"`
+	Status           string              `json:"status"`
+	ScannedAt        string              `json:"scanned_at,omitempty"`
+	ScannerVersion   string              `json:"scanner_version,omitempty"`
+	ArtifactDigest   string              `json:"artifact_digest,omitempty"`
+	ImageDigest      string              `json:"image_digest,omitempty"`
+	ScannerDBStatus  string              `json:"scanner_db_status,omitempty"`
+	ScannerDBVersion string              `json:"scanner_db_version,omitempty"`
+	ScannerDBBuiltAt string              `json:"scanner_db_built_at,omitempty"`
+	SeverityCounts   ScanSeverityCounts  `json:"severity_counts"`
+	Vulnerabilities  []ScanVulnerability `json:"vulnerabilities"`
+	Err              string              `json:"error,omitempty"`
 }
 
 // --- Webhook delivery (issue #476 / ADR-076) -----------------------------

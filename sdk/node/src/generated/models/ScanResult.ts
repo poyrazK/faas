@@ -30,13 +30,29 @@ export type ScanResult = {
    */
   scanned_at?: string | null;
   /**
-   * Grype binary version that produced the scan (e.g. "grype 0.78.0"). Captured once at imaged startup via `grype version` and stamped on every ScanResult payload.
+   * Grype binary version from the descriptor of the run that produced the scan (e.g. "0.78.0"). Enforce mode requires this identity to be present.
    */
   scanner_version?: string | null;
+  /**
+   * SHA-256 digest of the exact ext4 artifact selected for the Grype run. Enforce mode requires the digest and verifies it is unchanged before and after scanning.
+   */
+  artifact_digest?: string | null;
   /**
    * OCI image reference recorded at the time of the scan. In security_policy=enforce, this must exactly match deployments.image_digest before promotion. Empty on the pre-feature backfill (status = "skipped" with no image to stamp).
    */
   image_digest?: string | null;
+  /**
+   * Status Grype reported for its vulnerability database. Enforce mode requires `valid`.
+   */
+  scanner_db_status?: string | null;
+  /**
+   * Vulnerability database version from the Grype descriptor.
+   */
+  scanner_db_version?: string | null;
+  /**
+   * Vulnerability database build timestamp from the Grype descriptor. Enforce mode rejects databases older than 30 days.
+   */
+  scanner_db_built_at?: string | null;
   severity_counts: SeverityCounts;
   /**
    * Full CVE list, ordered by Grype's natural output (most-severe-first). The dashboard's "top 10" view sorts+truncates client-side. The /scan route returns the full list.

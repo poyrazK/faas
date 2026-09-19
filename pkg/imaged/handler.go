@@ -994,13 +994,20 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
+	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	if artifactErr != nil {
+		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
+		if app.SecurityPolicy == api.AppSecurityPolicyEnforce {
+			return verifiedScanFailure(app.SecurityPolicy, "hash scan artifact failed: "+artifactErr.Error())
+		}
+	}
 	result, err := h.runGrype(ctx, scanDir)
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
 		// so the operator sees the underlying cause.
 		h.log.Warn("imaged: per-deploy grype scan failed",
 			"deployment", dep.ID, "app", app.Slug, "err", err)
-		failedResult := &ScanResult{ImageDigest: dep.ImageDigest, Error: err.Error()}
+		failedResult := &ScanResult{ImageDigest: dep.ImageDigest, ArtifactDigest: artifactDigest, Error: err.Error()}
 		b, mErr := json.Marshal(failedResult)
 		if mErr != nil {
 			h.log.Warn("imaged: marshal failed scan result",
@@ -1023,10 +1030,21 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	if result == nil {
 		return verifiedScanFailure(app.SecurityPolicy, "grype returned an empty scan result")
 	}
+	if app.SecurityPolicy == api.AppSecurityPolicyEnforce {
+		artifactDigestAfter, hashErr := digestScanArtifact(scanDir)
+		if hashErr != nil {
+			return verifiedScanFailure(app.SecurityPolicy, "re-hash scan artifact failed: "+hashErr.Error())
+		}
+		if artifactDigest != artifactDigestAfter {
+			return verifiedScanFailure(app.SecurityPolicy, "scan artifact changed while scanning")
+		}
+	}
 	// The deployment reference is the identity carried through the existing
 	// scan API. Persist it in the evidence payload so enforce mode can reject
 	// stale or cross-deployment results instead of trusting severity counts.
 	result.ImageDigest = dep.ImageDigest
+	result.ArtifactDigest = artifactDigest
+	result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	b, mErr := json.Marshal(result)
 	if mErr != nil {
 		h.log.Warn("imaged: marshal scan result",

@@ -58,16 +58,26 @@ type ScanResult struct {
 	// 5 min of status: live, not at the same instant).
 	ScannedAt string `json:"scanned_at,omitempty"`
 	// ScannerVersion is the grype binary version that
-	// produced the scan (e.g. "grype 0.78.0"). Captured
-	// once at imaged startup via `grype version` and
-	// stamped on every ScanResult payload.
+	// produced the scan (e.g. "0.78.0"), copied from the
+	// Grype result descriptor.
 	ScannerVersion string `json:"scanner_version,omitempty"`
+	// ArtifactDigest is the SHA-256 of the exact ext4 artifact handed to
+	// Grype. It binds the evidence to the bytes selected for scanning.
+	ArtifactDigest string `json:"artifact_digest,omitempty"`
+	// ScannerDBVersion and ScannerDBBuiltAt identify the vulnerability
+	// database used by Grype. Enforce mode rejects evidence without a
+	// usable database identity or outside the freshness window.
+	ScannerDBVersion string `json:"scanner_db_version,omitempty"`
+	ScannerDBBuiltAt string `json:"scanner_db_built_at,omitempty"`
 	// ImageDigest is the deployment's OCI image digest at
 	// the time of the scan. Sourced from
 	// deployments.image_digest, not re-inspected. Empty on
 	// the pre-feature backfill (Status = "skipped" with no
 	// image to stamp).
 	ImageDigest string `json:"image_digest,omitempty"`
+	// ScannerDBStatus is the status Grype reported for its vulnerability
+	// database. It is omitted on legacy rows without descriptor metadata.
+	ScannerDBStatus string `json:"scanner_db_status,omitempty"`
 	// SeverityCounts is the per-bucket count of CVEs
 	// Grype matched. Always present (zero-value map
 	// serializes as `{}`); the dashboard reads

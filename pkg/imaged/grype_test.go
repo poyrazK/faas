@@ -302,6 +302,23 @@ func TestParseGrypeOutput_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestParseGrypeOutput_DescriptorMetadata(t *testing.T) {
+	res, err := parseGrypeOutput([]byte(`{
+		"matches": [],
+		"descriptor": {
+			"name": "grype",
+			"version": "0.78.0",
+			"db": {"status": "valid", "version": "2026-09-19", "built": "2026-09-19T10:00:00Z"}
+		}
+	}`), "/tmp/rootfs")
+	if err != nil {
+		t.Fatalf("parseGrypeOutput: %v", err)
+	}
+	if res.ScannerVersion != "0.78.0" || res.ScannerDBStatus != "valid" || res.ScannerDBVersion != "2026-09-19" || res.ScannerDBBuiltAt != "2026-09-19T10:00:00Z" {
+		t.Fatalf("descriptor metadata = version=%q status=%q db_version=%q built=%q", res.ScannerVersion, res.ScannerDBStatus, res.ScannerDBVersion, res.ScannerDBBuiltAt)
+	}
+}
+
 // TestVulnPaths pins the artifact.locations[].path flattening
 // helper used by parseGrypeOutput. The empty / nil contract
 // matters because the jsonb omitempty drop depends on the

@@ -73,7 +73,20 @@ type grypeLocation struct {
 // descriptor fields (ignored here) include the source artifact and
 // Grype's database version.
 type grypeOutput struct {
-	Matches []grypeMatch `json:"matches"`
+	Matches    []grypeMatch    `json:"matches"`
+	Descriptor grypeDescriptor `json:"descriptor"`
+}
+
+type grypeDescriptor struct {
+	Name    string        `json:"name"`
+	Version string        `json:"version"`
+	DB      grypeDatabase `json:"db"`
+}
+
+type grypeDatabase struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	Built   string `json:"built"`
 }
 
 // defaultGrypeRun shells out to the grype CLI and parses the JSON
@@ -217,6 +230,12 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("imaged: grype scan dir %q: parse json: %w", dir, err)
 	}
+	res := &ScanResult{
+		ScannerVersion:   out.Descriptor.Version,
+		ScannerDBStatus:  out.Descriptor.DB.Status,
+		ScannerDBVersion: out.Descriptor.DB.Version,
+		ScannerDBBuiltAt: out.Descriptor.DB.Built,
+	}
 	if len(out.Matches) == 0 {
 		// Zero-finding scan: return *ScanResult with an
 		// empty (NOT nil) Vulnerabilities slice so the
@@ -227,9 +246,10 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 		// client validator rejects null. The base-ext4
 		// sidecar (writeScanSidecar) reads only
 		// SeverityCounts which is zero-valued either way.
-		return &ScanResult{Vulnerabilities: []Vulnerability{}}, nil
+		res.Vulnerabilities = []Vulnerability{}
+		return res, nil
 	}
-	res := &ScanResult{Vulnerabilities: make([]Vulnerability, 0, len(out.Matches))}
+	res.Vulnerabilities = make([]Vulnerability, 0, len(out.Matches))
 	for _, m := range out.Matches {
 		res.bumpSeverity(normalizeGrypeSeverity(m.Vulnerability.Severity))
 		res.Vulnerabilities = append(res.Vulnerabilities, Vulnerability{
@@ -314,8 +334,17 @@ type ScanResult struct {
 	// ImageDigest identifies the exact deployment reference the scan was
 	// attached to. Enforce-mode promotion compares it with the deployment row
 	// before allowing the snapshot handoff.
-	ImageDigest    string         `json:"image_digest,omitempty"`
-	SeverityCounts SeverityCounts `json:"severity_counts"`
+	ImageDigest    string `json:"image_digest,omitempty"`
+	ArtifactDigest string `json:"artifact_digest,omitempty"`
+	ScannedAt      string `json:"scanned_at,omitempty"`
+	// ScannerVersion and the database fields come from Grype's descriptor.
+	// Enforce mode requires them so a scan cannot be treated as verified when
+	// the scanner or vulnerability database identity is unknown.
+	ScannerVersion   string         `json:"scanner_version,omitempty"`
+	ScannerDBStatus  string         `json:"scanner_db_status,omitempty"`
+	ScannerDBVersion string         `json:"scanner_db_version,omitempty"`
+	ScannerDBBuiltAt string         `json:"scanner_db_built_at,omitempty"`
+	SeverityCounts   SeverityCounts `json:"severity_counts"`
 	// Vulnerabilities is the full typed CVE list, ALWAYS
 	// present (no omitempty). For a zero-finding scan
 	// (len(out.Matches) == 0 in parseGrypeOutput) the
