@@ -1,4 +1,4 @@
--- filename: 20260920020000000_security_scan_quarantine.sql
+-- filename: 20260920020012345_security_scan_quarantine.sql
 -- +goose Up
 -- +goose StatementBegin
 
