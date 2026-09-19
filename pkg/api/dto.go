@@ -38,6 +38,27 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// EventSubscriptionResponse is one manifest-declared subscription currently
+// reconciled for an app. Filter is the normalized JSON object used by the
+// router when matching published events.
+type EventSubscriptionResponse struct {
+	ID        string          `json:"id"`
+	AppID     string          `json:"app_id"`
+	Source    string          `json:"source"`
+	Type      string          `json:"type"`
+	Filter    json.RawMessage `json:"filter"`
+	Enabled   bool            `json:"enabled"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// EventSubscriptionListResponse is the app-scoped, read-only subscription
+// inventory used by the CLI and dashboard integrations.
+type EventSubscriptionListResponse struct {
+	AppSlug       string                      `json:"app_slug"`
+	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.

@@ -14334,6 +14334,28 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-subscriptions:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptions
+      summary: List event subscriptions reconciled for an app.
+      description: |
+        Returns the event subscriptions currently installed from the app's
+        deployment manifest. The response is read-only and account-scoped;
+        use it to verify the router will receive matching published events.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Reconciled event subscriptions, in creation order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -22431,6 +22453,39 @@ components:
         id: { type: string }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
+
+    EventSubscriptionResponse:
+      description: One manifest-declared event subscription reconciled for an app.
+      type: object
+      additionalProperties: false
+      required: [id, app_id, source, type, filter, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        source:
+          type: string
+          description: Event source pattern, including supported wildcard forms.
+        type:
+          type: string
+          description: Event type pattern, including supported wildcard forms.
+        filter:
+          type: object
+          additionalProperties: true
+          description: Normalized JSON filter evaluated by the event matcher.
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    EventSubscriptionListResponse:
+      description: App-scoped event subscriptions reconciled from the manifest.
+      type: object
+      additionalProperties: false
+      required: [app_slug, subscriptions]
+      properties:
+        app_slug: { type: string }
+        subscriptions:
+          type: array
+          items: { $ref: '#/components/schemas/EventSubscriptionResponse' }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."

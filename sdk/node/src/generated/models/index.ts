@@ -290,6 +290,8 @@ export type { EnvDiffResponse } from './EnvDiffResponse.js';
 export type { EnvDiffRow } from './EnvDiffRow.js';
 export type { EnvScope } from './EnvScope.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
+export type { EventSubscriptionListResponse } from './EventSubscriptionListResponse.js';
+export type { EventSubscriptionResponse } from './EventSubscriptionResponse.js';
 export type { ExecutionFailure } from './ExecutionFailure.js';
 export type { ExecutionFile } from './ExecutionFile.js';
 export type { ExecutionID } from './ExecutionID.js';

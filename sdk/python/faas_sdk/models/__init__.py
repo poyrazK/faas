@@ -574,6 +574,9 @@ from .env_diff_response import EnvDiffResponse
 from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_subscription_list_response import EventSubscriptionListResponse
+from .event_subscription_response import EventSubscriptionResponse
+from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -1879,6 +1882,9 @@ __all__ = (
     "EnvDiffRow",
     "EnvDiffRowCells",
     "ErrorNewWebhookPayload",
+    "EventSubscriptionListResponse",
+    "EventSubscriptionResponse",
+    "EventSubscriptionResponseFilter",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",

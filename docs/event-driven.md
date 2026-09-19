@@ -56,3 +56,14 @@ choose the idempotency key explicitly. The flag-based form remains supported:
 gregale events publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
+
+To confirm what Gregale reconciled for an app, list its active manifest
+subscriptions directly:
+
+```bash
+gregale events subscriptions APP
+gregale events subscriptions APP --json
+```
+
+This is useful after a deploy or manifest change: it shows the normalized
+source, type, filter, and enabled state that the router will use.

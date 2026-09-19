@@ -6053,6 +6053,19 @@ func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (Pub
 	return resp, err
 }
 
+// ListEventSubscriptions returns the manifest declarations currently
+// reconciled for one app, in stable creation order.
+func (c *Client) ListEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
+	var out EventSubscriptionListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/event-subscriptions", nil, &out)
+}
+
+// ListAppsSlugEventSubscriptions is the route-shaped alias used by generated
+// SDK coverage and callers that prefer method names matching the REST path.
+func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
+	return c.ListEventSubscriptions(ctx, slug)
+}
+
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
 func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse
