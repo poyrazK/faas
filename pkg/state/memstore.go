@@ -149,6 +149,7 @@ type MemStore struct {
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
 	privateNetworks           map[string]PrivateNetwork
 	privateNetworkAddresses   map[string]PrivateNetworkAddress
+	privateNetworkPeerings    map[string]PrivateNetworkPeering
 	reservedIPLeases          map[string]ReservedIP
 	reservedIPInventory       map[string]ReservedIPInventory
 	appDeletionClaims         map[string]struct{}
@@ -884,6 +885,7 @@ func NewMemStore() *MemStore {
 		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
 		privateNetworks:           map[string]PrivateNetwork{},
 		privateNetworkAddresses:   map[string]PrivateNetworkAddress{},
+		privateNetworkPeerings:    map[string]PrivateNetworkPeering{},
 		reservedIPLeases:          map[string]ReservedIP{},
 		reservedIPInventory:       map[string]ReservedIPInventory{},
 		appDeletionClaims:         map[string]struct{}{},

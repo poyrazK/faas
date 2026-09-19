@@ -165,6 +165,7 @@ export type { CreateObjectUploadRouteRequest } from './CreateObjectUploadRouteRe
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
 export type { CreatePreviewRequest } from './CreatePreviewRequest.js';
+export type { CreatePrivateNetworkPeeringRequest } from './CreatePrivateNetworkPeeringRequest.js';
 export type { CreatePrivateNetworkRequest } from './CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
@@ -467,6 +468,8 @@ export type { PrewarmRequest } from './PrewarmRequest.js';
 export type { PrivateNetwork } from './PrivateNetwork.js';
 export type { PrivateNetworkFirewallRule } from './PrivateNetworkFirewallRule.js';
 export type { PrivateNetworkListResponse } from './PrivateNetworkListResponse.js';
+export type { PrivateNetworkPeering } from './PrivateNetworkPeering.js';
+export type { PrivateNetworkPeeringListResponse } from './PrivateNetworkPeeringListResponse.js';
 export type { Problem } from './Problem.js';
 export type { ProgrammaticAPIKey } from './ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './ProgrammaticAuthResponse.js';

@@ -7819,6 +7819,122 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/networks/{id}/peerings:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable Gregale network identifier whose peerings are listed.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+    get:
+      tags: [networking]
+      operationId: listPrivateNetworkPeerings
+      summary: List peerings for a private network.
+      description: |
+        Returns account-scoped peering intents involving this network. A
+        pending or error peering remains fail-closed until both route domains
+        converge; this surface does not call DigitalOcean APIs.
+      responses:
+        '200':
+          description: Private-network peerings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetworkPeeringListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [networking]
+      operationId: createPrivateNetworkPeering
+      summary: Request peering with another private network.
+      description: |
+        Creates a pending, symmetric peering between two Gregale-owned
+        networks in the same account and region. Networks must have
+        non-overlapping IPv4 CIDRs. Route activation is asynchronous and
+        remains fail-closed until the node fabric converges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePrivateNetworkPeeringRequest' }
+      responses:
+        '202':
+          description: Peering intent accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetworkPeering' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The account plan does not include private networking.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The two networks are already peered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Gregale-owned network fabric is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/networks/{id}/peerings/{peer_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable Gregale network identifier.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+      - name: peer_id
+        in: path
+        required: true
+        description: Stable peering identifier returned when the intent is created.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+    get:
+      tags: [networking]
+      operationId: getPrivateNetworkPeering
+      summary: Read a private-network peering.
+      responses:
+        '200':
+          description: Private-network peering.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetworkPeering' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [networking]
+      operationId: deletePrivateNetworkPeering
+      summary: Remove a private-network peering intent.
+      responses:
+        '204': { description: Peering removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/networks/{id}/policy:
     parameters:
       - name: id
@@ -30566,6 +30682,49 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AppPrivateNetworkAttachment'
             - type: 'null'
+
+    PrivateNetworkPeering:
+      description: Durable, provider-neutral peering intent between two Gregale-owned networks.
+      type: object
+      required: [id, network_id, peer_network_id, region, status]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        peer_network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        region:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        status:
+          type: string
+          enum: [pending, ready, error]
+        status_detail: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PrivateNetworkPeeringListResponse:
+      description: Peerings involving one account-scoped private network.
+      type: object
+      required: [peerings]
+      properties:
+        peerings:
+          type: array
+          items: { $ref: '#/components/schemas/PrivateNetworkPeering' }
+
+    CreatePrivateNetworkPeeringRequest:
+      description: POST /v1/networks/{id}/peerings body.
+      type: object
+      required: [peer_network_id]
+      properties:
+        peer_network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+          description: Another Gregale-owned network in the same account and region.
 
     PrivateNetwork:
       description: Gregale-owned private-network definition.

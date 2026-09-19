@@ -49,6 +49,16 @@ func scanPrivateNetworkAddress(row interface{ Scan(...any) error }) (PrivateNetw
 	return address, nil
 }
 
+func scanPrivateNetworkPeering(row interface{ Scan(...any) error }) (PrivateNetworkPeering, error) {
+	var peering PrivateNetworkPeering
+	var accountID string
+	if err := row.Scan(&peering.ID, &accountID, &peering.LeftNetworkID, &peering.RightNetworkID, &peering.Region, &peering.Status, &peering.StatusDetail, &peering.CreatedAt, &peering.UpdatedAt); err != nil {
+		return PrivateNetworkPeering{}, mapErr(err)
+	}
+	peering.AccountID = accountID
+	return peering, nil
+}
+
 func parsePrivateNetworkAddress(value string) (netip.Addr, error) {
 	parsed, err := netip.ParseAddr(value)
 	if err == nil {
@@ -264,7 +274,7 @@ func (s *PgStore) UpdatePrivateNetworkFirewallPolicy(ctx context.Context, accoun
 }
 
 func (s *PgStore) DeletePrivateNetwork(ctx context.Context, accountID, id string) error {
-	result, err := s.pool.Exec(ctx, `delete from private_networks where account_id = $1 and id = $2 and not exists (select 1 from app_private_network_attachments a where a.account_id = $1 and a.network_id = $2)`, mustPgUUID(accountID), strings.TrimSpace(id))
+	result, err := s.pool.Exec(ctx, `delete from private_networks where account_id = $1 and id = $2 and not exists (select 1 from app_private_network_attachments a where a.account_id = $1 and a.network_id = $2) and not exists (select 1 from private_network_peerings p where p.account_id = $1 and (p.left_network_id = $2 or p.right_network_id = $2))`, mustPgUUID(accountID), strings.TrimSpace(id))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -279,6 +289,104 @@ func (s *PgStore) DeletePrivateNetwork(ctx context.Context, accountID, id string
 		return ErrNotFound
 	}
 	return ErrConflict
+}
+
+func (s *PgStore) CreatePrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
+	var err error
+	peering, err = validatePrivateNetworkPeering(peering)
+	if err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	if peering.ID == "" {
+		peering.ID = "peer-" + uuid.NewString()
+	}
+	if peering.StatusDetail == "" {
+		peering.StatusDetail = "network route convergence is pending"
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var leftAccount, leftRegion, leftCIDR, rightAccount, rightRegion, rightCIDR string
+	if err := tx.QueryRow(ctx, `
+		select l.account_id::text, l.region, l.cidr::text,
+		       r.account_id::text, r.region, r.cidr::text
+		  from private_networks l
+		  join private_networks r on r.id = $3
+		 where l.id = $2 and l.account_id = $1 and r.account_id = $1
+		 for update`, mustPgUUID(peering.AccountID), peering.LeftNetworkID, peering.RightNetworkID).
+		Scan(&leftAccount, &leftRegion, &leftCIDR, &rightAccount, &rightRegion, &rightCIDR); err != nil {
+		return PrivateNetworkPeering{}, mapErr(err)
+	}
+	if leftAccount != peering.AccountID || rightAccount != peering.AccountID {
+		return PrivateNetworkPeering{}, ErrNotFound
+	}
+	if leftRegion != peering.Region || rightRegion != peering.Region {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	leftPrefix, leftErr := netip.ParsePrefix(leftCIDR)
+	rightPrefix, rightErr := netip.ParsePrefix(rightCIDR)
+	if leftErr != nil || rightErr != nil {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if leftPrefix.Overlaps(rightPrefix) {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	created, err := scanPrivateNetworkPeering(tx.QueryRow(ctx, `
+		insert into private_network_peerings
+		  (id, account_id, left_network_id, right_network_id, region, status, status_detail)
+		values ($1, $2, $3, $4, $5, $6, $7)
+		returning id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at`,
+		peering.ID, mustPgUUID(peering.AccountID), peering.LeftNetworkID, peering.RightNetworkID, peering.Region, peering.Status, peering.StatusDetail))
+	if err != nil {
+		return PrivateNetworkPeering{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	return created, nil
+}
+
+func (s *PgStore) ListPrivateNetworkPeerings(ctx context.Context, accountID, networkID string) ([]PrivateNetworkPeering, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at
+		  from private_network_peerings
+		 where account_id = $1 and ($2 = '' or left_network_id = $2 or right_network_id = $2)
+		 order by left_network_id asc, right_network_id asc, id asc`, mustPgUUID(accountID), strings.TrimSpace(networkID))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]PrivateNetworkPeering, 0)
+	for rows.Next() {
+		peering, scanErr := scanPrivateNetworkPeering(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, peering)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
+
+func (s *PgStore) GetPrivateNetworkPeering(ctx context.Context, accountID, id string) (PrivateNetworkPeering, error) {
+	return scanPrivateNetworkPeering(s.pool.QueryRow(ctx, `
+		select id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at
+		  from private_network_peerings where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id)))
+}
+
+func (s *PgStore) DeletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {
+	result, err := s.pool.Exec(ctx, `delete from private_network_peerings where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id))
+	if err != nil {
+		return mapErr(err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, networkID, ownerType, ownerID string) (PrivateNetworkAddress, error) {

@@ -44,6 +44,21 @@ type PrivateNetworkAddress struct {
 	CreatedAt time.Time
 }
 
+// PrivateNetworkPeering is the durable control-plane intent connecting two
+// Gregale-owned network route domains. Network IDs are canonicalized so the
+// same relationship cannot be created twice in reverse order.
+type PrivateNetworkPeering struct {
+	ID             string
+	AccountID      string
+	LeftNetworkID  string
+	RightNetworkID string
+	Region         string
+	Status         string
+	StatusDetail   string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // PrivateNetworkStore is an optional extension to Store so older test doubles
 // can continue serving the app attachment API. Both production and in-memory
 // stores implement it for the Gregale-owned fabric surface.
@@ -54,6 +69,17 @@ type PrivateNetworkStore interface {
 	DeletePrivateNetwork(context.Context, string, string) error
 	AllocatePrivateNetworkAddress(context.Context, string, string, string, string) (PrivateNetworkAddress, error)
 	ReleasePrivateNetworkAddress(context.Context, string, string, string, string) error
+}
+
+// PrivateNetworkPeeringStore is an additive extension for the customer-facing
+// peering lifecycle. Keeping it separate preserves compatibility with older
+// stores and test doubles that only implement network attachments.
+type PrivateNetworkPeeringStore interface {
+	PrivateNetworkStore
+	CreatePrivateNetworkPeering(context.Context, PrivateNetworkPeering) (PrivateNetworkPeering, error)
+	ListPrivateNetworkPeerings(context.Context, string, string) ([]PrivateNetworkPeering, error)
+	GetPrivateNetworkPeering(context.Context, string, string) (PrivateNetworkPeering, error)
+	DeletePrivateNetworkPeering(context.Context, string, string) error
 }
 
 // PrivateNetworkPolicyStore is the additive extension used by the reusable
@@ -73,6 +99,8 @@ type PrivateNetworkFirewallPolicyStore interface {
 
 var _ PrivateNetworkStore = (*MemStore)(nil)
 var _ PrivateNetworkStore = (*PgStore)(nil)
+var _ PrivateNetworkPeeringStore = (*MemStore)(nil)
+var _ PrivateNetworkPeeringStore = (*PgStore)(nil)
 var _ PrivateNetworkPolicyStore = (*MemStore)(nil)
 var _ PrivateNetworkPolicyStore = (*PgStore)(nil)
 var _ PrivateNetworkFirewallPolicyStore = (*MemStore)(nil)
@@ -148,6 +176,59 @@ func clonePrivateNetworkFirewallRules(in []api.PrivateNetworkFirewallRule) []api
 }
 
 func clonePrivateNetworkAddress(in PrivateNetworkAddress) PrivateNetworkAddress { return in }
+
+func clonePrivateNetworkPeering(in PrivateNetworkPeering) PrivateNetworkPeering { return in }
+
+func privateNetworkPeeringKey(accountID, left, right string) string {
+	return accountID + "\x00" + left + "\x00" + right
+}
+
+func validatePrivateNetworkPeering(in PrivateNetworkPeering) (PrivateNetworkPeering, error) {
+	in.ID = strings.TrimSpace(in.ID)
+	in.AccountID = strings.TrimSpace(in.AccountID)
+	in.LeftNetworkID = strings.TrimSpace(in.LeftNetworkID)
+	in.RightNetworkID = strings.TrimSpace(in.RightNetworkID)
+	in.Region = strings.TrimSpace(in.Region)
+	if in.AccountID == "" || in.LeftNetworkID == "" || in.RightNetworkID == "" || in.Region == "" {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if in.ID != "" {
+		if err := api.ValidatePrivateNetworkIdentifier(in.ID); err != nil {
+			return PrivateNetworkPeering{}, ErrInvalidArgument
+		}
+	}
+	if err := api.ValidatePrivateNetworkIdentifier(in.LeftNetworkID); err != nil {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if err := api.ValidatePrivateNetworkIdentifier(in.RightNetworkID); err != nil {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if err := api.ValidatePrivateNetworkIdentifier(in.Region); err != nil {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if in.LeftNetworkID == in.RightNetworkID {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if in.RightNetworkID < in.LeftNetworkID {
+		in.LeftNetworkID, in.RightNetworkID = in.RightNetworkID, in.LeftNetworkID
+	}
+	if in.Status == "" {
+		in.Status = api.PrivateNetworkPeeringStatusPending
+	}
+	if in.Status != api.PrivateNetworkPeeringStatusPending && in.Status != api.PrivateNetworkPeeringStatusReady && in.Status != api.PrivateNetworkPeeringStatusError {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	return in, nil
+}
+
+func privateNetworkPeeringSort(peerings []PrivateNetworkPeering) {
+	sort.Slice(peerings, func(i, j int) bool {
+		if peerings[i].LeftNetworkID == peerings[j].LeftNetworkID {
+			return peerings[i].RightNetworkID < peerings[j].RightNetworkID
+		}
+		return peerings[i].LeftNetworkID < peerings[j].LeftNetworkID
+	})
+}
 
 func privateNetworkAddressKey(networkID, ownerType, ownerID string) string {
 	return networkID + "\x00" + ownerType + "\x00" + ownerID
@@ -283,12 +364,108 @@ func (m *MemStore) DeletePrivateNetwork(ctx context.Context, accountID, id strin
 			return ErrConflict
 		}
 	}
+	for _, peering := range m.privateNetworkPeerings {
+		if peering.AccountID == accountID && (peering.LeftNetworkID == id || peering.RightNetworkID == id) {
+			return ErrConflict
+		}
+	}
 	delete(m.privateNetworks, id)
 	for addressID, address := range m.privateNetworkAddresses {
 		if address.NetworkID == id && address.AccountID == accountID {
 			delete(m.privateNetworkAddresses, addressID)
 		}
 	}
+	return nil
+}
+
+// CreatePrivateNetworkPeering records a pending symmetric route intent. The
+// in-memory implementation mirrors the Postgres checks so API tests exercise
+// account isolation, region matching, and CIDR safety.
+func (m *MemStore) CreatePrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
+	if err := ctx.Err(); err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	var err error
+	peering, err = validatePrivateNetworkPeering(peering)
+	if err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	left, leftOK := m.privateNetworks[peering.LeftNetworkID]
+	right, rightOK := m.privateNetworks[peering.RightNetworkID]
+	if !leftOK || !rightOK || left.AccountID != peering.AccountID || right.AccountID != peering.AccountID {
+		return PrivateNetworkPeering{}, ErrNotFound
+	}
+	if left.Region != peering.Region || right.Region != peering.Region {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	if left.CIDR.Overlaps(right.CIDR) {
+		return PrivateNetworkPeering{}, ErrInvalidArgument
+	}
+	key := privateNetworkPeeringKey(peering.AccountID, peering.LeftNetworkID, peering.RightNetworkID)
+	for _, existing := range m.privateNetworkPeerings {
+		if privateNetworkPeeringKey(existing.AccountID, existing.LeftNetworkID, existing.RightNetworkID) == key {
+			return PrivateNetworkPeering{}, ErrConflict
+		}
+	}
+	if peering.ID == "" {
+		peering.ID = "peer-" + uuid.NewString()
+	}
+	if _, exists := m.privateNetworkPeerings[peering.ID]; exists {
+		return PrivateNetworkPeering{}, ErrConflict
+	}
+	if peering.StatusDetail == "" {
+		peering.StatusDetail = "network route convergence is pending"
+	}
+	if peering.CreatedAt.IsZero() {
+		peering.CreatedAt = time.Now().UTC()
+	}
+	peering.UpdatedAt = time.Now().UTC()
+	m.privateNetworkPeerings[peering.ID] = peering
+	return clonePrivateNetworkPeering(peering), nil
+}
+
+func (m *MemStore) ListPrivateNetworkPeerings(ctx context.Context, accountID, networkID string) ([]PrivateNetworkPeering, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PrivateNetworkPeering, 0)
+	for _, peering := range m.privateNetworkPeerings {
+		if peering.AccountID == accountID && (networkID == "" || peering.LeftNetworkID == networkID || peering.RightNetworkID == networkID) {
+			out = append(out, clonePrivateNetworkPeering(peering))
+		}
+	}
+	privateNetworkPeeringSort(out)
+	return out, nil
+}
+
+func (m *MemStore) GetPrivateNetworkPeering(ctx context.Context, accountID, id string) (PrivateNetworkPeering, error) {
+	if err := ctx.Err(); err != nil {
+		return PrivateNetworkPeering{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	peering, ok := m.privateNetworkPeerings[id]
+	if !ok || peering.AccountID != accountID {
+		return PrivateNetworkPeering{}, ErrNotFound
+	}
+	return clonePrivateNetworkPeering(peering), nil
+}
+
+func (m *MemStore) DeletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	peering, ok := m.privateNetworkPeerings[id]
+	if !ok || peering.AccountID != accountID {
+		return ErrNotFound
+	}
+	delete(m.privateNetworkPeerings, id)
 	return nil
 }
 

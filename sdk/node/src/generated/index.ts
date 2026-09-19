@@ -170,6 +170,7 @@ export type { CreateObjectUploadRouteRequest } from './models/CreateObjectUpload
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
 export type { CreatePreviewRequest } from './models/CreatePreviewRequest.js';
+export type { CreatePrivateNetworkPeeringRequest } from './models/CreatePrivateNetworkPeeringRequest.js';
 export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
@@ -473,6 +474,8 @@ export type { PrewarmRequest } from './models/PrewarmRequest.js';
 export type { PrivateNetwork } from './models/PrivateNetwork.js';
 export type { PrivateNetworkFirewallRule } from './models/PrivateNetworkFirewallRule.js';
 export type { PrivateNetworkListResponse } from './models/PrivateNetworkListResponse.js';
+export type { PrivateNetworkPeering } from './models/PrivateNetworkPeering.js';
+export type { PrivateNetworkPeeringListResponse } from './models/PrivateNetworkPeeringListResponse.js';
 export type { Problem } from './models/Problem.js';
 export type { ProgrammaticAPIKey } from './models/ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse.js';

@@ -20,6 +20,9 @@ const (
 	PrivateNetworkFirewallMaxPortsPerRule = 16
 	PrivateNetworkStatusReady             = "ready"
 	PrivateNetworkStatusError             = "error"
+	PrivateNetworkPeeringStatusPending    = "pending"
+	PrivateNetworkPeeringStatusReady      = "ready"
+	PrivateNetworkPeeringStatusError      = "error"
 	PrivateNetworkMinPrefixBits           = 16
 	PrivateNetworkMaxPrefixBits           = 28
 )
@@ -45,6 +48,31 @@ type PrivateNetwork struct {
 // PrivateNetworkListResponse wraps the account-scoped network collection.
 type PrivateNetworkListResponse struct {
 	Networks []PrivateNetwork `json:"networks"`
+}
+
+// PrivateNetworkPeering is a durable, account-scoped request to connect two
+// Gregale-owned networks. Pending and error peerings remain fail-closed until
+// the node fabric has converged the symmetric route set.
+type PrivateNetworkPeering struct {
+	ID            string     `json:"id"`
+	NetworkID     string     `json:"network_id"`
+	PeerNetworkID string     `json:"peer_network_id"`
+	Region        string     `json:"region"`
+	Status        string     `json:"status"`
+	StatusDetail  string     `json:"status_detail,omitempty"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+// PrivateNetworkPeeringListResponse wraps peerings attached to one network.
+type PrivateNetworkPeeringListResponse struct {
+	Peerings []PrivateNetworkPeering `json:"peerings"`
+}
+
+// CreatePrivateNetworkPeeringRequest requests a symmetric peering between the
+// network in the URL and another network in the same account and region.
+type CreatePrivateNetworkPeeringRequest struct {
+	PeerNetworkID string `json:"peer_network_id"`
 }
 
 // CreatePrivateNetworkRequest creates a Gregale-owned IPv4 network. The

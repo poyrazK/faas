@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -24,6 +25,167 @@ func (s *server) privateNetworkFabricStore(w http.ResponseWriter, r *http.Reques
 		return nil, false
 	}
 	return store, true
+}
+
+func (s *server) privateNetworkPeeringStore(w http.ResponseWriter, r *http.Request) (state.PrivateNetworkPeeringStore, bool) {
+	base, ok := s.privateNetworkFabricStore(w, r)
+	if !ok {
+		return nil, false
+	}
+	store, ok := base.(state.PrivateNetworkPeeringStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
+		return nil, false
+	}
+	return store, true
+}
+
+func (s *server) listPrivateNetworkPeerings(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	store, ok := s.privateNetworkPeeringStore(w, r)
+	if !ok {
+		return
+	}
+	networkID := strings.TrimSpace(r.PathValue("id"))
+	if err := api.ValidatePrivateNetworkIdentifier(networkID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+		return
+	}
+	if _, err := store.GetPrivateNetwork(r.Context(), acct.ID, networkID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read private network"))
+		return
+	}
+	peerings, err := store.ListPrivateNetworkPeerings(r.Context(), acct.ID, networkID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list private network peerings"))
+		return
+	}
+	out := api.PrivateNetworkPeeringListResponse{Peerings: make([]api.PrivateNetworkPeering, 0, len(peerings))}
+	for _, peering := range peerings {
+		out.Peerings = append(out.Peerings, privateNetworkPeeringResponse(peering, networkID))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) createPrivateNetworkPeering(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	store, ok := s.privateNetworkPeeringStore(w, r)
+	if !ok {
+		return
+	}
+	if !acct.Plan.PrivateNetworkAllowed() {
+		api.WriteProblem(w, api.ErrPlanPrivateNetworkNotAllowed(acct.Plan))
+		return
+	}
+	networkID := strings.TrimSpace(r.PathValue("id"))
+	if err := api.ValidatePrivateNetworkIdentifier(networkID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+		return
+	}
+	network, err := store.GetPrivateNetwork(r.Context(), acct.ID, networkID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read private network"))
+		return
+	}
+	var req api.CreatePrivateNetworkPeeringRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("body", "", "invalid JSON"))
+		return
+	}
+	peerNetworkID := strings.TrimSpace(req.PeerNetworkID)
+	if err := api.ValidatePrivateNetworkIdentifier(peerNetworkID); err != nil {
+		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("peer_network_id", req.PeerNetworkID, err.Error()))
+		return
+	}
+	peerNetwork, err := store.GetPrivateNetwork(r.Context(), acct.ID, peerNetworkID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Peer private network not found", "the requested peer network does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read peer private network"))
+		return
+	}
+	peering, err := store.CreatePrivateNetworkPeering(r.Context(), state.PrivateNetworkPeering{
+		ID:             "peer-" + uuid.NewString(),
+		AccountID:      acct.ID,
+		LeftNetworkID:  network.ID,
+		RightNetworkID: peerNetwork.ID,
+		Region:         network.Region,
+		Status:         api.PrivateNetworkPeeringStatusPending,
+		StatusDetail:   "network route convergence is pending",
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Private network peering already exists", "the two networks are already peered"))
+		case errors.Is(err, state.ErrInvalidArgument):
+			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("peer_network_id", peerNetworkID, "the networks must be in the same region and use non-overlapping CIDRs"))
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not create private network peering"))
+		}
+		return
+	}
+	_ = s.notif.Notify(r.Context(), "private_network_changed", fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","status":"%s"}`, acct.ID, peering.ID, peering.Status))
+	s.audit.Emit(r.Context(), "private_network.peering_created", &acct.ID, map[string]any{"peering_id": peering.ID, "network_id": networkID, "peer_network_id": peerNetworkID, "status": peering.Status})
+	converted := privateNetworkPeeringResponse(peering, networkID)
+	writeJSON(w, http.StatusAccepted, converted)
+}
+
+func (s *server) getPrivateNetworkPeering(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	store, ok := s.privateNetworkPeeringStore(w, r)
+	if !ok {
+		return
+	}
+	networkID := strings.TrimSpace(r.PathValue("id"))
+	peeringID := strings.TrimSpace(r.PathValue("peer_id"))
+	if api.ValidatePrivateNetworkIdentifier(networkID) != nil || api.ValidatePrivateNetworkIdentifier(peeringID) != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
+		return
+	}
+	peering, err := store.GetPrivateNetworkPeering(r.Context(), acct.ID, peeringID)
+	if err != nil || (peering.LeftNetworkID != networkID && peering.RightNetworkID != networkID) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
+		return
+	}
+	writeJSON(w, http.StatusOK, privateNetworkPeeringResponse(peering, networkID))
+}
+
+func (s *server) deletePrivateNetworkPeering(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	store, ok := s.privateNetworkPeeringStore(w, r)
+	if !ok {
+		return
+	}
+	networkID := strings.TrimSpace(r.PathValue("id"))
+	peeringID := strings.TrimSpace(r.PathValue("peer_id"))
+	if api.ValidatePrivateNetworkIdentifier(networkID) != nil || api.ValidatePrivateNetworkIdentifier(peeringID) != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
+		return
+	}
+	peering, err := store.GetPrivateNetworkPeering(r.Context(), acct.ID, peeringID)
+	if err != nil || (peering.LeftNetworkID != networkID && peering.RightNetworkID != networkID) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
+		return
+	}
+	if err := store.DeletePrivateNetworkPeering(r.Context(), acct.ID, peeringID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not delete private network peering"))
+		return
+	}
+	_ = s.notif.Notify(r.Context(), "private_network_changed", fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","status":"deleted"}`, acct.ID, peeringID))
+	s.audit.Emit(r.Context(), "private_network.peering_deleted", &acct.ID, map[string]any{"peering_id": peeringID, "network_id": networkID})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) listPrivateNetworks(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -238,6 +400,15 @@ func privateNetworkResponse(network state.PrivateNetwork) api.PrivateNetwork {
 		CreatedAt:     &createdAt,
 		UpdatedAt:     &updatedAt,
 	}
+}
+
+func privateNetworkPeeringResponse(peering state.PrivateNetworkPeering, networkID string) api.PrivateNetworkPeering {
+	peerID := peering.LeftNetworkID
+	if peerID == networkID {
+		peerID = peering.RightNetworkID
+	}
+	createdAt, updatedAt := peering.CreatedAt, peering.UpdatedAt
+	return api.PrivateNetworkPeering{ID: peering.ID, NetworkID: networkID, PeerNetworkID: peerID, Region: peering.Region, Status: peering.Status, StatusDetail: peering.StatusDetail, CreatedAt: &createdAt, UpdatedAt: &updatedAt}
 }
 
 func privateNetworkPolicyStrings(prefixes []netip.Prefix) []string {

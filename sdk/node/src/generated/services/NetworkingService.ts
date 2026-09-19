@@ -4,9 +4,12 @@
 /* eslint-disable */
 import type { AppPrivateNetworkAttachmentRequest } from '../models/AppPrivateNetworkAttachmentRequest.js';
 import type { AppPrivateNetworkAttachmentResponse } from '../models/AppPrivateNetworkAttachmentResponse.js';
+import type { CreatePrivateNetworkPeeringRequest } from '../models/CreatePrivateNetworkPeeringRequest.js';
 import type { CreatePrivateNetworkRequest } from '../models/CreatePrivateNetworkRequest.js';
 import type { PrivateNetwork } from '../models/PrivateNetwork.js';
 import type { PrivateNetworkListResponse } from '../models/PrivateNetworkListResponse.js';
+import type { PrivateNetworkPeering } from '../models/PrivateNetworkPeering.js';
+import type { PrivateNetworkPeeringListResponse } from '../models/PrivateNetworkPeeringListResponse.js';
 import type { UpdatePrivateNetworkPolicyRequest } from '../models/UpdatePrivateNetworkPolicyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -110,6 +113,138 @@ export class NetworkingService {
         404: `code: not_found`,
         409: `Network still has an app attachment.`,
         503: `Gregale-owned network fabric is disabled for this network deletion.`,
+      },
+    });
+  }
+  /**
+   * List peerings for a private network.
+   * Returns account-scoped peering intents involving this network. A
+   * pending or error peering remains fail-closed until both route domains
+   * converge; this surface does not call DigitalOcean APIs.
+   *
+   * @returns PrivateNetworkPeeringListResponse Private-network peerings.
+   * @throws ApiError
+   */
+  public static listPrivateNetworkPeerings({
+    id,
+  }: {
+    /**
+     * Stable Gregale network identifier whose peerings are listed.
+     */
+    id: string,
+  }): CancelablePromise<PrivateNetworkPeeringListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/networks/{id}/peerings',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Gregale-owned network fabric is disabled.`,
+      },
+    });
+  }
+  /**
+   * Request peering with another private network.
+   * Creates a pending, symmetric peering between two Gregale-owned
+   * networks in the same account and region. Networks must have
+   * non-overlapping IPv4 CIDRs. Route activation is asynchronous and
+   * remains fail-closed until the node fabric converges.
+   *
+   * @returns PrivateNetworkPeering Peering intent accepted.
+   * @throws ApiError
+   */
+  public static createPrivateNetworkPeering({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Stable Gregale network identifier whose peerings are listed.
+     */
+    id: string,
+    requestBody: CreatePrivateNetworkPeeringRequest,
+  }): CancelablePromise<PrivateNetworkPeering> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/networks/{id}/peerings',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `The account plan does not include private networking.`,
+        404: `code: not_found`,
+        409: `The two networks are already peered.`,
+        503: `Gregale-owned network fabric is disabled.`,
+      },
+    });
+  }
+  /**
+   * Read a private-network peering.
+   * @returns PrivateNetworkPeering Private-network peering.
+   * @throws ApiError
+   */
+  public static getPrivateNetworkPeering({
+    id,
+    peerId,
+  }: {
+    /**
+     * Stable Gregale network identifier.
+     */
+    id: string,
+    /**
+     * Stable peering identifier returned when the intent is created.
+     */
+    peerId: string,
+  }): CancelablePromise<PrivateNetworkPeering> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/networks/{id}/peerings/{peer_id}',
+      path: {
+        'id': id,
+        'peer_id': peerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Gregale-owned network fabric is disabled.`,
+      },
+    });
+  }
+  /**
+   * Remove a private-network peering intent.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePrivateNetworkPeering({
+    id,
+    peerId,
+  }: {
+    /**
+     * Stable Gregale network identifier.
+     */
+    id: string,
+    /**
+     * Stable peering identifier returned when the intent is created.
+     */
+    peerId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/networks/{id}/peerings/{peer_id}',
+      path: {
+        'id': id,
+        'peer_id': peerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Gregale-owned network fabric is disabled.`,
       },
     });
   }

@@ -13,6 +13,16 @@ Gregale-owned private networks are account-scoped API resources. They are not
 DigitalOcean VPCs and do not require cloud credentials. Use `GET/POST
 /v1/networks` and `GET/DELETE /v1/networks/{id}` with the API or SDK.
 
+Gregale-owned networks can be connected without a provider-specific VPC
+operation. `POST /v1/networks/{id}/peerings` with
+`{"peer_network_id":"net-..."}` creates account-scoped peering intent and
+returns `202` with `status: "pending"`; inspect it with the sibling `GET` or
+list endpoint, and remove it with `DELETE`. Both networks must be in the same
+region and use non-overlapping IPv4 CIDRs. Pending and error peerings are
+fail-closed, so they never imply reachability; a later fabric reconciler is the
+only component allowed to mark one `ready`. A network referenced by a peering
+cannot be deleted until that peering is removed.
+
 The fabric slice persists the network definition and reserves stable member
 addresses (network+1 is reserved as the gateway; allocation starts at
 network+2). When the fabric flag is enabled, schedd first asks every vmmd

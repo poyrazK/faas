@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.sidecar import Sidecar
     from ..models.workflow_spec import WorkflowSpec
 
 
@@ -35,6 +36,8 @@ class UploadDeployOptions:
     deployed_by: str | Unset = UNSET
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
+    sidecars: list[Sidecar] | Unset = UNSET
+    """Up to 2 stateless sidecars (1 init + 1 sidecar) carried across the resumable upload session."""
     rollback_on_5xx: bool | None | Unset = UNSET
     """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
     while omitted or null keeps the default false."""
@@ -71,6 +74,13 @@ class UploadDeployOptions:
                 workflows_item = workflows_item_data.to_dict()
                 workflows.append(workflows_item)
 
+        sidecars: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.sidecars, Unset):
+            sidecars = []
+            for sidecars_item_data in self.sidecars:
+                sidecars_item = sidecars_item_data.to_dict()
+                sidecars.append(sidecars_item)
+
         rollback_on_5xx: bool | None | Unset
         if isinstance(self.rollback_on_5xx, Unset):
             rollback_on_5xx = UNSET
@@ -106,6 +116,8 @@ class UploadDeployOptions:
             field_dict["pr_number"] = pr_number
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if sidecars is not UNSET:
+            field_dict["sidecars"] = sidecars
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
 
@@ -113,6 +125,7 @@ class UploadDeployOptions:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.sidecar import Sidecar
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
@@ -149,6 +162,15 @@ class UploadDeployOptions:
 
                 workflows.append(workflows_item)
 
+        _sidecars = d.pop("sidecars", UNSET)
+        sidecars: list[Sidecar] | Unset = UNSET
+        if _sidecars is not UNSET:
+            sidecars = []
+            for sidecars_item_data in _sidecars:
+                sidecars_item = Sidecar.from_dict(sidecars_item_data)
+
+                sidecars.append(sidecars_item)
+
         def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -172,6 +194,7 @@ class UploadDeployOptions:
             deployed_by=deployed_by,
             pr_number=pr_number,
             workflows=workflows,
+            sidecars=sidecars,
             rollback_on_5xx=rollback_on_5xx,
         )
 
