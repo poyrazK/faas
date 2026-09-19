@@ -15,7 +15,7 @@ The initial surface is intentionally small:
 - `gregale_deployment` deploys a digest-pinned OCI image or GitHub source ref and exposes lifecycle and preview metadata.
 - `gregale_tcp_listener` manages a stable public raw TCP listener for an app.
 - `gregale_static_egress_ip` pins a stable public IPv4 address for an app's outbound traffic.
-- `gregale_private_network` manages a Gregale-owned provider-neutral private network.
+- `gregale_private_network` manages a Gregale-owned provider-neutral private network, including reusable CIDR and protocol/port firewall policy.
 - `gregale_private_network_attachment` manages an app's provider-neutral private-network attachment and reconciliation state.
 - `gregale_private_network_peering` manages a provider-neutral peering between two Gregale private networks.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
@@ -189,7 +189,27 @@ output "private_address" {
 
 `allowed_cidrs` is optional. When set, it narrows private traffic to the
 listed IPv4 ranges, which must be contained by the network CIDR; changing the
-policy updates the network in place. Omit it to preserve allow-all behavior.
+policy updates the network in place. `firewall_rules` is also optional and
+supports protocol/port rules for ingress and egress. Omit both to preserve
+allow-all behavior.
+
+```hcl
+resource "gregale_private_network" "prod" {
+  name   = "production"
+  region = "fra1"
+  cidr   = "10.20.0.0/16"
+
+  firewall_rules = [{
+    direction = "ingress"
+    protocol  = "tcp"
+    cidrs     = ["10.20.0.0/24"]
+    ports     = ["443", "8000-8080"]
+  }]
+}
+```
+
+TCP and UDP rules require at least one port or inclusive range. ICMP rules
+omit `ports`; an empty `cidrs` list means the whole private network CIDR.
 
 ## Private-network peering
 

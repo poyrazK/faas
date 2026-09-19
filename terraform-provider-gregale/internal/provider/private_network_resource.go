@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -19,15 +20,32 @@ type privateNetworkResource struct {
 }
 
 type privateNetworkModel struct {
-	ID           types.String `tfsdk:"id"`
-	Name         types.String `tfsdk:"name"`
-	Region       types.String `tfsdk:"region"`
-	CIDR         types.String `tfsdk:"cidr"`
-	AllowedCIDRs types.Set    `tfsdk:"allowed_cidrs"`
-	Status       types.String `tfsdk:"status"`
-	StatusDetail types.String `tfsdk:"status_detail"`
-	CreatedAt    types.String `tfsdk:"created_at"`
-	UpdatedAt    types.String `tfsdk:"updated_at"`
+	ID            types.String `tfsdk:"id"`
+	Name          types.String `tfsdk:"name"`
+	Region        types.String `tfsdk:"region"`
+	CIDR          types.String `tfsdk:"cidr"`
+	AllowedCIDRs  types.Set    `tfsdk:"allowed_cidrs"`
+	FirewallRules types.List   `tfsdk:"firewall_rules"`
+	Status        types.String `tfsdk:"status"`
+	StatusDetail  types.String `tfsdk:"status_detail"`
+	CreatedAt     types.String `tfsdk:"created_at"`
+	UpdatedAt     types.String `tfsdk:"updated_at"`
+}
+
+type privateNetworkFirewallRuleModel struct {
+	Direction types.String `tfsdk:"direction"`
+	Protocol  types.String `tfsdk:"protocol"`
+	CIDRs     types.Set    `tfsdk:"cidrs"`
+	Ports     types.Set    `tfsdk:"ports"`
+}
+
+var privateNetworkFirewallRuleObjectType = types.ObjectType{
+	AttrTypes: map[string]attr.Type{
+		"direction": types.StringType,
+		"protocol":  types.StringType,
+		"cidrs":     types.SetType{ElemType: types.StringType},
+		"ports":     types.SetType{ElemType: types.StringType},
+	},
 }
 
 func newPrivateNetworkResource() resource.Resource {
@@ -76,6 +94,40 @@ func (r *privateNetworkResource) Schema(_ context.Context, _ resource.SchemaRequ
 				ElementType:         types.StringType,
 				Description:         "Optional private IPv4 policy ranges admitted symmetrically for ingress and egress. Empty preserves allow-all behavior.",
 				MarkdownDescription: "Optional private IPv4 policy ranges admitted symmetrically for ingress and egress. Empty preserves allow-all behavior.",
+			},
+			"firewall_rules": schema.ListNestedAttribute{
+				Optional:            true,
+				Computed:            true,
+				Description:         "Optional protocol and port allow rules applied to every attachment. Empty preserves allow-all behavior.",
+				MarkdownDescription: "Optional protocol and port allow rules applied to every attachment. Empty preserves allow-all behavior.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"direction": schema.StringAttribute{
+							Required:            true,
+							Description:         "Traffic direction: ingress or egress.",
+							MarkdownDescription: "Traffic direction: `ingress` or `egress`.",
+						},
+						"protocol": schema.StringAttribute{
+							Required:            true,
+							Description:         "Network protocol: tcp, udp, or icmp.",
+							MarkdownDescription: "Network protocol: `tcp`, `udp`, or `icmp`.",
+						},
+						"cidrs": schema.SetAttribute{
+							Optional:            true,
+							Computed:            true,
+							ElementType:         types.StringType,
+							Description:         "Optional source CIDRs for ingress or destination CIDRs for egress. Empty means the entire network CIDR.",
+							MarkdownDescription: "Optional source CIDRs for ingress or destination CIDRs for egress. Empty means the entire network CIDR.",
+						},
+						"ports": schema.SetAttribute{
+							Optional:            true,
+							Computed:            true,
+							ElementType:         types.StringType,
+							Description:         "TCP or UDP ports and inclusive ranges such as 443 or 8000-8080. Omit for ICMP.",
+							MarkdownDescription: "TCP or UDP ports and inclusive ranges such as `443` or `8000-8080`. Omit for ICMP.",
+						},
+					},
+				},
 			},
 			"status": schema.StringAttribute{
 				Computed:            true,
@@ -180,10 +232,12 @@ func (r *privateNetworkResource) Update(ctx context.Context, req resource.Update
 	}
 	allowedCIDRs, diags := setStringsFromModel(ctx, plan.AllowedCIDRs)
 	resp.Diagnostics.Append(diags...)
+	firewallRules, firewallDiags := firewallRulesFromModel(ctx, plan.FirewallRules)
+	resp.Diagnostics.Append(firewallDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.updatePrivateNetworkPolicy(ctx, plan.ID.ValueString(), privateNetworkPolicyRequest{AllowedCIDRs: allowedCIDRs})
+	out, err := r.client.updatePrivateNetworkPolicy(ctx, plan.ID.ValueString(), privateNetworkPolicyRequest{AllowedCIDRs: allowedCIDRs, FirewallRules: firewallRules})
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not update Gregale private network policy", err)
 		return
@@ -211,28 +265,83 @@ func setPrivateNetworkModel(ctx context.Context, state *tfsdk.State, out private
 	if diags.HasError() {
 		return diags
 	}
+	firewallRules, firewallDiags := firewallRulesValueFromAPI(ctx, out.FirewallRules)
+	diags.Append(firewallDiags...)
+	if diags.HasError() {
+		return diags
+	}
 	model := privateNetworkModel{
-		ID:           remoteString(out.ID, fallback.ID),
-		Name:         remoteString(out.Name, fallback.Name),
-		Region:       remoteString(out.Region, fallback.Region),
-		CIDR:         remoteString(out.CIDR, fallback.CIDR),
-		AllowedCIDRs: allowedCIDRs,
-		Status:       types.StringValue(out.Status),
-		StatusDetail: types.StringValue(out.StatusDetail),
-		CreatedAt:    stringPointerValue(out.CreatedAt),
-		UpdatedAt:    stringPointerValue(out.UpdatedAt),
+		ID:            remoteString(out.ID, fallback.ID),
+		Name:          remoteString(out.Name, fallback.Name),
+		Region:        remoteString(out.Region, fallback.Region),
+		CIDR:          remoteString(out.CIDR, fallback.CIDR),
+		AllowedCIDRs:  allowedCIDRs,
+		FirewallRules: firewallRules,
+		Status:        types.StringValue(out.Status),
+		StatusDetail:  types.StringValue(out.StatusDetail),
+		CreatedAt:     stringPointerValue(out.CreatedAt),
+		UpdatedAt:     stringPointerValue(out.UpdatedAt),
 	}
 	return state.Set(ctx, &model)
 }
 
 func privateNetworkRequestFromModel(ctx context.Context, model privateNetworkModel) (privateNetworkRequest, diag.Diagnostics) {
 	allowedCIDRs, diags := setStringsFromModel(ctx, model.AllowedCIDRs)
+	firewallRules, firewallDiags := firewallRulesFromModel(ctx, model.FirewallRules)
+	diags.Append(firewallDiags...)
 	return privateNetworkRequest{
-		Name:         model.Name.ValueString(),
-		Region:       model.Region.ValueString(),
-		CIDR:         model.CIDR.ValueString(),
-		AllowedCIDRs: allowedCIDRs,
+		Name:          model.Name.ValueString(),
+		Region:        model.Region.ValueString(),
+		CIDR:          model.CIDR.ValueString(),
+		AllowedCIDRs:  allowedCIDRs,
+		FirewallRules: firewallRules,
 	}, diags
+}
+
+func firewallRulesFromModel(ctx context.Context, value types.List) ([]privateNetworkFirewallRule, diag.Diagnostics) {
+	if value.IsNull() || value.IsUnknown() {
+		return nil, nil
+	}
+	var models []privateNetworkFirewallRuleModel
+	var diags diag.Diagnostics
+	diags.Append(value.ElementsAs(ctx, &models, false)...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	rules := make([]privateNetworkFirewallRule, 0, len(models))
+	for _, model := range models {
+		cidrs, cidrDiags := setStringsFromModel(ctx, model.CIDRs)
+		ports, portDiags := setStringsFromModel(ctx, model.Ports)
+		diags.Append(cidrDiags...)
+		diags.Append(portDiags...)
+		rules = append(rules, privateNetworkFirewallRule{
+			Direction: model.Direction.ValueString(),
+			Protocol:  model.Protocol.ValueString(),
+			CIDRs:     cidrs,
+			Ports:     ports,
+		})
+	}
+	return rules, diags
+}
+
+func firewallRulesValueFromAPI(ctx context.Context, rules []privateNetworkFirewallRule) (types.List, diag.Diagnostics) {
+	models := make([]privateNetworkFirewallRuleModel, 0, len(rules))
+	var diags diag.Diagnostics
+	for _, rule := range rules {
+		cidrs, cidrDiags := types.SetValueFrom(ctx, types.StringType, rule.CIDRs)
+		ports, portDiags := types.SetValueFrom(ctx, types.StringType, rule.Ports)
+		diags.Append(cidrDiags...)
+		diags.Append(portDiags...)
+		models = append(models, privateNetworkFirewallRuleModel{
+			Direction: types.StringValue(rule.Direction),
+			Protocol:  types.StringValue(rule.Protocol),
+			CIDRs:     cidrs,
+			Ports:     ports,
+		})
+	}
+	value, valueDiags := types.ListValueFrom(ctx, privateNetworkFirewallRuleObjectType, models)
+	diags.Append(valueDiags...)
+	return value, diags
 }
 
 func setStringsFromModel(ctx context.Context, value types.Set) ([]string, diag.Diagnostics) {

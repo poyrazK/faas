@@ -11,8 +11,9 @@ Creates a Gregale-owned provider-neutral private network that apps can attach
 to for private ingress and egress. The CIDR must be an RFC1918 IPv4 range
 between `/16` and `/28`; the region is a Gregale placement label, not a
 provider-specific region identifier. An optional `allowed_cidrs` policy narrows
-traffic to CIDRs contained by the network; omitting it preserves allow-all
-behavior.
+traffic to CIDRs contained by the network, while `firewall_rules` can narrow
+traffic by direction, protocol, CIDR, and port; omitting both preserves
+allow-all behavior.
 
 Network name, region, and CIDR are immutable and changing any of them creates
 a replacement. A network cannot be deleted while an app remains attached.
@@ -25,6 +26,12 @@ resource "gregale_private_network" "prod" {
   region        = "fra1"
   cidr          = "10.20.0.0/16"
   allowed_cidrs = ["10.20.0.0/24"]
+  firewall_rules = [{
+    direction = "ingress"
+    protocol  = "tcp"
+    cidrs     = ["10.20.0.0/24"]
+    ports     = ["443"]
+  }]
 }
 ```
 
@@ -39,6 +46,7 @@ resource "gregale_private_network" "prod" {
 ### Optional
 
 - `allowed_cidrs` (Set of String) Private IPv4 policy ranges admitted symmetrically for ingress and egress. Each range must be contained by `cidr`; changing this updates the policy in place. Empty preserves allow-all behavior.
+- `firewall_rules` (List of Object) Protocol and port allow rules applied to every attachment; changing this updates the policy in place. Each object contains `direction` (`ingress` or `egress`), `protocol` (`tcp`, `udp`, or `icmp`), optional `cidrs`, and optional `ports` such as `443` or `8000-8080`. TCP and UDP rules require ports; ICMP rules omit them.
 
 ### Read-only
 

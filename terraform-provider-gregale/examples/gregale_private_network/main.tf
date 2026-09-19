@@ -13,6 +13,12 @@ resource "gregale_private_network" "prod" {
   region        = "fra1"
   cidr          = "10.20.0.0/16"
   allowed_cidrs = ["10.20.0.0/24"]
+  firewall_rules = [{
+    direction = "ingress"
+    protocol  = "tcp"
+    cidrs     = ["10.20.0.0/24"]
+    ports     = ["443"]
+  }]
 }
 
 output "network_id" {

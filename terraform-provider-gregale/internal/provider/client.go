@@ -333,26 +333,36 @@ type privateNetworkAttachmentResponse struct {
 }
 
 type privateNetworkRequest struct {
-	Name         string   `json:"name"`
-	Region       string   `json:"region"`
-	CIDR         string   `json:"cidr"`
-	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	Name          string                       `json:"name"`
+	Region        string                       `json:"region"`
+	CIDR          string                       `json:"cidr"`
+	AllowedCIDRs  []string                     `json:"allowed_cidrs,omitempty"`
+	FirewallRules []privateNetworkFirewallRule `json:"firewall_rules,omitempty"`
 }
 
 type privateNetworkPolicyRequest struct {
-	AllowedCIDRs []string `json:"allowed_cidrs"`
+	AllowedCIDRs  []string                     `json:"allowed_cidrs"`
+	FirewallRules []privateNetworkFirewallRule `json:"firewall_rules,omitempty"`
 }
 
 type privateNetworkResponse struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Region       string   `json:"region"`
-	CIDR         string   `json:"cidr"`
-	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
-	Status       string   `json:"status"`
-	StatusDetail string   `json:"status_detail,omitempty"`
-	CreatedAt    *string  `json:"created_at,omitempty"`
-	UpdatedAt    *string  `json:"updated_at,omitempty"`
+	ID            string                       `json:"id"`
+	Name          string                       `json:"name"`
+	Region        string                       `json:"region"`
+	CIDR          string                       `json:"cidr"`
+	AllowedCIDRs  []string                     `json:"allowed_cidrs,omitempty"`
+	FirewallRules []privateNetworkFirewallRule `json:"firewall_rules,omitempty"`
+	Status        string                       `json:"status"`
+	StatusDetail  string                       `json:"status_detail,omitempty"`
+	CreatedAt     *string                      `json:"created_at,omitempty"`
+	UpdatedAt     *string                      `json:"updated_at,omitempty"`
+}
+
+type privateNetworkFirewallRule struct {
+	Direction string   `json:"direction"`
+	Protocol  string   `json:"protocol"`
+	CIDRs     []string `json:"cidrs,omitempty"`
+	Ports     []string `json:"ports,omitempty"`
 }
 
 type privateNetworkPeeringRequest struct {
