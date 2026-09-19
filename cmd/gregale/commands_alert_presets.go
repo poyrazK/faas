@@ -102,8 +102,8 @@ func cmdAlertPresetList(args []string) int {
 
 // cmdAlertPresetEnable mirrors cmdAlertAdd (commands_alerts.go:102)
 // but takes the preset name positionally (the catalog key, NOT
-// the rule name) and the operator supplies only webhook_url +
-// webhook_secret + optional overrides. The (name, metric,
+// the rule name) and the operator supplies webhook delivery,
+// optional action, and other overrides. The (name, metric,
 // comparison, threshold, window_spec, default_cooldown_minutes)
 // sextuple comes from the catalog server-side.
 func cmdAlertPresetEnable(args []string) int {
@@ -112,13 +112,14 @@ func cmdAlertPresetEnable(args []string) int {
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
+	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	cooldown := fs.Int(flagNameCooldownMinutes, 0, fmt.Sprintf("cooldown override in minutes (%d..%d); 0 means use preset default", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the instantiated rule is enabled")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts preset enable --app <slug> [--webhook-url <url>] (--webhook-secret-stdin|--webhook-secret <s>) [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts preset enable --app <slug> [--webhook-url <url>] (--webhook-secret-stdin|--webhook-secret <s>) [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")
 		return 1
 	}
 	if err := resolveAlertSecret(webhookSecret, *webhookSecretStdin); err != nil {
@@ -131,10 +132,14 @@ func cmdAlertPresetEnable(args []string) int {
 	if *cooldown != 0 && (*cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes) {
 		return printErr("Invalid cooldown", fmt.Errorf("--cooldown-minutes %d outside [%d,%d]", *cooldown, api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	}
+	if *action != "" && !api.AllowedAlertRuleAction(*action) {
+		return printErr("Invalid action", fmt.Errorf("--action must be one of %v", api.AllowedAlertRuleActions))
+	}
 	req := api.EnableAlertPresetRequest{
 		WebhookURL:    *webhookURL,
 		WebhookSecret: *webhookSecret,
 		Enabled:       enabled,
+		Action:        ptrIfNonEmpty(*action),
 	}
 	if *cooldown != 0 {
 		req.CooldownMinutes = cooldown

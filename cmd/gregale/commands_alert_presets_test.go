@@ -13,6 +13,7 @@
 //   - missing --app / missing positional preset name
 //   - missing webhook-url / webhook-secret
 //   - out-of-band --cooldown-minutes
+//   - invalid --action
 //     All fire BEFORE the HTTP round-trip (the fake server's hit
 //     counter must stay at 0).
 //   - cmdAlertPresetEnable happy path (route hits
@@ -145,11 +146,34 @@ func TestCmdAlertPresetEnable_BadCooldown(t *testing.T) {
 	}
 }
 
+// TestCmdAlertPresetEnable_BadAction pins the local closed-set
+// validation so a typo never reaches the API.
+func TestCmdAlertPresetEnable_BadAction(t *testing.T) {
+	resetJSONOut(t)
+	var hits int32
+	srv := newFakeAPI(t, "", http.StatusOK)
+	srv.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	})
+	if code := cmdAlertPresetEnable([]string{
+		"--app", "demo",
+		"--webhook-url", "https://hooks.example.com/x",
+		"--webhook-secret", "shh",
+		"--action", "explode",
+		"error_rate_2pct",
+	}); code != 1 {
+		t.Fatalf("invalid action exit = %d, want 1", code)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("server was hit %d times; CLI must short-circuit before HTTP", got)
+	}
+}
+
 // TestCmdAlertPresetEnable_HappyPath pins the round-trip:
 // the route POSTs to /v1/apps/{slug}/alert-presets/{name}/enable
 // and the body matches the EnableAlertPresetRequest wire shape
-// (webhook_url + webhook_secret set, cooldown_minutes omitted
-// when --cooldown-minutes=0, enabled defaults to true).
+// (webhook_url + webhook_secret + action set, cooldown_minutes
+// omitted when --cooldown-minutes=0, enabled defaults to true).
 func TestCmdAlertPresetEnable_HappyPath(t *testing.T) {
 	resetJSONOut(t)
 	respBody := `{"id":"0123456789abcdef0123456789abcdef","name":"Error rate exceeds 2% (demo)","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","enabled":true,"cooldown_minutes":15}`
@@ -158,6 +182,7 @@ func TestCmdAlertPresetEnable_HappyPath(t *testing.T) {
 		"--app", "demo",
 		"--webhook-url", "https://hooks.example.com/x",
 		"--webhook-secret", "shh",
+		"--action", "rollback",
 		"error_rate_2pct",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
@@ -177,6 +202,9 @@ func TestCmdAlertPresetEnable_HappyPath(t *testing.T) {
 	}
 	if got["webhook_secret"] != "shh" {
 		t.Errorf("body.webhook_secret = %v", got["webhook_secret"])
+	}
+	if got["action"] != "rollback" {
+		t.Errorf("body.action = %v, want rollback", got["action"])
 	}
 	if _, present := got["cooldown_minutes"]; present {
 		t.Errorf("body.cooldown_minutes present; want omitted (use preset default)")

@@ -224,7 +224,7 @@ Rotate the alert&#39;s webhook secret
 
 ### alerts preset
 
-Alert preset catalog (preset list|enable --app &lt;slug&gt;)
+Alert preset catalog (preset list|enable --app &lt;slug&gt; [--action &lt;ACTION&gt;])
 
 
 ## audit-events

@@ -6,7 +6,10 @@ Alerts turn platform signals into signed webhook deliveries. Configure them per 
 
 ```bash
 gregale alerts preset list
+# Choose one enable command; action defaults to webhook.
 printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable availability --app APP_ID --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+# Safe-release actions are available when a preset should trigger a rollout response.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable availability --app APP_ID --action rollback --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 gregale alerts list --app APP_ID
 gregale alerts rm --app APP_ID ALERT_ID
 ```

@@ -557,6 +557,7 @@ from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
 from .enable_alert_preset_request import EnableAlertPresetRequest
+from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .env_diff_cell import EnvDiffCell
 from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
@@ -1848,6 +1849,7 @@ __all__ = (
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",
     "EnableAlertPresetRequest",
+    "EnableAlertPresetRequestAction",
     "EnvDiffCell",
     "EnvDiffKind",
     "EnvDiffResponse",

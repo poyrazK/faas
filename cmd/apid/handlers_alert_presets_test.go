@@ -24,6 +24,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// TestValidateAndDeriveEnablePresetOpts_ActionClosedSet pins the
+// preset-specific action gate. Omitted action remains webhook by
+// the persistence helper; invalid values fail before a rule can
+// be created.
+func TestValidateAndDeriveEnablePresetOpts_ActionClosedSet(t *testing.T) {
+	for _, action := range api.AllowedAlertRuleActions {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			_, _, prob := validateAndDeriveEnablePresetOpts(api.EnableAlertPresetRequest{Action: &action}, 15)
+			if prob != nil {
+				t.Fatalf("action %q rejected: %v", action, prob)
+			}
+		})
+	}
+	bad := "explode"
+	_, _, prob := validateAndDeriveEnablePresetOpts(api.EnableAlertPresetRequest{Action: &bad}, 15)
+	if prob == nil || prob.Code != api.CodeAlertPresetInvalid {
+		t.Fatalf("invalid action problem = %#v, want code %q", prob, api.CodeAlertPresetInvalid)
+	}
+}
+
 // TestBuildTestAlertEvent_PayloadDiscriminator pins the
 // load-bearing shape of the test-alert payload:
 //   - payload.test == true on EVERY event (the discriminator the

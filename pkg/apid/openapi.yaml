@@ -12214,8 +12214,9 @@ paths:
         caller owns from then on. The (metric, comparison,
         threshold, window_spec, default_cooldown_minutes)
         sextuple is pre-filled server-side; the caller supplies
-        only webhook_url + webhook_secret (the delivery channel)
-        and optional cooldown_minutes / enabled overrides.
+        webhook_url + webhook_secret (the delivery channel), an
+        optional safe-release action, and cooldown_minutes / enabled
+        overrides.
 
         Pre-loadApp gates fire in this order: 404 on missing
         preset → 400 alert_preset_disabled on disabled-in-catalog
@@ -12232,6 +12233,7 @@ paths:
             example:
               webhook_url: "https://hooks.example.com/alerts"
               webhook_secret: "shh"
+              action: "rollback"
               cooldown_minutes: 5
               enabled: true
       parameters:
@@ -25374,7 +25376,8 @@ components:
         Body for POST /v1/apps/{slug}/alert-presets/{name}/enable.
         The (name, metric, comparison, threshold, window_spec,
         default_cooldown_minutes) sextuple is pre-filled from the
-        catalog; the caller supplies only the delivery-side fields.
+        catalog; the caller supplies the delivery-side fields and an
+        optional safe-release action.
       type: object
       required: [webhook_url, webhook_secret]
       properties:
@@ -25387,6 +25390,13 @@ components:
           type: string
           maxLength: 256
           example: "shh"
+        action:
+          type: string
+          enum: [webhook, rollback, demote, promote]
+          default: webhook
+          description: |
+            Action to run when the instantiated alert fires. Omit to
+            use the default webhook-only behavior.
         cooldown_minutes:
           type: integer
           minimum: 5

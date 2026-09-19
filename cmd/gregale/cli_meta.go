@@ -342,7 +342,7 @@ var cliCommands = []cliCommand{
 			// instantiate-from-preset. Two leaves under preset:
 			// list (no flags), enable <name> --app <slug>
 			// --webhook-url <url> --webhook-secret <s>.
-			{Name: "preset", Short: "Alert preset catalog (preset list|enable --app <slug>)"},
+			{Name: "preset", Short: "Alert preset catalog (preset list|enable --app <slug> [--action <ACTION>])"},
 		},
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Value: "slug"}},
 	},

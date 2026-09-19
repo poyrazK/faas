@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.enable_alert_preset_request_action import (
+    EnableAlertPresetRequestAction,
+    check_enable_alert_preset_request_action,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EnableAlertPresetRequest")
@@ -16,12 +20,17 @@ class EnableAlertPresetRequest:
     """Body for POST /v1/apps/{slug}/alert-presets/{name}/enable.
     The (name, metric, comparison, threshold, window_spec,
     default_cooldown_minutes) sextuple is pre-filled from the
-    catalog; the caller supplies only the delivery-side fields.
+    catalog; the caller supplies the delivery-side fields and an
+    optional safe-release action.
 
     """
 
     webhook_url: str
     webhook_secret: str
+    action: EnableAlertPresetRequestAction | Unset = "webhook"
+    """Action to run when the instantiated alert fires. Omit to
+    use the default webhook-only behavior.
+    """
     cooldown_minutes: int | Unset = UNSET
     """Override for the preset's default_cooldown_minutes.
     Omit to use the catalog default.
@@ -37,6 +46,10 @@ class EnableAlertPresetRequest:
 
         webhook_secret = self.webhook_secret
 
+        action: str | Unset = UNSET
+        if not isinstance(self.action, Unset):
+            action = self.action
+
         cooldown_minutes = self.cooldown_minutes
 
         enabled = self.enabled
@@ -49,6 +62,8 @@ class EnableAlertPresetRequest:
                 "webhook_secret": webhook_secret,
             }
         )
+        if action is not UNSET:
+            field_dict["action"] = action
         if cooldown_minutes is not UNSET:
             field_dict["cooldown_minutes"] = cooldown_minutes
         if enabled is not UNSET:
@@ -63,6 +78,13 @@ class EnableAlertPresetRequest:
 
         webhook_secret = d.pop("webhook_secret")
 
+        _action = d.pop("action", UNSET)
+        action: EnableAlertPresetRequestAction | Unset
+        if isinstance(_action, Unset):
+            action = UNSET
+        else:
+            action = check_enable_alert_preset_request_action(_action)
+
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
 
         enabled = d.pop("enabled", UNSET)
@@ -70,6 +92,7 @@ class EnableAlertPresetRequest:
         enable_alert_preset_request = cls(
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
+            action=action,
             cooldown_minutes=cooldown_minutes,
             enabled=enabled,
         )

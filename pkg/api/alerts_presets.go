@@ -103,7 +103,7 @@ func AlertPresetResponseFromRow(r AlertPresetRow) AlertPresetResponse {
 // EnableAlertPresetRequest is the POST /v1/apps/{slug}/alert-presets/{name}/enable
 // body. The handler pre-fills (name, metric, comparison, threshold,
 // window_spec, default_cooldown_minutes) from the catalog row; the
-// customer supplies only the webhook delivery side.
+// customer supplies the webhook delivery side plus optional action.
 //
 // CooldownMinutes is optional and overrides the catalog default
 // (alert_presets.default_cooldown_minutes). When nil, the catalog
@@ -112,11 +112,16 @@ func AlertPresetResponseFromRow(r AlertPresetRow) AlertPresetResponse {
 // Enabled is optional and defaults to true. When false, the
 // instantiated rule is created in disabled state so a customer
 // can stage multiple presets before enabling them.
+//
+// Action is optional and defaults to "webhook". Non-webhook actions
+// route firing alerts through the corresponding safe-release action
+// executor in addition to the normal webhook delivery.
 type EnableAlertPresetRequest struct {
-	WebhookURL      string `json:"webhook_url"`
-	WebhookSecret   string `json:"webhook_secret"`
-	CooldownMinutes *int   `json:"cooldown_minutes,omitempty"`
-	Enabled         *bool  `json:"enabled,omitempty"`
+	WebhookURL      string  `json:"webhook_url"`
+	WebhookSecret   string  `json:"webhook_secret"`
+	CooldownMinutes *int    `json:"cooldown_minutes,omitempty"`
+	Enabled         *bool   `json:"enabled,omitempty"`
+	Action          *string `json:"action,omitempty"`
 }
 
 // TestAlertPresetResponse is the body returned by POST

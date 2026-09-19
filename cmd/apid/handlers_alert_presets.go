@@ -21,7 +21,8 @@
 // handlers_alerts.go:142). The catalog row's (name, metric,
 // comparison, threshold, window_spec, default_cooldown_minutes)
 // pre-fill the CreateAlertRuleRequest; only the customer-supplied
-// webhook_url + webhook_secret need their own validation. The
+// webhook_url + webhook_secret + optional action need their own
+// validation. The
 // quota path (CreateAlertRuleIfUnderQuota) is reused verbatim —
 // instantiating a preset counts toward the same per-app +
 // per-account cap as a hand-rolled rule, so the existing 403
@@ -41,6 +42,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"time"
@@ -212,6 +214,9 @@ func (s *server) loadAndGateAlertPreset(ctx context.Context, acct state.Account,
 // Pure — no I/O — so it lives in package scope (not a server
 // method) and is trivially unit-testable.
 func validateAndDeriveEnablePresetOpts(req api.EnableAlertPresetRequest, defaultCooldown int) (cooldown int, enabled bool, prob *api.Problem) {
+	if req.Action != nil && !api.AllowedAlertRuleAction(*req.Action) {
+		return 0, false, api.ErrAlertPresetInvalid(fmt.Sprintf("action must be one of %v (or omitted for webhook)", api.AllowedAlertRuleActions))
+	}
 	cooldown = defaultCooldown
 	if req.CooldownMinutes != nil {
 		if *req.CooldownMinutes < 1 || *req.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
@@ -291,6 +296,7 @@ func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Ac
 		// metrics are the closed vocabulary at pkg/api/alerts.go:66
 		// — none of them are failed_invocations).
 		FailureSource:       "",
+		Action:              alertRuleActionFrom(req.Action),
 		WebhookURL:          req.WebhookURL,
 		WebhookSecretSealed: sealed,
 		CooldownMinutes:     cooldown,
@@ -314,6 +320,7 @@ func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Ac
 		"app", app.Slug,
 		"account", acct.ID,
 		"metric", logsanitize.Field(string(row.Metric)),
+		"action", logsanitize.Field(string(row.Action)),
 	)
 	s.audit.Emit(ctx, "alert_preset.enabled", &acct.ID, map[string]any{
 		"preset_name": preset.Name,
@@ -322,6 +329,7 @@ func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Ac
 		"rule_id":     row.ID,
 		"app_slug":    app.Slug,
 		"metric":      row.Metric,
+		"action":      row.Action,
 		"threshold":   row.Threshold,
 		"webhook_url": req.WebhookURL,
 		"enabled":     enabled,
