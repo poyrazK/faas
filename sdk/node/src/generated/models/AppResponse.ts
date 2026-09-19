@@ -63,7 +63,7 @@ export type AppResponse = {
   /**
    * Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the platform URL.
    */
-  canonical_url: string;
+  canonical_url?: string;
   /**
    * Verified custom domain selected as the app's canonical host, when configured.
    */
