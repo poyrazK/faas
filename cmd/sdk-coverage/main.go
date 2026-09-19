@@ -866,10 +866,13 @@ var methodRouteMap = map[string]string{
 	// segment and conforms to the flat resource naming (same pattern
 	// as alerts). PATCH /v1/apps/{slug}/security would auto-derive to
 	// "PatchAppsSlugSecurity" — pin it explicitly so the gate stays
-	// the SDK's source of truth on verb choice.
+	// the SDK's source of truth on verb choice. The read-only posture
+	// sibling also needs an explicit mapping: auto-derivation would
+	// include the `{slug}` placeholder in the method name.
 	"GET /v1/apps/{slug}/trusted_signers":           "ListAppTrustedSigners",
 	"PUT /v1/apps/{slug}/trusted_signers/{name}":    "PutAppTrustedSigner",
 	"DELETE /v1/apps/{slug}/trusted_signers/{name}": "DeleteAppTrustedSigner",
+	"GET /v1/apps/{slug}/security":                  "GetAppSecurity",
 	"PATCH /v1/apps/{slug}/security":                "UpdateAppSecurity",
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). The
 	// SDK natural verb auto-derives to "GetAppsSlugRegistry-credentials"
