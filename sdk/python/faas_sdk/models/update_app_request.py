@@ -227,6 +227,9 @@ class UpdateAppRequest:
     warm_snapshot_min_ms: int | None | Unset = UNSET
     """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range
     [100, 60000]. Omitted → no change."""
+    warm_pool_size: int | None | Unset = UNSET
+    """Desired paused warm-pool size (issue #1056 / ADR-074). Omitted → no change; zero explicitly disables the
+    pool. Non-zero values require Hobby+ and may not exceed max_concurrency."""
     eviction_priority: (
         None
         | Unset
@@ -516,6 +519,12 @@ class UpdateAppRequest:
         else:
             warm_snapshot_min_ms = self.warm_snapshot_min_ms
 
+        warm_pool_size: int | None | Unset
+        if isinstance(self.warm_pool_size, Unset):
+            warm_pool_size = UNSET
+        else:
+            warm_pool_size = self.warm_pool_size
+
         eviction_priority: None | str | Unset
         if isinstance(self.eviction_priority, Unset):
             eviction_priority = UNSET
@@ -643,6 +652,8 @@ class UpdateAppRequest:
             field_dict["warm_snapshot_min_requests"] = warm_snapshot_min_requests
         if warm_snapshot_min_ms is not UNSET:
             field_dict["warm_snapshot_min_ms"] = warm_snapshot_min_ms
+        if warm_pool_size is not UNSET:
+            field_dict["warm_pool_size"] = warm_pool_size
         if eviction_priority is not UNSET:
             field_dict["eviction_priority"] = eviction_priority
         if require_authn is not UNSET:
@@ -1207,6 +1218,15 @@ class UpdateAppRequest:
 
         warm_snapshot_min_ms = _parse_warm_snapshot_min_ms(d.pop("warm_snapshot_min_ms", UNSET))
 
+        def _parse_warm_pool_size(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        warm_pool_size = _parse_warm_pool_size(d.pop("warm_pool_size", UNSET))
+
         def _parse_eviction_priority(
             data: object,
         ) -> (
@@ -1385,6 +1405,7 @@ class UpdateAppRequest:
             warm_snapshot_enabled=warm_snapshot_enabled,
             warm_snapshot_min_requests=warm_snapshot_min_requests,
             warm_snapshot_min_ms=warm_snapshot_min_ms,
+            warm_pool_size=warm_pool_size,
             eviction_priority=eviction_priority,
             require_authn=require_authn,
             consumer_auth_mode=consumer_auth_mode,

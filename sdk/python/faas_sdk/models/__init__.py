@@ -475,6 +475,9 @@ from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
+from .diff_app_config_patch_execution_mode import DiffAppConfigPatchExecutionMode
+from .diff_app_config_patch_restart_policy import DiffAppConfigPatchRestartPolicy
+from .diff_app_config_patch_service_replicas_type_0 import DiffAppConfigPatchServiceReplicasType0
 from .diff_break import DiffBreak
 from .diff_break_severity import DiffBreakSeverity
 from .diff_change import DiffChange
@@ -1732,6 +1735,9 @@ __all__ = (
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
     "DiffAppConfigPatchEvictionPriority",
+    "DiffAppConfigPatchExecutionMode",
+    "DiffAppConfigPatchRestartPolicy",
+    "DiffAppConfigPatchServiceReplicasType0",
     "DiffBreak",
     "DiffBreakSeverity",
     "DiffChange",

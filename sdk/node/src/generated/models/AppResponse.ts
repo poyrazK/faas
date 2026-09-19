@@ -143,6 +143,10 @@ export type AppResponse = {
    */
   warm_snapshot_min_ms?: number;
   /**
+   * Desired paused warm-pool size (issue #1056 / ADR-074). Zero disables the pool; bounded by max_concurrency and available on Hobby+ plans.
+   */
+  warm_pool_size?: number;
+  /**
    * Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction.
    */
   eviction_priority?: 'best_effort' | 'reserved';

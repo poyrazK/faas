@@ -2077,8 +2077,8 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38::jsonb)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39::jsonb)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -2115,7 +2115,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	}
 	row := s.pool.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
-		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
+		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, app.WarmPoolSize, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
 		// string to SQL NULL; Postgres infers the UUID type
@@ -2331,8 +2331,8 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36::jsonb)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2364,7 +2364,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	}
 	row := tx.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
-		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
+		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, app.WarmPoolSize, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
 		// string to SQL NULL; Postgres infers the UUID type
@@ -3707,7 +3707,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 			   declared_routes = case when $68 then $69::jsonb else declared_routes end,
 			   workload_class = case when $70 then $71::text else workload_class end,
 			   visibility = case when $72 then $73::text else visibility end,
-			   retry_policy = case when $74 then $75::jsonb else retry_policy end
+			   warm_pool_size = case when $74 then $75 else warm_pool_size end,
+			   retry_policy = case when $76 then $77::jsonb else retry_policy end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3834,6 +3835,7 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		p.SetDeclaredRoutes, declaredRoutesBytes,
 		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass),
 		p.SetVisibility, string(api.NormalizeAppVisibility(derefAppVisibility(p.Visibility))),
+		p.SetWarmPoolSize, intOrZero(p.WarmPoolSize),
 		p.SetRetryPolicy, retryPolicyBytes)
 	return scanApp(row)
 }
@@ -21624,7 +21626,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.AutoscaleTargetRPS, &a.AutoscaleTargetCPUPct,
 		&a.ProjectID, &a.RootDir, &a.WorkloadName, &workloadClassStr, &a.StartCommand,
 		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
-		&a.WarmSnapshotEnabled, &a.WarmSnapshotMinRequests, &a.WarmSnapshotMinMs,
+		&a.WarmSnapshotEnabled, &a.WarmSnapshotMinRequests, &a.WarmSnapshotMinMs, &a.WarmPoolSize,
 		// Issue #475: per-app eviction tier. eviction_priority is
 		// NOT NULL DEFAULT 'best_effort' (migration 00135) so the
 		// query can scan into a plain string without a SQL NULL
@@ -21820,7 +21822,7 @@ const appsSelectColumns = `
 	workload_class, coalesce(start_command, ''), streaming_enabled, require_signed,
 	scaling_policy, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
 	reassigned_at, migrated_at,
-	warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms,
+	warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size,
 	eviction_priority,
 	require_authn,
 	-- ADR-120: per-app end-customer credential policy.

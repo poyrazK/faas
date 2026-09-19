@@ -1247,6 +1247,10 @@ type App struct {
 	// the 60 s ceiling bounds the per-park latency cost the warm
 	// capture adds to the cold path (R1 in the plan).
 	WarmSnapshotMinMs int
+	// WarmPoolSize (issue #1056 / ADR-074) is the desired number of
+	// paused VMs retained for low-latency resume. Runtime reconciliation
+	// is deliberately separate from this durable customer contract.
+	WarmPoolSize int
 	// EvictionPriority (issue #475) classifies the app under
 	// cross-account RAM pressure (spec §4.3 / §6.2-2). 'best_effort'
 	// (default for every existing app) keeps the pre-#475
@@ -5034,6 +5038,10 @@ type UpdateAppParams struct {
 	// rejects <100).
 	WarmSnapshotMinMs    *int
 	SetWarmSnapshotMinMs bool
+	// WarmPoolSize is the desired paused warm-pool size. Set bit
+	// distinguishes an omitted PATCH from an explicit zero (disable).
+	WarmPoolSize    *int
+	SetWarmPoolSize bool
 	// EvictionPriority (issue #475) classifies the app under
 	// cross-account RAM pressure. SetEvictionPriority distinguishes
 	// "unset" (don't touch) from "explicit best_effort" (opt out of

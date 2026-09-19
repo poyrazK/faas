@@ -114,6 +114,10 @@ export type CreateAppRequest = {
    */
   warm_snapshot_min_ms?: number;
   /**
+   * Desired paused warm-pool size (issue #1056 / ADR-074). Omit for the default of zero; non-zero values require Hobby+ and may not exceed max_concurrency.
+   */
+  warm_pool_size?: number;
+  /**
    * Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → apid applies the schema default 'best_effort'.
    */
   eviction_priority?: 'best_effort' | 'reserved';

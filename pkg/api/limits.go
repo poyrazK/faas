@@ -1224,6 +1224,10 @@ type Limits struct {
 	// at CreateApp time so a Pro customer's brand-new app gets a
 	// warm.snap without an extra PATCH.
 	WarmSnapshotEnabled bool
+	// WarmPoolAllowed (issue #1056 / ADR-074) permits a customer to
+	// retain paused warm-pool VMs. Free is disabled; Hobby and above
+	// may opt in with an app-level warm_pool_size setting.
+	WarmPoolAllowed bool
 	// WarmSnapshotMinRequestsDefault is the per-app request-count
 	// threshold for warm-tier capture, applied at CreateApp when
 	// the plan allows it. Free/Hobby = 0 (irrelevant because
@@ -1933,6 +1937,7 @@ var planLimits = map[Plan]Limits{
 		// parked disk budget; doubling the per-app snapshot
 		// footprint is incompatible with the Free pricing tier.
 		WarmSnapshotEnabled:            false,
+		WarmPoolAllowed:                false,
 		WarmSnapshotMinRequestsDefault: 0,
 		WarmSnapshotMinMsDefault:       0,
 		// Issue #560: Free is gated off — the opt-in is
@@ -2303,6 +2308,7 @@ var planLimits = map[Plan]Limits{
 		// enough that the +130 MB per warm-tier app is comfortably
 		// inside the 452 GB parked budget.
 		WarmSnapshotEnabled:            false,
+		WarmPoolAllowed:                true,
 		WarmSnapshotMinRequestsDefault: 0,
 		WarmSnapshotMinMsDefault:       0,
 		// Issue #560: Hobby is gated off for the same
@@ -2661,6 +2667,7 @@ var planLimits = map[Plan]Limits{
 		// successful requests ≥2 s after first-ready, restore
 		// from warm.snap should be ≤50 % of init.snap p50".
 		WarmSnapshotEnabled:            true,
+		WarmPoolAllowed:                true,
 		WarmSnapshotMinRequestsDefault: 5,
 		WarmSnapshotMinMsDefault:       2000,
 		// Issue #560: Pro is the first tier where the
@@ -3038,6 +3045,7 @@ var planLimits = map[Plan]Limits{
 		// inside the 452 GB budget, and the customer's wake-p50
 		// win is the largest dollar lever for SaaS workloads.
 		WarmSnapshotEnabled:            true,
+		WarmPoolAllowed:                true,
 		WarmSnapshotMinRequestsDefault: 5,
 		WarmSnapshotMinMsDefault:       2000,
 		// Issue #560: Scale mirrors Pro — the opt-in is
@@ -5443,6 +5451,17 @@ func (p Plan) WarmSnapshotAllowed() bool {
 		return false
 	}
 	return l.WarmSnapshotEnabled
+}
+
+// WarmPoolAllowed reports whether a plan may configure a non-zero paused
+// warm-pool size. The pool is a customer-visible provisioned-capacity control,
+// so Free is fail-closed while Hobby/Pro/Scale are enabled.
+func (p Plan) WarmPoolAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.WarmPoolAllowed
 }
 
 // RequireAuthnAllowed reports whether the plan permits a customer to

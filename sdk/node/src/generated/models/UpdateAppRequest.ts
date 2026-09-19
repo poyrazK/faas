@@ -141,6 +141,10 @@ export type UpdateAppRequest = {
    */
   warm_snapshot_min_ms?: number | null;
   /**
+   * Desired paused warm-pool size (issue #1056 / ADR-074). Omitted → no change; zero explicitly disables the pool. Non-zero values require Hobby+ and may not exceed max_concurrency.
+   */
+  warm_pool_size?: number | null;
+  /**
    * Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction (every best_effort candidate is drained before any reserved is parked). Plan-gated upstream: Free PATCH 'reserved' returns 402 plan_eviction_priority_reserved_not_allowed. Per-account cap (Hobby 1, Pro 2, Scale 4): 422 plan_eviction_priority_reserved_quota when exhausted. Omitted → no change.
    */
   eviction_priority?: 'best_effort' | 'reserved';

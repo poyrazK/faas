@@ -254,7 +254,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// doesn't fit the Free pricing tier. The 0/0 defaults
 			// are defence-in-depth; the WarmSnapshotAllowed() gate
 			// surfaces the 403 to a Free customer PATCHing true.
-			WarmSnapshotEnabled: false, WarmSnapshotMinRequestsDefault: 0, WarmSnapshotMinMsDefault: 0,
+			WarmSnapshotEnabled: false, WarmPoolAllowed: false, WarmSnapshotMinRequestsDefault: 0, WarmSnapshotMinMsDefault: 0,
 			// Issue #560: Free is gated off for require_authn
 			// — opt-in is a paid-tier feature (Cloud Run's
 			// `--no-allow-unauthenticated` shape).
@@ -406,7 +406,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #470 / ADR-055: Hobby is gated off for the
 			// same cost-shape reason as Free — the doubled parked
 			// footprint doesn't fit the €9/month Hobby tier.
-			WarmSnapshotEnabled: false, WarmSnapshotMinRequestsDefault: 0, WarmSnapshotMinMsDefault: 0,
+			WarmSnapshotEnabled: false, WarmPoolAllowed: true, WarmSnapshotMinRequestsDefault: 0, WarmSnapshotMinMsDefault: 0,
 			// Issue #560: Hobby is gated off for the same
 			// posture-change shape as Free.
 			RequireAuthn: false,
@@ -554,7 +554,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// warm-tier snapshots are on by default — 5 requests /
 			// 2000 ms is the sweet spot for the issue's acceptance
 			// (p50 halved vs init-tier).
-			WarmSnapshotEnabled: true, WarmSnapshotMinRequestsDefault: 5, WarmSnapshotMinMsDefault: 2000,
+			WarmSnapshotEnabled: true, WarmPoolAllowed: true, WarmSnapshotMinRequestsDefault: 5, WarmSnapshotMinMsDefault: 2000,
 			// Issue #560: Pro is the first tier where the
 			// per-app require_authn opt-in unlocks.
 			RequireAuthn: true,
@@ -724,7 +724,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// the per-app parked cost fits inside the 452 GB
 			// budget and the wake-p50 win is the largest dollar
 			// lever for SaaS workloads.
-			WarmSnapshotEnabled: true, WarmSnapshotMinRequestsDefault: 5, WarmSnapshotMinMsDefault: 2000,
+			WarmSnapshotEnabled: true, WarmPoolAllowed: true, WarmSnapshotMinRequestsDefault: 5, WarmSnapshotMinMsDefault: 2000,
 			// Issue #560: Scale mirrors Pro — opt-in
 			// available, column default still false.
 			RequireAuthn: true,

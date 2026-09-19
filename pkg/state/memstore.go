@@ -5036,6 +5036,12 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	if p.SetWarmSnapshotMinMs {
 		a.WarmSnapshotMinMs = intOrZero(p.WarmSnapshotMinMs)
 	}
+	// Issue #1056 / ADR-074: desired paused warm-pool size. The API
+	// layer owns plan and max-concurrency validation; MemStore mirrors
+	// the durable Set-bit semantics for tests and local development.
+	if p.SetWarmPoolSize {
+		a.WarmPoolSize = intOrZero(p.WarmPoolSize)
+	}
 	// Issue #475: eviction_priority ('best_effort'|'reserved') follows
 	// the same Set*/optional-pointer pattern as warm_snapshot_*. The
 	// plan gate (Plan.EvictionPriorityReservedAllowed) and the per-account

@@ -121,6 +121,9 @@ class CreateAppRequest:
     warm_snapshot_min_ms: int | Unset = UNSET
     """Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds (issue #470 /
     ADR-055). Range [100, 60000]. Omitted → apid applies the plan default."""
+    warm_pool_size: int | Unset = UNSET
+    """Desired paused warm-pool size (issue #1056 / ADR-074). Omit for the default of zero; non-zero values require
+    Hobby+ and may not exceed max_concurrency."""
     eviction_priority: CreateAppRequestEvictionPriority | Unset = UNSET
     """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
     behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → apid
@@ -232,6 +235,8 @@ class CreateAppRequest:
 
         warm_snapshot_min_ms = self.warm_snapshot_min_ms
 
+        warm_pool_size = self.warm_pool_size
+
         eviction_priority: str | Unset = UNSET
         if not isinstance(self.eviction_priority, Unset):
             eviction_priority = self.eviction_priority
@@ -307,6 +312,8 @@ class CreateAppRequest:
             field_dict["warm_snapshot_min_requests"] = warm_snapshot_min_requests
         if warm_snapshot_min_ms is not UNSET:
             field_dict["warm_snapshot_min_ms"] = warm_snapshot_min_ms
+        if warm_pool_size is not UNSET:
+            field_dict["warm_pool_size"] = warm_pool_size
         if eviction_priority is not UNSET:
             field_dict["eviction_priority"] = eviction_priority
         if overflow_node is not UNSET:
@@ -461,6 +468,8 @@ class CreateAppRequest:
 
         warm_snapshot_min_ms = d.pop("warm_snapshot_min_ms", UNSET)
 
+        warm_pool_size = d.pop("warm_pool_size", UNSET)
+
         _eviction_priority = d.pop("eviction_priority", UNSET)
         eviction_priority: CreateAppRequestEvictionPriority | Unset
         if isinstance(_eviction_priority, Unset):
@@ -504,6 +513,7 @@ class CreateAppRequest:
             warm_snapshot_enabled=warm_snapshot_enabled,
             warm_snapshot_min_requests=warm_snapshot_min_requests,
             warm_snapshot_min_ms=warm_snapshot_min_ms,
+            warm_pool_size=warm_pool_size,
             eviction_priority=eviction_priority,
             overflow_node=overflow_node,
             require_authn=require_authn,

@@ -1196,6 +1196,12 @@ const (
 	// CLI can render "warm-snapshot is a paid feature" alongside
 	// the streaming + allowlist copy without conflating them.
 	CodePlanWarmSnapshotNotAllowed = "plan_warm_snapshot_not_allowed"
+	// CodePlanWarmPoolNotAllowed is returned when a Free customer tries
+	// to reserve paused warm-pool VMs (issue #1056 / ADR-074).
+	CodePlanWarmPoolNotAllowed = "plan_warm_pool_not_allowed"
+	// CodeInvalidWarmPoolSize is a 422 for values outside
+	// [0, max_concurrency].
+	CodeInvalidWarmPoolSize = "invalid_warm_pool_size"
 
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
 	// analogue: `--no-allow-unauthenticated`). Pro/Scale opt in by
@@ -1959,6 +1965,10 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanPrivateNetworkNotAllowed:
 		return http.StatusPaymentRequired
+	case CodePlanWarmPoolNotAllowed:
+		return http.StatusForbidden
+	case CodeInvalidWarmPoolSize:
+		return http.StatusUnprocessableEntity
 	case CodePlanInternalIngressNotAllowed:
 		return http.StatusPaymentRequired
 	case CodeAppVisibilityInvalid:

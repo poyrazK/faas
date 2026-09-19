@@ -153,6 +153,10 @@ type CreateAppRequest struct {
 	// threshold for warm-tier capture at creation time. nil → plan
 	// default (2000 on Pro/Scale; 0 on Free/Hobby). Range [100, 60000].
 	WarmSnapshotMinMs *int `json:"warm_snapshot_min_ms,omitempty"`
+	// WarmPoolSize requests a paused warm-pool size. Omitted uses the
+	// default of zero; non-zero values require Hobby or higher and may
+	// not exceed the app's effective max_concurrency.
+	WarmPoolSize *int `json:"warm_pool_size,omitempty"`
 	// WebSocketEnabled (issue #676 / ADR-080) opts the brand-new
 	// app into the raw-bytes Upgrade bridge (WebSocket / h2c /
 	// MQTT-over-WS / long-poll). nil → plan default (Free off;
@@ -460,6 +464,9 @@ type UpdateAppRequest struct {
 	// Range [100, 60000] — out-of-range values return 422
 	// invalid_warm_snapshot_min_ms.
 	WarmSnapshotMinMs *int `json:"warm_snapshot_min_ms,omitempty"`
+	// WarmPoolSize is the desired paused warm-pool size. nil means no
+	// change; zero explicitly disables the pool.
+	WarmPoolSize *int `json:"warm_pool_size,omitempty"`
 	// EvictionPriority (issue #475) classifies the app under
 	// cross-account RAM pressure. Values: 'best_effort' (default,
 	// pre-#475 behaviour) or 'reserved' (opt-in protected tier).
@@ -1174,6 +1181,8 @@ type AppResponse struct {
 	// the apid handler before they reach the store.
 	WarmSnapshotMinRequests int `json:"warm_snapshot_min_requests"`
 	WarmSnapshotMinMs       int `json:"warm_snapshot_min_ms"`
+	// WarmPoolSize is the persisted desired paused warm-pool size.
+	WarmPoolSize int `json:"warm_pool_size"`
 	// ParkedDeployment (issue #554 / ADR-079 follow-up) is the
 	// most-recently parked deployment for this app, or nil if the
 	// app has never been parked. Powers the "why is my app

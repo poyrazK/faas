@@ -133,6 +133,37 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.ErrMaxMinInstancesExceeded(*req.MinInstances, acct.Plan.MaxMinInstances())
 		}
 	}
+	// Issue #1056 / ADR-074: customer-facing paused warm-pool size.
+	// Plan gate runs before shape validation for non-zero values so Free
+	// customers receive the feature-gate response. The bound uses the
+	// post-PATCH max_concurrency when both knobs are changed together.
+	if req.WarmPoolSize != nil {
+		if *req.WarmPoolSize > 0 && !acct.Plan.WarmPoolAllowed() {
+			return api.NewProblem(http.StatusForbidden,
+				api.CodePlanWarmPoolNotAllowed,
+				"Warm-pool capacity is not allowed on this plan",
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+		}
+		effectiveMaxConcurrency := app.MaxConcurrency
+		if req.MaxConcurrency != nil {
+			effectiveMaxConcurrency = *req.MaxConcurrency
+		}
+		if *req.WarmPoolSize < 0 || *req.WarmPoolSize > effectiveMaxConcurrency {
+			return api.NewProblem(http.StatusUnprocessableEntity,
+				api.CodeInvalidWarmPoolSize,
+				"Invalid warm_pool_size",
+				fmt.Sprintf("warm_pool_size must be in [0, %d] (max_concurrency); got %d", effectiveMaxConcurrency, *req.WarmPoolSize)).
+				WithLimit(int64(effectiveMaxConcurrency), int64(*req.WarmPoolSize))
+		}
+	} else if req.MaxConcurrency != nil && app.WarmPoolSize > *req.MaxConcurrency {
+		// Keep the cross-column database CHECK customer-visible when a
+		// max-concurrency reduction would strand the existing pool size.
+		return api.NewProblem(http.StatusUnprocessableEntity,
+			api.CodeInvalidWarmPoolSize,
+			"Invalid max_concurrency for warm_pool_size",
+			fmt.Sprintf("max_concurrency must be at least the current warm_pool_size (%d); got %d", app.WarmPoolSize, *req.MaxConcurrency)).
+			WithLimit(int64(*req.MaxConcurrency), int64(app.WarmPoolSize))
+	}
 	if req.EgressAllowlist != nil {
 		// Plan tier first: a Free PATCH must surface 403 even
 		// if the request would otherwise be a malformed 400.
@@ -1134,6 +1165,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetWarmSnapshotMinRequests: req.WarmSnapshotMinRequests != nil,
 		WarmSnapshotMinMs:          req.WarmSnapshotMinMs,
 		SetWarmSnapshotMinMs:       req.WarmSnapshotMinMs != nil,
+		WarmPoolSize:               req.WarmPoolSize,
+		SetWarmPoolSize:            req.WarmPoolSize != nil,
 		// Issue #475: per-app eviction tier. The Set bit
 		// distinguishes "don't touch" (nil pointer) from "explicit
 		// best_effort" (opt out of reserved). The plan gate +
@@ -1322,6 +1355,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		oldApp["warm_snapshot_min_ms"] = app.WarmSnapshotMinMs
 		newApp["warm_snapshot_min_ms"] = updated.WarmSnapshotMinMs
 	}
+	if req.WarmPoolSize != nil {
+		oldApp["warm_pool_size"] = app.WarmPoolSize
+		newApp["warm_pool_size"] = updated.WarmPoolSize
+	}
 	// Issue #475: per-app eviction tier. Same shape as the
 	// warm-snapshot entries above — only fields the caller touched
 	// appear in the audit row, so a no-op PATCH (rare, but legal
@@ -1410,6 +1447,18 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"slug":   updated.Slug,
 			"old":    app.EvictionPriority,
 			"new":    updated.EvictionPriority,
+		})
+	}
+	// Issue #1056 / ADR-074: emit a focused audit row when the desired
+	// paused warm-pool size changes. The app.updated event retains the
+	// complete before/after snapshot; this row makes operational searches
+	// and billing investigations cheap without recording request data.
+	if req.WarmPoolSize != nil && app.WarmPoolSize != updated.WarmPoolSize {
+		s.audit.Emit(r.Context(), "app.warm_pool_size_changed", &acct.ID, map[string]any{
+			"app_id": updated.ID,
+			"slug":   updated.Slug,
+			"old":    app.WarmPoolSize,
+			"new":    updated.WarmPoolSize,
 		})
 	}
 	// Issue #560: emit app.authn_required / app.authn_disabled

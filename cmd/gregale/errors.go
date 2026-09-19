@@ -51,6 +51,8 @@ var errorDocsURL = map[string]string{
 	api.CodeSecretNotFound:              cliDocsURL,
 	api.CodePlanMinInstancesNotAllowed:  cliDocsURL,
 	api.CodeInvalidMinInstances:         cliDocsURL,
+	api.CodePlanWarmPoolNotAllowed:      cliDocsURL,
+	api.CodeInvalidWarmPoolSize:         cliDocsURL,
 	api.CodePlanTrafficSplitNotAllowed:  cliDocsURL,
 	api.CodePlanRollbackOn5xxNotAllowed: cliDocsURL,
 	api.CodeInvalidTrafficPercent:       cliDocsURL,

@@ -279,6 +279,28 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
 		return state.App{}, prob
 	}
+	// Issue #1056 / ADR-074: paused warm-pool capacity is a paid-tier
+	// customer control. Zero is the default and explicit disable value;
+	// non-zero values require Hobby+ and are bounded by the app's
+	// effective max_concurrency.
+	warmPoolSize := 0
+	if req.WarmPoolSize != nil {
+		v := *req.WarmPoolSize
+		if v > 0 && !acct.Plan.WarmPoolAllowed() {
+			return state.App{}, api.NewProblem(http.StatusForbidden,
+				api.CodePlanWarmPoolNotAllowed,
+				"Warm-pool capacity is not allowed on this plan",
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+		}
+		if v < 0 || v > mc {
+			return state.App{}, api.NewProblem(http.StatusUnprocessableEntity,
+				api.CodeInvalidWarmPoolSize,
+				"Invalid warm_pool_size",
+				fmt.Sprintf("warm_pool_size must be in [0, %d] (max_concurrency); got %d", mc, v)).
+				WithLimit(int64(mc), int64(v))
+		}
+		warmPoolSize = v
+	}
 	// Issue #471 / ADR-047: per-app streaming flag. Apply the
 	// plan-level default when the request didn't carry one — a
 	// Hobby customer's brand-new app is streaming-ready without an
@@ -490,6 +512,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// projects the plan defaults so dashboards stay consistent.
 		WarmSnapshotMinRequests: warmMinReqs,
 		WarmSnapshotMinMs:       warmMinMs,
+		WarmPoolSize:            warmPoolSize,
 		// ADR-124: per-app wire-protocol selector. Plan-default
 		// applied above (Free → "http1", Hobby/Pro/Scale →
 		// "http1" but customer may opt in to http2 / grpc via
@@ -854,6 +877,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		WarmSnapshotEnabled:     a.WarmSnapshotEnabled,
 		WarmSnapshotMinRequests: a.WarmSnapshotMinRequests,
 		WarmSnapshotMinMs:       a.WarmSnapshotMinMs,
+		WarmPoolSize:            a.WarmPoolSize,
 		// Tier A10 / ADR-088: resolved UUID of the per-app
 		// overflow_node preference. NULL on the wire when the
 		// customer has not pinned a spill target — the

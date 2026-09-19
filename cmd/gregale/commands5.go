@@ -661,7 +661,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
@@ -692,6 +692,7 @@ func cmdAppScale(slug string, args []string) int {
 	noWarm := fs.Bool("no-warm-snapshot", false, "disable warm-snapshot tier")
 	warmMinReq := fs.Int("warm-snapshot-min-requests", 0, "warm-snapshot min-request gate (1..100; 0 = use server default)")
 	warmMinMs := fs.Int("warm-snapshot-min-ms", 0, "warm-snapshot min-ms-since-ready gate (100..60000; 0 = use server default)")
+	warmPool := fs.Int("warm-pool-size", 0, "paused warm-pool size (Hobby+; 0 = disable)")
 	// Issue #560: per-deployment token gate. Mirror commands2.go:cmdApp
 	// so the canonical `gregale app <slug> scale --require-authn` form
 	// keeps parity with the top-level `gregale app <slug> --require-authn`
@@ -791,6 +792,10 @@ func cmdAppScale(slug string, args []string) int {
 		v := *warmMinMs
 		req.WarmSnapshotMinMs = &v
 	}
+	if explicit["warm-pool-size"] {
+		v := *warmPool
+		req.WarmPoolSize = &v
+	}
 	// Issue #560: require-authn pair coalesces to a single *bool on
 	// the wire so the apid side sees one canonical field. Each flag
 	// of the pair sets an explicit value; the no-op guard below
@@ -847,7 +852,7 @@ func cmdAppScale(slug string, args []string) int {
 	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.ScalingPolicy == nil &&
 		req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
-		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
+		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
 		req.RequireAuthn == nil && req.PublicAuth == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
 		PrintUsage(os.Stderr, appScaleUsage, "apps")
 		return 1

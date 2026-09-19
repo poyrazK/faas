@@ -205,7 +205,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -242,6 +242,7 @@ func cmdApp(args []string) int {
 	noWarm := fs.Bool("no-warm-snapshot", false, "disable warm-snapshot tier (4th audit kind: app.warm_snapshot_disabled)")
 	warmMinReq := fs.Int("warm-snapshot-min-requests", 0, "warm-snapshot min-request gate (1..100; 0 = use server default)")
 	warmMinMs := fs.Int("warm-snapshot-min-ms", 0, "warm-snapshot min-ms-since-ready gate (100..60000; 0 = use server default)")
+	warmPool := fs.Int("warm-pool-size", 0, "paused warm-pool size (Hobby+; 0 = disable)")
 	// Issue #559: --concurrency is a read-only fast path. When set
 	// (with no other flags), the CLI prints just the plan's
 	// per-VM concurrency bound instead of the full app info block.
@@ -453,6 +454,10 @@ func cmdApp(args []string) int {
 		v := *warmMinMs
 		req.WarmSnapshotMinMs = &v
 	}
+	if explicit["warm-pool-size"] {
+		v := *warmPool
+		req.WarmPoolSize = &v
+	}
 	// Issue #475: per-app eviction tier. The CLI uses a single
 	// string flag — the closed enum is 'best_effort' | 'reserved'
 	// (and any other value gets a clean 422 from the apid bounds
@@ -583,7 +588,7 @@ func cmdApp(args []string) int {
 
 	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
-		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
+		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
 		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
 		a, err := client.GetApp(ctx, slug)
@@ -681,6 +686,7 @@ func cmdApp(args []string) int {
 		}
 		fmt.Printf("%-30s %d\n", "warm snapshot min requests:", a.WarmSnapshotMinRequests)
 		fmt.Printf("%-30s %d ms\n", "warm snapshot min ms:", a.WarmSnapshotMinMs)
+		fmt.Printf("%-30s %d\n", "warm pool size:", a.WarmPoolSize)
 		// Issue #475: surface the per-app eviction tier so the
 		// customer can verify their PATCH round-tripped. The
 		// empty-string fallback matches the historical default

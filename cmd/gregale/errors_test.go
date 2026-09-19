@@ -41,6 +41,8 @@ func TestDocsURLForCode_KnownCodes(t *testing.T) {
 		api.CodeSecretNotFound,
 		api.CodePlanMinInstancesNotAllowed,
 		api.CodeInvalidMinInstances,
+		api.CodePlanWarmPoolNotAllowed,
+		api.CodeInvalidWarmPoolSize,
 		api.CodeAccountDeletionConfirm,
 		api.CodeAccountDeletionPending,
 		api.CodeAccountNotRestorable,

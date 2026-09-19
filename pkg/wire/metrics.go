@@ -105,6 +105,13 @@ type OpsMetrics struct {
 	// the TSDB series. The PromQL `rate(vmmd_warm_snapshot_errors_total[5m])`
 	// panel is the §12 warm-capture-error alert's primary signal.
 	warmSnapshotErrors *prometheus.CounterVec
+	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
+	// warm-pool size by plan. Runtime reconciliation will update the
+	// gauge in a follow-up; registering it here makes the contract
+	// available without per-app cardinality.
+	warmPoolSize *prometheus.GaugeVec
+	// warmPoolResumeTotal counts bounded warm-pool resume outcomes.
+	warmPoolResumeTotal *prometheus.CounterVec
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -1953,6 +1960,20 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"reason"})
 	warmSnapshotErrors.WithLabelValues("vmm_call")
 	warmSnapshotErrors.WithLabelValues("store_write")
+	warmPoolSize := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_warm_pool_size",
+		Help: "Desired paused warm-pool size by plan (issue #1056 / ADR-074). Runtime reconciliation updates this bounded gauge; zero means the customer has disabled the pool.",
+	}, []string{"plan"})
+	warmPoolResumeTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_warm_pool_resume_total",
+		Help: "Warm-pool resume outcomes (issue #1056 / ADR-074), labelled by outcome ∈ {success, missing, stale}.",
+	}, []string{"outcome"})
+	for _, plan := range api.Plans {
+		warmPoolSize.WithLabelValues(string(plan))
+	}
+	for _, outcome := range []string{"success", "missing", "stale"} {
+		warmPoolResumeTotal.WithLabelValues(outcome)
+	}
 	// warmupErrors (Tier A8 / ADR-083). Counts probe failures on the
 	// standby warm-up scraper (cmd/gatewayd-public/standby_warmup.go).
 	// Labelled by app slug — the per-app cardinality is bounded by the
@@ -3489,7 +3510,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	commonCollectors := []prometheus.Collector{
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingThrottled,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -4801,6 +4822,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dur:                                        dur,
 		watchdogKills:                              watchdogKills,
 		warmSnapshotErrors:                         warmSnapshotErrors,
+		warmPoolSize:                               warmPoolSize,
+		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		warmupErrors:                               warmupErrors,
 		writeRedirectTotal:                         writeRedirectTotal,
 		writeRedirectLatency:                       writeRedirectLatency,
@@ -5404,6 +5427,25 @@ func (m *OpsMetrics) WarmSnapshotErrors(reason string) prometheus.Counter {
 		return nil
 	}
 	return m.warmSnapshotErrors.WithLabelValues(reason)
+}
+
+// WarmPoolSize returns the plan-labelled desired warm-pool gauge. The
+// scheduler's runtime reconciler owns updates; this accessor keeps the
+// producer independent of metric construction and is nil-safe for tests.
+func (m *OpsMetrics) WarmPoolSize(plan api.Plan) prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.warmPoolSize.WithLabelValues(string(plan))
+}
+
+// WarmPoolResumeTotal returns the bounded outcome counter for warm-pool
+// resumes. Valid outcomes are success, missing, and stale.
+func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.warmPoolResumeTotal.WithLabelValues(outcome)
 }
 
 // WarmupErrors returns the per-(app slug) probe-failure counter

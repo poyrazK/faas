@@ -153,6 +153,9 @@ class AppResponse:
     warm_snapshot_min_ms: int | Unset = UNSET
     """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range
     [100, 60000]."""
+    warm_pool_size: int | Unset = UNSET
+    """Desired paused warm-pool size (issue #1056 / ADR-074). Zero disables the pool; bounded by max_concurrency
+    and available on Hobby+ plans."""
     eviction_priority: AppResponseEvictionPriority | Unset = UNSET
     """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
     behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction."""
@@ -338,6 +341,8 @@ class AppResponse:
 
         warm_snapshot_min_ms = self.warm_snapshot_min_ms
 
+        warm_pool_size = self.warm_pool_size
+
         eviction_priority: str | Unset = UNSET
         if not isinstance(self.eviction_priority, Unset):
             eviction_priority = self.eviction_priority
@@ -465,6 +470,8 @@ class AppResponse:
             field_dict["warm_snapshot_min_requests"] = warm_snapshot_min_requests
         if warm_snapshot_min_ms is not UNSET:
             field_dict["warm_snapshot_min_ms"] = warm_snapshot_min_ms
+        if warm_pool_size is not UNSET:
+            field_dict["warm_pool_size"] = warm_pool_size
         if eviction_priority is not UNSET:
             field_dict["eviction_priority"] = eviction_priority
         if require_authn is not UNSET:
@@ -730,6 +737,8 @@ class AppResponse:
 
         warm_snapshot_min_ms = d.pop("warm_snapshot_min_ms", UNSET)
 
+        warm_pool_size = d.pop("warm_pool_size", UNSET)
+
         _eviction_priority = d.pop("eviction_priority", UNSET)
         eviction_priority: AppResponseEvictionPriority | Unset
         if isinstance(_eviction_priority, Unset):
@@ -866,6 +875,7 @@ class AppResponse:
             warm_snapshot_enabled=warm_snapshot_enabled,
             warm_snapshot_min_requests=warm_snapshot_min_requests,
             warm_snapshot_min_ms=warm_snapshot_min_ms,
+            warm_pool_size=warm_pool_size,
             eviction_priority=eviction_priority,
             require_authn=require_authn,
             consumer_auth_mode=consumer_auth_mode,

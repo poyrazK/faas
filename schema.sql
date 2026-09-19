@@ -1485,6 +1485,7 @@ CREATE TABLE public.apps (
     warm_snapshot_enabled boolean DEFAULT false NOT NULL,
     warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
     warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
+    warm_pool_size integer DEFAULT 0 NOT NULL,
     eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
     require_authn boolean DEFAULT false NOT NULL,
     consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
@@ -1539,6 +1540,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
     CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
     CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
+    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
     CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
 );
 
