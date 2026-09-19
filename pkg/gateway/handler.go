@@ -689,6 +689,13 @@ type warmPathPicker interface {
 	PickWarm(appID string) PickResult
 }
 
+// deploymentTargetPicker is the authenticated rollout-smoke picker. It must
+// never fall back to a sibling deployment because the response is evidence
+// that the candidate revision itself is routable.
+type deploymentTargetPicker interface {
+	PickDeployment(appID, deploymentID string) PickResult
+}
+
 // affinityPicker is the optional production seam for session affinity. The
 // cookie is only a preference: implementations must fall back to ordinary
 // routing when the preferred instance is not currently routable.
@@ -5128,7 +5135,13 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 // pickForRequest applies the optional session-affinity hint before the normal
 // warm-path picker. A stale cookie falls through to the ordinary picker in the
 // same request, preserving availability during scale-in and restarts.
-func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickForRequest(app App, preferredInstanceID string, deploymentID ...string) PickResult {
+	if len(deploymentID) > 0 && deploymentID[0] != "" {
+		if picker, ok := h.backend.(deploymentTargetPicker); ok {
+			return picker.PickDeployment(app.ID, deploymentID[0])
+		}
+		return PickResult{Picked: deploymentID[0], ColdBucket: deploymentID[0]}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			pick := picker.PickForInstance(app.ID, preferredInstanceID)
@@ -5143,7 +5156,13 @@ func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult
 	return PickResult{}
 }
 
-func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string, deploymentID ...string) PickResult {
+	if len(deploymentID) > 0 && deploymentID[0] != "" {
+		if picker, ok := h.backend.(deploymentTargetPicker); ok {
+			return picker.PickDeployment(app.ID, deploymentID[0])
+		}
+		return PickResult{Picked: deploymentID[0], ColdBucket: deploymentID[0]}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			if pick := picker.PickForInstance(app.ID, preferredInstanceID); pick.OK {
@@ -5299,6 +5318,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	deploymentSmokeID := h.authorizedDeploymentSmokeID(r, app)
 	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
@@ -5828,7 +5848,7 @@ haveApp:
 	if app.SessionAffinity {
 		preferredInstanceID = h.affinityTargetFromRequest(r, app.ID)
 	}
-	pick := h.pickForRequest(app, preferredInstanceID)
+	pick := h.pickForRequest(app, preferredInstanceID, deploymentSmokeID)
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
 		if validator, ok := h.backend.(liveTargetValidator); ok {
 			live, validateErr := validator.ValidateLiveTarget(r.Context(), app.ID, pick.Target.InstanceID)
@@ -5842,7 +5862,7 @@ haveApp:
 			}
 		}
 	}
-	if !pick.OK {
+	if !pick.OK && deploymentSmokeID == "" {
 		// This is the canonical platform-only boundary. Authentication,
 		// routing, rate limiting, and the public edge have already completed;
 		// scheduler admission, VM restore, and the internal first-byte hop are
@@ -5940,25 +5960,29 @@ haveApp:
 	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
-	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS).MaxWait)
-	defer cancelBurstWait()
-	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
-	if burstErr != nil {
-		// A burst that cannot become routable within its admission policy is
-		// a controlled timeout, not an upstream 502. Client disconnects
-		// remain silent; genuine admission failures use the normal
-		// capacity problem response.
-		writeBurstCapacityError(w, r, burstErr)
-		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
-		return
+	waitedForBurst := false
+	if deploymentSmokeID == "" {
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS).MaxWait)
+		defer cancelBurstWait()
+		var burstErr error
+		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+		if burstErr != nil {
+			// A burst that cannot become routable within its admission policy is
+			// a controlled timeout, not an upstream 502. Client disconnects
+			// remain silent; genuine admission failures use the normal
+			// capacity problem response.
+			writeBurstCapacityError(w, r, burstErr)
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
+		}
 	}
 
 	// Choose from the capacity that is now ready. A pre-wake selection
 	// would send every queued request to the first guest even after waiting
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
-	if !pick.OK || waitedForBurst {
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+	if (!pick.OK && deploymentSmokeID == "") || waitedForBurst {
+		pick = h.pickAfterCapacity(app, preferredInstanceID, deploymentSmokeID)
 	}
 
 	// Wake-fan-out (issue #556 / PR-C): when Pick landed on a
@@ -5977,7 +6001,13 @@ haveApp:
 			attribute.String("deployment_id", pick.ColdBucket),
 		)
 		//nolint:contextcheck // request ctx at handler boundary; this is the wake-fan-out retry branch.
-		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(fanoutCtx, app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		admitTrigger := sched.TriggerGateway
+		admitMaxConcurrency := limits.MaxConcurrency
+		if deploymentSmokeID != "" {
+			admitTrigger = sched.TriggerDeploymentSmoke
+			admitMaxConcurrency = effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
+		}
+		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(fanoutCtx, app.ID, pick.ColdBucket, app.Scope, admitTrigger, admitMaxConcurrency)
 		fanoutSpan.SetAttributes(
 			attribute.String("wake_id", bucketWakeID),
 			attribute.String("wake_method", bucketMethod.String()),
@@ -5987,6 +6017,12 @@ haveApp:
 		}
 		fanoutSpan.End()
 		if bucketErr != nil {
+			if deploymentSmokeID != "" {
+				h.markHealthFailure(app.ID, bucketErr)
+				writeWakeError(w, bucketErr)
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
 			// Log-and-continue: the existing "warmest bucket"
 			// fallback inside Pick already handled the
 			// fallback path. Failure here means the cold
@@ -5996,7 +6032,7 @@ haveApp:
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID, deploymentSmokeID)
 	}
 	if !pick.OK {
 		// Race: every cached instance was evicted between

@@ -1786,7 +1786,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			deploymentID = p.To
 		}
 		if deploymentID != "" && p.Status != "" {
-			if p.Status == string(state.DeploySuperseded) {
+			switch p.Status {
+			case string(state.DeploySuperseded):
 				// Stable cutovers and rollbacks retire the old deployment
 				// atomically in Postgres, but its already-hot request/function
 				// instances are still owned by schedd. Drain them before the
@@ -1795,6 +1796,14 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				go func(id string) {
 					reconcileCtx := context.WithoutCancel(ctx)
 					l.engine.drainDeploymentInstances(reconcileCtx, id, true)
+				}(deploymentID)
+			case string(state.DeployFailed), string(state.DeployCancelled):
+				// A candidate can have one serving instance during its public
+				// smoke. Failed verification must release that temporary slot so
+				// the restored previous revision is not left over concurrency cap.
+				go func(id string) {
+					reconcileCtx := context.WithoutCancel(ctx)
+					l.engine.drainDeploymentInstances(reconcileCtx, id, false)
 				}(deploymentID)
 			}
 			// Live activates the new mode. Failed/superseded/cancelled signals

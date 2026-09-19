@@ -37,13 +37,16 @@ import (
 // what Pick returns on each call so the handler's wake-fan-out
 // branch is exercised deterministically.
 type wakefanoutBackend struct {
-	app            gateway.App
-	host           string
-	upstreamAddr   string
-	mu             sync.Mutex
-	admitErr       error
-	admitsByDeploy map[string]int32 // deploymentID → admit count
-	totalAdmits    atomic.Int32
+	app             gateway.App
+	host            string
+	upstreamAddr    string
+	mu              sync.Mutex
+	admitErr        error
+	admitsByDeploy  map[string]int32 // deploymentID → admit count
+	totalAdmits     atomic.Int32
+	smokeDeployment string
+	smokeToken      string
+	lastTrigger     string
 	// firstPick / secondPick drive the Pick state machine: the
 	// handler sees firstPick once (the cold-bucket wake trigger),
 	// then secondPick on the retry (the warmed-bucket routable
@@ -76,17 +79,79 @@ func (b *wakefanoutBackend) Pick(_ string) gateway.PickResult {
 	return b.secondPick
 }
 
+func (b *wakefanoutBackend) PickDeployment(_ string, deploymentID string) gateway.PickResult {
+	if deploymentID != b.smokeDeployment {
+		return gateway.PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	return b.Pick("")
+}
+
+func (b *wakefanoutBackend) ValidateDeploymentSmoke(_, deploymentID, token string) bool {
+	return deploymentID == b.smokeDeployment && token == b.smokeToken && token != ""
+}
+
 func (b *wakefanoutBackend) HealthyCount(_ string) int { return 1 }
 
-func (b *wakefanoutBackend) Admit(_ context.Context, _, deploymentID, _, _ string, _ int) (string, gateway.WakeMethod, bool, error) {
+func (b *wakefanoutBackend) Admit(_ context.Context, _, deploymentID, _, trigger string, _ int) (string, gateway.WakeMethod, bool, error) {
 	b.totalAdmits.Add(1)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.lastTrigger = trigger
 	if b.admitErr != nil {
 		return "", gateway.WakeMethodUnspecified, false, b.admitErr
 	}
 	b.admitsByDeploy[deploymentID]++
 	return "fake-wake-id", gateway.WakeMethodColdBoot, false, nil
+}
+
+func TestHandler_DeploymentSmokePinsAndWakesCandidate(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("candidate healthy"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &wakefanoutBackend{
+		app: gateway.App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro, MaxConcurrency: 1,
+			PublicAuth: gateway.PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
+		host:            "candidate.apps.dom",
+		upstreamAddr:    upstream.Listener.Addr().String(),
+		admitsByDeploy:  map[string]int32{},
+		smokeDeployment: "dep-candidate",
+		smokeToken:      "smoke-token",
+		firstPick: gateway.PickResult{
+			Picked: "dep-candidate", ColdBucket: "dep-candidate",
+		},
+		secondPick: gateway.PickResult{
+			Target: gateway.Target{
+				NodeID: upstream.Listener.Addr().String(), InstanceID: "candidate-instance",
+				DeploymentID: "dep-candidate", WakeID: "candidate-wake",
+			},
+			OK: true, Picked: "dep-candidate",
+		},
+	}
+	h := gateway.NewHandlerWith(b, gateway.NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	req := httptest.NewRequest(http.MethodGet, "http://candidate.apps.dom/healthz", nil)
+	req.Header.Set("X-Gregale-Platform-Smoke", "1")
+	req.Header.Set("X-Faas-Platform-Smoke-Deployment", "dep-candidate")
+	req.Header.Set("X-Faas-Platform-Smoke-Token", "smoke-token")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(api.DeploymentIDHeader); got != "dep-candidate" {
+		t.Fatalf("served deployment = %q, want dep-candidate", got)
+	}
+	if got := b.admitsByDeploy["dep-candidate"]; got != 1 {
+		t.Fatalf("candidate admits = %d, want 1", got)
+	}
+	if b.lastTrigger != "deployment.smoke" {
+		t.Fatalf("admit trigger = %q, want deployment.smoke", b.lastTrigger)
+	}
 }
 
 // LookupMirrorRules (issue #72 / ADR-125 PR-A3) is the no-op

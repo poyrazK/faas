@@ -3022,6 +3022,12 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// Fan out only now that the receipt and readiness stage are durable. The
 	// pre-smoke notification is route-only and carries no terminal status, so
 	// CLI/SSE waiters cannot report success while verification is still running.
+	// Retire the rollback revision only after the candidate proved itself. This
+	// closes the temporary one-instance smoke overlap without sacrificing the
+	// zero-downtime rollback window.
+	if previousLiveID != "" {
+		h.notifyDeploymentState(ctx, dep.AppID, previousLiveID, state.DeploySuperseded)
+	}
 	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployLive)
 	return nil
 }
