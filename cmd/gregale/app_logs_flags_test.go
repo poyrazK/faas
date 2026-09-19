@@ -79,6 +79,57 @@ func TestCmdLogsArchiveRequest(t *testing.T) {
 	}
 }
 
+func TestCmdLogsArchiveTerminalGapsFail(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, want string
+	}{
+		{"missing", "archive_missing", "No archived logs were found"},
+		{"degraded", "archive_degraded", "temporarily unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprintf(w, "event: end\ndata: {\"reason\":\"%s\"}\n\n", tc.reason)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			stderr, restore := captureStderr(t)
+			defer restore()
+			if code := cmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 3 {
+				t.Fatalf("exit=%d, want 3", code)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr=%q, want substring %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestCmdLogsArchiveMissingJSONIsRFC7807(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"archive_missing\"}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stderr, restore := captureStderr(t)
+	if code := cmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 3 {
+		t.Fatalf("exit=%d, want 3", code)
+	}
+	restore()
+	var problem map[string]any
+	if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil {
+		t.Fatalf("stderr is not JSON: %v; raw=%q", err, stderr.String())
+	}
+	if problem["code"] != "log_archive_missing" || problem["status"] != float64(http.StatusNotFound) {
+		t.Fatalf("problem = %#v", problem)
+	}
+}
+
 func TestCmdLogsArchiveValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string

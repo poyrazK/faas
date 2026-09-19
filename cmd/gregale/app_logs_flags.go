@@ -34,3 +34,34 @@ func appLogsDegradedMessage(data string) string {
 	}
 	return "Log stream degraded: the scheduler is temporarily unavailable"
 }
+
+// appLogsArchiveEndReason decodes the terminal reason emitted by the
+// durable-log archive stream. A missing or malformed reason is treated as a
+// degraded archive so the CLI never reports success for an incomplete stream.
+func appLogsArchiveEndReason(data string) string {
+	var event struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(data), &event) != nil || event.Reason == "" {
+		return "archive_degraded"
+	}
+	return event.Reason
+}
+
+func appLogsArchiveProblem(reason string) api.Problem {
+	if reason == "archive_missing" {
+		return *api.NewProblem(http.StatusNotFound, "log_archive_missing",
+			"Archived logs not found",
+			"No archived log object exists for the requested instance and UTC day; verify the instance and date, or check archive retention.").WithDocs(cliDocsURL)
+	}
+	return *api.NewProblem(http.StatusServiceUnavailable, "log_archive_degraded",
+		"Archived logs unavailable",
+		"The archive backend did not return a complete log archive; retry later or ask the operator to check it.").WithDocs(cliDocsURL)
+}
+
+func appLogsArchiveMessage(reason string) string {
+	if reason == "archive_missing" {
+		return "No archived logs were found for that instance and UTC day (archive gap); verify the instance and date or check archive retention."
+	}
+	return "Archived logs are temporarily unavailable; retry later or ask the operator to check the archive backend."
+}

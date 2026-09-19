@@ -5246,6 +5246,20 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 3
 		}
 		if e.Event == "end" {
+			if archive != nil {
+				reason := appLogsArchiveEndReason(e.Data)
+				if reason != "archive_complete" {
+					if jsonOutput {
+						_ = writeJSONProblem(appLogsArchiveProblem(reason))
+					} else {
+						fmt.Fprintln(os.Stderr, appLogsArchiveMessage(reason))
+					}
+					if collector != nil && !jsonOutput {
+						collector.flush(osStdout)
+					}
+					return true, 3
+				}
+			}
 			if collector != nil && !jsonOutput {
 				collector.flush(osStdout)
 			}
