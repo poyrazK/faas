@@ -67,6 +67,21 @@ type burstFakeEngine struct {
 	burstCounts []int
 }
 
+type workerPoolFakeEngine struct {
+	*fakeEngine
+	mu       sync.Mutex
+	desired  []int
+	triggers []string
+}
+
+func (e *workerPoolFakeEngine) ReconcileWorkerPool(_ context.Context, appID string, desired int, trigger string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.desired = append(e.desired, desired)
+	e.triggers = append(e.triggers, appID+":"+trigger)
+	return nil
+}
+
 func (e *burstFakeEngine) AdmitInstances(_ context.Context, appID, _, _ string, count int) ([]AdmitResult, error) {
 	e.mu.Lock()
 	e.burstCounts = append(e.burstCounts, count)
@@ -414,6 +429,39 @@ func TestTrigger_AdmitOnQueueDepthTarget(t *testing.T) {
 	}
 	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "worker-1" {
 		t.Fatalf("engine.admitCalls = %v, want [worker-1]", engine.admitCalls)
+	}
+}
+
+func TestTrigger_ReconcilesWorkerPoolDesiredCount(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID: "worker-pool", WorkloadClass: state.WorkloadClassWorker,
+		MaxConcurrency: 8,
+		ScalingPolicy:  &state.ScalingPolicy{Target: &state.ScalingTarget{Metric: "queue_depth", Value: 10}},
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"worker-pool": 1}}
+	engine := &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}
+	queue := &fakeQueueStats{byApp: map[string]state.QueueStats{"worker-pool": {Depth: 25}}}
+	tr := New(store, nil, engine, ledger, Options{QueueStatsReader: queue})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick(scale out): %v", err)
+	}
+	if len(engine.desired) != 1 || engine.desired[0] != 3 {
+		t.Fatalf("worker desired = %v, want [3]", engine.desired)
+	}
+	if len(engine.triggers) != 1 || engine.triggers[0] != "worker-pool:worker.pool" {
+		t.Fatalf("worker triggers = %v, want [worker-pool:worker.pool]", engine.triggers)
+	}
+	if len(engine.admitCalls) != 0 {
+		t.Fatalf("request admission calls = %v, want none", engine.admitCalls)
+	}
+
+	queue.byApp["worker-pool"] = state.QueueStats{}
+	ledger.conc["worker-pool"] = 3
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick(scale in): %v", err)
+	}
+	if len(engine.desired) != 2 || engine.desired[1] != 1 {
+		t.Fatalf("worker desired after drain = %v, want [3 1]", engine.desired)
 	}
 }
 

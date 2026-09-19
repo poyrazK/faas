@@ -19,6 +19,11 @@ import (
 // pkg/sched/triggers.go.
 const wakeBootTriggerTargets = "targets"
 
+// workerPoolTriggerTargets is the dedicated wake-timeline reason for
+// queue-driven worker replica reconciliation. It is local to avoid importing
+// sched (which would create the existing targets ↔ sched cycle).
+const workerPoolTriggerTargets = "worker.pool"
+
 // AdmitResult is the typed wake-subset the trigger needs from the
 // engine. Mirrors pkg/sched/scaleup.AdmitResult exactly; we re-
 // declare it locally so the targets package does not import scaleup
@@ -101,6 +106,14 @@ type Engine interface {
 // fake/test seam and lets older adapters fall back to one admission at a time.
 type BurstEngine interface {
 	AdmitInstances(ctx context.Context, appID, scope, trigger string, count int) ([]AdmitResult, error)
+}
+
+// WorkerPoolEngine is the optional queue-backed worker path. Worker pools
+// cannot use the request wake primitive because worker-mode admissions are
+// intentionally rejected there; the scheduler instead reconciles the desired
+// resident count through an explicit deployment admission path.
+type WorkerPoolEngine interface {
+	ReconcileWorkerPool(ctx context.Context, appID string, desired int, trigger string) error
 }
 
 // InstatsReader is the per-instance in-flight signal source (PR-C,
@@ -460,9 +473,9 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // inside the loop (the trigger never aborts the loop on a transient
 // store outage).
 //
-// The trigger is read-only on the apps table and the ledger; the
-// only side effect is the Engine.AdmitInstance call on the admit
-// branch and the metric observations.
+// The trigger is read-only on the apps table and the ledger; the only side
+// effects are the admission/reconciliation call on the scale branch and the
+// metric observations.
 func (t *Trigger) Tick(ctx context.Context) error {
 	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil) {
 		return nil
@@ -498,6 +511,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			lastScaleOut = *app.LastScaleOutAt
 		}
 		var dec Decision
+		workerQueuePath := false
+		workerDesired := 0
+		workerMaxInstances := 0
 		switch metric {
 		case "concurrent_requests":
 			if t.instats == nil {
@@ -555,6 +571,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			if policy.MaxInstances > 0 && policy.MaxInstances < maxInstances {
 				maxInstances = policy.MaxInstances
 			}
+			workerMaxInstances = maxInstances
 			dec = decideQueueDepth(QueueDepthStats{
 				TargetValue:       policy.Target.Value,
 				MaxConcurrency:    maxInstances,
@@ -564,11 +581,48 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				ScaleOutCooldownS: policy.ScaleOutCooldownS,
 				Now:               now,
 			})
+			workerQueuePath = app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
+			if workerQueuePath {
+				workerDesired = 1
+				if policy.Target.Value > 0 && queue.Depth > 0 {
+					workerDesired = int(math.Ceil(float64(queue.Depth) / policy.Target.Value))
+				}
+				if policy.MinInstances > workerDesired {
+					workerDesired = policy.MinInstances
+				}
+				if workerDesired > maxInstances && maxInstances > 0 {
+					workerDesired = maxInstances
+				}
+			}
 		}
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {
 			t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+		}
+		if workerQueuePath {
+			pool, ok := t.engine.(WorkerPoolEngine)
+			if ok {
+				if dec.Outcome == OutcomeCooldownHeld {
+					continue
+				}
+				if dec.Outcome == OutcomeRejectAtCap && workerMaxInstances > 0 {
+					workerDesired = workerMaxInstances
+				}
+				if workerDesired <= 0 {
+					workerDesired = 1
+				}
+				if t.admissionBackoffActive(app.ID, now) {
+					continue
+				}
+				if err := pool.ReconcileWorkerPool(ctx, app.ID, workerDesired, workerPoolTriggerTargets); err != nil {
+					t.recordAdmissionFailure(app.ID, now)
+					t.log.Warn("targets: reconcile worker pool failed", "app_id", app.ID, "err", err)
+				} else {
+					t.clearAdmissionBackoff(app.ID)
+				}
+				continue
+			}
 		}
 		if !dec.ShouldAdmit {
 			continue

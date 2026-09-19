@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -836,10 +837,12 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	}
 }
 
-// scheduleWorkerReconcile restores the worker singleton after an
+// scheduleWorkerReconcile restores the worker allocation after an
 // infrastructure failure without coupling explicit StopInstance calls to an
 // automatic restart. Customer-requested stops remain stops; dead-node,
-// liveness, and deployment lifecycle paths call this helper explicitly.
+// liveness, and deployment lifecycle paths call this helper explicitly. The
+// app-scoped reconciler derives a queue-backed pool target when configured and
+// otherwise preserves the singleton contract.
 func (e *Engine) scheduleWorkerReconcile(ctx context.Context, deploymentID string) {
 	if e == nil || e.store == nil || deploymentID == "" {
 		return
@@ -899,12 +902,162 @@ func workerStatePreference(ins state.Instance) int {
 	}
 }
 
-// ReconcileWorkerApp converges worker mode to one resident instance for the
-// newest live deployment in each scope. It also drains worker rows after a
-// mode switch, failed activation, or supersede. The same app-level mutex used
-// by service allocation serializes mode switches without nesting appMu around
-// admission or graceful stop calls.
+// workerQueueDepth returns the queue signal used by the worker reconciler.
+// Enabled queue bindings are aggregated when present; an app with no bindings
+// retains the legacy app-wide queue projection. Keeping this read in the
+// reconciler means an instance transition cannot accidentally collapse a
+// queue-sized worker fleet back to the singleton target.
+func (e *Engine) workerQueueDepth(ctx context.Context, app state.App) (int, error) {
+	bindings, err := e.store.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
+	if err != nil {
+		return 0, err
+	}
+	if len(bindings) == 0 {
+		stats, statsErr := e.store.QueueState(ctx, app.ID)
+		if statsErr != nil {
+			return 0, statsErr
+		}
+		return stats.Depth, nil
+	}
+	depth := 0
+	for _, binding := range bindings {
+		if !binding.Enabled {
+			continue
+		}
+		stats, statsErr := e.store.QueueStateForQueue(ctx, app.ID, binding.QueueName)
+		if statsErr != nil {
+			return 0, statsErr
+		}
+		depth += stats.Depth
+	}
+	return depth, nil
+}
+
+// workerReplicaTarget derives the resident worker count from the queue-depth
+// policy and the plan/app ceilings. Worker mode intentionally retains one
+// resident worker when the queue is empty: this is the long-lived consumer
+// contract, while request-mode scale-to-zero remains unchanged. A caller may
+// provide an already-computed desired value from the queue trigger; the
+// durable policy/queue read remains the fallback for lifecycle notifications.
+func (e *Engine) workerReplicaTarget(ctx context.Context, app state.App, override *int) int {
+	account, err := e.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		e.log.Warn("sched: load worker account limits", "app", app.ID, "err", err)
+		return 1
+	}
+	limits, ok := api.LimitsFor(account.Plan)
+	if !ok || limits.WorkerReplicasMax <= 0 {
+		return 0
+	}
+
+	max := app.MaxConcurrency
+	if max <= 0 || max > limits.MaxConcurrency {
+		max = limits.MaxConcurrency
+	}
+	if app.ScalingPolicy != nil && app.ScalingPolicy.MaxInstances > 0 && app.ScalingPolicy.MaxInstances < max {
+		max = app.ScalingPolicy.MaxInstances
+	}
+	if limits.WorkerReplicasMax < max {
+		max = limits.WorkerReplicasMax
+	}
+	if max <= 0 {
+		return 0
+	}
+
+	desired := 1
+	if override != nil {
+		desired = *override
+	} else if policy := app.ScalingPolicy; policy != nil && policy.Target != nil && policy.Target.Metric == "queue_depth" && policy.Target.Value > 0 {
+		depth, depthErr := e.workerQueueDepth(ctx, app)
+		if depthErr != nil {
+			e.log.Warn("sched: read worker queue depth", "app", app.ID, "err", depthErr)
+		} else if depth > 0 {
+			desired = int(math.Ceil(float64(depth) / policy.Target.Value))
+		}
+		if policy.MinInstances > desired {
+			desired = policy.MinInstances
+		}
+	}
+	if desired < 1 {
+		desired = 1
+	}
+	if desired > max {
+		desired = max
+	}
+	return desired
+}
+
+// capWorkerReplicasToAccount applies the plan's account-wide worker budget to
+// this app's target. The normal app ledger still enforces max_concurrency; the
+// additional count is needed because WorkerReplicasMax is intentionally a
+// cross-app plan limit.
+func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) int {
+	if desired <= 0 {
+		return desired
+	}
+	account, err := e.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		e.log.Warn("sched: load worker account capacity", "app", app.ID, "err", err)
+		return desired
+	}
+	limits, ok := api.LimitsFor(account.Plan)
+	if !ok || limits.WorkerReplicasMax <= 0 {
+		return 0
+	}
+	all, err := e.store.ListInstancesForAccount(ctx, app.AccountID)
+	if err != nil {
+		e.log.Warn("sched: list account workers", "app", app.ID, "err", err)
+		return desired
+	}
+	currentAppWorkers := 0
+	for _, ins := range current {
+		if state.State(ins.State).CountsForConcurrency() {
+			currentAppWorkers++
+		}
+	}
+	totalWorkers := 0
+	for _, ins := range all {
+		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForConcurrency() {
+			totalWorkers++
+		}
+	}
+	available := limits.WorkerReplicasMax - (totalWorkers - currentAppWorkers)
+	if available < 0 {
+		available = 0
+	}
+	if desired > available {
+		desired = available
+	}
+	return desired
+}
+
+// ReconcileWorkerApp converges worker mode to the queue-derived resident count
+// for the newest live deployment in each scope. With no queue-depth policy the
+// target remains one, preserving the original worker singleton behavior. It
+// also drains worker rows after a mode switch, failed activation, or supersede.
+// The same app-level mutex used by service allocation serializes mode switches
+// without nesting appMu around admission or graceful stop calls.
 func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
+	e.reconcileWorkerApp(ctx, appID, nil)
+}
+
+// ReconcileWorkerPool applies a queue trigger's desired worker count. It is a
+// narrow optional engine surface used by pkg/sched/targets: unlike request
+// wakes, worker admissions go through the explicit deployment path so the
+// request wake gate cannot reject a legitimate queue-driven scale-out.
+func (e *Engine) ReconcileWorkerPool(ctx context.Context, appID string, desired int, trigger string) error {
+	if trigger == "" {
+		trigger = TriggerWorkerPool
+	}
+	e.reconcileWorkerAppWithTrigger(ctx, appID, &desired, trigger)
+	return nil
+}
+
+func (e *Engine) reconcileWorkerApp(ctx context.Context, appID string, desiredOverride *int) {
+	e.reconcileWorkerAppWithTrigger(ctx, appID, desiredOverride, TriggerWorkerSingleton)
+}
+
+func (e *Engine) reconcileWorkerAppWithTrigger(ctx context.Context, appID string, desiredOverride *int, trigger string) {
 	ctx = detachedServiceContext(ctx)
 	reconcileMu := e.serviceAppMutex(appID)
 	reconcileMu.Lock()
@@ -929,6 +1082,10 @@ func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
 	if app.Status == state.AppActive && instanceModeForApp(app) == string(state.InstanceModeWorker) {
 		targets = workerDeploymentTargets(deployments)
 	}
+	desired := 0
+	if len(targets) > 0 {
+		desired = e.workerReplicaTarget(ctx, app, desiredOverride)
+	}
 
 	instances, err := e.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
@@ -952,37 +1109,38 @@ func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
 		return workers[i].StartedAt.Before(workers[j].StartedAt)
 	})
 
-	kept := make(map[string]string, len(targets))
+	kept := make(map[string]int, len(targets))
 	for _, ins := range workers {
 		_, wanted := targets[ins.DeploymentID]
-		_, alreadyKept := kept[ins.DeploymentID]
-		if wanted && !alreadyKept && state.State(ins.State).CountsForConcurrency() {
-			kept[ins.DeploymentID] = ins.ID
+		if wanted && kept[ins.DeploymentID] < desired && state.State(ins.State).CountsForConcurrency() {
+			kept[ins.DeploymentID]++
 			continue
 		}
 		if err := e.stopManagedWorker(ctx, ins.ID); err != nil {
 			e.log.Warn("sched: drain surplus worker", "app", appID, "deployment", ins.DeploymentID, "instance", ins.ID, "err", err)
 		}
 	}
+	desired = e.capWorkerReplicasToAccount(ctx, app, workers, desired)
 
 	for deploymentID := range targets {
-		if kept[deploymentID] != "" {
-			continue
-		}
-		dep, depErr := e.store.DeploymentByID(ctx, deploymentID)
-		if depErr != nil || dep.Status != state.DeployLive {
-			if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
-				e.log.Warn("sched: reload worker target", "app", appID, "deployment", deploymentID, "err", depErr)
+		for kept[deploymentID] < desired {
+			dep, depErr := e.store.DeploymentByID(ctx, deploymentID)
+			if depErr != nil || dep.Status != state.DeployLive {
+				if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
+					e.log.Warn("sched: reload worker target", "app", appID, "deployment", deploymentID, "err", depErr)
+				}
+				break
 			}
-			continue
-		}
-		result, admitErr := e.AdmitInstanceForDeployment(ctx, appID, deploymentID, dep.Scope, TriggerWorkerSingleton)
-		if admitErr != nil {
-			e.log.Warn("sched: admit worker singleton", "app", appID, "deployment", deploymentID, "err", admitErr)
-			continue
-		}
-		if result.AtCapacity {
-			e.log.Debug("sched: worker singleton admission at capacity", "app", appID, "deployment", deploymentID)
+			result, admitErr := e.AdmitInstanceForDeployment(ctx, appID, deploymentID, dep.Scope, trigger)
+			if admitErr != nil {
+				e.log.Warn("sched: admit worker replica", "app", appID, "deployment", deploymentID, "err", admitErr)
+				break
+			}
+			if result.AtCapacity {
+				e.log.Debug("sched: worker replica admission at capacity", "app", appID, "deployment", deploymentID)
+				break
+			}
+			kept[deploymentID]++
 		}
 	}
 }

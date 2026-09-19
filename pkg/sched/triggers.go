@@ -2,8 +2,9 @@
 //
 // This file is the single source of truth for the closed `trigger`
 // enum that stamps every `wake.boot_started` and `wake.boot_completed`
-// event row with the *reason* the instance started. The seven callers
-// of `Engine.admitAndDispatch` (gateway, floor per-app, floor
+// event row with the *reason* the instance started. The worker-pool and
+// lifecycle callers share this vocabulary with the existing wake producers.
+// Every admission path of `Engine.admitAndDispatch` (gateway, floor per-app, floor
 // per-deployment, scaleup, targets, cron schedule tick, cron fire-now,
 // legacy meterd) each pass one of the constants below. The dashboard,
 // CLI, and `apid` wake-timeline endpoint all render the value as-is.
@@ -62,6 +63,11 @@ const (
 	// TriggerWorkerSingleton — initial or replacement admission for the one
 	// long-lived worker assigned to a live deployment scope.
 	TriggerWorkerSingleton = "worker.singleton"
+
+	// TriggerWorkerPool — queue-depth reconciliation for a worker fleet. It
+	// uses the explicit deployment admission path and is distinct from the
+	// singleton lifecycle repair trigger for wake-timeline observability.
+	TriggerWorkerPool = "worker.pool"
 
 	// TriggerPrewarm — a durable scheduled/predicted demand-window restore.
 	// This distinguishes intentional ahead-of-demand wakes from reactive
