@@ -333,20 +333,26 @@ type privateNetworkAttachmentResponse struct {
 }
 
 type privateNetworkRequest struct {
-	Name   string `json:"name"`
-	Region string `json:"region"`
-	CIDR   string `json:"cidr"`
+	Name         string   `json:"name"`
+	Region       string   `json:"region"`
+	CIDR         string   `json:"cidr"`
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+}
+
+type privateNetworkPolicyRequest struct {
+	AllowedCIDRs []string `json:"allowed_cidrs"`
 }
 
 type privateNetworkResponse struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Region       string  `json:"region"`
-	CIDR         string  `json:"cidr"`
-	Status       string  `json:"status"`
-	StatusDetail string  `json:"status_detail,omitempty"`
-	CreatedAt    *string `json:"created_at,omitempty"`
-	UpdatedAt    *string `json:"updated_at,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Region       string   `json:"region"`
+	CIDR         string   `json:"cidr"`
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	Status       string   `json:"status"`
+	StatusDetail string   `json:"status_detail,omitempty"`
+	CreatedAt    *string  `json:"created_at,omitempty"`
+	UpdatedAt    *string  `json:"updated_at,omitempty"`
 }
 
 func newClient(rawBaseURL, token string) (*client, error) {
@@ -734,4 +740,11 @@ func (c *client) getPrivateNetwork(ctx context.Context, networkID string) (priva
 func (c *client) deletePrivateNetwork(ctx context.Context, networkID string) error {
 	path := "/v1/networks/" + escapePath(networkID)
 	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func (c *client) updatePrivateNetworkPolicy(ctx context.Context, networkID string, req privateNetworkPolicyRequest) (privateNetworkResponse, error) {
+	var out privateNetworkResponse
+	path := "/v1/networks/" + escapePath(networkID) + "/policy"
+	err := c.request(ctx, http.MethodPut, path, req, &out, true)
+	return out, err
 }

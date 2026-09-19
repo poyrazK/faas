@@ -23,6 +23,7 @@ type privateNetworkModel struct {
 	Name         types.String `tfsdk:"name"`
 	Region       types.String `tfsdk:"region"`
 	CIDR         types.String `tfsdk:"cidr"`
+	AllowedCIDRs types.Set    `tfsdk:"allowed_cidrs"`
 	Status       types.String `tfsdk:"status"`
 	StatusDetail types.String `tfsdk:"status_detail"`
 	CreatedAt    types.String `tfsdk:"created_at"`
@@ -68,6 +69,13 @@ func (r *privateNetworkResource) Schema(_ context.Context, _ resource.SchemaRequ
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"allowed_cidrs": schema.SetAttribute{
+				Optional:            true,
+				Computed:            true,
+				ElementType:         types.StringType,
+				Description:         "Optional private IPv4 policy ranges admitted symmetrically for ingress and egress. Empty preserves allow-all behavior.",
+				MarkdownDescription: "Optional private IPv4 policy ranges admitted symmetrically for ingress and egress. Empty preserves allow-all behavior.",
 			},
 			"status": schema.StringAttribute{
 				Computed:            true,
@@ -125,11 +133,12 @@ func (r *privateNetworkResource) Create(ctx context.Context, req resource.Create
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.createPrivateNetwork(ctx, privateNetworkRequest{
-		Name:   plan.Name.ValueString(),
-		Region: plan.Region.ValueString(),
-		CIDR:   plan.CIDR.ValueString(),
-	})
+	request, diags := privateNetworkRequestFromModel(ctx, plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	out, err := r.client.createPrivateNetwork(ctx, request)
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not create Gregale private network", err)
 		return
@@ -159,11 +168,27 @@ func (r *privateNetworkResource) Read(ctx context.Context, req resource.ReadRequ
 	resp.Diagnostics.Append(setPrivateNetworkModel(ctx, &resp.State, out, state)...)
 }
 
-func (r *privateNetworkResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Private network updates require replacement",
-		"The network name, region, and CIDR are immutable; Terraform should plan a replacement instead.",
-	)
+func (r *privateNetworkResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	if r.client == nil {
+		resp.Diagnostics.AddError("Unconfigured Gregale provider", "Configure the provider before updating a private network.")
+		return
+	}
+	var plan privateNetworkModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	allowedCIDRs, diags := setStringsFromModel(ctx, plan.AllowedCIDRs)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	out, err := r.client.updatePrivateNetworkPolicy(ctx, plan.ID.ValueString(), privateNetworkPolicyRequest{AllowedCIDRs: allowedCIDRs})
+	if err != nil {
+		appendClientError(&resp.Diagnostics, "Could not update Gregale private network policy", err)
+		return
+	}
+	resp.Diagnostics.Append(setPrivateNetworkModel(ctx, &resp.State, out, plan)...)
 }
 
 func (r *privateNetworkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -182,15 +207,39 @@ func (r *privateNetworkResource) Delete(ctx context.Context, req resource.Delete
 }
 
 func setPrivateNetworkModel(ctx context.Context, state *tfsdk.State, out privateNetworkResponse, fallback privateNetworkModel) diag.Diagnostics {
+	allowedCIDRs, diags := types.SetValueFrom(ctx, types.StringType, out.AllowedCIDRs)
+	if diags.HasError() {
+		return diags
+	}
 	model := privateNetworkModel{
 		ID:           remoteString(out.ID, fallback.ID),
 		Name:         remoteString(out.Name, fallback.Name),
 		Region:       remoteString(out.Region, fallback.Region),
 		CIDR:         remoteString(out.CIDR, fallback.CIDR),
+		AllowedCIDRs: allowedCIDRs,
 		Status:       types.StringValue(out.Status),
 		StatusDetail: types.StringValue(out.StatusDetail),
 		CreatedAt:    stringPointerValue(out.CreatedAt),
 		UpdatedAt:    stringPointerValue(out.UpdatedAt),
 	}
 	return state.Set(ctx, &model)
+}
+
+func privateNetworkRequestFromModel(ctx context.Context, model privateNetworkModel) (privateNetworkRequest, diag.Diagnostics) {
+	allowedCIDRs, diags := setStringsFromModel(ctx, model.AllowedCIDRs)
+	return privateNetworkRequest{
+		Name:         model.Name.ValueString(),
+		Region:       model.Region.ValueString(),
+		CIDR:         model.CIDR.ValueString(),
+		AllowedCIDRs: allowedCIDRs,
+	}, diags
+}
+
+func setStringsFromModel(ctx context.Context, value types.Set) ([]string, diag.Diagnostics) {
+	values := make([]string, 0)
+	var diags diag.Diagnostics
+	if !value.IsNull() && !value.IsUnknown() {
+		diags.Append(value.ElementsAs(ctx, &values, false)...)
+	}
+	return values, diags
 }

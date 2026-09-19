@@ -732,16 +732,28 @@ func TestClientPrivateNetworkLifecycleUsesPublicContract(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatalf("decode private network create request: %v", err)
 			}
-			if request.Name != "production" || request.Region != "fra1" || request.CIDR != "10.20.0.0/16" {
+			if request.Name != "production" || request.Region != "fra1" || request.CIDR != "10.20.0.0/16" || len(request.AllowedCIDRs) != 1 || request.AllowedCIDRs[0] != "10.20.0.0/24" {
 				t.Fatalf("private network create request = %+v", request)
 			}
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","status":"ready","status_detail":"network is ready","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","allowed_cidrs":["10.20.0.0/24"],"status":"ready","status_detail":"network is ready","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/networks/prod-vpc":
 			if r.Header.Get("Idempotency-Key") != "" {
 				t.Fatal("private network lookup included an idempotency key")
 			}
-			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","status":"ready","status_detail":"network is ready","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","allowed_cidrs":["10.20.0.0/24"],"status":"ready","status_detail":"network is ready","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/networks/prod-vpc/policy":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("private network policy update did not include an idempotency key")
+			}
+			var request privateNetworkPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode private network policy request: %v", err)
+			}
+			if len(request.AllowedCIDRs) != 1 || request.AllowedCIDRs[0] != "10.20.0.0/25" {
+				t.Fatalf("private network policy request = %+v", request)
+			}
+			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","allowed_cidrs":["10.20.0.0/25"],"status":"ready","status_detail":"policy updated","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:02:00Z"}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/networks/prod-vpc":
 			if r.Header.Get("Idempotency-Key") != "" {
 				t.Fatal("private network delete request included an idempotency key")
@@ -757,7 +769,7 @@ func TestClientPrivateNetworkLifecycleUsesPublicContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}
-	created, err := client.createPrivateNetwork(context.Background(), privateNetworkRequest{Name: "production", Region: "fra1", CIDR: "10.20.0.0/16"})
+	created, err := client.createPrivateNetwork(context.Background(), privateNetworkRequest{Name: "production", Region: "fra1", CIDR: "10.20.0.0/16", AllowedCIDRs: []string{"10.20.0.0/24"}})
 	if err != nil {
 		t.Fatalf("createPrivateNetwork: %v", err)
 	}
@@ -769,8 +781,16 @@ func TestClientPrivateNetworkLifecycleUsesPublicContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getPrivateNetwork: %v", err)
 	}
-	if read.CIDR != "10.20.0.0/16" || read.Region != "fra1" {
+	if read.CIDR != "10.20.0.0/16" || read.Region != "fra1" || len(read.AllowedCIDRs) != 1 || read.AllowedCIDRs[0] != "10.20.0.0/24" {
 		t.Fatalf("read private network = %+v", read)
+	}
+
+	updated, err := client.updatePrivateNetworkPolicy(context.Background(), "prod-vpc", privateNetworkPolicyRequest{AllowedCIDRs: []string{"10.20.0.0/25"}})
+	if err != nil {
+		t.Fatalf("updatePrivateNetworkPolicy: %v", err)
+	}
+	if len(updated.AllowedCIDRs) != 1 || updated.AllowedCIDRs[0] != "10.20.0.0/25" || updated.StatusDetail != "policy updated" {
+		t.Fatalf("updated private network = %+v", updated)
 	}
 
 	if err := client.deletePrivateNetwork(context.Background(), "prod-vpc"); err != nil {

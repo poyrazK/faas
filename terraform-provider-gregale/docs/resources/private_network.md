@@ -10,7 +10,9 @@ description: |-
 Creates a Gregale-owned provider-neutral private network that apps can attach
 to for private ingress and egress. The CIDR must be an RFC1918 IPv4 range
 between `/16` and `/28`; the region is a Gregale placement label, not a
-provider-specific region identifier.
+provider-specific region identifier. An optional `allowed_cidrs` policy narrows
+traffic to CIDRs contained by the network; omitting it preserves allow-all
+behavior.
 
 Network name, region, and CIDR are immutable and changing any of them creates
 a replacement. A network cannot be deleted while an app remains attached.
@@ -19,9 +21,10 @@ a replacement. A network cannot be deleted while an app remains attached.
 
 ```terraform
 resource "gregale_private_network" "prod" {
-  name   = "production"
-  region = "fra1"
-  cidr   = "10.20.0.0/16"
+  name          = "production"
+  region        = "fra1"
+  cidr          = "10.20.0.0/16"
+  allowed_cidrs = ["10.20.0.0/24"]
 }
 ```
 
@@ -32,6 +35,10 @@ resource "gregale_private_network" "prod" {
 - `name` (String) Stable private network name. Changing it forces replacement.
 - `region` (String) Gregale placement region. Changing it forces replacement.
 - `cidr` (String) RFC1918 IPv4 network range from `/16` through `/28`. Changing it forces replacement.
+
+### Optional
+
+- `allowed_cidrs` (Set of String) Private IPv4 policy ranges admitted symmetrically for ingress and egress. Each range must be contained by `cidr`; changing this updates the policy in place. Empty preserves allow-all behavior.
 
 ### Read-only
 

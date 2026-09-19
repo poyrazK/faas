@@ -168,9 +168,10 @@ for traffic.
 
 ```hcl
 resource "gregale_private_network" "prod" {
-  name   = "production"
-  region = "fra1"
-  cidr   = "10.20.0.0/16"
+  name          = "production"
+  region        = "fra1"
+  cidr          = "10.20.0.0/16"
+  allowed_cidrs = ["10.20.0.0/24"]
 }
 
 resource "gregale_private_network_attachment" "api" {
@@ -184,6 +185,10 @@ output "private_address" {
   value = gregale_private_network_attachment.api.address
 }
 ```
+
+`allowed_cidrs` is optional. When set, it narrows private traffic to the
+listed IPv4 ranges, which must be contained by the network CIDR; changing the
+policy updates the network in place. Omit it to preserve allow-all behavior.
 
 ## Alert rule
 
