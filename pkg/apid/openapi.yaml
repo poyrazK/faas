@@ -4941,6 +4941,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/dependencies:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugDependencyLatency
+      summary: Historical dependency latency and regressions.
+      description: |
+        Returns bounded dependency percentiles and error rates derived from
+        retained, redacted span summaries. The result compares the newer and
+        older halves of the selected window to flag a dependency regression.
+        Raw span attributes, destinations, request bodies, and credentials
+        are never returned. Span evidence is sampled and the response marks
+        row/cardinality truncation explicitly. Plan-gated by
+        `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Optional dependency-history lookback; defaults to the recent 24-hour window and is bounded by plan retention."
+      responses:
+        '200':
+          description: Historical dependency latency aggregates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugDependencyLatencyResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/running:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -31412,6 +31446,49 @@ components:
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
         dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
+
+    DebugDependencyLatencyItem:
+      type: object
+      description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
+      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
+      properties:
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
+        name: { type: string, maxLength: 256 }
+        calls: { type: integer, format: int64, minimum: 1 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        p50_ms: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        p99_ms: { type: integer, format: int64, minimum: 0 }
+        baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_p95_ms: { type: integer, format: int64, minimum: 0 }
+        p95_delta_ms: { type: integer, format: int64 }
+        regression_factor: { type: number, minimum: 0 }
+        regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and 25ms above baseline." }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_rate_delta_pct: { type: number }
+
+    DebugDependencyLatencyResponse:
+      type: object
+      description: "Historical dependency latency for one app. Raw span attributes and destinations are never exposed."
+      required: [app_id, since, window_start, window_end, retention_clamped, complete, truncated, telemetry_rows, represented_requests, span_samples, dependencies]
+      properties:
+        app_id: { type: string, format: uuid }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean }
+        complete: { type: boolean, description: "True only when the row, span, and dependency-cardinality caps were not reached." }
+        truncated: { type: boolean }
+        telemetry_rows: { type: integer, format: int64, minimum: 0 }
+        represented_requests: { type: integer, format: int64, minimum: 0 }
+        span_samples: { type: integer, format: int64, minimum: 0 }
+        dependencies:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DebugDependencyLatencyItem' }
 
     DebugRequestDependencyLatency:
       type: object

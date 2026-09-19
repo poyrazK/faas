@@ -48,6 +48,40 @@ func TestCmdDebugCoverage_RendersObservedSignalRates(t *testing.T) {
 	}
 }
 
+func TestCmdDebugDependencies_RendersRegressionAndSendsSince(t *testing.T) {
+	var got http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = *r.Clone(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DebugDependencyLatencyResponse{
+			AppID: "app-1", Since: "24h", WindowStart: "2026-09-18T00:00:00Z", WindowEnd: "2026-09-19T00:00:00Z",
+			Complete: true, TelemetryRows: 20, RepresentedRequests: 20, SpanSamples: 20,
+			Dependencies: []api.DebugDependencyLatencyItem{{Type: "managed_binding", Kind: "managed_postgres", Name: "db.query", Calls: 20, ErrorRatePct: 5, P50MS: 100, P95MS: 300, P99MS: 300, BaselineP95MS: 100, CurrentP95MS: 300, P95DeltaMS: 200, RegressionFactor: 3, Regression: true}},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugDependencies([]string{"my-app", "--since", "24h"}); code != 0 {
+		t.Fatalf("cmdDebugDependencies() = %d, want 0", code)
+	}
+	if got.URL.Path != "/v1/apps/my-app/debug/dependencies" || got.URL.Query().Get("since") != "24h" {
+		t.Fatalf("request = %s?%s, want dependencies with since=24h", got.URL.Path, got.URL.RawQuery)
+	}
+	for _, want := range []string{"managed_postgres", "yes (3.00x)", "300ms", "result complete"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("dependency output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
 	var got http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

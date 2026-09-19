@@ -6444,6 +6444,69 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
+SELECT id, count, received_at, spans_summary
+FROM request_telemetry
+WHERE app_id = $1
+  AND account_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND spans_summary IS NOT NULL
+ORDER BY received_at DESC, id DESC
+LIMIT $5
+`
+
+type ListRequestTelemetryDependencySpansParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+	Limit        int32
+}
+
+type ListRequestTelemetryDependencySpansRow struct {
+	ID           pgtype.UUID
+	Count        int32
+	ReceivedAt   pgtype.Timestamptz
+	SpansSummary []byte
+}
+
+// Bounded read path for the historical debugger dependency view. The
+// account_id predicate is defense in depth for callers that accidentally
+// pass an app id from another tenant; the app lookup remains the primary
+// IDOR boundary. The newest rows are preferred because spans_summary is
+// sampled evidence, not a complete request trace archive.
+func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error) {
+	rows, err := db.Query(ctx, listRequestTelemetryDependencySpans,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRequestTelemetryDependencySpansRow{}
+	for rows.Next() {
+		var i ListRequestTelemetryDependencySpansRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Count,
+			&i.ReceivedAt,
+			&i.SpansSummary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessions = `-- name: ListSessions :many
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,

@@ -375,6 +375,9 @@ from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
+from .debug_dependency_latency_item import DebugDependencyLatencyItem
+from .debug_dependency_latency_item_type import DebugDependencyLatencyItemType
+from .debug_dependency_latency_response import DebugDependencyLatencyResponse
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_confidence import DebugEvidenceExplanationConfidence
 from .debug_evidence_explanation_diagnosis import DebugEvidenceExplanationDiagnosis
@@ -475,6 +478,9 @@ from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
+from .diff_app_config_patch_execution_mode import DiffAppConfigPatchExecutionMode
+from .diff_app_config_patch_restart_policy import DiffAppConfigPatchRestartPolicy
+from .diff_app_config_patch_service_replicas_type_0 import DiffAppConfigPatchServiceReplicasType0
 from .diff_break import DiffBreak
 from .diff_break_severity import DiffBreakSeverity
 from .diff_change import DiffChange
@@ -1632,6 +1638,9 @@ __all__ = (
     "DebugCompareRouteStats",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
+    "DebugDependencyLatencyItem",
+    "DebugDependencyLatencyItemType",
+    "DebugDependencyLatencyResponse",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationConfidence",
     "DebugEvidenceExplanationDiagnosis",
@@ -1732,6 +1741,9 @@ __all__ = (
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
     "DiffAppConfigPatchEvictionPriority",
+    "DiffAppConfigPatchExecutionMode",
+    "DiffAppConfigPatchRestartPolicy",
+    "DiffAppConfigPatchServiceReplicasType0",
     "DiffBreak",
     "DiffBreakSeverity",
     "DiffChange",

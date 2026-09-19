@@ -5579,6 +5579,19 @@ func (c *Client) GetAppDebugCoverage(ctx context.Context, slug, since string) (D
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugDependencyLatency returns bounded historical dependency
+// percentiles, error rates, and a split-window regression signal. The server
+// clamps since to the plan's debugger retention and never returns raw span
+// attributes or destinations.
+func (c *Client) GetAppDebugDependencyLatency(ctx context.Context, slug, since string) (DebugDependencyLatencyResponse, error) {
+	var out DebugDependencyLatencyResponse
+	path := "/v1/apps/" + slug + "/debug/dependencies"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppDebugRunning returns the observed scheduler explanations for why an
 // app remains resident. The response includes the newest causes, current
 // floor/idle configuration, and bounded history. It reports observations only

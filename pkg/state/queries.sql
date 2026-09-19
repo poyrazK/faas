@@ -1719,6 +1719,22 @@ WHERE app_id = $1
 ORDER BY received_at DESC, id DESC
 LIMIT sqlc.arg('limit')::int;
 
+-- name: ListRequestTelemetryDependencySpans :many
+-- Bounded read path for the historical debugger dependency view. The
+-- account_id predicate is defense in depth for callers that accidentally
+-- pass an app id from another tenant; the app lookup remains the primary
+-- IDOR boundary. The newest rows are preferred because spans_summary is
+-- sampled evidence, not a complete request trace archive.
+SELECT id, count, received_at, spans_summary
+FROM request_telemetry
+WHERE app_id = $1
+  AND account_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND spans_summary IS NOT NULL
+ORDER BY received_at DESC, id DESC
+LIMIT $5;
+
 -- name: RequestTelemetryCoverage :one
 -- Signal coverage for the customer debugger. Counts are weighted by the
 -- publisher's collapsed-row `count`, while the row totals make the amount

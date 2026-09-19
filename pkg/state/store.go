@@ -5986,6 +5986,12 @@ type Store interface {
 	// whether Complete can be reported.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
 
+	// ListRequestTelemetryDependencySpans backs the historical dependency
+	// latency debugger view. It returns a strictly bounded set of the newest
+	// retained rows with redacted span summaries; the handler owns percentile,
+	// cardinality, and split-window regression calculations.
+	ListRequestTelemetryDependencySpans(ctx context.Context, arg sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error)
+
 	// RequestTelemetryCoverage backs GET /v1/apps/{slug}/debug/coverage.
 	// It reports weighted observed rows and the optional debugger signals
 	// attached to them. The query intentionally has no inferred denominator

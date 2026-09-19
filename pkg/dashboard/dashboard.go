@@ -1838,6 +1838,7 @@ type DebugPageData struct {
 	ReplayPollActive    bool
 	ReplayPollExhausted bool
 	Coverage            *DebugCoverageView
+	DependencyHistory   *DebugDependencyLatencyHistoryView
 	Running             *DebugRunningView
 	RunningError        string
 }
@@ -2080,6 +2081,41 @@ type DebugDependencyLatencyView struct {
 	Errors          int
 	TotalDurationMS int64
 	MaxDurationMS   int64
+}
+
+// DebugDependencyLatencyHistoryView is the template-safe projection of the
+// bounded historical dependency endpoint. It keeps the current-vs-baseline
+// comparison visible without exposing raw span attributes or destinations.
+type DebugDependencyLatencyHistoryView struct {
+	Since               string
+	WindowStart         string
+	WindowEnd           string
+	Complete            bool
+	Truncated           bool
+	TelemetryRows       int64
+	RepresentedRequests int64
+	SpanSamples         int64
+	Dependencies        []DebugDependencyLatencyHistoryItemView
+}
+
+type DebugDependencyLatencyHistoryItemView struct {
+	Type                 string
+	Kind                 string
+	Name                 string
+	Calls                int64
+	ErrorCalls           int64
+	ErrorRatePct         float64
+	P50MS                int64
+	P95MS                int64
+	P99MS                int64
+	BaselineP95MS        int64
+	CurrentP95MS         int64
+	P95DeltaMS           int64
+	RegressionFactor     float64
+	Regression           bool
+	BaselineErrorRatePct float64
+	CurrentErrorRatePct  float64
+	ErrorRateDeltaPct    float64
 }
 
 // DebugEvidenceFindingView is the template-safe projection of one

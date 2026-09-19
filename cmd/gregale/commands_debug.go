@@ -16,6 +16,7 @@
 //	gregale debug requests inspect <slug> [<request-id-or-row-id>] [--latest] [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N]
 //	gregale debug requests replay <slug> <request-id-or-row-id> [--deployment-id UUID]
 //	gregale debug coverage <slug> [--since <dur>]
+//	gregale debug dependencies <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
 //	gregale debug bundle <slug> <request-id-or-row-id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
@@ -50,7 +51,7 @@ import (
 
 // debugCmdUsage is the canonical usage text. Mirrors the shape of
 // commands_invocations.go's PrintUsage strings.
-const debugCmdUsage = "usage: gregale debug <requests|coverage|running|regressions|compare|bundle> ..."
+const debugCmdUsage = "usage: gregale debug <requests|coverage|dependencies|running|regressions|compare|bundle> ..."
 
 const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|inspect|replay> ..."
 
@@ -67,6 +68,7 @@ func cmdDebug(args []string) int {
 	if args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		_, _ = fmt.Fprintln(os.Stderr, "  requests inspect  select a request and render the complete investigation")
+		_, _ = fmt.Fprintln(os.Stderr, "  dependencies      show historical dependency latency and regressions")
 		return 0
 	}
 	switch args[0] {
@@ -74,6 +76,8 @@ func cmdDebug(args []string) int {
 		return cmdDebugRequests(args[1:])
 	case "coverage":
 		return cmdDebugCoverage(args[1:])
+	case "dependencies":
+		return cmdDebugDependencies(args[1:])
 	case "running":
 		return cmdDebugRunning(args[1:])
 	case "regressions":
@@ -113,6 +117,34 @@ func cmdDebugCoverage(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	renderDebugCoverage(osStdout, resp)
+	return 0
+}
+
+// cmdDebugDependencies renders the bounded historical dependency view. The
+// API uses the same plan retention and debugger scope as request evidence.
+func cmdDebugDependencies(args []string) int {
+	fs := newFlagSet("debug dependencies", flag.ContinueOnError)
+	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true})
+	if err := fs.Parse(flagArgs); err != nil {
+		return 1
+	}
+	if len(positional) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale debug dependencies [--since D] <slug>", debugCmdDocsTopic)
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.GetAppDebugDependencyLatency(context.Background(), positional[0], *since)
+	if err != nil {
+		return printErr("Could not get debug dependency latency", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	renderDebugDependencies(osStdout, resp)
 	return 0
 }
 
@@ -773,6 +805,31 @@ func renderDebugCoverage(w io.Writer, resp api.DebugCoverageResponse) {
 		_, _ = fmt.Fprintln(w, "observed range: no telemetry in this window")
 	} else {
 		_, _ = fmt.Fprintf(w, "observed range: %s → %s\n", resp.OldestTelemetryAt, resp.LatestTelemetryAt)
+	}
+}
+
+func renderDebugDependencies(w io.Writer, resp api.DebugDependencyLatencyResponse) {
+	_, _ = fmt.Fprintf(w, "Dependency latency · window %s → %s\n", resp.WindowStart, resp.WindowEnd)
+	_, _ = fmt.Fprintf(w, "app %s · since %s · telemetry rows: %d · represented requests: %d · span samples: %d\n", resp.AppID, resp.Since, resp.TelemetryRows, resp.RepresentedRequests, resp.SpanSamples)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "REGRESSION\tTYPE\tKIND\tDEPENDENCY\tCALLS\tERROR_RATE\tP50\tP95\tP99\tBASE_P95\tCURRENT_P95\tDELTA")
+	for _, dependency := range resp.Dependencies {
+		regression := ""
+		if dependency.Regression {
+			regression = fmt.Sprintf("yes (%.2fx)", dependency.RegressionFactor)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.2f%%\t%dms\t%dms\t%dms\t%dms\t%dms\t%dms\n",
+			regression, dependency.Type, dependency.Kind, dependency.Name, dependency.Calls, dependency.ErrorRatePct,
+			dependency.P50MS, dependency.P95MS, dependency.P99MS, dependency.BaselineP95MS, dependency.CurrentP95MS, dependency.P95DeltaMS)
+	}
+	_ = tw.Flush()
+	if resp.RetentionClamped {
+		_, _ = fmt.Fprintln(w, "window clamped to the plan's telemetry retention")
+	}
+	if resp.Truncated || !resp.Complete {
+		_, _ = fmt.Fprintln(w, "result truncated by the debugger row/cardinality cap")
+	} else {
+		_, _ = fmt.Fprintln(w, "result complete for the retained span evidence")
 	}
 }
 

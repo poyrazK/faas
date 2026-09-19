@@ -21,6 +21,7 @@ import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerReques
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
 import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
+import type { DebugDependencyLatencyResponse } from '../models/DebugDependencyLatencyResponse.js';
 import type { DebugRegressionActionRequest } from '../models/DebugRegressionActionRequest.js';
 import type { DebugRegressionActionResponse } from '../models/DebugRegressionActionResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
@@ -1436,6 +1437,53 @@ export class AppsService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/coverage',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Historical dependency latency and regressions.
+   * Returns bounded dependency percentiles and error rates derived from
+   * retained, redacted span summaries. The result compares the newer and
+   * older halves of the selected window to flag a dependency regression.
+   * Raw span attributes, destinations, request bodies, and credentials
+   * are never returned. Span evidence is sampled and the response marks
+   * row/cardinality truncation explicitly. Plan-gated by
+   * `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+   *
+   * @returns DebugDependencyLatencyResponse Historical dependency latency aggregates.
+   * @throws ApiError
+   */
+  public static getAppDebugDependencyLatency({
+    slug,
+    since,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional dependency-history lookback; defaults to the recent 24-hour window and is bounded by plan retention.
+     */
+    since?: string | null,
+  }): CancelablePromise<DebugDependencyLatencyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/dependencies',
       path: {
         'slug': slug,
       },

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"sort"
@@ -222,6 +223,277 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 		OldestTelemetryAt:   debugCoverageTimestamp(row.OldestTelemetryAt),
 		LatestTelemetryAt:   debugCoverageTimestamp(row.LatestTelemetryAt),
 	})
+}
+
+const (
+	debugDependencyHistoryMaxRows    = 2000
+	debugDependencyHistoryMaxGroups  = 256
+	debugDependencyHistoryMaxOutput  = 50
+	debugDependencyHistoryMinCalls   = int64(5)
+	debugDependencyRegressionFactor  = 1.5
+	debugDependencyRegressionDeltaMS = int64(25)
+)
+
+// debugDependencyLatencyHandler — GET /v1/apps/{slug}/debug/dependencies.
+//
+// The database read is deliberately capped before JSON parsing. Span
+// summaries are already redacted at write time; this handler applies the same
+// allowlist used by the per-request evidence endpoint, then computes bounded
+// weighted percentiles. The two halves of the selected window provide a
+// small, explainable regression signal without persisting another time series.
+func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	since, err := parseDebugSinceStrict(sinceRaw, 24*time.Hour)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	retentionClamped := false
+	if retention > 0 && since > retention {
+		since = retention
+		retentionClamped = true
+	}
+	now := time.Now().UTC()
+	windowStart := now.Add(-since)
+	rows, err := s.store.ListRequestTelemetryDependencySpans(r.Context(), sqlc.ListRequestTelemetryDependencySpansParams{
+		AppID:        stringToPgUUID(app.ID),
+		AccountID:    stringToPgUUID(acct.ID),
+		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+		Limit:        debugDependencyHistoryMaxRows + 1,
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug dependency latency"))
+		return
+	}
+	truncated := len(rows) > debugDependencyHistoryMaxRows
+	if truncated {
+		rows = rows[:debugDependencyHistoryMaxRows]
+	}
+	dependencies, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(rows, windowStart, now)
+	truncated = truncated || aggregationTruncated
+	writeJSON(w, http.StatusOK, api.DebugDependencyLatencyResponse{
+		AppID:               app.ID,
+		Since:               echoDebugSince(sinceRaw, since),
+		WindowStart:         windowStart.Format(time.RFC3339Nano),
+		WindowEnd:           now.Format(time.RFC3339Nano),
+		RetentionClamped:    retentionClamped,
+		Complete:            !truncated,
+		Truncated:           truncated,
+		TelemetryRows:       int64(len(rows)),
+		RepresentedRequests: representedRequests,
+		SpanSamples:         spanSamples,
+		Dependencies:        dependencies,
+	})
+}
+
+type debugDependencyHistorySample struct {
+	durationNanos uint64
+	weight        int64
+	isError       bool
+}
+
+type debugDependencyHistoryAggregate struct {
+	dependencyType string
+	dependencyKind string
+	name           string
+	all            []debugDependencyHistorySample
+	baseline       []debugDependencyHistorySample
+	current        []debugDependencyHistorySample
+	calls          int64
+	errors         int64
+	baselineCalls  int64
+	currentCalls   int64
+	baselineErrors int64
+	currentErrors  int64
+}
+
+func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugDependencyLatencyItem, bool, int64, int64) {
+	cutover := windowStart.Add(windowEnd.Sub(windowStart) / 2)
+	aggregates := make(map[string]*debugDependencyHistoryAggregate)
+	truncated := false
+	var representedRequests int64
+	var spanSamples int64
+	for _, row := range rows {
+		weight := int64(row.Count)
+		if weight < 1 {
+			weight = 1
+		}
+		representedRequests += weight
+		spans, spanTruncated := parseDebugEvidenceSpans(row.SpansSummary)
+		truncated = truncated || spanTruncated
+		spanSamples += int64(len(spans))
+		isCurrent := row.ReceivedAt.Valid && !row.ReceivedAt.Time.Before(cutover)
+		for _, span := range spans {
+			dependencyType := span.DependencyType
+			if dependencyType == "" {
+				dependencyType = "application"
+			}
+			name := span.Name
+			if name == "" {
+				name = "<unnamed>"
+			}
+			key := dependencyType + "\x00" + span.DependencyKind + "\x00" + name
+			aggregate := aggregates[key]
+			if aggregate == nil {
+				if len(aggregates) >= debugDependencyHistoryMaxGroups {
+					truncated = true
+					continue
+				}
+				aggregate = &debugDependencyHistoryAggregate{
+					dependencyType: dependencyType,
+					dependencyKind: span.DependencyKind,
+					name:           name,
+				}
+				aggregates[key] = aggregate
+			}
+			sample := debugDependencyHistorySample{
+				durationNanos: minDebugDependencyDuration(span.DurationNanos),
+				weight:        weight,
+				isError:       strings.EqualFold(span.Status, "error"),
+			}
+			aggregate.all = append(aggregate.all, sample)
+			aggregate.calls += weight
+			if sample.isError {
+				aggregate.errors += weight
+			}
+			if isCurrent {
+				aggregate.current = append(aggregate.current, sample)
+				aggregate.currentCalls += weight
+				if sample.isError {
+					aggregate.currentErrors += weight
+				}
+			} else {
+				aggregate.baseline = append(aggregate.baseline, sample)
+				aggregate.baselineCalls += weight
+				if sample.isError {
+					aggregate.baselineErrors += weight
+				}
+			}
+		}
+	}
+
+	ordered := make([]*debugDependencyHistoryAggregate, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		ordered = append(ordered, aggregate)
+	}
+	out := make([]api.DebugDependencyLatencyItem, 0, len(ordered))
+	for _, aggregate := range ordered {
+		baselineP95 := debugWeightedDependencyPercentile(aggregate.baseline, 0.95)
+		currentP95 := debugWeightedDependencyPercentile(aggregate.current, 0.95)
+		p95Delta := currentP95 - baselineP95
+		factor := float64(0)
+		if baselineP95 > 0 {
+			factor = roundDebugDependencyFactor(float64(currentP95) / float64(baselineP95))
+		}
+		regression := aggregate.baselineCalls >= debugDependencyHistoryMinCalls &&
+			aggregate.currentCalls >= debugDependencyHistoryMinCalls &&
+			baselineP95 > 0 && currentP95 > 0 &&
+			factor >= debugDependencyRegressionFactor &&
+			p95Delta >= debugDependencyRegressionDeltaMS
+		baselineErrorRate := debugDependencyErrorRate(aggregate.baselineErrors, aggregate.baselineCalls)
+		currentErrorRate := debugDependencyErrorRate(aggregate.currentErrors, aggregate.currentCalls)
+		out = append(out, api.DebugDependencyLatencyItem{
+			Type:                 aggregate.dependencyType,
+			Kind:                 aggregate.dependencyKind,
+			Name:                 aggregate.name,
+			Calls:                aggregate.calls,
+			ErrorCalls:           aggregate.errors,
+			ErrorRatePct:         debugDependencyErrorRate(aggregate.errors, aggregate.calls),
+			P50MS:                debugWeightedDependencyPercentile(aggregate.all, 0.50),
+			P95MS:                debugWeightedDependencyPercentile(aggregate.all, 0.95),
+			P99MS:                debugWeightedDependencyPercentile(aggregate.all, 0.99),
+			BaselineP95MS:        baselineP95,
+			CurrentP95MS:         currentP95,
+			P95DeltaMS:           p95Delta,
+			RegressionFactor:     factor,
+			Regression:           regression,
+			BaselineErrorRatePct: baselineErrorRate,
+			CurrentErrorRatePct:  currentErrorRate,
+			ErrorRateDeltaPct:    currentErrorRate - baselineErrorRate,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Regression != out[j].Regression {
+			return out[i].Regression
+		}
+		if out[i].CurrentP95MS != out[j].CurrentP95MS {
+			return out[i].CurrentP95MS > out[j].CurrentP95MS
+		}
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > debugDependencyHistoryMaxOutput {
+		out = out[:debugDependencyHistoryMaxOutput]
+		truncated = true
+	}
+	return out, truncated, representedRequests, spanSamples
+}
+
+func minDebugDependencyDuration(duration uint64) uint64 {
+	const maxDuration = uint64(24 * time.Hour)
+	if duration > maxDuration {
+		return maxDuration
+	}
+	return duration
+}
+
+func debugWeightedDependencyPercentile(samples []debugDependencyHistorySample, quantile float64) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sort.SliceStable(samples, func(i, j int) bool {
+		return samples[i].durationNanos < samples[j].durationNanos
+	})
+	var total int64
+	for _, sample := range samples {
+		total += sample.weight
+	}
+	target := int64(float64(total) * quantile)
+	if float64(target) < float64(total)*quantile {
+		target++
+	}
+	if target < 1 {
+		target = 1
+	}
+	var cumulative int64
+	for _, sample := range samples {
+		cumulative += sample.weight
+		if cumulative >= target {
+			return int64(sample.durationNanos / uint64(time.Millisecond))
+		}
+	}
+	return int64(samples[len(samples)-1].durationNanos / uint64(time.Millisecond))
+}
+
+func debugDependencyErrorRate(errors, calls int64) float64 {
+	if calls <= 0 {
+		return 0
+	}
+	return math.Round((float64(errors)*100/float64(calls))*100) / 100
+}
+
+func roundDebugDependencyFactor(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 func debugCoverageSignal(rows, requests, total int64) api.DebugCoverageSignal {

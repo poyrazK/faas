@@ -688,6 +688,12 @@ type Querier interface {
 	// handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
 	// the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 	ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg ListRequestTelemetryByAppParams) ([]ListRequestTelemetryByAppRow, error)
+	// Bounded read path for the historical debugger dependency view. The
+	// account_id predicate is defense in depth for callers that accidentally
+	// pass an app id from another tenant; the app lookup remains the primary
+	// IDOR boundary. The newest rows are preferred because spans_summary is
+	// sampled evidence, not a complete request trace archive.
+	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)

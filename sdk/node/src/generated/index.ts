@@ -195,6 +195,8 @@ export type { DebugCompareResponse } from './models/DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './models/DebugCompareRouteStats.js';
 export type { DebugCoverageResponse } from './models/DebugCoverageResponse.js';
 export type { DebugCoverageSignal } from './models/DebugCoverageSignal.js';
+export type { DebugDependencyLatencyItem } from './models/DebugDependencyLatencyItem.js';
+export type { DebugDependencyLatencyResponse } from './models/DebugDependencyLatencyResponse.js';
 export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './models/DebugEvidenceFinding.js';
 export type { DebugEvidenceRecommendation } from './models/DebugEvidenceRecommendation.js';

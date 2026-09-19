@@ -26245,6 +26245,13 @@ func (s *PgStore) ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRe
 	return s.appErrorsQueries().ListRequestTelemetryByApp(ctx, s.pool, arg)
 }
 
+// ListRequestTelemetryDependencySpans backs the bounded historical debugger
+// dependency view. The handler performs all redaction and aggregation after
+// this tenant-scoped query returns.
+func (s *PgStore) ListRequestTelemetryDependencySpans(ctx context.Context, arg sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
+	return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, s.pool, arg)
+}
+
 // RequestTelemetryCoverage backs the debugger coverage endpoint. The
 // aggregate is weighted by collapsed-row count and remains bounded by the
 // caller's plan retention window.

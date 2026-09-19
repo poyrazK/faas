@@ -39,6 +39,12 @@ func (m *MemStore) ListRequestTelemetryByApp(_ context.Context, _ sqlc.ListReque
 	return nil, errMemStoreRequestTelemetry
 }
 
+// ListRequestTelemetryDependencySpans is Postgres-only because
+// request_telemetry is a partitioned SQL table.
+func (m *MemStore) ListRequestTelemetryDependencySpans(_ context.Context, _ sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // RequestTelemetryCoverage (customer debugger coverage) — MemStore stub.
 // Postgres-only because request_telemetry is a partitioned SQL table.
 func (m *MemStore) RequestTelemetryCoverage(_ context.Context, _ sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error) {

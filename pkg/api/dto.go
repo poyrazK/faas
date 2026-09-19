@@ -8213,6 +8213,48 @@ type DebugRequestDependencyLatency struct {
 	MaxDurationMS   int64  `json:"max_duration_ms"`
 }
 
+// DebugDependencyLatencyItem is one bounded historical dependency aggregate.
+// The full-window percentiles are accompanied by a split-window comparison so
+// a customer can distinguish a consistently slow dependency from a recent
+// regression without exporting raw spans.
+type DebugDependencyLatencyItem struct {
+	Type                 string  `json:"type"`
+	Kind                 string  `json:"kind,omitempty"`
+	Name                 string  `json:"name"`
+	Calls                int64   `json:"calls"`
+	ErrorCalls           int64   `json:"error_calls"`
+	ErrorRatePct         float64 `json:"error_rate_pct"`
+	P50MS                int64   `json:"p50_ms"`
+	P95MS                int64   `json:"p95_ms"`
+	P99MS                int64   `json:"p99_ms"`
+	BaselineP95MS        int64   `json:"baseline_p95_ms,omitempty"`
+	CurrentP95MS         int64   `json:"current_p95_ms,omitempty"`
+	P95DeltaMS           int64   `json:"p95_delta_ms,omitempty"`
+	RegressionFactor     float64 `json:"regression_factor,omitempty"`
+	Regression           bool    `json:"regression"`
+	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
+	CurrentErrorRatePct  float64 `json:"current_error_rate_pct,omitempty"`
+	ErrorRateDeltaPct    float64 `json:"error_rate_delta_pct,omitempty"`
+}
+
+// DebugDependencyLatencyResponse is the bounded historical dependency view
+// returned by GET /v1/apps/{slug}/debug/dependencies. Rows are weighted by
+// the request telemetry collapse count; span evidence remains sampled, so the
+// response exposes the represented request count and completeness explicitly.
+type DebugDependencyLatencyResponse struct {
+	AppID               string                       `json:"app_id"`
+	Since               string                       `json:"since"`
+	WindowStart         string                       `json:"window_start"`
+	WindowEnd           string                       `json:"window_end"`
+	RetentionClamped    bool                         `json:"retention_clamped"`
+	Complete            bool                         `json:"complete"`
+	Truncated           bool                         `json:"truncated"`
+	TelemetryRows       int64                        `json:"telemetry_rows"`
+	RepresentedRequests int64                        `json:"represented_requests"`
+	SpanSamples         int64                        `json:"span_samples"`
+	Dependencies        []DebugDependencyLatencyItem `json:"dependencies"`
+}
+
 // DebugEvidenceExplanation is a bounded root-cause synthesis for a request's
 // evidence. The synthesis is generated only from the already-redacted
 // debugger envelope; it never receives request bodies, headers, raw logs, or

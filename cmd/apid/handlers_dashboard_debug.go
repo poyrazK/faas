@@ -181,6 +181,36 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		data.Coverage = dashboardDebugCoverageView(coverage, data.Since, data.WindowStart, data.WindowEnd, limits.DebugTelemetryRetentionDays)
 	}
 
+	dependencyRows, dependencyErr := s.store.ListRequestTelemetryDependencySpans(ctx, sqlc.ListRequestTelemetryDependencySpansParams{
+		AppID:        stringToPgUUID(app.ID),
+		AccountID:    stringToPgUUID(acct.ID),
+		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: windowEnd, Valid: true},
+		Limit:        debugDependencyHistoryMaxRows + 1,
+	})
+	if dependencyErr != nil {
+		log.Warn("dashboard renderAppDebug: dependency latency", "account_id", acct.ID, "app_id", app.ID, "err", dependencyErr)
+	} else {
+		dependencyTruncated := len(dependencyRows) > debugDependencyHistoryMaxRows
+		if dependencyTruncated {
+			dependencyRows = dependencyRows[:debugDependencyHistoryMaxRows]
+		}
+		dependencies, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(dependencyRows, windowStart, windowEnd)
+		dependencyTruncated = dependencyTruncated || aggregationTruncated
+		data.DependencyHistory = dashboardDebugDependencyLatencyHistoryView(api.DebugDependencyLatencyResponse{
+			Since:               data.Since,
+			WindowStart:         data.WindowStart,
+			WindowEnd:           data.WindowEnd,
+			RetentionClamped:    data.WindowClamped,
+			Complete:            !dependencyTruncated,
+			Truncated:            dependencyTruncated,
+			TelemetryRows:       int64(len(dependencyRows)),
+			RepresentedRequests: representedRequests,
+			SpanSamples:         spanSamples,
+			Dependencies:        dependencies,
+		})
+	}
+
 	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
 		AppID:             stringToPgUUID(app.ID),
@@ -439,6 +469,42 @@ func dashboardDebugCoverageSignalView(rows, requests, total int64) dashboard.Deb
 		rate = float64(requests) * 100 / float64(total)
 	}
 	return dashboard.DebugCoverageSignalView{Rows: rows, Requests: requests, RatePct: rate}
+}
+
+func dashboardDebugDependencyLatencyHistoryView(response api.DebugDependencyLatencyResponse) *dashboard.DebugDependencyLatencyHistoryView {
+	view := &dashboard.DebugDependencyLatencyHistoryView{
+		Since:               response.Since,
+		WindowStart:         response.WindowStart,
+		WindowEnd:           response.WindowEnd,
+		Complete:            response.Complete,
+		Truncated:           response.Truncated,
+		TelemetryRows:       response.TelemetryRows,
+		RepresentedRequests: response.RepresentedRequests,
+		SpanSamples:         response.SpanSamples,
+		Dependencies:        make([]dashboard.DebugDependencyLatencyHistoryItemView, 0, len(response.Dependencies)),
+	}
+	for _, dependency := range response.Dependencies {
+		view.Dependencies = append(view.Dependencies, dashboard.DebugDependencyLatencyHistoryItemView{
+			Type:                 dependency.Type,
+			Kind:                 dependency.Kind,
+			Name:                 dependency.Name,
+			Calls:                dependency.Calls,
+			ErrorCalls:           dependency.ErrorCalls,
+			ErrorRatePct:         dependency.ErrorRatePct,
+			P50MS:                dependency.P50MS,
+			P95MS:                dependency.P95MS,
+			P99MS:                dependency.P99MS,
+			BaselineP95MS:        dependency.BaselineP95MS,
+			CurrentP95MS:         dependency.CurrentP95MS,
+			P95DeltaMS:           dependency.P95DeltaMS,
+			RegressionFactor:     dependency.RegressionFactor,
+			Regression:           dependency.Regression,
+			BaselineErrorRatePct: dependency.BaselineErrorRatePct,
+			CurrentErrorRatePct:  dependency.CurrentErrorRatePct,
+			ErrorRateDeltaPct:    dependency.ErrorRateDeltaPct,
+		})
+	}
+	return view
 }
 
 func dashboardDebugRunningView(response api.DebugRunningResponse, slug string) *dashboard.DebugRunningView {
