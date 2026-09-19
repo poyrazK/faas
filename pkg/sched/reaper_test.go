@@ -48,6 +48,8 @@ func TestReapIdle(t *testing.T) {
 	}
 }
 
+// spec: §4.3 — warm-pool rows are resident capacity and are reclaimed by idle
+// timeout independently of the app's serving min_instances floor.
 func TestReapIdleWarmPoolIgnoresServingFloor(t *testing.T) {
 	now := time.Now()
 	instances := []InstanceInfo{
