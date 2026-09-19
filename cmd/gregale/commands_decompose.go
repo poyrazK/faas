@@ -204,6 +204,12 @@ func runConnectedRepoScan(opts connectedRepoScanOptions) int {
 	if err := validateRepoSlug(opts.bindingRepo); err != nil {
 		return printErr("Invalid --repository", err)
 	}
+	if opts.productionBranch == "" {
+		opts.productionBranch = "main"
+	}
+	if err := validateGitHubRef(opts.productionBranch); err != nil {
+		return printErr("Invalid --production-branch", err)
+	}
 	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
 		return printErr("Invalid --environment", err)
 	}
@@ -232,6 +238,79 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		return jsonOut(writeJSON(plan))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
+}
+
+// executeConnectedRepoPreview is the read-only source-ref counterpart used by
+// `gregale deploy --dry-run/--diff --repo ...`. Source-ref deploys do not have
+// local bytes for the single-app diff engine, so the connected project scanner
+// is the authoritative preview: it fetches the requested immutable ref and
+// returns the same plan that a project apply would use, without creating an
+// app, deployment, or binding.
+func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOptions, emitJSON, strict, noTriggers bool) int {
+	if opts.tarball != "" || opts.path != "" {
+		return printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive"))
+	}
+	if err := validateRepoSlug(opts.repo); err != nil {
+		return printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err))
+	}
+	if err := validateGitHubRef(opts.ref); err != nil {
+		return printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err))
+	}
+	if !api.ValidProjectSlug(opts.projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug))
+	}
+	if opts.bindingRepo == "" {
+		opts.bindingRepo = opts.repo
+	}
+	if err := validateRepoSlug(opts.bindingRepo); err != nil {
+		return printErr("Invalid --repository", err)
+	}
+	if opts.productionBranch == "" {
+		opts.productionBranch = "main"
+	}
+	if err := validateGitHubRef(opts.productionBranch); err != nil {
+		return printErr("Invalid --production-branch", err)
+	}
+	if opts.installID < 0 {
+		return printErr("Invalid --install-id", errors.New("must be zero or a positive integer"))
+	}
+	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
+		return printErr("Invalid --environment", err)
+	}
+	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", ")))
+	}
+	client, err := authedClientWithDeployTimeout(2 * time.Minute)
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	plan, err := client.ScanProjectSourceRef(ctx, api.ProjectSourceRefScanRequest{
+		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
+		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
+		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
+		Environment: opts.environment, NoTriggers: noTriggers,
+	})
+	if err != nil {
+		return printErr("Scan failed", err)
+	}
+	if emitJSON {
+		if code := jsonOut(writeJSON(plan)); code != 0 {
+			return code
+		}
+		if strict && !plan.CanApply {
+			return 1
+		}
+		return 0
+	}
+	code := printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
+	if code != 0 {
+		return code
+	}
+	if strict && !plan.CanApply {
+		return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
+	}
+	return 0
 }
 
 // runProjectDeployPreviewWithMode is the read-only preview path for

@@ -43,6 +43,13 @@ table inet faas {
 {% for cidr in faas_control_plane_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport { {{ faas_control_plane_allowed_ports | join(', ') }} } accept comment "faas compute services from control"
 {% endfor -%}
+{% endif -%}
+{% if faas_tcpd_enabled | default(false) and faas_tcpd_allowed_cidrs | default([]) -%}
+{% for cidr in faas_tcpd_allowed_cidrs -%}
+{% if ':' in cidr %}    ip6 saddr {{ cidr }} tcp dport 40000-49999 accept comment "raw TCP app listeners"
+{% else %}    ip saddr {{ cidr }} tcp dport 40000-49999 accept comment "raw TCP app listeners"
+{% endif -%}
+{% endfor -%}
 {% endif %}  }
 
   chain forward {

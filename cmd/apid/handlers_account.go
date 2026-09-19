@@ -1044,6 +1044,10 @@ func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID 
 		return nil, err
 	}
 	out := make([]api.CustomDomainResponse, 0, len(rows))
+	type defaultLookup interface {
+		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
+	}
+	lookup, _ := st.(defaultLookup)
 	for _, d := range rows {
 		status := d.CertStatus
 		if status == "" {
@@ -1060,6 +1064,11 @@ func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID 
 			DNSLastCheckedAt: formatTimeOrEmpty(d.DNSLastCheckedAt),
 		}
 		resp.CertNotAfter = resp.CertExpiresAt
+		if lookup != nil {
+			if isDefault, lookupErr := lookup.IsDefaultCustomDomain(ctx, d.AppID, d.Domain); lookupErr == nil {
+				resp.Default = isDefault
+			}
+		}
 		out = append(out, resp)
 	}
 	return out, nil

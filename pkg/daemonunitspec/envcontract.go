@@ -443,7 +443,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TAIL_PIPE_PATH", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_TAIL_WAIT_SEC", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_TCPD_BIND_HOST", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "raw TCP ingress bind host; used only when FAAS_TCPD_ENABLED is true"},
-	{Name: "FAAS_TCPD_ENABLED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in raw TCP ingress runtime; disabled until firewall/systemd exposure is deployed"},
+	{Name: "FAAS_TCPD_ENABLED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in raw TCP ingress runtime; enable only with the reserved-range firewall rules"},
 	{Name: "FAAS_TCPD_MAX_BYTES", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_MAX_CONNECTIONS", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_REFRESH_INTERVAL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},

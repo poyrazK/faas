@@ -915,6 +915,23 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	return fmt.Errorf("unsupported with --repo: %s", strings.Join(unsupported, ", "))
 }
 
+func validateSourceRefPreviewFlags(explicit map[string]bool) error {
+	var unsupported []string
+	for _, name := range []string{
+		"traffic-percent", "canary-preset", "canary-stages", "safe", "rollback-on-5xx",
+		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
+		"wait", "no-wait", "timeout",
+	} {
+		if explicit[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unsupported with --repo --dry-run/--diff: %s", strings.Join(unsupported, ", "))
+}
+
 func validateExplicitDockerfile(sourceDir string) error {
 	if sourceDir == "" {
 		return errors.New("--dockerfile requires a local, tarball, or template source containing Dockerfile")
@@ -2083,7 +2100,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		*environment = resolvedEnvironment
 	}
-	if *environment != "" && *diff && !projectRequested {
+	if *environment != "" && *diff && !projectRequested && *repo == "" {
 		return printErr("Invalid flags", fmt.Errorf("--environment cannot be combined with --dry-run or --diff"))
 	}
 	// --strict / --lenient mutex. Same rationale as
@@ -2390,9 +2407,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only is not supported with --repo; use --template or --path"))
 		}
-		if *diff {
-			return printErr("Invalid flags", fmt.Errorf("--diff/--dry-run/--server-diff cannot be combined with --repo; source-ref preview is not supported"))
-		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --repo"))
 		}
@@ -2413,6 +2427,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if projectRequested {
 			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
 			return 1
+		}
+		if *diff {
+			if err := validateSourceRefPreviewFlags(explicit); err != nil {
+				return printErr("Invalid flags", err)
+			}
+			projectSlug := defaultProjectSlug(filepath.Base(*repo) + ".tar.gz")
+			if *name != "" {
+				projectSlug = sanitizeProjectSlug(*name)
+			}
+			return executeConnectedRepoPreview(ctx, connectedRepoScanOptions{
+				repo: *repo, ref: *ref, projectSlug: projectSlug,
+				bindingRepo: *bindingRepo, productionBranch: *productionBranch,
+				installID: *installID, environment: *environment,
+			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
 			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
@@ -3835,7 +3863,7 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <list|add|rm> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -3856,7 +3884,11 @@ func cmdDomains(args []string) int {
 			if d.Verified {
 				verified = statusVerified
 			}
-			fmt.Printf("%-40s %-12s %s\n", d.Domain, verified, d.AppID)
+			marker := ""
+			if d.Default {
+				marker = " [default]"
+			}
+			fmt.Printf("%-40s %-12s %s%s\n", d.Domain, verified, d.AppID, marker)
 		}
 		return 0
 	case subAdd:
@@ -3901,6 +3933,24 @@ func cmdDomains(args []string) int {
 		return 0
 	case subDomainsVerify:
 		return cmdDomainsVerify(args[1:])
+	case subDomainsSetDefault:
+		if len(args) != 2 {
+			PrintUsage(os.Stderr, "usage: gregale domains set-default <domain>", "domains")
+			return 1
+		}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		d, err := client.SetDefaultDomain(context.Background(), args[1])
+		if err != nil {
+			return printErr("Could not set default domain", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(d))
+		}
+		PrintOK(osStdout, "Default domain for %s: %s", d.AppID, d.Domain)
+		return 0
 	case subDomainsShow:
 		return cmdDomainsShow(args[1:])
 	case subDomainsStatus:

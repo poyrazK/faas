@@ -2120,6 +2120,19 @@ func (c *Client) VerifyDomain(ctx context.Context, domain string) (CustomDomainR
 	return out, c.do(ctx, "POST", "/v1/domains/"+domain+"/verify", nil, &out)
 }
 
+// PostDomainsDomainDefault is the path-shaped SDK method for marking a
+// verified custom domain as the canonical host for its app. The server
+// replaces the previous default atomically.
+func (c *Client) PostDomainsDomainDefault(ctx context.Context, domain string) (CustomDomainResponse, error) {
+	var out CustomDomainResponse
+	return out, c.do(ctx, "POST", "/v1/domains/"+domain+"/default", nil, &out)
+}
+
+// SetDefaultDomain is the readable alias for PostDomainsDomainDefault.
+func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDomainResponse, error) {
+	return c.PostDomainsDomainDefault(ctx, domain)
+}
+
 // RetryDomainVerification re-arms a pending domain after its bounded polling
 // backoff or retry budget expires. The server returns 202 with no response
 // body; mutating-call idempotency is supplied by Client.do.
@@ -4612,6 +4625,12 @@ func (c *Client) GetPrivateNetwork(ctx context.Context, id string) (PrivateNetwo
 // DeletePrivateNetwork removes a network with no active app attachments.
 func (c *Client) DeletePrivateNetwork(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/networks/"+id, nil, nil)
+}
+
+// UpdatePrivateNetworkPolicy replaces the reusable network-level CIDR allowlist.
+func (c *Client) UpdatePrivateNetworkPolicy(ctx context.Context, id string, req UpdatePrivateNetworkPolicyRequest) (PrivateNetwork, error) {
+	var out PrivateNetwork
+	return out, c.do(ctx, "PUT", "/v1/networks/"+id+"/policy", req, &out)
 }
 
 // SetGithubWebhookSecret sets the per-tenant webhook secret for

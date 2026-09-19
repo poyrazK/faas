@@ -796,6 +796,7 @@ var cliCommands = []cliCommand{
 			{Name: subList, Short: "List custom domain bindings"},
 			{Name: subAdd, Short: "Bind a custom domain to an app"},
 			{Name: subRm, Short: "Remove a custom domain binding"},
+			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default"},
 			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
 			{Name: subDomainsShow, Short: "Show a domain's cert details"},
 			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},

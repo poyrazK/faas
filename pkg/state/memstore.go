@@ -216,6 +216,7 @@ type MemStore struct {
 	// overwrites the same row instead of doubling.
 	buildProvenance map[string]BuildProvenance
 	domains         map[string]CustomDomain
+	defaultDomains  map[string]string
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -920,6 +921,7 @@ func NewMemStore() *MemStore {
 		mirrorRules:         map[string]MirrorRule{},
 		mirrorResults:       map[string]MirrorInvocationResult{},
 		domains:             map[string]CustomDomain{},
+		defaultDomains:      map[string]string{},
 		doctorObs:           map[string]DomainDoctorObservation{},
 		crons:               map[string]Cron{},
 		prewarmIntents:      map[string]PrewarmIntent{},
@@ -9406,6 +9408,29 @@ func (m *MemStore) DomainByName(_ context.Context, domain string) (CustomDomain,
 	return d, nil
 }
 
+// SetDefaultCustomDomain atomically replaces the app's default domain in the
+// in-memory store. The handler performs ownership and verification checks;
+// keeping the same checks here makes direct test callers safe as well.
+func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.domains[domain]
+	if !ok || d.AppID != appID || !d.Verified() {
+		return ErrNotFound
+	}
+	if m.defaultDomains == nil {
+		m.defaultDomains = make(map[string]string)
+	}
+	m.defaultDomains[appID] = domain
+	return nil
+}
+
+func (m *MemStore) IsDefaultCustomDomain(_ context.Context, appID, domain string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.defaultDomains[appID] == domain, nil
+}
+
 // WildcardDomainForHost returns the most-specific wildcard custom domain that
 // covers host. The strict suffix check keeps example.com from matching
 // *.example.com and prevents look-alike domains such as badexample.com from
@@ -9520,6 +9545,11 @@ func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 		return ErrNotFound
 	}
 	delete(m.domains, domain)
+	for appID, defaultDomain := range m.defaultDomains {
+		if defaultDomain == domain {
+			delete(m.defaultDomains, appID)
+		}
+	}
 	return nil
 }
 

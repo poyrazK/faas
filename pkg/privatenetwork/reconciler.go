@@ -31,8 +31,9 @@ type Connector interface {
 }
 
 type CheckResult struct {
-	Ready  bool
-	Detail string
+	Ready        bool
+	Detail       string
+	AllowedCIDRs []netip.Prefix
 }
 
 // RouteApplier activates the exact CIDRs requested by the customer. It must be
@@ -210,8 +211,34 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 				}
 				break
 			}
+			effectiveAttachment := attachment
+			effectivePolicy, policyErr := mergePrivateNetworkPolicy(check.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
+			if policyErr != nil {
+				summary.Failed++
+				detail := boundedDetail(policyErr.Error())
+				if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+					sweepErrs = append(sweepErrs, updateErr)
+				} else {
+					sweepErrs = append(sweepErrs, policyErr)
+				}
+				break
+			}
+			if len(check.AllowedCIDRs) > 0 {
+				if _, supported := r.applier.(AttachmentRouteReportingApplier); !supported {
+					summary.Failed++
+					policyErr := errors.New("private network firewall policy cannot be enforced by the configured route applier")
+					detail := boundedDetail(policyErr.Error())
+					if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+						sweepErrs = append(sweepErrs, updateErr)
+					} else {
+						sweepErrs = append(sweepErrs, policyErr)
+					}
+					break
+				}
+			}
+			effectiveAttachment.AllowedCIDRs = effectivePolicy
 			if r.fabric != nil {
-				fabricReport, checkErr = r.fabric.ApplyWithReport(ctx, attachment)
+				fabricReport, checkErr = r.fabric.ApplyWithReport(ctx, effectiveAttachment)
 				if checkErr != nil {
 					summary.Failed++
 					detail := boundedDetail(fmt.Sprintf("network fabric activation failed: %v", checkErr))
@@ -225,11 +252,11 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 				}
 			}
 			if reporting, ok := r.applier.(AttachmentRouteReportingApplier); ok {
-				routeReport, checkErr = reporting.ApplyAttachmentWithReport(ctx, attachment)
+				routeReport, checkErr = reporting.ApplyAttachmentWithReport(ctx, effectiveAttachment)
 			} else if reporting, ok := r.applier.(RouteReportingApplier); ok {
-				routeReport, checkErr = reporting.ApplyWithReport(ctx, attachment.AppID, attachment.CIDRs)
+				routeReport, checkErr = reporting.ApplyWithReport(ctx, effectiveAttachment.AppID, effectiveAttachment.CIDRs)
 			} else {
-				checkErr = r.applier.Apply(ctx, attachment.AppID, attachment.CIDRs)
+				checkErr = r.applier.Apply(ctx, effectiveAttachment.AppID, effectiveAttachment.CIDRs)
 			}
 			for _, node := range routeReport.Nodes {
 				switch node.Status {
@@ -310,6 +337,43 @@ func validateAttachmentCIDRs(cidrs []netip.Prefix) error {
 	}
 	_, err := api.ValidatePrivateNetworkCIDRs(raw, api.PrivateNetworkAttachmentMaxCIDRs)
 	return err
+}
+
+func mergePrivateNetworkPolicy(networkPolicy, appPolicy, destinations []netip.Prefix) ([]netip.Prefix, error) {
+	toRaw := func(prefixes []netip.Prefix) []string {
+		raw := make([]string, 0, len(prefixes))
+		for _, prefix := range prefixes {
+			raw = append(raw, prefix.String())
+		}
+		return raw
+	}
+	network, err := api.ValidatePrivateNetworkPolicyCIDRs(toRaw(networkPolicy), destinations)
+	if err != nil {
+		return nil, fmt.Errorf("network firewall policy is invalid: %w", err)
+	}
+	app, err := api.ValidatePrivateNetworkPolicyCIDRs(toRaw(appPolicy), destinations)
+	if err != nil {
+		return nil, fmt.Errorf("app firewall policy is invalid: %w", err)
+	}
+	if len(network) == 0 {
+		return app, nil
+	}
+	if len(app) == 0 {
+		return network, nil
+	}
+	for _, appPrefix := range app {
+		contained := false
+		for _, networkPrefix := range network {
+			if networkPrefix.Contains(appPrefix.Addr()) && networkPrefix.Bits() <= appPrefix.Bits() {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			return nil, fmt.Errorf("app firewall policy %s is outside the private network policy", appPrefix)
+		}
+	}
+	return app, nil
 }
 
 func readyDetail(providerDetail string) string {

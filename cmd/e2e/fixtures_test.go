@@ -133,6 +133,35 @@ http.createServer((req, res) => {
 	return buildTarGz(t, files)
 }
 
+// NodeFixtureTCP returns a minimal Node 22 TCP echo service. It reads the
+// guest PORT stamp so the metal raw-TCP test verifies both the deployment
+// override and the protocol-neutral ForwardTCPStream path.
+func NodeFixtureTCP(t *testing.T) []byte {
+	t.Helper()
+	const pkgJSON = `{
+  "name": "faas-fixture-node-tcp",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {"node": "22"},
+  "scripts": {"start": "node index.js"},
+  "dependencies": {}
+}
+`
+	const indexJS = `const net = require('net');
+const port = parseInt(process.env.PORT || '5432', 10);
+net.createServer((socket) => {
+  socket.on('data', (chunk) => socket.write(Buffer.concat([Buffer.from('tcp-echo:'), chunk])));
+}).listen(port, '0.0.0.0', () => console.log('node fixture TCP listening on :' + port));
+`
+	files := map[string]string{
+		"package.json":     pkgJSON,
+		"index.js":         indexJS,
+		".faas-fixture":    "node22\n",
+		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",
+	}
+	return buildTarGz(t, files)
+}
+
 // NodeFixtureHealthcheck returns the bytes of a minimal Node 22 source
 // tarball whose index.js binds `:8080` (the host's stable readiness
 // probe target per ADR-009 + portnorm ladder) and registers a /healthz

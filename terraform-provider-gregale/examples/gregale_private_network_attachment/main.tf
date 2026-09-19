@@ -8,11 +8,17 @@ terraform {
 
 provider "gregale" {}
 
+resource "gregale_private_network" "prod" {
+  name   = "production"
+  region = "fra1"
+  cidr   = "10.20.0.0/16"
+}
+
 resource "gregale_private_network_attachment" "api" {
   app_slug   = "orders-api"
-  network_id = "prod-vpc"
-  region     = "fra1"
-  cidrs      = ["10.30.0.0/16"]
+  network_id = gregale_private_network.prod.id
+  region     = gregale_private_network.prod.region
+  cidrs      = [gregale_private_network.prod.cidr]
 }
 
 output "status" {

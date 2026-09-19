@@ -10,6 +10,8 @@ daemon forwards plaintext requests to `gatewayd-internal` over
 
 1. Drops `/etc/systemd/system/faas-gatewayd-public.service` and
    runs `systemctl daemon-reload`.
+2. Renders `/etc/faas/tcpd.env`. Raw TCP ingress stays disabled unless
+   `faas_tcpd_enabled: true` is set explicitly.
 
 ## What this role does NOT do
 
@@ -26,6 +28,9 @@ daemon forwards plaintext requests to `gatewayd-internal` over
 - Configure the upstream Caddy reverse-proxy to
   `http://127.0.0.1:8080` (Caddy is provisioned by the operator or
   by a separate role; see `docs/ops/gatewayd-caddy-upstream.md`).
+- Open the raw-TCP listener range by itself. Set
+  `faas_tcpd_allowed_cidrs` and the matching `faas_tcpd_enabled` under the
+  nftables role; an enabled daemon with no allowed CIDRs remains unreachable.
 
 ## Drop-ins
 
@@ -37,6 +42,8 @@ daemon forwards plaintext requests to `gatewayd-internal` over
   `role.FromConfig` sentinel. Without this drop-in gatewayd-public falls
   back to `RoleSingleBox` on a multi-host fleet and the per-daemon role
   gate is unenforced.
+- `tcpd.env.j2` — opt-in runtime contract for durable TCP listeners. The
+  default public range is 40000–49999; TLS paths and limits are optional.
 
 ## Note on the public edge
 

@@ -228,3 +228,16 @@ func TestReconcilerRequiresFabricBeforeRouteActivation(t *testing.T) {
 		t.Fatalf("attachment status = %q, want error", got.Status)
 	}
 }
+
+func TestMergePrivateNetworkPolicyOnlyAllowsAttachmentNarrowing(t *testing.T) {
+	destination := netip.MustParsePrefix("10.42.0.0/16")
+	network := []netip.Prefix{netip.MustParsePrefix("10.42.8.0/24")}
+	app := []netip.Prefix{netip.MustParsePrefix("10.42.8.0/25")}
+	effective, err := mergePrivateNetworkPolicy(network, app, []netip.Prefix{destination})
+	if err != nil || len(effective) != 1 || effective[0].String() != "10.42.8.0/25" {
+		t.Fatalf("effective policy = %v, err=%v", effective, err)
+	}
+	if _, err := mergePrivateNetworkPolicy(network, []netip.Prefix{netip.MustParsePrefix("10.42.9.0/24")}, []netip.Prefix{destination}); err == nil {
+		t.Fatal("broader/outside app policy unexpectedly accepted")
+	}
+}

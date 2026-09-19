@@ -719,3 +719,61 @@ func TestClientPrivateNetworkAttachmentLifecycleUsesPublicContract(t *testing.T)
 		t.Fatalf("clearPrivateNetworkAttachment: %v", err)
 	}
 }
+
+func TestClientPrivateNetworkLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/networks":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("private network create request did not include an idempotency key")
+			}
+			var request privateNetworkRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode private network create request: %v", err)
+			}
+			if request.Name != "production" || request.Region != "fra1" || request.CIDR != "10.20.0.0/16" {
+				t.Fatalf("private network create request = %+v", request)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","status":"ready","status_detail":"network is ready","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/networks/prod-vpc":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("private network lookup included an idempotency key")
+			}
+			_, _ = w.Write([]byte(`{"id":"prod-vpc","name":"production","region":"fra1","cidr":"10.20.0.0/16","status":"ready","status_detail":"network is ready","created_at":"2026-09-19T10:00:00Z","updated_at":"2026-09-19T10:01:00Z"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/networks/prod-vpc":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("private network delete request included an idempotency key")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	created, err := client.createPrivateNetwork(context.Background(), privateNetworkRequest{Name: "production", Region: "fra1", CIDR: "10.20.0.0/16"})
+	if err != nil {
+		t.Fatalf("createPrivateNetwork: %v", err)
+	}
+	if created.ID != "prod-vpc" || created.Status != "ready" {
+		t.Fatalf("created private network = %+v", created)
+	}
+
+	read, err := client.getPrivateNetwork(context.Background(), "prod-vpc")
+	if err != nil {
+		t.Fatalf("getPrivateNetwork: %v", err)
+	}
+	if read.CIDR != "10.20.0.0/16" || read.Region != "fra1" {
+		t.Fatalf("read private network = %+v", read)
+	}
+
+	if err := client.deletePrivateNetwork(context.Background(), "prod-vpc"); err != nil {
+		t.Fatalf("deletePrivateNetwork: %v", err)
+	}
+}

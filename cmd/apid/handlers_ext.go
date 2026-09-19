@@ -2496,7 +2496,7 @@ func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	out := make([]api.CustomDomainResponse, 0, len(domains))
 	for _, d := range domains {
-		out = append(out, domainResponse(d))
+		out = append(out, s.domainResponseWithDefault(r.Context(), d))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -2529,6 +2529,44 @@ func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state
 		"domain": domain,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// setDefaultDomain selects a verified custom domain as the app's canonical
+// host. The store repeats the app/domain predicate so the write remains safe
+// if a caller reaches it outside this HTTP handler.
+func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
+	d, ok := s.loadDomain(w, r, acct, domain)
+	if !ok {
+		return
+	}
+	if !d.Verified() {
+		api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
+		return
+	}
+	type defaultSetter interface {
+		SetDefaultCustomDomain(context.Context, string, string) error
+	}
+	setter, ok := s.store.(defaultSetter)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("default domain storage unavailable"))
+		return
+	}
+	if err := setter.SetDefaultCustomDomain(r.Context(), d.AppID, d.Domain); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not set default domain"))
+		return
+	}
+	s.audit.Emit(r.Context(), "domain.default_set", &acct.ID, map[string]any{
+		"app_id": d.AppID,
+		"domain": d.Domain,
+	})
+	resp := domainResponse(d)
+	resp.Default = true
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // verifyDomain (issue #961 / Mega-A PR-3) is the
@@ -2619,7 +2657,7 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 // → 422) or to keep the soft-fail shape (show → 200 with
 // CertStatus="dial_failed:<reason>").
 func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (api.CustomDomainResponse, error) {
-	resp := domainResponse(d)
+	resp := s.domainResponseWithDefault(ctx, d)
 	if !d.Verified() {
 		if d.CertStatus != state.CustomDomainCertDNSDrifted {
 			resp.CertStatus = certStatusPending
@@ -2648,6 +2686,19 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	resp.CertLastError = ""
 	_ = s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertIssued, cert.NotAfter, "", d.DNSLastCheckedAt)
 	return resp, nil
+}
+
+func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDomain) api.CustomDomainResponse {
+	resp := domainResponse(d)
+	type defaultLookup interface {
+		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
+	}
+	if lookup, ok := s.store.(defaultLookup); ok {
+		if isDefault, err := lookup.IsDefaultCustomDomain(ctx, d.AppID, d.Domain); err == nil {
+			resp.Default = isDefault
+		}
+	}
+	return resp
 }
 
 // classifyCertError maps a dialCert error to the CertStatus string

@@ -9,5 +9,9 @@ export type CreatePrivateNetworkRequest = {
   name: string;
   region: string;
   cidr: string;
+  /**
+   * Optional reusable CIDR allowlist contained by cidr.
+   */
+  allowed_cidrs?: Array<string>;
 };
 

@@ -10822,6 +10822,41 @@ func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain
 	return d, nil
 }
 
+// SetDefaultCustomDomain replaces the single default-domain pointer for an
+// app, but only when the target is one of that app's verified domains. The
+// ownership predicate is repeated here so callers cannot bypass the handler's
+// account check with a direct store call.
+func (s *PgStore) SetDefaultCustomDomain(ctx context.Context, appID, domain string) error {
+	var marker int
+	err := s.pool.QueryRow(ctx, `
+		insert into app_default_domains (app_id, domain)
+		select $1, domain
+		  from custom_domains
+		 where domain = $2
+		   and app_id = $1
+		   and verified_at is not null
+		on conflict (app_id) do update
+		   set domain = excluded.domain, updated_at = now()
+		 returning 1`, appID, domain).Scan(&marker)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain string) (bool, error) {
+	var isDefault bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(
+			select 1 from app_default_domains
+			 where app_id = $1 and domain = $2
+		)`, appID, domain).Scan(&isDefault)
+	return isDefault, err
+}
+
 // WildcardDomainForHost returns the most-specific wildcard row whose
 // suffix strictly contains host. The leading dot in substr(domain, 2) makes
 // the match label-boundary safe ("badexample.com" cannot match

@@ -15,6 +15,7 @@ The initial surface is intentionally small:
 - `gregale_deployment` deploys a digest-pinned OCI image or GitHub source ref and exposes lifecycle and preview metadata.
 - `gregale_tcp_listener` manages a stable public raw TCP listener for an app.
 - `gregale_static_egress_ip` pins a stable public IPv4 address for an app's outbound traffic.
+- `gregale_private_network` manages a Gregale-owned provider-neutral private network.
 - `gregale_private_network_attachment` manages an app's provider-neutral private-network attachment and reconciliation state.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
@@ -160,16 +161,23 @@ resource "gregale_static_egress_ip" "api" {
 
 ## Private-network attachment
 
-Attach an app to a provider-neutral private network. Gregale accepts the
-request asynchronously, so `status` remains `pending` until a connector
-reports `ready`; pending and error states remain fail-closed for traffic.
+Create a provider-neutral private network and attach an app to it. Gregale
+accepts attachment requests asynchronously, so `status` remains `pending`
+until a connector reports `ready`; pending and error states remain fail-closed
+for traffic.
 
 ```hcl
+resource "gregale_private_network" "prod" {
+  name   = "production"
+  region = "fra1"
+  cidr   = "10.20.0.0/16"
+}
+
 resource "gregale_private_network_attachment" "api" {
   app_slug   = gregale_app.api.slug
-  network_id = "prod-vpc"
-  region     = "fra1"
-  cidrs      = ["10.30.0.0/16"]
+  network_id = gregale_private_network.prod.id
+  region     = gregale_private_network.prod.region
+  cidrs      = [gregale_private_network.prod.cidr]
 }
 
 output "private_address" {

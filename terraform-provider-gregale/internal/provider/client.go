@@ -332,6 +332,23 @@ type privateNetworkAttachmentResponse struct {
 	Attachment     *privateNetworkAttachment `json:"attachment"`
 }
 
+type privateNetworkRequest struct {
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	CIDR   string `json:"cidr"`
+}
+
+type privateNetworkResponse struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Region       string  `json:"region"`
+	CIDR         string  `json:"cidr"`
+	Status       string  `json:"status"`
+	StatusDetail string  `json:"status_detail,omitempty"`
+	CreatedAt    *string `json:"created_at,omitempty"`
+	UpdatedAt    *string `json:"updated_at,omitempty"`
+}
+
 func newClient(rawBaseURL, token string) (*client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil {
@@ -698,5 +715,23 @@ func (c *client) setPrivateNetworkAttachment(ctx context.Context, appSlug string
 
 func (c *client) clearPrivateNetworkAttachment(ctx context.Context, appSlug string) error {
 	path := "/v1/apps/" + escapePath(appSlug) + "/network/private"
+	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
+}
+
+func (c *client) createPrivateNetwork(ctx context.Context, req privateNetworkRequest) (privateNetworkResponse, error) {
+	var out privateNetworkResponse
+	err := c.request(ctx, http.MethodPost, "/v1/networks", req, &out, true)
+	return out, err
+}
+
+func (c *client) getPrivateNetwork(ctx context.Context, networkID string) (privateNetworkResponse, error) {
+	var out privateNetworkResponse
+	path := "/v1/networks/" + escapePath(networkID)
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) deletePrivateNetwork(ctx context.Context, networkID string) error {
+	path := "/v1/networks/" + escapePath(networkID)
 	return c.request(ctx, http.MethodDelete, path, nil, nil, false)
 }

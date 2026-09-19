@@ -178,6 +178,50 @@ export class DomainsService {
     });
   }
   /**
+   * Set a verified custom domain as the app default.
+   * Atomically replaces the app's previous default custom domain.
+   * The domain must be verified and belong to the authenticated account.
+   * Used by `gregale domains set-default <domain>`.
+   *
+   * @returns CustomDomainResponse The selected domain binding with `default=true`.
+   * @throws ApiError
+   */
+  public static setDefaultDomain({
+    domain,
+    idempotencyKey,
+  }: {
+    /**
+     * The verified custom domain to make the app's canonical host.
+     */
+    domain: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CustomDomainResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/domains/{domain}/default',
+      path: {
+        'domain': domain,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The domain is not verified and cannot be selected.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Re-arm an expired or backed-off TXT verification challenge.
    * @returns any Verification was queued for the next bounded poller cycle.
    * @throws ApiError
