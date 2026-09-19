@@ -252,7 +252,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 	}
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
-		Instance: req.GetInstance(),
+		Instance:   req.GetInstance(),
+		KeepPaused: req.GetKeepPaused(),
 		// issue #463 / ADR-069 / PR-B AC #1 — pull the deployment_id
 		// schedd stamped onto the inbound gRPC MD so the vsock DGRAM
 		// sidecar-init-failed dispatch can flip the deployments row

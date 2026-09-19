@@ -2414,7 +2414,7 @@ func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) er
 // necessary because ListInstancesForApp deliberately has a broader contract.
 func reaperInstanceState(s state.State) bool {
 	switch s {
-	case state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateSnapshotting:
+	case state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateSnapshotting, state.StateWarm:
 		return true
 	default:
 		return false

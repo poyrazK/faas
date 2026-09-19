@@ -48,6 +48,7 @@ func TestToWakeRequest_Happy(t *testing.T) {
 			FcVersion:         "1.7.0",
 			StorageKey:        "snap/inst-1/mem",
 		},
+		KeepPaused: true,
 	}
 	wr, err := toWakeRequest(context.Background(), req)
 	if err != nil {
@@ -61,6 +62,9 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	}
 	if wr.Snapshot == nil {
 		t.Fatal("Snapshot should be set")
+	}
+	if !wr.KeepPaused {
+		t.Fatal("keep_paused was not forwarded")
 	}
 	// #121: both vmstate locators flow through to fcvm.Snapshot so a
 	// future regression that drops VmstateStorageKey (e.g. a rename that

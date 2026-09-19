@@ -233,10 +233,10 @@ DECLARE
   new_billable boolean;
   changed_at timestamptz := clock_timestamp();
 BEGIN
-  new_billable := NEW.state IN ('waking','cold_booting','running','snapshotting','migrating')
+  new_billable := NEW.state IN ('waking','cold_booting','running','snapshotting','migrating','warm')
                   AND COALESCE(NEW.mode, 'normal') <> 'mirror';
   IF TG_OP = 'UPDATE' THEN
-    old_billable := OLD.state IN ('waking','cold_booting','running','snapshotting','migrating')
+    old_billable := OLD.state IN ('waking','cold_booting','running','snapshotting','migrating','warm')
                     AND COALESCE(OLD.mode, 'normal') <> 'mirror';
   END IF;
 
@@ -2686,7 +2686,7 @@ CREATE TABLE public.instances (
     CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
     CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text]))),
-    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
+    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
 );
 
 
@@ -6416,7 +6416,7 @@ CREATE INDEX instances_kind_job_task_idx ON public.instances USING btree (job_id
 -- Name: instances_live_node_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX instances_live_node_id_idx ON public.instances USING btree (node_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text]));
+CREATE INDEX instances_live_node_id_idx ON public.instances USING btree (node_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'warm'::text]));
 
 
 --
@@ -6444,7 +6444,7 @@ CREATE INDEX instances_org_id_idx ON public.instances USING btree (org_id) WHERE
 -- Name: instances_reaper_state_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX instances_reaper_state_idx ON public.instances USING btree (started_at DESC) WHERE (state = ANY (ARRAY['running'::text, 'waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
+CREATE INDEX instances_reaper_state_idx ON public.instances USING btree (started_at DESC) WHERE (state = ANY (ARRAY['running'::text, 'waking'::text, 'cold_booting'::text, 'snapshotting'::text, 'warm'::text]));
 
 
 --

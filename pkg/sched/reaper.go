@@ -202,8 +202,11 @@ func idleReference(in InstanceInfo) time.Time {
 	return in.Started
 }
 
-// ReapIdle returns the instances to park for idleness: RUNNING instances whose
-// time since last request exceeds their effective idle timeout (spec §4.3).
+// ReapIdle returns the instances to park for idleness: RUNNING instances and
+// paused WARM-pool instances whose time since last request exceeds their
+// effective idle timeout (spec §4.3). Warm rows are resident capacity rather
+// than serving replicas, so their candidates are not constrained by the
+// app's min_instances floor.
 //
 // G7: an instance with OpenConns > 0 is considered active regardless of
 // LastRequest staleness — long-lived WebSockets and similar connections
@@ -252,7 +255,8 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 	type appGroup struct {
 		running         int            // total RUNNING instances of this app
 		floor           int            // app.MinInstances
-		cands           []InstanceInfo // idle-eligible (RUNNING, no flows, stale)
+		cands           []InstanceInfo // idle-eligible RUNNING rows
+		warmCands       []InstanceInfo // idle-eligible paused warm-pool rows
 		lastScaleInAt   *time.Time     // carrier (PR-C): from first row seen
 		scaleInCooldown time.Duration  // carrier (PR-C): zero disables
 		// P1D: per-app emitted-once flags. The cooldown consult runs
@@ -268,7 +272,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 	}
 	byApp := map[string]*appGroup{}
 	for _, in := range instances {
-		if in.State != state.StateRunning {
+		if in.State != state.StateRunning && in.State != state.StateWarm {
 			continue
 		}
 		g, ok := byApp[in.AppID]
@@ -355,7 +359,9 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		if state.InstanceMode(in.Mode) == state.InstanceModeMirror {
 			continue
 		}
-		g.running++
+		if in.State == state.StateRunning {
+			g.running++
+		}
 		// G7: an app with open TCP flows is active. Wins over stale
 		// LastRequest so a parked app mid-WebSocket isn't reaped.
 		if in.OpenConns > 0 {
@@ -380,11 +386,26 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		}
 		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.IdleTimeoutS)) * time.Second
 		if now.Sub(lastActivity) > timeout {
-			g.cands = append(g.cands, in)
+			if in.State == state.StateWarm {
+				g.warmCands = append(g.warmCands, in)
+			} else {
+				g.cands = append(g.cands, in)
+			}
 		}
 	}
 	var park []string
 	for _, g := range byApp {
+		// Warm-pool VMs are resident capacity, not serving replicas. Their
+		// idle timeout is independent of the app's min_instances floor; a
+		// stale paused VM must be parked even when the serving floor is held.
+		sort.Slice(g.warmCands, func(a, b int) bool {
+			aLast := idleReference(g.warmCands[a])
+			bLast := idleReference(g.warmCands[b])
+			if !aLast.Equal(bLast) {
+				return aLast.Before(bLast)
+			}
+			return g.warmCands[a].Instance < g.warmCands[b].Instance
+		})
 		// Sort candidates oldest-activity-first so trimming the
 		// front keeps the freshest (most-recently-served) alive. If
 		// activity timestamps tie (rare; sub-second precision), the instance
@@ -424,7 +445,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// per-app flags keep the emission exactly-once.
 		if metrics != nil {
 			switch {
-			case len(g.cands) > 0:
+			case len(g.cands) > 0 || len(g.warmCands) > 0:
 				if !g.parkEmitted {
 					metrics.ObserveScaleDown(g.appID, "park")
 					g.parkEmitted = true
@@ -437,6 +458,9 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			}
 		}
 		for _, c := range g.cands {
+			park = append(park, c.Instance)
+		}
+		for _, c := range g.warmCands {
 			park = append(park, c.Instance)
 		}
 	}

@@ -202,6 +202,10 @@ type RestoreSpec struct {
 	// drive is already isolated to one slot, so the VMM may link or bind it
 	// directly into the new jail. App restores keep the copy-on-write path.
 	EphemeralWritable bool
+	// KeepPaused asks the VMM to leave the restored guest paused. This is the
+	// vmmd half of the provisioned warm-pool contract: the VM remains resident
+	// for a later in-place resume and must not run guest-init yet.
+	KeepPaused bool
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).

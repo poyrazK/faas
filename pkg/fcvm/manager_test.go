@@ -349,7 +349,7 @@ func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error 
 	// vsock and trigger the resume hook. ADR-022. The test then sees the call
 	// on v.resumeHookCalls (used by TestWakeRestore_*) and surfaces any
 	// injected error (used by TestWakeRestore_ResumeHookErrorPropagatesAndUnwinds).
-	if spec.VsockDevice != nil {
+	if spec.VsockDevice != nil && !spec.KeepPaused {
 		if err := v.TriggerResumeHook(ctx, l, 1); err != nil {
 			return err
 		}
@@ -404,6 +404,34 @@ func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 	if frameworkRuns != 0 {
 		t.Fatalf("builder framework-ready loops = %d, want 0", frameworkRuns)
 	}
+}
+
+func TestWakeKeepPausedLeavesWarmRestorePaused(t *testing.T) {
+	vmm := &fakeVMM{}
+	mgr := newTestManager(&fakeRunner{}, vmm)
+	inst, err := mgr.Wake(context.Background(), WakeRequest{
+		Instance: "warm-restore",
+		BaseKey:  "/base.ext4", LayerKey: "/layer.ext4",
+		VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby,
+		Snapshot: usableSnapshot(), KeepPaused: true,
+	})
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if !inst.Paused {
+		t.Fatal("paused restore returned Paused=false")
+	}
+	vmm.mu.Lock()
+	if len(vmm.resumeHookCalls) != 0 {
+		vmm.mu.Unlock()
+		t.Fatalf("resume hook calls = %d, want 0 for paused restore", len(vmm.resumeHookCalls))
+	}
+	if len(vmm.restoreSpecs) != 1 || !vmm.restoreSpecs[0].KeepPaused {
+		vmm.mu.Unlock()
+		t.Fatalf("restore specs = %+v, want one KeepPaused spec", vmm.restoreSpecs)
+	}
+	vmm.mu.Unlock()
+	_ = mgr.Destroy(context.Background(), "warm-restore")
 }
 
 func (v *fakeVMM) TriggerResumeHook(_ context.Context, l Lease, hostTimeUnixNano int64) error {

@@ -2798,7 +2798,7 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 		   join apps a on a.id = i.app_id
 		   join accounts ac on ac.id = a.account_id
 		  where (
-		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','snapshotting','migrating'))
+		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','snapshotting','migrating','warm'))
 		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','snapshotting','migrating','evicting_account_deleting'))
 		  )%s
 		  order by i.started_at asc, i.id asc
@@ -14769,7 +14769,7 @@ func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, l
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating')
+		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating','warm')
 		 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
@@ -14813,7 +14813,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','snapshotting')
+		 where state in ('running','waking','cold_booting','snapshotting','warm')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -14893,7 +14893,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
-		   and i.state in ('waking', 'cold_booting', 'running', 'snapshotting')
+		   and i.state in ('waking', 'cold_booting', 'running', 'snapshotting', 'warm')
 		   and ($2 = '' or i.id::text < $2)
 		 order by i.id::text desc
 		 limit $3`, accountID, before, limit)
@@ -16090,7 +16090,7 @@ func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, 
 		select coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = $1
-		   and state in ('waking','cold_booting','running')
+		   and state in ('waking','cold_booting','running','warm')
 	`, nodeID, api.PerVMOverheadMB).Scan(&used)
 	if err != nil {
 		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
@@ -16118,7 +16118,7 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 		select node_id::text, coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = any($1::uuid[])
-		   and state in ('waking','cold_booting','running')
+		   and state in ('waking','cold_booting','running','warm')
 		 group by node_id
 	`, parsedIDs, api.PerVMOverheadMB)
 	if err != nil {
@@ -16440,7 +16440,7 @@ func (s *PgStore) PerNodeLiveStats(ctx context.Context) ([]PerNodeStats, error) 
 		       coalesce(sum(i.ram_mb + 8), 0)                    as ram_used_mb
 		from instances i
 		join compute_nodes n on n.id = i.node_id
-		where i.state in ('waking', 'cold_booting', 'running')
+		where i.state in ('waking', 'cold_booting', 'running', 'warm')
 		group by n.name
 		order by n.name
 	`)
@@ -16486,7 +16486,7 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 			       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 			       coalesce(sum(i.ram_mb + 8), 0)::bigint as ram_used_mb
 			  from instances i
-			 where i.state in ('waking', 'cold_booting', 'running')
+			 where i.state in ('waking', 'cold_booting', 'running', 'warm')
 			 group by i.node_id
 		), placed as (
 			select a.node_id,

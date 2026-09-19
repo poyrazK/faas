@@ -376,6 +376,10 @@ type Instance struct {
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly bool
+	// Paused marks a resident warm-pool restore. Paused instances are kept in
+	// vmmd's live map but do not start liveness/framework monitors until the
+	// scheduler explicitly resumes them.
+	Paused bool
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -2886,6 +2890,10 @@ type WakeRequest struct {
 	CPUMillicores int
 	EgressMbit    int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	Snapshot      *Snapshot // nil => cold boot
+	// KeepPaused restores a snapshot into the warm pool without resuming the
+	// guest. It is intentionally valid only with Snapshot; cold boots cannot
+	// produce a paused pool entry.
+	KeepPaused bool
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -3531,6 +3539,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		err = fmt.Errorf("wake %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
 		return nil, err
 	}
+	if req.KeepPaused && req.Snapshot == nil {
+		err = fmt.Errorf("wake %s: keep_paused requires a snapshot", req.Instance)
+		return nil, err
+	}
 	if !validCharacterizationExecutionMode(req.ExecutionMode) {
 		err = fmt.Errorf("wake %s: invalid execution_mode %q (ADR-137)", req.Instance, req.ExecutionMode)
 		return nil, err
@@ -3964,7 +3976,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4084,7 +4096,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	if !req.ExecutionOnly && !lease.IsBuilder {
+	if !req.ExecutionOnly && !lease.IsBuilder && !req.KeepPaused {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
 	}
@@ -4172,6 +4184,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			APIEnvJSON:         req.preparedAPIEnvJSON,
 			ServiceDiscoveryIP: serviceDiscoveryIP,
 			Networkless:        req.ExecutionOnly,
+			KeepPaused:         req.KeepPaused,
 		}
 		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the
@@ -4190,6 +4203,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		if rErr == nil {
 			return WakeRestore, nil
 		} else {
+			if req.KeepPaused {
+				// A paused warm-pool entry must never silently turn into a
+				// running cold boot. The scheduler can retry reconciliation;
+				// returning the restore error preserves the paused-state
+				// contract and lets the normal cleanup release the lease.
+				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", rErr)
+			}
 			// Fall back to cold boot into the same netns; kill any half-restored VM.
 			// The wrapped rErr names the failure mode (vsock dial timeout vs
 			// ack-nack vs /snapshot/load failure) so the operator doesn't have

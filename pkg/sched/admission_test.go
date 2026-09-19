@@ -300,6 +300,35 @@ func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
 	}
 }
 
+func TestAdmitWarmPoolKindReservesRAMWithoutConcurrencyUntilPromoted(t *testing.T) {
+	l := NewLedger()
+	req := Request{
+		Instance: "warm-1", AppID: "app-warm", DeploymentID: "dep-warm",
+		Plan: api.PlanPro, RAMMB: 512, VCPU: 2, MaxConcurrency: 1,
+		Kind: KindWarmPool, NodeID: "node-a", NodeCeilingMB: 100000,
+		VCPUBudget: 160,
+	}
+	if err := l.Admit(req); err != nil {
+		t.Fatalf("admit warm pool: %v", err)
+	}
+	if got := l.Concurrency(req.AppID); got != 0 {
+		t.Fatalf("warm-pool concurrency = %d, want 0", got)
+	}
+	if got := l.ResidentRAMForNode(req.NodeID); got != req.RAMMB+api.PerVMOverheadMB {
+		t.Fatalf("warm-pool resident RAM = %d, want %d", got, req.RAMMB+api.PerVMOverheadMB)
+	}
+	if !l.PromoteWarm(req.Instance) {
+		t.Fatal("PromoteWarm returned false for admitted warm reservation")
+	}
+	if got := l.Concurrency(req.AppID); got != 1 {
+		t.Fatalf("promoted concurrency = %d, want 1", got)
+	}
+	if got := l.ConcurrencyForDeployment(req.AppID, req.DeploymentID); got != 1 {
+		t.Fatalf("promoted deployment concurrency = %d, want 1", got)
+	}
+	l.Release(req.Instance)
+}
+
 // Tier A5 / ADR-066: a KindWake reservation with Plan unset still
 // fails fast (the existing pre-Tier-A5 contract). Pinning this
 // guards the KindMigration branch from being copy-pasted and

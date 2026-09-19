@@ -5450,15 +5450,29 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 }
 
 // Park snapshots a RUNNING request/service instance and frees its RAM (idle
-// reaper, spec §4.3). Worker/job instances have no reusable snapshot contract,
-// so an explicit park stops and destroys them instead. Acquires the app lock;
-// the reaper calls it per selected instance. The reaper builds its selection
-// without the lock, so we re-read under the lock and skip anything no longer
-// RUNNING (a concurrent wake/park already moved it).
+// reaper, spec §4.3). A resident WARM instance is already paused and has no
+// second snapshot to capture, so it is destroyed directly and lands in PARKED.
+// Worker/job instances have no reusable snapshot contract, so an explicit park
+// stops and destroys them instead. Acquires the app lock; the reaper calls it
+// per selected instance. The reaper builds its selection without the lock, so
+// we re-read under the lock and skip anything no longer parkable (a concurrent
+// wake/park already moved it).
 func (e *Engine) Park(ctx context.Context, instanceID string) error {
-	ins, err := e.lockedRunning(ctx, instanceID)
+	ins, err := e.lockedParkable(ctx, instanceID)
 	if err != nil || ins == nil {
 		return err
+	}
+	if state.State(ins.State) == state.StateWarm {
+		defer e.unlockApp(ins.AppID)
+		if err := e.timedDestroy(ctx, ins.NodeID, instanceID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park warm instance: destroy %s: %w", instanceID, err)
+		}
+		e.ledger.Release(instanceID)
+		e.transition(ctx, instanceID, ins.AppID, state.StateParked)
+		if ins.Mode == string(state.InstanceModeService) {
+			e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+		}
+		return nil
 	}
 	if mode := state.InstanceMode(ins.Mode); mode == state.InstanceModeWorker || mode == state.InstanceModeJob {
 		// StopInstance owns the mode-aware signal/grace/destroy sequence, but
@@ -5598,6 +5612,18 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 		}
 
 		switch state.State(fresh.State) {
+		case state.StateWarm:
+			// A warm-pool VM is already paused; app eviction only needs
+			// the same hard teardown as an in-flight wake. Do not route it
+			// through snapshotAndPark because there is no live guest left
+			// to capture.
+			if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
+				errs = append(errs, fmt.Errorf("instance %s: destroy warm VM: %w", fresh.ID, destroyErr))
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+			acted++
 		case state.StateRunning:
 			if mode := state.InstanceMode(fresh.Mode); mode == state.InstanceModeWorker || mode == state.InstanceModeJob {
 				// Worker/job instances are durable workload processes, not
@@ -6058,6 +6084,17 @@ const (
 // and the app lock has already been released. On a real error the lock is not
 // held. Callers that get a non-nil instance own the lock and must unlockApp.
 func (e *Engine) lockedRunning(ctx context.Context, instanceID string) (*state.Instance, error) {
+	return e.lockedInStates(ctx, instanceID, state.StateRunning)
+}
+
+// lockedParkable is the Park-specific sibling of lockedRunning. Warm-pool
+// instances are paused but still resident, so Park must be able to reclaim
+// them without pretending they are serving RUNNING VMs.
+func (e *Engine) lockedParkable(ctx context.Context, instanceID string) (*state.Instance, error) {
+	return e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateWarm)
+}
+
+func (e *Engine) lockedInStates(ctx context.Context, instanceID string, allowed ...state.State) (*state.Instance, error) {
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("sched: load instance %s: %w", instanceID, err)
@@ -6068,7 +6105,14 @@ func (e *Engine) lockedRunning(ctx context.Context, instanceID string) (*state.I
 		e.unlockApp(ins.AppID)
 		return nil, fmt.Errorf("sched: reload instance %s: %w", instanceID, err)
 	}
-	if fresh.State != string(state.StateRunning) {
+	allowedState := false
+	for _, candidate := range allowed {
+		if fresh.State == string(candidate) {
+			allowedState = true
+			break
+		}
+	}
+	if !allowedState {
 		e.unlockApp(ins.AppID)
 		return nil, nil
 	}

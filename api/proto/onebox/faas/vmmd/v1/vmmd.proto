@@ -806,6 +806,10 @@ message CreateFromSnapshotRequest {
   // directory and build timeout across the restore, just as it does for a
   // cold builder boot. Nil for app VMs.
   BuildSpec build = 7;
+  // KeepPaused restores the snapshot into the resident warm pool without
+  // resuming guest execution. The scheduler later resumes this VM in place
+  // when it promotes the warm reservation to serving capacity.
+  bool keep_paused = 8;
 }
 
 message CreateColdBootRequest {

@@ -113,6 +113,10 @@ const (
 	// concurrency: a new revision must be primed while the old revision keeps
 	// serving traffic.
 	KindSnapshotPrime
+	// KindWarmPool is a paused provisioned-capacity reservation. It counts
+	// toward resident RAM/vCPU, but not serving concurrency until the
+	// scheduler resumes it for a request.
+	KindWarmPool
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -120,7 +124,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -397,6 +401,29 @@ func (l *NodeLedger) BeginSnapshot(instance string) {
 			}
 		}
 	}
+}
+
+// PromoteWarm converts a paused warm-pool reservation into a serving
+// reservation. The resident RAM/vCPU reservation is unchanged; only the
+// per-app concurrency counters are restored. The caller performs the normal
+// max-concurrency gate while holding the app lock before resuming the VM.
+// Unknown or already-serving entries are harmless and return false.
+func (l *NodeLedger) PromoteWarm(instance string) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[instance]
+	if e == nil || e.countsConc {
+		return false
+	}
+	e.countsConc = true
+	l.perApp[e.appID]++
+	if e.deploymentID != "" {
+		l.perAppDeployment[e.appID+"\x00"+e.deploymentID]++
+	}
+	return true
 }
 
 // Release frees an instance's entire reservation when it parks/stops (§6.2-4).

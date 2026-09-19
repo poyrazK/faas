@@ -8,6 +8,9 @@ func TestLegalTransitions(t *testing.T) {
 		{StateWaking, StateRunning},
 		{StateWaking, StateColdBooting}, // restore failed → fallback
 		{StateColdBooting, StateRunning},
+		{StateColdBooting, StateWarm}, // paused restore retained in pool
+		{StateWarm, StateRunning},     // request resumes a pooled VM
+		{StateWarm, StateParked},      // pool scale-down / stale cleanup
 		{StateRunning, StateSnapshotting},
 		{StateSnapshotting, StateParked},
 		{StateSnapshotting, StateStopped}, // snapshot failed
@@ -79,7 +82,7 @@ func TestConcurrencyAccounting(t *testing.T) {
 }
 
 func TestRAMAccounting(t *testing.T) {
-	// Invariant §6.2-2: these five hold resident RAM. Tier A5
+	// Invariant §6.2-2: these six hold resident RAM. Tier A5
 	// (ADR-066) added StateMigrating — the paused-VM
 	// snapshot is resident on the dying node during the
 	// four-phase handoff; the RAM must count against the
@@ -88,6 +91,7 @@ func TestRAMAccounting(t *testing.T) {
 		StateWaking: true, StateColdBooting: true,
 		StateRunning: true, StateSnapshotting: true,
 		StateMigrating: true,
+		StateWarm:      true,
 	}
 	for _, s := range States {
 		if got := s.CountsForRAM(); got != want[s] {
@@ -111,7 +115,7 @@ func TestRAMAccounting(t *testing.T) {
 // `State(s).CountsForRAM()` indirection surfaces here.
 //
 // The set's exact membership is the load-bearing contract:
-// {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING, MIGRATING} —
+// {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING, MIGRATING, WARM} —
 // the same five states counted for RAM (§6.2-2). PARKED,
 // STOPPED, FAILED, EVICTING_ACCOUNT_DELETING are NOT live.
 // Tier A5 (ADR-066) added MIGRATING to this set.
@@ -128,6 +132,7 @@ func TestIsLive(t *testing.T) {
 		StateRunning:                 true,
 		StateSnapshotting:            true,
 		StateMigrating:               true,
+		StateWarm:                    true,
 		StateParked:                  false,
 		StateStopped:                 false,
 		StateFailed:                  false,

@@ -166,6 +166,14 @@ type RoutedVMM interface {
 	Logs(ctx context.Context, nodeID, instance string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error)
 }
 
+// PausedRestoreVMM is the additive warm-pool capability. It deliberately
+// remains separate from RoutedVMM so existing test doubles and older vmmd
+// nodes are not forced to implement a new method before the reconciler rolls
+// out.
+type PausedRestoreVMM interface {
+	CreatePausedFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
+}
+
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
 // client. cmd/schedd wires the production sched.DialVMMContext;
 // tests inject a recording stub so they don't need a real socket.
@@ -508,6 +516,22 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 		return nil, err
 	}
 	return cli.CreateFromSnapshot(ctx, instance, app, snap)
+}
+
+// CreatePausedFromSnapshot implements the additive warm-pool capability.
+func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	paused, ok := cli.(interface {
+		CreatePausedFromSnapshot(context.Context, string, AppSpec, SnapshotRef) (*WakeOutcome, error)
+	})
+	if !ok {
+		return nil, api.NewProblem(501, api.CodeNotImplemented,
+			"Warm-pool restore unavailable", "vmmd client does not support paused snapshot restore")
+	}
+	return paused.CreatePausedFromSnapshot(ctx, instance, app, snap)
 }
 
 // PauseAndSnapshot implements RoutedVMM.

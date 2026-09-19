@@ -4412,6 +4412,47 @@ func TestPark_RAMChangeDestroysOldInstanceWithoutSnapshot(t *testing.T) {
 	}
 }
 
+func TestParkWarmPoolDestroysPausedVMWithoutSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	ins, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateWarm), app.RAMMB, state.DefaultLocalNodeName, "warm-wake", string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+	if err := e.Ledger().Admit(Request{
+		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID,
+		Plan: api.PlanPro, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		MaxConcurrency: app.MaxConcurrency, Kind: KindWarmPool,
+		NodeID: state.DefaultLocalNodeName,
+	}); err != nil {
+		t.Fatalf("Admit warm reservation: %v", err)
+	}
+
+	if err := e.Park(context.Background(), ins.ID); err != nil {
+		t.Fatalf("Park warm: %v", err)
+	}
+	if vmm.destroys != 1 {
+		t.Fatalf("destroys = %d, want 1", vmm.destroys)
+	}
+	if vmm.snapshots != 0 || vmm.warmSnapshots != 0 {
+		t.Fatalf("snapshot calls = init:%d warm:%d, want 0/0", vmm.snapshots, vmm.warmSnapshots)
+	}
+	parked, err := store.InstanceByID(context.Background(), ins.ID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if parked.State != string(state.StateParked) {
+		t.Fatalf("state = %q, want parked", parked.State)
+	}
+	if e.Ledger().ResidentFor(ins.ID) {
+		t.Fatal("warm reservation still resident after Park")
+	}
+}
+
 // TestUsableSnapshotForWake_PlanGate drives the Wake-side tier
 // selection. The plan gate is the sticky-on-downgrade contract
 // (ADR-055 §5): a Free/Hobby account skips the warm tier even when

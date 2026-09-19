@@ -4334,7 +4334,7 @@ const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :m
 SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
-  AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
+  AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating', 'warm')
 ORDER BY started_at
 `
 
@@ -7149,7 +7149,7 @@ WHERE lifecycle = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM instances
       WHERE instances.node_id = compute_nodes.id
-        AND instances.state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating', 'warm')
   )
 ORDER BY name
 `

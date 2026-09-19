@@ -3945,7 +3945,7 @@ func (m *MemStore) ListDeploymentsByNodeID(_ context.Context, nodeID string) ([]
 // in-memory twin's mirror.
 func isInstanceStateLive(state string) bool {
 	switch state {
-	case instanceStateRunning, instanceStateWaking, instanceStateColdBooting:
+	case instanceStateRunning, instanceStateWaking, instanceStateColdBooting, string(StateWarm):
 		return true
 	}
 	return false
@@ -11775,7 +11775,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm):
 			out = append(out, ins)
 		}
 	}
@@ -11832,7 +11832,7 @@ func (m *MemStore) ListInstancesForAccount(_ context.Context, accountID string) 
 
 // ListInstancesForAccountPaged is the live-only cursor-paginated mirror of
 // PgStore.ListInstancesForAccountPaged (issues #393 and #2714). The public
-// inventory includes waking, cold_booting, running, and snapshotting rows.
+// inventory includes waking, cold_booting, running, snapshotting, and warm rows.
 // Cursor and sort both use instance.id DESC.
 func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID string, limit int, before string) ([]Instance, error) {
 	if limit <= 0 || limit > 100 {
@@ -11852,7 +11852,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateSnapshotting:
+		case StateWaking, StateColdBooting, StateRunning, StateSnapshotting, StateWarm:
 		default:
 			continue
 		}
@@ -12929,7 +12929,7 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 			continue
 		}
 		switch ins.State {
-		case "waking", "cold_booting", "running":
+		case "waking", "cold_booting", "running", "warm":
 			used += int64(ins.RAMMB + api.PerVMOverheadMB)
 		}
 	}

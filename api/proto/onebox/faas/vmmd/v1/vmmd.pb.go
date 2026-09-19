@@ -1107,7 +1107,11 @@ type CreateFromSnapshotRequest struct {
 	// restored. It must accompany the snapshot so vmmd can retain the export
 	// directory and build timeout across the restore, just as it does for a
 	// cold builder boot. Nil for app VMs.
-	Build         *BuildSpec `protobuf:"bytes,7,opt,name=build,proto3" json:"build,omitempty"`
+	Build *BuildSpec `protobuf:"bytes,7,opt,name=build,proto3" json:"build,omitempty"`
+	// KeepPaused restores the snapshot into the resident warm pool without
+	// resuming guest execution. The scheduler later resumes this VM in place
+	// when it promotes the warm reservation to serving capacity.
+	KeepPaused    bool `protobuf:"varint,8,opt,name=keep_paused,json=keepPaused,proto3" json:"keep_paused,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1189,6 +1193,13 @@ func (x *CreateFromSnapshotRequest) GetBuild() *BuildSpec {
 		return x.Build
 	}
 	return nil
+}
+
+func (x *CreateFromSnapshotRequest) GetKeepPaused() bool {
+	if x != nil {
+		return x.KeepPaused
+	}
+	return false
 }
 
 type CreateColdBootRequest struct {
@@ -6741,7 +6752,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"restore_ms\x18\v \x01(\x03R\trestoreMs\x12 \n" +
 	"\fnetns_tap_ms\x18\f \x01(\x03R\n" +
 	"netnsTapMs\x12$\n" +
-	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\"\xa7\x02\n" +
+	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +
@@ -6750,7 +6761,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"account_id\x18\x05 \x01(\tR\taccountId\x12\x17\n" +
 	"\awake_id\x18\x06 \x01(\tR\x06wakeId\x124\n" +
-	"\x05build\x18\a \x01(\v2\x1e.onebox.faas.vmmd.v1.BuildSpecR\x05build\"\xe5\x01\n" +
+	"\x05build\x18\a \x01(\v2\x1e.onebox.faas.vmmd.v1.BuildSpecR\x05build\x12\x1f\n" +
+	"\vkeep_paused\x18\b \x01(\bR\n" +
+	"keepPaused\"\xe5\x01\n" +
 	"\x15CreateColdBootRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x124\n" +

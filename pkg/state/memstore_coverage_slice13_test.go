@@ -69,11 +69,12 @@ func TestCoverageSlice13MemStoreHeartbeatGapClassification(t *testing.T) {
 // surfaces of the instance-state machine. Both are pure
 // functions over the State enum.
 func TestCoverageSlice13MemStoreInstanceStateMachine(t *testing.T) {
-	// All 9 documented states must be valid.
+	// All documented states must be valid.
 	for _, s := range []State{
 		StateParked, StateWaking, StateColdBooting, StateRunning,
 		StateSnapshotting, StateStopped, StateFailed,
 		StateEvictingAccountDeleting, StateMigrating,
+		StateWarm,
 	} {
 		if !s.Valid() {
 			t.Errorf("State(%q).Valid() = false", s)
@@ -98,6 +99,7 @@ func TestCoverageSlice13MemStoreInstanceStateMachine(t *testing.T) {
 	for _, s := range []State{
 		StateWaking, StateColdBooting, StateRunning, StateSnapshotting,
 		StateMigrating,
+		StateWarm,
 	} {
 		if !s.CountsForRAM() {
 			t.Errorf("State(%q).CountsForRAM() = false, want true", s)

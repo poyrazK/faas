@@ -44,13 +44,17 @@ const (
 	// StateEvictingAccountDeleting precedent — a transient state
 	// outside the wake/reap hot path.
 	StateMigrating State = "migrating"
+	// StateWarm is a resident, paused VM held in an app's provisioned
+	// warm pool. It consumes RAM but not serving concurrency; the next
+	// request resumes it in place instead of restoring a snapshot.
+	StateWarm State = "warm"
 )
 
 // States lists every state (deterministic order for tests + CHECK generation).
 var States = []State{
 	StateParked, StateWaking, StateColdBooting, StateRunning,
 	StateSnapshotting, StateStopped, StateFailed,
-	StateEvictingAccountDeleting, StateMigrating,
+	StateEvictingAccountDeleting, StateMigrating, StateWarm,
 }
 
 // validateInstanceState mirrors the instances.state CHECK constraint. The
@@ -73,7 +77,7 @@ func validateMemStoreCreateInstanceState(raw string) error {
 		return nil
 	} else {
 		switch raw {
-		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "snapshotted":
+		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "WARM", "snapshotted":
 			return nil
 		}
 		return err
@@ -98,8 +102,8 @@ var transitions = map[State][]State{
 	// upgrade → stale snap, or first deploy). The cold-boot branch is
 	// spec §4.4's lazy re-snapshot path.
 	StateParked:       {StateWaking, StateColdBooting},
-	StateWaking:       {StateRunning, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
-	StateColdBooting:  {StateRunning, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
+	StateWaking:       {StateRunning, StateWarm, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
+	StateColdBooting:  {StateRunning, StateWarm, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
 	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating, StateParked},
 	StateSnapshotting: {StateParked, StateStopped, StateEvictingAccountDeleting},
 	StateStopped:      {StateColdBooting},
@@ -116,6 +120,9 @@ var transitions = map[State][]State{
 	// considered migrating from that moment. Engine.MigrateLiveInstances
 	// owns both transitions.
 	StateMigrating: {StateRunning, StateParked, StateFailed, StateStopped, StateEvictingAccountDeleting},
+	// A warm VM may be resumed for a request, or destroyed/parked by the
+	// pool reconciler when desired capacity decreases or the VM is stale.
+	StateWarm: {StateRunning, StateParked, StateStopped, StateFailed, StateEvictingAccountDeleting},
 }
 
 // Valid reports whether s is a known state.
@@ -148,15 +155,17 @@ func (s State) CountsForConcurrency() bool {
 
 // CountsForRAM reports whether s holds resident RAM and so counts against the
 // admission ceiling (invariant §6.2-2: Σ(ram+8) over {WAKING, COLD_BOOTING,
-// RUNNING, SNAPSHOTTING, MIGRATING} ≤ 47,600 MB).
+// RUNNING, SNAPSHOTTING, MIGRATING, WARM} ≤ 47,600 MB).
 //
 // StateMigrating holds the paused-VM snapshot resident on the dying
 // node during the four-phase handoff (ADR-066). It counts as live
 // RAM until either the commit succeeds (edge → RUNNING on the new
 // owner) or the rollback fires (edge → PARKED; the snapshot is
-// freed on the dying node once the dying vmmd resumes).
+// freed on the dying node once the dying vmmd resumes). StateWarm
+// holds a paused resident warm-pool VM until it is resumed or
+// reclaimed.
 func (s State) CountsForRAM() bool {
-	return s.CountsForConcurrency() || s == StateSnapshotting || s == StateMigrating
+	return s.CountsForConcurrency() || s == StateSnapshotting || s == StateMigrating || s == StateWarm
 }
 
 // IsLive reports whether the named state is a live row that the

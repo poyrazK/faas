@@ -48,6 +48,20 @@ func TestReapIdle(t *testing.T) {
 	}
 }
 
+func TestReapIdleWarmPoolIgnoresServingFloor(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		{Instance: "serving", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			MinInstances: 1, LastRequest: now.Add(-time.Hour)},
+		{Instance: "warm-stale", AppID: "app1", Plan: api.PlanPro, State: state.StateWarm,
+			MinInstances: 1, LastRequest: now.Add(-time.Hour)},
+	}
+	got := ReapIdle(now, instances, nil, nil)
+	if !equalSet(got, []string{"warm-stale"}) {
+		t.Fatalf("ReapIdle = %v, want only stale warm row", got)
+	}
+}
+
 func TestReapIdleUsesStartedAtWhenLastRequestIsMissing(t *testing.T) {
 	now := time.Now()
 	instances := []InstanceInfo{

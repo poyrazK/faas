@@ -810,6 +810,17 @@ func (c *VMMClient) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitR
 }
 
 func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	return c.createFromSnapshot(ctx, instance, app, snap, false)
+}
+
+// CreatePausedFromSnapshot restores a snapshot into vmmd's resident warm pool
+// without resuming guest execution. It is an additive capability so older
+// scheduler fakes and vmmd nodes can continue serving ordinary wakes.
+func (c *VMMClient) CreatePausedFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	return c.createFromSnapshot(ctx, instance, app, snap, true)
+}
+
+func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef, keepPaused bool) (*WakeOutcome, error) {
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
@@ -826,7 +837,8 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 			VmstateStorageKey: snap.VMStateStorageKey,
 			Networkless:       snap.Networkless,
 		},
-		WakeId: fields.WakeID,
+		WakeId:     fields.WakeID,
+		KeepPaused: keepPaused,
 	})
 	if err != nil {
 		return nil, liftErr(err)

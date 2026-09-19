@@ -1240,21 +1240,26 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	body := map[string]any{
 		"snapshot_path": stateName,
 		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
-		"resume_vm":     true,
+		"resume_vm":     !spec.KeepPaused,
 	}
 	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	tLoad := time.Now()
-	// Vsock is in the config-file (set at config-write time before
-	// startJailer), so the UDS is live by the time /snapshot/load
-	// completes. Trigger the resume hook now to re-seed entropy and step
-	// the clock before the app can bind :8080 (spec §11 V6).
-	if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
-		return fmt.Errorf("vmm: resume hook: %w", err)
+	// A warm-pool restore deliberately remains paused. The guest resume hook
+	// and readiness probe belong to the later in-place resume, after the
+	// scheduler has promoted the reservation to serving concurrency.
+	if !spec.KeepPaused {
+		// Vsock is in the config-file (set at config-write time before
+		// startJailer), so the UDS is live by the time /snapshot/load
+		// completes. Trigger the resume hook now to re-seed entropy and step
+		// the clock before the app can bind :8080 (spec §11 V6).
+		if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+			return fmt.Errorf("vmm: resume hook: %w", err)
+		}
 	}
 	tResume := time.Now()
-	if !spec.SkipReady {
+	if !spec.KeepPaused && !spec.SkipReady {
 		if err = v.waitReady(ctx, l, spec.HealthcheckPath, spec.StartupDeadlineS); err != nil {
 			return fmt.Errorf("vmm: readiness after restore: %w", err)
 		}
