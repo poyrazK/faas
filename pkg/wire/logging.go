@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
@@ -42,19 +43,25 @@ import (
 // active span. Renaming any of these is a breaking change for Loki
 // filters and the §12 dashboard.
 const (
-	FieldRequestID    = "request_id"
-	FieldWakeID       = "wake_id"
-	FieldAppID        = "app_id"
-	FieldDeploymentID = "deployment_id"
-	FieldInstanceID   = "instance_id"
-	FieldInvocationID = "invocation_id"
-	FieldTraceID      = "trace_id"
-	FieldSpanID       = "span_id"
-	FieldDaemon       = "daemon"
+	FieldRequestID           = "request_id"
+	FieldWakeID              = "wake_id"
+	FieldAppID               = "app_id"
+	FieldDeploymentID        = "deployment_id"
+	FieldInstanceID          = "instance_id"
+	FieldInvocationID        = "invocation_id"
+	FieldTenantID            = "tenant_id"
+	FieldRegion              = "region"
+	FieldCommitSHA           = "commit_sha"
+	FieldDeploymentTag       = "deployment_tag"
+	FieldDeploymentCreatedAt = "deployment_created_at"
+	FieldImageDigest         = "image_digest"
+	FieldTraceID             = "trace_id"
+	FieldSpanID              = "span_id"
+	FieldDaemon              = "daemon"
 )
 
 // CorrelationFields is the canonical set of fields that identify a single
-// inbound request or a single wake lifecycle. The struct is additive —
+// inbound request, wake lifecycle, and selected deployment. The struct is additive —
 // new fields (e.g. cron_id, build_id, trace_id, span_id) can be added
 // without breaking the log contract as long as the wire-side metadata
 // helper in grpcmetadata.go carries them too.
@@ -70,15 +77,21 @@ const (
 // fields are kept separately so the slog envelope stays clean when
 // producers carry one but not the other.
 type CorrelationFields struct {
-	RequestID    string
-	WakeID       string
-	AppID        string
-	DeploymentID string
-	InstanceID   string
-	NodeID       string
-	InvocationID string
-	TraceID      string
-	SpanID       string
+	RequestID           string
+	WakeID              string
+	AppID               string
+	DeploymentID        string
+	InstanceID          string
+	NodeID              string
+	InvocationID        string
+	TenantID            string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+	TraceID             string
+	SpanID              string
 
 	// ADR-123 — wake-boot telemetry fields propagated from schedd to
 	// vmmd so its distinct BootObserved row carries the same trigger / queue /
@@ -90,6 +103,53 @@ type CorrelationFields struct {
 	TriggerClass       string
 	QueuedCount        int
 	ConcurrencyAtAdmit int
+}
+
+// CorrelationFieldsFromPlatformIdentity projects the scheduler-authored
+// deployment identity onto the shared log/metadata envelope. It intentionally
+// leaves wake and invocation fields untouched because those belong to the
+// request lifecycle rather than the selected deployment.
+func CorrelationFieldsFromPlatformIdentity(identity api.PlatformIdentity) CorrelationFields {
+	return CorrelationFields{
+		RequestID:           identity.RequestID,
+		AppID:               identity.AppID,
+		DeploymentID:        identity.DeploymentID,
+		InstanceID:          identity.InstanceID,
+		NodeID:              identity.NodeID,
+		TenantID:            identity.TenantID,
+		Region:              identity.Region,
+		CommitSHA:           identity.CommitSHA,
+		DeploymentTag:       identity.DeploymentTag,
+		DeploymentCreatedAt: identity.DeploymentCreatedAt,
+		ImageDigest:         identity.ImageDigest,
+	}
+}
+
+// WithPlatformIdentity adds deployment identity to an existing request
+// correlation context while preserving wake, invocation, and trigger fields.
+// Non-empty identity values replace stale values from an earlier hop.
+func WithPlatformIdentity(ctx context.Context, identity api.PlatformIdentity) context.Context {
+	fields, _ := FromContext(ctx)
+	projected := CorrelationFieldsFromPlatformIdentity(identity)
+	if projected.RequestID == "" {
+		projected.RequestID = fields.RequestID
+	}
+	projected.WakeID = fields.WakeID
+	projected.InvocationID = fields.InvocationID
+	projected.TraceID = fields.TraceID
+	projected.SpanID = fields.SpanID
+	projected.Trigger = fields.Trigger
+	projected.TriggerClass = fields.TriggerClass
+	projected.QueuedCount = fields.QueuedCount
+	projected.ConcurrencyAtAdmit = fields.ConcurrencyAtAdmit
+	return WithContext(ctx, projected)
+}
+
+// WithPlatformIdentityLogger derives a logger carrying the same identity
+// fields as WithPlatformIdentity. It is useful for request-scoped errors and
+// lifecycle records that do not themselves cross gRPC.
+func WithPlatformIdentityLogger(base *slog.Logger, identity api.PlatformIdentity) *slog.Logger {
+	return WithCorrelationFields(base, CorrelationFieldsFromPlatformIdentity(identity))
 }
 
 // FromContext returns the correlation fields stored on ctx by the inbound
@@ -211,6 +271,24 @@ func appendCorrelationAttrs(attrs []any, fields CorrelationFields) []any {
 	}
 	if fields.InvocationID != "" {
 		attrs = append(attrs, FieldInvocationID, logsanitize.Field(fields.InvocationID))
+	}
+	if fields.TenantID != "" {
+		attrs = append(attrs, FieldTenantID, logsanitize.Field(fields.TenantID))
+	}
+	if fields.Region != "" {
+		attrs = append(attrs, FieldRegion, logsanitize.Field(fields.Region))
+	}
+	if fields.CommitSHA != "" {
+		attrs = append(attrs, FieldCommitSHA, logsanitize.Field(fields.CommitSHA))
+	}
+	if fields.DeploymentTag != "" {
+		attrs = append(attrs, FieldDeploymentTag, logsanitize.Field(fields.DeploymentTag))
+	}
+	if fields.DeploymentCreatedAt != "" {
+		attrs = append(attrs, FieldDeploymentCreatedAt, logsanitize.Field(fields.DeploymentCreatedAt))
+	}
+	if fields.ImageDigest != "" {
+		attrs = append(attrs, FieldImageDigest, logsanitize.Field(fields.ImageDigest))
 	}
 	if fields.TraceID != "" {
 		attrs = append(attrs, FieldTraceID, logsanitize.Field(fields.TraceID))

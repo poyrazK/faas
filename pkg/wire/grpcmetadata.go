@@ -10,13 +10,14 @@
 // Wire shape: the gRPC metadata keys mirror the HTTP header names
 // (lowercase x-faas-…) but the suffix matches the slog field names
 // (request_id, wake_id, app_id, deployment_id, instance_id,
-// invocation_id). The dual naming keeps the gRPC layer compatible
+// invocation_id, tenant_id, region, commit_sha, deployment_tag,
+// deployment_created_at, image_digest). The dual naming keeps the gRPC layer compatible
 // with the existing pkg/middleware/requestid.go header convention
 // while the slog envelope stays log-canonical.
 //
 // Empty fields are skipped (not emitted as empty metadata entries) so
 // the wire stays tight. A producer that knows only request_id + wake_id
-// sends two keys, not six.
+// sends two keys, not the full identity envelope.
 package wire
 
 import (
@@ -40,15 +41,21 @@ import (
 // header at every read site. Schedd stamps the x-faas-* keys onto the
 // MD alongside the traceparent that otelgrpc writes.
 const (
-	mdKeyRequestID    = "x-faas-request-id"
-	mdKeyWakeID       = "x-faas-wake-id"
-	mdKeyAppID        = "x-faas-app-id"
-	mdKeyDeploymentID = "x-faas-deployment-id"
-	mdKeyInstanceID   = "x-faas-instance-id"
-	mdKeyNodeID       = "x-faas-node-id"
-	mdKeyInvocationID = "x-faas-invocation-id"
-	mdKeyTraceID      = "x-faas-trace-id"
-	mdKeySpanID       = "x-faas-span-id"
+	mdKeyRequestID           = "x-faas-request-id"
+	mdKeyWakeID              = "x-faas-wake-id"
+	mdKeyAppID               = "x-faas-app-id"
+	mdKeyDeploymentID        = "x-faas-deployment-id"
+	mdKeyInstanceID          = "x-faas-instance-id"
+	mdKeyNodeID              = "x-faas-node-id"
+	mdKeyInvocationID        = "x-faas-invocation-id"
+	mdKeyTenantID            = "x-faas-tenant-id"
+	mdKeyRegion              = "x-faas-region"
+	mdKeyCommitSHA           = "x-faas-commit-sha"
+	mdKeyDeploymentTag       = "x-faas-deployment-tag"
+	mdKeyDeploymentCreatedAt = "x-faas-deployment-created-at"
+	mdKeyImageDigest         = "x-faas-image-digest"
+	mdKeyTraceID             = "x-faas-trace-id"
+	mdKeySpanID              = "x-faas-span-id"
 	// ADR-123 — wake-boot telemetry fields (closed trigger enum +
 	// ledger.Concurrency snapshot). Threaded through the gRPC metadata
 	// envelope for correlated logs and restore diagnostics. The vmmd-side
@@ -100,6 +107,24 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 	}
 	if fields.InvocationID != "" {
 		pairs = append(pairs, mdKeyInvocationID, fields.InvocationID)
+	}
+	if fields.TenantID != "" {
+		pairs = append(pairs, mdKeyTenantID, fields.TenantID)
+	}
+	if fields.Region != "" {
+		pairs = append(pairs, mdKeyRegion, fields.Region)
+	}
+	if fields.CommitSHA != "" {
+		pairs = append(pairs, mdKeyCommitSHA, fields.CommitSHA)
+	}
+	if fields.DeploymentTag != "" {
+		pairs = append(pairs, mdKeyDeploymentTag, fields.DeploymentTag)
+	}
+	if fields.DeploymentCreatedAt != "" {
+		pairs = append(pairs, mdKeyDeploymentCreatedAt, fields.DeploymentCreatedAt)
+	}
+	if fields.ImageDigest != "" {
+		pairs = append(pairs, mdKeyImageDigest, fields.ImageDigest)
 	}
 	if fields.TraceID != "" {
 		pairs = append(pairs, mdKeyTraceID, fields.TraceID)
@@ -188,6 +213,30 @@ func CorrelationFromIncoming(ctx context.Context) (CorrelationFields, bool) {
 	}
 	if v := md.Get(mdKeyInvocationID); len(v) > 0 && v[0] != "" {
 		out.InvocationID = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyTenantID); len(v) > 0 && v[0] != "" {
+		out.TenantID = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyRegion); len(v) > 0 && v[0] != "" {
+		out.Region = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyCommitSHA); len(v) > 0 && v[0] != "" {
+		out.CommitSHA = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyDeploymentTag); len(v) > 0 && v[0] != "" {
+		out.DeploymentTag = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyDeploymentCreatedAt); len(v) > 0 && v[0] != "" {
+		out.DeploymentCreatedAt = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyImageDigest); len(v) > 0 && v[0] != "" {
+		out.ImageDigest = v[0]
 		any = true
 	}
 	if v := md.Get(mdKeyTraceID); len(v) > 0 && v[0] != "" {
