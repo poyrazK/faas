@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "add", "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "crons", "delayed-task", "events", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -353,6 +353,20 @@ var cliCommands = []cliCommand{
 			{Name: "get", Short: "Show one audit event"},
 		},
 		Positionals: []string{"[<id>]"},
+	},
+	{
+		Name:    "events",
+		DocSlug: "events",
+		Short:   "Publish tenant-scoped events to the internal router",
+		Subcommands: []cliSub{
+			{Name: "publish", Short: "Publish one CloudEvents-shaped event", Flags: []cliFlag{
+				{Name: "id", Short: "stable event id", Req: true, Value: "ID"},
+				{Name: "source", Short: "event source", Req: true, Value: "SOURCE"},
+				{Name: "type", Short: "event type", Req: true, Value: "TYPE"},
+				{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
+				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
+			}},
+		},
 	},
 	{
 		Name:    dispatchApps,
