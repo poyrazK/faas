@@ -935,10 +935,15 @@ func NewMemStore() *MemStore {
 		crons:                 map[string]Cron{},
 		prewarmIntents:        map[string]PrewarmIntent{},
 		triggerConsumerHealth: map[string]TriggerConsumerHealth{},
-		eventSubscriptions:    map[string]EventSubscription{},
-		triggerDeadLetters:    []sqlc.TriggerDeadLetter{},
-		deadLetterSnapshots:   map[string]DeadLetterEvent{},
-		deadLetterPurged:      map[string]struct{}{},
+		// records was the one map field on MemStore that was written by a
+		// Store method but never initialized here or guarded lazily, so
+		// InsertTriggerRecord panicked with "assignment to entry in nil map"
+		// on any fresh store. No MemStore test had ever called it.
+		records:             map[string]sqlc.TriggerRecord{},
+		eventSubscriptions:  map[string]EventSubscription{},
+		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
+		deadLetterSnapshots: map[string]DeadLetterEvent{},
+		deadLetterPurged:    map[string]struct{}{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
