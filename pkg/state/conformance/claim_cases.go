@@ -23,6 +23,7 @@ package conformance
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -423,5 +424,271 @@ func testOperatorIntentClaimIsExactlyOnce(t *testing.T, fx *Fixture) {
 		if n != 1 {
 			t.Errorf("operator intent %s claimed %d times, want 1", id, n)
 		}
+	}
+}
+
+// testCliAuthCodeClaimBindsOneAccount pins ClaimCliAuthCode.
+//
+// This is the device-code login handshake: the CLI prints a code, the browser
+// claims it, and the CLI then polls for the bound account. Two winners would
+// mean one code bound to two accounts, and whichever poll landed second would
+// hand the CLI a session for an account the human never authorised.
+func testCliAuthCodeClaimBindsOneAccount(t *testing.T, fx *Fixture) {
+	tokenHash := []byte("cli-auth-" + uuid.NewString())
+	if err := fx.Store.IssueCliAuthCode(fx.Ctx, tokenHash, time.Now().UTC().Add(10*time.Minute)); err != nil {
+		t.Fatalf("IssueCliAuthCode: %v", err)
+	}
+
+	other, err := fx.Store.CreateAccount(fx.Ctx, "cli-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	accounts := []string{fx.Account.ID, other.ID}
+
+	var next int32
+	claimed := claimRace(t, 6, func() (string, bool, error) {
+		acct := accounts[int(atomic.AddInt32(&next, 1))%len(accounts)]
+		if err := fx.Store.ClaimCliAuthCode(fx.Ctx, tokenHash, acct); err != nil {
+			return "", false, err
+		}
+		return acct, true, nil
+	})
+	if len(claimed) != 1 {
+		t.Fatalf("%d browsers claimed the same login code, want exactly 1 — a second "+
+			"winner binds the code to an account the human never authorised", len(claimed))
+	}
+
+	// The bound account is the one that won, and it is readable by the polling CLI.
+	status, boundAccount, err := fx.Store.PeekCliAuthCode(fx.Ctx, tokenHash)
+	if err != nil {
+		t.Fatalf("PeekCliAuthCode: %v", err)
+	}
+	if boundAccount != claimed[0] {
+		t.Fatalf("code bound to %s, but %s won the claim", boundAccount, claimed[0])
+	}
+	if status == "" {
+		t.Fatal("claimed code has an empty status; the polling CLI cannot tell it was claimed")
+	}
+
+	// An unknown code is not claimable — a login code must not be forgeable.
+	if err := fx.Store.ClaimCliAuthCode(fx.Ctx, []byte("never-issued-"+uuid.NewString()), fx.Account.ID); err == nil {
+		t.Fatal("claiming a code that was never issued succeeded")
+	}
+}
+
+// testDueWebhookDeliveryClaimRespectsScheduleAndLimit pins
+// ClaimDueAppWebhookDeliveries: the batch must honour both the due time and
+// the caller's limit, and must not hand the same delivery to two dispatchers.
+func testDueWebhookDeliveryClaimRespectsScheduleAndLimit(t *testing.T, fx *Fixture) {
+	hook, err := fx.Store.CreateAppWebhook(fx.Ctx, state.AppWebhook{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		TargetURL: "https://example.test/hook", SecretSealed: []byte("sealed"),
+		EventFilter: []string{string(state.AppWebhookEventAppDeployed)},
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAppWebhook: %v", err)
+	}
+
+	now := time.Now().UTC()
+	record := func(nextAttempt time.Time) string {
+		t.Helper()
+		d, err := fx.Store.RecordAppWebhookDelivery(fx.Ctx, state.AppWebhookDelivery{
+			WebhookID: hook.ID, AppID: fx.App.ID, AccountID: fx.Account.ID,
+			Event: state.AppWebhookEventAppDeployed, Payload: []byte(`{"v":1}`),
+			Status: state.AppWebhookDeliveryPending, NextAttemptAt: nextAttempt,
+		})
+		if err != nil {
+			t.Fatalf("RecordAppWebhookDelivery: %v", err)
+		}
+		return d.ID
+	}
+
+	due := map[string]bool{record(now.Add(-time.Minute)): true, record(now.Add(-time.Hour)): true}
+	notYetDue := record(now.Add(time.Hour))
+
+	// The limit is a cap, not a suggestion: a dispatcher that ignores it
+	// oversubscribes its own concurrency budget.
+	first, err := fx.Store.ClaimDueAppWebhookDeliveries(fx.Ctx, 1, now)
+	if err != nil {
+		t.Fatalf("ClaimDueAppWebhookDeliveries: %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("claimed %d deliveries with limit=1, want 1", len(first))
+	}
+	if !due[first[0].ID] {
+		t.Fatalf("claimed delivery %s is not one of the due rows", first[0].ID)
+	}
+
+	rest, err := fx.Store.ClaimDueAppWebhookDeliveries(fx.Ctx, 10, now)
+	if err != nil {
+		t.Fatalf("ClaimDueAppWebhookDeliveries: %v", err)
+	}
+	for _, d := range rest {
+		if d.ID == notYetDue {
+			t.Fatalf("claimed delivery %s whose next_attempt_at is in the future — a "+
+				"backoff that can be claimed early is not a backoff", d.ID)
+		}
+	}
+}
+
+// testFireNowRequestClaimIsExactlyOnce pins ClaimPendingFireNowRequest.
+//
+// A fire-now request is an operator pressing "run this cron now". Two winners
+// run the customer's cron twice.
+func testFireNowRequestClaimIsExactlyOnce(t *testing.T, fx *Fixture) {
+	cron, err := fx.Store.CreateCron(fx.Ctx, fx.App.ID, "*/5 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+	requestID, err := fx.Store.InsertFireNowRequest(fx.Ctx, cron.ID, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+
+	claimed := claimRace(t, 6, func() (string, bool, error) {
+		req, err := fx.Store.ClaimPendingFireNowRequest(fx.Ctx)
+		if err != nil {
+			return "", false, err
+		}
+		return req.ID, true, nil
+	})
+	if len(claimed) != 1 {
+		t.Fatalf("%d workers claimed the same fire-now request, want exactly 1 — the "+
+			"customer's cron would run once per winner", len(claimed))
+	}
+	if claimed[0] != requestID {
+		t.Fatalf("claimed %s, want %s", claimed[0], requestID)
+	}
+	// This path has its own sentinel rather than the shared ErrNotFound; both
+	// stores must agree on WHICH one, or a caller's errors.Is check silently
+	// stops matching against one of them.
+	if _, err := fx.Store.ClaimPendingFireNowRequest(fx.Ctx); !errors.Is(err, state.ErrFireNowRequestNotFound) {
+		t.Fatalf("claim with nothing pending = %v, want ErrFireNowRequestNotFound", err)
+	}
+}
+
+// testRuntimeConfigOperationClaimIsExactlyOnce pins
+// ClaimPendingRuntimeConfigOperation. Two winners apply the same operator
+// config change twice, and a rolling apply mode makes that a double rollout.
+func testRuntimeConfigOperationClaimIsExactlyOnce(t *testing.T, fx *Fixture) {
+	const operations = 2
+	want := map[string]bool{}
+	for i := 0; i < operations; i++ {
+		op, err := fx.Store.CreateRuntimeConfigOperation(fx.Ctx, state.RuntimeConfig{
+			Key:   "conformance." + uuid.NewString(),
+			Scope: state.RuntimeConfigScopeGlobal,
+			// runtime_config_operations_config_version_check requires > 0.
+			Version:      1,
+			DesiredValue: []byte(`{"enabled":true}`),
+			// A hot apply needs no operation row; the store rejects it outright.
+			ApplyMode: state.RuntimeConfigApplyGraceful,
+		}, uuid.NewString(), "claim conformance")
+		if err != nil {
+			t.Fatalf("CreateRuntimeConfigOperation: %v", err)
+		}
+		want[op.ID] = true
+	}
+
+	claimed := claimRace(t, 6, func() (string, bool, error) {
+		op, err := fx.Store.ClaimPendingRuntimeConfigOperation(fx.Ctx)
+		if err != nil {
+			return "", false, err
+		}
+		return op.ID, true, nil
+	})
+	if len(claimed) != operations {
+		t.Fatalf("claimed %d operations, want exactly %d", len(claimed), operations)
+	}
+	for id, n := range distinct(claimed) {
+		if n != 1 {
+			t.Errorf("runtime config operation %s claimed %d times, want 1", id, n)
+		}
+		if !want[id] {
+			t.Errorf("claimed unexpected operation %s", id)
+		}
+	}
+}
+
+// testTriggerRecordClaimIsBoundedAndScoped pins ClaimTriggerRecords.
+//
+// Deliberately NOT an exactly-once assertion. The interface promises that
+// "concurrent dispatch workers distribute claims without retry-on-collision",
+// and the two stores reach that by different means: PgStore selects FOR UPDATE
+// SKIP LOCKED, so genuinely concurrent statements get disjoint sets, while
+// MemStore takes one process mutex and therefore serializes every caller. A
+// race-based exactly-once check passes on one and cannot pass on the other,
+// which makes it a test of the concurrency model rather than of the contract.
+//
+// What both must honour is the bounded, scoped read: never more than `limit`,
+// never another trigger's records, never a record that is not claimable.
+//
+// (Writing this case surfaced two defects in MemStore, both recorded in the
+// commit message: a nil `records` map that panicked on first insert, and a
+// `r.State = "claimed"` that assigns to the range copy and is therefore dead.)
+func testTriggerRecordClaimIsBoundedAndScoped(t *testing.T, fx *Fixture) {
+	// triggers_source_check is a two-value closed set, and only ONE enabled
+	// queue trigger may exist per (app, source) — so the fixtures take one
+	// source each, and the third is disabled rather than a third source.
+	newTrigger := func(slug, source string, enabled bool) string {
+		t.Helper()
+		trigger, err := fx.Store.CreateTriggerIfUnderQuota(fx.Ctx, fx.App.ID, "queue",
+			slug+"-"+uuid.NewString(), enabled, []byte(`{"mode":"queue"}`), source,
+			10, 1000, 3, 1<<20, "commit", api.MustLimitsFor(api.PlanPro))
+		if err != nil {
+			t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
+		}
+		return trigger.ID.String()
+	}
+
+	target := newTrigger("target", "queue", true)
+	other := newTrigger("other", "delayed_task", true)
+
+	const records = 5
+	mine := map[string]bool{}
+	for i := 0; i < records; i++ {
+		id, err := fx.Store.InsertTriggerRecord(fx.Ctx, target,
+			"item-"+uuid.NewString(), []byte(`{"payload":1}`), nil, nil)
+		if err != nil {
+			t.Fatalf("InsertTriggerRecord: %v", err)
+		}
+		mine[id] = true
+	}
+	if _, err := fx.Store.InsertTriggerRecord(fx.Ctx, other,
+		"item-"+uuid.NewString(), []byte(`{"payload":2}`), nil, nil); err != nil {
+		t.Fatalf("InsertTriggerRecord(other): %v", err)
+	}
+
+	const limit = 2
+	batch, err := fx.Store.ClaimTriggerRecords(fx.Ctx, target, limit)
+	if err != nil {
+		t.Fatalf("ClaimTriggerRecords: %v", err)
+	}
+	if len(batch) > limit {
+		t.Fatalf("claimed %d records with limit=%d — a dispatcher that is handed more "+
+			"than it asked for oversubscribes its own concurrency budget", len(batch), limit)
+	}
+	if len(batch) == 0 {
+		t.Fatal("claimed nothing from a trigger holding 5 pending records")
+	}
+	for _, r := range batch {
+		if !mine[r.ID.String()] {
+			t.Fatalf("claim for trigger %s returned record %s, which belongs to another "+
+				"trigger — one customer's queue must never drain into another's dispatcher",
+				target, r.ID.String())
+		}
+		if r.State != "pending" && r.State != "retry" && r.State != "claimed" {
+			t.Errorf("claimed record %s is in state %q, which is not a claimable state",
+				r.ID.String(), r.State)
+		}
+	}
+
+	// A trigger with no records yields an empty batch, not an error.
+	empty, err := fx.Store.ClaimTriggerRecords(fx.Ctx, newTrigger("empty", "queue", false), limit)
+	if err != nil {
+		t.Fatalf("claim on an empty trigger: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty trigger returned %d records", len(empty))
 	}
 }
