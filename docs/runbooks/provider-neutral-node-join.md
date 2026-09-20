@@ -361,6 +361,31 @@ reachability and the durable fleet operator account, pin the SSH host key, and
 name a stable storage device path; the Gregale admission path after that
 handoff is identical.
 
+For a provider without a first-party adapter, do not hand-write that claim.
+After the provider creates the server and private/overlay DNS is ready, use the
+common host preflight. Obtain the expected SSH fingerprint independently from
+the provider console or rescue environment; deriving it from the same network
+connection would not authenticate the machine.
+
+```sh
+bash scripts/ops/prepare_compute_claim.sh \
+  --node fsn-5 \
+  --ssh-host <provider-or-overlay-address> \
+  --ssh-user root \
+  --identity-file /secure/private/compute-ssh-key \
+  --host-key-sha256 SHA256:<provider-verified-fingerprint> \
+  --storage-device /dev/disk/by-id/<stable-provider-disk> \
+  --format-storage \
+  --claim /tmp/fsn-5-compute-claim.yaml
+```
+
+The preflight is read-only. It proves Linux/x86_64, systemd, passwordless root,
+CPU virtualization flags, usable `/dev/kvm`, a dedicated stable storage path,
+and exact SSH host-key pinning. `--format-storage` still performs no formatting;
+it requires the device to be blank and unmounted before recording authorization
+for the later join. A failed check emits no claim. Feed the resulting file to
+`enroll_compute_claim.sh`, exactly like a GCP-produced claim.
+
 ## Fast repeated provisioning
 
 When adding more than one machine, prepare the public release assets and the
