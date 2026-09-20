@@ -337,6 +337,7 @@ jobs:
         with:
           go-version-file: claim-source/go.mod
           cache: true
+          cache-dependency-path: claim-source/go.sum
 
       - name: Set up Go for signed bundle validation
         if: inputs.fleet_bundle_url != ''
@@ -344,13 +345,21 @@ jobs:
         with:
           go-version-file: bundle-source/go.mod
           cache: true
+          cache-dependency-path: bundle-source/go.sum
 
       - name: Install pinned cosign for signed bundle validation
         if: inputs.fleet_bundle_url != ''
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/fleet-bundle-tools"
-          GOBIN="$RUNNER_TEMP/fleet-bundle-tools" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
+          COSIGN_SHA256=8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b
+          COSIGN_DEST="$RUNNER_TEMP/fleet-bundle-tools/cosign"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$COSIGN_DEST" \
+            https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64
+          echo "$COSIGN_SHA256  $COSIGN_DEST" | sha256sum -c -
+          chmod 0755 "$COSIGN_DEST"
 
       - name: Resolve declarative node claim
         if: inputs.claim_file != ''

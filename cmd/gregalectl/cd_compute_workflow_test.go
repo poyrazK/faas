@@ -99,6 +99,45 @@ func TestCDComputeWorkflowPassesReleaseTagToBundleValidation(t *testing.T) {
 	}
 }
 
+func TestFleetEnrollmentWorkflowsUseCachedSourceAndPinnedCosignBinary(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"),
+		filepath.Join("..", "..", ".github", "workflows", "fleet-enrollment.yml"),
+	}
+	const (
+		cosignURL    = "https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64"
+		cosignSHA256 = "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+	)
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		workflow := string(body)
+		for _, required := range []string{cosignURL, cosignSHA256, "sha256sum -c -"} {
+			if !strings.Contains(workflow, required) {
+				t.Errorf("%s is missing %q", filepath.Base(path), required)
+			}
+		}
+		if strings.Contains(workflow, "go install github.com/sigstore/cosign") {
+			t.Errorf("%s still compiles cosign during every run", filepath.Base(path))
+		}
+	}
+
+	computeBody, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dependencyPath := range []string{
+		"cache-dependency-path: claim-source/go.sum",
+		"cache-dependency-path: bundle-source/go.sum",
+	} {
+		if !strings.Contains(string(computeBody), dependencyPath) {
+			t.Errorf("cd-compute Go cache is missing %q", dependencyPath)
+		}
+	}
+}
+
 func TestCDComputeWorkflowDownloadsCanonicalAssetsFromOneLookupInParallel(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {
