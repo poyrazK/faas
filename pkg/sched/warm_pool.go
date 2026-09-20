@@ -216,6 +216,13 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	wakeID := uuid.NewString()
 	ins, err := e.store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, placement.NodeID, wakeID, instanceModeForApp(app))
 	if err != nil {
+		// ADR-193: a warm-pool fill must never outrank a customer wake for
+		// node RAM. A durable refusal returns the typed capacity Problem so
+		// the caller drops this fill attempt instead of retrying into a
+		// full node.
+		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
+			return capErr
+		}
 		return fmt.Errorf("create row: %w", err)
 	}
 	cleanup := func(reason string) {

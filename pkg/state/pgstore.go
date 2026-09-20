@@ -14676,13 +14676,19 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// errors.As(err, &pgErr) below would then return false on the
 	// very 23505 we want to translate. Bypassing mapErr preserves
 	// the chain and lets the typed sentinel surface.
-	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
+	// ADR-193: the INSERT runs inside the per-node headroom reservation so a
+	// peer schedd cannot admit against the same free MB. See
+	// node_reservation.go — a state that holds no resident RAM skips the
+	// transaction entirely and this stays a bare pool insert.
+	return s.insertInstanceWithNodeReservation(ctx, nodeID, state, ramMB, func(q instanceInserter) (Instance, error) {
+		row := q.QueryRow(ctx,
+			`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
 		 values ($1, nullif($2::text, '')::uuid, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now())
 		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
-		appID, deploymentID, state, ramMB, nodeID, wakeID)
-	return scanCreatedInstance(row, wakeID, appID)
+			appID, deploymentID, state, ramMB, nodeID, wakeID)
+		return scanCreatedInstance(row, wakeID, appID)
+	})
 }
 
 // scanCreatedInstance is shared by both instance insert shapes. The partial
@@ -14716,13 +14722,16 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
-	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
+	// ADR-193: same per-node headroom reservation as CreateInstance.
+	return s.insertInstanceWithNodeReservation(ctx, nodeID, state, ramMB, func(q instanceInserter) (Instance, error) {
+		row := q.QueryRow(ctx,
+			`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
 		 values ($1, nullif($2::text, '')::uuid, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), $7)
 		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
-		appID, deploymentID, state, ramMB, nodeID, wakeID, mode)
-	return scanCreatedInstance(row, wakeID, appID)
+			appID, deploymentID, state, ramMB, nodeID, wakeID, mode)
+		return scanCreatedInstance(row, wakeID, appID)
+	})
 }
 
 // CreateJobInstance writes the job-task instance shape. Job definitions use
@@ -14732,15 +14741,24 @@ func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentI
 // from accidentally relying on the app/deployment pair CHECK and defaulting
 // the row to kind='wake'.
 func (s *PgStore) CreateJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
-	row := s.pool.QueryRow(ctx,
-		`insert into instances (id, app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at, mode)
+	// ADR-193: a job task is resident RAM on the node like any other
+	// instance — ComputeNodeUsedMB does not filter by kind — so it takes the
+	// same per-node reservation. Per-account job concurrency stays where it
+	// was, at the dispatch tick.
+	inst, err := s.insertInstanceWithNodeReservation(ctx, nodeID, state, ramMB, func(q instanceInserter) (Instance, error) {
+		row := q.QueryRow(ctx,
+			`insert into instances (id, app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at, mode)
 		 values ($1::uuid, null, null, $2::uuid, 'job_task', $3, $4, $5::uuid,
 		         case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), 'job')
 		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
-		instanceID, jobID, state, ramMB, nodeID, wakeID)
-	inst, err := scanInstanceCols(row.Scan)
+			instanceID, jobID, state, ramMB, nodeID, wakeID)
+		return scanInstanceCols(row.Scan)
+	})
 	if err != nil {
+		if errors.Is(err, ErrNodeCapacity) {
+			return Instance{}, err
+		}
 		return Instance{}, fmt.Errorf("state: create job instance (instance=%s job=%s run=%s task=%d): %w", instanceID, jobID, runID, taskIndex, err)
 	}
 	inst.Kind = "job_task"

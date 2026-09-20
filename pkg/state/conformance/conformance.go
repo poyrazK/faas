@@ -89,6 +89,7 @@ func Run(t *testing.T, open Open) {
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1641,6 +1642,100 @@ func Seed(t *testing.T, store state.Store) *Fixture {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
 	return &Fixture{Store: store, Ctx: ctx, Account: acct, App: app, Deployment: dep, Node: node}
+}
+
+// testNodeAdmissionCeiling pins ADR-193: the per-node RAM ceiling
+// (invariant §6.2-2) is enforced by the instances INSERT itself, not only by
+// schedd's in-memory ledger.
+//
+// The arithmetic is spelled out rather than derived from the store, because
+// the failure this guards against is precisely the two tiers disagreeing
+// about what "used" means. Every figure below is absolute:
+//
+//	ceiling                    1024 MB
+//	three 256 MB admits   3 × (256 + 8) =  792 MB used, 232 MB free
+//	a fourth 256 MB admit      256 + 8  =  264 MB > 232 MB free  → refused
+//	a 224 MB admit             224 + 8  =  232 MB = 232 MB free  → admitted
+//	                                       total 1024 MB = ceiling exactly
+//
+// The boundary case matters: the ledger admits when used+requested <=
+// ceiling, so a store that refused an exact fit would strand the last slot
+// on every node in the fleet.
+func testNodeAdmissionCeiling(t *testing.T, fx *Fixture) {
+	const (
+		ceilingMB = 1024
+		admitMB   = 256
+	)
+	node, err := fx.Store.CreateComputeNode(fx.Ctx, state.ComputeNode{
+		Name:               "ceiling-" + uuid.NewString(),
+		TargetURL:          "unix:///tmp/conformance-ceiling.sock",
+		VPCPUs:             2,
+		MemMB:              2048,
+		MaxConcurrency:     20,
+		AdmissionCeilingMB: ceilingMB,
+		VCPUBudget:         2,
+		Lifecycle:          state.NodeLifecycleActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+			string(state.StateRunning), admitMB, node.ID, uuid.NewString()); err != nil {
+			t.Fatalf("CreateInstance(fill %d): %v", i, err)
+		}
+	}
+	const wantUsedAfterFill = 3 * (admitMB + api.PerVMOverheadMB) // 792
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB: %v", err)
+	} else if got != wantUsedAfterFill {
+		t.Fatalf("used after fill = %d MB, want %d MB", got, wantUsedAfterFill)
+	}
+
+	// 792 + 264 = 1056 > 1024. This is the admission a second schedd would
+	// have made against a stale cached headroom read.
+	_, err = fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateWaking), admitMB, node.ID, uuid.NewString())
+	if !errors.Is(err, state.ErrNodeCapacity) {
+		t.Fatalf("over-ceiling CreateInstance err = %v, want state.ErrNodeCapacity", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB after refusal: %v", err)
+	} else if got != wantUsedAfterFill {
+		t.Fatalf("refused admit left %d MB used, want %d MB — the row was not rolled back", got, wantUsedAfterFill)
+	}
+
+	// A parked row holds no resident RAM, so the ceiling must not apply to
+	// it however large it is. Guarding it would break park/restore.
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateParked), 4096, node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance(parked, over ceiling): %v", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB after park: %v", err)
+	} else if got != wantUsedAfterFill {
+		t.Fatalf("parked row counted as %d MB used, want %d MB", got, wantUsedAfterFill)
+	}
+
+	// Exact fit: 792 + 232 = 1024 = ceiling.
+	const exactFitMB = ceilingMB - wantUsedAfterFill - api.PerVMOverheadMB // 224
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateWaking), exactFitMB, node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("exact-fit CreateInstance(%d MB): %v", exactFitMB, err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB after exact fit: %v", err)
+	} else if got != ceilingMB {
+		t.Fatalf("used after exact fit = %d MB, want %d MB", got, ceilingMB)
+	}
+
+	// The fixture's own node is untouched by any of the above, so a
+	// full node never blocks admission elsewhere in the fleet.
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateWaking), admitMB, fx.Node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance on a different node: %v", err)
+	}
 }
 
 func testAppLimits(t *testing.T, fx *Fixture) {

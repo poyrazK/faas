@@ -1271,7 +1271,9 @@ func (e *Engine) createInstanceWithWakeRetry(ctx context.Context, appID, deploym
 		// instance UUID.
 		return state.Instance{}, state.ErrWakeAlreadyInflight
 	}
-	return state.Instance{}, err
+	// ADR-193: the durable per-node reservation refused. Surface the same
+	// typed capacity Problem the ledger would have produced.
+	return state.Instance{}, e.nodeCapacityProblem(err)
 }
 
 func hostPortRequestsForManifest(manifest state.AppManifest) []hostport.Request {
@@ -2826,6 +2828,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID, mode)
 	if err != nil {
 		release()
+		// ADR-193: a durable per-node refusal is a typed capacity Problem,
+		// not a wake failure — the chosen node is full, another may not be.
+		// The transaction rolled back, so there is no row to unwind.
+		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
+			return WakeResult{}, capErr
+		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
 	// Reserve declared listeners before the ledger and vmmd admission. The
@@ -5388,6 +5396,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	primeWakeID := primeWakeUUID.String()
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID, instanceModeForApp(app))
 	if err != nil {
+		// ADR-193: see the wake path. Prime is cold boot by design, so a
+		// node-full refusal here fails the deployment rather than the wake;
+		// the typed Problem is what carries CodeCapacity to the deploy row.
+		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
+			return capErr
+		}
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)

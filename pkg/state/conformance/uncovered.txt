@@ -82,7 +82,6 @@ CompleteBuild
 CompleteGdprRequest
 ComputeNodeByID
 ComputeNodeByName
-ComputeNodeUsedMB
 ConsumeCliAuthCode
 ConsumeEmailVerificationToken
 ConsumeLoginToken

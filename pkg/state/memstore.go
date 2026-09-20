@@ -11468,6 +11468,14 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	// ad-hoc test fixtures that don't thread wake_id through still get
 	// a non-empty value. Production callers (schedd's Wake) supply a
 	// UUIDv7 minted Go-side for time-ordered values.
+	//
+	// ADR-193: mirror of the PgStore per-node reservation. Consistent with
+	// the FK divergence noted above, an un-seeded nodeID is still a pass —
+	// the guard only fires for a node whose compute_nodes row exists and
+	// carries a positive ceiling.
+	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+		return Instance{}, err
+	}
 	ins := Instance{
 		ID:           newID(),
 		AppID:        appID,
@@ -11508,6 +11516,11 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// ADR-193: mirror of the PgStore per-node reservation. m.mu is held
+	// across check and insert, which is what the advisory lock buys PgStore.
+	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+		return Instance{}, err
+	}
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		mode = string(InstanceModeNormal)
@@ -11548,6 +11561,10 @@ func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID
 	}
 	if _, exists := m.instances[instanceID]; exists {
 		return Instance{}, ErrConflict
+	}
+	// ADR-193: job tasks take the same per-node reservation as app wakes.
+	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+		return Instance{}, err
 	}
 	ins := Instance{
 		ID:           instanceID,
