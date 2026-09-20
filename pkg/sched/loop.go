@@ -97,16 +97,14 @@ type Loop struct {
 	// doesn't sit for a full 1s tick before the first batch.
 	triggerWakeup     chan struct{}
 	triggerWakeupOnce sync.Once
-	// primeSlots bounds how many snapshot_prime handlers run off the
-	// main select goroutine. Prime is the one notification handler that
-	// does VM work (cold boot + snapshot), so it is the only one that
-	// can stall the shared loop for tens of seconds; every other case
-	// in handleNotification is a cheap DB or cache operation and stays
-	// inline. See dispatchPrime.
-	primeSlots            chan struct{}
-	primeSlotsOnce        sync.Once
-	primeInFlightMu       sync.Mutex
-	primeInFlight         map[string]struct{}
+	// work is the bounded off-loop task pool (ADR-191). It owns every
+	// handler arm that must not run on the select goroutine: the
+	// snapshot_prime VM work that used to have its own slot pool, plus
+	// the four reconcile arms that used to escape with an unbounded
+	// `go func`. Lazily built by workPool() so a Loop constructed
+	// without Run (tests) still dispatches.
+	work                  *workPool
+	workOnce              sync.Once
 	now                   func() time.Time
 	flowCounts            FlowCounter
 	ops                   *wire.OpsMetrics                    // issue #171 shared registry; nil safe
@@ -245,15 +243,26 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 }
 
 // MainLoopName is the Liveness loop name Run beats on every select
-// iteration. MainLoopBudget is its stall budget: the notify handler
-// runs Prime synchronously on this goroutine, and a Prime is bounded
-// by ColdBootTimeout (35 s) plus the memory-scaled snapshot budget
-// (SnapshotBudgetBase 15 s + 60 s/GiB, so 75 s for a Scale-plan
-// instance). 110 s is the legitimate worst case; three minutes is a
-// wedge, not work.
+// iteration. MainLoopBudget is its stall budget.
+//
+// ADR-191 moved Prime and the four reconcile arms onto the bounded work
+// pool, so the longest thing that still runs on this goroutine is
+// handleAppWake. That one stays inline deliberately: its error decides
+// whether the durable notification is acknowledged, and moving it off
+// the loop means re-plumbing outbox ack through the worker. EnsureWake
+// can legitimately cold-boot at ColdBootTimeout (35 s) plus admission,
+// so 60 s is the honest ceiling — down from the 180 s the loop needed
+// when a Scale-plan Prime ran here.
+//
+// The prime path can still land inline when all four prime slots are
+// busy (workSpecs: overflowInline, because dropping strands a
+// deployment in `snapshotting`). That is rare, bounded by
+// SnapshotTimeout, and a watchdog restart is the correct outcome if it
+// somehow exceeds a minute — the daemon has stopped scheduling either
+// way.
 const (
 	MainLoopName   = "main"
-	MainLoopBudget = 180 * time.Second
+	MainLoopBudget = 60 * time.Second
 )
 
 // WithLiveness (ADR-190) attaches the daemon's Liveness registry.
@@ -1633,6 +1642,24 @@ func retryableSnapshotPrimeError(err error) bool {
 	}
 }
 
+// workPool returns the loop's bounded off-loop task pool, building it on
+// first use (ADR-191). Lazy because tests construct a Loop and call
+// handleNotification directly without ever entering Run.
+func (l *Loop) workPool() *workPool {
+	l.workOnce.Do(func() {
+		if l.work == nil {
+			l.work = newWorkPool(l.log, l.ops)
+		}
+	})
+	return l.work
+}
+
+// submitWork hands one task to the pool. Thin wrapper so every call site
+// reads the same and the nil-Loop case stays impossible.
+func (l *Loop) submitWork(kind workKind, key string, fn func()) {
+	l.workPool().submit(kind, key, fn)
+}
+
 // dispatchPrime runs Engine.Prime off the loop's select goroutine.
 //
 // Prime does real VM work — cold boot then snapshot — so it can occupy
@@ -1662,28 +1689,7 @@ func retryableSnapshotPrimeError(err error) bool {
 // Durable replay can race a still-running LISTEN delivery, so a deployment
 // already in flight is coalesced before it consumes another prime slot.
 func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
-	primeKey := appID + "\x00" + deploymentID
-	l.primeInFlightMu.Lock()
-	if l.primeInFlight == nil {
-		l.primeInFlight = make(map[string]struct{})
-	}
-	if _, exists := l.primeInFlight[primeKey]; exists {
-		l.primeInFlightMu.Unlock()
-		l.log.Debug("sched: duplicate snapshot prime coalesced", "app", appID, "deployment", deploymentID)
-		return
-	}
-	l.primeInFlight[primeKey] = struct{}{}
-	l.primeInFlightMu.Unlock()
-
-	l.primeSlotsOnce.Do(func() {
-		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
-	})
-	run := func() {
-		defer func() {
-			l.primeInFlightMu.Lock()
-			delete(l.primeInFlight, primeKey)
-			l.primeInFlightMu.Unlock()
-		}()
+	l.submitWork(workPrime, appID+"\x00"+deploymentID, func() {
 		var err error
 		attempts := 0
 		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
@@ -1702,38 +1708,20 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "attempts", attempts, "err", err)
 			l.engine.markPrimeFailed(ctx, deploymentID, err)
 		}
-	}
-	select {
-	case l.primeSlots <- struct{}{}:
-		go func() {
-			defer func() { <-l.primeSlots }()
-			run()
-		}()
-	default:
-		l.log.Warn("sched: prime slots saturated; running inline",
-			"app", appID, "deployment", deploymentID, "slots", maxConcurrentPrimes)
-		run()
-	}
+	})
 }
 
-// waitPrimes blocks until every prime dispatched by dispatchPrime has
-// returned. It acquires all slots (so no worker can hold one) and then
-// releases them.
+// waitPrimes blocks until every task dispatched off the loop has
+// returned.
 //
-// Tests need this because dispatchPrime moved Prime off the caller's
-// goroutine: a test that calls handleNotification and asserts on the
-// resulting rows would otherwise race the worker. Production has no
-// caller — the loop is never "done" with primes.
+// Tests need this because the work pool moves handler bodies off the
+// caller's goroutine: a test that calls handleNotification and asserts on
+// the resulting rows would otherwise race the worker. Production has no
+// caller — the loop is never "done".
+//
+// Named for its original prime-only scope; it now drains every kind.
 func (l *Loop) waitPrimes() {
-	l.primeSlotsOnce.Do(func() {
-		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
-	})
-	for i := 0; i < maxConcurrentPrimes; i++ {
-		l.primeSlots <- struct{}{}
-	}
-	for i := 0; i < maxConcurrentPrimes; i++ {
-		<-l.primeSlots
-	}
+	l.workPool().drain()
 }
 
 // HandleNotification exposes the existing notification dispatcher to the
@@ -1830,7 +1818,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			// Restart can include a snapshot capture and a cold boot. Keep
 			// the notification loop responsive while the engine's restart
 			// single-flight coalesces duplicate requests for this app.
-			go func(appID, wakeID string) {
+			appID, wakeID := p.AppID, p.WakeID
+			l.submitWork(workRestart, appID, func() {
 				out, err := l.engine.RestartApp(context.WithoutCancel(ctx), appID, wakeID)
 				if err != nil {
 					l.log.Warn("sched: restart app failed", "app", appID, "err", err)
@@ -1839,12 +1828,12 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				if out.Instance != nil {
 					l.log.Info("sched: app restarted", "app", appID, "wake_id", out.Instance.WakeID)
 				}
-			}(p.AppID, p.WakeID)
+			})
 			return
 		}
 		if p.AppID != "" {
 			appID, lifecycleChanged := p.AppID, p.LifecycleChanged
-			go func(appID string, lifecycleChanged bool) {
+			l.submitWork(workAppReconcile, appID, func() {
 				reconcileCtx := context.WithoutCancel(ctx)
 				if lifecycleChanged {
 					l.engine.ReconcileServiceApp(reconcileCtx, appID)
@@ -1853,7 +1842,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				if err := l.engine.ReconcileWarmPool(reconcileCtx, appID); err != nil {
 					l.log.Warn("sched: warm pool reconcile", "app", appID, "err", err)
 				}
-			}(appID, lifecycleChanged)
+			})
 		}
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
@@ -1879,16 +1868,21 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				// instances are still owned by schedd. Drain them before the
 				// next request sees the new live revision; otherwise a Free
 				// one-instance plan can return plan_limit_concurrency.
-				go func(id string) {
-					reconcileCtx := context.WithoutCancel(ctx)
-					l.engine.drainDeploymentInstances(reconcileCtx, id, true)
-				}(deploymentID)
+				// Distinct coalescing key from the reconcile submission
+				// below: both are keyed on the same deployment id, and a
+				// shared key would make the reconcile look like a
+				// duplicate of the drain and swallow it.
+				id := deploymentID
+				l.submitWork(workDeploymentReconcile, "drain\x00"+id, func() {
+					l.engine.drainDeploymentInstances(context.WithoutCancel(ctx), id, true)
+				})
 			}
 			// Live activates the new mode. Failed/superseded/cancelled signals
 			// drain a worker that may have proved readiness immediately before
 			// activation failed, while preserving the prior live generation.
 			appID := p.AppID
-			go func(id string) {
+			id := deploymentID
+			l.submitWork(workDeploymentReconcile, id, func() {
 				reconcileCtx := context.WithoutCancel(ctx)
 				l.engine.ReconcileServiceDeployment(reconcileCtx, id)
 				l.engine.ReconcileWorkerDeployment(reconcileCtx, id)
@@ -1897,7 +1891,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 						l.log.Warn("sched: warm pool reconcile after deployment", "app", appID, "deployment", id, "err", err)
 					}
 				}
-			}(deploymentID)
+			})
 		}
 		l.log.Debug("deployment_changed", "payload", n.Payload)
 	case db.NotifySnapshotPrime:
@@ -1954,11 +1948,12 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			return
 		}
 		if p.Kind == "run_cancelled" && p.RunID != "" {
-			go func() {
-				if err := l.engine.ReconcileCancelledJobRun(context.WithoutCancel(ctx), p.RunID); err != nil {
-					l.log.Warn("sched: cancelled job cleanup failed", "run", p.RunID, "err", err)
+			runID := p.RunID
+			l.submitWork(workJobCancel, runID, func() {
+				if err := l.engine.ReconcileCancelledJobRun(context.WithoutCancel(ctx), runID); err != nil {
+					l.log.Warn("sched: cancelled job cleanup failed", "run", runID, "err", err)
 				}
-			}()
+			})
 		}
 		if l.jobsDispatched && (p.Kind == "created" || p.Kind == "run_created" || p.Kind == "updated") {
 			l.runJobsDispatchTick(ctx)

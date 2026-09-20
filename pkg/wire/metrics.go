@@ -1945,6 +1945,47 @@ type OpsMetrics struct {
 	// RegisterDefaultOps.
 	dbNotifyHubReconnects prometheus.Counter
 	dbNotifyHubDropped    *prometheus.CounterVec
+	// loopWork / loopWorkDuration (ADR-191): schedd's bounded off-loop
+	// work pool. kind is the closed task set (prime, restart,
+	// app_reconcile, deployment_reconcile, job_cancel); outcome is
+	// queued / inline / dropped / coalesced / panicked. A sustained
+	// `dropped` rate means a kind's slot budget is too small for the
+	// notification rate; any `panicked` is a bug.
+	loopWork         *prometheus.CounterVec
+	loopWorkDuration *prometheus.HistogramVec
+	// instanceDivergence (ADR-191): rows this schedd believes are live
+	// that the owning vmmd did not report, after the confirm-twice and
+	// grace gates. outcome ∈ {detected, failed, conflict, error,
+	// suppressed}. `suppressed` is the report-only mode's count of what
+	// enforcement would have acted on.
+	instanceDivergence *prometheus.CounterVec
+}
+
+// LoopWork returns the per-(kind, outcome) counter for schedd's off-loop
+// work pool (ADR-191). nil-safe.
+func (m *OpsMetrics) LoopWork(kind, outcome string) prometheus.Counter {
+	if m == nil || m.loopWork == nil {
+		return nil
+	}
+	return m.loopWork.WithLabelValues(kind, outcome)
+}
+
+// ObserveLoopWorkDuration records how long one off-loop task ran
+// (ADR-191). nil-safe.
+func (m *OpsMetrics) ObserveLoopWorkDuration(kind string, seconds float64) {
+	if m == nil || m.loopWorkDuration == nil {
+		return
+	}
+	m.loopWorkDuration.WithLabelValues(kind).Observe(seconds)
+}
+
+// InstanceDivergence returns the per-outcome counter for the instance
+// divergence reconciler (ADR-191). nil-safe.
+func (m *OpsMetrics) InstanceDivergence(outcome string) prometheus.Counter {
+	if m == nil || m.instanceDivergence == nil {
+		return nil
+	}
+	return m.instanceDivergence.WithLabelValues(outcome)
 }
 
 // HubReconnect implements db.NotifyHubObserver. nil-safe.
@@ -4440,6 +4481,21 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_db_notify_hub_dropped_total",
 		Help: "Notifications dropped because a subscriber's fan-out buffer was full (ADR-190), labelled by channel. Consumers recover from their durable table on the next safety tick; a sustained rate means that consumer is falling behind.",
 	}, []string{"channel"})
+	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_loop_work_total",
+		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
+	}, []string{"kind", "outcome"})
+	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: prefix + "_loop_work_duration_seconds",
+		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		// Reconciles are millisecond-scale database work; prime is
+		// tens of seconds. One set of buckets has to span both.
+		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},
+	}, []string{"kind"})
+	instanceDivergence := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_instance_divergence_total",
+		Help: "Instances schedd believes are live that the owning vmmd did not report, after the grace and confirm-twice gates (ADR-191). outcome ∈ {suppressed, failed, conflict, error}. `suppressed` is report-only mode counting what enforcement would have acted on; a non-zero rate means rows and reality have drifted and customers may be billed for VMs that no longer exist.",
+	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors,
 		uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal,
@@ -4452,6 +4508,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		loopLastBeatAgeSeconds,
 		dbNotifyHubReconnects,
 		dbNotifyHubDropped,
+		loopWork,
+		loopWorkDuration,
+		instanceDivergence,
 	)
 	// Pre-instantiate {plan} closed-set series so /metrics surfaces
 	// zero values from boot. Plan enum mirrors the four-value
@@ -5131,6 +5190,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		loopLastBeatAgeSeconds:                              loopLastBeatAgeSeconds,
 		dbNotifyHubReconnects:                               dbNotifyHubReconnects,
 		dbNotifyHubDropped:                                  dbNotifyHubDropped,
+		loopWork:                                            loopWork,
+		loopWorkDuration:                                    loopWorkDuration,
+		instanceDivergence:                                  instanceDivergence,
 	}
 }
 
