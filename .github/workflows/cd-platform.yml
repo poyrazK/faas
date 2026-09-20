@@ -106,6 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.matrix.outputs.targets }}
+      batch_prepare: ${{ steps.matrix.outputs.batch_prepare }}
     env:
       COMPUTE_TARGETS: ${{ inputs.compute_targets }}
       CLAIM_FILE: ${{ inputs.claim_file }}
@@ -170,6 +171,12 @@ jobs:
                   else . end
               )' "$targets_file")"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          batch_prepare="$(jq -r 'all(.[];
+            .claim_file == "" and
+            .fleet_bundle_url == "" and
+            .skip_fleet_preflight == false
+          )' <<<"$targets")"
+          echo "batch_prepare=$batch_prepare" >> "$GITHUB_OUTPUT"
 
   control:
     name: Control-plane stage
@@ -179,12 +186,23 @@ jobs:
     secrets: inherit
 
   compute-prepare:
+    name: Prepare compute fleet in parallel
+    needs: [control, plan]
+    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'
+    uses: ./.github/workflows/cd-compute.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      compute_targets: ${{ needs.plan.outputs.targets }}
+      rollout_phase: prepare
+    secrets: inherit
+
+  compute-prepare-compat:
     name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, plan]
-    if: inputs.compute_rollout_mode == 'phased'
+    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare != 'true'
     strategy:
-      # Preparation copies and verifies the release while every node continues
-      # serving the old version, so it is safe to overlap across the fleet.
+      # Claims, signed enrollment bundles, and explicit preflight skips retain
+      # the single-target path until the fleet command supports those inputs.
       fail-fast: true
       max-parallel: 2
       matrix:
@@ -209,8 +227,8 @@ jobs:
 
   compute:
     name: Roll out compute (${{ matrix.target.node || matrix.target.claim_file }})
-    needs: [control, compute-prepare, plan]
-    if: ${{ always() && needs.control.result == 'success' && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || needs.compute-prepare.result == 'success') }}
+    needs: [control, compute-prepare, compute-prepare-compat, plan]
+    if: ${{ always() && needs.control.result == 'success' && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true' && needs.compute-prepare.result == 'success') || (needs.plan.outputs.batch_prepare != 'true' && needs.compute-prepare-compat.result == 'success')) }}
     strategy:
       # Activation drains and restarts one node at a time. Fail fast preserves
       # the remaining old-version nodes as the healthy fallback.
@@ -239,7 +257,7 @@ jobs:
   verify:
     name: Report fleet release convergence
     if: always()
-    needs: [control, compute-prepare, compute, plan]
+    needs: [control, compute-prepare, compute-prepare-compat, compute, plan]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -247,7 +265,9 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       CONTROL_RESULT: ${{ needs.control.result }}
+      BATCH_PREPARE: ${{ needs.plan.outputs.batch_prepare }}
       COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
+      COMPUTE_PREPARE_COMPAT_RESULT: ${{ needs.compute-prepare-compat.result }}
       COMPUTE_RESULT: ${{ needs.compute.result }}
       COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}
       PLAN_RESULT: ${{ needs.plan.result }}
@@ -287,7 +307,11 @@ jobs:
           # behind another wait. A successful stage gets two heartbeat periods
           # to publish its final release and liveness state.
           prepare_ok=false
-          if [[ "$COMPUTE_PREPARE_RESULT" == "success" || ( "$COMPUTE_ROLLOUT_MODE" == "full" && "$COMPUTE_PREPARE_RESULT" == "skipped" ) ]]; then
+          selected_prepare_result="$COMPUTE_PREPARE_COMPAT_RESULT"
+          if [[ "$BATCH_PREPARE" == "true" ]]; then
+            selected_prepare_result="$COMPUTE_PREPARE_RESULT"
+          fi
+          if [[ "$selected_prepare_result" == "success" || "$COMPUTE_ROLLOUT_MODE" == "full" ]]; then
             prepare_ok=true
           fi
           gate_timeout=2m
@@ -306,7 +330,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Control plane | ${CONTROL_RESULT} |"
             echo "| Compute target plan | ${PLAN_RESULT} |"
-            echo "| Compute fleet preparation | ${COMPUTE_PREPARE_RESULT} |"
+            echo "| Compute fleet preparation | ${selected_prepare_result} |"
             echo "| Compute fleet activation | ${COMPUTE_RESULT} |"
             echo "| Active-node release gate | exit ${gate_exit} |"
             echo
@@ -329,7 +353,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
-            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${COMPUTE_PREPARE_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
+            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${selected_prepare_result} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"

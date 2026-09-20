@@ -42,16 +42,20 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 	for _, required := range []string{
 		"compute_targets:",
 		"name: Validate compute rollout targets",
+		"batch_prepare:",
+		"name: Prepare compute fleet in parallel",
+		"compute_targets: ${{ needs.plan.outputs.targets }}",
+		"name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})",
 		"target: ${{ fromJSON(needs.plan.outputs.targets) }}",
 		"fail-fast: true",
 		"max-parallel: 2",
 		"max-parallel: 1",
 		"rollout_phase: prepare",
 		"rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}",
-		"needs: [control, compute-prepare, plan]",
+		"needs: [control, compute-prepare, compute-prepare-compat, plan]",
 		"node: ${{ matrix.target.node }}",
 		"ssh_host: ${{ matrix.target.ssh_host }}",
-		"needs: [control, compute-prepare, compute, plan]",
+		"needs: [control, compute-prepare, compute-prepare-compat, compute, plan]",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("platform workflow is missing fleet-matrix contract %q", required)
@@ -74,10 +78,10 @@ func TestCDPlatformSupportsSerializedFullRolloutAfterContractChange(t *testing.T
 	for _, required := range []string{
 		"compute_rollout_mode:",
 		"default: phased",
-		"if: inputs.compute_rollout_mode == 'phased'",
-		"inputs.compute_rollout_mode == 'full' || needs.compute-prepare.result == 'success'",
+		"inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'",
+		"inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true'",
 		"inputs.compute_rollout_mode == 'full' && 'full' || 'activate'",
-		`"$COMPUTE_ROLLOUT_MODE" == "full" && "$COMPUTE_PREPARE_RESULT" == "skipped"`,
+		`"$selected_prepare_result" == "success" || "$COMPUTE_ROLLOUT_MODE" == "full"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("platform workflow is missing full-rollout fallback contract %q", required)
@@ -110,10 +114,11 @@ func TestCDPlatformControlSuccessThenComputeFailureIsVisible(t *testing.T) {
 	workflow := string(body)
 	for _, required := range []string{
 		"if: always()",
-		"needs: [control, compute-prepare, compute, plan]",
+		"needs: [control, compute-prepare, compute-prepare-compat, compute, plan]",
 		"PLAN_RESULT: ${{ needs.plan.result }}",
 		"CONTROL_RESULT: ${{ needs.control.result }}",
 		"COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}",
+		"COMPUTE_PREPARE_COMPAT_RESULT: ${{ needs.compute-prepare-compat.result }}",
 		"COMPUTE_RESULT: ${{ needs.compute.result }}",
 		"COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}",
 		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then`,

@@ -17,9 +17,13 @@ func TestCDComputeWorkflowSupportsPrepareThenActivate(t *testing.T) {
 	for _, required := range []string{
 		"rollout_phase:",
 		"default: full",
+		"compute_targets:",
 		"ROLLOUT_PHASE: ${{ inputs.rollout_phase }}",
 		"prepare) JOIN_ARGS+=(--prepare-only)",
 		"activate) JOIN_ARGS+=(--activate-prepared)",
+		"deploy join-fleet",
+		"--max-parallel 2",
+		"--prepare-only",
 		"if: inputs.rollout_phase != 'activate'",
 	} {
 		if !strings.Contains(workflow, required) {

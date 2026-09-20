@@ -46,6 +46,11 @@ on:
         required: false
         default: ""
         type: string
+      compute_targets:
+        description: "Normalized legacy compute target array for one parallel prepare job"
+        required: false
+        default: ""
+        type: string
       ssh_host:
         description: "Provider SSH address for a legacy dispatch"
         required: false
@@ -117,6 +122,11 @@ on:
         required: false
         default: ""
         type: string
+      compute_targets:
+        description: "Normalized legacy compute target array (prepare phase only)"
+        required: false
+        default: ""
+        type: string
       ssh_host:
         description: "Legacy: provider SSH address for this run; never becomes the runtime endpoint"
         required: false
@@ -163,7 +173,7 @@ on:
           - activate
 
 concurrency:
-  group: cd-compute-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url }}
+  group: cd-compute-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url || 'fleet' }}
   cancel-in-progress: false
 
 permissions:
@@ -177,7 +187,7 @@ jobs:
     environment: production
     timeout-minutes: 5
     outputs:
-      node: ${{ steps.resolve_bundle.outputs.node || steps.resolve_claim.outputs.node || steps.resolve_legacy.outputs.node }}
+      node: ${{ steps.resolve_batch.outputs.node || steps.resolve_bundle.outputs.node || steps.resolve_claim.outputs.node || steps.resolve_legacy.outputs.node }}
       ssh_host: ${{ steps.resolve_bundle.outputs.ssh_host || steps.resolve_claim.outputs.ssh_host || steps.resolve_legacy.outputs.ssh_host }}
       ssh_user: ${{ steps.resolve_bundle.outputs.ssh_user || steps.resolve_claim.outputs.ssh_user || steps.resolve_legacy.outputs.ssh_user }}
       ssh_port: ${{ steps.resolve_bundle.outputs.ssh_port || steps.resolve_claim.outputs.ssh_port || steps.resolve_legacy.outputs.ssh_port }}
@@ -200,6 +210,7 @@ jobs:
           CLAIM_FILE: ${{ inputs.claim_file }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           NODE: ${{ inputs.node }}
+          COMPUTE_TARGETS: ${{ inputs.compute_targets }}
           SSH_HOST: ${{ inputs.ssh_host }}
           SSH_HOST_KEY_SHA256: ${{ inputs.ssh_host_key_sha256 }}
           FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
@@ -219,6 +230,39 @@ jobs:
               exit 1
               ;;
           esac
+          if [[ -n "$COMPUTE_TARGETS" ]]; then
+            [[ "$ROLLOUT_PHASE" == "prepare" ]] || {
+              echo "::error::compute_targets is supported only for non-disruptive preparation" >&2
+              exit 1
+            }
+            [[ -z "$CLAIM_FILE" && -z "$FLEET_BUNDLE_URL" && -z "$NODE" && -z "$SSH_HOST" ]] || {
+              echo "::error::compute_targets cannot be combined with single-node, claim, or fleet-bundle inputs" >&2
+              exit 1
+            }
+            jq -e '
+              type == "array" and length > 0 and
+              all(.[];
+                type == "object" and
+                (.node | type == "string" and test("^[A-Za-z0-9._-]+$")) and
+                (.ssh_host | type == "string" and length > 0) and
+                ((.ssh_user // "root") | type == "string" and length > 0) and
+                (((.ssh_port // "22") | tostring) | test("^[0-9]+$")) and
+                (.ssh_host_key_sha256 | type == "string" and test("^SHA256:[A-Za-z0-9+/]{43}$")) and
+                (.claim_file // "") == "" and
+                (.fleet_bundle_url // "") == "" and
+                (.skip_fleet_preflight // false) == false
+              )
+            ' <<<"$COMPUTE_TARGETS" >/dev/null || {
+              echo "::error::compute_targets must contain non-skipping legacy targets with verified host-key fingerprints" >&2
+              exit 1
+            }
+            duplicate_count="$(jq -r '[.[].node] | length - (unique | length)' <<<"$COMPUTE_TARGETS")"
+            (( duplicate_count == 0 )) || {
+              echo "::error::compute_targets contains duplicate node names" >&2
+              exit 1
+            }
+            exit 0
+          fi
           if [[ -n "$FLEET_BUNDLE_URL" ]]; then
             [[ "$FLEET_BUNDLE_URL" =~ ^https:// ]] || {
               echo "::error::fleet_bundle_url must use https://" >&2
@@ -265,6 +309,11 @@ jobs:
               exit 1
             }
           fi
+
+      - name: Resolve parallel fleet preparation targets
+        if: inputs.compute_targets != ''
+        id: resolve_batch
+        run: echo 'node=fleet' >> "$GITHUB_OUTPUT"
 
       - name: Check out and validate the declarative node claim
         if: inputs.claim_file != ''
@@ -398,7 +447,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve legacy deployment inputs
-        if: inputs.claim_file == '' && inputs.fleet_bundle_url == ''
+        if: inputs.compute_targets == '' && inputs.claim_file == '' && inputs.fleet_bundle_url == ''
         id: resolve_legacy
         env:
           NODE: ${{ inputs.node }}
@@ -440,6 +489,7 @@ jobs:
           (( missing == 0 )) || exit 1
 
       - name: Require a verified SSH host-key fingerprint
+        if: inputs.compute_targets == ''
         env:
           SSH_HOST_KEY_SHA256: ${{ steps.resolve_bundle.outputs.host_key_sha256 || steps.resolve_claim.outputs.host_key_sha256 || steps.resolve_legacy.outputs.host_key_sha256 }}
         run: |
@@ -499,6 +549,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       NODE: ${{ needs.preflight.outputs.node }}
+      COMPUTE_TARGETS: ${{ inputs.compute_targets }}
       SSH_HOST: ${{ needs.preflight.outputs.ssh_host }}
       SSH_USER: ${{ needs.preflight.outputs.ssh_user }}
       SSH_PORT: ${{ needs.preflight.outputs.ssh_port }}
@@ -816,6 +867,40 @@ jobs:
           SKIP_FLEET_PREFLIGHT: ${{ inputs.skip_fleet_preflight }}
         run: |
           set -euo pipefail
+          if [[ -n "$COMPUTE_TARGETS" ]]; then
+            nodes_file="$ARTIFACT_DIR/compute-targets.json"
+            jq -ce '{nodes: map({
+              node,
+              ssh_host,
+              ssh_user: (.ssh_user // "root"),
+              ssh_port: ((.ssh_port // "22") | tonumber),
+              host_key_sha256: .ssh_host_key_sha256,
+              storage_device: (.storage_device // ""),
+              format_storage: (.format_storage // false)
+            })}' <<<"$COMPUTE_TARGETS" > "$nodes_file"
+            FLEET_JOIN_ARGS=(
+              deploy join-fleet
+              --nodes-file "$nodes_file"
+              --manifest-file "$ARTIFACT_DIR/production-manifest.yaml"
+              --ssh-key "$ARTIFACT_DIR/compute-ssh-key"
+              --ssh-known-hosts-file "$ARTIFACT_DIR/compute-known-hosts"
+              --release-tarball "$ARTIFACT_DIR/release.tar.gz"
+              --artifact-dir "$ARTIFACT_DIR"
+              --repo-root "$GITHUB_WORKSPACE"
+              --max-parallel 2
+              --timeout 40m
+              --lease-ttl 5m
+              --prepare-only
+              --resume
+              --yes
+              --json
+            )
+            if [[ -f "$ARTIFACT_DIR/ansible-vars.yml" ]]; then
+              FLEET_JOIN_ARGS+=(--ansible-vars-file "$ARTIFACT_DIR/ansible-vars.yml")
+            fi
+            "$ARTIFACT_DIR/gregalectl-linux-amd64" "${FLEET_JOIN_ARGS[@]}"
+            exit 0
+          fi
           # The supplied deployment key/user are the fleet operator identity,
           # not only the newly adopted host's identity. Apply them as Ansible
           # defaults so preflight and the control-plane convergence can reach

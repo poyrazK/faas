@@ -47,6 +47,8 @@ func cmdDeployJoinFleet(args []string) int {
 	claimFile := fs.String("claim-file", "", "single ComputeNodeClaim YAML/JSON file (alternative to --nodes-file)")
 	manifestFile := fs.String("manifest-file", "", "split-box manifest (required)")
 	artifactDir := fs.String("artifact-dir", "", "standard directory containing shared join assets")
+	sshKey := fs.String("ssh-key", "", "shared SSH private key used by Ansible")
+	sshKnownHosts := fs.String("ssh-known-hosts-file", "", "operator-verified known_hosts file covering the complete manifest fleet")
 	releaseTarball := fs.String("release-tarball", "", "signed release.tar.gz")
 	bootstrapBinary := fs.String("bootstrap-binary", "", "Linux bootstrap gregalectl")
 	cosignBinary := fs.String("cosign-binary", "", "cosign verifier")
@@ -63,6 +65,7 @@ func cmdDeployJoinFleet(args []string) int {
 	repoRoot := fs.String("repo-root", "", "path to the faas repository")
 	maxParallel := fs.Int("max-parallel", defaultJoinFleetMaxParallel, "maximum number of nodes converged at once")
 	skipPreflight := fs.Bool("skip-fleet-preflight", false, "skip the one shared complete-fleet preflight")
+	prepareOnly := fs.Bool("prepare-only", false, "stage and verify every managed node without draining it")
 	resume := fs.Bool("resume", false, "resume failed/interrupted jobs")
 	timeout := fs.Duration("timeout", 20*time.Minute, "maximum time per node")
 	leaseTTL := fs.Duration("lease-ttl", 30*time.Minute, "database lease per node")
@@ -93,6 +96,10 @@ func cmdDeployJoinFleet(args []string) int {
 	if *repoRoot == "" {
 		*repoRoot = defaultRepoRoot()
 	}
+	rolloutPhase := joinRolloutFull
+	if *prepareOnly {
+		rolloutPhase = joinRolloutPrepare
+	}
 	workers := joinFleetWorkerCount(*maxParallel, len(file.Nodes))
 	opts := make([]deployJoinOptions, 0, len(file.Nodes))
 	reports := make([]deployJoinReport, 0, len(file.Nodes))
@@ -113,11 +120,16 @@ func cmdDeployJoinFleet(args []string) int {
 		if n.SSHPort == 0 {
 			n.SSHPort = 22
 		}
+		nodeSSHKey := n.SSHKey
+		if nodeSSHKey == "" {
+			nodeSSHKey = *sshKey
+		}
 		o := deployJoinOptions{
 			ManifestFile: *manifestFile, Node: n.Node, SSHHost: n.SSHHost,
-			SSHUser: n.SSHUser, SSHPort: n.SSHPort, SSHKey: n.SSHKey,
-			SSHHostKeySHA256: n.HostKeySHA256,
-			StorageDevice:    n.StorageDevice, FormatStorage: n.FormatStorage,
+			SSHUser: n.SSHUser, SSHPort: n.SSHPort, SSHKey: nodeSSHKey,
+			SSHHostKeySHA256:    n.HostKeySHA256,
+			SSHKnownHostsSource: *sshKnownHosts,
+			StorageDevice:       n.StorageDevice, FormatStorage: n.FormatStorage,
 			ReleaseTarball: *releaseTarball, BootstrapBinary: *bootstrapBinary,
 			CosignBinary: *cosignBinary, PKISource: *pkiSource,
 			SignKeySource: *signKey, VerifyKeySource: *verifyKey,
@@ -125,6 +137,7 @@ func cmdDeployJoinFleet(args []string) int {
 			FleetAgeKeySource: *fleetAgeKey, FleetAgeRecipientSource: *fleetAgeRecipient,
 			AnsibleVarsFile: *ansibleVars, RepoRoot: *repoRoot,
 			PostgresOverlapNodes: workers,
+			RolloutPhase:         rolloutPhase,
 			SkipFleetPreflight:   *skipPreflight, Resume: *resume,
 			Timeout: *timeout, LeaseTTL: *leaseTTL, DryRun: *dryRun, Yes: *yes,
 			JSON: *jsonOut || jsonOutput,
@@ -313,7 +326,9 @@ func emitJoinFleetResult(result joinFleetResult, jsonOut bool) error {
 	}
 	for _, report := range result.Reports {
 		state := "active"
-		if !report.Applied {
+		if report.Prepared {
+			state = "prepared"
+		} else if !report.Applied {
 			state = "failed"
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "deploy join-fleet: %s node=%s release=%s ssh=%s\n", state, report.DatabaseNode, report.ReleaseGitSHA, report.SSHHost)
