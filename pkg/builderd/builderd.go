@@ -1048,9 +1048,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if out.DependencyCacheStoreError != "" {
 		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
-		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next sync may reinstall dependencies\n")
+		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
 	} else if out.DependencyCacheStored {
-		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next developer sync\n")
+		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 	}
 	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
 		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")

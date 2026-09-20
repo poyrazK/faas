@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 190 | [Production BuildKit dependency cache](190-production-buildkit-cache.md) | accepted | Reuse app-scoped Railpack and Dockerfile records across production source edits |
 | 186 | [Reusable private-network firewall policy](186-private-network-firewall-policy.md) | accepted | Network-level CIDR baseline layered over provider-neutral private-network reconciliation |
 | 187 | [Protocol-aware private-network firewall rules](187-private-network-firewall-rules.md) | accepted | Provider-neutral TCP/UDP/ICMP allow rules with fail-closed private-network enforcement |
 | 188 | [Provider-neutral private-network peering](188-private-network-peering.md) | accepted foundation | Canonical two-way route planning for non-overlapping Gregale networks |

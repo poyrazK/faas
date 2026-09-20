@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestDependencyCacheKeyForAppIsDeveloperScoped(t *testing.T) {
+func TestDependencyCacheKeyForAppIsTenantAndAppScoped(t *testing.T) {
 	dev := state.App{
 		ID:              "app-a",
 		AccountID:       "account-a",
@@ -47,10 +47,9 @@ func TestDependencyCacheKeyForAppIsDeveloperScoped(t *testing.T) {
 		})
 	}
 
-	production := dev
-	production.PreviewOfSlug = ""
-	if got := dependencyCacheKeyForApp(production, FrameworkNode, "", "runner-a"); got != "" {
-		t.Fatalf("production key = %q, want disabled", got)
+	production := state.App{ID: "production-app", AccountID: "account-a"}
+	if got := dependencyCacheKeyForApp(production, FrameworkNode, "apps/api", "runner-a"); len(got) != 64 || got == base {
+		t.Fatalf("production key = %q, want app-isolated 64-character key", got)
 	}
 	preview := dev
 	preview.PreviewPrNumber = 42

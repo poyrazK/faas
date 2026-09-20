@@ -418,33 +418,45 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	}
 }
 
-func TestBuildArgv_DeveloperDependencyCache(t *testing.T) {
-	got := buildArgv(api.BuildManifest{
-		Framework:             api.FrameworkRailpackNode,
-		Workdir:               "/build/src",
-		OutDir:                "/build/out",
-		DependencyCache:       true,
-		DependencyCacheImport: true,
-	})
-	joined := strings.Join(got, " ")
-	for _, want := range []string{
-		"--import-cache 'type=local,src=/build/cache'",
-		"--export-cache 'type=local,dest=/build/out/cache,mode=max'",
-		"--output type=oci,dest='/build/out/image.tar'",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("developer cache argv missing %q: %s", want, joined)
-		}
+func TestBuildArgv_DependencyCache(t *testing.T) {
+	tests := []struct {
+		name      string
+		framework api.BuildFramework
+		quote     string
+	}{
+		{name: "Railpack", framework: api.FrameworkRailpackNode, quote: "'"},
+		{name: "Dockerfile", framework: api.FrameworkDockerfile},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildArgv(api.BuildManifest{
+				Framework:             tt.framework,
+				Workdir:               "/build/src",
+				OutDir:                "/build/out",
+				DependencyCache:       true,
+				DependencyCacheImport: true,
+			})
+			joined := strings.Join(got, " ")
+			for _, want := range []string{
+				"--import-cache " + tt.quote + "type=local,src=/build/cache" + tt.quote,
+				"--export-cache " + tt.quote + "type=local,dest=/build/out/cache,mode=max" + tt.quote,
+				"--output type=oci,dest=" + tt.quote + "/build/out/image.tar" + tt.quote,
+			} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("dependency cache argv missing %q: %s", want, joined)
+				}
+			}
 
-	cold := strings.Join(buildArgv(api.BuildManifest{
-		Framework:       api.FrameworkRailpackNode,
-		Workdir:         "/build/src",
-		OutDir:          "/build/out",
-		DependencyCache: true,
-	}), " ")
-	if strings.Contains(cold, "--import-cache") || !strings.Contains(cold, "--export-cache") {
-		t.Fatalf("cold developer cache argv = %s", cold)
+			cold := strings.Join(buildArgv(api.BuildManifest{
+				Framework:       tt.framework,
+				Workdir:         "/build/src",
+				OutDir:          "/build/out",
+				DependencyCache: true,
+			}), " ")
+			if strings.Contains(cold, "--import-cache") || !strings.Contains(cold, "--export-cache") {
+				t.Fatalf("cold dependency cache argv = %s", cold)
+			}
+		})
 	}
 }
 
