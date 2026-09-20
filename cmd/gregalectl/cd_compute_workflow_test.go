@@ -52,6 +52,39 @@ func TestCDComputeWorkflowSupportsPrepareThenActivate(t *testing.T) {
 	}
 }
 
+func TestCDComputeWorkflowPinsDynamicHostForPostJoinProbes(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	adopt := strings.Index(workflow, "- name: Verify runner prerequisites and adopt the compute host")
+	pin := strings.Index(workflow, "- name: Pin adopted compute SSH key for post-join probes")
+	probe := strings.Index(workflow, "- name: Verify compute registry lifecycle authorization")
+	if adopt < 0 || pin < 0 || probe < 0 || !(adopt < pin && pin < probe) {
+		t.Fatalf("post-join SSH pin step ordering is invalid: adopt=%d pin=%d probe=%d", adopt, pin, probe)
+	}
+	end := strings.Index(workflow[pin:], "\n      - name:")
+	if end < 0 {
+		t.Fatal("cannot isolate post-join SSH pin step")
+	}
+	step := workflow[pin : pin+end]
+	for _, required := range []string{
+		"if: inputs.rollout_phase != 'prepare'",
+		`ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
+		`ssh-keygen -lf "$candidate" -E sha256`,
+		`[[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]`,
+		`cat "$verified_keys" >>"$ARTIFACT_DIR/compute-known-hosts"`,
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("post-join SSH pinning is missing %q", required)
+		}
+	}
+	if strings.Contains(step, "StrictHostKeyChecking=no") || strings.Contains(step, "accept-new") {
+		t.Fatal("post-join SSH pinning must not weaken strict host-key checking")
+	}
+}
+
 func TestCDComputeWorkflowRequiresExplicitFleetPreflightSkip(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

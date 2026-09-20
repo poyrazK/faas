@@ -1030,6 +1030,39 @@ jobs:
           fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
+      - name: Pin adopted compute SSH key for post-join probes
+        if: inputs.rollout_phase != 'prepare'
+        run: |
+          set -euo pipefail
+          # join-node verifies the provider address with a private temporary
+          # known_hosts file. Its post-join probes run after that workspace is
+          # removed, so persist only the independently pinned matching key in
+          # the job artifact directory. COMPUTE_KNOWN_HOSTS may not contain a
+          # brand-new dynamic node yet and must never force StrictHostKeyChecking
+          # off as a workaround.
+          scanned_keys="$RUNNER_TEMP/adopted-compute-scanned-keys"
+          verified_keys="$RUNNER_TEMP/adopted-compute-verified-keys"
+          : >"$verified_keys"
+          if ! ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST" >"$scanned_keys" 2>/dev/null; then
+            echo "::error::could not scan SSH host keys from $SSH_HOST:$SSH_PORT" >&2
+            exit 1
+          fi
+          while IFS= read -r host_key_line; do
+            [[ -n "$host_key_line" ]] || continue
+            candidate="$RUNNER_TEMP/adopted-compute-candidate-key"
+            printf '%s\n' "$host_key_line" >"$candidate"
+            candidate_fingerprint="$(ssh-keygen -lf "$candidate" -E sha256 2>/dev/null | awk 'NR == 1 { print $2 }')"
+            if [[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]; then
+              printf '%s\n' "$host_key_line" >>"$verified_keys"
+            fi
+          done <"$scanned_keys"
+          if [[ ! -s "$verified_keys" ]]; then
+            echo "::error::live SSH host key does not match the signed compute claim" >&2
+            exit 1
+          fi
+          cat "$verified_keys" >>"$ARTIFACT_DIR/compute-known-hosts"
+          chmod 0600 "$ARTIFACT_DIR/compute-known-hosts"
+
       - name: Verify compute registry lifecycle authorization
         if: inputs.rollout_phase != 'prepare'
         run: |
