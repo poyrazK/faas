@@ -31,12 +31,15 @@ import (
 func pgTestLifecycleNode(t *testing.T, s *state.PgStore, lifecycle state.NodeLifecycle) string {
 	t.Helper()
 	n, err := s.CreateComputeNode(t.Context(), state.ComputeNode{
-		Name:               "lc-" + uuid.NewString(),
-		TargetURL:          "unix:///run/faas/vmmd.sock",
-		Active:             true, // seed the active lifecycle for the CAS below
-		MemMB:              8192,
+		Name:      "lc-" + uuid.NewString(),
+		TargetURL: "unix:///run/faas/vmmd.sock",
+		Active:    true, // seed the active lifecycle for the CAS below
+		MemMB:     8192,
+		// Consistent with MemMB — see pgstore_dead_node_test.go for why the
+		// 256 MB placeholder stopped working once ADR-193 made the ceiling
+		// enforceable at the instances INSERT.
 		MaxConcurrency:     16,
-		AdmissionCeilingMB: 256,
+		AdmissionCeilingMB: 8192,
 		VPCPUs:             4,
 		VCPUBudget:         160,
 	})
