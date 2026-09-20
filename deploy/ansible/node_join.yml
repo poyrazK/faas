@@ -906,6 +906,11 @@
           User=faas-imaged
           Group=faas
           ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/imaged --config /etc/faas/imaged.toml
+          # Keep the candidate one-shot on the same capability boundary as
+          # the canonical imaged unit. imaged fail-closes at boot when its
+          # bounding set still contains the vmmd-only CAP_SYS_ADMIN bit.
+          CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
+          AmbientCapabilities=CAP_CHOWN CAP_DAC_OVERRIDE
           EnvironmentFile=-/etc/faas/compute-db.env
           EnvironmentFile=-/etc/faas/storage.env
           EnvironmentFile=-/etc/faas/imaged-storage.env

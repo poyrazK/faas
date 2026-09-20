@@ -293,6 +293,25 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 			t.Errorf("pre-stage unit missing %q", token)
 		}
 	}
+	canonicalUnit, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "compute_only_service", "files", "faas-imaged.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"CapabilityBoundingSet=", "AmbientCapabilities="} {
+		var directive string
+		for _, line := range strings.Split(string(canonicalUnit), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				directive = line
+				break
+			}
+		}
+		if directive == "" {
+			t.Fatalf("canonical imaged unit is missing %s", prefix)
+		}
+		if !strings.Contains(block, directive) {
+			t.Errorf("pre-stage unit capability contract drifted from canonical imaged unit; missing %q", directive)
+		}
+	}
 }
 
 func TestNodeJoinFreshHostBootstrapsVMMDWithoutEarlyActivation(t *testing.T) {
