@@ -71,6 +71,7 @@
   notify:
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
+    - restart faas-gatewayd-public
 
 - name: s3_gateway_service — install optional provider credentials
   ansible.builtin.copy:
@@ -86,6 +87,7 @@
   notify:
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
+    - restart faas-gatewayd-public
 
 - name: s3_gateway_service — remove stale provider credentials for ADC backends
   ansible.builtin.file:
@@ -97,6 +99,7 @@
   notify:
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
+    - restart faas-gatewayd-public
 
 - name: s3_gateway_service — read installed provider registry
   ansible.builtin.slurp:
@@ -166,6 +169,10 @@
       s3.gregale.dev {
           reverse_proxy 127.0.0.1:8084 {
               header_up Host {host}
+              # Cloudflare may rewrite Accept-Encoding before the request
+              # reaches Caddy. SigV4 clients sign the original value, so
+              # preserve identity on the origin hop.
+              header_up Accept-Encoding identity
           }
       }
     validate: "{{ faas_object_storage_caddy_binary }} validate --adapter caddyfile --config %s"

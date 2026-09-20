@@ -22,6 +22,14 @@ loaded by systemd into `apid` and `s3-gatewayd`. Switching to an ADC backend
 and clearing `faas_object_storage_provider_env_src` removes any stale file.
 Never put secret values in the JSON.
 
+Installing or changing the registry/provider environment also restarts
+`faas-gatewayd-public`. That daemon reads the registry at boot; restarting it
+here is required for public bucket mounts to become active when storage is
+provisioned after the edge service. Its socket remains bound during the
+restart. The managed Caddy route pins `Accept-Encoding: identity` on the
+origin hop because Cloudflare can rewrite that header before Caddy, which
+would invalidate SigV4 signatures.
+
 Before enabling the role, create a proxied Cloudflare record for
 `s3.gregale.dev` pointing at the Caddy edge. The beta registry must cap uploads
 and multipart parts at 64 MiB and the Cloudflare zone must bypass cache, URL
