@@ -298,7 +298,10 @@ For GCP, the operator path for a new node is:
 
 ```sh
 bash scripts/ops/gcp_provision_compute.sh \
-  --instance faas-compute-node-4 --node fsn-4 --apply
+  --instance faas-compute-node-4 --node fsn-4 \
+  --ssh-user faas-operator \
+  --ssh-public-key-file /secure/private/compute-ssh-key.pub \
+  --apply
 
 gregalectl deploy fleet-bundle create \
   --claim-file /tmp/fsn-4-gcp-claim.yaml \
@@ -315,10 +318,18 @@ verifies the release and runtime, then activates it. Later joins rebuild their
 fleet view from the compute registry so they do not remove earlier dynamic
 nodes.
 
+The provider bootstrap identity is deliberately separate from the durable
+fleet operator. The GCP adapter uses OS Login only to install the public half
+of `COMPUTE_SSH_KEY` under `--ssh-user`; the emitted claim names that fleet
+account. Keep the public key beside the private operator material and rotate
+both together. A claim that names the temporary OS Login account will pass
+signature validation but fail adoption from the fleet runner.
+
 The provider provisioner remains replaceable: an OVH or Hetzner adapter emits
 the same `ComputeNodeClaim`. It must provide nested-virtualization-capable
-hardware, fleet reachability, a pinned SSH host key, and a stable storage
-device path; the Gregale admission path after that handoff is identical.
+hardware, fleet reachability, the same durable fleet operator account, a
+pinned SSH host key, and a stable storage device path; the Gregale admission
+path after that handoff is identical.
 
 ## Fast repeated provisioning
 

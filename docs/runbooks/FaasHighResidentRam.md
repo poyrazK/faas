@@ -83,7 +83,10 @@ node or provision and enroll a new one before the 92% page threshold:
 bash scripts/ops/gcp_provision_compute.sh \
   --instance faas-compute-node-3 --node fsn-3
 bash scripts/ops/gcp_provision_compute.sh \
-  --instance faas-compute-node-3 --node fsn-3 --apply
+  --instance faas-compute-node-3 --node fsn-3 \
+  --ssh-user faas-operator \
+  --ssh-public-key-file /secure/private/compute-ssh-key.pub \
+  --apply
 gregalectl deploy join-node --help
 ```
 

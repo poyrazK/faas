@@ -689,7 +689,7 @@ gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM
 	python3 scripts/ops/gcp_public_beta_iam_test.py
 	python3 deploy/scripts/faas-rclone-backup-identity_test.py
 	bash -n scripts/ops/gcp_public_beta_converge.sh
-	bash -n scripts/ops/gcp_provision_compute.sh
+	bash scripts/ops/gcp_provision_compute_test.sh
 	bash -n scripts/ops/gcp_retire_compute.sh
 
 .PHONY: otlp-unit-check
