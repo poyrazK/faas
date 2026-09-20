@@ -89,6 +89,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_DATABASE_URL` | shared | `default` | yes |  | `url` | DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement |
 | `FAAS_DATA_PLACEMENT` | apid | `runtime-config` |  |  | `` |  |
+| `FAAS_DB_NOTIFY_HUB` | shared | `default` |  |  | `` | ADR-190; "0" restores one LISTEN connection per subscriber instead of one per daemon |
 | `FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEPLOYMENT_CREATED_AT` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
@@ -142,6 +143,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_METRICS_URL` | schedd | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAY_RAW_STREAM_ENABLED` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_ROUTE_METRICS` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GATEWAY_ROUTE_STALE_TTL` | shared | `default` |  |  | `` | ADR-190; how long a last-known-good route is served while the Postgres route lookup errors (default 10m, 0 disables) |
 | `FAAS_GATEWAY_STREAMING` | gatewayd-internal | `default` |  |  | `` | emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143) |
 | `FAAS_GATEWAY_SYNTH_SOCKET` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_SYNTH_TARGET` | schedd | `dropin` |  |  | `` |  |
@@ -161,6 +163,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITHUB_APP_REDIRECT_URI` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | the same GitHub App webhook secret is delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |  | `` |  |
+| `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |

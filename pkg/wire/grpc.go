@@ -205,6 +205,10 @@ func DialContext(ctx context.Context, target string, tlsCfg *tls.Config, opts ..
 	// always present — when OTel is unconfigured (PR-1 noop fallback),
 	// it still installs a no-op stats handler so wiring is uniform.
 	dialOpts = append(dialOpts, TraceDialOptions()...)
+	// ADR-190: every unary RPC gets a deadline. Callers that set one
+	// keep it; callers that forgot are bounded and counted. Appended
+	// after the caller's opts so a caller-supplied chain runs first.
+	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(DeadlineUnaryInterceptor(DefaultGRPCDeadline())))
 
 	switch t.Scheme {
 	case SchemeUnix, SchemeDNS:
@@ -212,7 +216,7 @@ func DialContext(ctx context.Context, target string, tlsCfg *tls.Config, opts ..
 		// unchanged. grpc.NewClient is lazy; ctx is consulted via opts
 		// where present (e.g. WithBlock + DialContext flavour) but the
 		// default lazy dial returns immediately.
-		conn, err := grpc.NewClient(t.String(), dialOpts...)
+		conn, err := grpc.NewClient(t.String(), dialOpts...) //nolint:forbidigo // ADR-190: wire.DialContext is the one sanctioned constructor
 		if err != nil {
 			return nil, fmt.Errorf("wire: dial %s: %w", t, err)
 		}
@@ -225,7 +229,7 @@ func DialContext(ctx context.Context, target string, tlsCfg *tls.Config, opts ..
 			return dialer.DialContext(dialCtx, "tcp", t.Address)
 		}
 		dialOpts = append(dialOpts, grpc.WithContextDialer(tcpDialer))
-		conn, err := grpc.NewClient("passthrough:///"+t.Address, dialOpts...)
+		conn, err := grpc.NewClient("passthrough:///"+t.Address, dialOpts...) //nolint:forbidigo // ADR-190: wire.DialContext is the one sanctioned constructor
 		if err != nil {
 			return nil, fmt.Errorf("wire: dial %s: %w", t, err)
 		}

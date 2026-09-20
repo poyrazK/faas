@@ -1921,6 +1921,46 @@ type OpsMetrics struct {
 	// owning account became non-active. The scheduler repairs the instance in
 	// the same path; this counter preserves an alertable record of the breach.
 	accountLifecycleViolations prometheus.Counter
+	// grpcClientCallsWithoutDeadline (ADR-190): unary RPCs issued through
+	// wire.DialContext whose caller set no deadline. The interceptor
+	// applies FAAS_GRPC_DEFAULT_DEADLINE; this counter, labelled by full
+	// gRPC method, is how the remaining unbudgeted call sites are found.
+	// Any non-zero series is a code fix waiting to happen, not an alert.
+	grpcClientCallsWithoutDeadline *prometheus.CounterVec
+	// loopStalled / loopLastBeatAgeSeconds (ADR-190): per-loop
+	// liveness published by wire.StartWatchdog from the daemon's
+	// Liveness registry. loop is a closed per-daemon set ("runtime"
+	// everywhere; "main" on schedd; "sweep" on vmmd). stalled=1 means
+	// the loop is past its budget and the systemd watchdog ping is
+	// suspended — the unit restarts after WatchdogSec unless the loop
+	// recovers first. Backs the FaasDaemonLoopStalled alert.
+	loopStalled            *prometheus.GaugeVec
+	loopLastBeatAgeSeconds *prometheus.GaugeVec
+	// dbNotifyHubReconnects / dbNotifyHubDropped (ADR-190): health of
+	// the per-daemon LISTEN hub (pkg/db/notify_hub.go). Reconnects
+	// count lost LISTEN connections; dropped counts notifications a
+	// subscriber could not buffer (the durable source + safety tick
+	// recover the work, but a sustained rate means a consumer is
+	// falling behind). Installed via db.SetNotifyHubObserver in
+	// RegisterDefaultOps.
+	dbNotifyHubReconnects prometheus.Counter
+	dbNotifyHubDropped    *prometheus.CounterVec
+}
+
+// HubReconnect implements db.NotifyHubObserver. nil-safe.
+func (m *OpsMetrics) HubReconnect() {
+	if m == nil || m.dbNotifyHubReconnects == nil {
+		return
+	}
+	m.dbNotifyHubReconnects.Inc()
+}
+
+// HubDropped implements db.NotifyHubObserver. nil-safe.
+func (m *OpsMetrics) HubDropped(channel string) {
+	if m == nil || m.dbNotifyHubDropped == nil {
+		return
+	}
+	m.dbNotifyHubDropped.WithLabelValues(channel).Inc()
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -4380,6 +4420,26 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_account_lifecycle_violations_total",
 		Help: "Count of live or waking instances reconciled after their owning account became suspended or deletion-pending.",
 	})
+	grpcClientCallsWithoutDeadline := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_grpc_client_calls_without_deadline_total",
+		Help: "Unary gRPC calls issued through wire.DialContext with no caller deadline (ADR-190). The interceptor bounded the call with FAAS_GRPC_DEFAULT_DEADLINE; each labelled method is a call site that still needs an explicit budget.",
+	}, []string{"method"})
+	loopStalled := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_loop_stalled",
+		Help: "1 when the named daemon loop has not beaten within its budget (ADR-190). While any loop is stalled the systemd watchdog ping is suspended and the unit restarts after WatchdogSec. loop is a small closed per-daemon set.",
+	}, []string{"loop"})
+	loopLastBeatAgeSeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_loop_last_beat_age_seconds",
+		Help: "Seconds since the named daemon loop last reported progress (ADR-190). Sampled once per second by wire.StartWatchdog.",
+	}, []string{"loop"})
+	dbNotifyHubReconnects := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_db_notify_hub_reconnects_total",
+		Help: "Times the daemon's single LISTEN connection was lost and re-established (ADR-190). A steady rate means Postgres is dropping idle connections or restarting.",
+	})
+	dbNotifyHubDropped := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_db_notify_hub_dropped_total",
+		Help: "Notifications dropped because a subscriber's fan-out buffer was full (ADR-190), labelled by channel. Consumers recover from their durable table on the next safety tick; a sustained rate means that consumer is falling behind.",
+	}, []string{"channel"})
 	commonCollectors = append(commonCollectors,
 		uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal,
@@ -4387,6 +4447,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		uploadSessionReaperRowsDeletedTotal,
 		uploadSessionReaperFailedTotal,
 		accountLifecycleViolations,
+		grpcClientCallsWithoutDeadline,
+		loopStalled,
+		loopLastBeatAgeSeconds,
+		dbNotifyHubReconnects,
+		dbNotifyHubDropped,
 	)
 	// Pre-instantiate {plan} closed-set series so /metrics surfaces
 	// zero values from boot. Plan enum mirrors the four-value
@@ -5061,6 +5126,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		uploadSessionReaperRowsDeletedTotal:                 uploadSessionReaperRowsDeletedTotal,
 		uploadSessionReaperFailedTotal:                      uploadSessionReaperFailedTotal,
 		accountLifecycleViolations:                          accountLifecycleViolations,
+		grpcClientCallsWithoutDeadline:                      grpcClientCallsWithoutDeadline,
+		loopStalled:                                         loopStalled,
+		loopLastBeatAgeSeconds:                              loopLastBeatAgeSeconds,
+		dbNotifyHubReconnects:                               dbNotifyHubReconnects,
+		dbNotifyHubDropped:                                  dbNotifyHubDropped,
 	}
 }
 

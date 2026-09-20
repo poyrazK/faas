@@ -185,6 +185,16 @@ linters:
         - pattern: '^Command(Context)?\((ctx\s*context\.\w+\s*,\s*)?"(mount|umount)"'
           pkg: '^os/exec$'
           msg: "DEPLOY-1 / ADR-075: do not invoke the `mount`/`umount` binaries outside pkg/vmmdmount and pkg/fcvm (the two vmmd-owned mount owners). If a new daemon needs to mount, route through pkg/vmmdgrpc MountOverlayParent/UmountOverlayParent RPC. If a test fixture needs to mount, put it in pkg/builderd/mount_helpers.go (the existing builderd test helper) or add a //nolint:forbidigo with a documented reason."
+        # ADR-190: wire.DialContext installs the default-deadline unary
+        # interceptor. A raw grpc.NewClient / grpc.Dial* anywhere else
+        # produces a client whose calls can hang forever — the exact
+        # shape of the 2026-09-03 schedd prime wedge. pkg/wire/grpc.go
+        # is the one legitimate caller (//nolint:forbidigo on the two
+        # sites); cmd/builderd/dial.go's readiness probe is dial-only
+        # (no RPC is ever issued) and carries the same annotation.
+        - pattern: '^(NewClient|Dial|DialContext)$'
+          pkg: '^google\.golang\.org/grpc$'
+          msg: "ADR-190: do not construct gRPC clients with grpc.NewClient / grpc.Dial* directly — call pkg/wire.DialContext so the default-deadline interceptor is installed. Dial-only probes that never issue an RPC may add //nolint:forbidigo with a documented reason."
 
     # gosec runs against a box where vmmd is root and drives jailer/firecracker
     # and builds guest rootfs images. The rule IDs below are structurally
