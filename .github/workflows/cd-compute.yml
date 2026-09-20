@@ -42,7 +42,7 @@ on:
         default: ""
         type: string
       node:
-        description: "Manifest compute node name"
+        description: "Static or dynamic-policy compute node name"
         required: false
         default: ""
         type: string
@@ -113,7 +113,7 @@ on:
         default: ""
         type: string
       node:
-        description: "Manifest fleet.hosts[].name to adopt or roll (omit when a single claim is supplied by claim_file or fleet_bundle_url)"
+        description: "Static or dynamic-policy compute node to adopt or roll (omit when a single claim is supplied by claim_file or fleet_bundle_url)"
         required: false
         default: ""
         type: string

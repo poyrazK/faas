@@ -13,7 +13,7 @@ apply=0
 
 usage() {
   cat <<'USAGE'
-Usage: gcp_provision_compute.sh --instance NAME --node MANIFEST_NODE [--zone ZONE] [--claim PATH] [--apply]
+Usage: gcp_provision_compute.sh --instance NAME --node FLEET_NODE [--zone ZONE] [--claim PATH] [--apply]
 
 Creates an N2 compute VM with nested virtualization, retained SSD storage,
 deletion protection, OS Login/IAP metadata, and the dedicated compute identity.
@@ -33,7 +33,7 @@ while (($#)); do
   esac
 done
 [[ "$instance" =~ ^faas-compute-node-[a-z0-9-]+$ ]] || { echo "--instance must use faas-compute-node-*" >&2; exit 2; }
-[[ "$node" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "--node must be a manifest compute-node name" >&2; exit 2; }
+[[ "$node" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "--node must be a static or dynamic-policy compute-node name" >&2; exit 2; }
 claim="${claim:-/tmp/${node}-gcp-claim.yaml}"
 
 active="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | paste -sd, -)"
@@ -103,4 +103,4 @@ spec:
 EOF
 elapsed="$(( $(date +%s) - started_at ))"
 echo "provider_ready_seconds=$elapsed instance=$instance node=$node claim=$claim"
-echo "validate and sign the claim, then use gregalectl deploy join-node or the fleet-enrollment workflow"
+echo "create and sign a FleetEnrollmentBundle from the claim, then dispatch cd-compute or use gregalectl deploy join-node"

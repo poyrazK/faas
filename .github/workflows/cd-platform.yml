@@ -39,7 +39,7 @@ on:
         default: ""
         type: string
       node:
-        description: "Active manifest compute node name"
+        description: "Active static or dynamic-policy compute node name"
         required: false
         default: ""
         type: string

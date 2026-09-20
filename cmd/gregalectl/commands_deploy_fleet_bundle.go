@@ -250,11 +250,19 @@ func validateFleetBundleManifest(bundle *fleetbundle.Bundle, path string) (fleet
 		manifestHosts[host.Name] = host.Role
 	}
 	var errs fleetbundle.Errors
+	dynamicClaims := 0
 	for i, claim := range bundle.Spec.Claims {
 		role, ok := manifestHosts[claim.Metadata.Name]
 		path := fmt.Sprintf("spec.claims[%d].metadata.name", i)
 		if !ok {
-			errs = append(errs, fleetbundle.Error{Path: path, Message: fmt.Sprintf("production manifest does not declare node %q", claim.Metadata.Name)})
+			if _, dynamicErr := m.DynamicComputeHost(claim.Metadata.Name, claim.Spec.Storage.Device); dynamicErr != nil {
+				errs = append(errs, fleetbundle.Error{Path: path, Message: fmt.Sprintf("production manifest does not authorize dynamic node %q: %v", claim.Metadata.Name, dynamicErr)})
+				continue
+			}
+			dynamicClaims++
+			if m.Fleet.ComputeNodeCount()+dynamicClaims > m.Fleet.DynamicCompute.MaxNodes {
+				errs = append(errs, fleetbundle.Error{Path: path, Message: fmt.Sprintf("dynamic compute policy allows at most %d compute nodes", m.Fleet.DynamicCompute.MaxNodes)})
+			}
 			continue
 		}
 		if role != roleComputeOnly {
@@ -333,6 +341,7 @@ func resolveFleetBundleInputs(opts *deployJoinOptions) error {
 			return err
 		}
 	}
+	opts.FleetBundleVerified = true
 	return nil
 }
 

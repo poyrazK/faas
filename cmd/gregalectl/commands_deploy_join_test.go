@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func TestResolveJoinPrivateAddressesSeedsSkippedPreflightFacts(t *testing.T) {
@@ -513,6 +514,97 @@ func splitboxJoinManifest(t *testing.T) string {
 	return writeSplitboxManifest(t, body)
 }
 
+func dynamicSplitboxJoinManifest(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(splitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic := strings.Replace(string(body), "fleet:\n", `fleet:
+  dynamic_compute:
+    enabled: true
+    max_nodes: 4
+    name_prefix: fsn-
+    tags: [dynamic]
+`, 1)
+	dynamic = strings.Replace(dynamic, "daemons:\n", "daemons:\n  vmmd:\n    bind: tcp://0.0.0.0:50051\n", 1)
+	return writeSplitboxManifest(t, dynamic)
+}
+
+func TestDeployJoinValidateDynamicNodeRequiresVerifiedBundle(t *testing.T) {
+	manifestPath := dynamicSplitboxJoinManifest(t)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "deploy/ansible"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "deploy/ansible/node_join.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := deployJoinOptions{
+		ManifestFile: manifestPath,
+		Node:         "fsn-4",
+		SSHHost:      "10.42.0.4",
+		RepoRoot:     repo,
+		DryRun:       true,
+	}
+	if _, err := deployJoinValidate(opts); err == nil || !strings.Contains(err.Error(), "verified signed FleetEnrollmentBundle") {
+		t.Fatalf("unsigned dynamic join error = %v", err)
+	}
+	opts.FleetBundleVerified = true
+	report, err := deployJoinValidate(opts)
+	if err != nil {
+		t.Fatalf("verified dynamic join rejected: %v", err)
+	}
+	if !report.DynamicScale || report.DatabaseNode != "fsn-4.faas" {
+		t.Fatalf("dynamic join report = %#v", report)
+	}
+}
+
+func TestEffectiveJoinManifestMergesRegisteredDynamicNodes(t *testing.T) {
+	base, err := manifest.Load(dynamicSplitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := state.NewMemStore()
+	role := roleComputeOnly
+	if _, err := st.UpsertComputeNodeFromOperator(t.Context(), state.ComputeNode{
+		Name: "fsn-4.faas", TargetURL: "tcp://fsn-4.gregale.dev:50051", Role: &role,
+		Lifecycle: state.NodeLifecycleActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := computeNodesStoreOpener
+	t.Cleanup(func() { computeNodesStoreOpener = old })
+	computeNodesStoreOpener = func() (state.Store, func(), error) { return st, func() {}, nil }
+	effective, path, err := effectiveJoinManifest(t.Context(), base, deployJoinOptions{
+		ManifestFile: basePathForTest(t, base),
+		Node:         "fsn-2",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("effectiveJoinManifest: %v", err)
+	}
+	if path == "" || len(effective.Fleet.Hosts) != 3 {
+		t.Fatalf("effective topology path=%q hosts=%#v", path, effective.Fleet.Hosts)
+	}
+	got := effective.Fleet.Hosts[2]
+	if got.Name != "fsn-4" || got.Address != "fsn-4.gregale.dev:50051" {
+		t.Fatalf("dynamic host = %#v", got)
+	}
+}
+
+func basePathForTest(t *testing.T, m *manifest.Manifest) string {
+	t.Helper()
+	body, err := yaml.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "manifest.yaml")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestDeployJoinValidate_DryRunNeedsOnlyManifestAndSSH(t *testing.T) {
 	manifestPath := splitboxJoinManifest(t)
 	repo := t.TempDir()
@@ -805,11 +897,11 @@ func TestRequireFleetKnownHostsCoversEveryManifestAddress(t *testing.T) {
 		{Name: "control", Address: "fsn-1.gregale.dev"},
 		{Name: "compute-a", Address: "fsn-2.gregale.dev"},
 	}}}
-	if err := requireFleetKnownHosts(path, m); err != nil {
+	if err := requireFleetKnownHosts(path, m, "", "", 22); err != nil {
 		t.Fatal(err)
 	}
 	m.Fleet.Hosts = append(m.Fleet.Hosts, manifest.Host{Name: "compute-b", Address: "fsn-3.gregale.dev"})
-	if err := requireFleetKnownHosts(path, m); err == nil || !strings.Contains(err.Error(), "compute-b") {
+	if err := requireFleetKnownHosts(path, m, "", "", 22); err == nil || !strings.Contains(err.Error(), "compute-b") {
 		t.Fatalf("missing peer error = %v", err)
 	}
 }

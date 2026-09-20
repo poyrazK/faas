@@ -1,8 +1,11 @@
 # Provider-neutral compute-node join
 
 `gregalectl deploy join-node` adopts an already-created Linux machine into a
-manifest-declared `compute-only` fleet. It does not create VMs, call a cloud
-API, edit the repository, or require a provider-specific deployment module.
+`compute-only` fleet. A host may be declared statically, or it may be admitted
+under the signed manifest's bounded `fleet.dynamic_compute` policy by a
+short-lived signed `FleetEnrollmentBundle`. It does not create VMs, call a
+cloud API, edit the repository, or require a provider-specific deployment
+module.
 
 The provider handoff is deliberately small:
 
@@ -21,10 +24,13 @@ Everything after that boundary is owned by the pipeline.
 
 The command performs these phases in order:
 
-1. Validate the manifest and require the requested host to be
-   `compute-only`.
-2. Generate an ephemeral Ansible inventory from the manifest. The generated
-   files are removed at the end and never committed.
+1. Validate the manifest. A static host must be `compute-only`; an undeclared
+   host must match the dynamic name/capacity policy and be authorized by a
+   verified, single-use enrollment bundle.
+2. Reconstruct previously enrolled, non-retired dynamic nodes from the compute
+   registry and generate an ephemeral Ansible inventory. The signed release
+   manifest remains the release hash identity; the expanded topology is
+   removed at the end and never committed.
 3. Override only the new host's Ansible connection target with `--ssh-host`.
    Runtime daemon endpoints remain the stable manifest names.
 4. Verify the provider SSH host key against `--ssh-host-key-sha256` and pin
@@ -45,7 +51,8 @@ The command performs these phases in order:
    mount with `reflink=1` and `prjquota`; a blank device is formatted only when
    `--format-storage` explicitly approves the supplied absolute device path.
 9. Register the embedded signed release manifest in `release_bundles` and
-   require its topology hash to match the supplied manifest.
+   require its hash to match the supplied signed base manifest. Dynamic fleet
+   membership cannot change release code or configuration identity.
 10. Run the production `deploy/ansible/bootstrap.yml` compute role.
 11. Install the signed release with `--defer-activation`; the database row is
    kept drained while the box is being prepared.
@@ -144,7 +151,8 @@ Set the corresponding `FLEET_BUNDLE_AUTH_TOKEN` production-environment secret.
 The bundle publisher must use the pinned keyless GitHub workflow identity; the
 repository does not store live node claims or their signatures. The hosted
 preflight verifies the digest, signature, expiry/nonce, SSH fingerprint, and
-membership in the signed release's production manifest. The self-hosted job
+either static membership or admission by the signed release's dynamic-compute
+policy. The self-hosted job
 downloads the same bytes again and passes them to `gregalectl deploy join-node`;
 the runner's durable `/var/lib/faas-runner/fleet-enrollment-used` ledger makes
 successful authorizations single-use.
@@ -263,6 +271,50 @@ runs.
 The `fleet.hosts[].address` value is not replaced with the provider's public
 SSH address. It remains the stable private runtime endpoint and certificate
 identity. `--ssh-host` is a connection override for this one adoption run.
+
+## Dynamic scale-out without a release per node
+
+The production GCP manifest enables a bounded policy like this:
+
+```yaml
+fleet:
+  dynamic_compute:
+    enabled: true
+    max_nodes: 16
+    name_prefix: fsn-
+    tags: [gcp-vpc, dynamic]
+```
+
+That policy is shipped and signed once. It authorizes names such as `fsn-4`
+but not arbitrary roles, endpoints, or unbounded capacity. Gregale derives the
+runtime endpoint as `<node>.<private_dns.zone>` on the signed vmmd port. The
+provider claim controls only SSH and the explicit storage device.
+
+For GCP, the operator path for a new node is:
+
+```sh
+bash scripts/ops/gcp_provision_compute.sh \
+  --instance faas-compute-node-4 --node fsn-4 --apply
+
+gregalectl deploy fleet-bundle create \
+  --claim-file /tmp/fsn-4-gcp-claim.yaml \
+  --manifest-file production-manifest.yaml \
+  --generation <next-generation> \
+  --output /secure/private/fleet-enrollment-fsn-4.yaml
+```
+
+Publish those exact bundle bytes to the private configuration service, sign
+them with `fleet-enrollment.yml`, then dispatch `cd-compute` with the bundle
+URL, signature URL, and digest. No manifest host edit or release tag is needed
+for `fsn-4`. The join adds the node drained, converges control-plane access,
+verifies the release and runtime, then activates it. Later joins rebuild their
+fleet view from the compute registry so they do not remove earlier dynamic
+nodes.
+
+The provider provisioner remains replaceable: an OVH or Hetzner adapter emits
+the same `ComputeNodeClaim`. It must provide nested-virtualization-capable
+hardware, fleet reachability, a pinned SSH host key, and a stable storage
+device path; the Gregale admission path after that handoff is identical.
 
 ## Fast repeated provisioning
 

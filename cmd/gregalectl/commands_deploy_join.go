@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -44,6 +45,7 @@ type deployJoinOptions struct {
 	SSHKnownHostsSource     string
 	FleetBundleFile         string
 	FleetBundleSignature    string
+	FleetBundleVerified     bool
 	FleetReplayState        string
 	SSHKnownHostsFile       string
 	ReleaseTarball          string
@@ -86,6 +88,7 @@ type deployJoinReport struct {
 	ReleaseGitSHA  string       `json:"release_git_sha"`
 	FleetPreflight bool         `json:"fleet_preflight"`
 	Prepared       bool         `json:"prepared"`
+	DynamicScale   bool         `json:"dynamic_scale"`
 	Applied        bool         `json:"applied"`
 	Steps          []string     `json:"steps"`
 	Timings        []joinTiming `json:"timings,omitempty"`
@@ -140,8 +143,8 @@ func defaultAnsiblePlaybookRunner(ctx context.Context, workingDir string, args [
 func cmdDeployJoinNode(args []string) int {
 	fs := flag.NewFlagSet("deploy join-node", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	manifestFile := fs.String("manifest-file", "", "split-box manifest containing the new compute-only node (required)")
-	node := fs.String("node", "", "manifest host name to adopt (required)")
+	manifestFile := fs.String("manifest-file", "", "signed split-box manifest declaring the host or dynamic-compute policy (required)")
+	node := fs.String("node", "", "static or policy-authorized compute host name to adopt (required)")
 	sshHost := fs.String("ssh-host", "", "SSH address of the already-created machine (required; provider boundary)")
 	sshUser := fs.String("ssh-user", "", "SSH user for the adopted machine (default: root without --fleet-bundle-file)")
 	sshPort := fs.Int("ssh-port", 0, "SSH port for the adopted machine (default: 22 without --fleet-bundle-file)")
@@ -526,7 +529,19 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 		}
 	}
 	if !hostFound {
-		return report, fmt.Errorf("manifest does not declare host %q", opts.Node)
+		if !opts.FleetBundleVerified {
+			return report, fmt.Errorf("manifest does not declare host %q; dynamic scale-out requires a verified signed FleetEnrollmentBundle", opts.Node)
+		}
+		dynamicHost, err := m.DynamicComputeHost(opts.Node, opts.StorageDevice)
+		if err != nil {
+			return report, fmt.Errorf("dynamic compute node %q is not authorized: %w", opts.Node, err)
+		}
+		if m.Fleet.ComputeNodeCount()+1 > m.Fleet.DynamicCompute.MaxNodes {
+			return report, fmt.Errorf("dynamic compute policy allows at most %d compute nodes", m.Fleet.DynamicCompute.MaxNodes)
+		}
+		report.DynamicScale = true
+		report.Steps[0] = "validate the signed dynamic-compute policy and one-time enrollment bundle"
+		m.Fleet.Hosts = append(m.Fleet.Hosts, dynamicHost)
 	}
 	if opts.StorageDevice != "" && !filepath.IsAbs(opts.StorageDevice) {
 		return report, fmt.Errorf("storage device %q must be an absolute device path", opts.StorageDevice)
@@ -726,22 +741,26 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		opts.SSHKnownHostsFile = knownHostsPath
 	}
 
-	m, err := manifest.Load(opts.ManifestFile)
+	baseManifest, err := manifest.Load(opts.ManifestFile)
 	if err != nil {
 		return 1, err
+	}
+	expectedManifestHash, err := joinManifestHash(opts.ManifestFile)
+	if err != nil {
+		return 3, err
+	}
+	m, topologyManifestFile, err := effectiveJoinManifest(ctx, baseManifest, *opts, tempRoot)
+	if err != nil {
+		return 3, err
 	}
 	peerContractSHA256, err := joinPeerContractHash(ansibleDir, m, opts.AnsibleVarsFile, opts.StorageEnvSource, opts.ImagedStorageEnvSource, opts.FleetAgeKeySource, opts.FleetAgeRecipientSource)
 	if err != nil {
 		return 3, err
 	}
 	if opts.SSHKnownHostsSource != "" {
-		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m); err != nil {
+		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m, opts.Node, opts.SSHHost, opts.SSHPort); err != nil {
 			return 3, err
 		}
-	}
-	expectedManifestHash, err := joinManifestHash(opts.ManifestFile)
-	if err != nil {
-		return 3, err
 	}
 	// Preparation is deliberately non-disruptive and may run concurrently on
 	// every node. Defer the shared release_bundles write to the serialized
@@ -821,7 +840,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_inventory_name":             opts.Node,
 		"faas_join_database_node":              report.DatabaseNode,
 		"faas_join_release_git_sha":            report.ReleaseGitSHA,
-		"faas_join_manifest_source":            opts.ManifestFile,
+		"faas_join_manifest_source":            topologyManifestFile,
 		"faas_join_bootstrap_binary_source":    opts.BootstrapBinary,
 		"faas_join_cosign_binary_source":       opts.CosignBinary,
 		"faas_join_pki_source":                 trustRoot,
@@ -952,6 +971,121 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	report.Applied = true
 	return 0, nil
+}
+
+// effectiveJoinManifest overlays durable dynamic membership onto the signed
+// release manifest for topology rendering. The signed file remains the
+// release/configuration identity (and therefore the manifest_hash stored in
+// release_bundles); only fleet.hosts is expanded for Ansible, SAN issuance,
+// and the joining node's runtime view.
+func effectiveJoinManifest(ctx context.Context, base *manifest.Manifest, opts deployJoinOptions, tempRoot string) (*manifest.Manifest, string, error) {
+	policy := base.Fleet.DynamicCompute
+	if policy == nil || !policy.Enabled {
+		return base, opts.ManifestFile, nil
+	}
+	declared := make(map[string]manifest.Host, len(base.Fleet.Hosts))
+	for _, host := range base.Fleet.Hosts {
+		declared[host.Name] = host
+	}
+	_, targetDeclared := declared[opts.Node]
+	if !targetDeclared && !opts.FleetBundleVerified {
+		return nil, "", fmt.Errorf("dynamic compute node %q requires a verified signed FleetEnrollmentBundle", opts.Node)
+	}
+
+	store, closeStore, err := computeNodesStoreOpener()
+	if err != nil {
+		return nil, "", fmt.Errorf("load dynamic compute topology: %w", err)
+	}
+	defer closeStore()
+	rows, err := store.ListComputeNodes(ctx, true)
+	if err != nil {
+		return nil, "", fmt.Errorf("list dynamic compute topology: %w", err)
+	}
+
+	dynamicHosts := make(map[string]manifest.Host)
+	for _, row := range rows {
+		name, ok := dynamicManifestNodeName(row.Name)
+		if !ok {
+			continue
+		}
+		if _, isStatic := declared[name]; isStatic {
+			continue
+		}
+		if row.Lifecycle == state.NodeLifecycleRetired {
+			if name == opts.Node {
+				return nil, "", fmt.Errorf("dynamic compute node %q is retired and cannot be re-enrolled", name)
+			}
+			continue
+		}
+		if row.Role == nil || *row.Role != roleComputeOnly {
+			continue
+		}
+		host, hostErr := base.DynamicComputeHost(name, "")
+		if hostErr != nil {
+			return nil, "", fmt.Errorf("registered dynamic compute node %q violates the signed policy: %w", name, hostErr)
+		}
+		expectedTarget, targetErr := manifest.TCPURL(host.Address)
+		if targetErr != nil {
+			return nil, "", fmt.Errorf("derive target for registered dynamic compute node %q: %w", name, targetErr)
+		}
+		if row.TargetURL != expectedTarget {
+			return nil, "", fmt.Errorf("registered dynamic compute node %q target_url is %q, want policy-derived %q", name, row.TargetURL, expectedTarget)
+		}
+		dynamicHosts[name] = host
+	}
+
+	if !targetDeclared {
+		host, hostErr := base.DynamicComputeHost(opts.Node, opts.StorageDevice)
+		if hostErr != nil {
+			return nil, "", fmt.Errorf("authorize dynamic compute node %q: %w", opts.Node, hostErr)
+		}
+		// A retry may already have registered the row. Preserve the signed
+		// claim's storage contract while requiring the DB endpoint to match.
+		dynamicHosts[opts.Node] = host
+	}
+	if len(dynamicHosts) == 0 {
+		return base, opts.ManifestFile, nil
+	}
+	if base.Fleet.ComputeNodeCount()+len(dynamicHosts) > policy.MaxNodes {
+		return nil, "", fmt.Errorf("dynamic compute topology would contain %d nodes; signed policy allows %d",
+			base.Fleet.ComputeNodeCount()+len(dynamicHosts), policy.MaxNodes)
+	}
+
+	effective := *base
+	effective.Fleet = base.Fleet
+	effective.Fleet.Hosts = append([]manifest.Host(nil), base.Fleet.Hosts...)
+	names := make([]string, 0, len(dynamicHosts))
+	for name := range dynamicHosts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		effective.Fleet.Hosts = append(effective.Fleet.Hosts, dynamicHosts[name])
+	}
+	if errs := effective.Validate(); errs != nil {
+		return nil, "", fmt.Errorf("effective dynamic compute topology is invalid: %w", errs)
+	}
+	body, err := yaml.Marshal(&effective)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode effective dynamic compute topology: %w", err)
+	}
+	path := filepath.Join(tempRoot, "effective-manifest.yaml")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return nil, "", fmt.Errorf("write effective dynamic compute topology: %w", err)
+	}
+	return &effective, path, nil
+}
+
+func dynamicManifestNodeName(databaseName string) (string, bool) {
+	const suffix = ".faas"
+	if !strings.HasSuffix(databaseName, suffix) {
+		return "", false
+	}
+	name := strings.TrimSuffix(databaseName, suffix)
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 func joinPeerContractHash(ansibleDir string, m *manifest.Manifest, inputFiles ...string) (string, error) {
@@ -1345,15 +1479,32 @@ func verifySSHHostKey(ctx context.Context, opts deployJoinOptions, knownHostsPat
 // contacts peers. Every stable manifest address must appear in the
 // operator-verified file. The selected provider address is appended only
 // after its observed key matches the separately authorized fingerprint.
-func requireFleetKnownHosts(path string, m *manifest.Manifest) error {
+func requireFleetKnownHosts(path string, m *manifest.Manifest, targetNode, targetSSHHost string, targetSSHPort int) error {
 	for _, host := range m.Fleet.Hosts {
-		address := strings.TrimSpace(host.Address)
-		if address == "" {
-			address = strings.TrimSpace(host.Name)
+		address := ""
+		port := 22
+		if host.Name == targetNode && strings.TrimSpace(targetSSHHost) != "" {
+			address = strings.TrimSpace(targetSSHHost)
+			if targetSSHPort != 0 {
+				port = targetSSHPort
+			}
+		} else {
+			runtimeAddress := strings.TrimSpace(host.Address)
+			if parsed, _, err := manifest.ParseHostPort(runtimeAddress); err == nil {
+				address = parsed
+			} else if runtimeAddress != "" && !strings.Contains(runtimeAddress, ":") {
+				address = runtimeAddress
+			} else {
+				address = strings.TrimSpace(host.Name)
+			}
 		}
-		lookup := exec.Command("ssh-keygen", "-F", address, "-f", path)
+		lookupName := address
+		if port != 22 {
+			lookupName = net.JoinHostPort(address, strconv.Itoa(port))
+		}
+		lookup := exec.Command("ssh-keygen", "-F", lookupName, "-f", path)
 		if err := lookup.Run(); err != nil {
-			return fmt.Errorf("fleet known_hosts has no verified key for manifest host %s (%s)", host.Name, address)
+			return fmt.Errorf("fleet known_hosts has no verified key for manifest host %s (%s)", host.Name, lookupName)
 		}
 	}
 	return nil
