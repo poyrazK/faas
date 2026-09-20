@@ -1005,45 +1005,71 @@
       changed_when: false
       when: (faas_join_rollout_phase | default('full')) == 'activate'
 
-    - name: Begin graceful drain of the existing node before release installation
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - drain
-          - --node
-          - "{{ faas_join_database_node }}"
-          - --reason
-          - node_join_preregister
-          - --break-glass-db
-          - --yes
-      when: >-
-        (faas_join_rollout_phase | default('full')) == 'activate' or
-        (faas_join_existing_compute_node.rc | default(3)) == 0
-      register: faas_compute_node_drain
-      changed_when: true
-
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until
     # the recovery controller migrates them. Maintenance plus zero live rows is
-    # the deterministic cache/traffic barrier before listener shutdown.
-    - name: Wait for the existing node to reach an empty maintenance hold
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - drain-status
-          - --node
-          - "{{ faas_join_database_node }}"
-          - --break-glass-db
+    # the deterministic cache/traffic barrier before listener shutdown. If
+    # that barrier times out, no service or release has been touched yet, so
+    # restore a node that entered the rollout active instead of silently
+    # leaving healthy capacity excluded from new placement.
+    - name: Gracefully drain the existing node before release installation
       when: >-
         (faas_join_rollout_phase | default('full')) == 'activate' or
         (faas_join_existing_compute_node.rc | default(3)) == 0
-      register: faas_compute_node_drain_status
-      changed_when: false
-      retries: 48
-      delay: 2
-      until: faas_compute_node_drain_status.rc == 0
+      block:
+        - name: Begin graceful drain of the existing node before release installation
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - drain
+              - --node
+              - "{{ faas_join_database_node }}"
+              - --reason
+              - node_join_preregister
+              - --break-glass-db
+              - --yes
+          register: faas_compute_node_drain
+          changed_when: true
+
+        - name: Wait for the existing node to reach an empty maintenance hold
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - drain-status
+              - --node
+              - "{{ faas_join_database_node }}"
+              - --break-glass-db
+          register: faas_compute_node_drain_status
+          changed_when: false
+          retries: 48
+          delay: 2
+          until: faas_compute_node_drain_status.rc == 0
+      rescue:
+        - name: Restore an originally active node after graceful drain failure
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - activate
+              - --node
+              - "{{ faas_join_database_node }}"
+              - --reason
+              - node_join_drain_rollback
+              - --break-glass-db
+              - --yes
+          when: >-
+            'lifecycle=active' in
+            (faas_join_existing_compute_node.stdout_lines | default([]))
+          changed_when: true
+
+        - name: Abort after restoring the pre-rollout lifecycle
+          ansible.builtin.fail:
+            msg: >-
+              graceful drain did not reach an empty maintenance hold; the
+              existing node's pre-rollout active lifecycle was restored when
+              applicable, and no service or release was replaced
 
     - name: Stop stale compute-only services before replacing the active release
       ansible.builtin.systemd:

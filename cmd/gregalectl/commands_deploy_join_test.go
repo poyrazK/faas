@@ -554,7 +554,18 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 		t.Fatalf("graceful drain order invalid: drain=%d wait=%d stop=%d", drain, wait, stop)
 	}
 	waitBlock := playbook[wait:stop]
-	for _, token := range []string{"drain-status", "--break-glass-db", "retries: 48", "until: faas_compute_node_drain_status.rc == 0"} {
+	for _, token := range []string{
+		"drain-status",
+		"--break-glass-db",
+		"retries: 48",
+		"until: faas_compute_node_drain_status.rc == 0",
+		"rescue:",
+		"Restore an originally active node after graceful drain failure",
+		"- activate",
+		"- node_join_drain_rollback",
+		"'lifecycle=active' in",
+		"Abort after restoring the pre-rollout lifecycle",
+	} {
 		if !strings.Contains(waitBlock, token) {
 			t.Errorf("drain barrier missing %q", token)
 		}
