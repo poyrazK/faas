@@ -1,3 +1,11 @@
+// adr: 120
+//
+// ADR-120 defines the gatewayd-internal consumer-key middleware and its
+// last_used_at bookkeeping. These tests pin the debouncer that fronts that
+// write: the debounce itself, its memory bound, and the fact that eviction
+// costs only a redundant observational write and never changes an
+// authorization outcome.
+
 package gateway
 
 import (
