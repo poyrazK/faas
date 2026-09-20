@@ -213,6 +213,9 @@ type PGBackend struct {
 	metrics *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
+	// stale (ADR-190) is the last-known-good host -> App tier consulted
+	// only when the Router errors. See stale_routes.go.
+	stale *staleRoutes
 
 	appsMu sync.RWMutex
 	apps   map[string]App // app_id -> App (plan)
@@ -663,6 +666,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		sched:           sched,
 		log:             log,
 		routes:          NewRouteCache(RouteCacheCap),
+		stale:           newStaleRoutes(RouteCacheCap, routeStaleTTL()),
 		apps:            map[string]App{},
 		appsPicker:      map[string]*appPicker{},
 		mirrorRules:     map[string][]MirrorRuleRow{},
@@ -830,8 +834,12 @@ const RouteCacheCap = 10_000
 
 // Lookup resolves a hostname to its app, cache-first (spec §4.1). A cache miss
 // is one indexed Postgres lookup through the Router; the result is memoized in
-// both the route (host→app_id) and app (app_id→plan) caches. A Router error or
-// an unknown host both yield ok=false so the handler writes a 404.
+// both the route (host→app_id) and app (app_id→plan) caches. An unknown host
+// yields ok=false so the handler writes a 404. A Router error (ADR-190) is
+// answered from the stale tier when the host resolved successfully within
+// FAAS_GATEWAY_ROUTE_STALE_TTL, so a Postgres outage does not take down
+// routes that were invalidated or evicted; without a stale entry it is a
+// 404 as before.
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
@@ -843,14 +851,31 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	}
 	app, ok, err := b.router.ResolveHost(ctx, host)
 	if err != nil {
-		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
-		return App{}, false
+		return b.lookupStale(host, err)
 	}
 	if !ok {
+		// Positive "no such route": never serve it stale again.
+		b.stale.Delete(host)
 		return App{}, false
 	}
 	b.routes.Put(host, app.ID)
 	b.putApp(app)
+	b.stale.Put(host, app)
+	return app, true
+}
+
+// lookupStale is the Router-error branch of Lookup (ADR-190).
+func (b *PGBackend) lookupStale(host string, err error) (App, bool) {
+	app, ok, shouldLog := b.stale.Get(host)
+	if !ok {
+		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
+		return App{}, false
+	}
+	b.metrics.ObserveRouteLookupStaleServed()
+	if shouldLog {
+		b.log.Warn("gateway: route lookup failed; serving last-known-good route",
+			"host", host, "app_id", app.ID, "err", err)
+	}
 	return app, true
 }
 

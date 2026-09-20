@@ -81,6 +81,10 @@
 //   - gateway_vm_inflight_requests{plan}         gauge (issue #1052;
 //     requests occupying per-instance concurrency slots. The plan label is
 //     closed; instance identity remains in vmmd's bounded stats stream.)
+//   - gateway_route_lookup_stale_served_total    counter (ADR-190; requests
+//     routed from the last-known-good tier because the Postgres route
+//     lookup errored. Unlabelled — the signal is "Postgres unreachable
+//     from this gateway", not per-app.)
 package gateway
 
 import (
@@ -118,6 +122,11 @@ type Metrics struct {
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
 	drainWaitSeconds *prometheus.HistogramVec
+	// routeLookupStaleServed (ADR-190) counts requests answered from
+	// the last-known-good route tier because the Router errored. A
+	// non-zero rate means Postgres is unreachable from this gateway
+	// and the data plane is coasting on cached routes.
+	routeLookupStaleServed prometheus.Counter
 	// inflightRequests (issue #587 / PR-A) is the per-daemon
 	// drain.Tracker in-flight gauge (see SetInflightRequests).
 	inflightRequests *prometheus.GaugeVec
@@ -1673,8 +1682,21 @@ func NewMetrics() *Metrics {
 	m.inflightRequests.WithLabelValues("gatewayd-public", "http")
 	m.inflightRequests.WithLabelValues("gatewayd-public", "upgrade")
 	m.inflightRequests.WithLabelValues("gatewayd-public", "control")
-	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests)
+	m.routeLookupStaleServed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_lookup_stale_served_total",
+		Help: "Requests routed from the last-known-good route tier because the authoritative route lookup errored (ADR-190). Bounded by FAAS_GATEWAY_ROUTE_STALE_TTL; a sustained rate means Postgres is unreachable from this gateway.",
+	})
+	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
 	return m
+}
+
+// ObserveRouteLookupStaleServed (ADR-190) increments
+// gateway_route_lookup_stale_served_total. Nil-safe.
+func (m *Metrics) ObserveRouteLookupStaleServed() {
+	if m == nil || m.routeLookupStaleServed == nil {
+		return
+	}
+	m.routeLookupStaleServed.Inc()
 }
 
 // ObserveDrainWait (issue #587 / PR-A) records the wall-clock
