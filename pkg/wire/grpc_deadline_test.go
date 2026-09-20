@@ -96,5 +96,5 @@ type countingHandler struct{ onRecord func() }
 
 func (h *countingHandler) Enabled(context.Context, slog.Level) bool  { return true }
 func (h *countingHandler) Handle(context.Context, slog.Record) error { h.onRecord(); return nil }
-func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler         { return h }
-func (h *countingHandler) WithGroup(string) slog.Handler              { return h }
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler        { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler             { return h }

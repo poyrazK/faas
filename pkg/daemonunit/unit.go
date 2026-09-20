@@ -99,7 +99,7 @@ type Unit struct {
 	// not just a dead process — triggers the restart. Empty omits
 	// the directive (Type=simple units, and units that opt out).
 	WatchdogSec string
-	Slice           string
+	Slice       string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
 	// below MemoryMax so a slow leak degrades the daemon rather than

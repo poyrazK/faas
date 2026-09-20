@@ -48,8 +48,8 @@ type recordingHubObserver struct {
 	dropped    atomic.Int64
 }
 
-func (r *recordingHubObserver) HubReconnect()      { r.reconnects.Add(1) }
-func (r *recordingHubObserver) HubDropped(string)  { r.dropped.Add(1) }
+func (r *recordingHubObserver) HubReconnect()     { r.reconnects.Add(1) }
+func (r *recordingHubObserver) HubDropped(string) { r.dropped.Add(1) }
 
 // TestNotifyHubDispatchDropsOnFullBufferWithoutBlocking pins the one
 // contract change: an overflowing subscriber never stalls dispatch.
