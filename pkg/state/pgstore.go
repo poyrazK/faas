@@ -7587,6 +7587,12 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 	default:
 		return Deployment{}, 0, ErrInvalidRecoverAction
 	}
+	// reason is customer free text and reaches two columns with different
+	// rejection rules — deployments.rollout_aborted_reason (text: rejects
+	// invalid UTF-8 and NUL) and events.data (jsonb: rejects non-JSON). Both
+	// writes ride the transaction below, so either rejection would roll back
+	// the recovery itself. Normalize once, here.
+	reason = normalizeRolloutReason(reason)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -7709,7 +7715,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 		}
 
 		auditKind = DeployTrafficChanged
-		auditData = []byte(fmt.Sprintf(`{"action":"advance","reason":%q}`, reason))
+		auditData = rolloutAuditData("advance", reason)
 
 	case "promote":
 		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
@@ -7737,7 +7743,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 		}
 
 		auditKind = DeployTrafficChanged
-		auditData = []byte(fmt.Sprintf(`{"action":"promote","reason":%q}`, reason))
+		auditData = rolloutAuditData("promote", reason)
 
 	case "abort":
 		if _, err := tx.Exec(ctx,
@@ -7790,7 +7796,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 			}
 		}
 		auditKind = DeployRolledBack
-		auditData = []byte(fmt.Sprintf(`{"action":"abort","reason":%q}`, reason))
+		auditData = rolloutAuditData("abort", reason)
 	}
 
 	// Audit emit rides the same tx as the deployment stamp —

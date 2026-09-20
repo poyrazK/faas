@@ -6362,6 +6362,11 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	default:
 		return Deployment{}, 0, ErrInvalidRecoverAction
 	}
+	// Mirror PgStore.RecoverRollout exactly. MemStore has no encoding to
+	// violate, so the normalization is not load-bearing here — but if the two
+	// stores disagree, a MemStore test observes a reason the SQL store would
+	// have rewritten, and the divergence goes unnoticed until production.
+	reason = normalizeRolloutReason(reason)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -6464,7 +6469,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(fmt.Sprintf(`{"action":"advance","reason":%q}`, reason)),
+			Data:         json.RawMessage(rolloutAuditData("advance", reason)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -6498,7 +6503,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(fmt.Sprintf(`{"action":"promote","reason":%q}`, reason)),
+			Data:         json.RawMessage(rolloutAuditData("promote", reason)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -6536,7 +6541,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			Kind:         DeployRolledBack,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(fmt.Sprintf(`{"action":"abort","reason":%q}`, reason)),
+			Data:         json.RawMessage(rolloutAuditData("abort", reason)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
