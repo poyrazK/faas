@@ -64,7 +64,12 @@ func activatedAPIDListener(file *os.File, addr string) (net.Listener, error) {
 		return nil, fmt.Errorf("apid: resolve configured listener: %w", err)
 	}
 	got, ok := listener.Addr().(*net.TCPAddr)
-	if !ok || got.Port != want.Port || !got.IP.Equal(want.IP) {
+	// The socket unit is authoritative under activation. Accept it when it is
+	// narrower than a legacy wildcard FAAS_APID_LISTEN value (for example the
+	// production socket's 127.0.0.1:8081 versus 0.0.0.0:8081), but never accept
+	// a different port or a wider bind than a concrete configured address.
+	wantWildcard := len(want.IP) == 0 || want.IP.IsUnspecified()
+	if !ok || got.Port != want.Port || (!wantWildcard && !got.IP.Equal(want.IP)) {
 		_ = listener.Close()
 		return nil, fmt.Errorf("apid: activated listener is %s, want %s", listener.Addr(), want)
 	}

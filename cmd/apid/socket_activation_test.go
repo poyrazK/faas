@@ -1,3 +1,4 @@
+// adr: 126
 package main
 
 import (
@@ -81,6 +82,31 @@ func TestActivatedAPIDListenerQueuesAcrossRestart(t *testing.T) {
 	}
 	if err := <-served; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestActivatedAPIDListenerAcceptsNarrowerBindThanWildcardConfig(t *testing.T) {
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpBase := base.(*net.TCPListener)
+	master, err := tcpBase.File()
+	_ = base.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+
+	port := tcpBase.Addr().(*net.TCPAddr).Port
+	listener, err := activatedAPIDListener(master, fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		t.Fatalf("narrower activated bind rejected: %v", err)
+	}
+	_ = listener.Close()
+
+	if _, err := activatedAPIDListener(master, fmt.Sprintf("0.0.0.0:%d", port+1)); err == nil {
+		t.Fatal("activated listener accepted a different configured port")
 	}
 }
 
