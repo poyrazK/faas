@@ -1172,6 +1172,29 @@ jobs:
               exit
             }
           ' "$RELEASE_ROOT/production-manifest.yaml")"
+          if [[ -z "$gateway_host" ]]; then
+            # A signed dynamic-compute enrollment intentionally does not add a
+            # fleet.hosts entry or require a release per node. Its runtime
+            # address is the deterministic node name in the manifest's private
+            # DNS zone, which is the same identity used by join-node and the
+            # compute registry.
+            private_dns_zone="$(awk '
+              $1 == "private_dns:" { selected = 1; next }
+              selected && /^[^[:space:]]/ { selected = 0 }
+              selected && $1 == "zone:" {
+                zone = $2
+                gsub(/^"|"$/, "", zone)
+                sub(/\.$/, "", zone)
+                print zone
+                exit
+              }
+            ' "$RELEASE_ROOT/production-manifest.yaml")"
+            [[ -n "$private_dns_zone" ]] || {
+              echo "::error::selected dynamic node $NODE has no private DNS zone in production-manifest.yaml" >&2
+              exit 1
+            }
+            gateway_host="${NODE}.${private_dns_zone}"
+          fi
           [[ -n "$gateway_host" ]] || {
             echo "::error::selected node $NODE has no private address in production-manifest.yaml" >&2
             exit 1

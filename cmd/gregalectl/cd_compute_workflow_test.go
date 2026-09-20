@@ -293,18 +293,36 @@ func TestCDComputeWorkflowUsesInfrastructureHealthHost(t *testing.T) {
 		t.Fatalf("read cd-compute workflow: %v", err)
 	}
 	workflow := string(body)
+	start := strings.Index(workflow, "- name: Verify private compute gateway reachability")
+	if start < 0 {
+		t.Fatal("cannot find private compute gateway reachability step")
+	}
+	end := strings.Index(workflow[start:], "\n      - name:")
+	if end < 0 {
+		t.Fatal("cannot isolate private compute gateway reachability step")
+	}
+	step := workflow[start : start+end]
 
-	if !strings.Contains(workflow, `--header 'Host: gatewayd-internal.faas'`) {
+	if !strings.Contains(step, `--header 'Host: gatewayd-internal.faas'`) {
 		t.Fatal("cd-compute private reachability probe must use the gateway infrastructure health host")
 	}
-	if strings.Contains(workflow, `--header 'Host: health-probe.invalid'`) {
+	if strings.Contains(step, `--header 'Host: health-probe.invalid'`) {
 		t.Fatal("cd-compute private reachability probe must not route health checks through the unknown-app path")
 	}
-	if !strings.Contains(workflow, `grep -q '^# HELP gateway_compute_node_changed_subscriber_alive '`) {
+	if !strings.Contains(step, `grep -q '^# HELP gateway_compute_node_changed_subscriber_alive '`) {
 		t.Fatal("cd-compute metrics probe must require a family registered by gatewayd-internal")
 	}
-	if strings.Contains(workflow, "gatewayd_ops_total") {
+	if strings.Contains(step, "gatewayd_ops_total") {
 		t.Fatal("cd-compute metrics probe must not require the removed gatewayd_ops_total family")
+	}
+	for _, required := range []string{
+		`$1 == "private_dns:" { selected = 1; next }`,
+		`gateway_host="${NODE}.${private_dns_zone}"`,
+		"selected dynamic node $NODE has no private DNS zone",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("dynamic compute private reachability is missing %q", required)
+		}
 	}
 }
 
