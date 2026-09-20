@@ -340,8 +340,8 @@ func TestUnitImaged_Shape(t *testing.T) {
 	if u.Slice != FaasCPSlice {
 		t.Errorf("imaged: Slice = %q, want %q", u.Slice, FaasCPSlice)
 	}
-	if !reflect.DeepEqual(u.AmbientCapabilities, []string{"CAP_CHOWN"}) {
-		t.Errorf("imaged: AmbientCapabilities = %v, want [CAP_CHOWN]", u.AmbientCapabilities)
+	if !reflect.DeepEqual(u.AmbientCapabilities, []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE"}) {
+		t.Errorf("imaged: AmbientCapabilities = %v, want [CAP_CHOWN CAP_DAC_OVERRIDE]", u.AmbientCapabilities)
 	}
 	// imaged does NOT dial /run/faas sockets — it talks to vmmd
 	// over faas-cp.slice dependency instead. Pin the FAAS_BASE_*

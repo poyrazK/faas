@@ -13,17 +13,17 @@
 // MountOverlayParent / UmountOverlayParent RPCs to vmmd.
 //
 // After DEPLOY-1 the capsDecl for imaged is:
-//   - Allow: cap_chown. imaged is User=faas-imaged +
+//   - Allow: cap_chown and cap_dac_override. imaged is User=faas-imaged +
 //     NoNewPrivileges=yes, but OCI extraction must preserve the uid/gid
-//     declared by each layer. This is deliberately narrower than root and
-//     does not permit mount operations.
+//     declared by each layer and then traverse restrictive customer-owned
+//     directories while inspecting and packaging the extracted tree. These
+//     capabilities do not permit mount operations.
 //   - Deny: cap_sys_admin. The runtimecheck asserts the
 //     daemon does NOT have cap_sys_admin in Bnd. The matching
 //     edit in deploy/systemd/faas-imaged.service shrinks
 //     CapabilityBoundingSet= to exclude cap_sys_admin (so the
-//     runtimecheck passes) and drops AmbientCapabilities=
-//     entirely (so the daemon can't USE the cap even if a
-//     future PR re-introduces it).
+//     runtimecheck passes), while AmbientCapabilities= contains
+//     only the two extraction capabilities above.
 //
 // Review finding M1: pre-M1 the declaration was Allow/Deny=nil
 // — a no-op assertion that allowed any cap to slip in. Adding
@@ -35,7 +35,7 @@
 // is the receipt that the cap was deliberately dropped.
 //
 // The remaining caps in the unit's CapabilityBoundingSet=
-// (cap_chown, cap_dac_override, cap_fowner, cap_fsetid, cap_kill,
+// (cap_fowner, cap_fsetid, cap_kill,
 // cap_setgid, cap_setuid, cap_setpcap, cap_net_bind_service,
 // cap_sys_chroot) are NOT in Allow — they're a "may have" list
 // the runtimecheck does not enforce. A future DEPLOY-3
@@ -52,6 +52,7 @@ import "github.com/onebox-faas/faas/pkg/capdecl"
 var capsDecl = capdecl.Declaration{
 	Allow: []string{
 		"cap_chown",
+		"cap_dac_override",
 	},
 	Deny: []string{
 		// cap_sys_admin is vmmd-only (spec §11 / CLAUDE.md

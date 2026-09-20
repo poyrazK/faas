@@ -11,9 +11,11 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // socket); vmmd does the mount under cap_sys_admin. imaged now runs
 // with a CapabilityBoundingSet that EXCLUDES cap_sys_admin, and the
 // AmbientCapabilities=cap_sys_admin directive that PR-F added is GONE. It
-// retains only CAP_CHOWN as an ambient capability: OCI layer extraction must
-// materialise customer-declared uid/gid ownership while the daemon itself
-// remains the unprivileged faas-imaged user.
+// retains only CAP_CHOWN and CAP_DAC_OVERRIDE as ambient capabilities: OCI
+// layer extraction must materialise customer-declared uid/gid ownership and
+// then keep traversing restrictive directories (for example distroless'
+// root-owned 0700 /home/nonroot) while the daemon itself remains the
+// unprivileged faas-imaged user.
 //
 // Wipe-comments-load-bearing rationale:
 //
@@ -75,10 +77,11 @@ func UnitImaged() daemonunit.Unit {
 		MemoryMax: "4G",
 
 		// DEPLOY-1 erased cap_sys_admin; the parent-ref mount is an RPC to
-		// vmmd now. CAP_CHOWN is the narrower image-integrity capability:
-		// without it, OCI files silently land as faas-imaged:faas and valid
-		// non-root images fail before exec.
-		AmbientCapabilities: []string{"CAP_CHOWN"},
+		// vmmd now. CAP_CHOWN preserves OCI uid/gid metadata. CAP_DAC_OVERRIDE
+		// is required after that ownership transfer so the unprivileged daemon
+		// can inspect and package customer-owned 0700 directory trees. The
+		// systemd filesystem sandbox still limits which host paths are writable.
+		AmbientCapabilities: []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE"},
 
 		CapabilityBoundingSet: []string{
 			"cap_chown",

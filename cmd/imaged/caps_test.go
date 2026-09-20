@@ -1,6 +1,6 @@
 // Unit tests for cmd/imaged/caps.go. Pins the declaration
 // shape so a future PR that drops cap_sys_admin from Deny (or
-// grows Allow beyond cap_chown) trips these tests instead of silently
+// grows Allow beyond the extraction pair) trips these tests instead of silently
 // regressing DEPLOY-1's "vmmd is the only root mount owner"
 // invariant.
 package main
@@ -12,11 +12,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl"
 )
 
-// TestCapsDecl_AllowsOnlyChown pins the one narrow capability imaged uses to
-// preserve OCI ownership while extracting layers as the unprivileged service
-// account. Mount authority remains denied and owned by vmmd.
-func TestCapsDecl_AllowsOnlyChown(t *testing.T) {
-	want := []string{"cap_chown"}
+// TestCapsDecl_AllowsOnlyExtractionCapabilities pins the narrow pair imaged
+// needs to preserve OCI ownership and keep traversing restrictive directories
+// after ownership changes. Mount authority remains denied and owned by vmmd.
+func TestCapsDecl_AllowsOnlyExtractionCapabilities(t *testing.T) {
+	want := []string{"cap_chown", "cap_dac_override"}
 	if !slices.Equal(capsDecl.Allow, want) {
 		t.Errorf("capsDecl.Allow = %v, want %v", capsDecl.Allow, want)
 	}

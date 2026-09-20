@@ -172,8 +172,8 @@ for rel in \
     echo "systemd-hardening-check: ${rel}: imaged startup timeout must match the 20-minute readiness ceiling" >&2
     errors=$((errors + 1))
   fi
-  if [[ -f "$file" ]] && ! grep -Fqx 'AmbientCapabilities=CAP_CHOWN' "$file"; then
-    echo "systemd-hardening-check: ${rel}: imaged must retain CAP_CHOWN to preserve OCI uid/gid metadata" >&2
+  if [[ -f "$file" ]] && ! grep -Fqx 'AmbientCapabilities=CAP_CHOWN CAP_DAC_OVERRIDE' "$file"; then
+    echo "systemd-hardening-check: ${rel}: imaged must retain CAP_CHOWN and CAP_DAC_OVERRIDE for customer-owned OCI trees" >&2
     errors=$((errors + 1))
   fi
 done
