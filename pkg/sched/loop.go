@@ -118,6 +118,7 @@ type Loop struct {
 	diskDrift             *DiskDrift                          // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
 	migratingWatchdog     *MigratingWatchdog                  // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
 	deadNodeReconciler    *DeadNodeReconciler                 // dead-node billing-leak self-healer; nil opts out (no ticker arm)
+	instanceDivergence    *DeadNodeReconciler                 // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
 	instStats             InstanceStatsPoller                 // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
 	instanceActivity      InstanceActivityReader              // fresh per-instance request activity used by scale-in; nil opts out
 	scaleup               *scaleup.Trigger                    // issue #169 / #172 reactive scale-up trigger; nil opts out
@@ -666,6 +667,16 @@ func (l *Loop) WithDeadNodeReconciler(r *DeadNodeReconciler) *Loop {
 	return l
 }
 
+// WithInstanceDivergence attaches the ADR-191 sweep that finds live rows
+// the owning vmmd is not reporting. Same nil-skip semantics as the
+// dead-node reconciler: nil means no ticker arm fires and the counter
+// stays at zero. The two sweeps cannot collide — this one acts only on
+// nodes that reported, the other only on nodes that went silent.
+func (l *Loop) WithInstanceDivergence(r *DeadNodeReconciler) *Loop {
+	l.instanceDivergence = r
+	return l
+}
+
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
 // subscriber, the reaper tick, and the cron tick.
 func (l *Loop) Run(ctx context.Context) error {
@@ -963,6 +974,13 @@ func (l *Loop) Run(ctx context.Context) error {
 		deadNodeReconcilerT = time.NewTicker(l.deadNodeReconciler.interval)
 		defer deadNodeReconcilerT.Stop()
 	}
+	// Instance divergence sweep ticker (ADR-191). Same nil-opts-out
+	// shape as the dead-node reconciler above.
+	var instanceDivergenceT *time.Ticker
+	if l.instanceDivergence != nil {
+		instanceDivergenceT = time.NewTicker(l.instanceDivergence.interval)
+		defer instanceDivergenceT.Stop()
+	}
 	// Jobs dispatch + stuck-job reaper tickers (Mega-1, issue
 	// #1184 Workstream A). Both gated on jobsDispatched so a
 	// FAAS_JOBS_DISPATCH=0 cluster never ticks. 1s matches the
@@ -1086,6 +1104,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runMigratingReconcile(ctx)
 		case <-deadNodeTick(deadNodeReconcilerT):
 			l.runDeadNodeReconcile(ctx)
+		case <-deadNodeTick(instanceDivergenceT):
+			l.runInstanceDivergence(ctx)
 		case <-jobsTick(jobsDispatchT):
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
@@ -1535,6 +1555,18 @@ func (l *Loop) runDeadNodeReconcile(ctx context.Context) {
 	// the metric carries the per-row outcome. A second Debug log at
 	// this layer would be noise.
 	_ = reconciled
+}
+
+// runInstanceDivergence dispatches one ADR-191 sweep. Same dispatch
+// shape and same swallow-on-cancel rule as runDeadNodeReconcile above;
+// per-row outcomes live on the instance_divergence_total metric.
+func (l *Loop) runInstanceDivergence(ctx context.Context) {
+	if l.instanceDivergence == nil {
+		return
+	}
+	if _, err := l.instanceDivergence.handle(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		l.log.Warn("instance divergence: tick failed", "err", err)
+	}
 }
 
 // runScaleUp dispatches one tick of the per-app reactive scale-up

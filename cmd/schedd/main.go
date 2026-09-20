@@ -1694,6 +1694,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		engine.ReconcileDeadNodeInstances,
 		time.Duration(dnrInterval)*time.Second,
 		log))
+	// ADR-191: the divergence sweep's sibling. The dead-node reconciler
+	// above repairs rows on nodes that went silent; this one repairs
+	// rows on nodes that are reporting but did not mention the VM. It
+	// reads the same instance-stats reader the autoscaler consumes, so
+	// a schedd without that reader wired simply never ticks.
+	//
+	// Ships report-only: FAAS_SCHEDD_RECONCILE_ENFORCE must be "1"
+	// before any row is written.
+	divergence := sched.NewInstanceDivergenceReconciler(engine, autoscaleReader, log)
+	loop.WithInstanceDivergence(sched.NewDeadNodeReconciler(
+		divergence.Reconcile,
+		time.Duration(api.InstanceDivergenceIntervalSeconds)*time.Second,
+		log))
+	log.Info("schedd: instance divergence sweep wired",
+		"interval_s", api.InstanceDivergenceIntervalSeconds,
+		"enforce", sched.DivergenceEnforceEnabled())
 	// Issue #171: share a single HTTPPromScraper between the gateway
 	// scrape path for the RPS scale-up trigger and the aggressive-
 	// reaper signal mirror.

@@ -4002,6 +4002,25 @@ const (
 	// minute) while keeping the query load negligible.
 	DeadNodeReconcilerIntervalSeconds = 30
 
+	// InstanceDivergenceIntervalSeconds is the cadence of the ADR-191
+	// sweep that finds live rows the owning vmmd is not reporting.
+	// 30s matches the dead-node reconciler: both repair rows the happy
+	// path left behind, and neither is latency-sensitive.
+	InstanceDivergenceIntervalSeconds = 30
+
+	// InstanceDivergenceGraceSeconds is how long after StartedAt an
+	// instance is exempt. A just-admitted VM may not appear in the last
+	// telemetry batch yet, and acting on that race would park healthy
+	// instances during every wake burst.
+	InstanceDivergenceGraceSeconds = 60
+
+	// InstanceDivergenceTickLimit caps the per-tick write burst, the
+	// same bound and for the same reason as
+	// DeadNodeReconcilerTickLimit: a whole node's fleet diverging at
+	// once is an event to surface, not to repair in one transaction
+	// storm.
+	InstanceDivergenceTickLimit = 50
+
 	// Tier A9 (capacity-pressure-triggered cross-node app rebalance,
 	// ADR-087 — sibling to the dead-node rebalancer of ADR-064).
 	// Today apps are durably pinned to a single compute_node via

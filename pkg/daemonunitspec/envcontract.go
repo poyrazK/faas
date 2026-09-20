@@ -418,6 +418,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCHEDD_CONFIG", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1"},
 	{Name: "FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_SCHEDD_RECONCILE_ENFORCE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDefault, Note: "ADR-191; \"1\" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row"},
 	{Name: "FAAS_SCHEDD_ROLE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SCHEDD_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SESSION_KEY", Owners: []string{"apid", "gatewayd-internal", "shared"}, Source: EnvSourceUnit, Note: "LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service"},
