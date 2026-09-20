@@ -25,6 +25,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // AlertRuleWebhookSecretMaxBytes bounds the plaintext webhook_secret
@@ -76,18 +78,14 @@ const AlertRuleNameMaxChars = 64
 // even when the input contains code points outside ASCII. Used
 // by the alert-preset enable path to clamp the derived rule
 // name against AlertRuleNameMaxChars.
+//
+// Delegates to safetext, which generalized this function's insight to the
+// whole codebase. Kept as an alias because it is part of pkg/api's surface;
+// new call sites should use safetext directly. safetext.TruncateRunes also
+// sanitizes invalid UTF-8 and NUL in the input, which this never did — a
+// strict improvement for every caller.
 func TruncateRunes(s string, maxRunes int) string {
-	if maxRunes <= 0 {
-		return ""
-	}
-	count := 0
-	for i := range s {
-		if count == maxRunes {
-			return s[:i]
-		}
-		count++
-	}
-	return s
+	return safetext.TruncateRunes(s, maxRunes)
 }
 
 // AllowedAlertRuleMetrics is the closed set for the `metric` field.
