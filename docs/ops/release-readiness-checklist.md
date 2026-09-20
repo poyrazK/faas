@@ -71,6 +71,18 @@ gh workflow run cd-platform.yml --ref main \
   --field compute_targets="$COMPUTE_TARGETS"
 ```
 
+The default `compute_rollout_mode=phased` prepares managed nodes before their
+serialized activation. When a release changes the managed-host bootstrap
+contract, select `compute_rollout_mode=full`; preparation is skipped and each
+node runs the full convergence path serially before the same fleet gates run:
+
+```bash
+gh workflow run cd-platform.yml --ref main \
+  --field release_tag="$RELEASE_TAG" \
+  --field compute_targets="$COMPUTE_TARGETS" \
+  --field compute_rollout_mode=full
+```
+
 Each target may instead provide a checked-in `claim_file` or signed fleet
 enrollment bundle fields. The single-node inputs remain available for repair
 runs and backward compatibility. `cd-controlplane.yml` and `cd-compute.yml`

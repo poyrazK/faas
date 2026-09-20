@@ -18,6 +18,14 @@ on:
         required: false
         default: "[]"
         type: string
+      compute_rollout_mode:
+        description: "Compute rollout path: phased for managed hosts, full after bootstrap-contract changes"
+        required: false
+        default: phased
+        type: choice
+        options:
+          - phased
+          - full
       claim_file:
         description: "Path to the active node's ComputeNodeClaim (preferred)"
         required: false
@@ -173,6 +181,7 @@ jobs:
   compute-prepare:
     name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, plan]
+    if: inputs.compute_rollout_mode == 'phased'
     strategy:
       # Preparation copies and verifies the release while every node continues
       # serving the old version, so it is safe to overlap across the fleet.
@@ -199,8 +208,9 @@ jobs:
     secrets: inherit
 
   compute:
-    name: Activate compute (${{ matrix.target.node || matrix.target.claim_file }})
-    needs: [compute-prepare, plan]
+    name: Roll out compute (${{ matrix.target.node || matrix.target.claim_file }})
+    needs: [control, compute-prepare, plan]
+    if: ${{ always() && needs.control.result == 'success' && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || needs.compute-prepare.result == 'success') }}
     strategy:
       # Activation drains and restarts one node at a time. Fail fast preserves
       # the remaining old-version nodes as the healthy fallback.
@@ -223,7 +233,7 @@ jobs:
       storage_device: ${{ matrix.target.storage_device }}
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
-      rollout_phase: activate
+      rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}
     secrets: inherit
 
   verify:
@@ -239,6 +249,7 @@ jobs:
       CONTROL_RESULT: ${{ needs.control.result }}
       COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
       COMPUTE_RESULT: ${{ needs.compute.result }}
+      COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}
       PLAN_RESULT: ${{ needs.plan.result }}
       RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
@@ -275,8 +286,12 @@ jobs:
           # summary captures desired/observed state without hiding the failure
           # behind another wait. A successful stage gets two heartbeat periods
           # to publish its final release and liveness state.
+          prepare_ok=false
+          if [[ "$COMPUTE_PREPARE_RESULT" == "success" || ( "$COMPUTE_ROLLOUT_MODE" == "full" && "$COMPUTE_PREPARE_RESULT" == "skipped" ) ]]; then
+            prepare_ok=true
+          fi
           gate_timeout=2m
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_PREPARE_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
@@ -313,7 +328,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_PREPARE_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
             echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${COMPUTE_PREPARE_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi
