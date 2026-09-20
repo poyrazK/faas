@@ -913,9 +913,10 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	phaseStarted := time.Now()
 	joinErr := ansiblePlaybookRunner(ctx, ansibleDir, joinArgs)
 	nodePhaseName := "node_convergence"
-	if rolloutPhase == joinRolloutPrepare {
+	switch rolloutPhase {
+	case joinRolloutPrepare:
 		nodePhaseName = "node_preparation"
-	} else if rolloutPhase == joinRolloutActivate {
+	case joinRolloutActivate:
 		nodePhaseName = "node_activation"
 	}
 	report.Timings = append(report.Timings, joinTiming{Phase: nodePhaseName, DurationMS: time.Since(phaseStarted).Milliseconds()})

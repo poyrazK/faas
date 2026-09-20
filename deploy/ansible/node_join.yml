@@ -872,7 +872,7 @@
           - --yes
       when: >-
         (faas_join_rollout_phase | default('full')) == 'activate' or
-        (faas_join_existing_compute_node | default({'rc': 3})).rc == 0
+        (faas_join_existing_compute_node.rc | default(3)) == 0
       register: faas_compute_node_drain
       changed_when: true
 
@@ -911,7 +911,7 @@
       changed_when: true
       when:
         - (faas_join_rollout_phase | default('full')) != 'activate'
-        - (faas_join_existing_compute_node | default({'rc': 3})).rc == 3
+        - (faas_join_existing_compute_node.rc | default(3)) == 3
 
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until
@@ -928,7 +928,7 @@
           - --break-glass-db
       when: >-
         (faas_join_rollout_phase | default('full')) == 'activate' or
-        (faas_join_existing_compute_node | default({'rc': 3})).rc == 0
+        (faas_join_existing_compute_node.rc | default(3)) == 0
       register: faas_compute_node_drain_status
       changed_when: false
       retries: 48
