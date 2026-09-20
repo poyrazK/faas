@@ -129,6 +129,8 @@ sign_title="Sign fleet bundle $digest"
 sign_run="$(find_run fleet-enrollment.yml "$sign_title")"
 gh run watch "$sign_run" --repo "$repository" --exit-status
 gcloud storage objects describe "gs://$bucket/$signature_object" >/dev/null
+signed_elapsed="$(( $(date -u +%s) - started_at ))"
+echo "bundle_signed_seconds=$signed_elapsed node=$node release=$release_tag"
 
 gh workflow run cd-compute.yml --repo "$repository" --ref main \
   -f "release_tag=$release_tag" \
@@ -144,6 +146,9 @@ rollout_url="https://github.com/$repository/actions/runs/$rollout_run"
 echo "compute_rollout=$rollout_url"
 if ((wait_for_rollout)); then
   gh run watch "$rollout_run" --repo "$repository" --exit-status
+  elapsed="$(( $(date -u +%s) - started_at ))"
+  echo "enrollment_ready_seconds=$elapsed node=$node release=$release_tag rollout=$rollout_url"
+else
+  elapsed="$(( $(date -u +%s) - started_at ))"
+  echo "enrollment_dispatched_seconds=$elapsed node=$node release=$release_tag rollout=$rollout_url"
 fi
-elapsed="$(( $(date -u +%s) - started_at ))"
-echo "enrollment_dispatched_seconds=$elapsed node=$node release=$release_tag rollout=$rollout_url"

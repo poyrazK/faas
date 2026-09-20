@@ -92,5 +92,11 @@ if grep -Fq 'gh run watch 202' "$FAKE_LOG"; then
   exit 1
 fi
 grep -Fq 'compute_rollout=https://github.com/example/faas/actions/runs/202' "$test_root/apply.out"
+grep -Fq 'bundle_signed_seconds=' "$test_root/apply.out"
+grep -Fq 'enrollment_dispatched_seconds=' "$test_root/apply.out"
+if grep -Fq 'enrollment_ready_seconds=' "$test_root/apply.out"; then
+  echo "--no-wait unexpectedly reported the node ready" >&2
+  exit 1
+fi
 
 echo "enroll_compute_claim tests passed"
