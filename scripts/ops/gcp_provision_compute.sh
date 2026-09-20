@@ -73,7 +73,10 @@ create_args=(gcloud compute instances create "$instance"
   --project="$project" --zone="$zone"
   --machine-type=n2-standard-4
   --image-project=ubuntu-os-cloud --image-family=ubuntu-2404-lts-amd64
-  --boot-disk-size=100GB --boot-disk-type=pd-balanced --no-boot-disk-auto-delete
+  # The OS disk does not carry Firecracker artifacts. Keep it on standard PD
+  # so each compute node consumes regional SSD quota only for its dedicated
+  # fast data disk, matching the existing production compute layout.
+  --boot-disk-size=100GB --boot-disk-type=pd-standard --no-boot-disk-auto-delete
   --create-disk="name=${instance}-storage,device-name=faas-fc-storage,size=100GB,type=pd-ssd,auto-delete=no"
   --enable-nested-virtualization --maintenance-policy=MIGRATE
   --service-account="gregale-compute@${project}.iam.gserviceaccount.com"
@@ -110,9 +113,9 @@ if ! id '$ssh_user' >/dev/null 2>&1; then
   sudo useradd --create-home --user-group --shell /bin/bash '$ssh_user'
 fi
 operator_home=\$(getent passwd '$ssh_user' | cut -d: -f6)
-test -n \"\$operator_home\"
-sudo install -d -o '$ssh_user' -g '$ssh_user' -m 0700 \"\$operator_home/.ssh\"
-printf '%s' '$ssh_public_key_b64' | base64 -d | sudo install -o '$ssh_user' -g '$ssh_user' -m 0600 /dev/stdin \"\$operator_home/.ssh/authorized_keys\"
+test -n "\$operator_home"
+sudo install -d -o '$ssh_user' -g '$ssh_user' -m 0700 "\$operator_home/.ssh"
+printf '%s' '$ssh_public_key_b64' | base64 -d | sudo install -o '$ssh_user' -g '$ssh_user' -m 0600 /dev/stdin "\$operator_home/.ssh/authorized_keys"
 printf '%s ALL=(ALL) NOPASSWD:ALL\n' '$ssh_user' | sudo install -o root -g root -m 0440 /dev/stdin '/etc/sudoers.d/90-gregale-operator'
 sudo visudo -cf '/etc/sudoers.d/90-gregale-operator' >/dev/null
 sudo passwd --lock '$ssh_user' >/dev/null

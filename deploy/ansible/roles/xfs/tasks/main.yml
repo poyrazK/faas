@@ -39,7 +39,12 @@
 
 - name: xfs — inspect whether the requested device is already mounted
   ansible.builtin.command:
-    argv: [findmnt, -S, "{{ faas_storage_device }}", -n, -o, TARGET]
+    # A converged host also exposes directories from this filesystem through
+    # bind mounts (for example /srv/fc/cache at /var/lib/faas/cache). Without
+    # --first-only, findmnt prints both the filesystem's root mount and those
+    # bind mounts, making the scalar safety check below reject our own layout.
+    # The root filesystem mount necessarily precedes mounts of its children.
+    argv: [findmnt, -S, "{{ faas_storage_device }}", -n, -o, TARGET, --first-only]
   register: faas_storage_device_mount
   changed_when: false
   failed_when: false

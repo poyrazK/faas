@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+xfs_tasks="$repo_root/deploy/ansible/roles/xfs/tasks/main.yml"
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 mkdir -p "$test_root/bin"
@@ -52,8 +53,16 @@ bash "$repo_root/scripts/ops/gcp_provision_compute.sh" \
 grep -Fq "user: faas-operator" "$claim"
 grep -Fq "host: 10.0.0.4" "$claim"
 grep -Fq "host_key_sha256: SHA256:test-host-fingerprint" "$claim"
+grep -Fq -- "--boot-disk-type=pd-standard" "$FAKE_GCLOUD_LOG"
+grep -Fq -- "type=pd-ssd" "$FAKE_GCLOUD_LOG"
 grep -Fq "useradd --create-home --user-group --shell /bin/bash 'faas-operator'" "$FAKE_GCLOUD_LOG"
+grep -Fq 'test -n "$operator_home"' "$FAKE_GCLOUD_LOG"
+grep -Fq '"$operator_home/.ssh/authorized_keys"' "$FAKE_GCLOUD_LOG"
 grep -Fq "/etc/sudoers.d/90-gregale-operator" "$FAKE_GCLOUD_LOG"
+# The GCP join converges the fast-storage cache bind mount before the legacy
+# XFS role validates the same device. Only inspect the device's root mount so
+# that the role remains idempotent once /var/lib/faas/cache is bound.
+grep -Fq 'argv: [findmnt, -S, "{{ faas_storage_device }}", -n, -o, TARGET, --first-only]' "$xfs_tasks"
 
 if bash "$repo_root/scripts/ops/gcp_provision_compute.sh" \
     --instance faas-compute-node-5 --node fsn-5 --apply >"$test_root/missing.out" 2>&1; then
