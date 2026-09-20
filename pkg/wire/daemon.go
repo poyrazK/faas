@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
@@ -72,6 +73,14 @@ var defaultOps *OpsMetrics
 // drain-flip, recordUptime's 1s ticker) reads the same instance.
 func RegisterDefaultOps(ops *OpsMetrics) {
 	defaultOps = ops
+	// ADR-190: the per-daemon LISTEN hub reports reconnects and
+	// dropped fan-outs through this registry; installing it here
+	// means every daemon gets the counters without extra wiring.
+	if ops == nil {
+		db.SetNotifyHubObserver(nil)
+		return
+	}
+	db.SetNotifyHubObserver(ops)
 }
 
 // BootStamps records the daemon's boot-time metrics (issue #573 /

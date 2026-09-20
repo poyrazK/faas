@@ -870,6 +870,13 @@ func SubscribeWithReconnect(
 	if len(channels) == 0 {
 		return nil, fmt.Errorf("db: SubscribeWithReconnect: no channels")
 	}
+	// ADR-190: one LISTEN connection per pool. The hub keeps this
+	// function's contract (fail-fast initial acquire, LISTEN active on
+	// return, channel closes only on ctx cancel); FAAS_DB_NOTIFY_HUB=0
+	// falls through to the legacy connection-per-subscriber path.
+	if notifyHubEnabled() {
+		return hubFor(pool, log).subscribe(ctx, channels)
+	}
 	inner, cancel, err := Subscribe(ctx, pool, channels)
 	if err != nil {
 		return nil, fmt.Errorf("db: SubscribeWithReconnect initial Subscribe: %w", err)
