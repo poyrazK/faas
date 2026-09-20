@@ -617,7 +617,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
 	@$(GO) tool golangci-lint run
 
 .PHONY: runbook-sql-check
@@ -699,6 +699,10 @@ otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OT
 .PHONY: sealed-env-scope-check
 sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by faas-apid.service (issue #585, ADR-127)
 	@bash scripts/ci/check_sealed_env_scope.sh $(CURDIR)
+
+.PHONY: text-encoding-check
+text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice
+	@bash scripts/ci/check_text_encoding.sh $(CURDIR)
 
 .PHONY: manifest-ansible
 manifest-ansible: ## Generate a manifest-owned Ansible inventory and host_vars tree (MANIFEST + ANSIBLE_GENERATED_DIR required)

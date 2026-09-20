@@ -44,6 +44,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+// dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
+// reason. The value can originate from a hostile DNS server, so it is both
+// capped and normalized before it reaches a stored reason string.
+const dialFailureDetailMaxBytes = 96
+
 // --- apps CRUD --------------------------------------------------------------
 
 // getApp returns one app by slug.
@@ -2799,10 +2804,7 @@ func classifyCertError(err error) string {
 		// net.OpError (DNS, connection refused) etc. Fall back to
 		// the wrapped error's message but cap the length so a
 		// hostile DNS server can't blow up the wire.
-		msg := err.Error()
-		if len(msg) > 96 {
-			msg = msg[:96] + "…"
-		}
+		msg := safetext.Ellipsis(err.Error(), dialFailureDetailMaxBytes)
 		return "dial_failed:" + msg
 	}
 }
@@ -2822,11 +2824,7 @@ func dialFailureReason(err error) string {
 	if err == nil || err.Error() == "" {
 		return "unknown"
 	}
-	msg := err.Error()
-	if len(msg) > 96 {
-		msg = msg[:96] + "…"
-	}
-	return msg
+	return safetext.Ellipsis(err.Error(), dialFailureDetailMaxBytes)
 }
 
 // --- domain doctor (ADR-120) --------------------------------------------

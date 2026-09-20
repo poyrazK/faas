@@ -8,7 +8,12 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
+
+// replicatorHelperDetailMaxBytes bounds the replication helper's combined
+// output when it is folded into an error message.
+const replicatorHelperDetailMaxBytes = 2048
 
 // CommandArtifactReplicator adapts an operator-owned artifact handoff helper
 // to ArtifactReplicator. The helper receives exactly two positional
@@ -38,10 +43,7 @@ func (r CommandArtifactReplicator) Replicate(ctx context.Context, layerKey strin
 	if err == nil {
 		return nil
 	}
-	detail := strings.TrimSpace(string(out))
-	if len(detail) > 2048 {
-		detail = detail[:2048] + "…"
-	}
+	detail := safetext.Ellipsis(strings.TrimSpace(string(out)), replicatorHelperDetailMaxBytes)
 	if detail == "" {
 		return fmt.Errorf("helper %q: %w", r.Path, err)
 	}

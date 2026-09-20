@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
@@ -44,6 +45,13 @@ import (
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// invocationFailureDetailMaxBytes bounds the failure detail copied from a
+// failed invocation's body into the invocation record. The body is
+// application output, so it is truncated with safetext.Ellipsis: the cut
+// lands on a rune boundary and the ellipsis is charged to the budget rather
+// than pushing the result three bytes past it.
+const invocationFailureDetailMaxBytes = 512
 
 // reaperParkTimeout bounds the synchronous Engine.Park call made by the
 // scheduler loop. Firecracker snapshot creation is normally fast, but a
@@ -3134,10 +3142,7 @@ func (h *httpGatewaySynth) InvokeWithWake(ctx context.Context, appID string, inv
 func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, error) {
 	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, wake)
 	if err == nil && out.State == state.InvocationFailed {
-		detail := strings.TrimSpace(string(out.Result))
-		if len(detail) > 512 {
-			detail = detail[:512] + "…"
-		}
+		detail := safetext.Ellipsis(strings.TrimSpace(string(out.Result)), invocationFailureDetailMaxBytes)
 		if detail == "" {
 			detail = http.StatusText(statusCode)
 		}
