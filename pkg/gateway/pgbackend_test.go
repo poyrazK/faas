@@ -64,7 +64,8 @@ func TestPGBackend_LookupUnknownHost(t *testing.T) {
 	}
 }
 
-// ADR-190: a Router error with no last-known-good route is still a 404.
+// adr: 190
+// A Router error with no last-known-good route is still a 404.
 func TestPGBackend_LookupRouterErrorWithoutStaleIsNotFound(t *testing.T) {
 	router := &fakeRouter{err: errors.New("pg down")}
 	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
