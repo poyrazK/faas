@@ -4145,6 +4145,12 @@ func (s *PgStore) ListAppDeletionArtifacts(ctx context.Context, appID string) ([
 			  from snapshots sn join deployments d on d.id = sn.deployment_id
 			 where sn.storage_key <> ''
 			union all
+			select d.app_id,
+			       left(sn.storage_key, length(sn.storage_key) - 4) || '/drive',
+			       0::bigint
+			  from snapshots sn join deployments d on d.id = sn.deployment_id
+			 where sn.storage_key like '%/v2/mem'
+			union all
 			select d.app_id, bp.sbom_storage_key, 0::bigint
 			  from build_provenance bp
 			  join builds b on b.id = bp.build_id

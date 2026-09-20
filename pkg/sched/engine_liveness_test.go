@@ -1,3 +1,4 @@
+// adr: 078
 // Engine-level tests for the liveness-probe restart path
 // (issue #554 / ADR-078). These tests pin the AC surface:
 //
@@ -382,8 +383,9 @@ func TestLiveness_StaleSnapAndColdBootOnlyAfterDestroy(t *testing.T) {
 	// Seed a non-stale init snapshot.
 	snap, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 512 << 20, DiskBytes: 1 << 20, StorageKey: "/tmp/snap",
-		Tier: state.SnapshotTierInit,
+		MemBytes: 512 << 20, DiskBytes: 1 << 20,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "liveness"),
+		Tier:       state.SnapshotTierInit,
 	})
 	if err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)

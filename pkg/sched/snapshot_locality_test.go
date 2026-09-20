@@ -38,7 +38,8 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 			producer, replica := seedTwoNodes(t, store)
 			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
 			snap, err := store.CreateSnapshot(ctx, state.Snapshot{
-				DeploymentID: dep.ID, FCVersion: "1.10.0", StorageKey: state.SnapMemKey(dep.ID),
+				DeploymentID: dep.ID, FCVersion: "1.10.0",
+				StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "locality"),
 			})
 			if err != nil {
 				t.Fatal(err)

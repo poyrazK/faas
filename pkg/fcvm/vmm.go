@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1111,19 +1112,28 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		{artifact: "kernel", key: spec.KernelKey, errorContext: "vmm: stage kernel"},
 		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
+	snapshotDriveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
 	if len(spec.Workloads) == 0 {
+		mainKey := spec.LayerKey
+		if snapshotDriveKey != "" {
+			mainKey = snapshotDriveKey
+		}
 		artifacts = append(artifacts, restoreArtifactSpec{
-			artifact: "main", key: spec.LayerKey, errorContext: "vmm: stage layer",
+			artifact: "main", key: mainKey, errorContext: "vmm: stage layer",
 		})
 	} else {
 		for i, workload := range spec.Workloads {
 			artifact := "main"
+			key := workload.StorageKey
+			if i == 0 && snapshotDriveKey != "" {
+				key = snapshotDriveKey
+			}
 			if i > 0 {
 				artifact = fmt.Sprintf("sidecar:%s", workload.Name)
 			}
 			artifacts = append(artifacts, restoreArtifactSpec{
 				artifact: artifact,
-				key:      workload.StorageKey,
+				key:      key,
 				errorContext: fmt.Sprintf("vmm: stage workload %d (%s)",
 					i, workload.Name),
 			})
@@ -1151,7 +1161,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// stageWritable with an empty src would fail; skip it — Boot handles a missing drive1.
 	tStageWritableStart := time.Now()
 	if layerSrc != "" {
-		if spec.EphemeralWritable {
+		if spec.EphemeralWritable && snapshotDriveKey == "" {
 			if _, err := v.stageEphemeralWritableAs(root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
 				return fmt.Errorf("vmm: stage ephemeral layer: %w", err)
 			}
@@ -2083,6 +2093,25 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "err", err)
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
 	}
+	// Firecracker memory and vmstate reference the exact block contents of
+	// drive1 at this pause boundary. Freeze that private writable ext4 before
+	// the guest resumes; restoring against the deployment's pristine layer can
+	// otherwise surface filesystem corruption (for example EBADMSG while
+	// reading a CA bundle) after the first scaled/restored instance.
+	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
+	var frozenDrivePath string
+	var driveBytes int64
+	if driveKey != "" {
+		if v.storage == nil {
+			return SnapshotInfo{}, errors.New("vmm: snapshot private drive requires storage backend")
+		}
+		var freezeErr error
+		frozenDrivePath, driveBytes, freezeErr = v.freezeSnapshotDrive(root, l.Instance)
+		if freezeErr != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: freeze snapshot private drive: %w", freezeErr)
+		}
+		defer func() { _ = os.Remove(frozenDrivePath) }()
+	}
 	if spec.ResumeBeforePublish {
 		// The snapshot files are complete once Firecracker returns from
 		// /snapshot/create. Shared OCI publication may take seconds and
@@ -2207,6 +2236,21 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}
 
+	if driveKey != "" {
+		// nolint:forbidigo // frozenDrivePath is a vmmd-created immutable clone.
+		f, oerr := os.Open(frozenDrivePath)
+		if oerr != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot private drive for publish: %w", oerr)
+		}
+		if perr := v.storage.Put(ctx, driveKey, f); perr != nil {
+			_ = f.Close()
+			return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot private drive: %w", perr)
+		}
+		if cerr := f.Close(); cerr != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: close snapshot private drive: %w", cerr)
+		}
+	}
+
 	// Logical snapshot lengths are required for Firecracker compatibility,
 	// but they are not the disk footprint of a sparse memory image. Resolve
 	// the just-published local/cache files and record their allocated blocks.
@@ -2221,6 +2265,10 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	}
 	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
 		allocatedBytesOrLogical(statePublishedPath, stateBytes)
+	if driveKey != "" {
+		drivePublishedPath := v.publishedLocalPath(driveKey, frozenDrivePath)
+		storedBytes += allocatedBytesOrLogical(drivePublishedPath, driveBytes)
+	}
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's
@@ -2229,6 +2277,68 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// responsible caller (Manager.WarmSnapshot → vmm.WarmSnapshot
 	// → vmmdgrpc.WarmSnapshot) MUST fire ResumeVM on success.
 	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes, StoredBytes: storedBytes}, nil
+}
+
+// freezeSnapshotDrive creates an immutable copy of the private drive backing
+// the paused VM. Production stages writable drives as reflink clones and bind
+// mounts them into the tmpfs jail; cloning the backing source is therefore an
+// O(1) snapshot on XFS/Btrfs. The portable copy fallback is used only when the
+// host filesystem lacks reflink support.
+func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, size int64, err error) {
+	mountpoint := filepath.Join(root, layerImageName)
+	source := mountpoint
+	v.mu.Lock()
+	for i := len(v.bindMounts[instance]) - 1; i >= 0; i-- {
+		mount := v.bindMounts[instance][i]
+		if mount.mountpoint == mountpoint {
+			source = mount.source
+			break
+		}
+	}
+	v.mu.Unlock()
+
+	// Firecracker has stopped issuing writes at this point. Flush the host's
+	// dirty pages before reflinking so the clone is also durable if the node
+	// fails while the snapshot is being published.
+	sourceFile, err := os.Open(source)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := sourceFile.Sync(); err != nil {
+		_ = sourceFile.Close()
+		return "", 0, err
+	}
+	if err := sourceFile.Close(); err != nil {
+		return "", 0, err
+	}
+
+	clone, cloned, err := reflinkCloneTemp(source, instance)
+	if err != nil {
+		return "", 0, err
+	}
+	if cloned {
+		path = clone
+	} else {
+		out, createErr := os.CreateTemp(filepath.Dir(source), ".faas-snapshot-drive-*.ext4")
+		if createErr != nil {
+			return "", 0, createErr
+		}
+		path = out.Name()
+		if closeErr := out.Close(); closeErr != nil {
+			_ = os.Remove(path)
+			return "", 0, closeErr
+		}
+		if copyErr := copyFile(source, path); copyErr != nil {
+			_ = os.Remove(path)
+			return "", 0, copyErr
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return "", 0, err
+	}
+	return path, info.Size(), nil
 }
 
 // publishedLocalPath returns the backend's local representation of key after a
@@ -2853,7 +2963,8 @@ func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateS
 		return fmt.Errorf("vmm: delete warm snapshot: storage backend unavailable")
 	}
 	var errs []error
-	for _, key := range []string{storageKey, vmstateStorageKey} {
+	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: storageKey})
+	for _, key := range []string{storageKey, vmstateStorageKey, driveKey} {
 		if key == "" {
 			continue
 		}

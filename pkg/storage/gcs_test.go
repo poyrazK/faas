@@ -152,6 +152,33 @@ func TestGCSStorageBackendZstdRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGCSPrivateSnapshotDriveIsCompressedWithoutMemoryCompression(t *testing.T) {
+	store := newMemoryGCSStore()
+	backend, err := newGCSStorageBackend("gregale-artifacts-test", snapshotCompressionNone, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "snap/550e8400-e29b-41d4-a716-446655440000/captures/660e8400-e29b-41d4-a716-446655440001/v2/drive"
+	body := make([]byte, 4<<20)
+	copy(body, []byte("ext4-private-drive"))
+	if err := backend.Put(t.Context(), key, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.objects["gregale-artifacts-test/"+key]
+	if stored.metadata[gcsEncodingMetadata] != snapshotCompressionZstd {
+		t.Fatalf("encoding = %q, want zstd", stored.metadata[gcsEncodingMetadata])
+	}
+	r, err := backend.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(r)
+	closeErr := r.Close()
+	if readErr != nil || closeErr != nil || !bytes.Equal(got, body) {
+		t.Fatalf("round trip changed drive: read=%v close=%v", readErr, closeErr)
+	}
+}
+
 func TestGCSStorageBackendDoesNotMaskPrimaryErrors(t *testing.T) {
 	store := newMemoryGCSStore()
 	store.getErr = errors.New("permission denied")

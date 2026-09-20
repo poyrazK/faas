@@ -1865,7 +1865,7 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	// A fresh, version-matched snapshot makes wake a restore.
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
-		StorageKey: SnapshotMemKey(dep.ID),
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "restore"),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
@@ -1924,7 +1924,7 @@ func TestEngineWake_StorageKey_ForwardedFromRow(t *testing.T) {
 	// Use a non-default storage_key so a regression that hardcodes
 	// "snap/<dep>/mem" can't pass — the row's value is what vmmd
 	// must see.
-	customKey := "snap/" + dep.ID + "/mem" // canonical today
+	customKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "custom")
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
 		StorageKey: customKey,
@@ -2112,7 +2112,7 @@ func TestEngineWake_ForwardsOverridePort(t *testing.T) {
 			DeploymentID: liveDep.ID,
 			FCVersion:    "1.10.0",
 			MemBytes:     512 << 20,
-			StorageKey:   SnapshotMemKey(liveDep.ID),
+			StorageKey:   state.SnapshotCaptureMemKey(liveDep.ID, state.SnapshotTierInit, "port"),
 		}); err != nil {
 			t.Fatalf("CreateSnapshot: %v", err)
 		}
@@ -2203,7 +2203,7 @@ func TestEngineWake_StaleFcVersionColdBoots(t *testing.T) {
 	// Snapshot made by an older FC; must not be restored (ADR-005 pinning).
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.7.0", MemBytes: 512 << 20,
-		StorageKey: SnapshotMemKey(dep.ID),
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "fallback"),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
@@ -2223,7 +2223,7 @@ func TestEngineWake_RestoreFallbackMarksSnapshotStale(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
-		StorageKey: SnapshotMemKey(dep.ID),
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "fallback"),
 	})
 	vmm := &fakeVMM{forceColdFallback: true}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
@@ -4524,17 +4524,19 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	// Seed both tiers directly. The StorageKey is the only field
 	// the engine reads at the wake site; FCVersion matches.
 	now := time.Now()
+	initKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "plan-init")
 	_, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 256 << 20, StorageKey: state.SnapMemKey(dep.ID),
+		MemBytes: 256 << 20, StorageKey: initKey,
 		Tier: state.SnapshotTierInit, Stale: false,
 	})
 	if err != nil {
 		t.Fatalf("CreateSnapshot init: %v", err)
 	}
+	warmKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "plan-warm")
 	_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 256 << 20, StorageKey: state.WarmSnapMemKey(dep.ID),
+		MemBytes: 256 << 20, StorageKey: warmKey,
 		Tier: state.SnapshotTierWarm, Stale: false,
 	})
 	if err != nil {
@@ -4553,8 +4555,8 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	if snap.Tier != state.SnapshotTierInit {
 		t.Errorf("Free plan: tier = %q, want init (warm skipped on sticky-downgrade)", snap.Tier)
 	}
-	if snap.StorageKey != state.SnapMemKey(dep.ID) {
-		t.Errorf("Free plan: storage_key = %q, want %q", snap.StorageKey, state.SnapMemKey(dep.ID))
+	if snap.StorageKey != initKey {
+		t.Errorf("Free plan: storage_key = %q, want %q", snap.StorageKey, initKey)
 	}
 	if tier != "init" {
 		t.Errorf("Free plan: chosen tier = %q, want init", tier)
@@ -4568,8 +4570,8 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	if snap.Tier != state.SnapshotTierWarm {
 		t.Errorf("Pro plan: tier = %q, want warm", snap.Tier)
 	}
-	if snap.StorageKey != state.WarmSnapMemKey(dep.ID) {
-		t.Errorf("Pro plan: storage_key = %q, want %q", snap.StorageKey, state.WarmSnapMemKey(dep.ID))
+	if snap.StorageKey != warmKey {
+		t.Errorf("Pro plan: storage_key = %q, want %q", snap.StorageKey, warmKey)
 	}
 	if tier != "warm" {
 		t.Errorf("Pro plan: chosen tier = %q, want warm", tier)
@@ -4581,7 +4583,7 @@ func TestUsableSnapshotForWake_RAMMismatchFallsBackAndRetires(t *testing.T) {
 	_, _, dep := seedApp(t, store, api.PlanPro, 256, 5)
 	warm, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 128 << 20, StorageKey: state.WarmSnapMemKey(dep.ID),
+		MemBytes: 128 << 20, StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "ram-warm"),
 		Tier: state.SnapshotTierWarm,
 	})
 	if err != nil {
@@ -4589,7 +4591,7 @@ func TestUsableSnapshotForWake_RAMMismatchFallsBackAndRetires(t *testing.T) {
 	}
 	_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 256 << 20, StorageKey: state.SnapMemKey(dep.ID),
+		MemBytes: 256 << 20, StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "ram-init"),
 		Tier: state.SnapshotTierInit,
 	})
 	if err != nil {
@@ -4614,8 +4616,8 @@ func TestUsableSnapshotForWake_AllRAMMismatchesColdBoot(t *testing.T) {
 		memBytes int64
 		key      string
 	}{
-		{state.SnapshotTierWarm, 128 << 20, state.WarmSnapMemKey(dep.ID)},
-		{state.SnapshotTierInit, 512 << 20, state.SnapMemKey(dep.ID)},
+		{state.SnapshotTierWarm, 128 << 20, state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "all-warm")},
+		{state.SnapshotTierInit, 512 << 20, state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "all-init")},
 	} {
 		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: fixture.memBytes,
@@ -4656,7 +4658,7 @@ func TestUsableSnapshotForWake_H2CBaseImageCompatibility(t *testing.T) {
 				DeploymentID: dep.ID, FCVersion: "1.10.0",
 				BaseImageVersion: tc.baseImageVersion,
 				MemBytes:         256 << 20,
-				StorageKey:       state.SnapMemKey(dep.ID),
+				StorageKey:       state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "h2c"),
 				Tier:             state.SnapshotTierInit,
 			}); err != nil {
 				t.Fatalf("CreateSnapshot: %v", err)

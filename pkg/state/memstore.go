@@ -5404,6 +5404,7 @@ func (m *MemStore) ListAppDeletionArtifacts(_ context.Context, appID string) ([]
 		if d, ok := m.deployments[snap.DeploymentID]; ok {
 			add(d.AppID, snap.StorageKey, snap.StoredBytes)
 			add(d.AppID, SnapshotVMStateKey(snap), 0)
+			add(d.AppID, SnapshotDriveKey(snap), 0)
 		}
 	}
 	for buildID, provenance := range m.buildProvenance {

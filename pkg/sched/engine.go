@@ -7116,7 +7116,7 @@ func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan s
 }
 
 func (e *Engine) snapshotCompatible(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) bool {
-	if snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+	if snap.Stale || snap.FCVersion != e.fcVer || state.SnapshotDriveKey(snap) == "" || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
 		return false
 	}
 	if appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC {

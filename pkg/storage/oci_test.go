@@ -709,6 +709,14 @@ func TestOCIArtifactCompressionScope(t *testing.T) {
 			tag:         "example__" + depID,
 			wantEncoded: true,
 		},
+		{
+			name:        "snapshot private drive always compressed",
+			backend:     f.client(t),
+			key:         "snap/" + depID + "/captures/660e8400-e29b-41d4-a716-446655440001/v2/drive",
+			repo:        "faas/snap-" + depID,
+			tag:         "captures-660e8400-e29b-41d4-a716-446655440001-v2-drive",
+			wantEncoded: true,
+		},
 	}
 
 	for _, tt := range tests {

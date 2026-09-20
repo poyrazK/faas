@@ -13,7 +13,10 @@ func (h *Handler) deleteSnapshotPair(ctx context.Context, snap state.Snapshot) {
 		h.log.Warn("imaged: snapshot cleanup backend", "err", err)
 		return
 	}
-	for _, key := range []string{snap.StorageKey, state.SnapshotVMStateKey(snap)} {
+	for _, key := range []string{snap.StorageKey, state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap)} {
+		if key == "" {
+			continue
+		}
 		if err := be.Delete(ctx, key); err != nil {
 			h.log.Warn("imaged: remove unused snapshot", "key", key, "err", err)
 		}
@@ -46,9 +49,12 @@ func (h *Handler) cleanupSnapshotCaptures(ctx context.Context, be storage.Storag
 	for _, key := range keys {
 		// The backend may return broader listings; constrain destructive cleanup
 		// to this deployment's generation namespace.
-		memKey := strings.TrimSuffix(key, "/vmstate")
-		if memKey != key {
-			memKey += "/mem"
+		memKey := key
+		for _, suffix := range []string{"/vmstate", "/drive"} {
+			if strings.HasSuffix(memKey, suffix) {
+				memKey = strings.TrimSuffix(memKey, suffix) + "/mem"
+				break
+			}
 		}
 		if !strings.HasPrefix(key, prefix) || !state.IsSnapshotCaptureKey(memKey) {
 			continue

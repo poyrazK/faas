@@ -13,7 +13,8 @@ import (
 // idle park. A stale or missing row still takes the normal capture path.
 func (e *Engine) reusableSnapshot(ctx context.Context, depID, tier string) (state.Snapshot, bool) {
 	snap, err := e.store.LatestSnapshotForTier(ctx, depID, tier)
-	return snap, err == nil && !snap.Stale && snap.FCVersion == e.fcVer && snap.StorageKey != ""
+	return snap, err == nil && !snap.Stale && snap.FCVersion == e.fcVer &&
+		snap.StorageKey != "" && state.SnapshotDriveKey(snap) != ""
 }
 
 func (e *Engine) captureInitOrReuse(ctx context.Context, ins state.Instance, vmstate, memKey, stateKey string) (SnapshotBytes, *state.Snapshot, error) {
