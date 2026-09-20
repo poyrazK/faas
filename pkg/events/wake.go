@@ -51,13 +51,17 @@ const (
 	// distinct kind and cannot inflate customer wake counts.
 	WakeBootObserved = "wake.boot_observed"
 	// WakeRestoreBreakdown — vmmd's detailed snapshot-restore phases.
-	// Payload: {wake_id, app_id, instance_id, chroot_ms,
-	// materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms,
+	// Payload: {wake_id, app_id, instance_id, lease_acquire_ms,
+	// env_prepare_ms, pre_network_ms, setup_network_ms (ADR-192:
+	// Manager.Wake phases before the restore window, outside total_ms),
+	// restore_gate_wait_ms, chroot_ms, materialize_mem_ms,
+	// materialize_vmstate_ms, resolve_images_ms,
 	// resolve_artifacts[{artifact, source, duration_ms}],
-	// stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms,
-	// bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms,
-	// total_ms}. Emitted after a successful restore so operators can
-	// identify which part of the vmmd restore window exceeded budget.
+	// stage_drives_ms, stage_pre_boot_files_ms, stage_snapshot_ms,
+	// helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms,
+	// resume_hook_ms, wait_ready_ms, total_ms}. Emitted after a
+	// successful restore so operators can identify which part of the
+	// vmmd restore window exceeded budget.
 	WakeRestoreBreakdown = "wake.restore_breakdown"
 	// WakeColdBootBreakdown — vmmd's complete cold-boot phases, including
 	// storage resolution that occurs before Firecracker starts. Payload:
@@ -382,25 +386,37 @@ func (e BootObserved) Payload() map[string]any {
 // milliseconds and are deliberately emitted as one typed event so the
 // wake-timeline endpoint can expose the breakdown without a node-log lookup.
 type RestoreBreakdown struct {
-	EmitAt               time.Time
-	WakeID               string
-	AppID                string
-	InstanceID           string
+	EmitAt     time.Time
+	WakeID     string
+	AppID      string
+	InstanceID string
+	// LeaseAcquireMs .. SetupNetworkMs (ADR-192) are the Manager.Wake phases
+	// that ran before the JailerVMM restore window. They are NOT part of
+	// TotalMs; they explain the gap between wake.boot_started and the first
+	// vmmd restore phase.
+	LeaseAcquireMs       int64
+	EnvPrepareMs         int64
+	PreNetworkMs         int64
+	SetupNetworkMs       int64
 	RestoreGateWaitMs    int64
 	ChrootMs             int64
 	MaterializeMemMs     int64
 	MaterializeVMStateMs int64
 	ResolveImagesMs      int64
 	StageDrivesMs        int64
-	StageSnapshotMs      int64
-	HelperMs             int64
-	StartJailerMs        int64
-	BindTunMs            int64
-	LoadSnapshotMs       int64
-	ResumeHookMs         int64
-	WaitReadyMs          int64
-	TotalMs              int64
-	ResolveArtifacts     []RestoreArtifactResolution
+	// StagePreBootFilesMs (ADR-192) is the single loop-mount session that
+	// writes the per-instance files onto drive1. It was previously folded
+	// into StageSnapshotMs.
+	StagePreBootFilesMs int64
+	StageSnapshotMs     int64
+	HelperMs            int64
+	StartJailerMs       int64
+	BindTunMs           int64
+	LoadSnapshotMs      int64
+	ResumeHookMs        int64
+	WaitReadyMs         int64
+	TotalMs             int64
+	ResolveArtifacts    []RestoreArtifactResolution
 }
 
 // RestoreArtifactResolution attributes one member of resolve_images_ms.
@@ -508,24 +524,29 @@ func (e RestoreBreakdown) At() time.Time    { return e.EmitAt }
 func (e RestoreBreakdown) Subject() *string { return nil }
 func (e RestoreBreakdown) Payload() map[string]any {
 	return map[string]any{
-		"wake_id":                e.WakeID,
-		"app_id":                 e.AppID,
-		"instance_id":            e.InstanceID,
-		"restore_gate_wait_ms":   e.RestoreGateWaitMs,
-		"chroot_ms":              e.ChrootMs,
-		"materialize_mem_ms":     e.MaterializeMemMs,
-		"materialize_vmstate_ms": e.MaterializeVMStateMs,
-		"resolve_images_ms":      e.ResolveImagesMs,
-		"resolve_artifacts":      e.ResolveArtifacts,
-		"stage_drives_ms":        e.StageDrivesMs,
-		"stage_snapshot_ms":      e.StageSnapshotMs,
-		"helper_ms":              e.HelperMs,
-		"start_jailer_ms":        e.StartJailerMs,
-		"bind_tun_ms":            e.BindTunMs,
-		"load_snapshot_ms":       e.LoadSnapshotMs,
-		"resume_hook_ms":         e.ResumeHookMs,
-		"wait_ready_ms":          e.WaitReadyMs,
-		"total_ms":               e.TotalMs,
+		"wake_id":                 e.WakeID,
+		"app_id":                  e.AppID,
+		"instance_id":             e.InstanceID,
+		"lease_acquire_ms":        e.LeaseAcquireMs,
+		"env_prepare_ms":          e.EnvPrepareMs,
+		"pre_network_ms":          e.PreNetworkMs,
+		"setup_network_ms":        e.SetupNetworkMs,
+		"restore_gate_wait_ms":    e.RestoreGateWaitMs,
+		"chroot_ms":               e.ChrootMs,
+		"materialize_mem_ms":      e.MaterializeMemMs,
+		"materialize_vmstate_ms":  e.MaterializeVMStateMs,
+		"resolve_images_ms":       e.ResolveImagesMs,
+		"resolve_artifacts":       e.ResolveArtifacts,
+		"stage_drives_ms":         e.StageDrivesMs,
+		"stage_pre_boot_files_ms": e.StagePreBootFilesMs,
+		"stage_snapshot_ms":       e.StageSnapshotMs,
+		"helper_ms":               e.HelperMs,
+		"start_jailer_ms":         e.StartJailerMs,
+		"bind_tun_ms":             e.BindTunMs,
+		"load_snapshot_ms":        e.LoadSnapshotMs,
+		"resume_hook_ms":          e.ResumeHookMs,
+		"wait_ready_ms":           e.WaitReadyMs,
+		"total_ms":                e.TotalMs,
 	}
 }
 

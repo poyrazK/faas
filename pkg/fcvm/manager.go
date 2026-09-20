@@ -299,6 +299,10 @@ type bringUpTimings struct {
 	scanCheckMs  int64
 	coldBootMs   int64
 	restoreError string
+	// prepare is filled by Wake from wakePhases just before bringUp so the
+	// RestoreSpec can carry the pre-restore phases onto the timeline
+	// (ADR-192).
+	prepare WakePrepareTimings
 }
 
 // SlowWakeLogThreshold is the elapsed time above which a SUCCESSFUL wake
@@ -350,6 +354,29 @@ func (w *wakePhases) mark(name string) {
 	now := time.Now()
 	w.phases = append(w.phases, wakePhase{name: name, ms: now.Sub(w.last).Milliseconds()})
 	w.last = now
+}
+
+// prepareTimings projects the phases that run before bringUp into the typed
+// shape the restore breakdown event carries (ADR-192). Unknown or later
+// phases (bring_up) are ignored; a repeated mark accumulates.
+func (w *wakePhases) prepareTimings() WakePrepareTimings {
+	var out WakePrepareTimings
+	if w == nil {
+		return out
+	}
+	for _, p := range w.phases {
+		switch p.name {
+		case "lease_acquire":
+			out.LeaseAcquireMs += p.ms
+		case "env_prepare":
+			out.EnvPrepareMs += p.ms
+		case "pre_network":
+			out.PreNetworkMs += p.ms
+		case "setup_network":
+			out.SetupNetworkMs += p.ms
+		}
+	}
+	return out
 }
 
 // attrs flattens the phases into slog key/values: total_ms plus one
@@ -3793,6 +3820,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 
 	phases.mark("setup_network")
+	timings.prepare = phases.prepareTimings()
 	method, err = m.bringUp(ctx, lease, nc, req, &timings)
 	// Marked before the error check so a FAILED bringUp still reports
 	// how long it burned — that is the phase most likely to hold a
@@ -4201,6 +4229,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			ServiceDiscoveryIP: serviceDiscoveryIP,
 			Networkless:        req.ExecutionOnly,
 			KeepPaused:         req.KeepPaused,
+		}
+		if timings != nil {
+			// ADR-192: hand the pre-restore Manager phases to the VMM so
+			// wake.restore_breakdown can attribute them.
+			rs.Prepare = timings.prepare
 		}
 		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the

@@ -206,6 +206,22 @@ type RestoreSpec struct {
 	// vmmd half of the provisioned warm-pool contract: the VM remains resident
 	// for a later in-place resume and must not run guest-init yet.
 	KeepPaused bool
+	// Prepare (ADR-192) carries the Manager.Wake phase durations that ran
+	// before Restore was entered, so the wake.restore_breakdown event can
+	// attribute the whole vmmd window rather than only the JailerVMM part.
+	Prepare WakePrepareTimings
+}
+
+// WakePrepareTimings (ADR-192) are the Manager.Wake phases that precede the
+// JailerVMM restore/boot window. They previously reached only the slog
+// phase line, so a wake that spent seconds acquiring a lease or building a
+// network namespace showed up on the customer timeline as an unexplained
+// gap between wake.boot_started and the first vmmd phase.
+type WakePrepareTimings struct {
+	LeaseAcquireMs int64
+	EnvPrepareMs   int64
+	PreNetworkMs   int64
+	SetupNetworkMs int64
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).

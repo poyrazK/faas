@@ -152,21 +152,30 @@ type bindSourceMode struct {
 // only when the wake-timeline event is emitted; keeping the struct in
 // durations avoids making the restore path depend on the event wire shape.
 type restoreTimingBreakdown struct {
+	// Prepare carries the Manager.Wake phases that ran BEFORE this
+	// JailerVMM.Restore window (ADR-192). They are outside TotalMs; the
+	// timeline previously had no way to attribute that gap.
+	Prepare              WakePrepareTimings
 	RestoreGateWaitMs    int64
 	ChrootMs             int64
 	MaterializeMemMs     int64
 	MaterializeVMStateMs int64
 	ResolveImagesMs      int64
 	StageDrivesMs        int64
-	StageSnapshotMs      int64
-	HelperMs             int64
-	StartJailerMs        int64
-	BindTunMs            int64
-	LoadSnapshotMs       int64
-	ResumeHookMs         int64
-	WaitReadyMs          int64
-	TotalMs              int64
-	ResolveArtifacts     []restoreArtifactTiming
+	// StagePreBootFilesMs is the single loop-mount session that writes
+	// secrets.env / env.json / resolver / workload files onto drive1
+	// (ADR-192). It was folded into StageSnapshotMs before, which made the
+	// two-syscall mem/vmstate bind look expensive.
+	StagePreBootFilesMs int64
+	StageSnapshotMs     int64
+	HelperMs            int64
+	StartJailerMs       int64
+	BindTunMs           int64
+	LoadSnapshotMs      int64
+	ResumeHookMs        int64
+	WaitReadyMs         int64
+	TotalMs             int64
+	ResolveArtifacts    []restoreArtifactTiming
 }
 
 type restoreArtifactTiming struct {
@@ -881,21 +890,70 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // The main drive is available after provision; the Firecracker process has not
 // received its config yet, so this is the last safe point for secrets, API env,
 // per-sidecar env overrides, and the sidecar roster.
+// stagePreBootFiles writes every per-instance file the guest expects on
+// drive1 in ONE loop-mount session (ADR-192). Before this, secrets.env,
+// env.json, the service resolver, each sidecar env override, the main
+// manifest and the roster mounted and unmounted the layer on their own, so
+// an app with secrets plus API env paid two to three ext4 mount +
+// journal-flush cycles on every restore — the dominant cost inside the
+// restore breakdown's stage window on the production SSD nodes. The
+// per-file writers are shared with the public Stage* methods, which keep
+// their single-file mount for the legacy Manager path and for tests.
 func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) error {
-	if len(secretsEnvJSON) > 0 {
-		if err := v.StageSecretsEnv(instance, secretsEnvJSON); err != nil {
-			return fmt.Errorf("stage secrets.env: %w", err)
+	writers, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP)
+	if err != nil {
+		return err
+	}
+	if len(writers) == 0 {
+		return nil
+	}
+	drive1, err := v.resolveDriveImage(instance)
+	if err != nil {
+		return err
+	}
+	return loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
+		for _, w := range writers {
+			if err := w.write(mountRoot); err != nil {
+				return fmt.Errorf("%s: %w", w.what, err)
+			}
 		}
+		return nil
+	})
+}
+
+// preBootFileWriter is one deferred write against a mounted drive1. what is
+// the operation label the caller wraps errors with, matching the messages
+// the previous one-mount-per-file implementation produced.
+type preBootFileWriter struct {
+	what  string
+	write func(mountRoot string) error
+}
+
+// preBootFileWriters validates inputs and projects byte caps BEFORE any
+// mount, so a rejected payload never costs a loop mount — the same posture
+// the individual Stage* methods always had. Order is preserved from the
+// previous implementation: secrets, API env, resolver, sidecar env
+// overrides, main manifest, roster.
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) ([]preBootFileWriter, error) {
+	var writers []preBootFileWriter
+	if len(secretsEnvJSON) > 0 {
+		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
+			return writeSecretsEnv(mp, secretsEnvJSON)
+		}})
 	}
 	if len(apiEnvJSON) > 0 {
-		if err := v.StageAPIEnv(instance, apiEnvJSON); err != nil {
-			return fmt.Errorf("stage env.json: %w", err)
-		}
+		writers = append(writers, preBootFileWriter{what: "stage env.json", write: func(mp string) error {
+			return writeAPIEnv(mp, apiEnvJSON)
+		}})
 	}
 	if strings.TrimSpace(serviceDiscoveryIP) != "" {
-		if err := v.stageServiceDiscoveryResolver(instance, serviceDiscoveryIP); err != nil {
-			return fmt.Errorf("stage service resolver: %w", err)
+		ip, err := parseServiceDiscoveryIP(serviceDiscoveryIP)
+		if err != nil {
+			return nil, fmt.Errorf("stage service resolver: %w", err)
 		}
+		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
+			return writeServiceDiscoveryResolver(mp, ip)
+		}})
 	}
 	if len(workloads) > 1 {
 		// Sidecar drives are deliberately read-only. Image defaults and the
@@ -906,41 +964,102 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 			if len(workload.preparedEnvJSON) == 0 {
 				continue
 			}
-			if err := v.StageWorkloadEnv(instance, workload.Name, workload.preparedEnvJSON); err != nil {
-				return fmt.Errorf("stage workload %s env: %w", workload.Name, err)
+			if !validWorkloadName(workload.Name) {
+				return nil, fmt.Errorf("stage workload %s env: invalid workload name %q", workload.Name, workload.Name)
 			}
+			name, blob := workload.Name, workload.preparedEnvJSON
+			writers = append(writers, preBootFileWriter{what: "stage workload " + name + " env", write: func(mp string) error {
+				return writeWorkloadEnv(mp, name, blob)
+			}})
 		}
-		if err := v.StageWorkloadManifest(instance, -1, workloads[0]); err != nil {
-			return fmt.Errorf("stage main workload manifest: %w", err)
+		manifest, err := marshalWorkloadManifest(workloads[0])
+		if err != nil {
+			return nil, fmt.Errorf("stage main workload manifest: %w", err)
 		}
-		if err := v.StageWorkloadRoster(instance, workloads[0], workloads[1:]); err != nil {
-			return fmt.Errorf("stage workload roster: %w", err)
+		writers = append(writers, preBootFileWriter{what: "stage main workload manifest", write: func(mp string) error {
+			return writeDriveFile(mp, workloadManifestPath, manifest, 0o400, "workload.json")
+		}})
+		roster, err := marshalWorkloadRoster(workloads[0], workloads[1:])
+		if err != nil {
+			return nil, fmt.Errorf("stage workload roster: %w", err)
 		}
+		writers = append(writers, preBootFileWriter{what: "stage workload roster", write: func(mp string) error {
+			return writeDriveFile(mp, workloadRosterPath, roster, 0o400, "workloads.json")
+		}})
+	}
+	return writers, nil
+}
+
+// loopMountSession loop-mounts an ext4 drive image read-write, runs fn
+// against the mountpoint, then unmounts and removes the mountpoint. vmmd is
+// the only root component, so the loopback mount is permitted by the §11
+// threat model. It is a package variable so the pure-Go test tier — which
+// has neither root nor a loop device — can substitute a plain directory
+// and count sessions.
+var loopMountSession = func(drive, prefix string, fn func(mountRoot string) error) error {
+	mp, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		return fmt.Errorf("mkdir mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(mp) }()
+	if out, err := exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
+	}
+	defer func() { _ = exec.Command("umount", mp).Run() }()
+	return fn(mp)
+}
+
+// writeDriveFile writes one file beneath a mounted drive, resolving the
+// full-rootfs marker the same way every Stage* method always has.
+func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMode, label string) error {
+	target, err := stagedDrivePath(mountRoot, optimizedPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", strings.TrimPrefix(filepath.Dir(optimizedPath), "upper/"), err)
+	}
+	if err := os.WriteFile(target, blob, mode); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+	return nil
+}
+
+func writeSecretsEnv(mountRoot string, blob []byte) error {
+	return writeDriveFile(mountRoot, secretsEnvPath, blob, 0o400, "secrets.env")
+}
+
+func writeAPIEnv(mountRoot string, blob []byte) error {
+	return writeDriveFile(mountRoot, apiEnvPath, blob, 0o400, "env.json")
+}
+
+func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
+	base, err := stagedDrivePath(mountRoot, workloadEnvPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(base, workloadName, "env.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("mkdir workload env: %w", err)
+	}
+	if err := os.WriteFile(target, blob, 0o400); err != nil {
+		return fmt.Errorf("write workload env: %w", err)
 	}
 	return nil
 }
 
 const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
 
-func (v *JailerVMM) stageServiceDiscoveryResolver(instance, bridgeIP string) error {
+func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(bridgeIP))
 	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {
-		return fmt.Errorf("invalid private bridge address %q", bridgeIP)
+		return netip.Addr{}, fmt.Errorf("invalid private bridge address %q", bridgeIP)
 	}
-	drive1, err := v.resolveDriveImage(instance)
-	if err != nil {
-		return err
-	}
-	mp, err := os.MkdirTemp("", "faas-vmm-resolver-")
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, mountErr := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); mountErr != nil {
-		return fmt.Errorf("mount loop: %w (%s)", mountErr, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-	target, err := stagedDrivePath(mp, serviceDiscoveryResolverPath)
+	return ip, nil
+}
+
+func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
+	target, err := stagedDrivePath(mountRoot, serviceDiscoveryResolverPath)
 	if err != nil {
 		return err
 	}
@@ -1184,6 +1303,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
+	tPreBootFiles := time.Now()
 
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
@@ -1288,13 +1408,15 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tDone := time.Now()
 	breakdown := restoreTimingBreakdown{
+		Prepare:              spec.Prepare,
 		RestoreGateWaitMs:    restoreAdmitted.Sub(t0).Milliseconds(),
 		ChrootMs:             chrootReady.Sub(restoreAdmitted).Milliseconds(),
 		MaterializeMemMs:     memReady.Sub(chrootReady).Milliseconds(),
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
 		StageDrivesMs:        tStageDrives.Sub(tResolve).Milliseconds(),
-		StageSnapshotMs:      tMemState.Sub(tStageDrives).Milliseconds(),
+		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
+		StageSnapshotMs:      tMemState.Sub(tPreBootFiles).Milliseconds(),
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
 		StartJailerMs:        tStartJailer.Sub(tHelper).Milliseconds(),
 		BindTunMs:            tBindTun.Sub(tStartJailer).Milliseconds(),
@@ -3227,30 +3349,9 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-secrets-")
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-
-	// rw,noexec,nosuid — drive1 is a vfat-less ext4; noexec would still
-	// work but we don't need it and rw alone is the minimum.
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-
-	target, err := stagedDrivePath(mp, secretsEnvPath)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("mkdir etc/faas: %w", err)
-	}
-	if err := os.WriteFile(target, jsonBlob, 0o400); err != nil {
-		return fmt.Errorf("write secrets.env: %w", err)
-	}
-	return nil
+	return loopMountSession(drive1, "faas-vmm-secrets-", func(mp string) error {
+		return writeSecretsEnv(mp, jsonBlob)
+	})
 }
 
 // StageAPIEnv is the plaintext sibling of StageSecretsEnv (issue #395 /
@@ -3273,28 +3374,9 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-apienv-")
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-
-	target, err := stagedDrivePath(mp, apiEnvPath)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("mkdir etc/faas: %w", err)
-	}
-	if err := os.WriteFile(target, jsonBlob, 0o400); err != nil {
-		return fmt.Errorf("write env.json: %w", err)
-	}
-	return nil
+	return loopMountSession(drive1, "faas-vmm-apienv-", func(mp string) error {
+		return writeAPIEnv(mp, jsonBlob)
+	})
 }
 
 // workloadEnvPath is the per-sidecar override file written to the main
@@ -3317,28 +3399,9 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	if err != nil {
 		return err
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-workload-env-")
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-
-	base, err := stagedDrivePath(mp, workloadEnvPath)
-	if err != nil {
-		return err
-	}
-	target := filepath.Join(base, workloadName, "env.json")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("mkdir workload env: %w", err)
-	}
-	if err := os.WriteFile(target, jsonBlob, 0o400); err != nil {
-		return fmt.Errorf("write workload env: %w", err)
-	}
-	return nil
+	return loopMountSession(drive1, "faas-vmm-workload-env-", func(mp string) error {
+		return writeWorkloadEnv(mp, workloadName, jsonBlob)
+	})
 }
 
 func validWorkloadName(name string) bool {
@@ -3399,15 +3462,19 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	if _, err := os.Stat(drive); err != nil {
 		return fmt.Errorf("stat workload drive: %w", err)
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-workload-")
+	blob, err := marshalWorkloadManifest(w)
 	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
+		return err
 	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
+	return loopMountSession(drive, "faas-vmm-workload-", func(mp string) error {
+		return writeDriveFile(mp, workloadManifestPath, blob, 0o400, "workload.json")
+	})
+}
+
+// marshalWorkloadManifest projects the byte cap and marshals the
+// compatibility manifest. It runs BEFORE any mount so an oversized payload
+// never costs a loop device.
+func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Marshalling an unbounded Name field before checking size
 	// would let a malicious or buggy wire payload allocate
@@ -3416,7 +3483,7 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	// The projection is conservative — the workloadManifest
 	// struct shape is fixed, and only Name can vary.
 	if projected := projectedWorkloadManifestBytes(w); projected > api.MaxExportedLayerBytes {
-		return fmt.Errorf("workload manifest projected %d bytes exceeds cap %d (name=%q)", projected, api.MaxExportedLayerBytes, w.Name)
+		return nil, fmt.Errorf("workload manifest projected %d bytes exceeds cap %d (name=%q)", projected, api.MaxExportedLayerBytes, w.Name)
 	}
 	// Marshal the manifest. encoding/json sorts map keys
 	// alphabetically so re-reads produce the same bytes; we don't
@@ -3441,19 +3508,9 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	}
 	blob, err := json.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("marshal workload manifest: %w", err)
+		return nil, fmt.Errorf("marshal workload manifest: %w", err)
 	}
-	target, err := stagedDrivePath(mp, workloadManifestPath)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("mkdir etc/faas: %w", err)
-	}
-	if err := os.WriteFile(target, blob, 0o400); err != nil {
-		return fmt.Errorf("write workload.json: %w", err)
-	}
-	return nil
+	return blob, nil
 }
 
 // projectedWorkloadManifestBytes (issue #463 / ADR-069 / PR-B
@@ -3619,23 +3676,25 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return err
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-roster-")
+	blob, err := marshalWorkloadRoster(main, sidecars)
 	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
+		return err
 	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
+	return loopMountSession(drive1, "faas-vmm-roster-", func(mp string) error {
+		return writeDriveFile(mp, workloadRosterPath, blob, 0o400, "workloads.json")
+	})
+}
 
+// marshalWorkloadRoster projects the byte cap and marshals the deployment
+// roster before any mount is taken.
+func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, error) {
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Cap runs BEFORE json.Marshal — matches the posture
 	// writeWorkloadManifest adopts. The roster is at most 1
 	// main + SidecarCapMax (2) sidecars, so the projection
 	// multiplies per-workload projections by len(sidecars)+1.
 	if projected := projectedWorkloadRosterBytes(main, sidecars); projected > api.MaxExportedLayerBytes {
-		return fmt.Errorf("workload roster projected %d bytes exceeds cap %d (sidecars=%d)", projected, api.MaxExportedLayerBytes, len(sidecars))
+		return nil, fmt.Errorf("workload roster projected %d bytes exceeds cap %d (sidecars=%d)", projected, api.MaxExportedLayerBytes, len(sidecars))
 	}
 
 	roster := workloadRoster{
@@ -3668,19 +3727,9 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	}
 	blob, err := json.Marshal(roster)
 	if err != nil {
-		return fmt.Errorf("marshal workload roster: %w", err)
+		return nil, fmt.Errorf("marshal workload roster: %w", err)
 	}
-	target, err := stagedDrivePath(mp, workloadRosterPath)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("mkdir etc/faas: %w", err)
-	}
-	if err := os.WriteFile(target, blob, 0o400); err != nil {
-		return fmt.Errorf("write workloads.json: %w", err)
-	}
-	return nil
+	return blob, nil
 }
 
 // exportMax resolves the per-export byte cap. Zero means "unset" — fall back
@@ -4714,12 +4763,17 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		WakeID:               fields.WakeID,
 		AppID:                fields.AppID,
 		InstanceID:           l.Instance,
+		LeaseAcquireMs:       b.Prepare.LeaseAcquireMs,
+		EnvPrepareMs:         b.Prepare.EnvPrepareMs,
+		PreNetworkMs:         b.Prepare.PreNetworkMs,
+		SetupNetworkMs:       b.Prepare.SetupNetworkMs,
 		RestoreGateWaitMs:    b.RestoreGateWaitMs,
 		ChrootMs:             b.ChrootMs,
 		MaterializeMemMs:     b.MaterializeMemMs,
 		MaterializeVMStateMs: b.MaterializeVMStateMs,
 		ResolveImagesMs:      b.ResolveImagesMs,
 		StageDrivesMs:        b.StageDrivesMs,
+		StagePreBootFilesMs:  b.StagePreBootFilesMs,
 		StageSnapshotMs:      b.StageSnapshotMs,
 		HelperMs:             b.HelperMs,
 		StartJailerMs:        b.StartJailerMs,
