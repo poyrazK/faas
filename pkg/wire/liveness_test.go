@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,8 +75,11 @@ func TestLivenessAgesSortedByName(t *testing.T) {
 func TestStartWatchdogPublishesLoopGauges(t *testing.T) {
 	ops := NewOpsMetrics("test")
 	l := NewLiveness()
-	now := time.Now()
-	l.now = func() time.Time { return now }
+	// The sampler goroutine reads the clock concurrently with the
+	// test advancing it, so the fake clock must be atomic.
+	var nowNanos atomic.Int64
+	nowNanos.Store(time.Now().UnixNano())
+	l.now = func() time.Time { return time.Unix(0, nowNanos.Load()) }
 	l.Register("main", 5*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -83,7 +87,7 @@ func TestStartWatchdogPublishesLoopGauges(t *testing.T) {
 	defer stop()
 	// "runtime" is registered by StartWatchdog; move the clock past
 	// main's budget and wait for a sample tick.
-	now = now.Add(6 * time.Second)
+	nowNanos.Add(int64(6 * time.Second))
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if testutil.ToFloat64(ops.loopStalled.WithLabelValues("main")) == 1 {
