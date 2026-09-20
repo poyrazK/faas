@@ -5859,6 +5859,15 @@ streamLoop:
 				if json.Unmarshal([]byte(e.Data), &status) == nil && isTerminalDeploymentStatus(status.Status) {
 					terminal := dep
 					terminal.Status = status.Status
+					if status.Status == deploymentStatusFailed {
+						// Terminal SSE frames intentionally contain only status. Refresh
+						// the durable row so the customer sees the persisted build/image/
+						// readiness reason instead of the queued response's empty Error.
+						if got, err := c.GetDeployment(waitCtx, dep.ID); err == nil && isCompletedDeployment(got) {
+							return terminalDeploymentWithFailure(got, failedStage, failedReason)
+						}
+						terminal.Error = strings.TrimSpace(failedReason)
+					}
 					if status.Status == statusLive && len(dep.StageState) > 0 {
 						if got, err := c.GetDeployment(waitCtx, dep.ID); err == nil && isCompletedDeployment(got) {
 							return terminalDeploymentWithFailure(got, failedStage, failedReason)
@@ -6176,6 +6185,10 @@ func printDeployColdWakeSentence() {
 // the legacy 4-class copy. Falls back to mapFailureMessage for
 // pre-cluster rows that only have the raw failure_class string.
 func renderDeployFailure(d api.DeploymentResponse) int {
+	if strings.TrimSpace(d.Error) == "" {
+		PrintFail(os.Stderr, "Deployment %s failed without a server reason. Inspect details with: gregale deploys status %s", d.ID, d.ID)
+		return 1
+	}
 	if d.ErrorCode != "" {
 		problem := &api.Problem{
 			Code:   d.ErrorCode,

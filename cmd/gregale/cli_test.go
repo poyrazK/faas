@@ -1,3 +1,4 @@
+// adr: 089
 // Tests for cmd/gregale command bodies and config helpers. Existing tests cover
 // the dispatcher + a couple of client paths; this file focuses on the parts
 // that were at 0%: cmdLogin, cmdLogout, cmdWhoami, cmdApps, cmdDeploy,
@@ -729,6 +730,67 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 			t.Errorf("recovered failed/oom = %d, want 1", code)
 		}
 	})
+}
+
+func TestCmdDeploy_FailedStatusFrameRefreshesFailureReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case r.URL.Path == "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"failed\"}\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+		case r.URL.Path == "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: "d1", Status: "failed", AppID: "my-app", Error: "build exited 1",
+			})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousStderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = previousStderr }()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"})
+	_ = w.Close()
+	output, readErr := io.ReadAll(r)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if code != 1 {
+		t.Fatalf("failed deployment exit = %d, want 1", code)
+	}
+	if !strings.Contains(string(output), "build exited 1") {
+		t.Fatalf("stderr = %q, want persisted failure reason", output)
+	}
+}
+
+func TestRenderDeployFailureWithoutReasonIsActionable(t *testing.T) {
+	stderr, restore := captureStderr(t)
+	code := renderDeployFailure(api.DeploymentResponse{ID: "d-empty", Status: "failed"})
+	restore()
+
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "gregale deploys status d-empty") {
+		t.Fatalf("stderr = %q, want status inspection command", got)
+	}
 }
 
 // TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment covers the
