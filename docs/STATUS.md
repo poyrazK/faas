@@ -1421,3 +1421,20 @@ expensive in a public deployment:
 Remaining public-release gates are tracked separately: durable event replay,
 M9 two-node and leak-drill acceptance, service-replica convergence, real OTLP
 export, and the remaining state/export scale work.
+
+## M8 — Wake hot path: single pre-boot staging session (ADR-192). 🚧
+
+Production wake timelines (2026-09-20, 10 samples on the GCP SSD nodes) put
+the restore window labelled `stage_snapshot_ms` at a median of 88 ms and up to
+355 ms, versus 26 ms in the rc.98 acceptance run. The cost was not snapshot
+I/O: `stagePreBootFiles` loop-mounted drive1 once per file (`secrets.env`,
+`env.json`, service resolver, workload files). vmmd now writes them in one
+session (`pkg/fcvm/vmm.go::stagePreBootFiles`, `loopMountSession`), and the
+`wake.restore_breakdown` event splits `stage_pre_boot_files_ms` out of
+`stage_snapshot_ms` and carries the Manager.Wake phases
+(`lease_acquire_ms`, `env_prepare_ms`, `pre_network_ms`, `setup_network_ms`)
+that previously reached only slog — the 6.6 s production wake had 5.2 s in
+that unattributed gap. Open evidence: a `make test-metal` +
+`make leakcheck` run on a native KVM host, then a re-run of
+`scripts/ops/wake_performance_gate.py` to record the new
+`stage_pre_boot_files_ms` distribution against the rc.98 baseline.
