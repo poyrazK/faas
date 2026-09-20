@@ -334,6 +334,11 @@
     # fingerprint. The captured value is the CAS guard used immediately after
     # staging so pre-stage never depends on a vmmd that is deadlocked behind
     # stale attestation state.
+    - name: Inspect the existing compute-node operator binary
+      ansible.builtin.stat:
+        path: /usr/local/bin/gregalectl
+      register: faas_join_existing_operator
+
     - name: Inspect existing compute-node certificate attestation before trust refresh
       ansible.builtin.command:
         argv:
@@ -346,6 +351,7 @@
       register: faas_join_existing_compute_node
       changed_when: false
       failed_when: faas_join_existing_compute_node.rc not in [0, 3]
+      when: faas_join_existing_operator.stat.exists
 
     - name: Remember the pre-refresh certificate fingerprint
       ansible.builtin.set_fact:
@@ -357,7 +363,7 @@
               | first
               | default('', true)
             )
-            if faas_join_existing_compute_node.rc == 0
+            if (faas_join_existing_compute_node.rc | default(3)) == 0
             else ''
           }}
 

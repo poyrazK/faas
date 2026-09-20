@@ -391,15 +391,16 @@ func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 		t.Fatal(err)
 	}
 	playbook := string(body)
+	inspectOperator := strings.Index(playbook, "Inspect the existing compute-node operator binary")
 	inspect := strings.Index(playbook, "Inspect existing compute-node certificate attestation before trust refresh")
 	stage := strings.Index(playbook, "Stage the compute trust bundle (the source never includes the CA private key)")
 	stamp := strings.Index(playbook, "CAS-stamp the staged vmmd certificate before runtime pre-stage")
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
-	if inspect < 0 || stage < 0 || stamp < 0 || prestage < 0 || !(inspect < stage && stage < stamp && stamp < prestage) {
-		t.Fatalf("certificate convergence order invalid: inspect=%d stage=%d stamp=%d prestage=%d", inspect, stage, stamp, prestage)
+	if inspectOperator < 0 || inspect < 0 || stage < 0 || stamp < 0 || prestage < 0 || !(inspectOperator < inspect && inspect < stage && stage < stamp && stamp < prestage) {
+		t.Fatalf("certificate convergence order invalid: operator=%d inspect=%d stage=%d stamp=%d prestage=%d", inspectOperator, inspect, stage, stamp, prestage)
 	}
-	block := playbook[inspect:prestage]
-	for _, token := range []string{"compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint"} {
+	block := playbook[inspectOperator:prestage]
+	for _, token := range []string{"Inspect the existing compute-node operator binary", "ansible.builtin.stat", "path: /usr/local/bin/gregalectl", "faas_join_existing_operator.stat.exists", "default(3)", "compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint"} {
 		if !strings.Contains(block, token) {
 			t.Errorf("certificate convergence block missing %q", token)
 		}
