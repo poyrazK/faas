@@ -187,6 +187,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() { errorsCh <- controlServer.Serve(controlListener) }()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

@@ -75,6 +75,11 @@ func UnitVmmd() daemonunit.Unit {
 		// Fifteen seconds keeps transient recovery automatic without turning a
 		// permanent configuration error into a tight restart loop.
 		RestartSec: "15s",
+		// ADR-190: the parent-mount sweep beats every 30 s with a 90 s
+		// budget; the watchdog waits a further 120 s without pings.
+		// Firecracker children survive a vmmd restart and are adopted
+		// or reaped by ReapOrphanedJails on the next boot.
+		WatchdogSec: "120s",
 
 		Slice: "faas-cp.slice",
 

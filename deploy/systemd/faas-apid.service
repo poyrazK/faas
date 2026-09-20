@@ -14,6 +14,7 @@ Group=faas
 ExecStart=/opt/faas/current/bin/apid --config /etc/faas/apid.toml
 Restart=on-failure
 RestartSec=2s
+WatchdogSec=90s
 Slice=faas-cp.slice
 MemoryMax=256M
 CapabilityBoundingSet=

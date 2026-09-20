@@ -29,6 +29,8 @@ func UnitS3Gateway() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/s3-gatewayd`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: data-path daemon; replace a stalled runtime quickly.
+		WatchdogSec: "60s",
 
 		Slice:     FaasCPSlice,
 		MemoryMax: "512M",

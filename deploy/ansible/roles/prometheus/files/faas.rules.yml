@@ -1362,6 +1362,27 @@ groups:
           description: "{{ $labels.daemon }} has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
 
+      # ADR-190: a daemon can be up, ready, and not doing any work —
+      # the 2026-09-03 schedd prime wedge answered /metrics for ten
+      # minutes with its only loop blocked. Every Type=notify daemon
+      # now beats a per-loop liveness registry; <daemon>_loop_stalled=1
+      # means the beat is older than that loop's budget and the systemd
+      # WATCHDOG=1 ping is suspended. systemd restarts the unit after
+      # WatchdogSec on its own; this alert exists so the restart is
+      # explained, and so a loop that stalls repeatedly is investigated
+      # rather than silently cycled.
+      - alert: FaasDaemonLoopStalled
+        expr: max by (job, instance, loop) ({__name__=~".+_loop_stalled"}) == 1
+        for: 30s
+        labels:
+          severity: page
+          component: platform
+          family: daemon_liveness
+        annotations:
+          summary: "Daemon {{ $labels.job }} loop {{ $labels.loop }} is stalled"
+          description: "{{ $labels.job }} has not advanced its '{{ $labels.loop }}' loop within its budget. The systemd watchdog will restart the unit after WatchdogSec; capture goroutine dumps (SIGQUIT) before it does if the stall is new."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonLoopStalled.md"
+
       - alert: FaasVMMDGuestReceiverDown
         expr: vmmd_guest_vsock_receiver_up{receiver=~"events|workload_identity"} == 0
         for: 1m

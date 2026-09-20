@@ -63,6 +63,10 @@ func UnitSchedd() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: the main loop's stall budget is 180 s (a Prime can
+		// legitimately hold the goroutine ~110 s); the watchdog then
+		// waits a further 180 s without pings before restarting.
+		WatchdogSec: "180s",
 
 		Slice: "faas-cp.slice",
 		// Layer verification streams remote OCI blobs through the shared

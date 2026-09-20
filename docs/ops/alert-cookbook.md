@@ -72,6 +72,7 @@ When you receive a page:
 | `audit_retention` | warn | [`FaasAuditRetentionExhaustion.md`](FaasAuditRetentionExhaustion.md) | Cleanup-loop goroutine wedged (liveness check). |
 | `audit_retention` | page | [`FaasAuditRetentionExhaustion.md`](FaasAuditRetentionExhaustion.md) | None — prune lag >24h is always a real signal. |
 | `daemon` | page | [`FaasDaemonDown.md`](FaasDaemonDown.md) | `systemd` unit reload (no restart); check `systemctl status`. |
+| `daemon_liveness` (`FaasDaemonLoopStalled`) | page | [`FaasDaemonLoopStalled.md`](FaasDaemonLoopStalled.md) | Host memory pressure or a long GC pause stalling the `runtime` loop; check node memory before treating it as a wedge. systemd restarts the unit on its own after `WatchdogSec`. |
 | `daemon_restart_loop` | warn | [`FaasRestartLoop.md`](FaasRestartLoop.md) | Single mis-deploy (5m transient); wait one cycle before paging. |
 | `daemon_repeated_restart` | warn | [`FaasRepeatedRestart.md`](FaasRepeatedRestart.md) | Same as `daemon_restart_loop` but over 1h; persistent signature requires investigation. |
 | `daemon_stuck_activating` | warn | [`FaasStuckActivating.md`](FaasStuckActivating.md) | Dependency deadlock (Postgres / etcd / Vault not ready); check `systemctl show` for the failed dependency. |

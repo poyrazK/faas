@@ -112,6 +112,7 @@ type Loop struct {
 	ops                   *wire.OpsMetrics                    // issue #171 shared registry; nil safe
 	audit                 *audit.Auditor                      // cron-fired audit row writer; nil opts out (no row written)
 	watchdog              *Watchdog                           // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	liveness              *wire.Liveness                      // ADR-190 main-loop progress beats; nil opts out
 	retention             *Retention                          // §17 retention sweep; nil means "no retention" (tests can opt out)
 	invocationsRetention  *InvocationsRetention               // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
 	triggersRetention     *TriggersRetention                  // ADR-134 PR-E: trigger_records retention sweep; nil opts out
@@ -242,6 +243,31 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 	l.watchdog = w
 	return l
 }
+
+// MainLoopName is the Liveness loop name Run beats on every select
+// iteration. MainLoopBudget is its stall budget: the notify handler
+// runs Prime synchronously on this goroutine, and a Prime is bounded
+// by ColdBootTimeout (35 s) plus the memory-scaled snapshot budget
+// (SnapshotBudgetBase 15 s + 60 s/GiB, so 75 s for a Scale-plan
+// instance). 110 s is the legitimate worst case; three minutes is a
+// wedge, not work.
+const (
+	MainLoopName   = "main"
+	MainLoopBudget = 180 * time.Second
+)
+
+// WithLiveness (ADR-190) attaches the daemon's Liveness registry.
+// Run registers MainLoopName with MainLoopBudget and beats it at the
+// top of every select iteration, so a handler that blocks the single
+// notify goroutine (the 2026-09-03 PauseAndSnapshot wedge) stops the
+// beat and the systemd watchdog restarts schedd. nil opts out.
+func (l *Loop) WithLiveness(lv *wire.Liveness) *Loop {
+	l.liveness = lv
+	return l
+}
+
+// beatMain is the nil-safe Beat used inside Run.
+func (l *Loop) beatMain() { l.liveness.Beat(MainLoopName) }
 
 // WithRetention attaches the §17 retention sweep (PR #74). Same opt-out
 // shape as WithWatchdog: nil means no ticker fires the retention case.
@@ -985,7 +1011,15 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.triggerWakeup = make(chan struct{}, 1)
 	})
 
+	// ADR-190: register the main loop once every ticker exists, so a
+	// beat gap is measured against the loop's real cadence. The 1 s
+	// watchdog/trigger tickers guarantee an iteration at least once
+	// a second when the goroutine is free; a missing beat means a
+	// handler arm is blocking it.
+	l.liveness.Register(MainLoopName, MainLoopBudget)
+
 	for {
+		l.beatMain()
 		select {
 		case <-ctx.Done():
 			return nil

@@ -37,6 +37,9 @@ func UnitMeterd() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: restart when the daemon stops pinging the systemd
+		// watchdog (gated on pkg/wire.Liveness).
+		WatchdogSec: "120s",
 
 		Slice:                 "faas-cp.slice",
 		MemoryMax:             "256M",

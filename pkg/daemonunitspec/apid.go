@@ -59,6 +59,9 @@ func UnitApid() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: restart when the daemon stops pinging the systemd
+		// watchdog (gated on pkg/wire.Liveness).
+		WatchdogSec: "90s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",

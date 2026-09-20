@@ -1565,7 +1565,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pool.MaxConns=16 (which leaves the async-invoke drain's
 	// BeginTx into starvation under e2e query bursts).
 	appDeleteSub := sched.NewAppDeleteSubscriber(engine, log)
+	// ADR-190: the loop beats this registry on every iteration; the
+	// systemd watchdog (started next to NotifyReadyWhen below) stops
+	// pinging when the beat is older than sched.MainLoopBudget.
+	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
+		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
@@ -2192,6 +2197,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, scheddProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, liveness, ops, log)()
 
 	select {
 	case <-ctx.Done():

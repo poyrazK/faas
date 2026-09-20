@@ -14,6 +14,7 @@ Group=faas
 ExecStart=/opt/faas/current/bin/gatewayd-public
 Restart=on-failure
 RestartSec=2s
+WatchdogSec=60s
 Slice=faas-cp.slice
 MemoryMax=512M
 AmbientCapabilities=

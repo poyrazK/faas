@@ -2255,6 +2255,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fully constructed.
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)

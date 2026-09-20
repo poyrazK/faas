@@ -59,6 +59,9 @@ func UnitImaged() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: OCI pull/extract work runs off the runtime loop; the
+		// budget only needs to outlast a stop-the-world pause.
+		WatchdogSec: "300s",
 		// imaged reconciles every runtime base assigned to the node before
 		// sd_notify(READY=1). A new generation can require OCI downloads,
 		// extraction, content validation and vulnerability scans. The

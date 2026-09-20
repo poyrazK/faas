@@ -126,6 +126,21 @@ for rel in "${units[@]}"; do
         errors=$((errors + 1))
       fi
     done
+    # ADR-190: every Type=notify daemon must run under a systemd
+    # watchdog so a stalled main loop is restarted, not just a dead
+    # process. The daemon gates WATCHDOG=1 on pkg/wire.Liveness; the
+    # abort is a failure exit, so Restart=on-failure is what turns it
+    # into a restart.
+    if grep -Fqx 'Type=notify' "$file"; then
+      if ! grep -Eq '^WatchdogSec=[0-9]+(s|min)$' "$file"; then
+        echo "systemd-hardening-check: ${rel}: Type=notify unit must set WatchdogSec=" >&2
+        errors=$((errors + 1))
+      fi
+      if ! grep -Fqx 'Restart=on-failure' "$file"; then
+        echo "systemd-hardening-check: ${rel}: watchdog units must set Restart=on-failure" >&2
+        errors=$((errors + 1))
+      fi
+    fi
   fi
   # Every daemon must bound its own memory. The value is per-daemon (256M
   # for the small control-plane services, 4G for imaged's layer work), so

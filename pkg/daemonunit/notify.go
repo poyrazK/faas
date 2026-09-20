@@ -10,10 +10,72 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// WatchdogFromEnv starts the sd_watchdog heartbeat when systemd asked
+// for one (WATCHDOG_USEC set, and WATCHDOG_PID absent or equal to this
+// process). It sends WATCHDOG=1 every half interval while healthy
+// reports true and stays silent otherwise, which is the whole
+// mechanism: a daemon whose main loop is stalled stops pinging and
+// systemd restarts it after WatchdogSec (ADR-190). Without the env
+// (no unit, tests, local runs) it is a no-op. The returned stop func
+// halts the heartbeat; cancelling ctx does the same.
+func WatchdogFromEnv(ctx context.Context, healthy func() bool) func() {
+	interval, ok := watchdogInterval(os.Getenv)
+	if !ok || healthy == nil {
+		return func() {}
+	}
+	return runWatchdog(ctx, interval/2, healthy, Notify)
+}
+
+// watchdogInterval parses the systemd watchdog contract from the
+// environment. Returns ok=false when systemd did not request a
+// watchdog or when WATCHDOG_PID names a different process (the env
+// was inherited by a child that must not answer for its parent).
+func watchdogInterval(getenv func(string) string) (time.Duration, bool) {
+	raw := getenv("WATCHDOG_USEC")
+	if raw == "" {
+		return 0, false
+	}
+	usec, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || usec <= 0 {
+		return 0, false
+	}
+	if pid := getenv("WATCHDOG_PID"); pid != "" && pid != strconv.Itoa(os.Getpid()) {
+		return 0, false
+	}
+	return time.Duration(usec) * time.Microsecond, true
+}
+
+// runWatchdog is the testable core of WatchdogFromEnv.
+func runWatchdog(ctx context.Context, every time.Duration, healthy func() bool, notify func(string) error) func() {
+	if every <= 0 {
+		every = time.Second
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if healthy() {
+					_ = notify("WATCHDOG=1")
+				}
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(stop) }) }
+}
 
 // Notify sends one sd_notify state datagram to systemd. Abstract namespace
 // sockets use the systemd convention of a leading '@' in NOTIFY_SOCKET.

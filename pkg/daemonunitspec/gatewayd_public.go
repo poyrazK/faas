@@ -44,6 +44,10 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/gatewayd-public`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: the only public listener on the node; replace a
+		// stalled runtime quickly. Socket activation keeps the
+		// listening socket open across the restart.
+		WatchdogSec: "60s",
 
 		Slice:           "faas-cp.slice",
 		MemoryMax:       "512M",
