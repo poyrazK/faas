@@ -14,14 +14,19 @@
 // arbitrary bytes from a registry response, guest output, or an upstream API
 // body; customer input can contain any code point the JSON spec allows.
 //
-// Two rules follow, and this package exists so neither has to be re-derived
-// at each call site:
+// A shell command line is the same kind of boundary: inside single quotes
+// every byte is literal except the single quote, which ends the quoted run.
+//
+// Three rules follow, and this package exists so none has to be re-derived at
+// each call site:
 //
 //  1. Never truncate free text with a byte slice. `s[:n]` splits multi-byte
 //     runes and produces invalid UTF-8. Use Truncate.
 //  2. Never build JSON with fmt verbs. `%q` is strconv.Quote, not a JSON
 //     encoder: it emits `\xNN` escapes that JSON has no grammar for. Use
 //     encoding/json on a struct, or Clean if a bare string must be embedded.
+//  3. Never interpolate a value into hand-written shell quotes. Use
+//     ShellSingleQuote, which supplies the quotes itself.
 package safetext
 
 import (
@@ -60,6 +65,23 @@ func JSONObject(v any) []byte {
 // U+FFFD REPLACEMENT CHARACTER is the Unicode-sanctioned stand-in and is what
 // strings.ToValidUTF8 and encoding/json both converge on.
 const replacement = "�"
+
+// ShellSingleQuote returns s as a single POSIX shell word, wrapped in single
+// quotes and safe to paste into a command line.
+//
+// Inside single quotes a POSIX shell treats every byte literally except the
+// single quote itself, which ends the quoted run. The standard escape is to
+// close the run, emit a backslash-escaped quote, and reopen. Anything that
+// interpolates a value into a hand-built `'...'` needs this; JSON encoding
+// does not help, because ' requires no escaping in JSON and so survives
+// json.Marshal untouched.
+//
+// This matters wherever the platform prints a command for an operator to run.
+// A value carrying a quote does not merely render oddly — it terminates the
+// argument and the remainder is parsed as shell.
+func ShellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(Clean(s), "'", `'\''`) + "'"
+}
 
 // Clean returns s with every byte sequence Postgres rejects replaced: invalid
 // UTF-8 and the NUL byte. The result is always safe to write to a `text`

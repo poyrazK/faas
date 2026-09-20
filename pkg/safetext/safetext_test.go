@@ -2,6 +2,7 @@ package safetext_test
 
 import (
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -203,5 +204,82 @@ func TestCleanedTextIsJSONMarshalable(t *testing.T) {
 		if !json.Valid(payload) {
 			t.Fatalf("json.Marshal(%q) produced invalid JSON: %s", in, payload)
 		}
+	}
+}
+
+func TestShellSingleQuote(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "example.com", `'example.com'`},
+		{"empty", "", `''`},
+		{"spaces are contained", "a b", `'a b'`},
+		{"double quotes need no escape inside single quotes", `a"b`, `'a"b'`},
+		{"dollar is literal inside single quotes", "$HOME", `'$HOME'`},
+		{"a single quote is closed, escaped, and reopened", "a'b", `'a'\''b'`},
+		{"the injection CodeQL flagged", `x'; rm -rf /; echo '`, `'x'\''; rm -rf /; echo '\'''`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := safetext.ShellSingleQuote(tc.in); got != tc.want {
+				t.Fatalf("ShellSingleQuote(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestShellSingleQuote_RoundTripsThroughARealShell is the assertion that
+// matters: whatever goes in must come back out as exactly one argument, with
+// its bytes intact. A quoting scheme that merely looks right is not evidence.
+func TestShellSingleQuote_RoundTripsThroughARealShell(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no POSIX sh on PATH")
+	}
+	inputs := []string{
+		"example.com",
+		"a b",
+		"a'b",
+		`x'; rm -rf /; echo '`,
+		`$(whoami)`,
+		"`id`",
+		`a"b`,
+		"tab\there",
+		"ünïcödé.example.com",
+		`'`,
+		`''`,
+		`\`,
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			// printf '%s' <quoted> emits the argument verbatim. If the quoting
+			// leaks, sh either errors or produces different bytes.
+			script := "printf '%s' " + safetext.ShellSingleQuote(in)
+			out, err := exec.Command("sh", "-c", script).Output()
+			if err != nil {
+				t.Fatalf("sh rejected the quoted form of %q: %v", in, err)
+			}
+			if string(out) != in {
+				t.Fatalf("round trip changed the value: got %q, want %q", out, in)
+			}
+		})
+	}
+}
+
+// TestShellSingleQuote_ArgumentCannotSplit pins that a hostile value stays one
+// argument rather than becoming several.
+func TestShellSingleQuote_ArgumentCannotSplit(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no POSIX sh on PATH")
+	}
+	hostile := `a'; echo INJECTED; :'b`
+	script := "set -- " + safetext.ShellSingleQuote(hostile) + `; printf '%s' "$#"`
+	out, err := exec.Command("sh", "-c", script).Output()
+	if err != nil {
+		t.Fatalf("sh rejected the quoted form: %v", err)
+	}
+	if string(out) != "1" {
+		t.Fatalf("hostile value produced %s arguments, want 1", out)
 	}
 }
