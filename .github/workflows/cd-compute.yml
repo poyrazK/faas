@@ -330,6 +330,7 @@ jobs:
         working-directory: bundle-source
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
           FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
           FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
           FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
