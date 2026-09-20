@@ -617,7 +617,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
 	@$(GO) tool golangci-lint run
 
 .PHONY: runbook-sql-check
@@ -703,6 +703,10 @@ sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by f
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice
 	@bash scripts/ci/check_text_encoding.sh $(CURDIR)
+
+.PHONY: shell-quoting-check
+shell-quoting-check: ## Static gate: no value interpolated into hand-written shell quotes (CodeQL go/unsafe-quoting)
+	@python3 scripts/ci/check_shell_quoting.py $(CURDIR)
 
 .PHONY: manifest-ansible
 manifest-ansible: ## Generate a manifest-owned Ansible inventory and host_vars tree (MANIFEST + ANSIBLE_GENERATED_DIR required)
