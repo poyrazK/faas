@@ -754,9 +754,53 @@
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
 
+    # A fresh host has no /opt/faas/current yet, but release-bound base
+    # preparation needs vmmd. Register the row as unavailable before the
+    # temporary candidate vmmd starts so self-registration cannot make the
+    # unfinished host schedulable. UpsertComputeNodeFromVmmd preserves this
+    # operator-owned lifecycle on conflict.
+    - name: Pre-register the newly adopted node as unavailable before runtime pre-stage
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - add
+          - --name
+          - "{{ faas_join_database_node }}"
+          - --target-url
+          - "{{ faas_vmmd_target_url }}"
+          - --schedd-target-url
+          - "{{ faas_vmmd_schedd_target }}"
+          - --gateway-target-url
+          - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
+          - --vpcpus
+          - "{{ ansible_processor_vcpus }}"
+          - --mem-mb
+          - "{{ ansible_memtotal_mb }}"
+          - --max-concurrency
+          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
+          - --admission-ceiling-mb
+          - "{{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}"
+          - --defer-activation
+          # A newly adopted host deliberately has no interactive operator MFA
+          # session. The trusted join already stages its root-only database
+          # credential, so acknowledge this bootstrap-only direct write
+          # explicitly instead of silently falling back from the API path.
+          - --reason
+          - node_join_preregister
+          - --break-glass-db
+          - --yes
+      register: faas_compute_node_preregister
+      changed_when: true
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - (faas_join_existing_compute_node.rc | default(3)) == 3
+
     # Changed runtime bases used to be built by faas-imaged after this play
     # drained the node. Extract the signed candidate and run its normal base
-    # staging path while the serving release and vmmd are still available.
+    # staging path while the serving release and vmmd are still available. A
+    # new host receives a short-lived candidate vmmd override below; an
+    # existing host keeps serving with its currently active release.
     - name: Create the release-bound runtime-base pre-stage directory
       ansible.builtin.file:
         path: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
@@ -772,6 +816,24 @@
         remote_src: true
         owner: root
         group: root
+
+    - name: Inspect the active vmmd binary before runtime pre-stage
+      ansible.builtin.stat:
+        path: /opt/faas/current/bin/vmmd
+        follow: true
+      register: faas_join_active_vmmd
+
+    - name: Bootstrap fresh-host vmmd from the verified release candidate
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-bootstrap-release.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd --config /etc/faas/vmmd.toml
+      when: not faas_join_active_vmmd.stat.exists
 
     - name: Install the runtime-base pre-stage one-shot
       ansible.builtin.copy:
@@ -834,9 +896,29 @@
         daemon_reload: true
 
     - name: Pre-stage release-bound runtime bases before draining the node
-      ansible.builtin.systemd:
-        name: faas-imaged-prestage.service
-        state: started
+      block:
+        - name: Start the release-bound runtime-base pre-stage
+          ansible.builtin.systemd:
+            name: faas-imaged-prestage.service
+            state: started
+      always:
+        # Existing nodes keep their serving vmmd. A fresh node used the
+        # candidate solely to prepare immutable bases and stays unavailable
+        # until the signed release and all readiness checks finish.
+        - name: Stop the fresh-host bootstrap vmmd after runtime pre-stage
+          ansible.builtin.systemd:
+            name: faas-vmmd.service
+            state: stopped
+          when: not faas_join_active_vmmd.stat.exists
+
+        - name: Remove the fresh-host vmmd release override
+          ansible.builtin.file:
+            path: /etc/systemd/system/faas-vmmd.service.d/zz-bootstrap-release.conf
+            state: absent
+
+        - name: Reload systemd after fresh-host vmmd bootstrap cleanup
+          ansible.builtin.systemd:
+            daemon_reload: true
 
     - name: Record completed non-disruptive rollout preparation
       ansible.builtin.copy:
@@ -881,43 +963,6 @@
         (faas_join_existing_compute_node.rc | default(3)) == 0
       register: faas_compute_node_drain
       changed_when: true
-
-    - name: Pre-register the newly adopted node as unavailable before release installation
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - add
-          - --name
-          - "{{ faas_join_database_node }}"
-          - --target-url
-          - "{{ faas_vmmd_target_url }}"
-          - --schedd-target-url
-          - "{{ faas_vmmd_schedd_target }}"
-          - --gateway-target-url
-          - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
-          - --vpcpus
-          - "{{ ansible_processor_vcpus }}"
-          - --mem-mb
-          - "{{ ansible_memtotal_mb }}"
-          - --max-concurrency
-          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
-          - --admission-ceiling-mb
-          - "{{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}"
-          - --defer-activation
-          # A newly adopted host deliberately has no interactive operator MFA
-          # session. The trusted join already stages its root-only database
-          # credential, so acknowledge this bootstrap-only direct write
-          # explicitly instead of silently falling back from the API path.
-          - --reason
-          - node_join_preregister
-          - --break-glass-db
-          - --yes
-      register: faas_compute_node_preregister
-      changed_when: true
-      when:
-        - (faas_join_rollout_phase | default('full')) != 'activate'
-        - (faas_join_existing_compute_node.rc | default(3)) == 3
 
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until

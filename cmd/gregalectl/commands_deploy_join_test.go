@@ -278,11 +278,11 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	}
 	playbook := string(body)
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
-	preregister := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before release installation")
-	if prestage < 0 || preregister < 0 || prestage >= preregister {
-		t.Fatal("runtime bases must be staged with the candidate release before node preregistration and drain")
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	if prestage < 0 || drain < 0 || prestage >= drain {
+		t.Fatal("runtime bases must be staged with the candidate release before an existing node is drained")
 	}
-	block := playbook[strings.Index(playbook, "Install the runtime-base pre-stage one-shot"):preregister]
+	block := playbook[strings.Index(playbook, "Install the runtime-base pre-stage one-shot"):drain]
 	for _, token := range []string{
 		"FAAS_IMAGED_PRESTAGE_ONLY=1",
 		"FAAS_GUEST_INIT=/opt/faas/prestage/",
@@ -291,6 +291,39 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	} {
 		if !strings.Contains(block, token) {
 			t.Errorf("pre-stage unit missing %q", token)
+		}
+	}
+}
+
+func TestNodeJoinFreshHostBootstrapsVMMDWithoutEarlyActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	preregister := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before runtime pre-stage")
+	inspect := strings.Index(playbook, "Inspect the active vmmd binary before runtime pre-stage")
+	override := strings.Index(playbook, "Bootstrap fresh-host vmmd from the verified release candidate")
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	if preregister < 0 || inspect < 0 || override < 0 || prestage < 0 || drain < 0 ||
+		!(preregister < inspect && inspect < override && override < prestage && prestage < drain) {
+		t.Fatalf("fresh-host bootstrap order invalid: preregister=%d inspect=%d override=%d prestage=%d drain=%d", preregister, inspect, override, prestage, drain)
+	}
+
+	bootstrapBlock := playbook[preregister:drain]
+	for _, token := range []string{
+		"--defer-activation",
+		"(faas_join_existing_compute_node.rc | default(3)) == 3",
+		"/opt/faas/current/bin/vmmd",
+		"ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd",
+		"when: not faas_join_active_vmmd.stat.exists",
+		"Stop the fresh-host bootstrap vmmd after runtime pre-stage",
+		"Remove the fresh-host vmmd release override",
+		"state: absent",
+	} {
+		if !strings.Contains(bootstrapBlock, token) {
+			t.Errorf("fresh-host vmmd bootstrap is missing %q", token)
 		}
 	}
 }
@@ -458,8 +491,8 @@ func TestNodeJoinPreregistrationAcknowledgesBootstrapDatabaseWrite(t *testing.T)
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	start := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before release installation")
-	end := strings.Index(playbook, "Stop stale compute-only services before replacing the active release")
+	start := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before runtime pre-stage")
+	end := strings.Index(playbook, "Create the release-bound runtime-base pre-stage directory")
 	if start < 0 || end < 0 || start >= end {
 		t.Fatal("node_join.yml is missing the compute-node preregistration block")
 	}
