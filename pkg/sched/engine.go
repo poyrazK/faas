@@ -4915,14 +4915,15 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 }
 
 // MigrateRecoveryInstance dispatches one arbiter-approved RUNNING instance
-// to this schedd's owner node. Keeping the single-instance adapter on Engine
-// lets the recovery runner use the same four-phase handoff as the legacy
-// notify path, while the arbiter remains the sole migrate-vs-recreate policy.
+// to a healthy destination node. Node-local schedds retain their fixed owner
+// as the destination. The central control-plane schedd deliberately has no
+// ownerNodeID, so it must run the normal capacity-aware chooser instead of
+// treating the migration as a successful no-op. Keeping the single-instance
+// adapter on Engine lets the recovery runner use the same four-phase handoff
+// as the legacy notify path, while the arbiter remains the sole
+// migrate-vs-recreate policy.
 func (e *Engine) MigrateRecoveryInstance(ctx context.Context, instanceID string) error {
 	if e == nil || e.store == nil {
-		return nil
-	}
-	if e.ownerNodeID == "" {
 		return nil
 	}
 	ins, err := e.store.InstanceByID(ctx, instanceID)
@@ -4932,11 +4933,23 @@ func (e *Engine) MigrateRecoveryInstance(ctx context.Context, instanceID string)
 		}
 		return fmt.Errorf("sched: recovery migration: load instance %s: %w", instanceID, err)
 	}
-	if ins.NodeID == "" || ins.NodeID == e.ownerNodeID {
+	if ins.NodeID == "" {
+		return fmt.Errorf("sched: recovery migration: instance %s has no source node", instanceID)
+	}
+	destinationNodeID, err := e.recoveryMigrationDestination(ctx, ins)
+	if err != nil {
+		return err
+	}
+	if ins.NodeID == destinationNodeID {
 		// A schedd must never hand an instance back to its current owner.
 		// In particular, the source node's own recovery runner can observe
-		// the row while a peer is racing to adopt it.
-		return nil
+		// the row while a peer is racing to adopt it. Preserve that benign
+		// node-local no-op; a central chooser returning the source instead is
+		// a stale-registry failure and must remain visible for retry.
+		if e.ownerNodeID != "" {
+			return nil
+		}
+		return fmt.Errorf("sched: recovery migration: destination %s still owns instance %s", destinationNodeID, instanceID)
 	}
 	if ins.State != string(state.StateRunning) {
 		return fmt.Errorf("sched: recovery migration: instance %s is %q, want running", instanceID, ins.State)
@@ -4952,7 +4965,7 @@ func (e *Engine) MigrateRecoveryInstance(ctx context.Context, instanceID string)
 		metrics = wire.NewOpsMetrics("schedd")
 	}
 	harness := NewMigrationHarness(ctx, e.store, e.vmm, metrics, e.log,
-		e.ownerNodeID, e.BuildAppSpecForMigration, e.ledger,
+		destinationNodeID, e.BuildAppSpecForMigration, e.ledger,
 		e.resolveNodeCeiling)
 	harness.SetMaxPerTick(1)
 	leaseSeconds := api.MigrateLiveLeaseSeconds
@@ -4964,6 +4977,47 @@ func (e *Engine) MigrateRecoveryInstance(ctx context.Context, instanceID string)
 		harness.WithEvents(e.events)
 	}
 	return harness.MigrateOne(ctx, instanceID, ins.NodeID)
+}
+
+// recoveryMigrationDestination resolves where a recovery migration should
+// land. A node-local schedd is already pinned to its owner. The central
+// schedd has no owner by design, so use the same capacity, CPU, liveness, and
+// app-affinity chooser as a normal wake. The source node is non-admitting by
+// the time the recovery runner calls this method; the final self-check in the
+// caller also protects against a briefly stale registry snapshot.
+func (e *Engine) recoveryMigrationDestination(ctx context.Context, ins state.Instance) (string, error) {
+	if e.ownerNodeID != "" {
+		return e.ownerNodeID, nil
+	}
+	app, err := e.store.AppByID(ctx, ins.AppID)
+	if err != nil {
+		return "", fmt.Errorf("sched: recovery migration: load app %s: %w", ins.AppID, err)
+	}
+	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return "", fmt.Errorf("sched: recovery migration: load account %s: %w", app.AccountID, err)
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+
+	release := e.lockApp(app.ID)
+	defer release()
+	placement, err := e.choosePlacementLocked(ctx, Request{
+		AppID:           app.ID,
+		DeploymentID:    ins.DeploymentID,
+		Plan:            acct.Plan,
+		RAMMB:           app.RAMMB,
+		VCPU:            limits.VCPU,
+		CPUMillicores:   effectiveAppCPUMillicores(app),
+		MaxConcurrency:  app.MaxConcurrency,
+		PreferredNodeID: app.NodeID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("sched: recovery migration: choose destination: %w", err)
+	}
+	if placement.NodeID == "" {
+		return "", errors.New("sched: recovery migration: chooser returned an empty destination")
+	}
+	return placement.NodeID, nil
 }
 
 // ReconcileExpiredMigrations (Tier A6 / ADR-067 migrating-
