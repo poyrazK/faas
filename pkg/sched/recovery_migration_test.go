@@ -1,3 +1,4 @@
+// adr: 137 — multi-node failure-safe recovery and live workload handoff.
 package sched
 
 import (
