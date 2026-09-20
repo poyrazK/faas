@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 type snapshotReplicaKey struct {
@@ -251,9 +254,7 @@ func (m *MemStore) MarkSnapshotReplicaFailedWithLease(_ context.Context, snapsho
 	if cause != nil {
 		message = strings.TrimSpace(cause.Error())
 	}
-	if len(message) > 2048 {
-		message = message[:2048]
-	}
+	message = safetext.Truncate(message, api.AuditMessageMaxBytes)
 	row.state = SnapshotReplicaFailed
 	row.leaseToken = ""
 	row.lastError = message

@@ -94,6 +94,40 @@ func TestTruncate_NeverExceedsCapOrBreaksUTF8(t *testing.T) {
 	}
 }
 
+func TestTruncateTail(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		maxBytes int
+		want     string
+	}{
+		{"under the cap", "abc", 10, "abc"},
+		{"ascii tail", "abcdef", 3, "def"},
+		// "aüb" is 4 bytes: a, 0xC3, 0xBC, b. Asking for the last 2 starts at
+		// 0xBC — inside 'ü' — so the partial rune is dropped rather than
+		// replaced with U+FFFD.
+		{"cut lands mid-rune", "aüb", 2, "b"},
+		{"cut lands on a rune start", "aüb", 3, "üb"},
+		{"whole string", "aüb", 4, "aüb"},
+		{"zero", "abc", 0, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := safetext.TruncateTail(tc.in, tc.maxBytes)
+			if got != tc.want {
+				t.Fatalf("TruncateTail(%q, %d) = %q, want %q", tc.in, tc.maxBytes, got, tc.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateTail(%q, %d) returned invalid UTF-8", tc.in, tc.maxBytes)
+			}
+			if strings.HasPrefix(got, "�") && !strings.HasPrefix(tc.in, "�") {
+				t.Fatalf("TruncateTail(%q, %d) = %q begins with a stray replacement char",
+					tc.in, tc.maxBytes, got)
+			}
+		})
+	}
+}
+
 func TestTruncateRunes(t *testing.T) {
 	tests := []struct {
 		name     string

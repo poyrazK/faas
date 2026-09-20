@@ -9,6 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 const (
@@ -354,9 +357,7 @@ func (s *PgStore) MarkSnapshotReplicaFailedWithLease(ctx context.Context, snapsh
 		message = cause.Error()
 	}
 	message = strings.TrimSpace(message)
-	if len(message) > 2048 {
-		message = message[:2048]
-	}
+	message = safetext.Truncate(message, api.AuditMessageMaxBytes)
 	if isPermanentSnapshotReplicaError(cause) {
 		tag, err := s.pool.Exec(ctx, `
 			update snapshot_replicas

@@ -8,6 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 func (s *PgStore) CreateRuntimeConfigOperation(ctx context.Context, config RuntimeConfig, actorID, reason string) (RuntimeConfigOperation, error) {
@@ -85,16 +88,12 @@ func (s *PgStore) MarkRuntimeConfigOperationSucceeded(ctx context.Context, id st
 }
 
 func (s *PgStore) MarkRuntimeConfigOperationFailed(ctx context.Context, id, phase, errMsg string) error {
-	if len(errMsg) > 1024 {
-		errMsg = errMsg[:1024]
-	}
+	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationFailed, phase, errMsg, nil, 0, 0, false)
 }
 
 func (s *PgStore) MarkRuntimeConfigOperationBlocked(ctx context.Context, id, phase, reason string) error {
-	if len(reason) > 1024 {
-		reason = reason[:1024]
-	}
+	reason = safetext.Truncate(reason, api.AuditReasonMaxBytes)
 	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationBlocked, phase, reason, nil, 0, 0, true)
 }
 

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 func (m *MemStore) CreateRuntimeConfigOperation(_ context.Context, config RuntimeConfig, actorID, reason string) (RuntimeConfigOperation, error) {
@@ -105,9 +108,7 @@ func (m *MemStore) finishRuntimeConfigOperation(id string, status RuntimeConfigO
 	if !ok || (op.Status != RuntimeConfigOperationRunning && (!allowPending || op.Status != RuntimeConfigOperationPending)) {
 		return ErrRuntimeConfigNotFound
 	}
-	if len(message) > 1024 {
-		message = message[:1024]
-	}
+	message = safetext.Truncate(message, api.AuditReasonMaxBytes)
 	op.Status = status
 	op.Phase = phase
 	op.Error = message

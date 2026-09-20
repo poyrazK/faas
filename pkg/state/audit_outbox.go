@@ -6,6 +6,9 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // AuditEventOutbox is one durable cross-daemon audit delivery record.
@@ -105,8 +108,6 @@ func auditEventOutboxFailureMessage(cause error) string {
 	if cause != nil && strings.TrimSpace(cause.Error()) != "" {
 		message = strings.TrimSpace(cause.Error())
 	}
-	if len(message) > 2048 {
-		message = message[:2048]
-	}
+	message = safetext.Truncate(message, api.AuditMessageMaxBytes)
 	return message
 }

@@ -79,6 +79,31 @@ func Truncate(s string, maxBytes int) string {
 	return s[:cut]
 }
 
+// TruncateTail returns the LAST maxBytes bytes of s, cleaned by Clean and
+// advanced forward to the next rune boundary so the result never begins
+// mid-rune. Use it to keep the end of a log or error tail.
+//
+// The naive form, s[len(s)-n:], starts inside a rune whenever the cut lands
+// there. Callers that follow it with strings.ToValidUTF8 get a valid string,
+// but one that begins with a stray U+FFFD; this drops the partial rune
+// instead.
+//
+// maxBytes <= 0 returns the empty string.
+func TruncateTail(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	s = Clean(s)
+	if len(s) <= maxBytes {
+		return s
+	}
+	start := len(s) - maxBytes
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
+}
+
 // TruncateRunes returns s cleaned by Clean and then reduced to at most
 // maxRunes runes. Use it for text whose limit is a human-facing character
 // count (a display label, a CLI column) rather than a storage bound.

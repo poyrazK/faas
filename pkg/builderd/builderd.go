@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -1582,10 +1583,11 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 // Railpack or BuildKit lines.
 func boundedGuestBuildLogTail(raw string) string {
 	const maxBytes = 3 * 1024
-	if len(raw) > maxBytes {
-		raw = raw[len(raw)-maxBytes:]
-	}
-	return strings.TrimSpace(strings.ToValidUTF8(raw, "\uFFFD"))
+	// safetext.TruncateTail advances to the next rune boundary, so a cut
+	// landing inside a multi-byte character drops the partial rune instead of
+	// prefixing the customer's build log with a stray U+FFFD. It also
+	// subsumes the ToValidUTF8 pass this used to do by hand.
+	return strings.TrimSpace(safetext.TruncateTail(raw, maxBytes))
 }
 
 // materializeSource preserves the package-local helper used by older tests;
