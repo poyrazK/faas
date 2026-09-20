@@ -51,7 +51,7 @@ type Manifest struct {
 	GitSHA        string            `json:"git_sha"`
 	ManifestHash  string            `json:"manifest_hash"`
 	DaemonHashes  map[string]string `json:"daemon_hashes"`          // daemon name -> "sha256:<64hex>"
-	ToolHashes    map[string]string `json:"tool_hashes,omitempty"`  // required host support executable -> "sha256:<64hex>"
+	ToolHashes    map[string]string `json:"tool_hashes,omitempty"`  // host executable outside the required-daemon catalog -> "sha256:<64hex>"
 	AssetHashes   map[string]string `json:"asset_hashes,omitempty"` // nested release asset path -> "sha256:<64hex>"
 	CreatedAt     time.Time         `json:"created_at"`
 	// Signature is reserved for a future PR-3.5 cosign verification

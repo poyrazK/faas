@@ -4,7 +4,7 @@
   "public_region": "us-east-1",
   "defaults": { "us-east-1": "gcs-us-east1-v1" },
   "max_buckets_per_app": 10,
-  "max_upload_bytes": 104857600,
+  "max_upload_bytes": 67108864,
   "accounting": null,
   "backends": [
     {
@@ -15,6 +15,7 @@
       "gcs_location": "US-EAST1",
       "gcs_storage_class": "STANDARD",
       "gcs_service_account": "gregale-storage@replace-with-your-project.iam.gserviceaccount.com",
+      "gcs_impersonate_service_account": true,
       "allowed_origins": ["https://gregale.dev"]
     }
   ]

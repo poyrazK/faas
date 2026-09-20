@@ -39,18 +39,19 @@ type BackendConfig struct {
 	Region           string      `json:"region"`
 	// Namespace identifies the upstream account/cluster. Changing it, the
 	// endpoint or S3 region fences existing buckets instead of misrouting data.
-	Namespace         string   `json:"namespace"`
-	Endpoint          string   `json:"endpoint"`
-	S3Region          string   `json:"s3_region"`
-	PathStyle         bool     `json:"path_style"`
-	AccessKeyEnv      string   `json:"access_key_env"`
-	SecretKeyEnv      string   `json:"secret_key_env"`
-	SessionTokenEnv   string   `json:"session_token_env,omitempty"`
-	GCSLocation       string   `json:"gcs_location,omitempty"`
-	GCSStorageClass   string   `json:"gcs_storage_class,omitempty"`
-	GCSServiceAccount string   `json:"gcs_service_account,omitempty"`
-	AllowedOrigins    []string `json:"allowed_origins,omitempty"`
-	AllowHTTP         bool     `json:"allow_http,omitempty"`
+	Namespace                    string   `json:"namespace"`
+	Endpoint                     string   `json:"endpoint"`
+	S3Region                     string   `json:"s3_region"`
+	PathStyle                    bool     `json:"path_style"`
+	AccessKeyEnv                 string   `json:"access_key_env"`
+	SecretKeyEnv                 string   `json:"secret_key_env"`
+	SessionTokenEnv              string   `json:"session_token_env,omitempty"`
+	GCSLocation                  string   `json:"gcs_location,omitempty"`
+	GCSStorageClass              string   `json:"gcs_storage_class,omitempty"`
+	GCSServiceAccount            string   `json:"gcs_service_account,omitempty"`
+	GCSImpersonateServiceAccount bool     `json:"gcs_impersonate_service_account,omitempty"`
+	AllowedOrigins               []string `json:"allowed_origins,omitempty"`
+	AllowHTTP                    bool     `json:"allow_http,omitempty"`
 }
 
 // UsageConfig selects the provider-specific authoritative usage adapter. It
@@ -154,7 +155,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			if b.S3Region == "" {
 				return nil, fmt.Errorf("object storage: backend %s requires an S3 region", b.ID)
 			}
-			if b.GCSLocation != "" || b.GCSStorageClass != "" || b.GCSServiceAccount != "" {
+			if b.GCSLocation != "" || b.GCSStorageClass != "" || b.GCSServiceAccount != "" || b.GCSImpersonateServiceAccount {
 				return nil, fmt.Errorf("object storage: backend %s mixes S3 and GCS settings", b.ID)
 			}
 		case "gcs":

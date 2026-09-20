@@ -12,7 +12,7 @@ normal control-plane bootstrap:
 faas_object_storage_gateway_managed: true
 faas_object_storage_gateway_enabled: true
 faas_object_storage_config_src: /operator/config/object-storage.json
-# S3/R2/OVH only; omit for attached GCS ADC:
+# S3/R2/OVH only; omit for attached or impersonated GCS ADC:
 faas_object_storage_provider_env_src: /operator/secrets/object-storage.env
 ```
 
@@ -22,8 +22,11 @@ loaded by systemd into `apid` and `s3-gatewayd`. Switching to an ADC backend
 and clearing `faas_object_storage_provider_env_src` removes any stale file.
 Never put secret values in the JSON.
 
-Before enabling the role, create a DNS-only Cloudflare `A`/`AAAA` record for
-`s3.gregale.dev` pointing at the Caddy edge. Do not enable the Cloudflare proxy:
-its request-size and duration ceilings would become accidental Gregale limits.
+Before enabling the role, create a proxied Cloudflare record for
+`s3.gregale.dev` pointing at the Caddy edge. The beta registry must cap uploads
+and multipart parts at 64 MiB and the Cloudflare zone must bypass cache, URL
+normalization, redirects, response transforms, and interactive bot challenges
+for this hostname. Cloudflare's duration ceilings remain part of the beta
+endpoint contract; larger uploads require a separate direct-upload design.
 The runtime `s3_enabled` flag remains false until an operator explicitly flips
 it after the live qualification and branded smoke test pass.
