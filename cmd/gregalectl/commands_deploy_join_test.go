@@ -334,18 +334,25 @@ func TestNodeJoinPreparationStopsBeforeDrainAndActivationRequiresMarker(t *testi
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	certGuard := strings.Index(playbook, "Refuse certificate rotation during parallel rollout preparation")
+	trustGuard := strings.Index(playbook, "Require stable active trust during parallel rollout preparation")
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
 	record := strings.Index(playbook, "Record completed non-disruptive rollout preparation")
 	endPlay := strings.Index(playbook, "End the node play after non-disruptive rollout preparation")
 	verify := strings.Index(playbook, "Verify the prepared rollout marker")
 	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
-	if certGuard < 0 || prestage < 0 || record < 0 || endPlay < 0 || verify < 0 || drain < 0 ||
-		!(certGuard < prestage && prestage < record && record < endPlay && endPlay < verify && verify < drain) {
-		t.Fatalf("phased rollout order invalid: cert=%d prestage=%d record=%d end=%d verify=%d drain=%d", certGuard, prestage, record, endPlay, verify, drain)
+	if trustGuard < 0 || prestage < 0 || record < 0 || endPlay < 0 || verify < 0 || drain < 0 ||
+		!(trustGuard < prestage && prestage < record && record < endPlay && endPlay < verify && verify < drain) {
+		t.Fatalf("phased rollout order invalid: trust=%d prestage=%d record=%d end=%d verify=%d drain=%d", trustGuard, prestage, record, endPlay, verify, drain)
 	}
-	if !strings.Contains(playbook[certGuard:prestage], "faas_join_candidate_cert_fingerprint == faas_join_expected_cert_fingerprint") {
-		t.Fatal("parallel preparation does not reject a live certificate rotation")
+	trustBlock := playbook[trustGuard:prestage]
+	for _, token := range []string{
+		"faas_join_active_cert_fingerprint.stdout | trim) == faas_join_expected_cert_fingerprint",
+		"faas_join_active_ca_fingerprint.stdout | trim) == faas_join_candidate_ca_fingerprint",
+		"(faas_join_rollout_phase | default('full')) != 'prepare'",
+	} {
+		if !strings.Contains(trustBlock, token) {
+			t.Errorf("parallel preparation trust guard is missing %q", token)
+		}
 	}
 	prepareBlock := playbook[record:verify]
 	for _, token := range []string{
@@ -433,7 +440,7 @@ func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 		t.Fatalf("certificate convergence order invalid: operator=%d inspect=%d stage=%d stamp=%d prestage=%d", inspectOperator, inspect, stage, stamp, prestage)
 	}
 	block := playbook[inspectOperator:prestage]
-	for _, token := range []string{"Inspect the existing compute-node operator binary", "ansible.builtin.stat", "path: /usr/local/bin/gregalectl", "faas_join_existing_operator.stat.exists", "default(3)", "compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint"} {
+	for _, token := range []string{"Inspect the existing compute-node operator binary", "ansible.builtin.stat", "path: /usr/local/bin/gregalectl", "faas_join_existing_operator.stat.exists", "default(3)", "compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint", "(faas_join_rollout_phase | default('full')) != 'prepare'"} {
 		if !strings.Contains(block, token) {
 			t.Errorf("certificate convergence block missing %q", token)
 		}

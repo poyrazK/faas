@@ -786,9 +786,9 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err := copyTrustBundle(opts.PKISource, trustRoot, roleComputeOnly, manifestSANs, report.DatabaseNode); err != nil {
 		return 3, fmt.Errorf("prepare compute trust bundle: %w", err)
 	}
-	candidateCertFingerprint, err := pki.LoadCertificateFingerprint(filepath.Join(trustRoot, "vmmd", "server.crt"))
+	candidateCAFingerprint, err := pki.LoadCertificateFingerprint(filepath.Join(trustRoot, "ca", "ca.crt"))
 	if err != nil {
-		return 3, fmt.Errorf("fingerprint candidate compute certificate: %w", err)
+		return 3, fmt.Errorf("fingerprint candidate compute CA: %w", err)
 	}
 	files, err := renderManifestAnsibleFiles(m, tempRoot)
 	if err != nil {
@@ -866,7 +866,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
 		"faas_join_peer_contract_sha256":       peerContractSHA256,
 		"faas_join_rollout_phase":              rolloutPhase,
-		"faas_join_candidate_cert_fingerprint": candidateCertFingerprint,
+		"faas_join_candidate_ca_fingerprint":   candidateCAFingerprint,
 		"faas_postgres_rollout_overlap_nodes":  postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers

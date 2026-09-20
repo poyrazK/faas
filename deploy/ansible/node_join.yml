@@ -367,17 +367,47 @@
             else ''
           }}
 
-    # Updating the database fingerprint while the old vmmd process is still
-    # serving would make new mTLS connections reject that process. Certificate
-    # rotation therefore remains on the serialized full-convergence path.
-    - name: Refuse certificate rotation during parallel rollout preparation
+    # Preparation must preserve the live trust identity. The shared operator
+    # bundle can contain issuance material, and producing a leaf from it is
+    # intentionally nondeterministic; comparing that newly issued leaf with
+    # the active node would make every later phased rollout fail. Validate the
+    # installed leaf against the database attestation and only require the
+    # candidate bundle to retain the same CA. The serialized full path remains
+    # the only path allowed to install and attest replacement leaves.
+    - name: Inspect the active compute certificate during parallel rollout preparation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - pki
+          - fingerprint
+          - --cert
+          - /etc/faas/tls/vmmd/server.crt
+      register: faas_join_active_cert_fingerprint
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    - name: Inspect the active compute CA during parallel rollout preparation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - pki
+          - fingerprint
+          - --cert
+          - /etc/faas/tls/ca/ca.crt
+      register: faas_join_active_ca_fingerprint
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    - name: Require stable active trust during parallel rollout preparation
       ansible.builtin.assert:
         that:
           - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
-          - faas_join_candidate_cert_fingerprint == faas_join_expected_cert_fingerprint
+          - (faas_join_active_cert_fingerprint.stdout | trim) == faas_join_expected_cert_fingerprint
+          - (faas_join_active_ca_fingerprint.stdout | trim) == faas_join_candidate_ca_fingerprint
         fail_msg: >-
-          Parallel rollout preparation cannot rotate the compute certificate;
-          run the full serialized join path for this node.
+          Parallel rollout preparation requires the active certificate to
+          match its database attestation and the candidate CA; run the full
+          serialized join path for trust rotation or repair.
       when: (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Stage the compute trust bundle (the source never includes the CA private key)
@@ -388,6 +418,7 @@
         group: root
         mode: preserve
       no_log: true
+      when: (faas_join_rollout_phase | default('full')) != 'prepare'
 
     # The operator-side PKI archive deliberately stores private keys as
     # root-only. The full bootstrap roles grant access only to the leaves
@@ -416,6 +447,7 @@
         - { path: /etc/faas/tls/imaged/vmmd-client.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.crt, mode: "0444" }
+      when: (faas_join_rollout_phase | default('full')) != 'prepare'
 
     - name: CAS-stamp the staged vmmd certificate before runtime pre-stage
       ansible.builtin.command:
@@ -427,7 +459,9 @@
           - "{{ faas_join_database_node }}"
           - --expected-fingerprint
           - "{{ faas_join_expected_cert_fingerprint }}"
-      when: (faas_join_expected_cert_fingerprint | default('') | trim) != ''
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'prepare'
+        - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
       changed_when: true
 
     - name: Stage the image-signing private key
