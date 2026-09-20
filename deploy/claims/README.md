@@ -100,14 +100,18 @@ fleet_bundle_signature_url=https://private-config.example/fleet/production-7.cos
 fleet_bundle_sha256=sha256:<64 lowercase hex>
 ```
 
-Configure `FLEET_BUNDLE_AUTH_TOKEN` on the `production` environment. The
-endpoint should be private and return the exact immutable bytes for the
-digest; the token is sent only as a bearer header and is never printed. The
-bundle publisher is expected to sign with the workflow identity pinned by the
-CLI (`.github/workflows/fleet-enrollment.yml` on `main`) and to publish the
-bundle and signature atomically before dispatch. A provider adapter only needs
-to create the machine and produce the claim; it does not need a GCP, Hetzner,
-or OVH deployment module.
+The production GCS path authenticates both workflows with short-lived GitHub
+OIDC credentials; converge its publisher/reader identities once with
+`scripts/ops/gcp_fleet_enrollment_identity.sh --apply`. Do not copy a one-hour
+`gcloud auth print-access-token` value into a GitHub secret: a queued fleet
+runner can outlive it. Non-GCS private configuration services may instead set
+`FLEET_BUNDLE_AUTH_TOKEN` and `FLEET_BUNDLE_PUBLISH_TOKEN` on the `production`
+environment. The endpoint must return exact immutable bytes for the digest;
+bearer credentials are never printed. The bundle publisher signs with the
+workflow identity pinned by the CLI (`.github/workflows/fleet-enrollment.yml`
+on `main`) and publishes the bundle and signature atomically before dispatch.
+A provider adapter only needs to create the machine and produce the claim; it
+does not need a GCP, Hetzner, or OVH deployment module.
 
 For migration, `cd-compute` still accepts `claim_file` as a release-source
 input. The path is resolved from the selected release source, validated on a

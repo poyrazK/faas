@@ -96,9 +96,11 @@ concurrency:
 permissions:
   # Called workflows can only reduce the caller's token permissions. The
   # compute stage reads the dispatch run while resolving a reused preflight,
-  # so the orchestrator must make actions:read available up front.
+  # and GCS enrollment readers mint per-job credentials after runner queues,
+  # so the orchestrator must make both capabilities available up front.
   actions: read
   contents: read
+  id-token: write
 
 jobs:
   plan:

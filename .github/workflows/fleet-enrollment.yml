@@ -29,6 +29,11 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  GCP_PROJECT: project-5ae37259-04cf-4070-bef
+  GCP_FLEET_BUNDLE_PUBLISHER_PROVIDER: projects/811654175645/locations/global/workloadIdentityPools/github-actions/providers/gregale-fleet-publisher
+  GCP_FLEET_BUNDLE_PUBLISHER_SERVICE_ACCOUNT: gregale-fleet-publisher@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com
+
 jobs:
   sign:
     name: Sign private fleet enrollment authorization
@@ -43,6 +48,17 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+
+      - id: fleet_bundle_auth
+        name: Authenticate fleet bundle publisher with GitHub OIDC
+        if: startsWith(inputs.bundle_url, 'https://storage.googleapis.com/')
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_PUBLISHER_PROVIDER }}
+          service_account: ${{ env.GCP_FLEET_BUNDLE_PUBLISHER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/devstorage.read_write
 
       - name: Install pinned cosign
         run: |
@@ -61,6 +77,7 @@ jobs:
         env:
           BUNDLE_URL: ${{ inputs.bundle_url }}
           BUNDLE_SHA256: ${{ inputs.bundle_sha256 }}
+          GCP_FLEET_BUNDLE_ACCESS_TOKEN: ${{ steps.fleet_bundle_auth.outputs.access_token }}
         run: |
           set -euo pipefail
           [[ "$BUNDLE_URL" =~ ^https://.+ ]] || {
@@ -71,13 +88,17 @@ jobs:
             echo "::error::bundle_sha256 must match sha256:<64 lowercase hex>" >&2
             exit 1
           }
-          [[ -n "$FLEET_BUNDLE_AUTH_TOKEN" ]] || {
-            echo "::error::FLEET_BUNDLE_AUTH_TOKEN is not configured" >&2
+          bundle_token="${FLEET_BUNDLE_AUTH_TOKEN:-}"
+          if [[ "$BUNDLE_URL" == https://storage.googleapis.com/* ]]; then
+            bundle_token="${GCP_FLEET_BUNDLE_ACCESS_TOKEN:-}"
+          fi
+          [[ -n "$bundle_token" ]] || {
+            echo "::error::no private bundle credential is available" >&2
             exit 1
           }
           bundle="$RUNNER_TEMP/fleet-enrollment.yaml"
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            --header "Authorization: Bearer ${FLEET_BUNDLE_AUTH_TOKEN}" \
+            --header "Authorization: Bearer ${bundle_token}" \
             -o "$bundle" "$BUNDLE_URL"
           actual="sha256:$(sha256sum "$bundle" | awk '{print $1}')"
           [[ "$actual" == "$BUNDLE_SHA256" ]] || {
@@ -89,10 +110,6 @@ jobs:
       - name: Sign exact bundle bytes with GitHub OIDC
         run: |
           set -euo pipefail
-          [[ -n "$FLEET_BUNDLE_PUBLISH_TOKEN" ]] || {
-            echo "::error::FLEET_BUNDLE_PUBLISH_TOKEN is not configured" >&2
-            exit 1
-          }
           signature="$RUNNER_TEMP/fleet-enrollment.cosign.bundle"
           "$RUNNER_TEMP/fleet-bundle-tools/cosign" sign-blob --yes \
             --bundle "$signature" "$FLEET_BUNDLE_PATH"
@@ -106,14 +123,23 @@ jobs:
       - name: Publish detached signature once
         env:
           SIGNATURE_UPLOAD_URL: ${{ inputs.signature_upload_url }}
+          GCP_FLEET_BUNDLE_ACCESS_TOKEN: ${{ steps.fleet_bundle_auth.outputs.access_token }}
         run: |
           set -euo pipefail
           [[ "$SIGNATURE_UPLOAD_URL" =~ ^https://.+ ]] || {
             echo "::error::signature_upload_url must use https://" >&2
             exit 1
           }
+          publish_token="${FLEET_BUNDLE_PUBLISH_TOKEN:-}"
+          if [[ "$SIGNATURE_UPLOAD_URL" == https://storage.googleapis.com/* ]]; then
+            publish_token="${GCP_FLEET_BUNDLE_ACCESS_TOKEN:-}"
+          fi
+          [[ -n "$publish_token" ]] || {
+            echo "::error::no private signature publishing credential is available" >&2
+            exit 1
+          }
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --request PUT \
-            --header "Authorization: Bearer ${FLEET_BUNDLE_PUBLISH_TOKEN}" \
+            --header "Authorization: Bearer ${publish_token}" \
             --header 'If-None-Match: *' \
             --upload-file "$FLEET_BUNDLE_SIGNATURE_PATH" "$SIGNATURE_UPLOAD_URL"

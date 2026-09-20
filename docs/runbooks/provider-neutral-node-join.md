@@ -147,7 +147,12 @@ fleet_bundle_signature_url=https://private-config.example/fleet/production-7.cos
 fleet_bundle_sha256=sha256:<64 lowercase hex>
 ```
 
-Set the corresponding `FLEET_BUNDLE_AUTH_TOKEN` production-environment secret.
+For the production GCS store, run
+`scripts/ops/gcp_fleet_enrollment_identity.sh --apply` once. The signing and
+deployment jobs then mint fresh, least-privilege Google access tokens through
+GitHub OIDC after each job actually starts, so runner queue time cannot expire
+the bundle credential. For a non-GCS private endpoint, set the corresponding
+`FLEET_BUNDLE_AUTH_TOKEN` production-environment secret instead.
 The bundle publisher must use the pinned keyless GitHub workflow identity; the
 repository does not store live node claims or their signatures. The hosted
 preflight verifies the digest, signature, expiry/nonce, SSH fingerprint, and

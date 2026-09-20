@@ -179,6 +179,12 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  id-token: write
+
+env:
+  GCP_PROJECT: project-5ae37259-04cf-4070-bef
+  GCP_FLEET_BUNDLE_READER_PROVIDER: projects/811654175645/locations/global/workloadIdentityPools/github-actions/providers/gregale-fleet-reader
+  GCP_FLEET_BUNDLE_READER_SERVICE_ACCOUNT: gregale-fleet-reader@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com
 
 jobs:
   preflight:
@@ -331,6 +337,17 @@ jobs:
           path: bundle-source
           fetch-depth: 1
 
+      - id: fleet_bundle_auth
+        name: Authenticate fleet bundle reader with GitHub OIDC
+        if: startsWith(inputs.fleet_bundle_url, 'https://storage.googleapis.com/')
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_READER_PROVIDER }}
+          service_account: ${{ env.GCP_FLEET_BUNDLE_READER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/devstorage.read_only
+
       - name: Set up Go for claim validation
         if: inputs.claim_file != ''
         uses: actions/setup-go@v7
@@ -393,6 +410,7 @@ jobs:
           FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
           FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
           NODE: ${{ inputs.node }}
+          GCP_FLEET_BUNDLE_ACCESS_TOKEN: ${{ steps.fleet_bundle_auth.outputs.access_token }}
         run: |
           set -euo pipefail
           bundle_dir="$RUNNER_TEMP/fleet-enrollment"
@@ -401,9 +419,15 @@ jobs:
             local url="$1"
             local destination="$2"
             local args=(--fail --silent --show-error --location --proto '=https' --tlsv1.2)
-            if [[ -n "${FLEET_BUNDLE_AUTH_TOKEN:-}" ]]; then
-              args+=(--header "Authorization: Bearer ${FLEET_BUNDLE_AUTH_TOKEN}")
+            local token="${FLEET_BUNDLE_AUTH_TOKEN:-}"
+            if [[ "$url" == https://storage.googleapis.com/* ]]; then
+              token="${GCP_FLEET_BUNDLE_ACCESS_TOKEN:-}"
             fi
+            [[ -n "$token" ]] || {
+              echo "::error::no private bundle credential is available for $url" >&2
+              return 1
+            }
+            args+=(--header "Authorization: Bearer ${token}")
             curl "${args[@]}" -o "$destination" "$url"
           }
           download_private "$FLEET_BUNDLE_URL" "$bundle_dir/fleet-enrollment.yaml"
@@ -491,7 +515,7 @@ jobs:
               missing=1
             fi
           done
-          if [[ -n "$FLEET_BUNDLE_URL" && -z "${FLEET_BUNDLE_AUTH_TOKEN:-}" ]]; then
+          if [[ -n "$FLEET_BUNDLE_URL" && "$FLEET_BUNDLE_URL" != https://storage.googleapis.com/* && -z "${FLEET_BUNDLE_AUTH_TOKEN:-}" ]]; then
             echo "::error::production secret FLEET_BUNDLE_AUTH_TOKEN is required for signed bundle dispatches" >&2
             missing=1
           fi
@@ -597,6 +621,17 @@ jobs:
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 0
+
+      - id: fleet_bundle_auth
+        name: Authenticate fleet bundle reader with GitHub OIDC
+        if: startsWith(inputs.fleet_bundle_url, 'https://storage.googleapis.com/')
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_READER_PROVIDER }}
+          service_account: ${{ env.GCP_FLEET_BUNDLE_READER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/devstorage.read_only
 
       - name: Check fleet runner prerequisites
         run: |
@@ -727,6 +762,8 @@ jobs:
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
 
       - name: Assemble the standard join artifact directory
+        env:
+          GCP_FLEET_BUNDLE_ACCESS_TOKEN: ${{ steps.fleet_bundle_auth.outputs.access_token }}
         run: |
           set -euo pipefail
           for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV \
@@ -822,10 +859,6 @@ jobs:
             printf '%s' "$COMPUTE_ARCHIVE_ENVELOPE_B64" | base64 --decode > "$ARTIFACT_DIR/archive-creds.json.age"
           fi
           if [[ -n "$FLEET_BUNDLE_URL" ]]; then
-            [[ -n "$FLEET_BUNDLE_AUTH_TOKEN" ]] || {
-              echo "::error::FLEET_BUNDLE_AUTH_TOKEN is required for signed bundle dispatches" >&2
-              exit 1
-            }
             [[ "$FLEET_BUNDLE_URL" =~ ^https://.+ ]] || {
               echo "::error::fleet_bundle_url must use https://" >&2
               exit 1
@@ -838,8 +871,16 @@ jobs:
               echo "::error::fleet_bundle_sha256 must match sha256:<64 lowercase hex>" >&2
               exit 1
             }
+            bundle_token="${FLEET_BUNDLE_AUTH_TOKEN:-}"
+            if [[ "$FLEET_BUNDLE_URL" == https://storage.googleapis.com/* ]]; then
+              bundle_token="${GCP_FLEET_BUNDLE_ACCESS_TOKEN:-}"
+            fi
+            [[ -n "$bundle_token" ]] || {
+              echo "::error::no private fleet bundle credential is available" >&2
+              exit 1
+            }
             bundle_args=(--fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-              --header "Authorization: Bearer ${FLEET_BUNDLE_AUTH_TOKEN}")
+              --header "Authorization: Bearer ${bundle_token}")
             curl "${bundle_args[@]}" -o "$ARTIFACT_DIR/fleet-enrollment.yaml" "$FLEET_BUNDLE_URL"
             curl "${bundle_args[@]}" -o "$ARTIFACT_DIR/fleet-enrollment.cosign.bundle" "$FLEET_BUNDLE_SIGNATURE_URL"
             actual="sha256:$(sha256sum "$ARTIFACT_DIR/fleet-enrollment.yaml" | awk '{print $1}')"

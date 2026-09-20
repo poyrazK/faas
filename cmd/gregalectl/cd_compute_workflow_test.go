@@ -138,6 +138,76 @@ func TestFleetEnrollmentWorkflowsUseCachedSourceAndPinnedCosignBinary(t *testing
 	}
 }
 
+func TestFleetEnrollmentGCSAuthIsFreshAndKeylessPerJob(t *testing.T) {
+	computePath := filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml")
+	computeBody, err := os.ReadFile(computePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compute := string(computeBody)
+	for _, required := range []string{
+		"id-token: write",
+		"providers/gregale-fleet-reader",
+		"gregale-fleet-reader@",
+		"Authenticate fleet bundle reader with GitHub OIDC",
+		"token_format: access_token",
+		"https://www.googleapis.com/auth/devstorage.read_only",
+		`GCP_FLEET_BUNDLE_ACCESS_TOKEN: ${{ steps.fleet_bundle_auth.outputs.access_token }}`,
+	} {
+		if !strings.Contains(compute, required) {
+			t.Errorf("cd-compute keyless bundle auth is missing %q", required)
+		}
+	}
+	if got := strings.Count(compute, "Authenticate fleet bundle reader with GitHub OIDC"); got != 2 {
+		t.Fatalf("cd-compute GCS auth steps = %d, want hosted preflight plus post-queue deploy", got)
+	}
+	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(platformBody), "id-token: write") {
+		t.Fatal("cd-platform caller must grant its reusable compute jobs OIDC token permission")
+	}
+
+	publisherPath := filepath.Join("..", "..", ".github", "workflows", "fleet-enrollment.yml")
+	publisherBody, err := os.ReadFile(publisherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := string(publisherBody)
+	for _, required := range []string{
+		"providers/gregale-fleet-publisher",
+		"gregale-fleet-publisher@",
+		"Authenticate fleet bundle publisher with GitHub OIDC",
+		"https://www.googleapis.com/auth/devstorage.read_write",
+	} {
+		if !strings.Contains(publisher, required) {
+			t.Errorf("fleet-enrollment keyless publisher auth is missing %q", required)
+		}
+	}
+
+	identityPath := filepath.Join("..", "..", "scripts", "ops", "gcp_fleet_enrollment_identity.sh")
+	identityBody, err := os.ReadFile(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := string(identityBody)
+	for _, required := range []string{
+		"fleet-enrollment.yml@refs/heads/main",
+		"cd-compute.yml@refs/heads/main",
+		"roles/storage.objectCreator",
+		"roles/storage.objectViewer",
+		"roles/iam.workloadIdentityUser",
+	} {
+		if !strings.Contains(identity, required) {
+			t.Errorf("fleet enrollment identity convergence is missing %q", required)
+		}
+	}
+	if strings.Contains(identity, "roles/storage.objectAdmin") {
+		t.Fatal("fleet enrollment identities must not receive destructive objectAdmin access")
+	}
+}
+
 func TestCDComputeWorkflowDownloadsCanonicalAssetsFromOneLookupInParallel(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {
