@@ -202,6 +202,10 @@ note instead of the banner.
 
 - [ADR-178: dedicated fleet sealed-secret domain](178-fleet-sealed-secret-domain.md)
 
+## Daemon durability decisions
+
+- [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
+
 ## Snapshot restore optimization decisions
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)

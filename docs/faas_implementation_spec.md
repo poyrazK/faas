@@ -1564,6 +1564,12 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `safedeploy_orchestrator_stuck_check_missing_timestamp_total` rate | 0 | > 0 / 15 m warn (runbook `FaasSafedeployMissingTimestamp.md` — deployments rows landing without `canary_step_started_at`, the stuck-detection predicate becomes a no-op for that row) |
 | `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
 | `deployment_audit_gc_failed_total` rate | 0 | > 0 / 1 h warn (PR-B's `deployment_audit_gc_failing` alert — 90-day GC cron failing, disk-fill risk) |
+| `<daemon>_loop_stalled{loop}` gauge | 0 | == 1 for 30 s page (`FaasDaemonLoopStalled`, runbook `FaasDaemonLoopStalled.md`; ADR-190 — the daemon is up and ready but its named loop has not beaten within budget; systemd restarts the unit after `WatchdogSec`) |
+| `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
+| `<daemon>_grpc_client_calls_without_deadline_total{method}` rate | 0 | none — every labelled method is a call site still relying on `FAAS_GRPC_DEFAULT_DEADLINE` (ADR-190 §1); fix the site, not the alert |
+| `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
+| `<daemon>_db_notify_hub_reconnects_total` rate | 0 | > 1 / 5 m warn (ADR-190 §4 — the daemon's single LISTEN connection is being dropped; check Postgres restarts and idle-connection reaping) |
+| `<daemon>_db_notify_hub_dropped_total{channel}` rate | 0 | > 0 sustained 15 m warn (ADR-190 §4 — a subscriber is not draining its fan-out buffer; the durable table + safety tick recover the work, but the consumer is falling behind) |
 
 The four `schedd_instance_*` gauges (ADR-036, issue #170) are the
 new per-`(app,node)` rolled-up surfaces — max CPU, sum RSS, sum

@@ -987,6 +987,38 @@ makes Gregale match that posture for newly-created apps.
 
 ADR-080 / issue #695 / migration 00156.
 
+## M8 — Daemon durability primitives (ADR-190). ✅
+
+The "alive but not working" and "control-plane outage leaks into the data
+plane" outage classes (schedd prime wedge 2026-09-03, fsn-1 connection
+exhaustion 2026-09-12, route 404s during Postgres outages) are closed at
+their seams rather than at the last call site that hit them:
+
+- **Default gRPC deadline.** `wire.DialContext` installs a unary client
+  interceptor: calls without a deadline are bounded by
+  `FAAS_GRPC_DEFAULT_DEADLINE` (60 s) and counted on
+  `grpc_client_calls_without_deadline_total{method}`. A forbidigo rule
+  keeps every client on the sanctioned dial path.
+- **Liveness-gated systemd watchdog.** `pkg/wire.Liveness` + `StartWatchdog`
+  beat per named loop (schedd `main`, vmmd `sweep`, `runtime` everywhere)
+  and send `WATCHDOG=1` only while no loop is past budget; every
+  `Type=notify` unit now carries `WatchdogSec=` from the generator.
+  `FaasDaemonLoopStalled` explains the restart.
+- **Last-known-good routes.** `PGBackend.Lookup` serves the stale tier
+  when the Router errors (never on not-found), bounded by
+  `FAAS_GATEWAY_ROUTE_STALE_TTL`; `gateway_route_lookup_stale_served_total`
+  shows the edge coasting.
+- **One LISTEN connection per daemon.** `pkg/db/notify_hub.go` multiplexes
+  every `SubscribeWithReconnect` on a pool onto one connection with the
+  same fail-fast and LISTEN-active-on-return contracts; `FAAS_DB_NOTIFY_HUB=0`
+  is the kill switch. `DaemonMaxConnections` is deliberately unchanged
+  until `pg_stat_activity` confirms the drop in production.
+
+Remaining: lower per-daemon pool budgets after one production cycle;
+add real loop beats to gatewayd-internal and imaged (both run on the
+`runtime` loop only today); run the SIGSTOP watchdog drill on the
+acceptance node and record it under `docs/drills/`.
+
 ## M8 — Deploy configuration contract (ADR-143). ✅
 
 The "read but never set" outage class (PR #1286 function runner paths, PR
