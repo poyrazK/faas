@@ -320,9 +320,10 @@ bash scripts/ops/enroll_compute_claim.sh \
 ```
 
 It downloads the exact release manifest, validates the claim, chooses a
-time-based authorization generation, uploads the bundle with a create-only
-GCS precondition, waits for the exact digest-named signing run, confirms the
-signature exists, and dispatches the exact digest-named `cd-compute` run. It
+nanosecond time-based authorization generation, uploads the bundle with a
+create-only GCS precondition, waits for the exact digest-named signing run,
+confirms the signature exists, and dispatches the exact digest-named
+`cd-compute` run. It
 waits for rollout completion by default; use `--no-wait` only when another
 operator will monitor the printed run URL. Dry-run is the default.
 

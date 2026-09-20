@@ -10,14 +10,14 @@ repository="${GITHUB_REPOSITORY:-poyrazK/faas}"
 gregalectl="${GREGALECTL_BIN:-gregalectl}"
 claim=""
 release_tag=""
-generation="$(date -u +%s)"
+generation=""
 apply=0
 wait_for_rollout=1
 
 usage() {
   cat <<'USAGE'
 Usage: enroll_compute_claim.sh --claim PATH --release-tag TAG
-       [--generation UNIX_SECONDS] [--no-wait] [--apply]
+       [--generation UINT64] [--no-wait] [--apply]
 
 Validates a provider-neutral ComputeNodeClaim against the exact production
 manifest in TAG, creates an immutable private GCS enrollment bundle, waits for
@@ -43,12 +43,13 @@ done
   echo "--release-tag must be a release tag" >&2
   exit 2
 }
-[[ "$generation" =~ ^[1-9][0-9]*$ ]] || { echo "--generation must be a positive integer" >&2; exit 2; }
 [[ "$bucket" =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]] || { echo "invalid GCS bucket name" >&2; exit 2; }
 command -v "$gregalectl" >/dev/null || { echo "gregalectl binary not found: $gregalectl" >&2; exit 1; }
-for tool in gcloud gh jq sha256sum; do
+for tool in gcloud gh jq python3 sha256sum; do
   command -v "$tool" >/dev/null || { echo "required tool not found: $tool" >&2; exit 1; }
 done
+generation="${generation:-$(python3 -c 'import time; print(time.time_ns())')}"
+[[ "$generation" =~ ^[1-9][0-9]*$ ]] || { echo "--generation must be a positive integer" >&2; exit 2; }
 
 active="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | paste -sd, -)"
 [[ "$active" == "$operator" ]] || {

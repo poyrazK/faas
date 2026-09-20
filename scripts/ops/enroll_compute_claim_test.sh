@@ -70,8 +70,8 @@ export GREGALECTL_BIN=gregalectl
 
 bash "$repo_root/scripts/ops/enroll_compute_claim.sh" \
   --claim "$test_root/claim.yaml" --release-tag v0.1.18-rc.200 \
-  --generation 1800000000 >"$test_root/dry-run.out"
-grep -Fq 'node=fsn-5 release=v0.1.18-rc.200 generation=1800000000 digest=sha256:' "$test_root/dry-run.out"
+  >"$test_root/dry-run.out"
+grep -Eq 'node=fsn-5 release=v0.1.18-rc.200 generation=[0-9]{18,20} digest=sha256:' "$test_root/dry-run.out"
 grep -Fq 'dry run complete' "$test_root/dry-run.out"
 if grep -Fq 'gcloud storage cp' "$FAKE_LOG"; then
   echo "dry-run unexpectedly uploaded the bundle" >&2
