@@ -120,6 +120,10 @@ type MigrationHarness struct {
 	// NodeLedger.Admit. Same load-bearing rationale as
 	// destinationCeilingMB.
 	destinationVCPUBudget int
+	// destinationCPUBudgetMillicores is physical host CPU capacity, derived
+	// from compute_nodes.vpcpus. It gates the migrated VM's sustained cgroup
+	// quota independently from guest-visible vCPU topology.
+	destinationCPUBudgetMillicores int
 	// nodeCeilingResolver resolves a nodeID to its (RAM ceiling,
 	// vCPU budget) row from compute_nodes. Wired by the engine so
 	// the harness doesn't import pkg/state directly (one-way
@@ -231,6 +235,11 @@ func NewMigrationHarness(
 		} else {
 			h.destinationCeilingMB = ceilingMB
 			h.destinationVCPUBudget = vcpuBudget
+		}
+	}
+	if newOwnerNodeID != "" {
+		if node, err := store.ComputeNodeByID(ctx, newOwnerNodeID); err == nil && node.VPCPUs > 0 {
+			h.destinationCPUBudgetMillicores = node.VPCPUs * 1000
 		}
 	}
 	return h
@@ -397,13 +406,15 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	// the instance is now RUNNING on the destination and counts
 	// toward its ledger normally.
 	if err := h.ledger.Admit(Request{
-		Instance:      instanceID,
-		RAMMB:         int(appSpec.MemSizeMiB),
-		VCPU:          int(appSpec.VCPUCount),
-		Kind:          KindMigration,
-		NodeID:        h.newOwnerNodeID,
-		NodeCeilingMB: h.destinationCeilingMB,
-		VCPUBudget:    h.destinationVCPUBudget,
+		Instance:            instanceID,
+		RAMMB:               int(appSpec.MemSizeMiB),
+		VCPU:                int(appSpec.VCPUCount),
+		CPUMillicores:       int(appSpec.CPUMillicores),
+		Kind:                KindMigration,
+		NodeID:              h.newOwnerNodeID,
+		NodeCeilingMB:       h.destinationCeilingMB,
+		VCPUBudget:          h.destinationVCPUBudget,
+		CPUBudgetMillicores: h.destinationCPUBudgetMillicores,
 		// AppID + Plan left zero-valued: KindMigration skips
 		// both the per-app concurrency check and the
 		// api.LimitsFor lookup (see admission.go Admit).

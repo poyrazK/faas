@@ -13019,6 +13019,37 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 	return used, nil
 }
 
+// ComputeNodeUsedCPUMillicoresByNode mirrors PgStore's fleet-wide CPU
+// reservation aggregate for local tests and in-memory deployments.
+func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	wanted := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		wanted[nodeID] = struct{}{}
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := wanted[ins.NodeID]; !ok {
+			continue
+		}
+		switch ins.State {
+		case "waking", "cold_booting", "running", "warm":
+			app, ok := m.apps[ins.AppID]
+			if !ok {
+				continue
+			}
+			cpu := app.CPUMillicores
+			if cpu <= 0 {
+				cpu = api.DefaultAppCPUMillicores
+			}
+			used[ins.NodeID] += int64(cpu)
+		}
+	}
+	return used, nil
+}
+
 func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

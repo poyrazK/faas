@@ -1920,6 +1920,17 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 	if gotU != 0 {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
 	}
+
+	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, "00000000-0000-0000-0000-000000000000"})
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode: %v", err)
+	}
+	if cpu[nodeID] != 5*api.DefaultAppCPUMillicores {
+		t.Errorf("used CPU for live instances = %d, want %d", cpu[nodeID], 5*api.DefaultAppCPUMillicores)
+	}
+	if cpu["00000000-0000-0000-0000-000000000000"] != 0 {
+		t.Errorf("used CPU for unknown node = %d, want 0", cpu["00000000-0000-0000-0000-000000000000"])
+	}
 }
 
 // --- Snapshot GC (ADR-005 / spec §4.6) ---------------------------------------

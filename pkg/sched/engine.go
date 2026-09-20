@@ -2800,7 +2800,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID:  warmHint,
 		PreferredNodeIDs: snapshotNodes,
 		PreferredRegion:  preferredRegion,
@@ -2831,11 +2831,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke,
 		NodeID:                  placement.NodeID,
 		NodeCeilingMB:           placement.CeilingMB,
 		VCPUBudget:              placement.VCPUBudget,
+		CPUBudgetMillicores:     placement.CPUBudgetMillicores,
 	}); err != nil {
 		// Admit failed (capacity / concurrency). The two rejection
 		// modes differ in how loudly the engine surfaces them:
@@ -2986,7 +2987,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
+		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -3868,6 +3869,34 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 	return used
 }
 
+// nodeCPUUsageForNodes merges the durable fleet-wide instance aggregate with
+// this schedd's in-flight ledger. The database view is required because each
+// app-owner schedd has its own ledger and may place an instance on a peer
+// node; a local-only sum would miss reservations created by another owner.
+func (e *Engine) nodeCPUUsageForNodes(ctx context.Context, nodes []state.ComputeNode) map[string]int64 {
+	used := make(map[string]int64, len(nodes))
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+		used[node.ID] = int64(e.ledger.UsedCPUMillicoresForNode(node.ID))
+	}
+	batcher, ok := e.store.(state.ComputeNodeCPUUsageBatcher)
+	if !ok || len(ids) == 0 {
+		return used
+	}
+	bulk, err := batcher.ComputeNodeUsedCPUMillicoresByNode(ctx, ids)
+	if err != nil {
+		e.log.Warn("sched: placement: bulk compute node used_cpu_millicores read failed", "err", err)
+		return used
+	}
+	for _, id := range ids {
+		if bulk[id] > used[id] {
+			used[id] = bulk[id]
+		}
+	}
+	return used
+}
+
 // choosePlacement picks a compute_node for the next wake using the
 // pure ChoosePlacement chooser (placement.go). It loads the live
 // fleet from the store and the per-node used_mb aggregate, both
@@ -3882,13 +3911,18 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 // back to the legacy store sum so a silent vmmd degrades to the
 // pre-axis-5 behaviour rather than dropping the node from the
 // fleet view entirely.
+func effectiveAppCPUMillicores(app state.App) int {
+	if app.CPUMillicores > 0 {
+		return app.CPUMillicores
+	}
+	return api.DefaultAppCPUMillicores
+}
+
 func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
-	// Phase 2 / Gate A: pin placement to the schedd's owner
-	// node. The chooser still runs the per-node headroom checks
-	// (usedMB + usedVCPU + ceiling), but every candidate is
-	// either this owner or nothing — the wake can't escape to
-	// another schedd's fleet. An empty ownerNodeID preserves
-	// the legacy behaviour (pick any active node).
+	// Phase 2 / Gate A: authorize the app against this schedd's owner and
+	// prefer that node for locality. Capacity remains fleet-wide: a saturated
+	// owner may spill to a peer through the routed VMM. An empty ownerNodeID
+	// preserves the legacy behavior (pick any active node).
 	if e.ownerNodeID != "" {
 		// Defence-in-depth: refuse to admit if the app's
 		// persisted owner doesn't match. The gRPC handler's
@@ -3918,6 +3952,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 	// ledger's per-node UsedVCPU remains an independent local reservation view.
 	usedMB := e.nodeUsageForNodes(ctx, nodes)
 	usedVCPU := make(map[string]int64, len(nodes))
+	usedCPUMillicores := e.nodeCPUUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
 		// Tier A2: per-node vCPU is ledger-authoritative. The chooser
 		// uses this to enforce compute_nodes.vcpu_budget per node;
@@ -3925,7 +3960,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		// per-node budget is the gate, not the absolute number).
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
-	return ChoosePlacement(nodes, usedMB, usedVCPU, r)
+	return choosePlacementWithCPU(nodes, usedMB, usedVCPU, usedCPUMillicores, r)
 }
 
 // ClaimUnplaced is the schedd-side async placement claim
@@ -3984,6 +4019,7 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 		AppID:          appID,
 		RAMMB:          app.RAMMB,
 		VCPU:           limits.VCPU,
+		CPUMillicores:  effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency,
 	})
 	if err != nil {
@@ -4592,6 +4628,17 @@ func (e *Engine) resolveNodeCeiling(ctx context.Context, nodeID string) (int, in
 	return n.AdmissionCeilingMB, n.VCPUBudget, nil
 }
 
+func (e *Engine) resolveNodeCPUBudgetMillicores(ctx context.Context, nodeID string) int {
+	if nodeID == "" {
+		return 0
+	}
+	n, err := e.store.ComputeNodeByID(ctx, nodeID)
+	if err != nil || n.VPCPUs <= 0 {
+		return 0
+	}
+	return n.VPCPUs * 1000
+}
+
 // BuildAppSpecForMigration (Tier A5 / ADR-066) rebuilds the
 // AppSpec shape vmmd needs to restore a migrated VM from the
 // local app + deployment view. The lookup walks: instance → app
@@ -4669,7 +4716,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:     int32(limits.VCPU),
 		MemSizeMiB:    int32(app.RAMMB),
-		CPUMillicores: int32(app.CPUMillicores),
+		CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit:    int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
@@ -5301,7 +5348,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// The chooser still enforces liveness and CPU/RAM admission.
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
@@ -5331,11 +5378,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-		Kind:          KindSnapshotPrime,
-		NodeID:        placement.NodeID,
-		NodeCeilingMB: placement.CeilingMB,
-		VCPUBudget:    placement.VCPUBudget,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		Kind:                KindSnapshotPrime,
+		NodeID:              placement.NodeID,
+		NodeCeilingMB:       placement.CeilingMB,
+		VCPUBudget:          placement.VCPUBudget,
+		CPUBudgetMillicores: placement.CPUBudgetMillicores,
 	}); err != nil {
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_admit_denied")
 		return err
@@ -5365,7 +5413,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
+		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
@@ -6279,6 +6327,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 	// the next time the chooser runs.
 	ceilings := map[string]int{}
 	budgets := map[string]int{}
+	cpuBudgets := map[string]int{}
 	loadCeiling := func(ctx context.Context, nodeID string) int {
 		if c, ok := ceilings[nodeID]; ok {
 			return c
@@ -6307,6 +6356,19 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		}
 		budgets[nodeID] = n.VCPUBudget
 		return n.VCPUBudget
+	}
+	loadCPUBudgetMillicores := func(ctx context.Context, nodeID string) int {
+		if b, ok := cpuBudgets[nodeID]; ok {
+			return b
+		}
+		n, err := e.store.ComputeNodeByID(ctx, nodeID)
+		if err != nil || n.VPCPUs <= 0 {
+			cpuBudgets[nodeID] = 0
+			return 0
+		}
+		budget := n.VPCPUs * 1000
+		cpuBudgets[nodeID] = budget
+		return budget
 	}
 	for _, app := range apps {
 		if !e.ownsApp(app) {
@@ -6342,16 +6404,18 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 			if err := e.ledger.Admit(Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
-				RAMMB: ins.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				// Recovery must account for the one candidate/stable overlap
 				// that deployment smoke may have admitted before a restart.
 				// This does not authorize new capacity: the rows are already
 				// resident, and the reconstructed count blocks normal admits.
-				AllowConcurrencyOverlap: true,
-				NodeID:                  nodeID,
-				NodeCeilingMB:           loadCeiling(ctx, nodeID),
-				VCPUBudget:              loadVCPUBudget(ctx, nodeID),
-				Kind:                    kind,
+				AllowConcurrencyOverlap:    true,
+				NodeID:                     nodeID,
+				NodeCeilingMB:              loadCeiling(ctx, nodeID),
+				VCPUBudget:                 loadVCPUBudget(ctx, nodeID),
+				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
+				AllowCPUOvercommitRecovery: true,
+				Kind:                       kind,
 			}); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
 				continue

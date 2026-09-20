@@ -76,13 +76,14 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		}
 		if !e.ledger.ResidentFor(warm.ID) {
 			ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, warm.NodeID)
+			cpuBudgetMillicores := e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID)
 			if ceilingErr != nil {
 				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", ceilingErr)
 			}
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
-				RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, Kind: KindWarmPool,
+				RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {
 					warmCount--

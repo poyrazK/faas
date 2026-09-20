@@ -684,6 +684,15 @@ type ComputeNodeUsageBatcher interface {
 	ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ComputeNodeCPUUsageBatcher is the optional fleet-wide sustained CPU
+// reservation view used by placement. Values are the sum of each live app
+// instance's configured cpu_millicores, grouped by destination node. Keeping
+// this optional avoids widening the core Store contract for narrow adapters;
+// PgStore and MemStore both implement it.
+type ComputeNodeCPUUsageBatcher interface {
+	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
+}
+
 // ManagedRealtimeEndpointStore is the optional persistence surface for
 // managed realtime endpoint resources. It is intentionally separate from
 // Store so narrow test doubles and older integrations remain source-

@@ -42,9 +42,10 @@ type NodeLedger struct {
 }
 
 type nodeReservation struct {
-	residentRAM int // Σ(ram_mb + PerVMOverheadMB) on this node
-	usedVCPU    int // Σ vCPU on this node
-	ceilingMB   int // latest per-node RAM admission ceiling
+	residentRAM       int // Σ(ram_mb + PerVMOverheadMB) on this node
+	usedVCPU          int // Σ guest-visible vCPU topology on this node
+	usedCPUMillicores int // Σ sustained host CPU quota on this node
+	ceilingMB         int // latest per-node RAM admission ceiling
 }
 
 // reservation remembers the node it belongs to so Release can route
@@ -54,12 +55,13 @@ type nodeReservation struct {
 // the box-wide counter in that case so the migration is non-breaking
 // for tests that don't plumb node IDs.
 type reservation struct {
-	appID        string
-	deploymentID string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
-	nodeID       string // empty = legacy box-wide accounting (test seams)
-	admissionMB  int    // ram_mb + PerVMOverheadMB
-	vcpu         int
-	countsConc   bool // still in {WAKING,COLD_BOOTING,RUNNING}
+	appID         string
+	deploymentID  string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
+	nodeID        string // empty = legacy box-wide accounting (test seams)
+	admissionMB   int    // ram_mb + PerVMOverheadMB
+	vcpu          int
+	cpuMillicores int
+	countsConc    bool // still in {WAKING,COLD_BOOTING,RUNNING}
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -150,8 +152,14 @@ type Request struct {
 	// the ledger trusts len(SidecarMBs) ≤ 2 and never re-checks it.
 	// Nil or empty = legacy no-sidecar shape; BillableRAMMB
 	// (single-arg form) collapses to the same math in that case.
-	SidecarMBs     []int
-	VCPU           int // vcpus for this instance
+	SidecarMBs []int
+	VCPU       int // guest-visible vCPUs for this instance
+	// CPUMillicores is the sustained host CPU quota enforced by the
+	// instance's parent cgroup. It is intentionally separate from VCPU:
+	// guest topology may expose four vCPUs while cpu.max permits only one
+	// physical core. Zero preserves legacy/test callers that pre-date host
+	// CPU admission.
+	CPUMillicores  int
 	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above MaxConcurrency. It is reserved for the authenticated deployment
@@ -212,6 +220,18 @@ type Request struct {
 	// smaller cap. Zero or negative falls back to api.VCPUSlots
 	// (safe for un-registered nodes and pre-multi-node test seams).
 	VCPUBudget int
+	// CPUBudgetMillicores is the physical host CPU admission ceiling for
+	// the selected node. Placement derives it from compute_nodes.vpcpus at
+	// 1000 millicores per host vCPU. Zero disables this newer guard only for
+	// legacy/unregistered test seams; production placement always supplies
+	// a positive value.
+	CPUBudgetMillicores int
+	// AllowCPUOvercommitRecovery lets startup reconstruction account for
+	// VMs that already existed before millicore admission was enabled. It
+	// never authorizes a new VM: recovery records the full overcommitted
+	// total so every subsequent normal admission remains blocked until the
+	// node falls back below its physical CPU budget.
+	AllowCPUOvercommitRecovery bool
 }
 
 func (r Request) admissionMB() int {
@@ -336,13 +356,29 @@ func (l *NodeLedger) Admit(r Request) error {
 			r.NodeID, node.usedVCPU, r.VCPU, vcpuCeiling))
 	}
 
+	// Host CPU admission is distinct from guest-visible vCPU topology.
+	// Firecracker can expose four guest vCPUs while the parent cgroup's
+	// cpu.max is 1000 millicores; using VCPU alone therefore allowed eight
+	// such VMs onto a four-vCPU host. Enforce the sustained cgroup quota
+	// against physical host capacity. Startup recovery may record an
+	// already-overcommitted node, but can never use that exception for a
+	// newly-created reservation.
+	if r.CPUMillicores > 0 && r.CPUBudgetMillicores > 0 &&
+		node.usedCPUMillicores+r.CPUMillicores > r.CPUBudgetMillicores &&
+		!r.AllowCPUOvercommitRecovery {
+		return api.ErrCapacity(fmt.Sprintf(
+			"CPU headroom: node %q reserved %d millicores + %d requested exceeds the %d millicore physical CPU budget",
+			r.NodeID, node.usedCPUMillicores, r.CPUMillicores, r.CPUBudgetMillicores))
+	}
+
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
-		admissionMB: r.admissionMB(), vcpu: r.VCPU,
+		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
 		countsConc: kindCountsConcurrency(r.Kind),
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
+	node.usedCPUMillicores += r.CPUMillicores
 	if kindCountsConcurrency(r.Kind) {
 		l.perApp[r.AppID]++
 		if r.DeploymentID != "" {
@@ -477,7 +513,11 @@ func (l *NodeLedger) Release(instance string) {
 		if node.usedVCPU < 0 {
 			node.usedVCPU = 0
 		}
-		if node.residentRAM == 0 && node.usedVCPU == 0 {
+		node.usedCPUMillicores -= e.cpuMillicores
+		if node.usedCPUMillicores < 0 {
+			node.usedCPUMillicores = 0
+		}
+		if node.residentRAM == 0 && node.usedVCPU == 0 && node.usedCPUMillicores == 0 {
 			delete(l.resident, e.nodeID)
 		}
 	}
@@ -536,6 +576,18 @@ func (l *NodeLedger) UsedVCPUForNode(nodeID string) int {
 	defer l.mu.Unlock()
 	if r, ok := l.resident[nodeID]; ok {
 		return r.usedVCPU
+	}
+	return 0
+}
+
+// UsedCPUMillicoresForNode returns the summed sustained cgroup CPU quota on a
+// single node. Placement uses this physical-capacity view independently from
+// UsedVCPUForNode, which remains the guest-topology budget.
+func (l *NodeLedger) UsedCPUMillicoresForNode(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if r, ok := l.resident[nodeID]; ok {
+		return r.usedCPUMillicores
 	}
 	return 0
 }

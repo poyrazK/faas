@@ -58,6 +58,10 @@ type Placement struct {
 	// request fits; downstream code (admission) reads this to log
 	// context and to thread the budget into the per-node ledger check.
 	VCPUBudget int
+	// CPUBudgetMillicores is the physical host CPU capacity used by the
+	// sustained-quota admission guard. Unlike VCPUBudget, this is not guest
+	// topology: it is compute_nodes.vpcpus * 1000.
+	CPUBudgetMillicores int
 	// UsedMB is the live Σ(ram_mb + PerVMOverheadMB) on the chosen node
 	// AT THE TIME OF THE CHOICE, BEFORE this request is added. It is
 	// informational — the engine's per-node ledger keeps the canonical
@@ -65,9 +69,11 @@ type Placement struct {
 	UsedMB int64
 }
 
-// ChoosePlacement returns the node with the most free RAM headroom that
-// still fits the request, or a *api.Problem if no node can. Tie-break order:
-// (headroom DESC, vcpu_headroom DESC, region ASC, zone ASC, name ASC).
+// ChoosePlacement returns a node that fits all configured resource guards, or
+// a *api.Problem if none can. Legacy requests without CPUMillicores preserve
+// the old order. CPU-aware production requests use:
+// (physical_cpu_headroom DESC, ram_headroom DESC, guest_vcpu_headroom DESC,
+// region ASC, zone ASC, name ASC).
 // Pure function: no Engine/Ledger coupling, no DB access.
 //
 // Inputs:
@@ -92,11 +98,19 @@ type Placement struct {
 // / ADR-070 §Decision 6); a no-sidecar request collapses to the
 // legacy single-arg form (r.SidecarMBs nil/empty).
 //
-// Sticky-warm affinity (r.PreferredNodeID): when set and the preferred node
-// has headroom, return it directly. When set but the preferred node is
-// saturated or absent, fall through to the least-loaded path. Affinity
-// never overrides the headroom invariant (ADR-005).
+// Sticky-warm affinity (r.PreferredNodeID): legacy requests return a fitting
+// preferred node directly. CPU-aware requests retain affinity only when that
+// node is tied for the most physical CPU headroom, preventing locality from
+// packing one host while an idle peer exists. Affinity remains a bias, never
+// a capacity gate (ADR-005).
 func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU map[string]int64, r Request) (Placement, error) {
+	return choosePlacementWithCPU(nodes, usedMB, usedVCPU, nil, r)
+}
+
+// choosePlacementWithCPU is the production chooser. The exported wrapper
+// keeps the pre-millicore pure-function seam stable for older callers and
+// tests; Engine supplies the ledger's per-node sustained CPU reservations.
+func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU, usedCPUMillicores map[string]int64, r Request) (Placement, error) {
 	if r.RAMMB <= 0 {
 		return Placement{}, api.ErrCapacity(fmt.Sprintf("placement: request RAM must be positive (got %d)", r.RAMMB))
 	}
@@ -164,6 +178,17 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 				continue // this node can't fit the vCPU
 			}
 		}
+		// Physical CPU admission uses the cgroup quota, not guest-visible
+		// topology. A node advertising four host vCPUs has 4000
+		// millicores of sustained app capacity. Missing/zero VPCPUs is
+		// rejected when the request opts into this guard; legacy requests
+		// with CPUMillicores=0 retain the previous behavior.
+		if r.CPUMillicores > 0 {
+			budget := cpuBudgetMillicores(n)
+			if budget <= 0 || usedCPUMillicores[n.ID]+int64(r.CPUMillicores) > budget {
+				continue
+			}
+		}
 		used := usedMB[n.ID]
 		if used+billable > int64(n.AdmissionCeilingMB) {
 			continue // this node can't fit the request
@@ -181,15 +206,21 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 		}
 	}
 
-	if warmFit != nil {
+	// CPU headroom outranks sticky locality. Preserve the warm fast path
+	// only while the preferred node is tied for the most physical CPU
+	// headroom; otherwise affinity would pack a single host until it was
+	// saturated while an idle peer existed.
+	if warmFit != nil && (r.CPUMillicores <= 0 ||
+		cpuHeadroomMillicores(*warmFit, usedCPUMillicores[warmFit.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 		return Placement{
-			NodeID:     warmFit.ID,
-			Name:       warmFit.Name,
-			TargetURL:  warmFit.TargetURL,
-			Region:     stringValue(warmFit.Region),
-			CeilingMB:  warmFit.AdmissionCeilingMB,
-			VCPUBudget: warmFit.VCPUBudget,
-			UsedMB:     usedMB[warmFit.ID],
+			NodeID:              warmFit.ID,
+			Name:                warmFit.Name,
+			TargetURL:           warmFit.TargetURL,
+			Region:              stringValue(warmFit.Region),
+			CeilingMB:           warmFit.AdmissionCeilingMB,
+			VCPUBudget:          warmFit.VCPUBudget,
+			CPUBudgetMillicores: int(cpuBudgetMillicores(*warmFit)),
+			UsedMB:              usedMB[warmFit.ID],
 		}, nil
 	}
 
@@ -200,42 +231,30 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 	if len(snapshotF) > 0 {
 		best := snapshotF[0]
 		for _, n := range snapshotF[1:] {
-			if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], r.PreferredRegion) {
+			if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], usedCPUMillicores[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], usedCPUMillicores[best.ID], r) {
 				best = n
 			}
 		}
-		return Placement{
-			NodeID:     best.ID,
-			Name:       best.Name,
-			TargetURL:  best.TargetURL,
-			Region:     stringValue(best.Region),
-			CeilingMB:  best.AdmissionCeilingMB,
-			VCPUBudget: best.VCPUBudget,
-			UsedMB:     usedMB[best.ID],
-		}, nil
+		if r.CPUMillicores <= 0 ||
+			cpuHeadroomMillicores(best, usedCPUMillicores[best.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores) {
+			return placementForNode(best, usedMB[best.ID]), nil
+		}
 	}
 
 	if len(candidates) == 0 {
 		return Placement{}, api.ErrCapacity(fmt.Sprintf(
-			"placement: no active compute_node fits %d MB billable (per-node ceilings: see compute_nodes.admission_ceiling_mb) / %d vCPU (per-node budgets: see compute_nodes.vcpu_budget) across %d candidates",
-			billable, r.VCPU, len(nodes)))
+			"placement: no active compute_node fits %d MB billable (per-node ceilings: see compute_nodes.admission_ceiling_mb) / %d guest vCPU (per-node budgets: see compute_nodes.vcpu_budget) / %d millicores (physical host CPU budget) across %d candidates",
+			billable, r.VCPU, r.CPUMillicores, len(nodes)))
 	}
 
 	// Single best candidate — short-circuit the sort.
 	if len(candidates) == 1 {
 		n := candidates[0]
-		return Placement{
-			NodeID:     n.ID,
-			Name:       n.Name,
-			TargetURL:  n.TargetURL,
-			Region:     stringValue(n.Region),
-			CeilingMB:  n.AdmissionCeilingMB,
-			VCPUBudget: n.VCPUBudget,
-			UsedMB:     usedMB[n.ID],
-		}, nil
+		return placementForNode(n, usedMB[n.ID]), nil
 	}
 
-	// Pick by (headroom DESC, vcpu_headroom DESC, region ASC, zone ASC, name ASC).
+	// Pick by physical CPU headroom first for CPU-aware requests, then RAM,
+	// guest-vCPU headroom, and the deterministic locality/name tie-breakers.
 	//
 	// Region/Zone are *string; treat nil and "" identically so a
 	// pre-00069 row (nil pointers) sorts the same as an operator-
@@ -250,19 +269,46 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 	// node is well under its RAM ceiling).
 	best := candidates[0]
 	for _, n := range candidates[1:] {
-		if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], r.PreferredRegion) {
+		if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], usedCPUMillicores[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], usedCPUMillicores[best.ID], r) {
 			best = n
 		}
 	}
+	return placementForNode(best, usedMB[best.ID]), nil
+}
+
+func placementForNode(n state.ComputeNode, usedMB int64) Placement {
 	return Placement{
-		NodeID:     best.ID,
-		Name:       best.Name,
-		TargetURL:  best.TargetURL,
-		Region:     stringValue(best.Region),
-		CeilingMB:  best.AdmissionCeilingMB,
-		VCPUBudget: best.VCPUBudget,
-		UsedMB:     usedMB[best.ID],
-	}, nil
+		NodeID:              n.ID,
+		Name:                n.Name,
+		TargetURL:           n.TargetURL,
+		Region:              stringValue(n.Region),
+		CeilingMB:           n.AdmissionCeilingMB,
+		VCPUBudget:          n.VCPUBudget,
+		CPUBudgetMillicores: int(cpuBudgetMillicores(n)),
+		UsedMB:              usedMB,
+	}
+}
+
+func cpuBudgetMillicores(n state.ComputeNode) int64 {
+	if n.VPCPUs <= 0 {
+		return 0
+	}
+	return int64(n.VPCPUs) * 1000
+}
+
+func cpuHeadroomMillicores(n state.ComputeNode, used int64) int64 {
+	return cpuBudgetMillicores(n) - used
+}
+
+func maxCPUHeadroomMillicores(nodes []state.ComputeNode, used map[string]int64) int64 {
+	var max int64
+	for i, n := range nodes {
+		headroom := cpuHeadroomMillicores(n, used[n.ID])
+		if i == 0 || headroom > max {
+			max = headroom
+		}
+	}
+	return max
 }
 
 func stringValue(value *string) string {
@@ -289,13 +335,20 @@ func containsNodeID(ids []string, want string) bool {
 // Changing this function changes where hot apps land; never edit without
 // reading the test cases.
 //
-// Tier A2: a fifth vCPU headroom secondary is added after the
-// existing RAM headroom primary. Tied on RAM headroom → prefer
-// the node with more vCPU headroom. The vCPU headroom is computed
-// against the node's VCPUBudget; a node with vcpu_budget=0 has
-// zero headroom and is excluded upstream (the candidate filter
-// in ChoosePlacement), so betterCandidate never sees it.
-func betterCandidate(n state.ComputeNode, nUsed int64, nVCPUUsed int64, best state.ComputeNode, bestUsed int64, bestVCPUUsed int64, preferred string) bool {
+// For a CPU-aware request, physical millicore headroom is primary. RAM and
+// guest-vCPU preserve their prior order below it. A legacy request with
+// CPUMillicores=0 skips the new comparison bit-for-bit.
+func betterCandidate(n state.ComputeNode, nUsed, nVCPUUsed, nCPUUsed int64, best state.ComputeNode, bestUsed, bestVCPUUsed, bestCPUUsed int64, r Request) bool {
+	// Sustained host CPU headroom is the first placement signal once a
+	// request carries its real cgroup quota. This spreads work before RAM
+	// and guest-topology tie-breakers can pack one node.
+	if r.CPUMillicores > 0 {
+		nCPUHead := cpuHeadroomMillicores(n, nCPUUsed)
+		bestCPUHead := cpuHeadroomMillicores(best, bestCPUUsed)
+		if nCPUHead != bestCPUHead {
+			return nCPUHead > bestCPUHead
+		}
+	}
 	nHead := int64(n.AdmissionCeilingMB) - nUsed
 	bestHead := int64(best.AdmissionCeilingMB) - bestUsed
 	if nHead != bestHead {
@@ -322,9 +375,9 @@ func betterCandidate(n state.ComputeNode, nUsed int64, nVCPUUsed int64, best sta
 	// load-bearing (placement_test.go pins the ordering).
 	nRegion := derefRegion(n.Region)
 	bestRegion := derefRegion(best.Region)
-	if preferred != "" {
-		nMatch := nRegion == preferred
-		bestMatch := bestRegion == preferred
+	if r.PreferredRegion != "" {
+		nMatch := nRegion == r.PreferredRegion
+		bestMatch := bestRegion == r.PreferredRegion
 		if nMatch != bestMatch {
 			return nMatch
 		}
