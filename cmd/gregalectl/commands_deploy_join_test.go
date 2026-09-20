@@ -573,6 +573,12 @@ func TestEffectiveJoinManifestMergesRegisteredDynamicNodes(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.UpsertComputeNodeFromOperator(t.Context(), state.ComputeNode{
+		Name: "vmmd.faas", TargetURL: "tcp://vmmd.faas:50051", Role: &role,
+		Lifecycle: state.NodeLifecycleActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	old := computeNodesStoreOpener
 	t.Cleanup(func() { computeNodesStoreOpener = old })
 	computeNodesStoreOpener = func() (state.Store, func(), error) { return st, func() {}, nil }

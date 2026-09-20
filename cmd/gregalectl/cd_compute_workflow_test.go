@@ -72,6 +72,29 @@ func TestCDComputeWorkflowRequiresExplicitFleetPreflightSkip(t *testing.T) {
 	}
 }
 
+func TestCDComputeWorkflowPassesReleaseTagToBundleValidation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "- name: Download and validate signed fleet enrollment bundle")
+	if start < 0 {
+		t.Fatal("cannot find signed fleet enrollment validation step")
+	}
+	end := strings.Index(workflow[start:], "\n      - name:")
+	if end < 0 {
+		t.Fatal("cannot isolate signed fleet enrollment validation step")
+	}
+	step := workflow[start : start+end]
+	if !strings.Contains(step, `RELEASE_TAG: ${{ inputs.release_tag }}`) {
+		t.Fatal("signed fleet enrollment validation does not receive the release tag")
+	}
+	if !strings.Contains(step, `/releases/tags/${RELEASE_TAG}`) {
+		t.Fatal("signed fleet enrollment validation does not use the exported release tag")
+	}
+}
+
 func TestCDComputeWorkflowDownloadsCanonicalAssetsFromOneLookupInParallel(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

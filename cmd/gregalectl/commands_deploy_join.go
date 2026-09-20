@@ -1011,6 +1011,14 @@ func effectiveJoinManifest(ctx context.Context, base *manifest.Manifest, opts de
 		if _, isStatic := declared[name]; isStatic {
 			continue
 		}
+		// The registry can also contain legacy service-discovery aliases such
+		// as vmmd.faas. They are compute-only rows, but they are not fleet
+		// members admitted by this dynamic policy. Only reconstruct names in
+		// the policy namespace; a matching name still passes the full policy
+		// and target checks below.
+		if !strings.HasPrefix(name, policy.NamePrefix) {
+			continue
+		}
 		if row.Lifecycle == state.NodeLifecycleRetired {
 			if name == opts.Node {
 				return nil, "", fmt.Errorf("dynamic compute node %q is retired and cannot be re-enrolled", name)
