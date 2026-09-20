@@ -1478,6 +1478,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
 		})
+	// The local Reader above deliberately contains only instances physically
+	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
+	// that non-overlapping partition. Scaling policy has a different ownership
+	// boundary. An app-owning schedd must see its instances even when placement
+	// put them on peer nodes, otherwise remote CPU/inflight/request signals are
+	// silently absent. Build a separate owner-scoped reader over VMMRouter's
+	// cached per-node clients; single-box installs keep the local reader.
+	autoscaleReader := reader
+	if ownerNodeID != "" {
+		autoscaleReader = instancestats.NewReader()
+		fleetInterval := cfg.ScaleUpInterval
+		if fleetInterval <= 0 {
+			fleetInterval = time.Duration(api.ScaleUpDecisionIntervalSeconds) * time.Second
+		}
+		fleetStatsPoller := instancestats.NewPoller(
+			store, nil, vmmTLS, autoscaleReader, nil, log,
+		).WithNodeRegistry(nodeRegistry).
+			WithFleetStats(vmmRouter, ownerNodeID)
+		fleetStatsPoller.Interval = fleetInterval
+		go func() {
+			if err := fleetStatsPoller.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("owner fleet instance stats exited", "err", err)
+			}
+		}()
+		log.Info("owner fleet instance stats enabled",
+			"owner_node_id", ownerNodeID,
+			"interval", fleetInterval)
+	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is
@@ -1554,7 +1582,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
-		WithInstanceActivity(reader).
+		WithInstanceActivity(autoscaleReader).
 		// Issue #171: shared Prometheus registry (same instance the
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.
@@ -1681,7 +1709,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// same interface but the scaleup trigger itself does
 		// not read it (the concurrent_requests axis lives in
 		// pkg/sched/targets — see loop.WithTargets below).
-		store, reader, scraper,
+		store, autoscaleReader, scraper,
 		schedScaleUpEngine{engine: engine},
 		engine.Ledger(),
 		scaleup.Options{
@@ -1699,7 +1727,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance stats enabled, but queue-depth autoscaling must still run.
 	// Tick treats a missing reader as no-signal for that metric.
 	targetsTrigger := targets.New(
-		store, reader,
+		store, autoscaleReader,
 		schedTargetsEngine{engine: engine},
 		schedTargetsLedger{ledger: engine.Ledger()},
 		targets.Options{
@@ -1715,7 +1743,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("reactive target trigger enabled",
 		"interval", cfg.ScaleUpInterval,
 		"owner_node_id", ownerNodeID,
-		"concurrent_requests_reader", reader != nil,
+		"concurrent_requests_reader", autoscaleReader != nil,
 		"queue_depth_reader", true)
 	// Issue #557 / ADR-071: proactive min-instances floor
 	// reconciler. Walks every app the schedd owns each tick and
@@ -1781,10 +1809,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// VMMD telemetry reader. Split-box schedulers commonly leave the local
 	// gateway metrics URL empty; the telemetry fallback keeps scale-down
 	// symmetric with the scale-up trigger in that deployment shape.
-	if scraper != nil || reader != nil {
+	if scraper != nil || autoscaleReader != nil {
 		mirror := recentload.New(scraper, api.ScaleUpWindowSeconds, time.Second)
-		if reader != nil {
-			mirror.WithRateReader(reader)
+		if autoscaleReader != nil {
+			mirror.WithRateReader(autoscaleReader)
 		}
 		loop.WithRecentLoad(mirror)
 		signalSource := "vmmd_telemetry"

@@ -463,7 +463,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if t.ledger != nil {
 			conc = t.ledger.Concurrency(app.ID)
 		}
-		// Per-instance RPS = windowed requests/second / conc.
+		// Per-instance RPS = best available total requests/second / conc.
+		// In a split ingress fleet, the local gateway counter is only one
+		// shard of app traffic while VMMD request-start telemetry covers every
+		// instance owned by this scheduler. Use the larger fresh total rather
+		// than allowing a partial local scrape to suppress the fleet signal.
 		// When conc=0 (cold path: no instances yet), the rollup
 		// is undefined; we treat HaveRPS=false so the trigger
 		// fires no_signal. The first instant wake that lands an
@@ -473,15 +477,17 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if conc > 0 {
 			_, promAvailable := promApps[app.ID]
 			if promAvailable && t.ring.HasObservation(app.ID) {
-				rps := t.ring.AppRate(app.ID, time.Now())
-				perInstRPS = rps / float64(conc)
+				perInstRPS = t.ring.AppRate(app.ID, time.Now()) / float64(conc)
 				haveRPS = true
 			}
 		}
-		if conc > 0 && !haveRPS {
+		if conc > 0 {
 			if reader, ok := t.instats.(RequestRateReader); ok {
 				if rps, ok := reader.RequestsPerSecond(app.ID); ok {
-					perInstRPS = rps / float64(conc)
+					fleetPerInstance := rps / float64(conc)
+					if !haveRPS || fleetPerInstance > perInstRPS {
+						perInstRPS = fleetPerInstance
+					}
 					haveRPS = true
 				}
 			}

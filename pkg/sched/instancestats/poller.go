@@ -47,6 +47,14 @@ func (f DialerFunc) Dial(ctx context.Context, targetURL string, tlsCfg *tls.Conf
 	return f(ctx, targetURL, tlsCfg)
 }
 
+// StatsRouter is the cached, per-node Stats surface used by the owner-scoped
+// autoscaling reader. Unlike Dialer, it does not create and close a transport
+// on every sample: production wires the Engine's VMMRouter, which amortises one
+// mTLS connection per compute node.
+type StatsRouter interface {
+	Stats(ctx context.Context, nodeID string) (*sched.StatsSnapshot, error)
+}
+
 // DiskPressureHandler is called once when an instance first reaches the full
 // writable-filesystem threshold. The handler owns the lifecycle action (for
 // example, destroy and cold-replace); returning an error leaves the pressure
@@ -78,6 +86,12 @@ type Poller struct {
 	// is authoritative for. Empty identifies a control-plane observer, which
 	// must not report missing remote streams as owner failures.
 	OwnerNodeID string
+	// FleetStats enables the separate owner-scoped autoscaling view. Durable
+	// rows are selected by app ownership (apps.node_id), then live stats are
+	// fetched from the physical node through the cached VMM router. This is
+	// intentionally separate from Telemetry: the local ReportCapacity stream
+	// remains the authoritative source for metering and node diagnostics.
+	FleetStats StatsRouter
 	// DiskPressureHandler turns a full guest writable filesystem into an
 	// explicit lifecycle action. Nil keeps the poller observation-only.
 	DiskPressureHandler DiskPressureHandler
@@ -105,6 +119,18 @@ func (p *Poller) WithNodeRegistry(reg *sched.NodeRegistry) *Poller {
 func (p *Poller) WithOwnerNodeID(nodeID string) *Poller {
 	if p != nil {
 		p.OwnerNodeID = nodeID
+	}
+	return p
+}
+
+// WithFleetStats switches this poller to the app-owner view used by scaling
+// policy consumers. A second local poller continues to project the host's
+// ReportCapacity stream for metering, so enabling this mode cannot duplicate
+// or reassign billing telemetry.
+func (p *Poller) WithFleetStats(router StatsRouter, ownerNodeID string) *Poller {
+	if p != nil {
+		p.FleetStats = router
+		p.OwnerNodeID = ownerNodeID
 	}
 	return p
 }
@@ -176,9 +202,9 @@ func (p *Poller) Run(ctx context.Context) error {
 }
 
 // Tick performs one full sweep: list the active-node snapshot, list live
-// instances, and project either the persistent telemetry cache or the legacy
-// fresh-dial path into InstanceStat rows. The production path has no per-node
-// network calls here; legacy dial failures remain partial and non-fatal.
+// instances, and project either the local persistent telemetry cache, the
+// owner-scoped cached-router view, or the legacy fresh-dial path into
+// InstanceStat rows. Per-node failures remain partial and non-fatal.
 func (p *Poller) Tick(ctx context.Context) error {
 	started := p.now()
 	var nodes []state.ComputeNode
@@ -191,11 +217,19 @@ func (p *Poller) Tick(ctx context.Context) error {
 			return err
 		}
 	}
-	instances, err := p.Store.ListAllInstances(ctx)
+	var instances []state.Instance
+	var err error
+	if p.FleetStats != nil && p.OwnerNodeID != "" {
+		// ListInstancesByNodeID follows app ownership, not physical
+		// placement. An owner's app may have instances on any active node.
+		instances, err = p.Store.ListInstancesByNodeID(ctx, p.OwnerNodeID)
+	} else {
+		instances, err = p.Store.ListAllInstances(ctx)
+	}
 	if err != nil {
 		return err
 	}
-	if p.Telemetry != nil && p.OwnerNodeID != "" {
+	if p.FleetStats == nil && p.Telemetry != nil && p.OwnerNodeID != "" {
 		local := instances[:0]
 		for _, instance := range instances {
 			if instance.NodeID == p.OwnerNodeID {
@@ -238,6 +272,14 @@ func (p *Poller) Tick(ctx context.Context) error {
 			continue
 		}
 		sidecarByDeploy[in.DeploymentID] = mbs
+	}
+	if p.FleetStats != nil {
+		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
+		p.Reader.Replace(rows)
+		if p.Metrics != nil {
+			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
+		}
+		return nil
 	}
 	// Production uses the persistent vmmd→schedd capacity stream. The stream
 	// updates one complete batch per node; this local projection can continue at
@@ -454,6 +496,80 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		if p.Metrics != nil {
 			p.Metrics.InstanceStatsPartialError(node.ID)
 		}
+		return nil, nil
+	}
+	return p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+}
+
+// tickFleet reads the physical nodes that currently host instances belonging
+// to this app owner. Calls fan out concurrently and use VMMRouter's cached
+// transports, so one slow node cannot serialize the owner's complete signal
+// view or create a new mTLS connection on every autoscaling tick.
+func (p *Poller) tickFleet(
+	ctx context.Context,
+	nodes []state.ComputeNode,
+	byNode map[string][]state.Instance,
+	sidecarByDeploy map[string][]int,
+) ([]InstanceStat, []wire.InstanceStatRow) {
+	type result struct {
+		rows   []InstanceStat
+		rolled []wire.InstanceStatRow
+	}
+	wanted := 0
+	for _, node := range nodes {
+		if len(byNode[node.ID]) > 0 {
+			wanted++
+		}
+	}
+	if wanted == 0 {
+		return nil, nil
+	}
+
+	results := make(chan result, wanted)
+	var wg sync.WaitGroup
+	for _, node := range nodes {
+		siblings := byNode[node.ID]
+		if len(siblings) == 0 {
+			continue
+		}
+		node := node
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			snap, err := p.FleetStats.Stats(callCtx, node.ID)
+			if err != nil {
+				p.Log.Warn("instance stats fleet read failed", "node_id", node.ID, "err", err)
+				if p.Metrics != nil {
+					p.Metrics.InstanceStatsPartialError(node.ID)
+				}
+				results <- result{}
+				return
+			}
+			rows, rolled := p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+			results <- result{rows: rows, rolled: rolled}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	var rows []InstanceStat
+	var rolled []wire.InstanceStatRow
+	for got := range results {
+		rows = append(rows, got.rows...)
+		rolled = append(rolled, got.rolled...)
+	}
+	return rows, rolled
+}
+
+func (p *Poller) decodeStatsSnapshot(
+	node state.ComputeNode,
+	siblings []state.Instance,
+	snap *sched.StatsSnapshot,
+	sidecarByDeploy map[string][]int,
+) ([]InstanceStat, []wire.InstanceStatRow) {
+	if snap == nil {
 		return nil, nil
 	}
 	// Index durable sibling state by instance id for the join.

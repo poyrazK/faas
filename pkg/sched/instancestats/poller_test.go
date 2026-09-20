@@ -61,6 +61,25 @@ type statsFakeDialer struct {
 	stats   map[string]*sched.StatsSnapshot // targetURL → snapshot
 }
 
+type statsFakeRouter struct {
+	mu    sync.Mutex
+	calls []string
+	stats map[string]*sched.StatsSnapshot
+	errs  map[string]error
+}
+
+func (r *statsFakeRouter) Stats(_ context.Context, nodeID string) (*sched.StatsSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, nodeID)
+	if err := r.errs[nodeID]; err != nil {
+		return nil, err
+	}
+	return r.stats[nodeID], nil
+}
+
+var _ StatsRouter = (*statsFakeRouter)(nil)
+
 func (d *statsFakeDialer) Dial(_ context.Context, target string, _ *tls.Config) (sched.VMM, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -457,6 +476,80 @@ func TestPoller_TwoOwnerTelemetryViewsFormFleetWithoutFalseErrors(t *testing.T) 
 	}
 	if len(fleetRows) != 2 {
 		t.Fatalf("fleet rows=%+v, want one authoritative row from each owner", fleetRows)
+	}
+}
+
+// TestPoller_FleetStatsFollowsAppOwnershipAcrossPhysicalNodes is the
+// regression for split-node autoscaling. The app owner must observe CPU from
+// every physical placement; filtering by instance.node_id makes remote hot
+// instances invisible and leaves the scale-up trigger on no_signal.
+func TestPoller_FleetStatsFollowsAppOwnershipAcrossPhysicalNodes(t *testing.T) {
+	store := state.NewMemStore()
+	owner, remote := seedTwoNodes(t, store)
+	app, err := store.CreateApp(context.Background(), state.App{
+		Slug: "owned-app", RAMMB: 256, NodeID: owner.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	localInstance := seedInstance(t, store, app.ID, owner.ID)
+	remoteInstance := seedInstance(t, store, app.ID, remote.ID)
+
+	// A foreign-owned app physically placed on the owner's node must not leak
+	// into the owner's scaling view.
+	foreign, err := store.CreateApp(context.Background(), state.App{
+		Slug: "foreign-app", RAMMB: 256, NodeID: remote.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignInstance := seedInstance(t, store, foreign.ID, owner.ID)
+
+	localCPU, remoteCPU, foreignCPU := 12.5, 175.25, 99.0
+	localCount, remoteCount, foreignCount := int64(100), int64(200), int64(300)
+	router := &statsFakeRouter{stats: map[string]*sched.StatsSnapshot{
+		owner.ID: {Instances: []sched.VMInstanceStat{
+			{InstanceID: localInstance.ID, CPUPct: &localCPU, RequestCountTotal: &localCount},
+			{InstanceID: foreignInstance.ID, CPUPct: &foreignCPU, RequestCountTotal: &foreignCount},
+		}},
+		remote.ID: {Instances: []sched.VMInstanceStat{
+			{InstanceID: remoteInstance.ID, CPUPct: &remoteCPU, RequestCountTotal: &remoteCount},
+		}},
+	}}
+	reader := NewReader()
+	now := time.Now()
+	poller := NewPoller(store, nil, nil, reader, nil, nilLogger()).
+		WithNodeRegistry(sched.NewNodeRegistry([]state.ComputeNode{owner, remote})).
+		WithFleetStats(router, owner.ID)
+	poller.Now = func() time.Time { return now }
+
+	if err := poller.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	rows := reader.SnapshotAll()
+	if len(rows) != 2 {
+		t.Fatalf("owner fleet rows = %+v, want local + remote owned instances", rows)
+	}
+	if got, ok := reader.MaxCPU(app.ID); !ok || got != remoteCPU {
+		t.Fatalf("MaxCPU(%s) = %v, %v; want %v, true", app.ID, got, ok, remoteCPU)
+	}
+	for _, row := range rows {
+		if row.InstanceID == foreignInstance.ID {
+			t.Fatalf("owner fleet leaked foreign-owned instance: %+v", row)
+		}
+	}
+
+	// The second sample proves request-start deltas are aggregated across
+	// physical nodes while the foreign app's much larger delta is excluded.
+	localCount += 5
+	remoteCount += 7
+	foreignCount += 99
+	now = now.Add(time.Second)
+	if err := poller.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+	if got, ok := reader.RequestsPerSecond(app.ID); !ok || got != 12 {
+		t.Fatalf("RequestsPerSecond(%s) = %v, %v; want 12, true", app.ID, got, ok)
 	}
 }
 
