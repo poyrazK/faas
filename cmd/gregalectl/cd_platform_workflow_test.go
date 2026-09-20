@@ -14,15 +14,16 @@ func TestCDPlatformOrchestratesControlComputeAndFleetGate(t *testing.T) {
 	}
 	workflow := string(body)
 	control := strings.Index(workflow, "uses: ./.github/workflows/cd-controlplane.yml")
-	compute := strings.Index(workflow, "uses: ./.github/workflows/cd-compute.yml")
+	prepare := strings.Index(workflow, "rollout_phase: prepare")
+	activate := strings.Index(workflow, "rollout_phase: activate")
 	computeNeedsControl := strings.Index(workflow, "needs: [control, plan]")
 	verify := strings.Index(workflow, "name: Report fleet release convergence")
 	gate := strings.Index(workflow, "compute-nodes release-status --desired-release")
-	if control < 0 || compute < 0 || computeNeedsControl < 0 || verify < 0 || gate < 0 {
-		t.Fatalf("platform workflow is incomplete: control=%d compute=%d needs=%d verify=%d gate=%d", control, compute, computeNeedsControl, verify, gate)
+	if control < 0 || prepare < 0 || activate < 0 || computeNeedsControl < 0 || verify < 0 || gate < 0 {
+		t.Fatalf("platform workflow is incomplete: control=%d prepare=%d activate=%d needs=%d verify=%d gate=%d", control, prepare, activate, computeNeedsControl, verify, gate)
 	}
-	if !(control < computeNeedsControl && computeNeedsControl < compute && compute < verify && verify < gate) {
-		t.Fatalf("platform rollout stages are out of order: control=%d needs=%d compute=%d verify=%d gate=%d", control, computeNeedsControl, compute, verify, gate)
+	if !(control < computeNeedsControl && computeNeedsControl < prepare && prepare < activate && activate < verify && verify < gate) {
+		t.Fatalf("platform rollout stages are out of order: control=%d needs=%d prepare=%d activate=%d verify=%d gate=%d", control, computeNeedsControl, prepare, activate, verify, gate)
 	}
 	if !strings.Contains(workflow, "--timeout '${gate_timeout}'") || !strings.Contains(workflow, "--break-glass-db -json") {
 		t.Fatal("platform workflow must execute the bounded, machine-readable active-node release gate")
@@ -43,10 +44,14 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 		"name: Validate compute rollout targets",
 		"target: ${{ fromJSON(needs.plan.outputs.targets) }}",
 		"fail-fast: true",
+		"max-parallel: 2",
 		"max-parallel: 1",
+		"rollout_phase: prepare",
+		"rollout_phase: activate",
+		"needs: [compute-prepare, plan]",
 		"node: ${{ matrix.target.node }}",
 		"ssh_host: ${{ matrix.target.ssh_host }}",
-		"needs: [control, compute, plan]",
+		"needs: [control, compute-prepare, compute, plan]",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("platform workflow is missing fleet-matrix contract %q", required)
@@ -85,12 +90,13 @@ func TestCDPlatformControlSuccessThenComputeFailureIsVisible(t *testing.T) {
 	workflow := string(body)
 	for _, required := range []string{
 		"if: always()",
-		"needs: [control, compute, plan]",
+		"needs: [control, compute-prepare, compute, plan]",
 		"PLAN_RESULT: ${{ needs.plan.result }}",
 		"CONTROL_RESULT: ${{ needs.control.result }}",
+		"COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}",
 		"COMPUTE_RESULT: ${{ needs.compute.result }}",
-		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then`,
-		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
+		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_PREPARE_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then`,
+		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_PREPARE_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
 		"active-node-gate=${gate_exit}",
 	} {
 		if !strings.Contains(workflow, required) {

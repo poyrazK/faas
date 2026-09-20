@@ -448,6 +448,8 @@ var cliCommands = []cliCommand{
 					{Name: "artifact-dir", Short: "standard directory containing join assets"},
 					{Name: "ansible-vars-file", Short: "optional provider/overlay Ansible vars"},
 					{Name: "skip-fleet-preflight", Short: "skip complete-fleet preflight"},
+					{Name: "prepare-only", Short: "stage and verify without draining the node"},
+					{Name: "activate-prepared", Short: "activate a previously prepared release"},
 					{Name: "resume", Short: "resume an interrupted join job"},
 					{Name: "timeout", Short: "maximum join duration"},
 					{Name: "lease-ttl", Short: "join coordination lease duration"},

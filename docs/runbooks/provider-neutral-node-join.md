@@ -224,6 +224,13 @@ gregalectl deploy join-node \
   --yes
 ```
 
+The canonical `cd-platform` rollout splits existing managed nodes into two
+phases automatically. `--prepare-only` verifies and stages the signed release
+and runtime bases without draining the node; `--activate-prepared` later
+requires the same durable desired state and on-host release marker before it
+can drain or restart anything. Fleet preparation may run in parallel, but
+activation stays serialized. Direct repair runs keep the default full path.
+
 If the manifest does not already declare the host's device, add it to this
 invocation explicitly. Use `--format-storage` only for a confirmed blank
 device:

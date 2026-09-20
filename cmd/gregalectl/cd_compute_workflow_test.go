@@ -8,6 +8,46 @@ import (
 	"testing"
 )
 
+func TestCDComputeWorkflowSupportsPrepareThenActivate(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	for _, required := range []string{
+		"rollout_phase:",
+		"default: full",
+		"ROLLOUT_PHASE: ${{ inputs.rollout_phase }}",
+		"prepare) JOIN_ARGS+=(--prepare-only)",
+		"activate) JOIN_ARGS+=(--activate-prepared)",
+		"if: inputs.rollout_phase != 'activate'",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("phased compute rollout is missing %q", required)
+		}
+	}
+	for _, step := range []string{
+		"Verify compute registry lifecycle authorization",
+		"Verify compute OCI cache uses fast storage after activation",
+		"Verify guest service proxy listener after activation",
+		"Verify imaged public-smoke tenant routing after activation",
+		"Verify private compute gateway reachability",
+	} {
+		start := strings.Index(workflow, "- name: "+step)
+		if start < 0 {
+			t.Errorf("missing post-activation step %q", step)
+			continue
+		}
+		end := strings.Index(workflow[start:], "\n      - name:")
+		if end < 0 {
+			end = len(workflow) - start
+		}
+		if !strings.Contains(workflow[start:start+end], "if: inputs.rollout_phase != 'prepare'") {
+			t.Errorf("post-activation step %q does not skip preparation", step)
+		}
+	}
+}
+
 func TestCDComputeWorkflowRequiresExplicitFleetPreflightSkip(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

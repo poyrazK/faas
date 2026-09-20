@@ -170,13 +170,40 @@ jobs:
       release_tag: ${{ inputs.release_tag }}
     secrets: inherit
 
-  compute:
-    name: Compute stage (${{ matrix.target.node || matrix.target.claim_file }})
+  compute-prepare:
+    name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, plan]
     strategy:
-      # max-parallel keeps the fleet serialized; fail-fast prevents the next
-      # queued node from starting after the current node fails its post-rollout
-      # gates. Continuing would risk mutating the last healthy fallback.
+      # Preparation copies and verifies the release while every node continues
+      # serving the old version, so it is safe to overlap across the fleet.
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    uses: ./.github/workflows/cd-compute.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      claim_file: ${{ matrix.target.claim_file }}
+      fleet_bundle_url: ${{ matrix.target.fleet_bundle_url }}
+      fleet_bundle_signature_url: ${{ matrix.target.fleet_bundle_signature_url }}
+      fleet_bundle_sha256: ${{ matrix.target.fleet_bundle_sha256 }}
+      node: ${{ matrix.target.node }}
+      ssh_host: ${{ matrix.target.ssh_host }}
+      ssh_user: ${{ matrix.target.ssh_user }}
+      ssh_port: ${{ matrix.target.ssh_port }}
+      ssh_host_key_sha256: ${{ matrix.target.ssh_host_key_sha256 }}
+      storage_device: ${{ matrix.target.storage_device }}
+      format_storage: ${{ matrix.target.format_storage }}
+      skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
+      rollout_phase: prepare
+    secrets: inherit
+
+  compute:
+    name: Activate compute (${{ matrix.target.node || matrix.target.claim_file }})
+    needs: [compute-prepare, plan]
+    strategy:
+      # Activation drains and restarts one node at a time. Fail fast preserves
+      # the remaining old-version nodes as the healthy fallback.
       fail-fast: true
       max-parallel: 1
       matrix:
@@ -196,12 +223,13 @@ jobs:
       storage_device: ${{ matrix.target.storage_device }}
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
+      rollout_phase: activate
     secrets: inherit
 
   verify:
     name: Report fleet release convergence
     if: always()
-    needs: [control, compute, plan]
+    needs: [control, compute-prepare, compute, plan]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -209,6 +237,7 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       CONTROL_RESULT: ${{ needs.control.result }}
+      COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
       COMPUTE_RESULT: ${{ needs.compute.result }}
       PLAN_RESULT: ${{ needs.plan.result }}
       RELEASE_TAG: ${{ inputs.release_tag }}
@@ -247,7 +276,7 @@ jobs:
           # behind another wait. A successful stage gets two heartbeat periods
           # to publish its final release and liveness state.
           gate_timeout=2m
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_PREPARE_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
@@ -262,7 +291,8 @@ jobs:
             echo "| --- | --- |"
             echo "| Control plane | ${CONTROL_RESULT} |"
             echo "| Compute target plan | ${PLAN_RESULT} |"
-            echo "| Compute fleet matrix | ${COMPUTE_RESULT} |"
+            echo "| Compute fleet preparation | ${COMPUTE_PREPARE_RESULT} |"
+            echo "| Compute fleet activation | ${COMPUTE_RESULT} |"
             echo "| Active-node release gate | exit ${gate_exit} |"
             echo
             echo '```json'
@@ -283,8 +313,8 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
-            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_PREPARE_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${COMPUTE_PREPARE_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"

@@ -81,6 +81,11 @@ on:
         required: false
         default: false
         type: boolean
+      rollout_phase:
+        description: "Rollout phase: full, prepare, or activate"
+        required: false
+        default: full
+        type: string
   workflow_dispatch:
     inputs:
       release_tag:
@@ -147,6 +152,15 @@ on:
         required: false
         default: false
         type: boolean
+      rollout_phase:
+        description: "Rollout phase: full, prepare, or activate"
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - prepare
+          - activate
 
 concurrency:
   group: cd-compute-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url }}
@@ -191,12 +205,20 @@ jobs:
           FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
           FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
           FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
+          ROLLOUT_PHASE: ${{ inputs.rollout_phase }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
             echo "::error::release_tag must be a release tag, got $RELEASE_TAG" >&2
             exit 1
           }
+          case "$ROLLOUT_PHASE" in
+            full|prepare|activate) ;;
+            *)
+              echo "::error::rollout_phase must be full, prepare, or activate" >&2
+              exit 1
+              ;;
+          esac
           if [[ -n "$FLEET_BUNDLE_URL" ]]; then
             [[ "$FLEET_BUNDLE_URL" =~ ^https:// ]] || {
               echo "::error::fleet_bundle_url must use https://" >&2
@@ -482,6 +504,7 @@ jobs:
       SSH_HOST_KEY_SHA256: ${{ needs.preflight.outputs.ssh_host_key_sha256 }}
       STORAGE_DEVICE: ${{ needs.preflight.outputs.storage_device }}
       FORMAT_STORAGE: ${{ needs.preflight.outputs.format_storage }}
+      ROLLOUT_PHASE: ${{ inputs.rollout_phase }}
       FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
       FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
       FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
@@ -768,6 +791,7 @@ jobs:
           echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
 
       - name: Publish the release-pinned kernel to shared storage
+        if: inputs.rollout_phase != 'activate'
         env:
           # Publishing uses the exact storage.env contract that is staged on
           # the node. `--no-cache` keeps the trusted runner from treating its
@@ -836,6 +860,15 @@ jobs:
             # while another manifest peer is intentionally powered off.
             JOIN_ARGS+=(--skip-fleet-preflight)
           fi
+          case "$ROLLOUT_PHASE" in
+            prepare) JOIN_ARGS+=(--prepare-only) ;;
+            activate) JOIN_ARGS+=(--activate-prepared) ;;
+            full) ;;
+            *)
+              echo "::error::unsupported rollout phase $ROLLOUT_PHASE" >&2
+              exit 1
+              ;;
+          esac
           if [[ -n "$FLEET_BUNDLE_URL" ]]; then
             JOIN_ARGS+=(
               --fleet-bundle-file "$ARTIFACT_DIR/fleet-enrollment.yaml"
@@ -861,6 +894,7 @@ jobs:
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
       - name: Verify compute registry lifecycle authorization
+        if: inputs.rollout_phase != 'prepare'
         run: |
           set -euo pipefail
           ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
@@ -879,6 +913,7 @@ jobs:
             "sudo -n -u faas-imaged /usr/local/bin/gregalectl artifact lifecycle-check --env-file /etc/faas/storage.env --lifecycle-env-file /etc/faas/imaged-storage.env --json"
 
       - name: Verify compute OCI cache uses fast storage after activation
+        if: inputs.rollout_phase != 'prepare'
         run: |
           set -euo pipefail
           ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
@@ -909,6 +944,7 @@ jobs:
           REMOTE
 
       - name: Verify guest service proxy listener after activation
+        if: inputs.rollout_phase != 'prepare'
         run: |
           set -euo pipefail
           ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
@@ -926,6 +962,7 @@ jobs:
           REMOTE
 
       - name: Verify imaged public-smoke tenant routing after activation
+        if: inputs.rollout_phase != 'prepare'
         run: |
           set -euo pipefail
           ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
@@ -948,6 +985,7 @@ jobs:
           REMOTE
 
       - name: Verify private compute gateway reachability
+        if: inputs.rollout_phase != 'prepare'
         run: |
           set -euo pipefail
           # The trusted fleet runner is on the control-plane network. Probe the
@@ -1013,8 +1051,8 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          echo "release=${RELEASE_ID:-unknown} node=$NODE ssh_host=$SSH_HOST"
-          echo "The join command is the readiness/activation gate; inspect its JSON result above."
+          echo "release=${RELEASE_ID:-unknown} node=$NODE ssh_host=$SSH_HOST phase=$ROLLOUT_PHASE"
+          echo "The join command is the rollout gate for this phase; inspect its JSON result above."
 
       - name: Clean compute rollout scratch
         if: always()

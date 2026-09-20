@@ -52,9 +52,10 @@ host.
 ### Step 4: Deploy the Signed Release to the Fleet
 
 Use the canonical platform workflow for production installation. It verifies
-and activates the control plane, rolls every declared compute target, then
-requires full-fleet release convergence and production acceptance. Pass the
-complete active fleet as one JSON array:
+and activates the control plane, prepares release artifacts and runtime bases
+on compute targets in parallel without draining them, then drains and activates
+one prepared node at a time. It finally requires full-fleet release convergence
+and production acceptance. Pass the complete active fleet as one JSON array:
 
 ```bash
 RELEASE_TAG=v0.1.18-rc.1

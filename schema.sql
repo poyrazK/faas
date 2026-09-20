@@ -3079,7 +3079,7 @@ CREATE TABLE public.node_join_jobs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
     CONSTRAINT node_join_jobs_attempt_check CHECK ((attempt >= 0)),
-    CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
+    CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'prepared'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
 );
 
 

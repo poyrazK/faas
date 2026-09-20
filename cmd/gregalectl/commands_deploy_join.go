@@ -68,6 +68,7 @@ type deployJoinOptions struct {
 	AnsibleVarsFile         string
 	RepoRoot                string
 	PostgresOverlapNodes    int
+	RolloutPhase            string
 	SkipFleetPreflight      bool
 	Resume                  bool
 	Timeout                 time.Duration
@@ -84,6 +85,7 @@ type deployJoinReport struct {
 	ManifestFile   string       `json:"manifest_file"`
 	ReleaseGitSHA  string       `json:"release_git_sha"`
 	FleetPreflight bool         `json:"fleet_preflight"`
+	Prepared       bool         `json:"prepared"`
 	Applied        bool         `json:"applied"`
 	Steps          []string     `json:"steps"`
 	Timings        []joinTiming `json:"timings,omitempty"`
@@ -93,6 +95,12 @@ type joinTiming struct {
 	Phase      string `json:"phase"`
 	DurationMS int64  `json:"duration_ms"`
 }
+
+const (
+	joinRolloutFull     = "full"
+	joinRolloutPrepare  = "prepare"
+	joinRolloutActivate = "activate"
+)
 
 var nodeJoinStoreOpener = openNodeJoinStore
 
@@ -165,6 +173,8 @@ func cmdDeployJoinNode(args []string) int {
 	ansibleVars := fs.String("ansible-vars-file", "", "optional provider/overlay Ansible vars file")
 	repoRoot := fs.String("repo-root", "", "path to the faas repository (default: inferred from gregalectl)")
 	skipPreflight := fs.Bool("skip-fleet-preflight", false, "skip the complete-fleet preflight (only for a previously validated fleet)")
+	prepareOnly := fs.Bool("prepare-only", false, "stage and verify an existing managed node without draining it")
+	activatePrepared := fs.Bool("activate-prepared", false, "activate a release previously completed by --prepare-only")
 	resume := fs.Bool("resume", false, "resume a failed or interrupted join job for this exact desired state")
 	timeout := fs.Duration("timeout", 20*time.Minute, "maximum time allowed for the remote adoption")
 	leaseTTL := fs.Duration("lease-ttl", 30*time.Minute, "database lease held by this join worker")
@@ -177,6 +187,16 @@ func cmdDeployJoinNode(args []string) int {
 	if fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: unexpected positional argument")
 		return 2
+	}
+	if *prepareOnly && *activatePrepared {
+		fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: --prepare-only and --activate-prepared are mutually exclusive")
+		return 2
+	}
+	rolloutPhase := joinRolloutFull
+	if *prepareOnly {
+		rolloutPhase = joinRolloutPrepare
+	} else if *activatePrepared {
+		rolloutPhase = joinRolloutActivate
 	}
 
 	opts := deployJoinOptions{
@@ -213,6 +233,7 @@ func cmdDeployJoinNode(args []string) int {
 		AnsibleVarsFile:         *ansibleVars,
 		RepoRoot:                *repoRoot,
 		PostgresOverlapNodes:    1,
+		RolloutPhase:            rolloutPhase,
 		SkipFleetPreflight:      *skipPreflight,
 		Resume:                  *resume,
 		Timeout:                 *timeout,
@@ -252,7 +273,11 @@ func cmdDeployJoinNode(args []string) int {
 		return emitDeployJoinReport(report, false, opts.JSON)
 	}
 	if !opts.Yes {
-		fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: this will bootstrap and start services on the remote host")
+		if opts.RolloutPhase == joinRolloutPrepare {
+			fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: this will stage and verify the release without draining the remote host")
+		} else {
+			fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: this will bootstrap and start services on the remote host")
+		}
 		fmt.Fprintln(os.Stderr, "Re-run with --yes to proceed.")
 		return 2
 	}
@@ -262,11 +287,13 @@ func cmdDeployJoinNode(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy join-node: %v\n", err)
 		return code
 	}
-	if err := markFleetBundleConsumed(opts); err != nil {
-		fmt.Fprintf(os.Stderr, "gregalectl deploy join-node: %v\n", err)
-		return 3
+	if report.Applied {
+		if err := markFleetBundleConsumed(opts); err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl deploy join-node: %v\n", err)
+			return 3
+		}
 	}
-	return emitDeployJoinReport(report, true, opts.JSON)
+	return emitDeployJoinReport(report, report.Applied, opts.JSON)
 }
 
 // cmdDeployRollbackNode is the operator-safe rollback boundary for a join.
@@ -349,6 +376,11 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 	if opts.LeaseTTL <= 0 {
 		return 2, errors.New("--lease-ttl must be positive")
 	}
+	phase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
+	if err != nil {
+		return 2, err
+	}
+	opts.RolloutPhase = phase
 	manifestHash, err := joinManifestHash(opts.ManifestFile)
 	if err != nil {
 		return 1, err
@@ -359,8 +391,12 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 	}
 	defer closeJobStore()
 	spec := nodejoin.Spec{NodeName: opts.Node, DatabaseNode: report.DatabaseNode, SSHHost: opts.SSHHost, ManifestHash: manifestHash, ReleaseGitSHA: report.ReleaseGitSHA}
-	if _, err := jobStore.CreateOrResume(context.Background(), spec, opts.Resume); err != nil {
+	job, err := jobStore.CreateOrResume(context.Background(), spec, opts.Resume)
+	if err != nil {
 		return 1, fmt.Errorf("prepare durable join job: %w", err)
+	}
+	if phase == joinRolloutActivate && job.Phase != nodejoin.PhasePrepared {
+		return 3, fmt.Errorf("activate prepared rollout: node %s is in phase %s, want %s; rerun --prepare-only first", opts.Node, job.Phase, nodejoin.PhasePrepared)
 	}
 	owner := fmt.Sprintf("gregalectl-%d-%d", os.Getpid(), time.Now().UnixNano())
 	if _, err := jobStore.AcquireLease(context.Background(), opts.Node, owner, opts.LeaseTTL); err != nil {
@@ -379,13 +415,41 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 		_ = jobStore.MarkFailed(context.Background(), opts.Node, owner, err)
 		return code, err
 	}
+	if phase == joinRolloutPrepare {
+		if err := jobStore.UpdatePhase(context.Background(), opts.Node, owner, nodejoin.PhasePrepared, ""); err != nil {
+			return 3, fmt.Errorf("mark prepared: %w", err)
+		}
+		if err := jobStore.ReleaseLease(context.Background(), opts.Node, owner); err != nil {
+			return 3, fmt.Errorf("release prepared join lease: %w", err)
+		}
+		report.Prepared = true
+		return 0, nil
+	}
 	if err := jobStore.MarkComplete(context.Background(), opts.Node, owner); err != nil {
 		return 3, fmt.Errorf("mark active: %w", err)
 	}
 	return 0, nil
 }
 
+func normalizedJoinRolloutPhase(phase string) (string, error) {
+	phase = strings.TrimSpace(phase)
+	if phase == "" {
+		return joinRolloutFull, nil
+	}
+	switch phase {
+	case joinRolloutFull, joinRolloutPrepare, joinRolloutActivate:
+		return phase, nil
+	default:
+		return "", fmt.Errorf("invalid rollout phase %q", phase)
+	}
+}
+
 func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
+	rolloutPhase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
+	if err != nil {
+		return deployJoinReport{}, err
+	}
+	opts.RolloutPhase = rolloutPhase
 	rolloutOverlapNodes := postgresRolloutOverlapNodes(opts.PostgresOverlapNodes)
 	report := deployJoinReport{
 		Node:           opts.Node,
@@ -627,6 +691,11 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if opts.RepoRoot == "" {
 		opts.RepoRoot = defaultRepoRoot()
 	}
+	rolloutPhase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
+	if err != nil {
+		return 2, err
+	}
+	opts.RolloutPhase = rolloutPhase
 	ansibleDir := filepath.Join(opts.RepoRoot, "deploy/ansible")
 	bootstrapContractSHA256, err := joinBootstrapContractHash(ansibleDir)
 	if err != nil {
@@ -674,8 +743,13 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err != nil {
 		return 3, err
 	}
-	if err := joinReleaseBundleRegistrar(ctx, opts.ReleaseTarball, report.ReleaseGitSHA, expectedManifestHash); err != nil {
-		return 3, fmt.Errorf("register release bundle: %w", err)
+	// Preparation is deliberately non-disruptive and may run concurrently on
+	// every node. Defer the shared release_bundles write to the serialized
+	// activation lane so parallel prepare jobs cannot race the unique git SHA.
+	if rolloutPhase != joinRolloutPrepare {
+		if err := joinReleaseBundleRegistrar(ctx, opts.ReleaseTarball, report.ReleaseGitSHA, expectedManifestHash); err != nil {
+			return 3, fmt.Errorf("register release bundle: %w", err)
+		}
 	}
 	builderBaseRef := ""
 	if digest := strings.TrimSpace(m.Release.BuilderBaseDigest); digest != "" {
@@ -692,6 +766,10 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	trustRoot := filepath.Join(tempRoot, "pki-trust")
 	if err := copyTrustBundle(opts.PKISource, trustRoot, roleComputeOnly, manifestSANs, report.DatabaseNode); err != nil {
 		return 3, fmt.Errorf("prepare compute trust bundle: %w", err)
+	}
+	candidateCertFingerprint, err := pki.LoadCertificateFingerprint(filepath.Join(trustRoot, "vmmd", "server.crt"))
+	if err != nil {
+		return 3, fmt.Errorf("fingerprint candidate compute certificate: %w", err)
 	}
 	files, err := renderManifestAnsibleFiles(m, tempRoot)
 	if err != nil {
@@ -768,6 +846,8 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_builder_base_ref":           builderBaseRef,
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
 		"faas_join_peer_contract_sha256":       peerContractSHA256,
+		"faas_join_rollout_phase":              rolloutPhase,
+		"faas_join_candidate_cert_fingerprint": candidateCertFingerprint,
 		"faas_postgres_rollout_overlap_nodes":  postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
@@ -794,7 +874,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		common = append(common, "-e", "@"+opts.AnsibleVarsFile)
 	}
 	common = append(common, "-e", "@"+varsPath)
-	if !opts.SkipFleetPreflight {
+	if rolloutPhase != joinRolloutActivate && !opts.SkipFleetPreflight {
 		if progress != nil {
 			if err := progress(nodejoin.PhasePreflight); err != nil {
 				return 3, fmt.Errorf("record preflight phase: %w", err)
@@ -813,22 +893,38 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 			return 3, fmt.Errorf("record converging phase: %w", err)
 		}
 	}
-	// A node join changes the control-plane's peer allowlists as well as the
-	// adopted host. Keep this as a separate, narrowly limited play so the
-	// existing compute fleet is never rebooted or reconfigured by --limit.
-	controlPlaneArgs := append(append([]string{}, common...), "--limit", "control_plane", filepath.Join(ansibleDir, "node_join_control_plane.yml"))
-	phaseStarted := time.Now()
-	controlPlaneErr := ansiblePlaybookRunner(ctx, ansibleDir, controlPlaneArgs)
-	report.Timings = append(report.Timings, joinTiming{Phase: "control_plane_convergence", DurationMS: time.Since(phaseStarted).Milliseconds()})
-	if controlPlaneErr != nil {
-		return 3, fmt.Errorf("control-plane topology convergence: %w", controlPlaneErr)
+	// Preparation runs concurrently across nodes, so it must not mutate the
+	// shared control plane. Activation is serialized by cd-platform and keeps
+	// this topology convergence immediately ahead of the node drain.
+	if rolloutPhase != joinRolloutPrepare {
+		controlPlaneArgs := append(append([]string{}, common...), "--limit", "control_plane", filepath.Join(ansibleDir, "node_join_control_plane.yml"))
+		phaseStarted := time.Now()
+		controlPlaneErr := ansiblePlaybookRunner(ctx, ansibleDir, controlPlaneArgs)
+		report.Timings = append(report.Timings, joinTiming{Phase: "control_plane_convergence", DurationMS: time.Since(phaseStarted).Milliseconds()})
+		if controlPlaneErr != nil {
+			return 3, fmt.Errorf("control-plane topology convergence: %w", controlPlaneErr)
+		}
 	}
-	joinArgs := append(append([]string{}, common...), "--limit", opts.Node, filepath.Join(ansibleDir, "node_join.yml"))
-	phaseStarted = time.Now()
+	joinArgs := append(append([]string{}, common...), "--limit", opts.Node)
+	if rolloutPhase == joinRolloutActivate {
+		joinArgs = append(joinArgs, "--start-at-task", "Verify the prepared rollout marker")
+	}
+	joinArgs = append(joinArgs, filepath.Join(ansibleDir, "node_join.yml"))
+	phaseStarted := time.Now()
 	joinErr := ansiblePlaybookRunner(ctx, ansibleDir, joinArgs)
-	report.Timings = append(report.Timings, joinTiming{Phase: "node_convergence", DurationMS: time.Since(phaseStarted).Milliseconds()})
+	nodePhaseName := "node_convergence"
+	if rolloutPhase == joinRolloutPrepare {
+		nodePhaseName = "node_preparation"
+	} else if rolloutPhase == joinRolloutActivate {
+		nodePhaseName = "node_activation"
+	}
+	report.Timings = append(report.Timings, joinTiming{Phase: nodePhaseName, DurationMS: time.Since(phaseStarted).Milliseconds()})
 	if joinErr != nil {
 		return 3, fmt.Errorf("node adoption: %w", joinErr)
+	}
+	if rolloutPhase == joinRolloutPrepare {
+		report.Prepared = true
+		return 0, nil
 	}
 	if progress != nil {
 		if err := progress(nodejoin.PhaseVerifying); err != nil {
@@ -1706,6 +1802,8 @@ func emitDeployJoinReport(report deployJoinReport, applied bool, jsonOut bool) i
 	state := "plan"
 	if applied {
 		state = "active"
+	} else if report.Prepared {
+		state = "prepared"
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "deploy join-node: %s node=%s release=%s ssh=%s\n", state, report.DatabaseNode, report.ReleaseGitSHA, report.SSHHost)
 	for i, step := range report.Steps {

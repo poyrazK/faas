@@ -120,6 +120,19 @@
              if faas_join_bootstrap_contract_current
              else 'Managed-host bootstrap contract is absent or stale; running full convergence.' }}
 
+    # The parallel preparation lane is intentionally narrower than node
+    # adoption. A host whose OS/role contract changed must use the existing
+    # serialized full convergence path rather than mutating serving daemons in
+    # parallel with its peers.
+    - name: Require an existing managed host for non-disruptive rollout preparation
+      ansible.builtin.assert:
+        that:
+          - faas_join_bootstrap_contract_current | bool
+        fail_msg: >-
+          Parallel rollout preparation requires a current managed-host
+          bootstrap contract; run the full serialized join path for this node.
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
     - name: Create bootstrap directories
       ansible.builtin.file:
         path: "{{ item.path }}"
@@ -347,6 +360,19 @@
             if faas_join_existing_compute_node.rc == 0
             else ''
           }}
+
+    # Updating the database fingerprint while the old vmmd process is still
+    # serving would make new mTLS connections reject that process. Certificate
+    # rotation therefore remains on the serialized full-convergence path.
+    - name: Refuse certificate rotation during parallel rollout preparation
+      ansible.builtin.assert:
+        that:
+          - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
+          - faas_join_candidate_cert_fingerprint == faas_join_expected_cert_fingerprint
+        fail_msg: >-
+          Parallel rollout preparation cannot rotate the compute certificate;
+          run the full serialized join path for this node.
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Stage the compute trust bundle (the source never includes the CA private key)
       ansible.builtin.copy:
@@ -806,6 +832,32 @@
         name: faas-imaged-prestage.service
         state: started
 
+    - name: Record completed non-disruptive rollout preparation
+      ansible.builtin.copy:
+        dest: /var/lib/faas/bootstrap/prepared-release.sha
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ faas_join_release_git_sha }}\n"
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    - name: End the node play after non-disruptive rollout preparation
+      ansible.builtin.meta: end_play
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    # --activate-prepared starts at this exact task. The release-bound marker
+    # is written only after signature verification and runtime-base pre-stage
+    # complete, so the serialized lane cannot drain a partially prepared node.
+    - name: Verify the prepared rollout marker
+      ansible.builtin.command:
+        argv:
+          - grep
+          - -Fqx
+          - "{{ faas_join_release_git_sha }}"
+          - /var/lib/faas/bootstrap/prepared-release.sha
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'activate'
+
     - name: Begin graceful drain of the existing node before release installation
       ansible.builtin.command:
         argv:
@@ -818,7 +870,9 @@
           - node_join_preregister
           - --break-glass-db
           - --yes
-      when: faas_join_existing_compute_node.rc == 0
+      when: >-
+        (faas_join_rollout_phase | default('full')) == 'activate' or
+        (faas_join_existing_compute_node | default({'rc': 3})).rc == 0
       register: faas_compute_node_drain
       changed_when: true
 
@@ -855,7 +909,9 @@
           - --yes
       register: faas_compute_node_preregister
       changed_when: true
-      when: faas_join_existing_compute_node.rc == 3
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - (faas_join_existing_compute_node | default({'rc': 3})).rc == 3
 
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until
@@ -870,7 +926,9 @@
           - --node
           - "{{ faas_join_database_node }}"
           - --break-glass-db
-      when: faas_join_existing_compute_node.rc == 0
+      when: >-
+        (faas_join_rollout_phase | default('full')) == 'activate' or
+        (faas_join_existing_compute_node | default({'rc': 3})).rc == 0
       register: faas_compute_node_drain_status
       changed_when: false
       retries: 48

@@ -294,6 +294,56 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	}
 }
 
+func TestNodeJoinPreparationStopsBeforeDrainAndActivationRequiresMarker(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	certGuard := strings.Index(playbook, "Refuse certificate rotation during parallel rollout preparation")
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	record := strings.Index(playbook, "Record completed non-disruptive rollout preparation")
+	endPlay := strings.Index(playbook, "End the node play after non-disruptive rollout preparation")
+	verify := strings.Index(playbook, "Verify the prepared rollout marker")
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	if certGuard < 0 || prestage < 0 || record < 0 || endPlay < 0 || verify < 0 || drain < 0 ||
+		!(certGuard < prestage && prestage < record && record < endPlay && endPlay < verify && verify < drain) {
+		t.Fatalf("phased rollout order invalid: cert=%d prestage=%d record=%d end=%d verify=%d drain=%d", certGuard, prestage, record, endPlay, verify, drain)
+	}
+	if !strings.Contains(playbook[certGuard:prestage], "faas_join_candidate_cert_fingerprint == faas_join_expected_cert_fingerprint") {
+		t.Fatal("parallel preparation does not reject a live certificate rotation")
+	}
+	prepareBlock := playbook[record:verify]
+	for _, token := range []string{
+		"prepared-release.sha",
+		"faas_join_release_git_sha",
+		"ansible.builtin.meta: end_play",
+		"faas_join_rollout_phase | default('full')) == 'prepare'",
+	} {
+		if !strings.Contains(prepareBlock, token) {
+			t.Errorf("preparation handoff is missing %q", token)
+		}
+	}
+	activationBlock := playbook[verify:drain]
+	for _, token := range []string{"grep", "- -Fqx", "prepared-release.sha", "faas_join_rollout_phase | default('full')) == 'activate'"} {
+		if !strings.Contains(activationBlock, token) {
+			t.Errorf("activation marker gate is missing %q", token)
+		}
+	}
+}
+
+func TestNormalizedJoinRolloutPhase(t *testing.T) {
+	for input, want := range map[string]string{"": joinRolloutFull, "full": joinRolloutFull, " prepare ": joinRolloutPrepare, "activate": joinRolloutActivate} {
+		got, err := normalizedJoinRolloutPhase(input)
+		if err != nil || got != want {
+			t.Errorf("normalizedJoinRolloutPhase(%q) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	if _, err := normalizedJoinRolloutPhase("unsafe"); err == nil {
+		t.Fatal("normalizedJoinRolloutPhase accepted an unknown phase")
+	}
+}
+
 func TestNodeJoinRepairsCacheBeforeRuntimePrestage(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {
@@ -1144,7 +1194,11 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		joinPrivateAddressLookup = oldLookup
 	})
 	joinControlPlaneVerifier = func(context.Context, *deployJoinReport, string) error { return nil }
-	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error { return nil }
+	registrations := 0
+	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error {
+		registrations++
+		return nil
+	}
 	joinPrivateAddressLookup = func(_ context.Context, _, host string) ([]net.IP, error) {
 		switch host {
 		case "fsn-1.gregale.dev":
@@ -1216,7 +1270,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployJoinValidate: %v", err)
 	}
-	if code, err := deployJoinApply(&deployJoinOptions{
+	applyOpts := deployJoinOptions{
 		ManifestFile:            manifestPath,
 		Node:                    "fsn-2",
 		SSHHost:                 "203.0.113.27",
@@ -1237,7 +1291,8 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		RepoRoot:                repo,
 		PostgresOverlapNodes:    4,
 		SkipFleetPreflight:      true,
-	}, &report); err != nil || code != 0 {
+	}
+	if code, err := deployJoinApply(&applyOpts, &report); err != nil || code != 0 {
 		t.Fatalf("deployJoinApply: code=%d err=%v", code, err)
 	}
 	if len(calls) != 3 {
@@ -1260,5 +1315,54 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if !report.Applied {
 		t.Fatal("apply report was not marked applied")
+	}
+	if registrations != 1 {
+		t.Fatalf("full rollout release registrations = %d, want 1", registrations)
+	}
+
+	calls = nil
+	prepareOpts := applyOpts
+	prepareOpts.RolloutPhase = joinRolloutPrepare
+	prepareReport := report
+	prepareReport.Applied = false
+	prepareReport.Prepared = false
+	if code, err := deployJoinApply(&prepareOpts, &prepareReport); err != nil || code != 0 {
+		t.Fatalf("prepare deployJoinApply: code=%d err=%v", code, err)
+	}
+	if len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "node_join.yml") {
+		t.Fatalf("prepare Ansible calls = %v, want only node preparation", calls)
+	}
+	if !prepareReport.Prepared || prepareReport.Applied {
+		t.Fatalf("prepare report = %#v, want prepared but not applied", prepareReport)
+	}
+	if registrations != 1 {
+		t.Fatalf("preparation registered the shared release bundle; registrations=%d", registrations)
+	}
+
+	calls = nil
+	activateOpts := applyOpts
+	activateOpts.RolloutPhase = joinRolloutActivate
+	activateReport := report
+	activateReport.Applied = false
+	activateReport.Prepared = false
+	if code, err := deployJoinApply(&activateOpts, &activateReport); err != nil || code != 0 {
+		t.Fatalf("activate deployJoinApply: code=%d err=%v", code, err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("activation Ansible calls = %d, want control-plane, node activation, and baseline acceptance", len(calls))
+	}
+	activationArgs := calls[1]
+	joinedActivation := strings.Join(activationArgs, " ")
+	if !strings.Contains(joinedActivation, "--start-at-task Verify the prepared rollout marker") {
+		t.Fatalf("activation does not start from the prepared marker: %v", activationArgs)
+	}
+	if activationArgs[len(activationArgs)-1] != filepath.Join(ansibleDir, "node_join.yml") {
+		t.Fatalf("activation playbook must follow Ansible options: %v", activationArgs)
+	}
+	if !activateReport.Applied {
+		t.Fatal("activation report was not marked applied")
+	}
+	if registrations != 2 {
+		t.Fatalf("activation release registrations = %d, want one additional registration", registrations)
 	}
 }
