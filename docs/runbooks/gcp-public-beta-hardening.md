@@ -215,6 +215,11 @@ bash scripts/ops/gcp_provision_compute.sh \
   --apply
 ```
 
+The apply path also converges the node's private Cloud DNS name to its RFC1918
+address. If provisioning is interrupted after the VM exists, rerun the same
+command with `--resume-existing --apply`; it validates the complete managed
+compute shape before resuming DNS, operator SSH bootstrap, and claim emission.
+
 The final line records `provider_ready_seconds`. Record the later release,
 admission, snapshot, and traffic timestamps beside it; VM creation alone is not
 traffic recovery.

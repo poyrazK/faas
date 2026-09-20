@@ -309,6 +309,20 @@ bash scripts/ops/gcp_provision_compute.sh \
   --apply
 ```
 
+The GCP adapter also creates or converges a private managed zone for
+`fsn-4.gregale.dev.` and points its A record at the VM's RFC1918 address. This
+is part of provider readiness: the claim is not useful if control-plane and
+compute peers still resolve the runtime name through public DNS. Override
+`--network`, `--private-dns-name`, or `--private-dns-zone` only when the signed
+fleet topology uses a different private network identity.
+
+If the command is interrupted after GCE creates the VM, rerun the same command
+with `--resume-existing --apply`. Resume validates the machine type, zone,
+nested virtualization, service account, disks, metadata, labels, private-only
+networking, and deletion protection before it touches SSH access or DNS. A
+same-named but differently configured machine fails closed; the script never
+silently adopts it or creates a duplicate.
+
 Use the provider-neutral enrollment command for the rest of the path:
 
 ```sh
@@ -342,9 +356,10 @@ signature validation but fail adoption from the fleet runner.
 
 The provider provisioner remains replaceable: an OVH or Hetzner adapter emits
 the same `ComputeNodeClaim`. It must provide nested-virtualization-capable
-hardware, fleet reachability, the same durable fleet operator account, a
-pinned SSH host key, and a stable storage device path; the Gregale admission
-path after that handoff is identical.
+hardware, converge the node's private runtime name, establish fleet
+reachability and the durable fleet operator account, pin the SSH host key, and
+name a stable storage device path; the Gregale admission path after that
+handoff is identical.
 
 ## Fast repeated provisioning
 
