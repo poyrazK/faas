@@ -307,21 +307,30 @@ bash scripts/ops/gcp_provision_compute.sh \
   --ssh-user faas-operator \
   --ssh-public-key-file /secure/private/compute-ssh-key.pub \
   --apply
-
-gregalectl deploy fleet-bundle create \
-  --claim-file /tmp/fsn-4-gcp-claim.yaml \
-  --manifest-file production-manifest.yaml \
-  --generation <next-generation> \
-  --output /secure/private/fleet-enrollment-fsn-4.yaml
 ```
 
-Publish those exact bundle bytes to the private configuration service, sign
-them with `fleet-enrollment.yml`, then dispatch `cd-compute` with the bundle
-URL, signature URL, and digest. No manifest host edit or release tag is needed
-for `fsn-4`. The join adds the node drained, converges control-plane access,
-verifies the release and runtime, then activates it. Later joins rebuild their
-fleet view from the compute registry so they do not remove earlier dynamic
-nodes.
+Use the provider-neutral enrollment command for the rest of the path:
+
+```sh
+GREGALECTL_BIN=/secure/bin/gregalectl \
+bash scripts/ops/enroll_compute_claim.sh \
+  --claim /tmp/fsn-4-gcp-claim.yaml \
+  --release-tag <signed-release-tag> \
+  --apply
+```
+
+It downloads the exact release manifest, validates the claim, chooses a
+time-based authorization generation, uploads the bundle with a create-only
+GCS precondition, waits for the exact digest-named signing run, confirms the
+signature exists, and dispatches the exact digest-named `cd-compute` run. It
+waits for rollout completion by default; use `--no-wait` only when another
+operator will monitor the printed run URL. Dry-run is the default.
+
+No manifest host edit or release tag is needed for each node. The join adds
+the node drained, converges control-plane access, verifies the release and
+runtime, then activates it. Later joins rebuild their fleet view from the
+compute registry so they do not remove earlier dynamic nodes. OVH and Hetzner
+adapters emit the same claim and use this same enrollment command.
 
 The provider bootstrap identity is deliberately separate from the durable
 fleet operator. The GCP adapter uses OS Login only to install the public half

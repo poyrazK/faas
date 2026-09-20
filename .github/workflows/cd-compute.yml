@@ -13,6 +13,7 @@
 # database and mesh used by the join pipeline.
 
 name: cd-compute
+run-name: Compute ${{ inputs.node || 'fleet' }} ${{ inputs.fleet_bundle_sha256 || inputs.release_tag }}
 
 on:
   workflow_call:

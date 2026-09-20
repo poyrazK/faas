@@ -8,6 +8,7 @@
 # identity when it accepts a bundle during node adoption.
 
 name: fleet-enrollment
+run-name: Sign fleet bundle ${{ inputs.bundle_sha256 }}
 
 on:
   workflow_dispatch:

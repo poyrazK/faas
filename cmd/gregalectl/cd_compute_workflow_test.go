@@ -208,6 +208,23 @@ func TestFleetEnrollmentGCSAuthIsFreshAndKeylessPerJob(t *testing.T) {
 	}
 }
 
+func TestFleetEnrollmentRunsHaveDigestStableNames(t *testing.T) {
+	computeBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(computeBody), "run-name: Compute ${{ inputs.node || 'fleet' }} ${{ inputs.fleet_bundle_sha256 || inputs.release_tag }}") {
+		t.Fatal("cd-compute run name must identify the exact node and signed bundle digest")
+	}
+	publisherBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "fleet-enrollment.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(publisherBody), "run-name: Sign fleet bundle ${{ inputs.bundle_sha256 }}") {
+		t.Fatal("fleet-enrollment run name must identify the exact signed bundle digest")
+	}
+}
+
 func TestCDComputeWorkflowDownloadsCanonicalAssetsFromOneLookupInParallel(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

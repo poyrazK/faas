@@ -15,6 +15,14 @@ func TestGCPProvisionComputeOperatorHandoff(t *testing.T) {
 	}
 }
 
+func TestProviderNeutralClaimEnrollmentOrchestration(t *testing.T) {
+	cmd := exec.Command("bash", "enroll_compute_claim_test.sh")
+	cmd.Dir = "."
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compute claim enrollment regression test failed: %v\n%s", err, output)
+	}
+}
+
 func TestGCPComputeJoinIgnoresExpectedCacheBindMount(t *testing.T) {
 	tasks, err := os.ReadFile("../../deploy/ansible/roles/xfs/tasks/main.yml")
 	if err != nil {
