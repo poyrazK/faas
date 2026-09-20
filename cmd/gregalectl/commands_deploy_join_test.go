@@ -303,12 +303,13 @@ func TestNodeJoinFreshHostBootstrapsVMMDWithoutEarlyActivation(t *testing.T) {
 	playbook := string(body)
 	preregister := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before runtime pre-stage")
 	inspect := strings.Index(playbook, "Inspect the active vmmd binary before runtime pre-stage")
+	render := strings.Index(playbook, "Render fresh-host runtime configuration before pre-stage")
 	override := strings.Index(playbook, "Bootstrap fresh-host vmmd from the verified release candidate")
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
 	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
-	if preregister < 0 || inspect < 0 || override < 0 || prestage < 0 || drain < 0 ||
-		!(preregister < inspect && inspect < override && override < prestage && prestage < drain) {
-		t.Fatalf("fresh-host bootstrap order invalid: preregister=%d inspect=%d override=%d prestage=%d drain=%d", preregister, inspect, override, prestage, drain)
+	if preregister < 0 || inspect < 0 || render < 0 || override < 0 || prestage < 0 || drain < 0 ||
+		!(preregister < inspect && inspect < render && render < override && override < prestage && prestage < drain) {
+		t.Fatalf("fresh-host bootstrap order invalid: preregister=%d inspect=%d render=%d override=%d prestage=%d drain=%d", preregister, inspect, render, override, prestage, drain)
 	}
 
 	bootstrapBlock := playbook[preregister:drain]
@@ -316,6 +317,11 @@ func TestNodeJoinFreshHostBootstrapsVMMDWithoutEarlyActivation(t *testing.T) {
 		"--defer-activation",
 		"(faas_join_existing_compute_node.rc | default(3)) == 3",
 		"/opt/faas/current/bin/vmmd",
+		"Render fresh-host runtime configuration before pre-stage",
+		"/usr/local/bin/gregalectl",
+		"- manifest",
+		"- render",
+		"- --pki-trust-only",
 		"ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd",
 		"when: not faas_join_active_vmmd.stat.exists",
 		"Stop the fresh-host bootstrap vmmd after runtime pre-stage",

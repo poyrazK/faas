@@ -823,6 +823,26 @@
         follow: true
       register: faas_join_active_vmmd
 
+    # A fresh host has the daemon units installed by bootstrap.yml, but the
+    # production TOML files are intentionally owned by the manifest renderer.
+    # Render before starting the candidate vmmd so its TCP listener loads the
+    # staged mTLS leaves instead of falling back to the defaults-only config.
+    # Existing nodes keep their serving configuration untouched until the
+    # normal post-drain release installation and render below.
+    - name: Render fresh-host runtime configuration before pre-stage
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - manifest
+          - render
+          - --manifest-file
+          - /etc/faas/manifest.yaml
+          - --host
+          - "{{ faas_join_inventory_name }}"
+          - --pki-trust-only
+      changed_when: true
+      when: not faas_join_active_vmmd.stat.exists
+
     - name: Bootstrap fresh-host vmmd from the verified release candidate
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-vmmd.service.d/zz-bootstrap-release.conf
