@@ -987,6 +987,35 @@ makes Gregale match that posture for newly-created apps.
 
 ADR-080 / issue #695 / migration 00156.
 
+## M8 — Scheduler divergence and bounded dispatch (ADR-191). 🚧
+
+Follow-on to ADR-190, closing the two scheduler-side causes behind it:
+
+- **Instance divergence.** A sweep every 30 s compares live rows against what
+  the owning vmmd reports through the existing capacity-telemetry stream (no
+  new RPC). Four gates before a row counts: the node must have reported
+  something, the instance must be past a 60 s grace, it must be absent on two
+  consecutive sweeps, and an empty snapshot resets all candidates. Disjoint by
+  construction from the dead-node reconciler, which acts only on silent nodes.
+- **Bounded loop dispatch.** One work pool replaces the four unbounded
+  `go func` arms and the prime slot pool. Prime still overflows to inline
+  (dropping strands a deployment in `snapshotting`); reconcile kinds overflow to
+  drop, since each is idempotent over a durable table with a safety ticker.
+  `MainLoopBudget` 180 s → 60 s, schedd `WatchdogSec` 180 s → 120 s.
+
+**Ships inert.** `FAAS_SCHEDD_RECONCILE_ENFORCE` is unset, so the divergence
+sweep counts and logs but writes no row.
+
+Remaining, in order:
+
+1. Read `schedd_instance_divergence_total{outcome="suppressed"}` against
+   production reality for one week. Every count should be explainable by a vmmd
+   restart, a host OOM, or a failed destroy.
+2. Flip `FAAS_SCHEDD_RECONCILE_ENFORCE=1` in the compute-only drop-in and
+   promote `FaasInstanceDivergence` from warn to page in the same change.
+3. Close the known gap: a node whose only instance dies reports nothing and is
+   skipped. Needs a vmmd-side "up with zero VMs" assertion.
+
 ## M8 — Daemon durability primitives (ADR-190). ✅
 
 The "alive but not working" and "control-plane outage leaks into the data

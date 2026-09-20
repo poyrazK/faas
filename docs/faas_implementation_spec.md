@@ -1570,6 +1570,9 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
 | `<daemon>_db_notify_hub_reconnects_total` rate | 0 | > 1 / 5 m warn (ADR-190 §4 — the daemon's single LISTEN connection is being dropped; check Postgres restarts and idle-connection reaping) |
 | `<daemon>_db_notify_hub_dropped_total{channel}` rate | 0 | > 0 sustained 15 m warn (ADR-190 §4 — a subscriber is not draining its fan-out buffer; the durable table + safety tick recover the work, but the consumer is falling behind) |
+| `schedd_instance_divergence_total{outcome}` rate | 0 | > 0 / 15 m warn (`FaasInstanceDivergence`, runbook `FaasInstanceDivergence.md`; ADR-191 §1 — live rows the owning vmmd is not reporting, after the node-reporting, grace and confirm-twice gates. `suppressed` is report-only mode counting what enforcement would repair; promote to page in the change that sets `FAAS_SCHEDD_RECONCILE_ENFORCE=1`) |
+| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"` page (a handler bug, not a capacity signal) |
+| `schedd_loop_work_duration_seconds{kind}` p95 | `kind="prime"` ≤ 110 s; every other kind ≤ 1 s | none (ADR-191 §2 diagnostic; the prime tail carries cold boot plus snapshot capture by design, so alert on `gateway_wake_latency_seconds` instead) |
 
 The four `schedd_instance_*` gauges (ADR-036, issue #170) are the
 new per-`(app,node)` rolled-up surfaces — max CPU, sum RSS, sum

@@ -1383,6 +1383,26 @@ groups:
           description: "{{ $labels.job }} has not advanced its '{{ $labels.loop }}' loop within its budget. The systemd watchdog will restart the unit after WatchdogSec; capture goroutine dumps (SIGQUIT) before it does if the stall is new."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonLoopStalled.md"
 
+      # ADR-191: rows schedd believes are live that the owning vmmd is
+      # not reporting. Each is billing the customer and holding an
+      # admission slot. Warn, not page: the sweep ships report-only
+      # (FAAS_SCHEDD_RECONCILE_ENFORCE unset), so nothing is being
+      # repaired automatically and there is no customer-facing outage to
+      # wake someone for — but rows and reality have measurably drifted
+      # and someone has to look. Promote to page in the same change that
+      # flips enforcement on.
+      - alert: FaasInstanceDivergence
+        expr: increase(schedd_instance_divergence_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: instance_divergence
+        annotations:
+          summary: "schedd sees {{ $value }} instances vmmd does not have"
+          description: "Live instance rows were absent from the owning vmmd's telemetry on two consecutive sweeps, outside the startup grace window, on a node that was otherwise reporting. They are being billed and are holding admission slots. Check whether vmmd restarted or the host OOM-killed Firecracker."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInstanceDivergence.md"
+
       - alert: FaasVMMDGuestReceiverDown
         expr: vmmd_guest_vsock_receiver_up{receiver=~"events|workload_identity"} == 0
         for: 1m

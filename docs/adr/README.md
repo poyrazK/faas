@@ -206,6 +206,12 @@ note instead of the banner.
 ## Daemon durability decisions
 
 - [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
+- [ADR-191: scheduler divergence reconciliation and bounded loop dispatch](191-scheduler-divergence-and-bounded-dispatch.md) — repair rows the owning vmmd is not reporting (report-only first), and move every long-running notification handler onto one bounded pool
+
+Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
+first; `190-daemon-durability-primitives.md` picked the same number
+concurrently). The log above already contains several such pairs (157, 158, 167,
+168). A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Snapshot restore optimization decisions
 
