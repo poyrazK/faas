@@ -28,12 +28,14 @@ import (
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"google.golang.org/grpc"
 )
 
 // Server bundles the gRPC + HTTP listeners. cmd/githubd builds it
@@ -467,7 +469,10 @@ func (s *Server) writeWebhookResult(w http.ResponseWriter, result reconcile.Resu
 		if isReleaseTagRejected(err) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprintf(w, `{"status":"ignored","reason":%q}`, releaseTagRejectReason(err))
+			_, _ = w.Write(safetext.JSONObject(struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			}{Status: "ignored", Reason: releaseTagRejectReason(err)}))
 			observe(nil)
 			return
 		}

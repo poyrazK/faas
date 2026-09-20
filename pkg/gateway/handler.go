@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/sync/singleflight"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
@@ -30,11 +33,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"go.opentelemetry.io/otel/attribute"
-	"golang.org/x/sync/singleflight"
 )
 
 // ResolveSlugFn (ADR-093) is the (slug → appID) resolver the
@@ -7877,7 +7879,17 @@ func writeWakeInProgress(w http.ResponseWriter, requestID string) {
 		w.Header().Set(api.RequestIDHeader, requestID)
 	}
 	w.WriteHeader(http.StatusAccepted)
-	_, _ = fmt.Fprintf(w, `{"status":202,"code":%q,"title":"App is waking","detail":"retry the request after the Retry-After interval"}`+"\n", api.CodeWakeInProgress)
+	_, _ = w.Write(append(safetext.JSONObject(struct {
+		Status int    `json:"status"`
+		Code   string `json:"code"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}{
+		Status: http.StatusAccepted,
+		Code:   api.CodeWakeInProgress,
+		Title:  "App is waking",
+		Detail: "retry the request after the Retry-After interval",
+	}), '\n'))
 }
 
 func wakeRetryAfterSeconds(err error, fallback int) int {

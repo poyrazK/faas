@@ -10,14 +10,27 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/netip"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// privateNetworkAttachmentChange is the app_changed payload for a private
+// network attach or detach. network_id and region are omitempty because the
+// detach payload has never carried them; encoding them unconditionally would
+// change the wire shape a subscriber may match on.
+type privateNetworkAttachmentChange struct {
+	Kind      string `json:"kind"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id"`
+	NetworkID string `json:"network_id,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Status    string `json:"status"`
+}
 
 const privateNetworkPendingDetail = "connector not provisioned; traffic remains blocked until the attachment is ready"
 
@@ -170,9 +183,11 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 	if fabric != nil && previous.NetworkID != "" && previous.NetworkID != req.NetworkID {
 		_ = fabric.ReleasePrivateNetworkAddress(r.Context(), acct.ID, previous.NetworkID, "app", app.ID)
 	}
-	_ = s.notif.Notify(r.Context(), "app_changed", fmt.Sprintf(
-		`{"kind":"private_network_attachment","app_id":"%s","account_id":"%s","network_id":%q,"region":%q,"status":%q}`,
-		app.ID, acct.ID, attachment.NetworkID, attachment.Region, attachment.Status))
+	_ = s.notif.Notify(r.Context(), "app_changed", string(safetext.JSONObject(
+		privateNetworkAttachmentChange{
+			Kind: "private_network_attachment", AppID: app.ID, AccountID: acct.ID,
+			NetworkID: attachment.NetworkID, Region: attachment.Region, Status: attachment.Status,
+		})))
 	s.audit.Emit(r.Context(), "app.private_network_attachment_requested", &acct.ID, map[string]any{
 		"app_id": app.ID, "network_id": attachment.NetworkID, "region": attachment.Region,
 		"cidrs": prefixesToStrings(attachment.CIDRs), "allowed_cidrs": prefixesToStrings(attachment.AllowedCIDRs), "status": attachment.Status,
@@ -216,9 +231,11 @@ func (s *server) clearAppPrivateNetworkAttachment(w http.ResponseWriter, r *http
 		return
 	}
 	if err == nil {
-		_ = s.notif.Notify(r.Context(), "app_changed", fmt.Sprintf(
-			`{"kind":"private_network_attachment","app_id":"%s","account_id":"%s","status":"detached"}`,
-			app.ID, acct.ID))
+		_ = s.notif.Notify(r.Context(), "app_changed", string(safetext.JSONObject(
+			privateNetworkAttachmentChange{
+				Kind: "private_network_attachment", AppID: app.ID, AccountID: acct.ID,
+				Status: "detached",
+			})))
 		s.audit.Emit(r.Context(), "app.private_network_attachment_detached", &acct.ID, map[string]any{"app_id": app.ID})
 	}
 	w.WriteHeader(http.StatusNoContent)

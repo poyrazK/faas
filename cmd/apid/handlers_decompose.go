@@ -31,6 +31,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -249,8 +250,11 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	notifyCtx := r.Context()
 	notifyApp := func(a state.App, kind string) {
 		_ = s.notif.Notify(notifyCtx, db.NotifyAppChanged,
-			fmt.Sprintf(`{"kind":%q,"app_id":"%s","project_id":"%s"}`,
-				kind, a.ID, insertedProject.ID))
+			string(safetext.JSONObject(struct {
+				Kind      string `json:"kind"`
+				AppID     string `json:"app_id"`
+				ProjectID string `json:"project_id"`
+			}{Kind: kind, AppID: a.ID, ProjectID: insertedProject.ID})))
 	}
 	for _, a := range added {
 		notifyApp(a, "created")

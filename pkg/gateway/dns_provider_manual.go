@@ -50,6 +50,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // errManualDNSRequiresOperator is the sentinel the manual
@@ -111,8 +113,13 @@ func (m *ManualDNSProvider) UpsertRecord(_ context.Context, name, value string) 
 	if name == "" || value == "" {
 		return fmt.Errorf("manual dns: name and value required (got name=%q value=%q)", name, value)
 	}
-	body := fmt.Sprintf(`{"type":"A","name":%q,"content":%q,"ttl":60,"proxied":false}`,
-		name, value)
+	body := string(safetext.JSONObject(struct {
+		Type    string `json:"type"`
+		Name    string `json:"name"`
+		Content string `json:"content"`
+		TTL     int    `json:"ttl"`
+		Proxied bool   `json:"proxied"`
+	}{Type: "A", Name: name, Content: value, TTL: 60, Proxied: false}))
 	curl := fmt.Sprintf(
 		"# FAAS_DNS_PROVIDER=manual: UpsertRecord\n"+
 			"# ProviderURL: %s\n"+

@@ -36,6 +36,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -43,14 +46,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 )
+
+// appPlacementChange is the app_changed payload emitted when the scheduler
+// claims or moves an app. The fields are UUIDs and a closed-set kind, so no
+// value here can be hostile — but it is encoded rather than formatted so the
+// codebase has exactly one way to build a notification payload.
+type appPlacementChange struct {
+	Kind     string `json:"kind"`
+	AppID    string `json:"app_id"`
+	NodeID   string `json:"node_id,omitempty"`
+	FromNode string `json:"from_node,omitempty"`
+	ToNode   string `json:"to_node,omitempty"`
+}
 
 // vmmd RPC deadlines (spec §6.1). Centralised here — not in VMMClient —
 // because the same client serves every RPC and each has a different
@@ -4039,7 +4053,9 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	// transition. The subscriber itself filters out kind=claimed
 	// to avoid re-entry.
 	if e.notif != nil {
-		payload := fmt.Sprintf(`{"kind":"claimed","app_id":%q,"node_id":%q}`, appID, placement.NodeID)
+		payload := string(safetext.JSONObject(appPlacementChange{
+			Kind: "claimed", AppID: appID, NodeID: placement.NodeID,
+		}))
 		if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
 			e.log.Warn("sched: claim unplaced: notify claimed",
 				"app_id", appID, "node_id", placement.NodeID, "err", err)
@@ -4247,9 +4263,9 @@ func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) e
 		// subscriber drops the rebalanced kind so no re-
 		// entry loop happens.
 		if e.notif != nil {
-			payload := fmt.Sprintf(
-				`{"kind":"rebalanced","app_id":%q,"from_node":%q,"to_node":%q}`,
-				app.ID, app.NodeID, e.ownerNodeID)
+			payload := string(safetext.JSONObject(appPlacementChange{
+				Kind: "rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: e.ownerNodeID,
+			}))
 			if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
 				e.log.Warn("sched: rebalance: notify rebalanced",
 					"app_id", app.ID, "from", app.NodeID,
@@ -4450,9 +4466,9 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 	// pkg/sched/placement_claim.go's subscriber drops the
 	// pressure_rebalanced kind so no re-entry loop happens.
 	if e.notif != nil {
-		payload := fmt.Sprintf(
-			`{"kind":"pressure_rebalanced","app_id":%q,"from_node":%q,"to_node":%q}`,
-			app.ID, app.NodeID, peer)
+		payload := string(safetext.JSONObject(appPlacementChange{
+			Kind: "pressure_rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: peer,
+		}))
 		if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
 			e.log.Warn("sched: pressure rebalance: notify rebalanced",
 				"app_id", app.ID, "from", app.NodeID, "to", peer, "err", err)

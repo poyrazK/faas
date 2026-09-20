@@ -1570,8 +1570,11 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 	if b.notif == nil {
 		return
 	}
-	payload := fmt.Sprintf(`{"build":"%s","line":%q}`, buildID, line)
-	if err := b.notif.Notify(ctx, db.NotifyBuildLog, payload); err != nil {
+	payload := safetext.JSONObject(struct {
+		Build string `json:"build"`
+		Line  string `json:"line"`
+	}{Build: buildID, Line: line})
+	if err := b.notif.Notify(ctx, db.NotifyBuildLog, string(payload)); err != nil {
 		b.log.Warn("builderd: notify log", "build", buildID, "err", err)
 	}
 }

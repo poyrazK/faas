@@ -25,9 +25,36 @@
 package safetext
 
 import (
+	"encoding/json"
 	"strings"
 	"unicode/utf8"
 )
+
+// JSONObject encodes v as a JSON document for a jsonb column, a pg_notify
+// payload, or an HTTP response body. It is the replacement for building JSON
+// with fmt and the %q verb.
+//
+// %q is strconv.Quote, not a JSON encoder. For a control byte it emits \xNN,
+// an escape JSON has no grammar for, and the result is rejected by a jsonb
+// column with SQLSTATE 22P02 and by any conforming parser. encoding/json
+// emits \u00XX for the same byte and replaces invalid UTF-8 with U+FFFD, so
+// its output is always parseable.
+//
+// v must be a value whose marshaling cannot fail — a struct, map or slice of
+// strings, numbers and bools, which covers every payload in this codebase.
+// Channels, funcs, cyclic structures and custom Marshalers that return errors
+// do not qualify. For those, call json.Marshal directly and handle the error.
+//
+// The unreachable error branch returns an empty object rather than an error,
+// because a well-formed `{}` is always safe for the destinations above while
+// a returned error would be discarded at every call site.
+func JSONObject(v any) []byte {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return encoded
+}
 
 // replacement substitutes any byte sequence that Postgres will not accept.
 // U+FFFD REPLACEMENT CHARACTER is the Unicode-sanctioned stand-in and is what
