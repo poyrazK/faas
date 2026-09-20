@@ -751,13 +751,13 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  subReleaseInstall,
-				Short: "Install a release on the local box (atomic symlink flip + applied_at first-write-wins stamp + compute_nodes UPSERT). --role is the dual-purpose flag: on first-boot it templates drop-ins + starts the role subset; on a running box with a different existing role it triggers PR-B in-place mutation (drain-gate, Mutate(stop+start), role UPSERT).",
+				Short: "Install a release on the local box (atomic symlink flip + applied_at first-write-wins stamp + compute_nodes UPSERT). --role is the dual-purpose flag: on first-boot it templates drop-ins and normally starts the role subset; --defer-activation leaves a new compute subset stopped for the readiness pipeline. On a running box with a different existing role it triggers PR-B in-place mutation (drain-gate, Mutate(stop+start), role UPSERT).",
 				Flags: []cliFlag{
 					{Name: "git-sha", Short: "40-char lowercase hex git SHA to install (required)", Req: true},
 					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
 					{Name: "node", Short: "compute_nodes.name to stamp (default: FAAS_NODE_NAME, then hostname; compute-only uses NAME.faas)"},
 					{Name: "role", Short: "box role: control-plane|compute-only (ADR-112); empty = no role templating. Reads /etc/faas/first-boot.env's FAAS_BOX_ROLE when unset.", ClosedSet: []string{"", "control-plane", "compute-only"}},
-					{Name: "defer-activation", Short: "keep a compute row drained until readiness gates pass"},
+					{Name: "defer-activation", Short: "keep a compute row drained until readiness gates pass; on first boot, leave daemons stopped for the join pipeline"},
 				},
 			},
 			{

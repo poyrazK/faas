@@ -572,6 +572,32 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 	}
 }
 
+func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	install := strings.Index(playbook, "Install the verified release while keeping the row drained")
+	secrets := strings.Index(playbook, "Initialize host-local runtime identity and backup stubs")
+	doctor := strings.Index(playbook, "Run the node-scoped doctor before starting services")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if install < 0 || secrets < 0 || doctor < 0 || restart < 0 ||
+		!(install < secrets && secrets < doctor && doctor < restart) {
+		t.Fatalf("fresh-host activation order invalid: install=%d secrets=%d doctor=%d restart=%d", install, secrets, doctor, restart)
+	}
+	installEnd := strings.Index(playbook[install:], "Verify the requested release is the active on-host release")
+	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], "- --defer-activation") {
+		t.Fatal("node_join release install must defer first-boot daemon start and database activation")
+	}
+	credentialBlock := playbook[secrets:restart]
+	for _, token := range []string{"secrets", "init", "--preserve-existing", "doctor", "--fail-on"} {
+		if !strings.Contains(credentialBlock, token) {
+			t.Errorf("pre-start credential/readiness block missing %q", token)
+		}
+	}
+}
+
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
 	body := strings.Replace(validManifestYAML,
