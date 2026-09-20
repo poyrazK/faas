@@ -20,6 +20,15 @@ func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	pathGlob := r.URL.Query().Get("path")
+	// The glob is customer-supplied and lands in a pg_notify payload, which
+	// PostgreSQL caps at 8000 bytes. path.Match validates syntax but accepts
+	// an arbitrarily long pattern, so without a length bound an oversized
+	// glob reached the database and came back as a 503 — a server-error
+	// shape for what is plainly a bad request.
+	if len(pathGlob) > api.CachePurgeGlobMaxBytes {
+		api.WriteProblem(w, api.ErrValidation("cache path glob is too long"))
+		return
+	}
 	if pathGlob != "" && pathGlob != "*" {
 		if _, err := path.Match(pathGlob, "/"); err != nil {
 			api.WriteProblem(w, api.ErrValidation("invalid cache path glob"))

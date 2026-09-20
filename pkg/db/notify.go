@@ -191,13 +191,40 @@ func MarshalAppChangedPayload(payload AppChangedPayload) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
+// NotifyPayloadMaxBytes is the largest NOTIFY payload PostgreSQL accepts.
+//
+// The server's buffer is 8000 bytes including the NUL terminator, so the
+// usable maximum is 7999: a 7999-byte payload is accepted and an 8000-byte
+// one is rejected with "payload string too long". Both boundaries are
+// asserted against a real server in notify_payload_limit_test.go rather than
+// taken from the documentation, which says only "8000 bytes".
+const NotifyPayloadMaxBytes = 7999
+
+// ErrNotifyPayloadTooLarge reports a payload that cannot fit in a NOTIFY.
+//
+// This used to surface as a raw pgx error from deep inside a callsite that
+// had already discarded its context, on a Notify whose error most producers
+// deliberately ignore. Callers can now match it with errors.Is and decide,
+// and the message names the channel and the two sizes.
+var ErrNotifyPayloadTooLarge = errors.New("db: notify payload exceeds the PostgreSQL limit")
+
 // Notify publishes a payload on the given channel. Deploy handoff channels
 // first persist a replay row and publish an envelope in the same transaction;
-// all other channels retain the direct pg_notify path. Payloads are limited
-// to ~8 KB by Postgres — caller's responsibility.
+// all other channels retain the direct pg_notify path.
+//
+// Payloads over NotifyPayloadMaxBytes are rejected before the round trip.
+// The previous contract — "limited to ~8 KB by Postgres — caller's
+// responsibility" — was enforced by nothing: one channel capped its content
+// at 3 KiB, another switched to a pipe-delimited encoding to stay under the
+// limit, and the rest simply hoped. Each new channel re-litigated the
+// question, and an oversize payload failed as an opaque SQLSTATE at runtime.
 func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) error {
 	if IsDurableNotificationChannel(channel) {
 		return enqueueAndNotify(ctx, pool, channel, payload)
+	}
+	if len(payload) > NotifyPayloadMaxBytes {
+		return fmt.Errorf("%w: channel %s, %d bytes > %d",
+			ErrNotifyPayloadTooLarge, channel, len(payload), NotifyPayloadMaxBytes)
 	}
 	_, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	if err != nil {
@@ -229,9 +256,20 @@ func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload 
 	if err != nil {
 		return fmt.Errorf("db: enqueue notification %s: %w", channel, err)
 	}
+	// The envelope adds ~50 bytes, so a payload that fitted on its own can
+	// overflow once wrapped. Skip only the wakeup in that case and still
+	// commit the row: RunNotificationOutbox polls on a ticker independently
+	// of NOTIFY, so the handoff is recovered on the next sweep with added
+	// latency rather than lost.
+	//
+	// Failing the Exec instead would roll back the whole transaction — the
+	// outbox row included — so the one mechanism built to survive a missed
+	// notification would be defeated by the notification being too large.
 	wire := wrapNotificationPayload(id, payload)
-	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, wire); err != nil {
-		return fmt.Errorf("db: notify %s: %w", channel, err)
+	if len(wire) <= NotifyPayloadMaxBytes {
+		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, wire); err != nil {
+			return fmt.Errorf("db: notify %s: %w", channel, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("db: notify %s commit: %w", channel, err)

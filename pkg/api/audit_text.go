@@ -22,4 +22,10 @@ const (
 	// upstream API bodies, so they are both longer and far more likely to
 	// contain bytes that are not valid UTF-8.
 	AuditMessageMaxBytes = 2048
+
+	// CachePurgeGlobMaxBytes bounds the customer-supplied path glob on
+	// POST /v1/apps/{slug}/cache/purge. The glob travels in a pg_notify
+	// payload, which PostgreSQL caps at 8000 bytes; 1 KiB is generous for a
+	// path pattern and leaves the rest of the envelope ample room.
+	CachePurgeGlobMaxBytes = 1024
 )
