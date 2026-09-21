@@ -372,9 +372,12 @@ func (h *Handler) WithRetryObserver(obs retryObserver) *Handler {
 	return h
 }
 
-// retryPolicyFor resolves the effective policy for one request. A matched
-// kind=retry rule wins; otherwise the operator default applies. Both are
-// inert until the gate is on.
+// retryPolicyFor resolves the effective policy for one request.
+//
+// Precedence: an injected test matcher, then a matched kind=retry edge rule,
+// then the operator default. All three are inert until the gate is on, so
+// FAAS_GATEWAY_RETRY remains a single kill switch regardless of what rules
+// customers have stored.
 func (h *Handler) retryPolicyFor(app App, r *http.Request) RetryPolicy {
 	if !h.retryEnabled {
 		return RetryPolicy{}
@@ -383,6 +386,11 @@ func (h *Handler) retryPolicyFor(app App, r *http.Request) RetryPolicy {
 		if policy, ok := h.retryMatch(app, r); ok {
 			policy.Enabled = true
 			return policy
+		}
+	}
+	if h.edgeRules != nil {
+		if rule := h.edgeRules.MatchRetry(r.Context(), hostname(r.Host), r.URL.Path, r.Method); rule != nil {
+			return rule.Policy()
 		}
 	}
 	policy := h.retryDefault
