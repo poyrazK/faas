@@ -5979,7 +5979,7 @@ haveApp:
 			attribute.Int("desired_instances", maxInstances),
 		)
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, concurrencyConfigForApp(app))
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(
 			attribute.Bool("cold", cold),
 			attribute.String("wake_id", wakeID),
@@ -7623,7 +7623,13 @@ func (s *statusRecorder) finalFlush() {
 // prod app's. Empty = prod (legacy). When the cold-start path calls
 // coldStart and coldStart in turn calls Admit, scope is plumbed
 // through both paths.
-func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, configs ...concurrencyAdmissionConfig) (cold bool, wakeID string, method WakeMethod, err error) {
+//
+// trigger (ADR-123 vocabulary, ADR-196) is the wake-boot trigger stamped on
+// the emitted wake.boot_started / wake.boot_completed rows. Request paths
+// driven by an Internet client pass sched.TriggerGateway; the node-local
+// service proxy passes sched.TriggerServiceMesh so internal fan-out is
+// distinguishable from customer traffic in the wake timeline.
+func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, trigger string, configs ...concurrencyAdmissionConfig) (cold bool, wakeID string, method WakeMethod, err error) {
 	// HealthyCount is intentionally process-local for the hot path, but an
 	// empty process-local cache is not authoritative in a multi-node fleet.
 	// The empty-cache reconciliation now runs inside coldStart's WakeGate
@@ -7637,11 +7643,39 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 	if len(configs) > 0 {
 		config = configs[0]
 	}
-	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS, config)
+	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS, trigger, config)
 	if err != nil {
 		return false, "", WakeMethodUnspecified, err
 	}
 	return cold, wakeID, method, nil
+}
+
+// EnsureServiceCapacity is the node-local service proxy's entry into the same
+// wake machinery the public edge uses (ADR-196). A call to
+// <slug>.svc.gregale for a parked app must hold and wake exactly like a
+// public request does, otherwise an internal service can never scale to zero:
+// its callers would see 503 on every cold call and customers would be forced
+// to pin min_instances on every internal dependency.
+//
+// Reusing Handler.ensureCapacity — rather than giving the proxy its own
+// admission path — is deliberate. The WakeGate is keyed on appID alone, so a
+// public request and an internal service call that arrive for the same parked
+// app coalesce into ONE restore instead of racing to create two instances.
+// That coalescing is also what keeps invariant §6.2-1 (≤ max_concurrency
+// instances in {WAKING, COLD_BOOTING, RUNNING}) intact across both entry
+// points.
+//
+// The returned error is the admission error only. An at-capacity outcome is
+// not an error: the caller re-reads the endpoint registry and surfaces
+// "no healthy replicas" if the wake genuinely produced nothing.
+func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	limits, ok := api.LimitsFor(app.Plan)
+	if !ok {
+		limits = api.Limits{}
+	}
+	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	return err
 }
 
 func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Time) bool {
@@ -7667,7 +7701,10 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 // through the WakeGate's single-flight coalescing. shouldWake is held
 // under the gate lock and re-runs HealthyCount; if a peer's admit has
 // just landed, we skip the redundant cold boot.
-func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, configs ...concurrencyAdmissionConfig) (bool, string, WakeMethod, error) {
+func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, trigger string, configs ...concurrencyAdmissionConfig) (bool, string, WakeMethod, error) {
+	if trigger == "" {
+		trigger = sched.TriggerGateway
+	}
 	var (
 		admittedWakeID string
 		cold           bool
@@ -7719,7 +7756,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			}
 			admit := func(admitCtx context.Context) error {
 				if ensurer, ok := h.backend.(capacityWarmEnsurer); ok && scope == "" {
-					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))
+					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, trigger, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))
 					if e != nil {
 						return e
 					}
@@ -7737,7 +7774,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					return nil
 				}
 				if ensurer, ok := h.backend.(warmEnsurer); ok && scope == "" {
-					id, m, atCapacity, e := ensurer.EnsureWarm(admitCtx, appID, scope, sched.TriggerGateway)
+					id, m, atCapacity, e := ensurer.EnsureWarm(admitCtx, appID, scope, trigger)
 					if e != nil {
 						return e
 					}
@@ -7751,7 +7788,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					h.finishWakePageCycle(admitCtx, appID, id)
 					return nil
 				}
-				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, sched.TriggerGateway, maxConcurrency)
+				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, trigger, maxConcurrency)
 				if e != nil {
 					return e
 				}

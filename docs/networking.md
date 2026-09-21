@@ -161,3 +161,19 @@ domain route. Service discovery continues to resolve them through
 `APP_ID.svc.gregale:10080`, where the service proxy enforces caller identity
 and same-account authorization. Visibility changes are audited and invalidate
 the gateway route cache.
+
+Internal services scale to zero like any other app. A service call to a parked
+target is held at the node-local proxy while the snapshot is restored, then
+forwarded — the same wake-blocking contract the public edge offers (ADR-196).
+The restore is coalesced with any concurrent public request for that app, so a
+burst of internal callers costs one restore rather than one per caller. Set
+client timeouts above the platform wake budget plus your own handler time, and
+note that a fully cold chain (`public-api` → `auth` → `billing`) pays each
+restore in sequence. `min_instances` remains available to trade resident RAM
+for first-call latency, but it is no longer required for an internal
+dependency to be reachable.
+
+When a wake cannot produce a replica, the proxy answers `503`. A saturated
+wake queue carries `Retry-After`; a target at its plan concurrency ceiling
+reports `service has no healthy replicas`. Internal wakes appear in the wake
+timeline with trigger `service.mesh`, distinct from public `gateway` traffic.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // cacheRuleContextKey is the unexported context-key type the
@@ -158,7 +159,7 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
 			defer cancel()
 			limits, _ := api.LimitsFor(app.Plan)
-			if _, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan, app.AutoscaleTargetRPS, concurrencyConfigForApp(app)); err != nil {
+			if _, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app)); err != nil {
 				return nil, err
 			}
 			h.refreshCacheFromWarmTarget(ctx, request, app, rule, key)

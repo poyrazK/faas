@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,17 @@ type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID s
 // platform header while preserving the header contract for trusted callers.
 type ServiceProxyCallerResolver func(ctx context.Context, remoteAddr string) (appID string, err error)
 
+// ServiceProxyWaker holds the caller while the scheduler brings a parked
+// target service back (ADR-196). It returns nil once the wake attempt has
+// finished — successfully or at capacity — and the proxy then re-reads the
+// endpoint registry to decide whether a replica is actually routable.
+//
+// A non-nil error is a real admission failure (no headroom, scheduler
+// unreachable, store error) and is surfaced as 503. nil disables
+// wake-on-demand entirely, restoring the pre-ADR-196 fail-fast behaviour for
+// wiring that has no scheduler seam (tests, single-box dev without schedd).
+type ServiceProxyWaker func(ctx context.Context, appID string) error
+
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
 // normally gateway.ForwardingReverseProxyWithEvents(...); tests inject a
 // small handler factory so selection and retry behavior can be exercised
@@ -79,9 +91,12 @@ type ServiceProxyConfig struct {
 	Authorize     ServiceProxyAuthorizer
 	ResolveCaller ServiceProxyCallerResolver
 	Forward       func(Target) http.Handler
-	EndpointTTL   time.Duration
-	Now           func() time.Time
-	Log           *slog.Logger
+	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
+	// legacy fail-fast behaviour for a parked target.
+	Wake        ServiceProxyWaker
+	EndpointTTL time.Duration
+	Now         func() time.Time
+	Log         *slog.Logger
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -94,6 +109,7 @@ type ServiceProxy struct {
 	authorize     ServiceProxyAuthorizer
 	resolveCaller ServiceProxyCallerResolver
 	forward       func(Target) http.Handler
+	wake          ServiceProxyWaker
 	endpointTTL   time.Duration
 	now           func() time.Time
 	log           *slog.Logger
@@ -129,6 +145,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		authorize:     cfg.Authorize,
 		resolveCaller: cfg.ResolveCaller,
 		forward:       cfg.Forward,
+		wake:          cfg.Wake,
 		endpointTTL:   ttl,
 		now:           now,
 		log:           log,
@@ -193,13 +210,8 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, err := p.endpoints(r.Context(), targetApp)
-	if err != nil {
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
-		return
-	}
-	if len(endpoints) == 0 {
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
+	endpoints, served := p.routableEndpoints(w, r, targetApp)
+	if !served {
 		return
 	}
 	if !serviceProxyRetryable(r) {
@@ -295,6 +307,91 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	p.snapshots[appID] = serviceProxySnapshot{fetchedAt: now, endpoints: append([]ServiceEndpoint(nil), endpoints...)}
 	p.mu.Unlock()
 	return endpoints, nil
+}
+
+// routableEndpoints resolves the endpoints the request can be forwarded to,
+// waking a parked target on the way (ADR-196). It writes the error response
+// itself and reports served=false when nothing is routable, so ServeHTTP
+// stays within the handler-length convention.
+func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID string) ([]ServiceEndpoint, bool) {
+	endpoints, err := p.endpoints(r.Context(), appID)
+	if err != nil {
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+		return nil, false
+	}
+	if len(endpoints) > 0 {
+		return endpoints, true
+	}
+	endpoints, err = p.wakeAndRefresh(r.Context(), appID)
+	if err != nil {
+		p.writeWakeFailure(w, appID, err)
+		return nil, false
+	}
+	if len(endpoints) == 0 {
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
+		return nil, false
+	}
+	return endpoints, true
+}
+
+// writeWakeFailure maps a wake error onto the caller-facing response.
+func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err error) {
+	var full *WakeQueueFullError
+	if errors.As(err, &full) {
+		// Mirror the public edge: a saturated wake queue is a bounded,
+		// retryable condition, not a failure of the service. Hand the caller
+		// the same Retry-After the edge would so a peer workload can back off
+		// instead of hot-looping on a restoring dependency.
+		w.Header().Set("Retry-After", retryAfterSeconds(full.RetryAfter))
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "service is waking and its wake queue is full")
+		return
+	}
+	p.log.Warn("gateway: service proxy wake failed", "app", appID, "err", err)
+	serviceProxyProblem(w, http.StatusServiceUnavailable, "service could not be woken")
+}
+
+// wakeAndRefresh holds the caller while a parked target service is restored
+// (ADR-196), then re-reads the endpoint registry.
+//
+// The cached registry snapshot is invalidated before the re-read. The
+// ordinary 5 s endpoint lease exists to keep the hot path off Postgres, but
+// the wake has just changed the exact state that lease caches: serving the
+// stale empty snapshot back would make every cold internal call a guaranteed
+// 503 no matter how fast the restore was.
+//
+// A nil waker returns no endpoints and no error, so the caller falls through
+// to the pre-ADR-196 "no healthy replicas" response.
+func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
+	if p.wake == nil {
+		return nil, nil
+	}
+	if err := p.wake(ctx, appID); err != nil {
+		return nil, err
+	}
+	p.invalidateEndpoints(appID)
+	return p.endpoints(ctx, appID)
+}
+
+// invalidateEndpoints drops the cached registry lease for appID so the next
+// read goes back to the authoritative provider.
+func (p *ServiceProxy) invalidateEndpoints(appID string) {
+	p.mu.Lock()
+	delete(p.snapshots, appID)
+	p.mu.Unlock()
+}
+
+// retryAfterSeconds renders a wake budget as an integer-second Retry-After
+// value, floored at 1 so a sub-second budget never emits "0" (which clients
+// read as "retry immediately" and turn into a hot loop).
+func retryAfterSeconds(d time.Duration) string {
+	seconds := int(d / time.Second)
+	if d%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.Itoa(seconds)
 }
 
 func validServiceEndpoints(in []ServiceEndpoint) []ServiceEndpoint {

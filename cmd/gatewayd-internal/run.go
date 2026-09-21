@@ -2962,6 +2962,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return nil
 			},
 			Forward: deps.nodeCache.Forwarding(),
+			// ADR-196: a call to a parked internal service must hold and
+			// wake exactly like a public request does. Without this seam a
+			// scale-to-zero internal service 503s on every cold call, which
+			// forces customers to pin min_instances on every dependency and
+			// gives up the platform's central economic claim for precisely
+			// the workloads that are idle most of the time.
+			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
