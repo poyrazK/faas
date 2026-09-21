@@ -409,6 +409,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	opsMetrics := wire.NewOpsMetrics("gatewayd_public")
 	wire.BootStamps(ctx, "gatewayd-public", opsMetrics)
 	wire.RegisterDefaultOps(opsMetrics)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(opsMetrics, pool)
 	probe.SetReadyObserver(func(ready bool, reason string) {
 		opsMetrics.MarkReady("gatewayd-public", ready, reason)
 	})

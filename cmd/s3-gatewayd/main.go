@@ -75,6 +75,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("s3-gatewayd: open db: %w", err)
 	}
 	defer pool.Close()
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	store := state.NewPgStore(pool)
 	requestMetrics, ok := any(store).(state.ObjectStorageProviderUsageStore)
 	if !ok {

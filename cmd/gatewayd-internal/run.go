@@ -1617,6 +1617,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	gatewayOps := wire.NewOpsMetrics("gatewayd")
 	wire.BootStamps(ctx, "gatewayd-internal", gatewayOps)
 	wire.RegisterDefaultOps(gatewayOps)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
 	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).WithEvents(eventsPlatform)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as

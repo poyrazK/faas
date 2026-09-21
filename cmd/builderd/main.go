@@ -234,6 +234,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// series real rather than a throwaway (ADR-030).
 	wire.BootStamps(ctx, "builderd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	builderdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("builderd", ready, reason)
 	})

@@ -1383,6 +1383,28 @@ groups:
           description: "{{ $labels.job }} has not advanced its '{{ $labels.loop }}' loop within its budget. The systemd watchdog will restart the unit after WatchdogSec; capture goroutine dumps (SIGQUIT) before it does if the stall is new."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonLoopStalled.md"
 
+      # Postgres pool starvation. A cancelled acquire is a caller that
+      # gave up waiting for a connection, so unlike the empty-acquire
+      # counter it has no warm-up floor and any non-zero rate is real:
+      # requests are already timing out on pool contention rather than
+      # on any work Postgres is doing. This is the signal that was
+      # missing on 2026-09-12, when fsn-1 sat at 96/97 slots with 88 of
+      # them idle and the only way to see it was pg_stat_activity on the
+      # box. It is also the gate on lowering any pkg/db
+      # DaemonMaxConnections entry: a cap may only come down while this
+      # is flat at zero for the daemon in question.
+      - alert: FaasDBPoolStarved
+        expr: sum by (job, instance) (rate({__name__=~".+_db_pool_canceled_acquires_total"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: platform
+          family: db_pool
+        annotations:
+          summary: "Daemon {{ $labels.job }} is abandoning Postgres pool acquisitions"
+          description: "{{ $labels.job }} has callers giving up while waiting for a pool connection. Compare <daemon>_db_pool_conns against <daemon>_db_pool_max_conns: at the cap, the daemon's DaemonMaxConnections entry is too small for its concurrency; below the cap, connections are being held too long by a slow query or a leaked transaction."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
+
       # ADR-191: rows schedd believes are live that the owning vmmd is
       # not reporting. Each is billing the customer and holding an
       # admission slot. Warn, not page: the sweep ships report-only

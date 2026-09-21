@@ -1506,6 +1506,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// unset (the daemon stays up; only the listener is skipped below).
 	wire.BootStamps(ctx, "apid", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, deps.pool)
 	// Issue #1182 §P1 PR-1: wire the 5 apid_upload_session_*
 	// counters from (*OpsMetrics) into the package-level state the
 	// upload handlers read via uploadSessionCreatedTotal() etc.

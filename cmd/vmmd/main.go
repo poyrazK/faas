@@ -799,6 +799,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// below; same single-registry pattern as every other daemon.
 	wire.BootStamps(ctx, "vmmd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	// ADR-054 acceptance: wire the LocalCacheBackend observer so
 	// stale-fallback serves on the cold-boot Restore path emit
 	// `vmmd_storage_cache_stale_fallback_total`. vmmd is the

@@ -562,6 +562,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("schedd")
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
 	go heartbeatRetention.Run(ctx)

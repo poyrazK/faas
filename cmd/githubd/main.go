@@ -170,6 +170,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	store := state.NewPgStore(pool)
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	ghAud := audit.New(store, log, ops, "githubd")
 	ghReconcile := buildGithubdReconcileService(store, ghAud, log)
 
