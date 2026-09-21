@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/circuit"
 )
 
 const (
@@ -82,6 +83,12 @@ type ServiceProxyConfig struct {
 	EndpointTTL   time.Duration
 	Now           func() time.Time
 	Log           *slog.Logger
+	// Breaker is the endpoint health breaker (ADR-195 §2). Nil installs
+	// circuit.LegacyQuarantineConfig, which reproduces the fixed-TTL
+	// quarantine this field replaced: one failure benches an endpoint for
+	// EndpointTTL with no backoff growth. cmd/gatewayd-internal passes a
+	// DefaultConfig group when FAAS_GATEWAY_CIRCUIT_BREAKER is on.
+	Breaker *circuit.Group
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -98,10 +105,11 @@ type ServiceProxy struct {
 	now           func() time.Time
 	log           *slog.Logger
 
-	mu          sync.Mutex
-	snapshots   map[string]serviceProxySnapshot
-	next        map[string]uint64
-	quarantined map[string]time.Time
+	breaker *circuit.Group
+
+	mu        sync.Mutex
+	snapshots map[string]serviceProxySnapshot
+	next      map[string]uint64
 }
 
 type serviceProxySnapshot struct {
@@ -123,6 +131,17 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 	if log == nil {
 		log = slog.Default()
 	}
+	breaker := cfg.Breaker
+	if breaker == nil {
+		// Flag-off equivalence: the legacy config is a single-failure,
+		// flat-TTL bench, which is byte-for-byte what the quarantine map
+		// did. Pinned by TestLegacyConfigMatchesQuarantine.
+		legacy := circuit.LegacyQuarantineConfig()
+		legacy.Window = ttl
+		legacy.OpenDuration = ttl
+		legacy.MaxOpenDuration = ttl
+		breaker = circuit.NewGroup(legacy, now)
+	}
 	return &ServiceProxy{
 		provider:      cfg.Provider,
 		resolve:       cfg.Resolve,
@@ -132,9 +151,9 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		endpointTTL:   ttl,
 		now:           now,
 		log:           log,
+		breaker:       breaker,
 		snapshots:     make(map[string]serviceProxySnapshot),
 		next:          make(map[string]uint64),
-		quarantined:   make(map[string]time.Time),
 	}
 }
 
@@ -340,6 +359,13 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq := request.WithContext(withStaleTargetSignal(request.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
 		p.forward(Target{NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, Port: endpoint.Port}).ServeHTTP(buffer, forwardReq)
+		if !signal.stale.Load() {
+			// Report the healthy transport. Without this the breaker only
+			// ever observes failures, the rolling ratio is a constant 1.0,
+			// and one blip opens the circuit no matter how much good traffic
+			// surrounds it. It also closes a half-open probe.
+			p.healthy(appID, endpoint.InstanceID)
+		}
 		if retry && !buffer.committed && signal.stale.Load() && attempt+1 < ServiceProxyMaxAttempts {
 			continue
 		}
@@ -348,30 +374,39 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	}
 }
 
+// pick walks the round-robin ring and returns the first endpoint whose
+// breaker admits it. In half-open exactly one caller is admitted as a probe,
+// so a recovering endpoint receives a single trial request rather than the
+// full share the ring would otherwise hand it.
 func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceEndpoint, bool) {
-	now := p.now()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	start := p.next[appID]
 	p.next[appID]++
+	p.mu.Unlock()
 	for i := 0; i < len(endpoints); i++ {
 		endpoint := endpoints[(int(start)+i)%len(endpoints)]
-		until := p.quarantined[serviceProxyEndpointKey(appID, endpoint.InstanceID)]
-		if until.IsZero() || !now.Before(until) {
-			if !until.IsZero() {
-				delete(p.quarantined, serviceProxyEndpointKey(appID, endpoint.InstanceID))
-			}
+		if p.breaker.Allow(serviceProxyEndpointKey(appID, endpoint.InstanceID)) {
 			return endpoint, true
 		}
 	}
 	return ServiceEndpoint{}, false
 }
 
+// quarantine reports a transport failure for an endpoint. The name is kept
+// because every call site reads as "bench this endpoint"; the mechanism
+// underneath is now the shared breaker, so repeated failures back off
+// geometrically instead of re-admitting the endpoint every endpointTTL.
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
-	p.mu.Lock()
-	p.quarantined[serviceProxyEndpointKey(appID, instanceID)] = p.now().Add(p.endpointTTL)
-	p.mu.Unlock()
+	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
 	p.log.Warn("gateway: service proxy quarantined stale endpoint", "app", appID, "instance", instanceID)
+}
+
+// healthy reports a successful transport for an endpoint, and closes a
+// half-open probe. Without it the breaker would only ever observe failures,
+// the rolling ratio would be a constant 1.0, and one blip would open the
+// circuit no matter how much good traffic surrounded it.
+func (p *ServiceProxy) healthy(appID, instanceID string) {
+	p.breaker.Success(serviceProxyEndpointKey(appID, instanceID))
 }
 
 func serviceProxyEndpointKey(appID, instanceID string) string { return appID + "\x00" + instanceID }
