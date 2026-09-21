@@ -280,6 +280,11 @@ var restoreTimingPhases = []string{
 	"load_snapshot_ms",
 	"wait_ready_ms",
 	"bind_tun_ms",
+	"tun_wait_mntns_ms",
+	"tun_wait_chroot_ms",
+	"tun_setup_jail_ms",
+	"tun_setup_jail_work_us",
+	"cgroup_fence_ms",
 	"start_jailer_ms",
 	"chroot_ms",
 	"helper_ms",
@@ -295,7 +300,7 @@ var restoreTimingPhases = []string{
 func reportRestoreTiming(t *testing.T, rows []map[string]int64) {
 	t.Helper()
 	t.Logf("restore timing over %d park→restore cycles (nearest-rank percentiles, ms)", len(rows))
-	t.Logf("%-24s %6s %6s %6s %6s %6s %6s", "phase", "min", "p50", "p90", "p95", "max", "mean")
+	t.Logf("%-26s %6s %6s %6s %6s %6s %6s", "phase (ms unless noted)", "min", "p50", "p90", "p95", "max", "mean")
 	for _, phase := range restoreTimingPhases {
 		vals := make([]int64, 0, len(rows))
 		for _, r := range rows {
@@ -311,8 +316,15 @@ func reportRestoreTiming(t *testing.T, rows []map[string]int64) {
 		for _, v := range vals {
 			sum += v
 		}
-		t.Logf("%-24s %6d %6d %6d %6d %6d %6.1f",
-			phase, vals[0], nearestRank(vals, 50), nearestRank(vals, 90),
+		// Most phases are milliseconds; the helper's self-reported work is
+		// microseconds because it is sub-millisecond. Label the row with its
+		// unit rather than silently mixing the two in one column.
+		label := phase
+		if strings.HasSuffix(phase, "_us") {
+			label = phase + " (µs)"
+		}
+		t.Logf("%-26s %6d %6d %6d %6d %6d %6.1f",
+			label, vals[0], nearestRank(vals, 50), nearestRank(vals, 90),
 			nearestRank(vals, 95), vals[len(vals)-1], float64(sum)/float64(len(vals)))
 	}
 }
