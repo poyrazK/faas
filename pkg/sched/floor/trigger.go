@@ -607,7 +607,15 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 		headroom = t.ledger.HeadroomMB()
 	}
 	for _, app := range apps {
-		floor := app.EffectiveMinInstances()
+		floor := app.EffectiveMinInstancesAt(now)
+		// ADR-195: publish the schedule's contribution BEFORE the
+		// disabled short-circuit below. An app whose window just closed
+		// has floor 0 and takes that branch, and skipping the emit there
+		// would freeze the gauge at the last open window's value — the
+		// closed window would look permanently open.
+		if t.metrics != nil {
+			t.metrics.SetScheduledFloor(app.ID, app.ScalingPolicy.ScheduledMinInstancesAt(now))
+		}
 		if floor <= 0 {
 			t.observe(app.ID, OutcomeDisabled)
 			continue

@@ -1,6 +1,6 @@
 package fcvm
 
-// Egress circuit application (ADR-200 §3).
+// Egress circuit application (ADR-201 §3).
 //
 // vmmd is the only component that touches a network namespace, so schedd's
 // breaker reaches the data plane through here. The operation is deliberately

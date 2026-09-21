@@ -1,5 +1,5 @@
 // Package circuit is the three-state circuit breaker shared by the gateway's
-// instance breaker and schedd's egress breaker (ADR-200 §2, §3).
+// instance breaker and schedd's egress breaker (ADR-201 §2, §3).
 //
 // One implementation serves both because the two differ only in what feeds
 // them: the gateway reports per-request transport outcomes, while the egress
@@ -70,7 +70,7 @@ type Config struct {
 	MaxOpenDuration time.Duration
 }
 
-// DefaultConfig is the ADR-200 §2 default: open at a 50% failure ratio over a
+// DefaultConfig is the ADR-201 §2 default: open at a 50% failure ratio over a
 // 10 s window once at least 5 outcomes have been seen, probe after 5 s, back
 // off to at most 60 s.
 func DefaultConfig() Config {
@@ -83,7 +83,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// LegacyQuarantineConfig reproduces the pre-ADR-200 ServiceProxy behaviour: a
+// LegacyQuarantineConfig reproduces the pre-ADR-201 ServiceProxy behaviour: a
 // single failure benches the endpoint for a flat 5 s with no backoff growth.
 // This is what the group is built with when FAAS_GATEWAY_CIRCUIT_BREAKER is
 // off, so the flag-off tree is behaviourally identical to the fixed-TTL
@@ -98,7 +98,7 @@ func LegacyQuarantineConfig() Config {
 	}
 }
 
-// EgressConfig is the ADR-200 §3 default for probe-driven breaking. The window
+// EgressConfig is the ADR-201 §3 default for probe-driven breaking. The window
 // is much longer and MinRequests much lower than the gateway's because the
 // input is a 30 s probe, not per-request traffic: three samples is a
 // 90-second-old picture, which is the freshest honest signal available.

@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * Request replay against a different healthy instance
- * (ADR-200 §1, kind=retry).
+ * (ADR-201 §1, kind=retry).
  *
  * There is deliberately NO "retry on status" field. Only a
  * TRANSPORT failure may arm a replay — a guest that answered 5xx

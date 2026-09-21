@@ -53,7 +53,7 @@ class DataUpstreamResponse:
     last_probed_at: datetime.datetime | Unset = UNSET
     """Timestamp of the most recent probe. Omitted when no probe yet."""
     circuit_breaker: EgressCircuitBreakerPolicy | Unset = UNSET
-    """Per-upstream egress circuit-breaker policy (ADR-200 §3).
+    """Per-upstream egress circuit-breaker policy (ADR-201 §3).
 
     When enabled, your app's NEW connections to this upstream are
     rejected with a TCP reset while the circuit is open, instead of

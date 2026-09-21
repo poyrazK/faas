@@ -5520,7 +5520,7 @@ type ListEgressCircuitCandidatesRow struct {
 	SampledAt                      pgtype.Timestamptz
 }
 
-// schedd's egress circuit-breaker feed (ADR-200 §3). Returns every
+// schedd's egress circuit-breaker feed (ADR-201 §3). Returns every
 // opted-in upstream joined to its NEWEST probe verdict, which is the
 // complete input the breaker loop needs for one reconcile pass.
 //
@@ -12123,7 +12123,7 @@ type UpdateDataUpstreamCircuitBreakerParams struct {
 	CircuitBreakerOpenSeconds      pgtype.Int4
 }
 
-// ADR-200 §3 per-upstream egress-breaker policy. Each field uses the
+// ADR-201 §3 per-upstream egress-breaker policy. Each field uses the
 // COALESCE(sqlc.narg, existing) shape so a PATCH that omits a field
 // leaves it untouched — the same partial-update convention the app
 // PATCH paths use.

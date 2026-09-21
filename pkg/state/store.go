@@ -6173,7 +6173,7 @@ type Store interface {
 	// the window.
 	ListDataUpstreamProbesByHostRegion(ctx context.Context, arg sqlc.ListDataUpstreamProbesByHostRegionParams) ([]DataUpstreamProbe, error)
 
-	// ListEgressCircuitCandidates (ADR-200 §3) backs schedd's egress
+	// ListEgressCircuitCandidates (ADR-201 §3) backs schedd's egress
 	// circuit-breaker loop. Returns every opted-in upstream joined to its
 	// newest probe verdict no older than `since`; an opted-in upstream with
 	// no probe in the window comes back with a zero Sampled rather than
@@ -6182,7 +6182,7 @@ type Store interface {
 	// ADR-098 sentinel.
 	ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error)
 
-	// UpdateDataUpstreamCircuitBreaker (ADR-200 §3) applies a partial
+	// UpdateDataUpstreamCircuitBreaker (ADR-201 §3) applies a partial
 	// per-upstream egress-breaker policy update. Scoped by (id, app_id) so
 	// a forged ID from a sibling app cannot enable a breaker on an upstream
 	// the caller cannot see — this rule can cut an app off from its own

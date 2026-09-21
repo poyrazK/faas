@@ -6716,7 +6716,7 @@ type EdgeRuleValidateAction struct {
 }
 
 // EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
-// (ADR-200 §1). It tunes the replay of a request that died in transport
+// (ADR-201 §1). It tunes the replay of a request that died in transport
 // against a different healthy instance.
 //
 // There is deliberately NO "retry on status" field. Only a transport failure
@@ -6742,7 +6742,7 @@ type EdgeRuleRetryAction struct {
 	BackoffMs int `json:"backoff_ms,omitempty"`
 }
 
-// Validate applies the ADR-200 §1 defaults and bounds. It mutates the
+// Validate applies the ADR-201 §1 defaults and bounds. It mutates the
 // receiver so the stored row carries the effective values rather than zeros —
 // an operator reading the row later should not have to know the defaults to
 // know what the rule does.
@@ -6782,7 +6782,7 @@ func (a *EdgeRuleRetryAction) Validate() *Problem {
 }
 
 // EdgeRuleCircuitBreakerAction is the wire shape for a kind=circuit_breaker
-// edge rule (ADR-200 §2).
+// edge rule (ADR-201 §2).
 //
 // This rule TUNES a breaker that already runs for every app on every plan; it
 // does not enable protection. A customer with no rule is still protected from
@@ -6803,7 +6803,7 @@ type EdgeRuleCircuitBreakerAction struct {
 	MaxOpenSeconds int `json:"max_open_seconds,omitempty"`
 }
 
-// Validate applies the ADR-200 §2 defaults and bounds, mutating the receiver
+// Validate applies the ADR-201 §2 defaults and bounds, mutating the receiver
 // so the stored row carries effective values.
 func (a *EdgeRuleCircuitBreakerAction) Validate() *Problem {
 	if a == nil {

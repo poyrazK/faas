@@ -447,7 +447,7 @@ type HostEntry struct {
 	// HostEntry.
 	Cache   []EdgeRuleCacheResolved
 	Respond []EdgeRuleRespondResolved
-	// Retry and CircuitBreaker carry the ADR-200 subsets. Same
+	// Retry and CircuitBreaker carry the ADR-201 subsets. Same
 	// kind-agnostic slot shape as every kind above; the cmd-side loader
 	// threads one slice per kind into the HostEntry.
 	Retry          []EdgeRuleRetryResolved
@@ -754,7 +754,7 @@ func (c *EdgeRuleCache) GetBudget(host string) ([]EdgeRuleBudgetResolved, bool) 
 	return out, true
 }
 
-// GetRetry returns the per-host kind=retry slice (ADR-200 §1). Mirrors
+// GetRetry returns the per-host kind=retry slice (ADR-201 §1). Mirrors
 // GetBudget: a cached host with no retry rules returns (nil, true) so the
 // caller can tell "no rules" from "not loaded".
 func (c *EdgeRuleCache) GetRetry(host string) ([]EdgeRuleRetryResolved, bool) {
@@ -771,7 +771,7 @@ func (c *EdgeRuleCache) GetRetry(host string) ([]EdgeRuleRetryResolved, bool) {
 }
 
 // GetCircuitBreaker returns the per-host kind=circuit_breaker slice
-// (ADR-200 §2).
+// (ADR-201 §2).
 func (c *EdgeRuleCache) GetCircuitBreaker(host string) ([]EdgeRuleCircuitBreakerResolved, bool) {
 	entry, ok := c.getEntry(host)
 	if !ok {
@@ -1003,7 +1003,7 @@ type EdgeRuleMatcher interface {
 	// wake-gate interaction stays in one place).
 	MatchCache(ctx context.Context, host, path, method string) *EdgeRuleCacheResolved
 	MatchRespond(ctx context.Context, host, path, method string) *EdgeRuleRespondResolved
-	// MatchRetry and MatchCircuitBreaker are the ADR-200 matchers. Like
+	// MatchRetry and MatchCircuitBreaker are the ADR-201 matchers. Like
 	// every matcher here they only resolve the highest-priority matching
 	// rule; the replay loop lives in pkg/gateway/retry.go and the breaker
 	// state machine in pkg/circuit, so the matching and the mechanism stay

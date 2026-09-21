@@ -12294,7 +12294,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			}
 		}
 	}
-	// ADR-200 §1/§2 per-kind quotas. Unlike the branches above, a zero
+	// ADR-201 §1/§2 per-kind quotas. Unlike the branches above, a zero
 	// quota DENIES rather than skipping the check — see
 	// pkg/state/edge_rule_kind_quota.go for why the two differ.
 	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {

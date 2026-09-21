@@ -210,7 +210,7 @@ func streamingEnabledFromEnv() bool {
 	return false
 }
 
-// trafficResilienceEnabled resolves an ADR-200 operator gate. Reuses the
+// trafficResilienceEnabled resolves an ADR-201 operator gate. Reuses the
 // streaming flag's truthy vocabulary so every gateway kill switch answers to
 // the same values rather than each inventing its own.
 func trafficResilienceEnabled(name string) bool {
@@ -223,7 +223,7 @@ func trafficResilienceEnabled(name string) bool {
 	return false
 }
 
-// egressBreakerGroup returns the ServiceProxy's health breaker (ADR-200 §2).
+// egressBreakerGroup returns the ServiceProxy's health breaker (ADR-201 §2).
 //
 // Nil is NOT returned when the flag is off: NewServiceProxy installs
 // circuit.LegacyQuarantineConfig for a nil breaker, which reproduces the
@@ -1541,7 +1541,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (certmagic, httpsec, :443/:80 ACME mux). This daemon stays
 	// plain HTTP on :8080; the resolved-TLS branch was removed in PR-A.
 	deps.metrics = gateway.NewMetrics()
-	// ADR-200: surface the closed-vocabulary retry/breaker series from
+	// ADR-201: surface the closed-vocabulary retry/breaker series from
 	// process start so an operator alerting on `rate(...) == 0` is not
 	// reading a cold-start absence as a healthy zero.
 	deps.metrics.PreInstantiateTrafficResilience()
@@ -2089,7 +2089,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// — run()
 	// populates deps.streamingEnabled; tests inject the bit directly.
 	handler.WithStreamingEnabled(deps.streamingEnabled)
-	// ADR-200 §1. Two gates on purpose: FAAS_GATEWAY_RETRY turns the
+	// ADR-201 §1. Two gates on purpose: FAAS_GATEWAY_RETRY turns the
 	// machinery on, and a kind=retry edge rule still has to permit a replay.
 	// An operator can therefore enable the flag fleet-wide and roll retry out
 	// per app, rather than changing every app's behaviour at once — which is
@@ -2986,26 +2986,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WebSocketEnabled: app.WebSocketEnabled,
 				}, app.ID != "", nil
 			},
-			Authorize: func(ctx context.Context, callerAppID, targetAppID string) error {
-				caller, err := pgStore.AppByID(ctx, callerAppID)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ErrServiceProxyDenied
-				}
-				if err != nil {
-					return fmt.Errorf("load caller app: %w", err)
-				}
-				target, err := pgStore.AppByID(ctx, targetAppID)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ErrServiceProxyDenied
-				}
-				if err != nil {
-					return fmt.Errorf("load target app: %w", err)
-				}
-				if caller.AccountID == "" || caller.AccountID != target.AccountID {
-					return gateway.ErrServiceProxyDenied
-				}
-				return nil
-			},
+			Authorize:  newServiceProxyAuthorizer(pgStore),
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and
@@ -3015,9 +2996,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
 			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
-			// ADR-200 §2. Nil Breaker installs the legacy fixed-TTL
+			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
-			// pre-ADR-200 behaviour.
+			// pre-ADR-201 behaviour.
 			Breaker: egressBreakerGroup(),
 			Metrics: deps.metrics,
 		}

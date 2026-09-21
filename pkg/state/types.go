@@ -6323,7 +6323,7 @@ const (
 	// checked again by the gateway before it can short-circuit traffic.
 	EdgeRuleKindRespond EdgeRuleKind = "respond"
 	// EdgeRuleKindRetry tunes the replay of a request that died in
-	// transport against a different healthy instance (ADR-200 §1). The
+	// transport against a different healthy instance (ADR-201 §1). The
 	// runtime is pkg/gateway/retry.go. Only a TRANSPORT failure arms a
 	// replay — a guest that answered 5xx has served the request, and
 	// replaying it would run the customer's side effects twice — so this
@@ -6336,7 +6336,7 @@ const (
 	// migrations/20260921155758349_edge_rules_kind_retry_and_circuit_breaker.sql.
 	EdgeRuleKindRetry EdgeRuleKind = "retry"
 	// EdgeRuleKindCircuitBreaker tunes the closed/open/half-open breaker
-	// that decides whether an instance is selectable (ADR-200 §2). The
+	// that decides whether an instance is selectable (ADR-201 §2). The
 	// runtime is pkg/circuit, shared with the egress breaker so both
 	// surfaces behave identically. The breaker runs for every app on every
 	// plan with DefaultConfig; this rule only adjusts its thresholds, which
@@ -6767,17 +6767,17 @@ type EdgeRuleAction struct {
 	Cache *EdgeRuleCacheAction `json:"cache,omitempty"`
 	// Respond carries the fixed JSON response for a preview-only mock route.
 	Respond *EdgeRuleRespondAction `json:"respond,omitempty"`
-	// Retry carries the replay knobs for kind=retry (ADR-200 §1). There is
+	// Retry carries the replay knobs for kind=retry (ADR-201 §1). There is
 	// deliberately no "retry on status" field: only a transport failure may
 	// arm a replay, so the set of retryable conditions is not customer-
 	// configurable. The runtime is pkg/gateway/retry.go.
 	Retry *EdgeRuleRetryAction `json:"retry,omitempty"`
 	// CircuitBreaker carries the threshold knobs for kind=circuit_breaker
-	// (ADR-200 §2). The runtime is pkg/circuit.
+	// (ADR-201 §2). The runtime is pkg/circuit.
 	CircuitBreaker *EdgeRuleCircuitBreakerAction `json:"circuit_breaker,omitempty"`
 }
 
-// EdgeRuleRetryAction is the kind=retry payload (ADR-200 §1).
+// EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).
 //
 // MaxAttempts counts attempts, not retries: 2 is the original plus one
 // replay. AllowNonIdempotent opts POST and PATCH into replay and is the one
@@ -6795,7 +6795,7 @@ type EdgeRuleRetryAction struct {
 }
 
 // EdgeRuleCircuitBreakerAction is the kind=circuit_breaker payload
-// (ADR-200 §2).
+// (ADR-201 §2).
 //
 // MinRequests is the low-traffic guard and the field most likely to be
 // misconfigured: setting it to 1 makes a single transport blip open the
@@ -7153,7 +7153,7 @@ type DataUpstream struct {
 	LastProbedAt *time.Time
 	LastSeenAt   time.Time
 	CreatedAt    time.Time
-	// CircuitBreakerEnabled is the ADR-200 §3 per-upstream opt-in.
+	// CircuitBreakerEnabled is the ADR-201 §3 per-upstream opt-in.
 	//
 	// Default false, and that is load-bearing rather than conservative: an
 	// open circuit REJECTS the tenant's connections to their own database.

@@ -880,7 +880,7 @@ type Limits struct {
 	EdgeRulesCachePerApp int
 
 	// EdgeRulesRetryPerApp caps how many kind='retry' rules one app
-	// may hold (ADR-200 §1). Per-plan: Free 0, Hobby 3, Pro 10,
+	// may hold (ADR-201 §1). Per-plan: Free 0, Hobby 3, Pro 10,
 	// Scale 25.
 	//
 	// Free is 0 for a capacity reason, not a packaging one: a replay
@@ -892,7 +892,7 @@ type Limits struct {
 	EdgeRulesRetryPerApp int
 
 	// EdgeRulesCircuitBreakerPerApp caps how many
-	// kind='circuit_breaker' rules one app may hold (ADR-200 §2).
+	// kind='circuit_breaker' rules one app may hold (ADR-201 §2).
 	// Per-plan: Free 0, Hobby 3, Pro 10, Scale 25.
 	//
 	// This gates TUNING, not protection. The breaker runs for every
@@ -903,7 +903,7 @@ type Limits struct {
 	EdgeRulesCircuitBreakerPerApp int
 
 	// EgressCircuitBreakersPerApp caps how many declared upstreams one
-	// app may opt into egress breaking for (ADR-200 §3). Per-plan:
+	// app may opt into egress breaking for (ADR-201 §3). Per-plan:
 	// Free 0, Hobby 3, Pro 10, Scale 50 — deliberately mirroring
 	// DataPlacementHintsPerApp, since a breaker can only exist for an
 	// upstream the ADR-098 capture path already recorded and Free
@@ -1309,10 +1309,22 @@ type Limits struct {
 	TrafficSplit bool
 
 	// RollbackOn5xxAllowed (issue #961 / ADR-118) gates the
-	// per-deployment first-wake 5xx auto-rollback opt-in. Pro and
-	// Scale unlock it; Free and Hobby retain the safe default-off
-	// behavior. The deployment column remains available to internal
-	// workers and existing rows on every plan.
+	// per-deployment first-wake 5xx auto-rollback opt-in.
+	//
+	// TRUE ON EVERY PLAN as of ADR-201. Unlike TrafficSplit, this one
+	// never had a cost argument to answer: auto-rollback consumes no
+	// extra runtime resources. It reads the first_5xx_count column the
+	// platform already increments on every deployment regardless of
+	// plan, and on threshold it flips traffic back to a snapshot that
+	// already exists. The work is strictly cheaper than the outage it
+	// prevents — a bad revision left serving burns wake and RAM
+	// seconds for as long as it stays up.
+	//
+	// The opt-in remains OFF by default on every plan (the column
+	// default is false), so nothing changes for a customer who does
+	// not ask for it. Retained as a field so an operator can re-tier
+	// it, and because plan_rollback_on_5xx_not_allowed stays in the
+	// wire contract for older clients.
 	RollbackOn5xxAllowed bool
 
 	// MirrorRuleAllowed (issue #72 / ADR-125) is the plan gate
@@ -1851,7 +1863,7 @@ var planLimits = map[Plan]Limits{
 		// upsell is the wake-elision guarantee. Same posture as
 		// tenant_surfaces / alert_rules / cors_presets on Free.
 		EdgeRulesCachePerApp: 0,
-		// ADR-200 traffic primitives. Retry and breaker TUNING are
+		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -2015,8 +2027,13 @@ var planLimits = map[Plan]Limits{
 		//
 		// The column default (100) still keeps today's
 		// behaviour for every app that never opts in.
-		TrafficSplit:         true,
-		RollbackOn5xxAllowed: false,
+		TrafficSplit: true,
+		// ADR-201: Free unlocks first-wake 5xx auto-rollback. It costs
+		// no extra runtime resources — the 5xx counters are already
+		// collected on every plan — and the tier least able to absorb
+		// a bad release is the one that benefits most. Still off by
+		// default; the customer must opt in per deployment.
+		RollbackOn5xxAllowed: true,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
 		// rationale. MirrorTargetsPerApp = 0 keeps the field
@@ -2243,7 +2260,7 @@ var planLimits = map[Plan]Limits{
 		// to demonstrate the wake-elision value before the
 		// customer upgrades to Pro.
 		EdgeRulesCachePerApp: 1,
-		// ADR-200 traffic primitives. Retry and breaker TUNING are
+		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -2399,8 +2416,10 @@ var planLimits = map[Plan]Limits{
 		// instance.
 		//
 		// See the Free block above for the full rationale.
-		TrafficSplit:         true,
-		RollbackOn5xxAllowed: false,
+		TrafficSplit: true,
+		// ADR-201: Hobby unlocks first-wake 5xx auto-rollback — see the
+		// Free row above. Still opt-in per deployment.
+		RollbackOn5xxAllowed: true,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
 		// rationale. MirrorTargetsPerApp = 0 keeps the field
@@ -2623,7 +2642,7 @@ var planLimits = map[Plan]Limits{
 		// plus one wildcard. Same five-fold upgrade as throttle and
 		// geo so the upsell curve is single-shape.
 		EdgeRulesCachePerApp: 5,
-		// ADR-200 traffic primitives. Retry and breaker TUNING are
+		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -2993,7 +3012,7 @@ var planLimits = map[Plan]Limits{
 		// category, etc.). Pin in limits_test.go so the per-plan
 		// monotonic ladder Free < Hobby < Pro < Scale is enforced.
 		EdgeRulesCachePerApp: 20,
-		// ADR-200 traffic primitives. Retry and breaker TUNING are
+		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -3606,7 +3625,7 @@ const (
 	// not the cap).
 	MaxEdgeRuleMaintenanceRetryAfterSeconds = 24 * 60 * 60 // 86400 (24h)
 
-	// --- ADR-200 §1: kind=retry bounds -------------------------------
+	// --- ADR-201 §1: kind=retry bounds -------------------------------
 	// These are global bounds, not plan quotas. The per-plan rule count
 	// is EdgeRulesRetryPerApp above.
 
@@ -3635,7 +3654,7 @@ const (
 	// exists only for the case where the sibling is still waking.
 	MaxEdgeRuleRetryBackoffMs = 1_000
 
-	// --- ADR-200 §2: kind=circuit_breaker bounds ----------------------
+	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
 	// EdgeRuleCircuitDefaultFailureThreshold is the failure ratio at or
 	// above which a closed breaker opens.

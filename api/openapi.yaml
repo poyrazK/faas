@@ -8732,7 +8732,7 @@ paths:
       summary: Update an upstream's egress circuit-breaker policy.
       description: |
         Opts one upstream into (or out of) egress circuit breaking, and
-        optionally tunes its thresholds (ADR-200 §3).
+        optionally tunes its thresholds (ADR-201 §3).
 
         Enabling this grants the platform permission to REJECT your app's
         connections to this upstream while its circuit is open. Plaintext
@@ -26406,7 +26406,7 @@ components:
     EdgeRuleRetryAction:
       description: |
         Request replay against a different healthy instance
-        (ADR-200 §1, kind=retry).
+        (ADR-201 §1, kind=retry).
 
         There is deliberately NO "retry on status" field. Only a
         TRANSPORT failure may arm a replay — a guest that answered 5xx
@@ -26469,7 +26469,7 @@ components:
             waking.
     EdgeRuleCircuitBreakerAction:
       description: |
-        Instance health thresholds (ADR-200 §2, kind=circuit_breaker).
+        Instance health thresholds (ADR-201 §2, kind=circuit_breaker).
 
         This rule TUNES a breaker that already runs for every app on
         every plan; it does not enable protection. With no rule your
@@ -27791,7 +27791,7 @@ components:
 
     EgressCircuitBreakerPolicy:
       description: |
-        Per-upstream egress circuit-breaker policy (ADR-200 §3).
+        Per-upstream egress circuit-breaker policy (ADR-201 §3).
 
         When enabled, your app's NEW connections to this upstream are
         rejected with a TCP reset while the circuit is open, instead of
@@ -27851,7 +27851,7 @@ components:
     UpdateUpstreamCircuitBreakerRequest:
       description: |
         Partial update of an upstream's egress circuit-breaker policy
-        (ADR-200 §3). Omitted fields are left unchanged.
+        (ADR-201 §3). Omitted fields are left unchanged.
 
         Setting `enabled` to false leaves the threshold fields intact, so
         toggling protection off does not discard your tuning.

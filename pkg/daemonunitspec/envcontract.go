@@ -198,7 +198,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_E2E_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host"},
 	{Name: "FAAS_E2E_VMMD_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
-	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-200 §3; off by default — an open circuit rejects a tenant's connections to their own upstream"},
+	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
 	{Name: "FAAS_EXECUTION_", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1"},
@@ -218,13 +218,13 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAYD_CONTROL_URL", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAYD_PUBLIC_ROLE", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAYD_ROLE", Owners: []string{"gatewayd-internal", "shared"}, Source: EnvSourceDropin},
-	{Name: "FAAS_GATEWAY_CIRCUIT_BREAKER", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-200 §2; off installs the legacy fixed-TTL quarantine, which is byte-identical to pre-ADR-200"},
+	{Name: "FAAS_GATEWAY_CIRCUIT_BREAKER", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-201 §2; off installs the legacy fixed-TTL quarantine, which is byte-identical to pre-ADR-201"},
 	{Name: "FAAS_GATEWAY_CONTROL_LISTEN", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_LISTEN", Owners: []string{"gatewayd-internal", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_GATEWAY_METRICS_URL", Owners: []string{"schedd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAY_RAW_STREAM_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
-	{Name: "FAAS_GATEWAY_RETRY", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-200 §1; off by default. A matched kind=retry rule is still required, so this is a fleet-wide kill switch rather than a behaviour change"},
+	{Name: "FAAS_GATEWAY_RETRY", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-201 §1; off by default. A matched kind=retry rule is still required, so this is a fleet-wide kill switch rather than a behaviour change"},
 	{Name: "FAAS_GATEWAY_ROUTE_METRICS", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_ROUTE_STALE_TTL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "ADR-190; how long a last-known-good route is served while the Postgres route lookup errors (default 10m, 0 disables)"},
 	{Name: "FAAS_GATEWAY_STREAMING", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143)"},
@@ -492,7 +492,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TWO_NODE_SSH_", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},
 	{Name: "FAAS_UPSTREAM_AFFINITY", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "off by design until the §9.A rollout gate (spec)"},
 	{Name: "FAAS_UPSTREAM_AFFINITY_TTL", Owners: []string{"schedd"}, Source: EnvSourceDefault},
-	// schedd joined the owners in ADR-200 §3: the egress circuit breaker
+	// schedd joined the owners in ADR-201 §3: the egress circuit breaker
 	// refuses to start without the probe, because without probe rows it
 	// has no health signal and would be a silent no-op that looks like
 	// protection.

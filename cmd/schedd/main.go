@@ -661,7 +661,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}()
 
-	// ADR-200 §3: egress circuit breaker. Off unless the operator sets
+	// ADR-201 §3: egress circuit breaker. Off unless the operator sets
 	// FAAS_EGRESS_CIRCUIT_BREAKER, and additionally inert unless the
 	// ADR-098 probe is running — without probe rows the breaker has no
 	// health signal at all, so enabling one without the other would be a

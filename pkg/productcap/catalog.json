@@ -8,7 +8,7 @@
       "description": "Stop routing to an instance that is failing in transport, and probe it back into service once it recovers.",
       "maturity": "internal",
       "plans": [],
-      "docs_url": "/docs/adr/200-traffic-as-a-platform-primitive",
+      "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_GATEWAY_CIRCUIT_BREAKER",
       "acceptance_test": "pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint"
     },
@@ -64,7 +64,7 @@
       "description": "Fail an app's connections to a declared upstream fast while that upstream is unhealthy, instead of letting each request wait out a full connect timeout.",
       "maturity": "internal",
       "plans": [],
-      "docs_url": "/docs/adr/200-traffic-as-a-platform-primitive",
+      "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_EGRESS_CIRCUIT_BREAKER",
       "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery"
     },
@@ -191,7 +191,7 @@
       "description": "Replay a request that died in transport against a different healthy instance of the same app.",
       "maturity": "internal",
       "plans": [],
-      "docs_url": "/docs/adr/200-traffic-as-a-platform-primitive",
+      "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_GATEWAY_RETRY",
       "acceptance_test": "pkg/gateway/handler_retry_test.go::TestHandlerRetryConvertsTransportFailureIntoSuccess"
     },

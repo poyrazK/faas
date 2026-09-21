@@ -395,7 +395,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/github":                           "DisconnectGitHubConnection",
 	"GET /v1/deployments/{id}":                                "GetDeployment",
 	"PATCH /v1/deployments/{id}":                              "PatchDeployment",                     // ADR-072 / issue #557 closure; min_instances override
-	"PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker":    "UpdateAppDataUpstreamCircuitBreaker", // ADR-200 §3: same literal-hyphen case as env-diff above — auto-derivation yields `PatchAppsSlugUpstreamsIdCircuit-breaker`, which is not a legal Go identifier. Follows the spec operationId `updateAppDataUpstreamCircuitBreaker`.
+	"PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker":    "UpdateAppDataUpstreamCircuitBreaker", // ADR-201 §3: same literal-hyphen case as env-diff above — auto-derivation yields `PatchAppsSlugUpstreamsIdCircuit-breaker`, which is not a legal Go identifier. Follows the spec operationId `updateAppDataUpstreamCircuitBreaker`.
 	"DELETE /v1/deployments/{id}":                             "ClearDeployment",                     // ADR-124 PR-A; soft-delete (status untouched)
 	"GET /v1/deployments":                                     "ListDeployments",
 	"GET /v1/deployments/latest-by-app":                       "ListLatestDeploymentsByApp",

@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-200 §3: per-upstream egress circuit-breaker opt-in.
+-- ADR-201 §3: per-upstream egress circuit-breaker opt-in.
 --
 -- The default is FALSE and that is load-bearing, not conservatism. An open
 -- circuit REJECTS a tenant's connections to their own database. Enabling that

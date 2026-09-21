@@ -1,6 +1,6 @@
 package sched
 
-// Egress circuit breaking (ADR-200 §3).
+// Egress circuit breaking (ADR-201 §3).
 //
 // This is the half of the feature that decides; pkg/netns owns the half that
 // enforces. The decision input is the ADR-098 probe: meterd already dials
@@ -109,7 +109,7 @@ func NewEgressCircuitBreaker(applier EgressCircuitApplier, resolve EgressResolve
 }
 
 // WithMetrics publishes circuit state to the shared OpsMetrics registry
-// (ADR-200 §3).
+// (ADR-201 §3).
 //
 // The gauge carries the REDACTED upstream hash, never the plaintext host —
 // a customer's database hostname in a Prometheus label is exactly the §11

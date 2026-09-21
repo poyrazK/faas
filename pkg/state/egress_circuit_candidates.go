@@ -1,6 +1,6 @@
 package state
 
-// Egress circuit-breaker candidate reads (ADR-200 §3).
+// Egress circuit-breaker candidate reads (ADR-201 §3).
 
 import (
 	"context"
@@ -38,7 +38,7 @@ type EgressCircuitCandidate struct {
 	Sampled          time.Time
 }
 
-// ListEgressCircuitCandidates (ADR-200 §3) — MemStore stub, Postgres-only.
+// ListEgressCircuitCandidates (ADR-201 §3) — MemStore stub, Postgres-only.
 //
 // Mirrors every other ADR-098 data_upstreams method on MemStore: the feed
 // reads a partitioned probe table with a DISTINCT ON join, and a hand-rolled
@@ -91,7 +91,7 @@ func (s *PgStore) ListEgressCircuitCandidates(ctx context.Context, since time.Ti
 }
 
 // UpdateDataUpstreamCircuitBreakerParams is the partial-update input for the
-// ADR-200 §3 per-upstream policy. A nil field means "leave unchanged".
+// ADR-201 §3 per-upstream policy. A nil field means "leave unchanged".
 type UpdateDataUpstreamCircuitBreakerParams struct {
 	ID               uuid.UUID
 	AppID            uuid.UUID
@@ -101,7 +101,7 @@ type UpdateDataUpstreamCircuitBreakerParams struct {
 	OpenSeconds      *int
 }
 
-// UpdateDataUpstreamCircuitBreaker (ADR-200 §3) — MemStore stub,
+// UpdateDataUpstreamCircuitBreaker (ADR-201 §3) — MemStore stub,
 // Postgres-only, matching every other ADR-098 data_upstreams method.
 func (m *MemStore) UpdateDataUpstreamCircuitBreaker(_ context.Context, _ UpdateDataUpstreamCircuitBreakerParams) error {
 	return errMemStoreDataUpstreams

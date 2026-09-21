@@ -957,9 +957,9 @@ type Handler struct {
 	// cmd/gatewayd-internal/main.go so production defaults to off and operators
 	// opt in per-cluster after PR-B ships.
 	streamingEnabled bool
-	// retryEnabled is the FAAS_GATEWAY_RETRY operator gate (ADR-200 §1).
+	// retryEnabled is the FAAS_GATEWAY_RETRY operator gate (ADR-201 §1).
 	// Off by default; with it off, proxyAttempt calls the forwarder directly
-	// and the tree is byte-identical to the pre-ADR-200 path.
+	// and the tree is byte-identical to the pre-ADR-201 path.
 	retryEnabled bool
 	// retryDefault is the policy applied when the gate is on and no
 	// kind=retry rule matched. Zero MaxAttempts means no replay, so an
@@ -6327,7 +6327,7 @@ haveApp:
 	// are therefore left untouched.
 	staleContext := r.Context()
 	// retireStaleTarget is shared by the plain path's signal below and by the
-	// ADR-200 §1 retry loop, which reports each attempt's own failed target.
+	// ADR-201 §1 retry loop, which reports each attempt's own failed target.
 	// Extracted so both report identically — a retry that evicted differently
 	// from a non-retry failure would make the two paths diverge in exactly the
 	// situation an operator is trying to read.
@@ -6584,7 +6584,7 @@ haveApp:
 		// re-frames to H1+chunked on the guest side per
 		// PR #750).
 		r.Header.Set("x-faas-protocol", decideProtocol(app))
-		// ADR-200 §1. Retry only wraps the BUFFERED path: a streaming
+		// ADR-201 §1. Retry only wraps the BUFFERED path: a streaming
 		// response commits on its first flush, so a replay is impossible by
 		// construction, and wrapping it would put a buffering writer in front
 		// of the very path whose point is not to buffer. Upgrade requests

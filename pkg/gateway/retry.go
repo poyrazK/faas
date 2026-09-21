@@ -1,6 +1,6 @@
 package gateway
 
-// Request retry against a different healthy instance (ADR-200 §1).
+// Request retry against a different healthy instance (ADR-201 §1).
 //
 // The gateway is the only component that knows the *other* healthy instances
 // of an app, so replaying a request that died in transport is work only the
@@ -177,11 +177,11 @@ type retryObserver interface {
 }
 
 // runWithRetry executes attempt against target, replaying against a fresh
-// target when the bridge reports a transport failure and every ADR-200 §1
+// target when the bridge reports a transport failure and every ADR-201 §1
 // safety rule holds.
 //
 // When the policy is disabled this calls attempt exactly once with the caller's
-// own writer and request, which is byte-identical to the pre-ADR-200 path —
+// own writer and request, which is byte-identical to the pre-ADR-201 path —
 // no buffering, no body rewind, no wrapper in the way of the streaming and
 // upgrade paths.
 func runWithRetry(
@@ -284,7 +284,7 @@ func runAttempts(
 	}
 }
 
-// nextAttemptAllowed applies the ADR-200 §1 safety rules in order. It returns
+// nextAttemptAllowed applies the ADR-201 §1 safety rules in order. It returns
 // the exhaustion reason when a replay is refused; an empty reason means the
 // attempt simply succeeded and no metric should fire.
 func nextAttemptAllowed(
@@ -399,7 +399,7 @@ func (h *Handler) retryPolicyFor(app App, r *http.Request) RetryPolicy {
 }
 
 // proxyAttempt runs the forwarder for one request, replaying against a fresh
-// target when ADR-200 §1 permits.
+// target when ADR-201 §1 permits.
 //
 // Streaming is excluded outright rather than left to rule 1. A streaming
 // response commits on its first flush, so a replay is impossible by

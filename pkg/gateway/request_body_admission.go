@@ -156,7 +156,7 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 	}
 
 	_ = original.Close()
-	// GetBody makes the admitted body replayable (ADR-200 §1). Both backing
+	// GetBody makes the admitted body replayable (ADR-201 §1). Both backing
 	// stores are already rewindable, so retry costs no extra buffering and no
 	// extra memory ceiling: these bytes are resident either way and were
 	// already counted against MaxRequestBodyBytes above.
@@ -168,7 +168,7 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 	// The retry loop (retryingProxy) therefore keeps the owning body and
 	// closes it exactly once; every attempt, including the first, proxies a
 	// NopCloser. When retry is disabled nothing calls GetBody and r.Body stays
-	// the owning body, which is byte-identical to the pre-ADR-200 path.
+	// the owning body, which is byte-identical to the pre-ADR-201 path.
 	if spool != nil {
 		if _, err := spool.Seek(0, io.SeekStart); err != nil {
 			cleanupSpool()

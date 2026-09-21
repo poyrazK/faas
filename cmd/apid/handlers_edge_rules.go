@@ -211,7 +211,7 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("retry action: %v", err))
 		}
-		// Validate applies the ADR-200 §1 defaults in place. The
+		// Validate applies the ADR-201 §1 defaults in place. The
 		// per-plan rule count (Free 0 / Hobby 3 / Pro 10 / Scale 25)
 		// is enforced separately in CreateEdgeRuleIfUnderQuota via
 		// Limits.EdgeRulesRetryPerApp, mirroring kind=cache.

@@ -1,6 +1,6 @@
 package state
 
-// Per-kind edge-rule quotas for the ADR-200 traffic primitives.
+// Per-kind edge-rule quotas for the ADR-201 traffic primitives.
 //
 // These live in one place so MemStore and PgStore cannot drift — the class of
 // bug that produced the always-zero uppercase-state-literal queries, where
@@ -16,14 +16,14 @@ package state
 // EdgeRulesCachePerApp = 0 that is not actually enforced at the store layer —
 // a Free app can create unlimited kind=cache rules today.
 //
-// ADR-200 needs Free = 0 to genuinely mean "no retry rules", so these
+// ADR-201 needs Free = 0 to genuinely mean "no retry rules", so these
 // helpers treat 0 as DENY. The older branches are deliberately left alone:
 // tightening them would revoke rules customers may already have created, and
 // that is a product decision, not a refactor.
 
 import "github.com/onebox-faas/faas/pkg/api"
 
-// edgeRuleKindQuota returns the per-app quota for an ADR-200 kind, and
+// edgeRuleKindQuota returns the per-app quota for an ADR-201 kind, and
 // whether the kind is one this helper governs.
 func edgeRuleKindQuota(kind EdgeRuleKind, limits api.Limits) (int, bool) {
 	switch kind {

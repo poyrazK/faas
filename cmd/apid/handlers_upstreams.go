@@ -412,7 +412,7 @@ func dataUpstreamResponseFromState(r state.DataUpstream) api.DataUpstreamRespons
 }
 
 // updateUpstreamCircuitBreaker is PATCH
-// /v1/apps/{slug}/upstreams/{id}/circuit-breaker (ADR-200 §3).
+// /v1/apps/{slug}/upstreams/{id}/circuit-breaker (ADR-201 §3).
 //
 // Opting in gives the platform permission to REJECT this app's connections to
 // this upstream while its circuit is open. That is the whole point — a

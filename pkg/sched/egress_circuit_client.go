@@ -1,6 +1,6 @@
 package sched
 
-// Client + router plumbing for the ADR-200 §3 egress breaker, and the
+// Client + router plumbing for the ADR-201 §3 egress breaker, and the
 // production EgressCircuitApplier that joins the breaker to vmmd.
 
 import (

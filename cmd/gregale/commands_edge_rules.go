@@ -273,7 +273,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	budgetMs := fs.Int("budget-ms", 0, "kind=budget: per-request wall-clock budget in ms (>0; max 30000)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
-	// retry (ADR-200 §1). Replay a request that died in transport
+	// retry (ADR-201 §1). Replay a request that died in transport
 	// against a different healthy instance. Only a TRANSPORT failure
 	// arms a replay — a guest that answered 5xx has served the
 	// request — so there is deliberately no "retry on status" flag.
@@ -282,7 +282,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	retryMinRemainingMs := fs.Int("retry-min-remaining-ms", 0, "kind=retry: skip the replay below this much remaining request budget (default 250; max 30000)")
 	retryBackoffMs := fs.Int("retry-backoff-ms", 0, "kind=retry: delay before a replay in ms (default 0; max 1000)")
 
-	// circuit_breaker (ADR-200 §2). Tunes a breaker that already runs
+	// circuit_breaker (ADR-201 §2). Tunes a breaker that already runs
 	// for every app on every plan; a rule only moves the thresholds.
 	circuitFailureThreshold := fs.Float64("circuit-failure-threshold", 0, "kind=circuit_breaker: failure RATIO that opens a closed breaker (default 0.5; (0,1])")
 	circuitMinRequests := fs.Int("circuit-min-requests", 0, "kind=circuit_breaker: observations needed before the ratio is consulted (default 5; at 1 a single blip opens the circuit)")
@@ -519,7 +519,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new per-request wall-clock budget in ms (>0; max 30000)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
-	// retry (ADR-200 §1). Replay a request that died in transport
+	// retry (ADR-201 §1). Replay a request that died in transport
 	// against a different healthy instance. Only a TRANSPORT failure
 	// arms a replay — a guest that answered 5xx has served the
 	// request — so there is deliberately no "retry on status" flag.
@@ -528,7 +528,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	retryMinRemainingMs := fs.Int("retry-min-remaining-ms", 0, "kind=retry: skip the replay below this much remaining request budget (default 250; max 30000)")
 	retryBackoffMs := fs.Int("retry-backoff-ms", 0, "kind=retry: delay before a replay in ms (default 0; max 1000)")
 
-	// circuit_breaker (ADR-200 §2). Tunes a breaker that already runs
+	// circuit_breaker (ADR-201 §2). Tunes a breaker that already runs
 	// for every app on every plan; a rule only moves the thresholds.
 	circuitFailureThreshold := fs.Float64("circuit-failure-threshold", 0, "kind=circuit_breaker: failure RATIO that opens a closed breaker (default 0.5; (0,1])")
 	circuitMinRequests := fs.Int("circuit-min-requests", 0, "kind=circuit_breaker: observations needed before the ratio is consulted (default 5; at 1 a single blip opens the circuit)")
@@ -790,14 +790,14 @@ type edgeRuleActionInputs struct {
 	// respond (preview-only fixed JSON response)
 	RespondStatus int
 	RespondBody   string
-	// retry (ADR-200 §1). Replay against a different healthy instance.
+	// retry (ADR-201 §1). Replay against a different healthy instance.
 	// Every field is optional — a bare `--kind retry` rule is the valid
 	// "platform defaults" shape — so none is checked for presence.
 	RetryMaxAttempts        int
 	RetryAllowNonIdempotent bool
 	RetryMinRemainingMs     int
 	RetryBackoffMs          int
-	// circuit_breaker (ADR-200 §2). Instance health thresholds. Also all
+	// circuit_breaker (ADR-201 §2). Instance health thresholds. Also all
 	// optional: the breaker runs with platform defaults whether or not a
 	// rule exists, so a bare rule is a no-op rather than an error.
 	CircuitFailureThreshold float64
@@ -1047,7 +1047,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		return marshalAction(a)
 	case "retry":
-		// ADR-200 §1. Every field is optional and the server applies
+		// ADR-201 §1. Every field is optional and the server applies
 		// defaults, so unlike kind=budget there is nothing to reject
 		// locally for absence — a bare rule means "platform defaults".
 		a := api.EdgeRuleRetryAction{
@@ -1061,7 +1061,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		return marshalAction(a)
 	case "circuit_breaker":
-		// ADR-200 §2.
+		// ADR-201 §2.
 		a := api.EdgeRuleCircuitBreakerAction{
 			FailureThreshold: in.CircuitFailureThreshold,
 			MinRequests:      in.CircuitMinRequests,

@@ -294,7 +294,7 @@ type Metrics struct {
 	// synthetic (app_id, rule_id, mode, reason) tuples for the
 	// known fleet.
 	validateFailures *prometheus.CounterVec
-	// ADR-200 traffic-resilience metrics, on the gatewayd-internal-local
+	// ADR-201 traffic-resilience metrics, on the gatewayd-internal-local
 	// registry per the rule at the top of this file: no wire-side mirror
 	// without a cross-daemon consumer, and the instance breaker + retry
 	// loop both run here.
@@ -302,7 +302,7 @@ type Metrics struct {
 	retryExhausted     *prometheus.CounterVec
 	circuitTransitions *prometheus.CounterVec
 	// circuitOpenTargets is a COUNT per app, deliberately not a per-instance
-	// state gauge. ADR-200's original sketch had {app_id, target} keyed by
+	// state gauge. ADR-201's original sketch had {app_id, target} keyed by
 	// instance_id; instance IDs churn on every wake, so that series set
 	// grows for the daemon's lifetime. A count answers the same operator
 	// question — is this app losing instances — at one series per app.
@@ -660,6 +660,18 @@ type Metrics struct {
 	// rows from idle fleet, non-zero as soon as production WS
 	// traffic arrives.
 	wsUpgradeTotal *prometheus.CounterVec
+	// serviceCallTotal (ADR-196 / ADR-197) counts every call that reaches the
+	// node-local service proxy, labelled by a closed outcome set. It is the
+	// only view of internal service-to-service traffic: these calls never
+	// touch the public edge, so gateway_requests_total cannot see them.
+	// Deliberately NOT labelled by app — the label set must stay bounded, and
+	// per-app attribution already exists in the wake timeline.
+	serviceCallTotal *prometheus.CounterVec
+	// serviceWakeLatency (ADR-196) observes how long an internal caller was
+	// held while a parked target service was restored. ADR-196 defers
+	// speculative wake-ahead along depends_on edges "until measured evidence";
+	// this histogram is that evidence.
+	serviceWakeLatency prometheus.Histogram
 	// wsActiveSessions (issue #676 / ADR-080 follow-up, PR-B) is
 	// the in-flight raw-bytes Upgrade session gauge, labelled by
 	// plan. Inc/Dec happens via IncWSSessionStart /
@@ -895,19 +907,19 @@ func NewMetrics() *Metrics {
 		// bucket; reason is closed at 6).
 		retryAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_attempts_total",
-			Help: "Request attempts observed by the ADR-200 §1 retry loop, labelled by outcome ∈ {original_ok, original_failed, replay_ok, replay_failed}. A non-zero replay_ok rate is the feature working: transport failures converted into successful responses by a healthy sibling. A rising replay_failed rate means siblings are failing too — a fleet problem rather than one dead instance.",
+			Help: "Request attempts observed by the ADR-201 §1 retry loop, labelled by outcome ∈ {original_ok, original_failed, replay_ok, replay_failed}. A non-zero replay_ok rate is the feature working: transport failures converted into successful responses by a healthy sibling. A rising replay_failed rate means siblings are failing too — a fleet problem rather than one dead instance.",
 		}, []string{"outcome"}),
 		retryExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_exhausted_total",
-			Help: "Times the ADR-200 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|no_healthy_sibling|insufficient_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high non_idempotent_method rate means customers want the allow_non_idempotent opt-in; a high insufficient_budget rate means their kind=budget deadlines are too tight for a replay to help. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
+			Help: "Times the ADR-201 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|no_healthy_sibling|insufficient_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high non_idempotent_method rate means customers want the allow_non_idempotent opt-in; a high insufficient_budget rate means their kind=budget deadlines are too tight for a replay to help. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
 		}, []string{"reason"}),
 		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_circuit_transitions_total",
-			Help: "ADR-200 §2 instance-breaker state changes, labelled by {from, to}. A sustained closed->open rate is instance churn; a repeating open->half_open->open cycle that never reaches half_open->closed means the target is persistently dead and the exponential backoff is doing its job.",
+			Help: "ADR-201 §2 instance-breaker state changes, labelled by {from, to}. A sustained closed->open rate is instance churn; a repeating open->half_open->open cycle that never reaches half_open->closed means the target is persistently dead and the exponential backoff is doing its job.",
 		}, []string{"from", "to"}),
 		circuitOpenTargets: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_circuit_open_targets",
-			Help: "Count of instance circuits currently open for an app (ADR-200 §2). A COUNT rather than a per-instance state gauge on purpose: instance IDs churn on every wake, so an {app_id, instance_id} series set would grow for the daemon's lifetime.",
+			Help: "Count of instance circuits currently open for an app (ADR-201 §2). A COUNT rather than a per-instance state gauge on purpose: instance IDs churn on every wake, so an {app_id, instance_id} series set would grow for the daemon's lifetime.",
 		}, []string{"app_id"}),
 		edgeRuleValidateFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_rule_validate_failures_total",
@@ -1378,6 +1390,24 @@ func NewMetrics() *Metrics {
 		// (WSOutcome / WSDirection constants) so the constructor
 		// pre-instantiate loop and the runtime helpers share one
 		// source of truth.
+		serviceCallTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_call_total",
+				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
+			},
+			[]string{"outcome"},
+		),
+		// Buckets span 10 ms (a warm in-rack hop) to 30 s (the wake gate's
+		// lifecycle TTL). The middle of the range is where the platform wake
+		// budget lives (§6.3, p95 < 350 ms on the reference node), so the
+		// resolution is deliberately densest there.
+		serviceWakeLatency: prometheus.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "gateway_service_wake_latency_seconds",
+				Help:    "Time an internal service caller was held while a parked target was restored (ADR-196), measured across the wake-and-refresh cycle. Observed only on the cold path; a warm call records nothing.",
+				Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5, 10, 30},
+			},
+		),
 		wsUpgradeTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_ws_upgrade_total",
@@ -1421,6 +1451,12 @@ func NewMetrics() *Metrics {
 	// ws_session_duration_seconds histogram excludes plan_denied
 	// / bridge_disided because those never open a session — the
 	// counter is sufficient for the rejected-at-gate outcomes.
+	// Pre-instantiate every service-call outcome so an idle node renders
+	// zeros rather than absent series — a dashboard cannot distinguish "no
+	// internal traffic" from "the proxy is not wired" without them.
+	for _, outcome := range ServiceCallOutcomes {
+		m.serviceCallTotal.WithLabelValues(string(outcome))
+	}
 	wsOutcomes := []WSOutcome{WSOutcomeAccepted, WSOutcomePlanDenied, WSOutcomeBridgeDisabled}
 	wsSessionOutcomes := []WSOutcome{WSOutcomeAccepted, WSOutcomeInitFailed, WSOutcomeUpstreamUnavailable, WSOutcomeClientDisconnect}
 	wsDirections := []WSDirection{WSDirectionTx, WSDirectionRx}
@@ -1696,7 +1732,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3077,6 +3113,68 @@ func (m *Metrics) IncWSUpgrade(plan string, outcome WSOutcome) {
 	m.wsUpgradeTotal.WithLabelValues(plan, string(outcome)).Inc()
 }
 
+// ServiceCallOutcome is the closed label set for gateway_service_call_total.
+// Declared alongside the helper so the constructor's pre-instantiate loop and
+// the runtime call sites share one source of truth.
+type ServiceCallOutcome string
+
+const (
+	// ServiceCallForwarded — the target was already warm.
+	ServiceCallForwarded ServiceCallOutcome = "forwarded"
+	// ServiceCallWoken — the target was parked; a wake produced a replica and
+	// the held request was then forwarded. The ratio of this to Forwarded is
+	// the internal cold-start rate.
+	ServiceCallWoken ServiceCallOutcome = "woken"
+	// ServiceCallNoReplica — the wake finished but nothing became routable
+	// (typically the app sits at its plan concurrency ceiling).
+	ServiceCallNoReplica ServiceCallOutcome = "no_replica"
+	// ServiceCallRegistryUnavailable — the endpoint registry read failed. A
+	// control-plane fault, not a parked service; no wake is attempted.
+	ServiceCallRegistryUnavailable ServiceCallOutcome = "registry_unavailable"
+	// ServiceCallWakeFailed — admission itself failed (no headroom, scheduler
+	// unreachable, store error).
+	ServiceCallWakeFailed ServiceCallOutcome = "wake_failed"
+	// ServiceCallWakeQueueFull — the target's wake queue was saturated; the
+	// caller received Retry-After.
+	ServiceCallWakeQueueFull ServiceCallOutcome = "wake_queue_full"
+	// ServiceCallUnauthenticated — no caller identity could be established.
+	ServiceCallUnauthenticated ServiceCallOutcome = "unauthenticated"
+	// ServiceCallDenied — caller and target belong to different accounts.
+	ServiceCallDenied ServiceCallOutcome = "denied"
+	// ServiceCallNotFound — the service name resolves to no app.
+	ServiceCallNotFound ServiceCallOutcome = "not_found"
+	// ServiceCallUpgradeRejected — an Upgrade request the target does not
+	// accept, or no raw bridge is wired on this node (ADR-197).
+	ServiceCallUpgradeRejected ServiceCallOutcome = "upgrade_rejected"
+)
+
+// ServiceCallOutcomes is the full closed set, used to pre-instantiate every
+// series so an idle node still renders zeros rather than absent series.
+var ServiceCallOutcomes = []ServiceCallOutcome{
+	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
+	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
+	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallNotFound,
+	ServiceCallUpgradeRejected,
+}
+
+// IncServiceCall bumps gateway_service_call_total for one outcome.
+// nil-safe: the pre-metrics test corpus constructs proxies without a Metrics.
+func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
+	if m == nil {
+		return
+	}
+	m.serviceCallTotal.WithLabelValues(string(outcome)).Inc()
+}
+
+// ObserveServiceWakeLatency records how long an internal caller waited for a
+// parked target to come back. Only the cold path calls this.
+func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.serviceWakeLatency.Observe(d.Seconds())
+}
+
 // IncWSSessionStart (issue #676 / ADR-080 follow-up, PR-B)
 // increments the {plan}-labeled gateway_ws_active_sessions
 // gauge when a raw-bytes Upgrade session opens. MUST be paired
@@ -3172,7 +3270,7 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 	m.requestTelemetryShipped.Add(float64(n))
 }
 
-// IncRetryAttempt records one attempt observed by the ADR-200 §1 retry loop.
+// IncRetryAttempt records one attempt observed by the ADR-201 §1 retry loop.
 // Satisfies retryObserver. Nil-safe.
 func (m *Metrics) IncRetryAttempt(outcome string) {
 	if m == nil || m.retryAttempts == nil {
@@ -3190,7 +3288,7 @@ func (m *Metrics) IncRetryExhausted(reason string) {
 	m.retryExhausted.WithLabelValues(reason).Inc()
 }
 
-// IncCircuitTransition records an ADR-200 §2 instance-breaker state change.
+// IncCircuitTransition records an ADR-201 §2 instance-breaker state change.
 // Nil-safe.
 func (m *Metrics) IncCircuitTransition(from, to string) {
 	if m == nil || m.circuitTransitions == nil {
@@ -3208,7 +3306,7 @@ func (m *Metrics) SetCircuitOpenTargets(appID string, count float64) {
 	m.circuitOpenTargets.WithLabelValues(appID).Set(count)
 }
 
-// PreInstantiateTrafficResilience surfaces the ADR-200 closed-set series at
+// PreInstantiateTrafficResilience surfaces the ADR-201 closed-set series at
 // process start.
 //
 // Without it an operator alerting on `rate(...) == 0` cannot distinguish "no

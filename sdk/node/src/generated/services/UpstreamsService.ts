@@ -267,7 +267,7 @@ export class UpstreamsService {
   /**
    * Update an upstream's egress circuit-breaker policy.
    * Opts one upstream into (or out of) egress circuit breaking, and
-   * optionally tunes its thresholds (ADR-200 §3).
+   * optionally tunes its thresholds (ADR-201 §3).
    *
    * Enabling this grants the platform permission to REJECT your app's
    * connections to this upstream while its circuit is open. Plaintext
