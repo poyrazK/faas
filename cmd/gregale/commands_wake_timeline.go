@@ -425,10 +425,19 @@ func renderRestoreArtifacts(value any) string {
 		name, _ := artifact["artifact"].(string)
 		source, _ := artifact["source"].(string)
 		ms, durationOK := timelineMillis(artifact["duration_ms"])
+		bytes, bytesOK := timelineMillis(artifact["bytes"])
 		if name == "" || source == "" || !durationOK {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s/%s=%dms", name, source, ms))
+		// Bytes alongside the source, matching renderColdBootArtifacts: on the
+		// restore side this is what distinguishes a slow fetch from a large
+		// one, and mem is the artifact where that difference is measured in
+		// hundreds of megabytes.
+		part := fmt.Sprintf("%s/%s=%dms", name, source, ms)
+		if bytesOK {
+			part += fmt.Sprintf("/%dB", bytes)
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ",")
 }

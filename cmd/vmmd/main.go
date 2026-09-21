@@ -874,6 +874,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer stopArchive()
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
+		// Same registry the Manager gets below, so per-artifact
+		// materialization lands next to the wake phases in one scrape.
+		WithWakePhaseMetrics(wpm).
 		WithStorage(storageBackend).
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		// Issue #309 / tier-2 DX: install the per-VMM

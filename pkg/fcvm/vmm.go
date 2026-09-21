@@ -128,6 +128,9 @@ type JailerVMM struct {
 	// bindSourceModes reference-counts temporary source permission widening
 	// when multiple VMs bind the same shared base image concurrently.
 	bindSourceModes map[string]bindSourceMode
+	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
+	// the Manager. Optional; every observation site is nil-safe.
+	wakePhaseMetrics *WakePhaseMetrics
 	// events is the wake-timeline fan-out (issue #517 / PR-C /
 	// ADR-064). vmmd is the source for the corroborating wake.boot_observed
 	// event and the canonical emit site for
@@ -178,10 +181,20 @@ type restoreTimingBreakdown struct {
 	ResolveArtifacts    []restoreArtifactTiming
 }
 
+// restoreArtifactTiming attributes one restore input to where its bytes came
+// from. Source is the discriminator that matters for placement: a local hit
+// is a stat plus a bind, while "materialized" is a full streamed copy of the
+// object out of the configured backend.
+//
+// Bytes mirrors coldBootArtifactTiming.Bytes. Without it a remote fetch and a
+// local hit are only distinguishable by duration, which conflates "the object
+// is large" with "the network was slow" — the two questions cross-node
+// placement actually has to separate.
 type restoreArtifactTiming struct {
 	Artifact   string `json:"artifact"`
 	Source     string `json:"source"`
 	DurationMs int64  `json:"duration_ms"`
+	Bytes      int64  `json:"bytes"`
 }
 
 type restoreArtifactSpec struct {
@@ -521,6 +534,34 @@ func (v *JailerVMM) acquireRestoreSlot(ctx context.Context) (func(), error) {
 func (v *JailerVMM) WithEvents(p *events.Platform) VMM {
 	v.events = p
 	return v
+}
+
+// WithWakePhaseMetrics stamps the vmmd wake registry on the VMM so restore
+// can report per-artifact materialization alongside the per-wake event.
+//
+// The same *WakePhaseMetrics the Manager holds: restore input resolution
+// happens down here in the VMM while the Manager owns the wake-phase
+// histogram, and the two belong on one registry so an operator reads the
+// whole wake from a single scrape. Sibling of WithEvents — nil opts out, and
+// every observation site is nil-safe, so fixtures that skip this keep
+// working.
+func (v *JailerVMM) WithWakePhaseMetrics(m *WakePhaseMetrics) *JailerVMM {
+	v.wakePhaseMetrics = m
+	return v
+}
+
+// observeRestoreArtifacts mirrors the restore breakdown's artifact list into
+// the wake registry. The event carries the per-wake detail for forensics; the
+// histogram is what a dashboard or an alert can actually read, which is the
+// difference between being able to reconstruct one slow wake and being able
+// to see cross-node fetch cost as a trend.
+func (v *JailerVMM) observeRestoreArtifacts(timings []restoreArtifactTiming) {
+	if v == nil || v.wakePhaseMetrics == nil {
+		return
+	}
+	for _, t := range timings {
+		v.wakePhaseMetrics.ObserveMaterialize(t.Artifact, t.Source, t.DurationMs, t.Bytes)
+	}
 }
 
 // resolveFCChrootName returns the directory name jailer will use for the chroot:
@@ -1157,13 +1198,14 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// /srv/fc/snap and the resolution is essentially a stat; the OCI
 	// driver streams the bytes over HTTP. Tmp cleanup happens via the
 	// deferred Kill (chroot lives on tmpfs and disappears with it).
-	memSrc, err := v.restoreMemSource(ctx, l.Instance, spec)
+	memSrc, memTiming, err := v.resolveRestoreBlob(ctx, l.Instance, "mem", spec.StorageKey, spec.VMStatePath)
 	if err != nil {
 		return err
 	}
 	if memSrc == "" {
 		return fmt.Errorf("vmm: restore spec missing mem source (storage_key=%q)", spec.StorageKey)
 	}
+	blobTimings := []restoreArtifactTiming{memTiming}
 	memReady := time.Now()
 
 	// #121 / ADR-025 axis 2 slice 4 — materialise the vmstate blob
@@ -1179,22 +1221,17 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// When the key is empty we fall back to spec.VMStatePath byte-for-bit
 	// (the existing single-box behaviour).
 	vmstateStart := time.Now()
-	stateSrc := spec.VMStatePath
-	if spec.VMStateStorageKey != "" && v.storage != nil {
-		stateTmp, gerr := v.restoreSourceFromStorage(ctx, l.Instance, spec.VMStateStorageKey)
-		if gerr != nil {
-			return gerr
-		}
-		if stateTmp != "" {
-			stateSrc = stateTmp
-		}
-		// Defensive: a nil-error, empty-result from materializeFromStorage
-		// means the backend didn't surface a file for this key (e.g. the
-		// materialise helper's "no entry" return code). Falling through to
-		// spec.VMStatePath below keeps Restore advancing when a legacy
-		// host-path file is still around; the next branch's empty-stateSrc
-		// check is the hard error when neither locator has bytes.
+	// resolveRestoreBlob preserves the branch above byte-for-bit: an empty
+	// key or nil storage returns spec.VMStatePath unchanged, and a
+	// nil-error/empty-result materialization falls back to it too (the
+	// backend surfaced no file for this key). It adds only the source and
+	// byte attribution that mem and vmstate previously lacked.
+	stateSrc, stateTiming, gerr := v.resolveRestoreBlob(
+		ctx, l.Instance, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
+	if gerr != nil {
+		return gerr
 	}
+	blobTimings = append(blobTimings, stateTiming)
 	if stateSrc == "" {
 		return fmt.Errorf("vmm: restore spec missing vmstate source (vmstate_storage_key=%q vmstate_path=%q)",
 			spec.VMStateStorageKey, spec.VMStatePath)
@@ -1424,8 +1461,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
 		WaitReadyMs:          tReady.Sub(tResume).Milliseconds(),
 		TotalMs:              tDone.Sub(t0).Milliseconds(),
-		ResolveArtifacts:     restoreArtifactTimings(resolvedArtifacts),
+		// Blob timings first: mem and vmstate are the largest inputs and the
+		// ones whose source decides whether a cross-node wake can hold the
+		// budget, so an operator reading the timeline sees them before the
+		// kernel/base/layer drives.
+		ResolveArtifacts: append(blobTimings, restoreArtifactTimings(resolvedArtifacts)...),
 	}
+	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
 	// The durable wake event above is the operator-facing record. Keep the
 	// duplicate structured log at Debug so a slow journald sink cannot delay
@@ -1452,26 +1494,6 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"total_ms", breakdown.TotalMs,
 	)
 	return nil
-}
-
-// restoreMemSource resolves the memory blob from the canonical storage key
-// whenever one is present. The legacy VMStatePath is only a fallback for
-// callers that predate StorageKey. This must not branch on
-// FAAS_STORAGE_BACKEND: OCI mode still needs the memory blob materialized
-// from StorageBackend before Firecracker can load the snapshot.
-func (v *JailerVMM) restoreMemSource(ctx context.Context, instanceID string, spec RestoreSpec) (string, error) {
-	memSrc := spec.VMStatePath
-	if spec.StorageKey == "" || v.storage == nil {
-		return memSrc, nil
-	}
-	memTmp, err := v.restoreSourceFromStorage(ctx, instanceID, spec.StorageKey)
-	if err != nil {
-		return "", err
-	}
-	if memTmp != "" {
-		memSrc = memTmp
-	}
-	return memSrc, nil
 }
 
 // vsockUDSSock is the host-side path the TriggerResumeHook dialer reaches.
@@ -4876,6 +4898,7 @@ func eventRestoreArtifactTimings(timings []restoreArtifactTiming) []events.Resto
 			Artifact:   timings[i].Artifact,
 			Source:     timings[i].Source,
 			DurationMs: timings[i].DurationMs,
+			Bytes:      timings[i].Bytes,
 		}
 	}
 	return resolved
@@ -5672,6 +5695,9 @@ func (v *JailerVMM) resolveRestoreArtifacts(ctx context.Context, instanceID stri
 				},
 				path: path,
 			}
+			if hit {
+				results[i].Bytes = artifactBytes(path)
+			}
 			local[i] = hit
 			errs[i] = err
 		}(i)
@@ -5693,6 +5719,7 @@ func (v *JailerVMM) resolveRestoreArtifacts(ctx context.Context, instanceID stri
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", specs[i].errorContext, err)
 		}
+		results[i].Bytes = artifactBytes(path)
 	}
 	return results, nil
 }
@@ -5703,6 +5730,73 @@ func restoreArtifactTimings(resolutions []restoreArtifactResolution) []restoreAr
 		timings[i] = resolutions[i].restoreArtifactTiming
 	}
 	return timings
+}
+
+// artifactBytes stats a resolved artifact path. A failed stat leaves Bytes at
+// zero rather than failing the restore: this value is attribution, and the
+// staging operation that follows retains authority over whether the file is
+// usable. Mirrors resolveColdBootArtifact's handling.
+func artifactBytes(path string) int64 {
+	if path == "" {
+		return 0
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+// resolveRestoreBlob resolves the mem or vmstate snapshot blob and reports
+// where its bytes came from.
+//
+// These two are the largest inputs a restore touches — the fleet target is
+// 130 MB of mem per snapshot and production parks write up to 1 GiB — and
+// until now they were the only restore inputs with no source attribution.
+// materialize_mem_ms timed a local bind and a full remote copy identically,
+// so a wake placed on a node without a local replica was indistinguishable in
+// the timeline from one placed on a warm node. That is precisely the term
+// that decides whether cross-node placement can stay inside the wake budget.
+//
+// fallback is the legacy host-path locator (spec.VMStatePath); it is used
+// unchanged when no storage key is set, which is the single-box path.
+func (v *JailerVMM) resolveRestoreBlob(
+	ctx context.Context,
+	instanceID, artifact, key, fallback string,
+) (string, restoreArtifactTiming, error) {
+	timing := restoreArtifactTiming{Artifact: artifact, Source: "host_path"}
+	if key == "" || v.storage == nil {
+		timing.Bytes = artifactBytes(fallback)
+		return fallback, timing, nil
+	}
+
+	started := time.Now()
+	path, source, local, err := v.probeRestoreLocalPath(key)
+	if err != nil {
+		return "", timing, err
+	}
+	if local {
+		timing.Source = source
+		timing.DurationMs = time.Since(started).Milliseconds()
+		timing.Bytes = artifactBytes(path)
+		return path, timing, nil
+	}
+
+	path, err = v.materializeFromStorage(ctx, instanceID, key)
+	timing.Source = "materialized"
+	timing.DurationMs = time.Since(started).Milliseconds()
+	if err != nil {
+		return "", timing, err
+	}
+	timing.Bytes = artifactBytes(path)
+	if path == "" {
+		// The backend surfaced no file for this key. Keep the legacy
+		// fallback behaviour and report what actually carried the bytes.
+		timing.Source = "host_path"
+		timing.Bytes = artifactBytes(fallback)
+		return fallback, timing, nil
+	}
+	return path, timing, nil
 }
 
 // trackMaterialised records tmpPath against instanceID so Kill /

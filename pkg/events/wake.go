@@ -56,7 +56,11 @@ const (
 	// Manager.Wake phases before the restore window, outside total_ms),
 	// restore_gate_wait_ms, chroot_ms, materialize_mem_ms,
 	// materialize_vmstate_ms, resolve_images_ms,
-	// resolve_artifacts[{artifact, source, duration_ms}],
+	// resolve_artifacts[{artifact, source, duration_ms, bytes}] — now
+	// including mem and vmstate, the two largest inputs, so a wake that
+	// paid a cross-node fetch (source="materialized") is distinguishable
+	// from one that hit a local replica; materialize_mem_ms times the same
+	// work but cannot tell the two apart,
 	// stage_drives_ms, stage_pre_boot_files_ms, stage_snapshot_ms,
 	// helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms,
 	// resume_hook_ms, wait_ready_ms, total_ms}. Emitted after a
@@ -425,6 +429,11 @@ type RestoreArtifactResolution struct {
 	Artifact   string `json:"artifact"`
 	Source     string `json:"source"`
 	DurationMs int64  `json:"duration_ms"`
+	// Bytes is the resolved artifact's size. Zero when the stat failed —
+	// attribution must never fail a restore. With Source it separates "the
+	// object is large" from "the fetch was slow", which is the question a
+	// cross-node wake actually poses.
+	Bytes int64 `json:"bytes"`
 }
 
 // ColdBootBreakdown attributes the complete JailerVMM.BootColdBoot window.

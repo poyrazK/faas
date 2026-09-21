@@ -227,6 +227,13 @@ func (m *FrameworkReadyMetrics) ObserveWarmup(runtime, app string, seconds float
 type WakePhaseMetrics struct {
 	reg    *prometheus.Registry
 	phases *prometheus.HistogramVec
+	// materializeSeconds / materializeBytes attribute restore inputs by where
+	// their bytes came from. They live on this registry rather than a new one
+	// because vmmd's mux already mounts it: a fresh registry is a second
+	// thing to remember to mount, and an unmounted registry is a metric that
+	// exists in code and never appears in a scrape.
+	materializeSeconds *prometheus.HistogramVec
+	materializeBytes   *prometheus.CounterVec
 }
 
 // NewWakePhaseMetrics registers vmmd_wake_phase_duration_seconds on
@@ -251,8 +258,45 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	for _, phase := range []string{"restore_ms", "netns_tap_ms", "guest_ready_ms", "scan_check_ms", "cold_boot_ms"} {
 		m.phases.WithLabelValues(phase)
 	}
-	reg.MustRegister(m.phases)
+	m.materializeSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "vmmd_snapshot_materialize_seconds",
+		Help: "Time to resolve one restore input, by artifact ∈ {mem, vmstate, kernel, base, main, sidecar:*} and source. source=\"materialized\" is a full streamed copy out of the configured storage backend — the cross-node term: a node without a local replica pays it, and at the 130 MB fleet snapshot target it alone can exceed the whole wake budget. Any other source (a local backend hit, or host_path on the single-box path) is a stat plus a bind. Compare the two quantiles to see what placement locality is worth; a rising materialized rate means wakes are landing away from their snapshots.",
+		Buckets: []float64{
+			0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0,
+		},
+	}, []string{"artifact", "source"})
+	m.materializeBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "vmmd_snapshot_materialize_bytes_total",
+		Help: "Bytes resolved per restore input, by artifact and source. Divided by vmmd_snapshot_materialize_seconds it gives effective throughput, which separates \"the object is large\" from \"the fetch was slow\" — the distinction that decides whether a slow cross-node wake wants a bigger pipe or a closer replica. The source=\"materialized\" series is also the fleet's remote snapshot read volume.",
+	}, []string{"artifact", "source"})
+	// Pre-instantiate the pair that answers the placement question so both
+	// series render zero on an idle box rather than being absent. The
+	// per-drive and sidecar labels stay lazy: they are bounded by the
+	// workload shape, not by a closed set.
+	for _, artifact := range []string{"mem", "vmstate"} {
+		for _, source := range []string{"materialized", "host_path"} {
+			m.materializeSeconds.WithLabelValues(artifact, source)
+			m.materializeBytes.WithLabelValues(artifact, source)
+		}
+	}
+	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes)
 	return m
+}
+
+// ObserveMaterialize records one resolved restore input. artifact and source
+// come straight from the restore breakdown, so the metric and the per-wake
+// wake.restore_breakdown event always agree. Safe on a nil receiver.
+func (m *WakePhaseMetrics) ObserveMaterialize(artifact, source string, ms, bytes int64) {
+	if m == nil || artifact == "" {
+		return
+	}
+	if source == "" {
+		source = "unknown"
+	}
+	m.materializeSeconds.WithLabelValues(artifact, source).Observe(float64(ms) / 1000.0)
+	if bytes > 0 {
+		m.materializeBytes.WithLabelValues(artifact, source).Add(float64(bytes))
+	}
 }
 
 // Registry exposes the underlying registry — vmmd's mux mounts this
