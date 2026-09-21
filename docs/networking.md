@@ -145,6 +145,45 @@ keeps cloud credentials out of the control plane while the provider adapter is
 rolled out; a future connector can replace the registry without changing the
 customer-facing attachment contract.
 
+## Internal services
+
+Apps in the same account reach one another by name, on every plan. There is no
+VPC, subnet, security group, internal load balancer, service registry, or DNS
+record to configure:
+
+```text
+public-api  ──►  auth
+            ├─►  billing
+            └─►  recommendation
+```
+
+Each dependency is an ordinary app. From `public-api`, call them as:
+
+```text
+http://auth.svc.gregale:10080
+http://billing.svc.gregale:10080
+http://recommendation.svc.gregale:10080
+```
+
+The name is the app slug. Declare the edges with `depends_on` and Gregale
+injects the URLs for you, so nothing hard-codes a hostname:
+
+```yaml
+services:
+  public-api:
+    depends_on: [auth, billing, recommendation]
+```
+
+`public-api` then starts with `GREGALE_SERVICE_AUTH_URL`,
+`GREGALE_SERVICE_BILLING_URL`, and `GREGALE_SERVICE_RECOMMENDATION_URL` in its
+environment. The dependency graph is validated before anything deploys —
+unknown names, self-edges, and ambiguous names are rejected.
+
+Calls are authorized by the platform, not by your code. The caller is
+identified from the network identity of the calling VM, so a guest cannot
+claim to be another app, and the proxy only permits calls between apps in the
+same account. Cross-account calls are refused.
+
 ## Internal-only ingress
 
 Pro and Scale apps can be hidden from the public edge while remaining reachable

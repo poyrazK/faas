@@ -63,6 +63,16 @@
       "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
     },
     {
+      "id": "internal-services",
+      "name": "Internal services",
+      "category": "runtime",
+      "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call.",
+      "maturity": "preview",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"
+    },
+    {
       "id": "managed-postgres",
       "name": "Managed PostgreSQL",
       "category": "data",
@@ -103,6 +113,16 @@
       "plans": ["free", "hobby", "pro", "scale"],
       "docs_url": "/docs/preview-environments",
       "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"
+    },
+    {
+      "id": "private-apps",
+      "name": "Private apps",
+      "category": "edge",
+      "description": "Keep an app off the public edge entirely while it stays reachable over authenticated same-account service routing.",
+      "maturity": "preview",
+      "plans": ["pro", "scale"],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },
     {
       "id": "progressive-rollouts",
