@@ -486,7 +486,6 @@ MarkWorkflowRunStatus
 MarkWorkflowStepStatus
 MatchEdgeRulesForHost
 MatchRecoveryCode
-MigrateInstanceOwner
 MinCertExpiryForApp
 MirrorSummary
 NodeGet

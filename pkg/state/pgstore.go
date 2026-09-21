@@ -3191,6 +3191,12 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 		return fmt.Errorf("state: migrate instance owner begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// ADR-193: the destination gains this instance's full RAM at commit
+	// ('migrating' does not count toward a node's sum, 'running' does), so the
+	// ceiling has to be checked here as well as on the INSERT path.
+	if err := reserveNodeForMigration(ctx, tx, instanceID, toNodeID); err != nil {
+		return err
+	}
 	// Two-UPDATE transaction:
 	//   1. instances row: conditional on state='migrating' +
 	//      node_id=fromNodeID, flips node_id, stamps lineage cols,

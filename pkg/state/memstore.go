@@ -4532,6 +4532,14 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	if ins.State != "migrating" || ins.NodeID != fromNodeID || ins.LeaseToken != leaseToken {
 		return ErrConflict
 	}
+	// ADR-193 parity with PgStore: the destination gains this instance's full
+	// RAM at commit ('migrating' does not count toward a node's sum,
+	// 'running' does), so the ceiling applies to the transfer exactly as it
+	// does to an admission. m.mu is held, which is what makes the
+	// check-then-move atomic here.
+	if err := m.checkNodeReservationLocked(toNodeID, string(StateRunning), ins.RAMMB); err != nil {
+		return err
+	}
 	now := time.Now()
 	migFrom := fromNodeID
 	ins.NodeID = toNodeID

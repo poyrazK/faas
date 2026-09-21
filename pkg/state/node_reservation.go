@@ -218,3 +218,68 @@ func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int
 	}
 	return nil
 }
+
+// reserveNodeForMigration is the ownership-transfer half of ADR-193's
+// per-node ceiling.
+//
+// insertInstanceWithNodeReservation guards the door instances come IN through.
+// Live migration uses a different door: MigrateInstanceOwner moves an existing
+// row by UPDATEing node_id, so it never reaches that guard and could push a
+// destination node past its admission ceiling — the exact §6.2-2 violation the
+// INSERT guard exists to prevent, through the one path it did not cover.
+//
+// The transfer is a genuine gain for the destination, not a no-op: the row
+// sits in 'migrating' during the handoff, which nodeUsageCounts excludes, and
+// the UPDATE restores it to 'running', which it includes. So the destination
+// acquires the instance's full ram_mb + overhead at commit.
+//
+// It takes the SAME lock class and key as the INSERT guard. That is
+// load-bearing: an admission and a migration targeting one node have to
+// serialize against each other, or the two paths each see headroom the other
+// is about to consume. Only the destination is locked — the source is only
+// ever losing capacity — so there is no two-lock ordering and no deadlock
+// against a concurrent admission elsewhere.
+//
+// Caller must already hold tx; the lock releases with it.
+func reserveNodeForMigration(ctx context.Context, tx pgx.Tx, instanceID, toNodeID string) error {
+	if _, err := tx.Exec(ctx,
+		`select pg_advisory_xact_lock($1, hashtext($2))`,
+		nodeReservationLockClass, toNodeID,
+	); err != nil {
+		return fmt.Errorf("state: migration reservation: lock node %s: %w", toNodeID, err)
+	}
+
+	var ceilingMB, usedMB, ramMB int64
+	err := tx.QueryRow(ctx, `
+		select n.admission_ceiling_mb::bigint,
+		       coalesce((select sum(i.ram_mb + $3)
+		                   from instances i
+		                  where i.node_id = n.id
+		                    and i.state in ('waking','cold_booting','running','warm')), 0)::bigint,
+		       coalesce((select m.ram_mb from instances m where m.id = $2), 0)::bigint
+		  from compute_nodes n
+		 where n.id = $1`,
+		toNodeID, instanceID, api.PerVMOverheadMB,
+	).Scan(&ceilingMB, &usedMB, &ramMB)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// No such destination node. Let the UPDATE's FK report it rather than
+		// renaming a schema error into a capacity refusal.
+		return nil
+	case err != nil:
+		return fmt.Errorf("state: migration reservation: read headroom (node=%s): %w", toNodeID, err)
+	}
+	if ceilingMB <= 0 || ramMB <= 0 {
+		// An unsized node or a row we could not read: the pre-ADR-193
+		// behaviour, which is to let the migration proceed.
+		return nil
+	}
+	admitMB := ramMB + int64(api.PerVMOverheadMB)
+	if usedMB+admitMB > ceilingMB {
+		return fmt.Errorf(
+			"state: %w: migration target node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
+			ErrNodeCapacity, toNodeID, usedMB, admitMB, ceilingMB,
+		)
+	}
+	return nil
+}

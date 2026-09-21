@@ -102,6 +102,7 @@ func Run(t *testing.T, open Open) {
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
+		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1747,6 +1748,86 @@ func testNodeAdmissionCeiling(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
 		string(state.StateWaking), admitMB, fx.Node.ID, uuid.NewString()); err != nil {
 		t.Fatalf("CreateInstance on a different node: %v", err)
+	}
+}
+
+// testNodeAdmissionCeilingOnMigration pins the ownership-transfer half of
+// ADR-193.
+//
+// The INSERT guard covers the door instances come in through. Live migration
+// uses a different one: MigrateInstanceOwner moves an existing row by changing
+// node_id, so it bypassed the guard entirely and could push a destination past
+// its ceiling — the same §6.2-2 violation, through the path the original fix
+// did not cover.
+//
+// The transfer is a real gain for the destination, not a no-op: the row sits in
+// 'migrating' while the handoff runs, which the per-node sum excludes, and lands
+// in 'running', which it includes.
+func testNodeAdmissionCeilingOnMigration(t *testing.T, fx *Fixture) {
+	const (
+		ceilingMB = 1024
+		admitMB   = 248
+	)
+	mkNode := func(name string) state.ComputeNode {
+		t.Helper()
+		n, err := fx.Store.CreateComputeNode(fx.Ctx, state.ComputeNode{
+			Name: name + "-" + uuid.NewString(), TargetURL: "unix:///tmp/mig.sock",
+			VPCPUs: 4, MemMB: 2048, MaxConcurrency: 20,
+			AdmissionCeilingMB: ceilingMB, VCPUBudget: 4,
+			Lifecycle: state.NodeLifecycleActive,
+		})
+		if err != nil {
+			t.Fatalf("CreateComputeNode(%s): %v", name, err)
+		}
+		return n
+	}
+	src, dst := mkNode("mig-src"), mkNode("mig-dst")
+
+	// Fill the destination to exactly its ceiling: 4 x (248 + 8) = 1024.
+	for i := 0; i < 4; i++ {
+		if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+			string(state.StateRunning), admitMB, dst.ID, uuid.NewString()); err != nil {
+			t.Fatalf("fill destination[%d]: %v", i, err)
+		}
+	}
+
+	// One instance on the source, put into the handoff state.
+	moving, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), admitMB, src.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(source): %v", err)
+	}
+	if err := fx.Store.MarkInstanceMigrating(fx.Ctx, moving.ID, src.ID, "mig-lease-token"); err != nil {
+		t.Fatalf("MarkInstanceMigrating: %v", err)
+	}
+
+	// Migrating to a full destination must be refused.
+	err = fx.Store.MigrateInstanceOwner(fx.Ctx, moving.ID, src.ID, dst.ID, "mig-lease-token")
+	if !errors.Is(err, state.ErrNodeCapacity) {
+		t.Fatalf("migration into a full node err = %v, want state.ErrNodeCapacity", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, dst.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB(dst): %v", err)
+	} else if got != ceilingMB {
+		t.Errorf("refused migration left destination at %d MB, want %d — the move was not rolled back", got, ceilingMB)
+	}
+	// The instance must still belong to the source, still mid-handoff, so the
+	// orchestrator can roll it back rather than losing track of it.
+	if ins, err := fx.Store.InstanceByID(fx.Ctx, moving.ID); err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	} else if ins.NodeID != src.ID {
+		t.Errorf("refused migration moved the row anyway: node=%s want %s", ins.NodeID, src.ID)
+	}
+
+	// A destination with room accepts the same transfer.
+	roomy := mkNode("mig-roomy")
+	if err := fx.Store.MigrateInstanceOwner(fx.Ctx, moving.ID, src.ID, roomy.ID, "mig-lease-token"); err != nil {
+		t.Fatalf("migration into a node with headroom: %v", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, roomy.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB(roomy): %v", err)
+	} else if want := int64(admitMB + api.PerVMOverheadMB); got != want {
+		t.Errorf("destination used = %d MB, want %d — the transfer must count on arrival", got, want)
 	}
 }
 
