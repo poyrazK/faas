@@ -76,20 +76,26 @@ func TestE2E_LiveMigration_DrainMovesInstancesToThePeer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no running instance to migrate: %v", err)
 	}
-	owner, err := faults.InstanceNodeName(instance.ID)
+	// Ask where the instance actually landed rather than assuming.
+	//
+	// With two interchangeable nodes the chooser is free to pick either, and
+	// it picked the peer on the first run. Asserting a particular node here
+	// tested the chooser's tie-break, which is not what this is about — and
+	// would keep breaking as placement heuristics change.
+	source, err := faults.InstanceNodeName(instance.ID)
 	if err != nil {
 		t.Fatalf("read initial owner: %v", err)
 	}
-	if owner != state.DefaultLocalNodeName {
-		t.Fatalf("instance started on %q, want %q — the drain below would target the wrong node",
-			owner, state.DefaultLocalNodeName)
+	target := migrationPeerNode
+	if source == migrationPeerNode {
+		target = state.DefaultLocalNodeName
 	}
 
-	// Drain the node the instance is on. This is the operator action the whole
-	// mechanism exists for: take a box out of service without dropping the
-	// work on it.
-	if err := faults.Drain(state.DefaultLocalNodeName); err != nil {
-		t.Fatalf("drain: %v", err)
+	// Drain the node the instance is actually on. This is the operator action
+	// the whole mechanism exists for: take a box out of service without
+	// dropping the work on it.
+	if err := faults.Drain(source); err != nil {
+		t.Fatalf("drain %s: %v", source, err)
 	}
 
 	// The protocol must run at all. Its absence is the failure that matters:
@@ -116,7 +122,7 @@ func TestE2E_LiveMigration_DrainMovesInstancesToThePeer(t *testing.T) {
 	// nothing.
 	waitForWake(t, 60*time.Second, func() bool {
 		name, err := faults.InstanceNodeName(instance.ID)
-		return err == nil && name == migrationPeerNode
+		return err == nil && name == target
 	}, "the migration protocol completed but the instance is still owned by the drained node; "+
 		"draining it again would move nothing and the box can never be taken out of service")
 }
