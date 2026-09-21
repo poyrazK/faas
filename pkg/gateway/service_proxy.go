@@ -116,8 +116,9 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
-	// Metrics observes internal call outcomes and cold-path wake latency.
-	// nil is allowed and every observation is a no-op.
+	// Metrics observes internal call outcomes, cold-path wake latency, and
+	// ADR-201 §2 breaker transitions. nil is allowed and every observation
+	// is a no-op — the breaker keeps working and simply publishes nothing.
 	Metrics     *Metrics
 	EndpointTTL time.Duration
 	Now         func() time.Time
@@ -128,10 +129,6 @@ type ServiceProxyConfig struct {
 	// EndpointTTL with no backoff growth. cmd/gatewayd-internal passes a
 	// DefaultConfig group when FAAS_GATEWAY_CIRCUIT_BREAKER is on.
 	Breaker *circuit.Group
-	// Metrics receives breaker transitions (ADR-201 §2). Optional — nil
-	// keeps the breaker fully working and simply publishes nothing, the
-	// posture every other metrics hook in this package takes.
-	Metrics *Metrics
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
