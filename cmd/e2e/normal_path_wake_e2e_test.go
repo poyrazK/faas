@@ -30,53 +30,17 @@
 package e2e_test
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-// newNormalPathWakeFixture is the normal-path fixture plus a real artifact
-// store.
-//
-// The default fixture has none, which is fine for tests that seed an already
-// RUNNING instance and never wake. A wake is different: it verifies the live
-// deployment's rootfs layer before booting, so without a readable, signed
-// layer the wake fails with "live deployment artifact is unavailable", the
-// deployment is marked unavailable, and every later request 404s with "no live
-// deployment to wake" — a confusing symptom several steps removed from the
-// cause.
-func newNormalPathWakeFixture(t *testing.T, slug string) *normalPathFixture {
-	t.Helper()
-	artifactDir, err := os.MkdirTemp("", "faas-e2e-wake-artifacts-*")
-	if err != nil {
-		t.Fatalf("create wake artifact dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(artifactDir) })
-	artifacts, err := storage.NewLocalStorageBackend(artifactDir)
-	if err != nil {
-		t.Fatalf("create wake artifact store: %v", err)
-	}
-	f := newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanHobby,
-		"FAAS_STORAGE_BACKEND=local",
-		"FAAS_STORAGE_ROOT="+artifactDir,
-	)
-	if f != nil {
-		f.artifacts = artifacts
-	}
-	return f
-}
 
 // createNormalPathParkedDeployment publishes a live deployment with a real,
 // signed rootfs layer and no running instance — what a parked app looks like:
@@ -88,9 +52,6 @@ func newNormalPathWakeFixture(t *testing.T, slug string) *normalPathFixture {
 // and a wake against it fails before it ever chooses a boot edge.
 func createNormalPathParkedDeployment(t *testing.T, f *normalPathFixture) state.Deployment {
 	t.Helper()
-	if f.artifacts == nil {
-		t.Fatal("parked deployment needs an artifact store; use newNormalPathWakeFixture")
-	}
 	dep, err := f.store.CreateDeployment(f.ctx, state.Deployment{
 		AppID:       f.app.ID,
 		Kind:        state.DeploymentKindImage,
@@ -103,23 +64,7 @@ func createNormalPathParkedDeployment(t *testing.T, f *normalPathFixture) state.
 		t.Fatalf("mark parked deployment live: %v", err)
 	}
 
-	layerKey := "layers/" + dep.ID + ".ext4"
-	layer := []byte("gregale wake fixture rootfs layer\n")
-	if err := f.artifacts.Put(f.ctx, layerKey, bytes.NewReader(layer)); err != nil {
-		t.Fatalf("publish parked layer: %v", err)
-	}
-	// schedd verifies the layer signature before boot, so an unsigned layer
-	// fails the same way a missing one does.
-	signer, err := cosign.NewLocalSigner(f.h.SignKeyPath, f.artifacts, nil)
-	if err != nil {
-		t.Fatalf("create artifact signer: %v", err)
-	}
-	if err := signer.Sign(f.ctx, layerKey, cosign.SigKeyFor(layerKey)); err != nil {
-		t.Fatalf("sign parked layer: %v", err)
-	}
-	if err := f.store.SetDeploymentRootfs(f.ctx, dep.ID, layerKey, layerKey, int64(len(layer))); err != nil {
-		t.Fatalf("publish parked rootfs metadata: %v", err)
-	}
+	publishNormalPathLayer(t, f, dep.ID)
 	return dep
 }
 
@@ -205,7 +150,7 @@ func wakeNormalPathApp(t *testing.T, f *normalPathFixture) {
 // that disabled restore entirely — turning every customer wake into a cold
 // boot and blowing the p95 budget — would have shipped completely green.
 func TestE2E_NormalPath_ParkedAppWakesByRestore(t *testing.T) {
-	f := newNormalPathWakeFixture(t, "wake-restore")
+	f := newNormalPathFixture(t, "wake-restore")
 	if f == nil {
 		return
 	}
@@ -266,7 +211,7 @@ func TestE2E_NormalPath_UnusableSnapshotColdBoots(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newNormalPathWakeFixture(t, tc.slug)
+			f := newNormalPathFixture(t, tc.slug)
 			if f == nil {
 				return
 			}
@@ -297,7 +242,7 @@ func TestE2E_NormalPath_UnusableSnapshotColdBoots(t *testing.T) {
 // snapshot is retired, so the next wake does not pay for the same doomed
 // attempt again.
 func TestE2E_NormalPath_DegradedRestoreServesAndRetiresSnapshot(t *testing.T) {
-	f := newNormalPathWakeFixture(t, "wake-restore-degraded")
+	f := newNormalPathFixture(t, "wake-restore-degraded")
 	if f == nil {
 		return
 	}
@@ -331,7 +276,7 @@ func TestE2E_NormalPath_DegradedRestoreServesAndRetiresSnapshot(t *testing.T) {
 // above by making every restore error silently cold boot, which would hide a
 // broken vmmd behind a slow-but-green platform.
 func TestE2E_NormalPath_RestoreRPCErrorFailsTheWake(t *testing.T) {
-	f := newNormalPathWakeFixture(t, "wake-restore-rpc-error")
+	f := newNormalPathFixture(t, "wake-restore-rpc-error")
 	if f == nil {
 		return
 	}
@@ -358,7 +303,7 @@ func TestE2E_NormalPath_RestoreRPCErrorFailsTheWake(t *testing.T) {
 // edge, which was equally unreachable: PauseAndSnapshot was Unimplemented, so
 // no CI test had ever observed a park.
 func TestE2E_NormalPath_IdleParkWritesSnapshotAndReleasesInstance(t *testing.T) {
-	f := newNormalPathWakeFixture(t, "park-writes-snapshot")
+	f := newNormalPathFixture(t, "park-writes-snapshot")
 	if f == nil {
 		return
 	}

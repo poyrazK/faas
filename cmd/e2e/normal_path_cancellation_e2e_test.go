@@ -21,7 +21,7 @@ func TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-upload")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cancel-upload")
 	f.vmmd.SetVersion(instance.ID, "cancel-upload")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-upload\n", 10*time.Second)
 	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, false)
@@ -91,7 +91,7 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-response")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cancel-response")
 	f.vmmd.SetVersion(instance.ID, "cancel-response")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-response\n", 10*time.Second)
 	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)

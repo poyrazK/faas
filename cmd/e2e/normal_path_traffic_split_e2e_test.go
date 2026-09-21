@@ -160,8 +160,7 @@ func TestE2E_NormalPath_TrafficSplitUpdatesAndRollsBack(t *testing.T) {
 		return
 	}
 
-	stableDeployment, stableInstance := createNormalPathLiveDeployment(
-		t, f.ctx, f.store, f.app.ID, f.nodeID, "stable")
+	stableDeployment, stableInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "stable")
 	candidateDeployment, candidateInstance := createNormalPathExplicitTrafficDeployment(
 		t, f, "candidate", 0)
 	f.vmmd.SetVersion(stableInstance.ID, "stable")

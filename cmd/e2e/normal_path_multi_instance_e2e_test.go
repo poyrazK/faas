@@ -59,7 +59,7 @@ func TestE2E_NormalPath_TrafficSpreadsAcrossLiveInstances(t *testing.T) {
 	if f == nil {
 		return
 	}
-	deployment, first := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "multi-a")
+	deployment, first := createNormalPathLiveDeployment(t, f, f.app.ID, "multi-a")
 	second := createNormalPathRunningSibling(t, f, deployment.ID)
 	f.vmmd.SetVersion(first.ID, "multi-a")
 	f.vmmd.SetVersion(second.ID, "multi-b")
@@ -104,7 +104,7 @@ func TestE2E_NormalPath_StaleInstanceFailsOverAndReplacementRejoins(t *testing.T
 	if f == nil {
 		return
 	}
-	deployment, stale := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "multi-stale")
+	deployment, stale := createNormalPathLiveDeployment(t, f, f.app.ID, "multi-stale")
 	healthy := createNormalPathRunningSibling(t, f, deployment.ID)
 	replacement := state.Instance{}
 	f.vmmd.SetVersion(stale.ID, "multi-stale")

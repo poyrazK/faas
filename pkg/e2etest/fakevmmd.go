@@ -10,10 +10,17 @@
 // one e2e family could use it. Everything below is a move plus the renames the
 // package boundary forces; behaviour is unchanged.
 //
-// Coverage note: this fake implements 8 of vmmd's 36 RPCs. The rest fall
-// through to UnimplementedVmmdServer, so any daemon path that needs one is
-// silently unreachable from CI. Grow this deliberately rather than assuming a
-// green e2e run covered a boundary it never called.
+// Coverage note: this fake implements 10 of vmmd's 36 RPCs — Ping, Heartbeat,
+// CreateColdBoot, CreateFromSnapshot, PauseAndSnapshot, Destroy, StopInstance,
+// Stats, FrameworkReady, ForwardHTTPStream. The rest fall through to
+// UnimplementedVmmdServer, so any daemon path that needs one is silently
+// unreachable from CI. Grow this deliberately rather than assuming a green e2e
+// run covered a boundary it never called.
+//
+// Fidelity matters more than completeness here. When Destroy and StopInstance
+// were Unimplemented the reaper could never tear an instance down, so seeded
+// instances lived forever and no e2e request ever performed a real wake — the
+// suite looked like it covered the lifecycle while exercising none of it.
 
 package e2etest
 
@@ -30,6 +37,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 type CancellationProbe struct {
@@ -119,6 +127,13 @@ type FakeVMMD struct {
 	failRestore   error
 	failSnapshot  error
 	degradeWake   bool
+
+	// liveInstances / instanceStats back the Stats RPC: schedd's view of what
+	// is resident on the node. Kept in boot order so a test reading Stats sees
+	// a stable sequence.
+	liveInstances  []string
+	instanceStats  map[string]*vmmdpb.InstanceStats
+	frameworkReady []*vmmdpb.FrameworkReadyRequest
 }
 
 type FakeResponse struct {
@@ -216,6 +231,7 @@ func StartFakeVMMD(t *testing.T, socketPath string) *FakeVMMD {
 		failures:         make(map[string]error),
 		probes:           make(map[string]*CancellationProbe),
 		gates:            make(map[string]*RequestGate),
+		instanceStats:    make(map[string]*vmmdpb.InstanceStats),
 	}
 	vmmdpb.RegisterVmmdServer(server, vmmd)
 	go func() {
@@ -357,6 +373,7 @@ func (s *FakeVMMD) Ping(context.Context, *vmmdpb.PingRequest) (*vmmdpb.PingRespo
 func (s *FakeVMMD) CreateColdBoot(_ context.Context, request *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {
 	s.mu.Lock()
 	s.coldBootCalls = append(s.coldBootCalls, proto.Clone(request).(*vmmdpb.CreateColdBootRequest))
+	s.trackLiveLocked(request.GetInstance())
 	s.mu.Unlock()
 	return &vmmdpb.WakeResponse{
 		Instance: request.GetInstance(),
@@ -390,6 +407,9 @@ func (s *FakeVMMD) CreateFromSnapshot(_ context.Context, request *vmmdpb.CreateF
 	s.restoreCalls = append(s.restoreCalls, proto.Clone(request).(*vmmdpb.CreateFromSnapshotRequest))
 	failure := s.failRestore
 	degrade := s.degradeWake
+	if failure == nil {
+		s.trackLiveLocked(request.GetInstance())
+	}
 	s.mu.Unlock()
 	if failure != nil {
 		return nil, failure
@@ -429,6 +449,7 @@ func (s *FakeVMMD) PauseAndSnapshot(_ context.Context, request *vmmdpb.PauseAndS
 func (s *FakeVMMD) Destroy(_ context.Context, request *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
 	s.mu.Lock()
 	s.destroyCalls = append(s.destroyCalls, request.GetInstance())
+	s.forgetLiveLocked(request.GetInstance())
 	s.mu.Unlock()
 	return &vmmdpb.DestroyResponse{Instance: request.GetInstance()}, nil
 }
@@ -436,8 +457,96 @@ func (s *FakeVMMD) Destroy(_ context.Context, request *vmmdpb.DestroyRequest) (*
 func (s *FakeVMMD) StopInstance(_ context.Context, request *vmmdpb.StopInstanceRequest) (*vmmdpb.StopInstanceResponse, error) {
 	s.mu.Lock()
 	s.stopCalls = append(s.stopCalls, request.GetInstance())
+	s.forgetLiveLocked(request.GetInstance())
 	s.mu.Unlock()
 	return &vmmdpb.StopInstanceResponse{Instance: request.GetInstance()}, nil
+}
+
+// Stats is the per-node telemetry schedd polls: residency for the RAM ledger,
+// in-flight counts for the reaper's idle decision, and request counters that
+// feed metering. It returns one InstanceStats row per instance the fake has
+// seen boot and not seen destroyed, so a test can assert that schedd's view of
+// the node matches what it actually asked for.
+//
+// SetInstanceStats overrides a row when a test needs specific numbers (an idle
+// instance the reaper should park, a busy one it must not).
+func (s *FakeVMMD) Stats(context.Context, *vmmdpb.StatsRequest) (*vmmdpb.StatsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	resp := &vmmdpb.StatsResponse{}
+	var resident int64
+	for _, id := range s.liveInstances {
+		stat, ok := s.instanceStats[id]
+		if !ok {
+			stat = &vmmdpb.InstanceStats{
+				Instance:      id,
+				LeaseUid:      20000,
+				HostIp:        "127.0.0.1",
+				ResidentBytes: wrapperspb.Int64(int64(FakeSnapshotRAMMB) << 20),
+			}
+		}
+		resident += stat.GetResidentBytes().GetValue()
+		resp.Instances = append(resp.Instances, proto.Clone(stat).(*vmmdpb.InstanceStats))
+	}
+	resp.LiveCount = int32(len(resp.Instances))
+	resp.LeasedCount = resp.LiveCount
+	resp.TotalResidentBytes = wrapperspb.Int64(resident)
+	return resp, nil
+}
+
+// SetInstanceStats pins the InstanceStats row the fake reports for one
+// instance. The instance is treated as live until Destroy or StopInstance.
+func (s *FakeVMMD) SetInstanceStats(instanceID string, stat *vmmdpb.InstanceStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stat.GetInstance() == "" {
+		stat.Instance = instanceID
+	}
+	s.instanceStats[instanceID] = stat
+	s.trackLiveLocked(instanceID)
+}
+
+// FrameworkReady is the guest's post-boot readiness signal — the point schedd
+// treats the framework as warm and therefore worth a warm-tier snapshot
+// (ADR-074). Recording the warmup lets a test assert the handshake happened
+// and with what duration, rather than only that a boot returned.
+func (s *FakeVMMD) FrameworkReady(_ context.Context, request *vmmdpb.FrameworkReadyRequest) (*vmmdpb.FrameworkReadyResponse, error) {
+	s.mu.Lock()
+	s.frameworkReady = append(s.frameworkReady, proto.Clone(request).(*vmmdpb.FrameworkReadyRequest))
+	s.mu.Unlock()
+	return &vmmdpb.FrameworkReadyResponse{}, nil
+}
+
+// FrameworkReadyCalls returns the readiness signals the fake received.
+func (s *FakeVMMD) FrameworkReadyCalls() []*vmmdpb.FrameworkReadyRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.FrameworkReadyRequest(nil), s.frameworkReady...)
+}
+
+// trackLiveLocked records an instance as resident. Callers hold s.mu.
+func (s *FakeVMMD) trackLiveLocked(instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	for _, id := range s.liveInstances {
+		if id == instanceID {
+			return
+		}
+	}
+	s.liveInstances = append(s.liveInstances, instanceID)
+}
+
+// forgetLiveLocked drops an instance from the resident set. Callers hold s.mu.
+func (s *FakeVMMD) forgetLiveLocked(instanceID string) {
+	kept := s.liveInstances[:0]
+	for _, id := range s.liveInstances {
+		if id != instanceID {
+			kept = append(kept, id)
+		}
+	}
+	s.liveInstances = kept
+	delete(s.instanceStats, instanceID)
 }
 
 // FailRestore makes the next and every subsequent CreateFromSnapshot return a

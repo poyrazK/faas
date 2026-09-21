@@ -86,6 +86,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
@@ -133,12 +134,41 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 	vmmdSock := filepath.Join(vmmdSockDir, "vmmd.sock")
 	vmmd := e2etest.StartFakeVMMD(t, vmmdSock)
 	t.Setenv("FAAS_E2E_VMMD_SOCKET", vmmdSock)
+	// Every normal-path fixture gets a real artifact store, because every live
+	// deployment needs a readable, signed rootfs layer.
+	//
+	// This used to be optional, and the tests passed only because the fake
+	// vmmd left Destroy/StopInstance/PauseAndSnapshot Unimplemented: the
+	// reaper could never actually tear an instance down, so a seeded RUNNING
+	// instance lived forever and no request ever had to wake. Once those RPCs
+	// worked, the reaper did too, the next request became a real wake, and the
+	// wake failed its layer check — surfacing as a 404 "no live deployment to
+	// wake" several steps removed from the cause.
+	//
+	// A deployment with neither a live snapshot nor a cold-bootable rootfs
+	// violates invariant §6.2-3 and is a state production never reaches, so
+	// the fixture was asserting against an impossible app. Callers may still
+	// override the root via extraEnv (the debugger fixture does); extraEnv is
+	// appended last so their value wins.
+	artifactDir, err := os.MkdirTemp("", "faas-e2e-normal-artifacts-*")
+	if err != nil {
+		t.Fatalf("create artifact dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(artifactDir) })
+	artifacts, err := storage.NewLocalStorageBackend(artifactDir)
+	if err != nil {
+		t.Fatalf("create artifact store: %v", err)
+	}
 	// Pin the Firecracker version for every normal-path test, not just the
 	// snapshot ones. An unpinned schedd runs with fcVer="" — a state a
 	// production node never has — and silently routes every wake down the
 	// cold-boot edge, which is exactly how the restore path escaped e2e
 	// coverage in the first place.
-	extraEnv = append([]string{"FAAS_SCHEDD_FC_VERSION=" + e2etest.FakeFCVersion}, extraEnv...)
+	extraEnv = append([]string{
+		"FAAS_SCHEDD_FC_VERSION=" + e2etest.FakeFCVersion,
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT=" + artifactDir,
+	}, extraEnv...)
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
@@ -153,14 +183,15 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 	}
 	store := state.NewPgStore(pool)
 	return &normalPathFixture{
-		h:      h,
-		vmmd:   vmmd,
-		store:  store,
-		app:    app,
-		key:    key,
-		nodeID: defaultLocalComputeNodeID(t, ctx, store),
-		host:   slug + ".apps.test.example",
-		ctx:    ctx,
+		artifacts: artifacts,
+		h:         h,
+		vmmd:      vmmd,
+		store:     store,
+		app:       app,
+		key:       key,
+		nodeID:    defaultLocalComputeNodeID(t, ctx, store),
+		host:      slug + ".apps.test.example",
+		ctx:       ctx,
 	}
 }
 
@@ -169,7 +200,7 @@ func TestE2E_NormalPath_RealGatewayBridgeAndRedeployRefresh(t *testing.T) {
 	if f == nil {
 		return
 	}
-	firstDep, firstInstance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	firstDep, firstInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(firstInstance.ID, "v1")
 
 	firstBody := waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
@@ -191,7 +222,7 @@ func TestE2E_NormalPath_RealGatewayBridgeAndRedeployRefresh(t *testing.T) {
 	// transitions used by the deploy pipeline. The gateway must observe the
 	// deployment_changed/instance_changed notifications and stop routing to
 	// the old live deployment.
-	secondDep, secondInstance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v2")
+	secondDep, secondInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "v2")
 	f.vmmd.SetVersion(secondInstance.ID, "v2")
 	notifyNormalPathDeploymentChanged(t, f, secondDep.ID)
 	notifyNormalPathInstanceChanged(t, f, secondInstance.ID, string(state.StateRunning))
@@ -233,7 +264,7 @@ func TestE2E_NormalPath_ForwardsHTTPContract(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
@@ -286,7 +317,7 @@ func TestE2E_NormalPath_UnknownHostDoesNotReachBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 	before := f.vmmd.ForwardCount()
@@ -308,7 +339,7 @@ func TestE2E_NormalPath_HostNormalizationPreservesRoute(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
@@ -342,7 +373,7 @@ func TestE2E_NormalPath_RequireAuthnBlocksUnauthenticatedTraffic(t *testing.T) {
 	if err := json.Unmarshal(body, &app); err != nil {
 		t.Fatalf("decode gated app: %v body=%s", err, body)
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, app.ID, f.nodeID, "authn")
+	_, instance := createNormalPathLiveDeployment(t, f, app.ID, "authn")
 	f.vmmd.SetVersion(instance.ID, "authn")
 
 	before := f.vmmd.ForwardCount()
@@ -388,7 +419,7 @@ func TestE2E_NormalPath_ReassemblesResponseChunks(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "chunks")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "chunks")
 	f.vmmd.SetVersion(instance.ID, "chunks")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:chunks\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -411,7 +442,7 @@ func TestE2E_NormalPath_NoContentResponsePreservesEmptyBody(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "no-content")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "no-content")
 	f.vmmd.SetVersion(instance.ID, "no-content")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:no-content\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -444,7 +475,7 @@ func TestE2E_NormalPath_HEADSuppressesResponseBody(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "head")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "head")
 	f.vmmd.SetVersion(instance.ID, "head")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:head\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -479,7 +510,7 @@ func TestE2E_NormalPath_PreservesResponseTrailers(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "trailers")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "trailers")
 	f.vmmd.SetVersion(instance.ID, "trailers")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:trailers\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -521,7 +552,7 @@ func TestE2E_NormalPath_AsyncInvokeUsesRealGatewayBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "async")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:async\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -587,7 +618,7 @@ func TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "async-failure")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "async-failure")
 	f.vmmd.SetVersion(instance.ID, "async-failure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:async-failure\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -627,7 +658,7 @@ func TestE2E_NormalPath_AsyncIdempotencyDoesNotDuplicateWork(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "idempotency")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "idempotency")
 	f.vmmd.SetVersion(instance.ID, "idempotency")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:idempotency\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -671,7 +702,7 @@ func TestE2E_NormalPath_SyncInvokeReturnsRealBridgeResult(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "sync")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:sync\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -720,7 +751,7 @@ func TestE2E_NormalPath_QueueUsesRealGatewayBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue")
 	f.vmmd.SetVersion(instance.ID, "queue")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -786,7 +817,7 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-push")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-push")
 	f.vmmd.SetVersion(instance.ID, "queue-push")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-push\n", 10*time.Second)
 	// A valid JSON scalar without a batchItemFailures member is a successful
@@ -878,7 +909,7 @@ func TestE2E_NormalPath_QueueDeliversMultipleMessages(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-batch")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-batch")
 	f.vmmd.SetVersion(instance.ID, "queue-batch")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-batch\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -965,7 +996,7 @@ func TestE2E_NormalPath_QueueFailureExhaustsIntoDeadLetter(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-dead-letter")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-dead-letter")
 	f.vmmd.SetVersion(instance.ID, "queue-dead-letter")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-dead-letter\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -1030,7 +1061,7 @@ func TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge(t *testing.T) 
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "delayed")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "delayed")
 	f.vmmd.SetVersion(instance.ID, "delayed")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:delayed\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -1128,7 +1159,7 @@ func TestE2E_NormalPath_CancelledDelayedTaskNeverReachesBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cancel")
 	f.vmmd.SetVersion(instance.ID, "cancel")
 
 	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
@@ -1184,7 +1215,7 @@ func TestE2E_NormalPath_ProxyActivityBecomesDurable(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "activity")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "activity")
 	f.vmmd.SetVersion(instance.ID, "activity")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:activity\n", 10*time.Second)
 	before, err := f.store.InstanceByID(f.ctx, instance.ID)
@@ -1226,7 +1257,7 @@ func TestE2E_NormalPath_GuestFailureDoesNotRefreshActivity(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "activity-failure")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "activity-failure")
 	f.vmmd.SetVersion(instance.ID, "activity-failure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:activity-failure\n", 10*time.Second)
 
@@ -1278,7 +1309,7 @@ func TestE2E_NormalPath_AsyncInvokeRetriesTransientBridgeFailure(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "retry")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:retry\n", 10*time.Second)
 	f.vmmd.FailNext(instance.ID, status.Error(codes.Unavailable, "simulated async bridge outage"))
@@ -1316,7 +1347,7 @@ func TestE2E_NormalPath_AsyncInvokeRetriesGuestServerError(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "guest-retry")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "guest-retry")
 	f.vmmd.SetVersion(instance.ID, "guest-retry")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:guest-retry\n", 10*time.Second)
 	f.vmmd.SetResponseSequence(instance.ID, []e2etest.FakeResponse{
@@ -1365,7 +1396,7 @@ func TestE2E_NormalPath_GuestStatusAndHeadersPassThrough(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "status")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:status\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -1401,7 +1432,7 @@ func TestE2E_NormalPath_GuestServerErrorPassesThrough(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "guest-500")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "guest-500")
 	f.vmmd.SetVersion(instance.ID, "guest-500")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:guest-500\n", 10*time.Second)
 	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
@@ -1433,7 +1464,7 @@ func TestE2E_NormalPath_BridgeUnavailableSurfaces503(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 	f.vmmd.FailNext(instance.ID, status.Error(codes.Unavailable, "simulated vmmd outage"))
@@ -1458,7 +1489,7 @@ func TestE2E_NormalPath_StoppedInstanceInvalidatesRoute(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 	if err := f.store.UpdateInstanceState(f.ctx, instance.ID, string(state.StateStopped)); err != nil {
@@ -1488,7 +1519,7 @@ func TestE2E_NormalPath_GatewayRestartReloadsDurableRoute(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
@@ -1512,7 +1543,7 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "restart-stream")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "restart-stream")
 	f.vmmd.SetVersion(instance.ID, "restart-stream")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:restart-stream\n", 10*time.Second)
 
@@ -1585,7 +1616,7 @@ func TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "schedd-recovery")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "schedd-recovery")
 	f.vmmd.SetVersion(instance.ID, "schedd-recovery")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:schedd-recovery\n", 10*time.Second)
 
@@ -1675,13 +1706,41 @@ func notifyNormalPathInstanceChanged(t *testing.T, f *normalPathFixture, instanc
 	}
 }
 
-func createNormalPathLiveDeployment(t *testing.T, ctx context.Context, store *state.PgStore, appID, nodeID, version string) (state.Deployment, state.Instance) {
+// publishNormalPathLayer gives a deployment the readable, signed rootfs layer
+// that every wake verifies before it boots. Without it a wake fails the layer
+// check, the deployment is marked unavailable, and later requests 404 with
+// "no live deployment to wake" — a symptom well removed from the cause.
+func publishNormalPathLayer(t *testing.T, f *normalPathFixture, deploymentID string) {
+	t.Helper()
+	if f.artifacts == nil {
+		t.Fatal("normal-path fixture has no artifact store")
+	}
+	layerKey := "layers/" + deploymentID + ".ext4"
+	layer := []byte("gregale normal-path fixture rootfs layer\n")
+	if err := f.artifacts.Put(f.ctx, layerKey, bytes.NewReader(layer)); err != nil {
+		t.Fatalf("publish layer: %v", err)
+	}
+	// schedd verifies the signature too, so an unsigned layer fails the same
+	// way a missing one does.
+	signer, err := cosign.NewLocalSigner(f.h.SignKeyPath, f.artifacts, nil)
+	if err != nil {
+		t.Fatalf("create artifact signer: %v", err)
+	}
+	if err := signer.Sign(f.ctx, layerKey, cosign.SigKeyFor(layerKey)); err != nil {
+		t.Fatalf("sign layer: %v", err)
+	}
+	if err := f.store.SetDeploymentRootfs(f.ctx, deploymentID, layerKey, layerKey, int64(len(layer))); err != nil {
+		t.Fatalf("publish rootfs metadata: %v", err)
+	}
+}
+
+func createNormalPathLiveDeployment(t *testing.T, f *normalPathFixture, appID, version string) (state.Deployment, state.Instance) {
 	t.Helper()
 	digestByte := "1"
 	if version == "v2" {
 		digestByte = "2"
 	}
-	dep, err := store.CreateDeployment(ctx, state.Deployment{
+	dep, err := f.store.CreateDeployment(f.ctx, state.Deployment{
 		AppID:       appID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: "sha256:" + strings.Repeat(digestByte, 64),
@@ -1689,10 +1748,12 @@ func createNormalPathLiveDeployment(t *testing.T, ctx context.Context, store *st
 	if err != nil {
 		t.Fatalf("create %s deployment: %v", version, err)
 	}
-	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+	if err := f.store.MarkDeploymentLive(f.ctx, dep.ID); err != nil {
 		t.Fatalf("mark %s deployment live: %v", version, err)
 	}
-	instance, err := store.CreateInstance(ctx, appID, dep.ID, string(state.StateRunning), 256, nodeID, "")
+	publishNormalPathLayer(t, f, dep.ID)
+	instance, err := f.store.CreateInstance(f.ctx, appID, dep.ID, string(state.StateRunning),
+		e2etest.FakeSnapshotRAMMB, f.nodeID, "")
 	if err != nil {
 		t.Fatalf("create %s instance: %v", version, err)
 	}

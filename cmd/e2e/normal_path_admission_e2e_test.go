@@ -56,7 +56,7 @@ func TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "admission-cancel")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "admission-cancel")
 	f.vmmd.SetVersion(instance.ID, "admission-cancel")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:admission-cancel\n", 10*time.Second)
 
@@ -135,7 +135,7 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "admission-timeout")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "admission-timeout")
 	f.vmmd.SetVersion(instance.ID, "admission-timeout")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:admission-timeout\n", 10*time.Second)
 

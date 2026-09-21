@@ -26,7 +26,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "concurrent")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "concurrent")
 	f.vmmd.SetVersion(instance.ID, "concurrent")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:concurrent\n", 10*time.Second)
 
@@ -136,7 +136,7 @@ func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "backpressure")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "backpressure")
 	f.vmmd.SetVersion(instance.ID, "backpressure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:backpressure\n", 10*time.Second)
 
@@ -232,7 +232,7 @@ func TestE2E_NormalPath_AppProtocolMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			protocol := tc.protocol
 			app := createNormalPathApp(t, f, "normal-protocol-"+tc.name, &protocol)
-			_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, app.ID, f.nodeID, tc.name)
+			_, instance := createNormalPathLiveDeployment(t, f, app.ID, tc.name)
 			f.vmmd.SetVersion(instance.ID, tc.name)
 			host := app.Slug + ".apps.test.example"
 			waitForNormalPathResponse(t, f.h, host, "normal-path:"+tc.name+"\n", 10*time.Second)
@@ -300,7 +300,7 @@ func TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "response-headers")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "response-headers")
 	f.vmmd.SetVersion(instance.ID, "response-headers")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:response-headers\n", 10*time.Second)
 	f.vmmd.SetResponseForPath(instance.ID, "/response-headers", e2etest.FakeResponse{
