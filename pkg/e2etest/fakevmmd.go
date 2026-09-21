@@ -10,9 +10,9 @@
 // one e2e family could use it. Everything below is a move plus the renames the
 // package boundary forces; behaviour is unchanged.
 //
-// Coverage note: this fake implements 10 of vmmd's 36 RPCs — Ping, Heartbeat,
+// Coverage note: this fake implements 11 of vmmd's 36 RPCs — Ping, Heartbeat,
 // CreateColdBoot, CreateFromSnapshot, PauseAndSnapshot, Destroy, StopInstance,
-// Stats, FrameworkReady, ForwardHTTPStream. The rest fall through to
+// Stats, FrameworkReady, UpdateEgressAllowlist, ForwardHTTPStream. The rest fall through to
 // UnimplementedVmmdServer, so any daemon path that needs one is silently
 // unreachable from CI. Grow this deliberately rather than assuming a green e2e
 // run covered a boundary it never called.
@@ -136,6 +136,7 @@ type FakeVMMD struct {
 	liveInstances  []string
 	instanceStats  map[string]*vmmdpb.InstanceStats
 	frameworkReady []*vmmdpb.FrameworkReadyRequest
+	egressUpdates  []*vmmdpb.UpdateEgressAllowlistRequest
 
 	// unreachable makes the liveness RPCs fail, which is how a node that has
 	// died looks to schedd. Backdating last_heartbeat_at is not enough on its
@@ -594,6 +595,28 @@ func (s *FakeVMMD) FrameworkReady(_ context.Context, request *vmmdpb.FrameworkRe
 	s.frameworkReady = append(s.frameworkReady, proto.Clone(request).(*vmmdpb.FrameworkReadyRequest))
 	s.mu.Unlock()
 	return &vmmdpb.FrameworkReadyResponse{}, nil
+}
+
+// UpdateEgressAllowlist receives the per-app outbound allowlist schedd fans
+// out when apps.egress_allowlist changes (ADR-031/033).
+//
+// Recording it is the whole point. Enforcement is nftables inside the netns
+// and needs metal, but whether the intended policy ever REACHES the node is
+// pure control plane — and a policy that is committed in Postgres and never
+// delivered leaves a tenant running on its old rules with nothing to show for
+// it. That is the failure this makes visible.
+func (s *FakeVMMD) UpdateEgressAllowlist(_ context.Context, req *vmmdpb.UpdateEgressAllowlistRequest) (*vmmdpb.UpdateEgressAllowlistAck, error) {
+	s.mu.Lock()
+	s.egressUpdates = append(s.egressUpdates, proto.Clone(req).(*vmmdpb.UpdateEgressAllowlistRequest))
+	s.mu.Unlock()
+	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
+}
+
+// EgressUpdates returns the allowlist pushes the fake received, in order.
+func (s *FakeVMMD) EgressUpdates() []*vmmdpb.UpdateEgressAllowlistRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.UpdateEgressAllowlistRequest(nil), s.egressUpdates...)
 }
 
 // FrameworkReadyCalls returns the readiness signals the fake received.
