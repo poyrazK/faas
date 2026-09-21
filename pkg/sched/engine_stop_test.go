@@ -1,3 +1,4 @@
+// adr: 138 — container lifecycle contract: stop signal and graceful drain.
 // engine_stop_test.go — portable (no KVM, no pgtest) tests for the
 // M-2 / ADR-138 mode-aware Engine.StopInstance dispatch. The tests
 // pin three behaviours:
