@@ -3303,6 +3303,15 @@ type DeploymentSummaryResponse struct {
 	Previous         *DeploymentResponse `json:"previous,omitempty"`
 	Changes          []DeploymentChange  `json:"changes"`
 	RollbackTargetID string              `json:"rollback_target_id,omitempty"`
+	// RollbackTargetRevision is the ADR-198 revision of RollbackTargetID, so
+	// a consumer can render the rollback command with the handle a customer
+	// can actually read and retype (`--to v41`) instead of a uuid.
+	//
+	// Carried alongside the id rather than replacing it: the id stays the
+	// unambiguous machine reference, and a row written before the revision
+	// column existed has none. Zero means "no revision", and consumers must
+	// fall back to RollbackTargetID rather than rendering `v0`.
+	RollbackTargetRevision int `json:"rollback_target_revision,omitempty"`
 }
 
 // DeploymentChange describes one release field that changed relative to the

@@ -150,3 +150,57 @@ func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 		t.Fatalf("release changes = %+v", receipt.ReleaseSummary.Changes)
 	}
 }
+
+// TestRenderDeploymentReleaseSummary_UsesRevisionHandle pins the ADR-198
+// surface on the one line of deploy output that is meant to be copy-pasted.
+// A uuid is the single thing here a human cannot retype or recognise later,
+// so when the rollback target has a revision the command must name it.
+//
+// adr: 198
+func TestRenderDeploymentReleaseSummary_UsesRevisionHandle(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Previous: &api.DeploymentResponse{ID: "8f14e45fceea467a9c8e9b0e21c6d5a1", Revision: 41},
+		Changes: []api.DeploymentChange{{
+			Field: "image_digest", Before: "sha256:old", After: "sha256:new",
+		}},
+		RollbackTargetID:       "8f14e45fceea467a9c8e9b0e21c6d5a1",
+		RollbackTargetRevision: 41,
+	}, "my-app")
+
+	got := out.String()
+	if !strings.Contains(got, "Rollback: gregale rollback my-app --to v41") {
+		t.Errorf("rollback command does not use the v41 handle\nfull output:\n%s", got)
+	}
+	if !strings.Contains(got, "Changes since v41:") {
+		t.Errorf("change header does not use the v41 handle\nfull output:\n%s", got)
+	}
+	// The uuid must not leak into output that already names the revision —
+	// printing both is what made the original line unreadable.
+	if strings.Contains(got, "8f14e45fceea467a9c8e9b0e21c6d5a1") {
+		t.Errorf("uuid still rendered alongside the revision\nfull output:\n%s", got)
+	}
+}
+
+// TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision pins that a
+// row predating the revision column still prints a WORKING command. The
+// fallback is the reason RollbackTargetID stays on the wire next to the
+// revision; rendering `v0` here would print a handle that cannot resolve.
+//
+// adr: 198
+func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Previous:         &api.DeploymentResponse{ID: "legacy-release"},
+		Changes:          []api.DeploymentChange{},
+		RollbackTargetID: "legacy-release",
+	}, "my-app")
+
+	got := out.String()
+	if !strings.Contains(got, "Rollback: gregale rollback my-app --to legacy-release") {
+		t.Errorf("revision-less target did not fall back to the id\nfull output:\n%s", got)
+	}
+	if strings.Contains(got, "v0") {
+		t.Errorf("revision-less target rendered as v0\nfull output:\n%s", got)
+	}
+}

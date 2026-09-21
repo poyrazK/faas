@@ -244,7 +244,13 @@ type ManifestView struct {
 
 // DeploymentItem is one row on the app detail page's deploy list.
 type DeploymentItem struct {
-	ID        string
+	ID string
+	// Revision (ADR-198) is the per-app deployment number rendered as `v42`.
+	// The deploy list leads with it because it is the handle a customer can
+	// carry into `gregale rollback --to` or an incident channel; the uuid
+	// stays on the row for the rows that predate the column (Revision 0),
+	// which the template renders as "—".
+	Revision  int
 	Status    string
 	Kind      string
 	CreatedAt string

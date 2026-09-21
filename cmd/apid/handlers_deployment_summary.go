@@ -40,7 +40,7 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 		previousResponse = &projected
 	}
 
-	rollbackTargetID, err := s.rollbackTargetID(r.Context(), app.ID, deployment.ID)
+	rollbackTargetID, rollbackTargetRevision, err := s.rollbackTarget(r.Context(), app.ID, deployment.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read rollback target"))
 		return
@@ -51,10 +51,11 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 		changes = deploymentChanges(*previousResponse, currentResponse)
 	}
 	writeJSON(w, http.StatusOK, api.DeploymentSummaryResponse{
-		Deployment:       currentResponse,
-		Previous:         previousResponse,
-		Changes:          changes,
-		RollbackTargetID: rollbackTargetID,
+		Deployment:             currentResponse,
+		Previous:               previousResponse,
+		Changes:                changes,
+		RollbackTargetID:       rollbackTargetID,
+		RollbackTargetRevision: rollbackTargetRevision,
 	})
 }
 
@@ -81,21 +82,26 @@ func (s *server) previousAppDeployment(ctx context.Context, appID string, curren
 	return nil, nil
 }
 
-// rollbackTargetID reports the target the existing app rollback operation
-// would select today. Only superseded rows are eligible; a missing target is
-// a normal first-deploy state and is represented by an omitted field.
-func (s *server) rollbackTargetID(ctx context.Context, appID, currentID string) (string, error) {
+// rollbackTarget reports the target the existing app rollback operation would
+// select today, as both its id and its ADR-198 revision. Only superseded rows
+// are eligible; a missing target is a normal first-deploy state and is
+// represented by empty/zero values.
+//
+// The revision rides along so the CLI can print a rollback command a human can
+// retype. A pre-ADR-198 row has revision 0, which callers must treat as "no
+// revision" and fall back to the id.
+func (s *server) rollbackTarget(ctx context.Context, appID, currentID string) (string, int, error) {
 	target, err := s.store.LatestSupersededDeployment(ctx, appID)
 	if errors.Is(err, state.ErrNotFound) {
-		return "", nil
+		return "", 0, nil
 	}
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if target.ID == currentID {
-		return "", nil
+		return "", 0, nil
 	}
-	return target.ID, nil
+	return target.ID, target.Revision, nil
 }
 
 // deploymentChanges compares only non-secret release metadata. The field

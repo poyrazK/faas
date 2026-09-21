@@ -3076,6 +3076,7 @@ func dashboardDeploymentItem(d state.Deployment) dashboard.DeploymentItem {
 	repoURL, commitURL, checksURL, commitSHA, commitShort := githubDeploymentLinks(d.SourceURL, d.CommitSHA)
 	return dashboard.DeploymentItem{
 		ID:                d.ID,
+		Revision:          d.Revision, // ADR-198
 		Status:            string(d.Status),
 		Kind:              string(d.Kind),
 		CreatedAt:         d.CreatedAt.UTC().Format(time.RFC3339),

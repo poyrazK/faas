@@ -93,9 +93,18 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 		if step > final.CanaryTotalSteps {
 			step = final.CanaryTotalSteps
 		}
-		PrintOK(osStdout, "Candidate live. %s", appURL)
+		// ADR-198: name the revision that just went live. During a canary the
+		// customer is watching two revisions at once, so "candidate" without
+		// saying WHICH one is the least useful moment to omit it.
+		if label := renderRevision(final.Revision); label != "" {
+			PrintOK(osStdout, "Candidate %s live. %s", label, appURL)
+		} else {
+			PrintOK(osStdout, "Candidate live. %s", appURL)
+		}
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+	} else if label := renderRevision(final.Revision); label != "" {
+		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
@@ -168,9 +177,9 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 	case summary.Previous == nil:
 		_, _ = fmt.Fprintln(w, "  Changes: initial release")
 	case len(summary.Changes) == 0:
-		_, _ = fmt.Fprintf(w, "  Changes since %s: none\n", summary.Previous.ID)
+		_, _ = fmt.Fprintf(w, "  Changes since %s: none\n", deploymentLabel(*summary.Previous))
 	default:
-		_, _ = fmt.Fprintf(w, "  Changes since %s:\n", summary.Previous.ID)
+		_, _ = fmt.Fprintf(w, "  Changes since %s:\n", deploymentLabel(*summary.Previous))
 		for _, change := range summary.Changes {
 			_, _ = fmt.Fprintf(w, "    %-18s %s -> %s\n", change.Field,
 				formatSummaryValue(change.Before), formatSummaryValue(change.After))
@@ -180,7 +189,15 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 		_, _ = fmt.Fprintln(w, "  Rollback: unavailable (no previous release)")
 		return
 	}
-	_, _ = fmt.Fprintf(w, "  Rollback: gregale rollback %s --to %s\n", appSlug, summary.RollbackTargetID)
+	// ADR-198: print the revision handle when the target has one. This line is
+	// meant to be copy-pasted, and a uuid is the one thing in this output a
+	// human cannot retype or recognise later. Rows predating the revision
+	// column still fall back to the id so the command always works.
+	target := summary.RollbackTargetID
+	if label := renderRevision(summary.RollbackTargetRevision); label != "" {
+		target = label
+	}
+	_, _ = fmt.Fprintf(w, "  Rollback: gregale rollback %s --to %s\n", appSlug, target)
 }
 
 // waitForDeploymentReceiptUntil is the timeout-aware implementation used by
