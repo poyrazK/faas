@@ -133,8 +133,11 @@ cache entry. That is outlier ejection: there is no failure-rate
 threshold, no open state, and no controlled probe. A flapping instance is
 re-admitted every 5 s regardless of how many times it has just failed.
 
-`pkg/gateway/circuit` introduces a three-state breaker keyed by
-`(app_id, instance_id)`:
+`pkg/circuit` introduces a three-state breaker keyed by
+`(app_id, instance_id)`. It lives at the top level rather than under
+`pkg/gateway` because schedd's egress breaker (§3) uses the same state
+machine, and one implementation is what makes the two surfaces behave
+identically:
 
 - **closed** — requests flow. A rolling window (default 10 s) counts
   transport failures and successes. Transition to **open** when
@@ -222,9 +225,16 @@ host_redacted_hash, port)`:
   timeout. That is the entire product value: the app's own error handling
   runs in microseconds rather than after 30 s, so a dependency outage
   stops consuming the request budget and the wake slot.
-- **half_open** → the rule is removed and the next probe decides. The
-  probe, not tenant traffic, is the half-open trial. The guest never
-  serves as the canary for its own dependency.
+- **half_open** → the rule **stays installed** and the next probe decides.
+  This is the one place the design departs from a textbook breaker, and it
+  departs deliberately. In a textbook breaker the half-open trial *is* a
+  real request, so the gate must open to let it through. Here the trial is
+  meterd's probe, which dials from the **host** while the reject rule lives
+  in the **guest's netns** — the probe cannot see the rule at all. Removing
+  it during the trial would therefore buy nothing and would re-expose every
+  tenant request arriving in the trial window to exactly the hang this
+  feature exists to remove. The guest never serves as the canary for its own
+  dependency, and it never pays for the canary either.
 
 Rule installation is a new `vmmd` RPC alongside the existing netns
 surface; vmmd remains the only component that touches netns. Rules are
