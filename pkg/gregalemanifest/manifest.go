@@ -1017,7 +1017,6 @@ func (s WorkerScaleSpec) Validate() error {
 	return nil
 }
 
-
 // Load reads `gregale.yaml`, `gregale.yml`, or the event-only `gregale.toml`
 // from dir. Returns
 // (nil, false, nil) when no manifest is present — callers treat this

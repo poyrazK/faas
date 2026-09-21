@@ -1,3 +1,4 @@
+// adr: 100
 // poller_kafka_test.go — Kafka poller unit tests.
 //
 // The kafka poller's broker side (segmentio/kafka-go Reader) is
@@ -619,9 +620,9 @@ func (r *flakyCommitReader) FetchMessage(context.Context) (kafka.Message, error)
 func (r *flakyCommitReader) CommitMessages(_ context.Context, _ ...kafka.Message) error {
 	return r.commitErr
 }
-func (r *flakyCommitReader) SetOffset(_ int64) error { return nil }
+func (r *flakyCommitReader) SetOffset(_ int64) error  { return nil }
 func (r *flakyCommitReader) Stats() kafka.ReaderStats { return kafka.ReaderStats{} }
-func (r *flakyCommitReader) Close() error            { return nil }
+func (r *flakyCommitReader) Close() error             { return nil }
 
 // TestKafka_AckCommitBrokerError reports a non-nil error from
 // the underlying CommitMessages. The poller's contract is

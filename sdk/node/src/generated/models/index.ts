@@ -655,6 +655,7 @@ export type { WakeTimelineApp } from './WakeTimelineApp.js';
 export type { WakeTimelineEvent } from './WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './WakeTimelineJSONRow.js';
 export type { WakeTimelineResponse } from './WakeTimelineResponse.js';
+export type { WorkerScaling } from './WorkerScaling.js';
 export type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 export type { WorkflowRunResponse } from './WorkflowRunResponse.js';
 export type { WorkflowSpec } from './WorkflowSpec.js';

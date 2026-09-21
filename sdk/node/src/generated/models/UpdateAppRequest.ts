@@ -8,6 +8,7 @@ import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { WorkerScaling } from './WorkerScaling.js';
 /**
  * Partial update — every field is optional; omitted fields are unchanged.
  */
@@ -55,6 +56,10 @@ export type UpdateAppRequest = {
    * Full replacement of the service replica policy. Omit for no change.
    */
   service_replicas?: ServiceReplicas;
+  /**
+   * Full replacement of the worker replica scaling policy. Omit for no change.
+   */
+  worker_replicas?: WorkerScaling;
   /**
    * Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only.
    */
