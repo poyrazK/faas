@@ -176,11 +176,7 @@ type restoreTimingBreakdown struct {
 	// TunSetupJailWorkUs is the helper's own in-namespace duration, self
 	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
 	TunSetupJailWorkUs int64
-	// TunSetupJailEntered is 1 when the single-process --enter-jail path
-	// ran and 0 when the nsenter fallback did, so a timing is never
-	// compared across the two shapes by mistake.
-	TunSetupJailEntered bool
-	CgroupFenceMs       int64
+	CgroupFenceMs      int64
 	// StagePreBootFilesMs is the single loop-mount session that writes
 	// secrets.env / env.json / resolver / workload files onto drive1
 	// (ADR-192). It was folded into StageSnapshotMs before, which made the
@@ -1474,7 +1470,6 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		TunWaitChrootMs:      tunTimings.WaitChrootMs,
 		TunSetupJailMs:       tunTimings.SetupJailMs,
 		TunSetupJailWorkUs:   tunTimings.SetupJailWorkUs,
-		TunSetupJailEntered:  tunTimings.SetupJailEntered,
 		CgroupFenceMs:        tBindTun.Sub(tTunReady).Milliseconds(),
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
 		StageSnapshotMs:      tMemState.Sub(tPreBootFiles).Milliseconds(),
@@ -1517,7 +1512,6 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
 		"tun_setup_jail_ms", breakdown.TunSetupJailMs,
 		"tun_setup_jail_work_us", breakdown.TunSetupJailWorkUs,
-		"tun_setup_jail_entered", boolToInt64(breakdown.TunSetupJailEntered),
 		"cgroup_fence_ms", breakdown.CgroupFenceMs,
 		"load_snapshot_ms", breakdown.LoadSnapshotMs,
 		"resume_hook_ms", breakdown.ResumeHookMs,
@@ -4360,17 +4354,6 @@ type bindTunTimings struct {
 	// SetupJailWorkUs is what the helper reports for its own work inside
 	// the namespace, so SetupJailMs minus it isolates spawn overhead.
 	SetupJailWorkUs int64
-	// SetupJailEntered records that the single-process --enter-jail path
-	// was used rather than the nsenter fallback, so an operator can tell
-	// which shape a timing came from.
-	SetupJailEntered bool
-}
-
-func boolToInt64(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // parseSetupJailWorkUs reads the helper's self-reported duration. A helper
@@ -4450,40 +4433,9 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 	}
 	timings.WaitChrootMs = time.Since(tWaitChrootStart).Milliseconds()
 	tSetupJailStart := time.Now()
-	// Preferred: one process. The helper joins the jailer's mount namespace
-	// itself (--enter-jail), so we do not pay for nsenter as a second
-	// process. Measured on an acceptance node, this window was ~23.7 ms of
-	// which ~136 us was the actual mount/mknod work — 99.4 % was the two
-	// fork+execs from a ~79 MB vmmd, and fork cost scales with the parent's
-	// resident size, so a busier vmmd paid more.
-	//
-	// The helper is process-versioned (ensureMountHelper republishes it from
-	// the running executable at startup), so it always understands the
-	// subcommand this build sends. The nsenter path below stays as a fallback
-	// for a stale on-disk helper or a kernel that refuses the setns, which
-	// keeps this change rollback-safe rather than load-bearing on first boot.
-	enterArgs := []string{"--enter-jail", strconv.Itoa(pid), "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}
-	if hostHelper, helperErr := v.ensureMountHelper(); helperErr == nil {
-		if enterOut, enterErr := exec.Command(hostHelper, enterArgs...).CombinedOutput(); enterErr == nil {
-			timings.SetupJailWorkUs = parseSetupJailWorkUs(enterOut)
-			timings.SetupJailEntered = true
-		} else {
-			slog.Default().Warn("vmm: --enter-jail failed; falling back to nsenter",
-				"instance", instance, "err", enterErr, "output", strings.TrimSpace(string(enterOut)))
-		}
-	} else {
-		slog.Default().Warn("vmm: mount helper unavailable for --enter-jail; falling back to nsenter",
-			"instance", instance, "err", helperErr)
-	}
-	// Fallback: prepare /dev tmpfs, bind TUN, and mknod KVM via nsenter.
-	if setupOut, err := func() ([]byte, error) {
-		if timings.SetupJailEntered {
-			return nil, nil
-		}
-		return exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput()
-	}(); err != nil {
+	// Single-pass setup: prepare /dev tmpfs, bind TUN, and mknod KVM in one nsenter invocation.
+	if setupOut, err := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); err != nil {
 		// Fallback to legacy 3-step sequence if the mounted helper doesn't support --setup-jail yet
-		//nolint:nestif // the three steps are the documented legacy order
 		if outDev, errDev := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-dev", "/dev").CombinedOutput(); errDev != nil {
 			return timings, fmt.Errorf("vmm: prepare jail device tree: %w (%s)", errDev, strings.TrimSpace(string(outDev)))
 		}
@@ -4493,7 +4445,7 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 		if outKvm, errKvm := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); errKvm != nil {
 			return timings, fmt.Errorf("vmm: provision KVM device: %w (%s)", errKvm, strings.TrimSpace(string(outKvm)))
 		}
-	} else if !timings.SetupJailEntered {
+	} else {
 		timings.SetupJailWorkUs = parseSetupJailWorkUs(setupOut)
 	}
 	timings.SetupJailMs = time.Since(tSetupJailStart).Milliseconds()
