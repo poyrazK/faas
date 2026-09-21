@@ -24,6 +24,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -57,26 +59,55 @@ func newImagedFixture(t *testing.T) *imagedFixture {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	// The builder base is NOT stubbable. imaged validates the staged ext4 and
+	// requires railpack, buildctl, runc and guest-init inside it
+	// (pkg/e2etest/builderbase.go), so pointing imaged at a one-layer stub
+	// makes it exit at boot — which is exactly what happened here first.
+	//
+	// A CI runner has no real base, so use the boot-contract recipe instead:
+	// pre-provision the staged base and its digest sidecar, then point
+	// FAAS_BUILDER_BASE_REF at a ref the registry will not serve. imaged takes
+	// its normal registry-outage fallback and accepts what is already staged.
+	storageRoot := t.TempDir()
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
+
+	// The sidecar records guest-init's sha256, so the file imaged is told to
+	// use and the file we hash must be the same one.
+	guestInitBody := []byte("#!/bin/sh\n")
+	guestInit := filepath.Join(t.TempDir(), "faas-guest-init")
+	if err := os.WriteFile(guestInit, guestInitBody, 0o755); err != nil {
+		t.Fatalf("write guest-init: %v", err)
+	}
+	t.Setenv("FAAS_GUEST_INIT", guestInit)
+	seedBootContractBuilderBase(t, storageRoot, guestInitBody)
+
+	// imaged validates an existing base read-only through debugfs. The
+	// pipeline is what is under test, not ext4 mechanics, so shim it rather
+	// than construct a multi-gigabyte filesystem on every CI run — the same
+	// trade the boot-contract job makes.
+	shimDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shimDir, "debugfs"), []byte("#!/bin/sh\necho 'Inode: 1'\n"), 0o755); err != nil {
+		t.Fatalf("write debugfs shim: %v", err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(registry.Close)
 
-	// imaged refuses a tag for the builder base and exits at boot, so the ref
-	// must be digest-pinned — AddImage returns the pinned form. A zero-layer
-	// base is rejected too ("manifest has no layers"), hence HelloImage.
-	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
-
-	// The deploy-time base is a DIFFERENT repo whose single layer matches the
+	// The deploy-time base is a different repo whose single layer matches the
 	// app image's lower layer, so oci.LayersAboveBase treats it as a prefix and
 	// the app's own layer lands in `above` — the two-drive shape (§4.6).
 	deployBase, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", imagedHelloBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBase)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	storageRoot := t.TempDir()
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Imaged, []string{
 		"FAAS_STORAGE_BACKEND=local",
 		"FAAS_STORAGE_ROOT=" + storageRoot,
+		// Digest-pinned (imaged refuses a tag and exits) and unservable, so the
+		// staged base above is what imaged falls back to.
+		"FAAS_BUILDER_BASE_REF=" + registry.Host() + "/onebox-faas/builder-base@sha256:" + repeatChar("0", 64),
 	})
 	ctx := context.Background()
 	return &imagedFixture{
