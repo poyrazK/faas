@@ -400,6 +400,22 @@ func stageBenchMountHelper(t *testing.T, v *JailerVMM) {
 	if src == "" {
 		return
 	}
+	// Mirror production's helper SELECTION, not just its placement.
+	// newMetalVMM pins mountHelperPath to the vmmd that `make test-metal`
+	// builds, so ensureMountHelper returns early and resolveMountHelper --
+	// which prefers the sibling vmmd-jail-helper -- never runs. Production
+	// therefore execs a ~1.6 MB helper per restore while the harness execed
+	// a ~79 MB vmmd, and Go runtime + package init of that binary measured
+	// ~22 ms against ~3 ms: the whole of tun_setup_jail_ms, invented by the
+	// fixture. The Makefile already builds the helper next to the vmmd.
+	if sibling := filepath.Join(filepath.Dir(src), "vmmd-jail-helper"); sibling != src {
+		if info, statErr := os.Stat(sibling); statErr == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			src = sibling
+		} else {
+			t.Logf("WARNING: %s absent; execing the full vmmd per restore, so "+
+				"tun_setup_jail_ms will overstate production by ~20 ms", sibling)
+		}
+	}
 	if err := os.MkdirAll(v.chrootBase, 0o700); err != nil {
 		t.Fatalf("create chroot base %s: %v", v.chrootBase, err)
 	}
