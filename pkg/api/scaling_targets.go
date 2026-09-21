@@ -31,6 +31,16 @@ const (
 	// ScalingMetricQueueLag targets the consumer group lag each worker should
 	// drain.
 	ScalingMetricQueueLag = "queue_lag"
+	// ScalingMetricCustom targets a customer-pushed application metric
+	// (ADR-201), named by ScalingTarget.Name. Like queue_depth and
+	// queue_lag it is compared FLEET-WIDE: the value is the total backlog
+	// one instance should carry, so desired = ceil(measured / target).
+	//
+	// This is the only metric whose reading Gregale does not measure
+	// itself, which is the point — "unprocessed rows in my orders table"
+	// is not derivable from request traffic, and an app can serve zero
+	// requests while being catastrophically behind.
+	ScalingMetricCustom = "custom"
 )
 
 // ScalingMetricP99LatencyMS was in the closed set before ADR-194 and had no
@@ -50,6 +60,7 @@ func ScalingMetrics() []string {
 		ScalingMetricConcurrentRequests,
 		ScalingMetricQueueDepth,
 		ScalingMetricQueueLag,
+		ScalingMetricCustom,
 	}
 }
 
@@ -105,16 +116,24 @@ func ValidateScalingTargets(field string, targets []ScalingTarget) *Problem {
 				fmt.Sprintf("%s[%d].metric=%q is not in the closed set (%s).",
 					field, i, t.Metric, strings.Join(ScalingMetrics(), ", ")))
 		}
-		if _, dup := seen[t.Metric]; dup {
+		// The uniqueness key is metric+name, not metric alone: two custom
+		// targets on DIFFERENT metrics are legitimate and common (an
+		// orders backlog and a document backlog), while two on the same
+		// name are the dead-config case the check exists for.
+		key := t.Metric
+		if t.Metric == ScalingMetricCustom {
+			key += ":" + t.Name
+		}
+		if _, dup := seen[key]; dup {
 			// Two targets on one metric have no defined meaning: the
 			// arbiter takes a max, so the looser one is dead config the
 			// author almost certainly believed was in effect.
 			return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
 				"Invalid scaling policy",
-				fmt.Sprintf("%s declares metric %q more than once; each metric may appear at most once.",
-					field, t.Metric))
+				fmt.Sprintf("%s declares %q more than once; each metric may appear at most once (custom metrics, once per name).",
+					field, key))
 		}
-		seen[t.Metric] = struct{}{}
+		seen[key] = struct{}{}
 		// NaN and +Inf must be caught before the range check, because
 		// `NaN <= 0` is false and a NaN would sail through it into the
 		// arbiter, where it becomes the divisor of a capacity calculation.
@@ -133,6 +152,24 @@ func ValidateScalingTargets(field string, targets []ScalingTarget) *Problem {
 				"Invalid scaling policy",
 				fmt.Sprintf("%s[%d].value must be > 0 for %s; got %v.",
 					field, i, t.Metric, t.Value))
+		}
+		// ADR-201: a name identifies WHICH pushed metric to watch, so it
+		// is required for custom and meaningless anywhere else. Accepting
+		// it on a platform-measured metric would store a field nothing
+		// reads — the accepted-but-inert shape this codebase keeps having
+		// to remove.
+		if t.Metric == ScalingMetricCustom {
+			if !validCustomMetricName(t.Name) {
+				return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+					"Invalid scaling policy",
+					fmt.Sprintf("%s[%d].name %q is required for metric %q and must match [a-z][a-z0-9_]{0,%d}.",
+						field, i, t.Name, ScalingMetricCustom, CustomMetricNameMaxBytes-1))
+			}
+		} else if t.Name != "" {
+			return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+				"Invalid scaling policy",
+				fmt.Sprintf("%s[%d].name is only valid with metric %q; %q is measured by the platform and has no name.",
+					field, i, ScalingMetricCustom, t.Metric))
 		}
 		if t.Metric == ScalingMetricCPU && t.Value > 100 {
 			return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
@@ -199,4 +236,73 @@ func ErrScalingTargetConflict() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
 		"Invalid scaling policy",
 		"scaling policy sets both target and targets; use targets (target is the single-signal form of the same field).")
+}
+
+// validCustomMetricName mirrors the app_custom_metrics_name_shape CHECK in
+// the migration. Enforced in Go as well as in the database so a customer
+// gets a 422 naming the rule rather than a constraint violation, and so the
+// scaling policy and the pushed metric cannot disagree about what a legal
+// name is.
+func validCustomMetricName(name string) bool {
+	if name == "" || len(name) > CustomMetricNameMaxBytes {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case i > 0 && ((r >= '0' && r <= '9') || r == '_'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateCustomMetricName checks a pushed metric name against the same
+// shape the app_custom_metrics CHECK enforces.
+func ValidateCustomMetricName(name string) *Problem {
+	if validCustomMetricName(name) {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Invalid custom metric",
+		fmt.Sprintf("name %q must match [a-z][a-z0-9_]{0,%d}.", name, CustomMetricNameMaxBytes-1))
+}
+
+// ValidateCustomMetricValue bounds a pushed value.
+//
+// NaN is checked before the range comparison because every comparison
+// against NaN is false, so a range check alone would pass it straight
+// through to the scheduler, where it becomes the numerator of a capacity
+// calculation. The upper bound exists because without one a single bad push
+// demands the plan cap's worth of instances on the very next tick.
+func ValidateCustomMetricValue(v float64) *Problem {
+	switch {
+	case math.IsNaN(v) || math.IsInf(v, 0):
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid custom metric", fmt.Sprintf("value must be a finite number; got %v.", v))
+	case v < 0:
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid custom metric",
+			fmt.Sprintf("value must be >= 0; a negative backlog has no meaning. Got %v.", v))
+	case v > CustomMetricMaxValue:
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid custom metric",
+			fmt.Sprintf("value must be <= %v; a larger reading is a broken producer, and "+
+				"without this bound one bad push would demand the plan cap on the next tick. Got %v.",
+				CustomMetricMaxValue, v))
+	}
+	return nil
+}
+
+// ErrCustomMetricLimitReached is the 422 for a push of a NEW name by an app
+// already holding the maximum. A push to an EXISTING name is always accepted
+// — it is an upsert and cannot grow the count.
+func ErrCustomMetricLimitReached(limit int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeCustomMetricLimit,
+		"Custom metric limit reached",
+		fmt.Sprintf("this app already holds %d custom metrics, which is the maximum. "+
+			"Pushing a new value for an existing metric always works; delete an unused "+
+			"metric to free a slot. See https://docs.gregale.dev/scaling-policy#custom-metrics",
+			limit))
 }

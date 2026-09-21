@@ -859,6 +859,12 @@ type ScalingPolicy struct {
 type ScalingTarget struct {
 	Metric string  `json:"metric,omitempty"`
 	Value  float64 `json:"value,omitempty"`
+	// Name identifies WHICH custom metric this target watches (ADR-201).
+	// Required when Metric is "custom" and rejected otherwise — a name on
+	// a platform-measured metric would be silently ignored, which is the
+	// kind of accepted-but-inert field this codebase keeps having to
+	// remove.
+	Name string `json:"name,omitempty"`
 }
 
 // ScalingSchedule is one recurring window that raises the warm floor
@@ -9555,4 +9561,31 @@ type JobDeletedResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	DeletedAt string `json:"deleted_at"`
+}
+
+// CustomMetricRequest is the ADR-201 push body. The name travels in the URL
+// path, so the body carries only the number that actually varies — which is
+// what makes the push idempotent by construction.
+type CustomMetricRequest struct {
+	Value float64 `json:"value"`
+}
+
+// CustomMetricResponse is one stored gauge on the read path.
+type CustomMetricResponse struct {
+	Name       string    `json:"name"`
+	Value      float64   `json:"value"`
+	ObservedAt time.Time `json:"observed_at"`
+	// Stale reports that this row is older than the freshness bound and is
+	// therefore NOT driving scaling. Computed server-side so the API and
+	// the scheduler cannot disagree about which rows count.
+	Stale bool `json:"stale"`
+}
+
+// CustomMetricListResponse carries the rows plus the two limits an operator
+// needs in order to interpret them, so debugging "why isn't this scaling"
+// does not require reading the docs for the freshness window.
+type CustomMetricListResponse struct {
+	Metrics    []CustomMetricResponse `json:"metrics"`
+	FreshnessS int                    `json:"freshness_seconds"`
+	MaxMetrics int                    `json:"max_metrics"`
 }

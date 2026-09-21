@@ -46,6 +46,7 @@ func Run(t *testing.T, open Open) {
 		fn   func(*testing.T, *Fixture)
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
+		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
 		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
 		{"build_claim_fairness_prefers_the_quiet_account", testBuildClaimFairnessPrefersTheQuietAccount},
@@ -2390,5 +2391,85 @@ func testDeploymentRevisions(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.DeploymentByRevision(fx.Ctx, otherApp.ID, 2); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("DeploymentByRevision(otherApp, 2) error = %v, want ErrNotFound (fx.App's v2 must not leak)", err)
+	}
+}
+
+// testCustomMetricsContract pins the ADR-201 store contract on both
+// implementations.
+//
+// The load-bearing case is the distinct-name cap. PgStore enforces it inside
+// the INSERT's WHERE clause and MemStore with a len() check, which are
+// different mechanisms for the same rule — exactly the shape that diverged
+// when PgStore's SQL used uppercase state literals and MemStore did not.
+// Absolute expected values throughout, never "the two agree".
+func testCustomMetricsContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	at := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+
+	// A fresh app holds nothing.
+	got, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("ListCustomMetrics on a fresh app: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("fresh app has %d custom metrics, want 0", len(got))
+	}
+
+	// Two distinct names under a cap of 2.
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "orders_pending", 120, at, 2); err != nil {
+		t.Fatalf("put orders_pending: %v", err)
+	}
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "docs_queued", 7.5, at, 2); err != nil {
+		t.Fatalf("put docs_queued: %v", err)
+	}
+
+	// A THIRD distinct name must be rejected at the cap.
+	err = fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "third_name", 1, at, 2)
+	if !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third distinct name at cap 2 = %v, want ErrCustomMetricLimit", err)
+	}
+
+	// An EXISTING name must still be accepted at the cap: it is an upsert
+	// and cannot grow the row count. Rejecting it would break an app that
+	// is merely at its limit and pushing a fresh value.
+	later := at.Add(time.Minute)
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "orders_pending", 999, later, 2); err != nil {
+		t.Fatalf("re-push of an existing name at the cap: %v, want nil", err)
+	}
+
+	// Name-ordered, and the upsert replaced BOTH value and timestamp.
+	got, err = fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("ListCustomMetrics: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("stored metrics = %d, want 2 (the capped push must not have been stored)", len(got))
+	}
+	if got[0].Name != "docs_queued" || got[1].Name != "orders_pending" {
+		t.Fatalf("names = [%s %s], want [docs_queued orders_pending] (name-ordered)", got[0].Name, got[1].Name)
+	}
+	if got[0].Value != 7.5 {
+		t.Errorf("docs_queued value = %v, want 7.5 (a non-integral metric must survive)", got[0].Value)
+	}
+	if got[1].Value != 999 {
+		t.Errorf("orders_pending value = %v, want 999 (the upsert must replace the value)", got[1].Value)
+	}
+	if !got[1].ObservedAt.UTC().Equal(later) {
+		t.Errorf("orders_pending observed_at = %v, want %v: a stale timestamp would keep a "+
+			"refreshed metric looking expired and silently drop the signal", got[1].ObservedAt.UTC(), later)
+	}
+
+	// Delete frees a slot, so a new name fits again.
+	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "docs_queued"); err != nil {
+		t.Fatalf("delete docs_queued: %v", err)
+	}
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "third_name", 1, at, 2); err != nil {
+		t.Fatalf("put after delete freed a slot: %v, want nil", err)
+	}
+
+	// Deleting a name that does not exist is not an error: the caller's
+	// intent is "this metric is gone", which is already true.
+	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
+		t.Errorf("delete of a missing name = %v, want nil", err)
 	}
 }

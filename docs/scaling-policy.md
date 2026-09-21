@@ -48,6 +48,7 @@ scaling rule, choose a stabilization window, or decide how signals combine.
 | `cpu` | max CPU percent across instances | CPU-bound work whose request count understates its cost |
 | `queue_depth` | backlog each worker should drain, in Gregale's own queue | job and worker apps |
 | `queue_lag` | backlog still on the external broker | Kafka / AMQP / NATS / Redis Streams / SQS triggers |
+| `custom` | any number your app pushes | backlogs only your app knows about |
 
 `queue_lag` and `queue_depth` are different quantities and are not
 interchangeable. A broker-backed trigger pulls at most one batch of messages
@@ -60,6 +61,52 @@ million-message Kafka backlog with a batch size of 64 shows a queue depth of
 disabled, the broker is unreachable, or the source does not report lag). It
 does not fall back to the local queue depth, so an app declaring only
 `queue_lag` simply does not scale on that axis until a reading arrives.
+
+## Custom metrics
+
+Every signal above is something Gregale measures *about* your app. `custom`
+is the one you measure yourself — unprocessed rows in your orders table,
+documents awaiting OCR, anything not derivable from request traffic. An app
+can serve zero requests and still be badly behind.
+
+Push the number, then scale on it by name:
+
+```bash
+curl -X PUT https://api.gregale.dev/v1/apps/$APP/custom-metrics/orders_pending \
+  -H "Authorization: Bearer $GREGALE_TOKEN" \
+  -d '{"value": 1284}'
+```
+
+```yaml
+scaling:
+  targets:
+    - metric: custom
+      name: orders_pending
+      value: 100      # backlog one instance should carry
+```
+
+That scales to `ceil(1284 / 100)` = 13 instances.
+
+**The pusher does not have to be your app.** A cron, a database trigger, or
+your own infrastructure can push — which is the point: a parked app has no
+process, so a signal that only a running instance could produce could never
+scale you *up from zero*, which is exactly when a backlog matters most.
+
+Things to know:
+
+- **The value is fleet-total**, not per-instance. `value` is how much backlog
+  one instance should carry, and Gregale divides.
+- **Push a gauge, not a counter.** Gregale does not validate what your number
+  means; a monotonically increasing counter produces monotonic scale-out.
+- **Stale metrics stop counting.** A value not refreshed within the freshness
+  window (returned by `GET /v1/apps/{slug}/custom-metrics`) reports no signal
+  rather than its last value, so a dead pusher makes the app scale *down* on
+  its other signals instead of holding the fleet at a frozen backlog. Push at
+  least twice per window.
+- **Names are capped per app.** Pushing a new value for an existing metric
+  always works; only a *new* name can hit the cap. `DELETE` one to free a
+  slot.
+- Paid plans only.
 
 When more than one target is declared, Gregale evaluates each independently
 and provisions for whichever asks for the most instances. So:

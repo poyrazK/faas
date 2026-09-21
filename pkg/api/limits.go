@@ -509,6 +509,11 @@ type Limits struct {
 	// the max_concurrency cap is bounded). apid's updateApp handler
 	// gates the PATCH body on this flag.
 	MinInstancesAllowed bool
+	// CustomMetricsAllowed toggles ADR-201 pushed application metrics.
+	// Gated for two reasons: the push buys the same scaling capability
+	// min_instances does, and an unbounded free-tier write endpoint is an
+	// abuse surface.
+	CustomMetricsAllowed bool
 
 	// MaxInstancesAllowed (issue #462 / ADR-058) toggles the per-app
 	// ceiling on live instances. Mirrors MinInstancesAllowed: Hobby+
@@ -2168,8 +2173,9 @@ var planLimits = map[Plan]Limits{
 		// the dashboard's "Plan" page names "Hobby+ unlocks
 		// warm floor" so a Hobby customer opting in knows what
 		// they're paying for.
-		MinInstancesAllowed: true,
-		MaxInstancesAllowed: true,
+		MinInstancesAllowed:  true,
+		CustomMetricsAllowed: true,
+		MaxInstancesAllowed:  true,
 		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
 		// deliver (the customer's "first request never pays the
@@ -2519,6 +2525,7 @@ var planLimits = map[Plan]Limits{
 		// Issue #461: Pro = 5 — multi-region + CI shapes.
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
+		CustomMetricsAllowed:  true,
 		MaxInstancesAllowed:   true,
 		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
@@ -2879,6 +2886,7 @@ var planLimits = map[Plan]Limits{
 		// Issue #461: Scale = 20 — broad fan-out for SaaS-scale apps.
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,
+		CustomMetricsAllowed:  true,
 		MaxInstancesAllowed:   true,
 		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
@@ -4040,6 +4048,25 @@ const (
 	// latency bound rather than a product limit. Twelve covers a distinct
 	// window per month, which is well past any real weekly shape.
 	MaxScalingSchedules = 12
+	// MaxCustomMetricsPerApp caps distinct ADR-201 metric names per app.
+	//
+	// The bound is a LATENCY property before it is a storage one: the
+	// targets trigger reads an app's custom metrics on every tick for
+	// every app the schedd owns, so an unbounded name set multiplies the
+	// per-tick read. The (app_id, name) primary key means a push to an
+	// existing name is an upsert and cannot grow the count — only a new
+	// name can, which is where apid enforces this.
+	MaxCustomMetricsPerApp = 5
+	// CustomMetricNameMaxBytes bounds a metric name. Matches the
+	// app_custom_metrics_name_shape CHECK in the migration; the Go gate
+	// exists so the customer gets a 422 with a useful message instead of
+	// a constraint violation.
+	CustomMetricNameMaxBytes = 63
+	// CustomMetricMaxValue bounds a pushed value. A backlog larger than
+	// this is not a backlog, it is a broken producer — and without a
+	// ceiling one bad push would demand the plan cap's worth of instances
+	// on the very next tick.
+	CustomMetricMaxValue = 1e12
 	// MinScalingScheduleDurationS / MaxScalingScheduleDurationS bound a
 	// window. The floor is 60 s because the scheduler's own sweep is
 	// coarser than that, so a shorter window could close before any tick
@@ -4052,6 +4079,16 @@ const (
 	// decision events for one app. Metrics remain per-tick; the audit stream
 	// is sampled so a sustained hot app cannot flood events.
 	ScaleDecisionEventMinIntervalSeconds = 30
+	// CustomMetricFreshnessSeconds bounds how long a pushed ADR-201 value
+	// stands in for the current reading.
+	//
+	// Five minutes is deliberately longer than the broker-lag equivalent:
+	// a custom metric's pusher is customer infrastructure on a cadence
+	// Gregale does not control, and a cron that runs every minute must not
+	// look stale between runs. Past it the metric reports NO SIGNAL rather
+	// than its last value, so an app whose pusher died scales down on its
+	// other signals instead of holding the fleet at a frozen backlog.
+	CustomMetricFreshnessSeconds = 300
 
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
@@ -4938,6 +4975,16 @@ func (p Plan) MinInstancesAllowed() bool {
 		return false
 	}
 	return l.MinInstancesAllowed
+}
+
+// CustomMetricsAllowed (ADR-201) reports whether the plan may push custom
+// application metrics and scale on them.
+func (p Plan) CustomMetricsAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.CustomMetricsAllowed
 }
 
 // QueueControlsAllowed (ADR-124) reports whether the plan may

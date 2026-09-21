@@ -599,6 +599,9 @@ type AMQPConfig struct {
 type ScalingTarget struct {
 	Metric string  `yaml:"metric"`
 	Value  float64 `yaml:"value"`
+	// Name selects WHICH custom metric to watch (ADR-201). Required with
+	// `metric: custom`, rejected with any other metric.
+	Name string `yaml:"name,omitempty"`
 }
 
 // ScalingConfig declares the app-level autoscaling policy. Pointers preserve
@@ -785,7 +788,7 @@ func (s *ScalingConfig) Validate() error {
 	if len(s.Targets) > 0 {
 		converted := make([]api.ScalingTarget, 0, len(s.Targets))
 		for _, t := range s.Targets {
-			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value})
+			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
 		}
 		if problem := api.ValidateScalingTargets("targets", converted); problem != nil {
 			return fmt.Errorf("scaling: %s", problem.Detail)
@@ -855,10 +858,10 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		out.ScaleInCooldownS = *s.ScaleInCooldownS
 	}
 	if s.Target != nil {
-		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value}
+		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name}
 	}
 	for _, t := range s.Targets {
-		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value})
+		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
 	}
 	out.Timezone = s.Timezone
 	// Validate() already rejected an unparseable duration, so a failure

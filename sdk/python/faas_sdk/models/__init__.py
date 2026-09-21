@@ -363,6 +363,9 @@ from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
 from .custom_domain_response import CustomDomainResponse
+from .custom_metric_list_response import CustomMetricListResponse
+from .custom_metric_request import CustomMetricRequest
+from .custom_metric_response import CustomMetricResponse
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -1676,6 +1679,9 @@ __all__ = (
     "CronRunOutcome",
     "CSRFTokenResponse",
     "CustomDomainResponse",
+    "CustomMetricListResponse",
+    "CustomMetricRequest",
+    "CustomMetricResponse",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",

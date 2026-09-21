@@ -53,6 +53,7 @@ var classes = map[string]Class{
 	api.ScalingMetricConcurrentRequests: ClassPerInstanceRate,
 	api.ScalingMetricQueueDepth:         ClassBacklog,
 	api.ScalingMetricQueueLag:           ClassBacklog,
+	api.ScalingMetricCustom:             ClassBacklog,
 	api.ScalingMetricCPU:                ClassSaturation,
 }
 

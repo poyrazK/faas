@@ -3962,6 +3962,26 @@ type Store interface {
 	// Used by the queueStats handler. OldestPendingAt is the zero-time
 	// when the app has no pending rows; callers translate to nil.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)
+
+	// --- ADR-201 custom application metrics -------------------------
+	//
+	// PutCustomMetric upserts one customer-pushed gauge. Keyed
+	// (app_id, name), so a push to an existing name replaces the value
+	// and the timestamp rather than adding a row — that upsert is what
+	// bounds the table. distinctLimit caps how many DISTINCT names an
+	// app may hold; the store enforces it in the same transaction as the
+	// insert, because a check-then-insert would let concurrent pushes of
+	// two new names both pass a limit of one.
+	PutCustomMetric(ctx context.Context, appID, name string, value float64, observedAt time.Time, distinctLimit int) error
+	// ListCustomMetrics returns every stored gauge for an app. The
+	// scaling trigger calls this per owned app per tick, which is why
+	// MaxCustomMetricsPerApp is a latency bound and not only a storage
+	// one. Freshness is NOT applied here: the caller owns the clock, so
+	// a replayed or back-dated evaluation sees what actually applied.
+	ListCustomMetrics(ctx context.Context, appID string) ([]CustomMetric, error)
+	// DeleteCustomMetric removes one gauge by name so a customer can
+	// retire a metric without waiting for the app to be deleted.
+	DeleteCustomMetric(ctx context.Context, appID, name string) error
 	// QueueStateForQueue returns the same live counters scoped to one named
 	// queue binding. Queue names are exact matches; the empty queue name is
 	// reserved for the legacy app-wide queue returned by QueueState.

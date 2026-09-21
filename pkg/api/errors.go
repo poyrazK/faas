@@ -1090,11 +1090,18 @@ const (
 	// table treats them as 403/422/402; surfacing the codes separately
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
-	CodePlanQueueDepth     = "plan_queue_depth"
-	CodePlanSourceBytes    = "plan_source_bytes"
-	CodePlanFeatureGated   = "plan_feature_gated"
-	CodePlanDelayedCap     = "plan_delayed_tasks_cap"
-	CodeInvocationNotFound = "invocation_not_found"
+	CodePlanQueueDepth = "plan_queue_depth"
+	// CodeCustomMetricLimit: a push of a NEW ADR-201 metric name by an app
+	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
+	// produces this — it is an upsert and cannot grow the count.
+	CodeCustomMetricLimit = "custom_metric_limit"
+	// CodePlanCustomMetricsNotAllowed: the account's plan does not include
+	// custom application metrics.
+	CodePlanCustomMetricsNotAllowed = "plan_custom_metrics_not_allowed"
+	CodePlanSourceBytes             = "plan_source_bytes"
+	CodePlanFeatureGated            = "plan_feature_gated"
+	CodePlanDelayedCap              = "plan_delayed_tasks_cap"
+	CodeInvocationNotFound          = "invocation_not_found"
 	// CodeInvocationNotReplayable (issue #315 / tier-2 DX) is the
 	// 409 surfaced by POST /v1/invocations/{id}/replay when the
 	// original invocation is in a state that cannot be re-issued
@@ -6024,4 +6031,16 @@ func ErrNodeLifecycleInvalid(from, to string) *Problem {
 		"Compute node lifecycle transition invalid",
 		fmt.Sprintf("cannot transition lifecycle from %q to %q.", from, to)).
 		WithDocs(docsBase + "/admin/compute-nodes#lifecycle")
+}
+
+// ErrPlanCustomMetricsNotAllowed is the 402 for an ADR-201 push on a plan
+// without the feature. Pushing a metric buys the same scaling capability the
+// other targets do, and an unbounded free-tier write endpoint is an abuse
+// surface.
+func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanCustomMetricsNotAllowed,
+		"Custom metrics not available on this plan",
+		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
+			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
+			"queue_depth, queue_lag) or upgrade.", plan))
 }

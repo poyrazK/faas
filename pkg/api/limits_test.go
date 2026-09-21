@@ -335,7 +335,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// rationale is unchanged). The bill auto-counts
 			// (pkg/meter/sampler.go:238-239) so the warm floor
 			// has a bounded cost.
-			MinInstancesAllowed: true, MaxInstancesAllowed: true,
+			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// Issue #169 / #172: Hobby is gated on Pro+ for both RPS
 			// and CPU (2026-07-28: ADR-037 amendment — Hobby→Pro re-tier
 			// on ScaleUpTargetRPSAllowed). CPU-driven scaling is gated
@@ -479,7 +479,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			EnvVarsMax: 64, EnvValueMaxBytes: 16384,
 			// Issue #462 / ADR-058: Pro unlocks warm-floor + max-instances
 			// ceiling (was min-instances only at the pre-#462 contract).
-			MinInstancesAllowed: true, MaxInstancesAllowed: true,
+			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// ADR-044: see PlanFree.
 			CPUWeight: 8, CPUQuotaUS: 500_000, CPUPeriodUS: 500_000,
 			MaxQueueDepth: 25, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
@@ -636,7 +636,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			EnvVarsMax: 256, EnvValueMaxBytes: 32768,
 			// Issue #462 / ADR-058: Scale unlocks warm-floor +
 			// max-instances ceiling (same as Pro).
-			MinInstancesAllowed: true, MaxInstancesAllowed: true,
+			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// ADR-044: see PlanFree. Scale's 1000ms/100ms quota is the
 			// upper bound — 10 vCPU worth of compute at the per-instance
 			// level, gated by the §1 56 GB hard fence at the slice level.

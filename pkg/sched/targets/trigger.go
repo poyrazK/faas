@@ -149,6 +149,17 @@ type BrokerLagReader interface {
 	BrokerLag(ctx context.Context, appID string) (int64, bool, error)
 }
 
+// CustomMetricReader supplies an app's pushed ADR-201 gauges. Optional: a
+// deployment whose apps declare no custom targets wires nil and the axis
+// reports no signal.
+//
+// state.Store already satisfies this. Freshness is applied by the TRIGGER,
+// not the store, so the trigger's own tick time drives it — a store that
+// filtered by wall clock would make a back-dated evaluation silently wrong.
+type CustomMetricReader interface {
+	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
+}
+
 // queueDepthSignal keeps the aggregate queue projection used by the generic
 // scaler together with the binding-level samples needed to size a worker
 // fleet fairly. A single app-level depth is not enough when two bindings have
@@ -454,6 +465,7 @@ type Trigger struct {
 	queueStats    QueueStatsReader
 	queueBindings QueueBindingStatsReader
 	brokerLag     BrokerLagReader
+	customMetrics CustomMetricReader
 	engine        Engine
 	ledger        Ledger
 	metrics       *wire.OpsMetrics
@@ -499,6 +511,8 @@ type Options struct {
 	QueueBindingStatsReader QueueBindingStatsReader
 	// BrokerLagReader supplies broker-reported consumer lag for queue_lag / queue_depth targets.
 	BrokerLagReader BrokerLagReader
+	// CustomMetricReader supplies pushed ADR-201 gauges. Optional.
+	CustomMetricReader CustomMetricReader
 }
 
 // New constructs the trigger. instats is REQUIRED (unlike the
@@ -518,6 +532,7 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 		instats:          instats,
 		queueStats:       opts.QueueStatsReader,
 		queueBindings:    opts.QueueBindingStatsReader,
+		customMetrics:    opts.CustomMetricReader,
 		brokerLag:        opts.BrokerLagReader,
 		engine:           engine,
 		ledger:           ledger,
@@ -655,7 +670,7 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // effects are the admission/reconciliation call on the scale branch and the
 // metric observations.
 func (t *Trigger) Tick(ctx context.Context) error {
-	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil && t.brokerLag == nil) {
+	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil && t.brokerLag == nil && t.customMetrics == nil) {
 		return nil
 	}
 	now := time.Now()
@@ -687,7 +702,10 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		inflightTarget, haveInflightTarget := policy.TargetFor(api.ScalingMetricConcurrentRequests)
 		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
 		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
-		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget {
+		// ADR-201: custom targets are keyed by NAME, so they cannot be
+		// resolved with TargetFor — an app may declare several.
+		customTargets := customTargetsOf(policy)
+		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
 			continue
 		}
 		conc := 0
@@ -816,6 +834,41 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			}
 		}
 
+		if len(customTargets) > 0 {
+			// One observation per declared name. A name with no stored
+			// row, or one whose push has gone stale, contributes
+			// Have=false: it never scales the app and never suppresses a
+			// sibling signal that does have a reading.
+			//
+			// Failing to "no signal" rather than holding the last value
+			// is the deliberate choice (ADR-201). If the pusher dies —
+			// the cron stops, the customer's infrastructure has an
+			// outage — a frozen backlog would pin the fleet at whatever
+			// it was when the pusher stopped, indefinitely, and bill for
+			// it.
+			stored := map[string]state.CustomMetric{}
+			if t.customMetrics != nil {
+				rows, err := t.customMetrics.ListCustomMetrics(ctx, app.ID)
+				if err != nil {
+					t.log.Warn("targets: custom metrics failed", "app_id", app.ID, "err", err)
+				}
+				for _, row := range rows {
+					stored[row.Name] = row
+				}
+			}
+			freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+			for _, ct := range customTargets {
+				row, ok := stored[ct.Name]
+				fresh := ok && now.Sub(row.ObservedAt) <= freshness
+				obs = append(obs, scalesignal.Observation{
+					Metric:   api.ScalingMetricCustom,
+					Target:   ct.Value,
+					Measured: row.Value,
+					Have:     fresh,
+				})
+			}
+		}
+
 		// MaxInstances bounds the arbitrated result for every axis. Before
 		// ADR-194 only the queue path applied it, because it was the only
 		// path that had loaded it; a concurrent_requests app's
@@ -918,4 +971,17 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// customTargetsOf returns the app's ADR-201 targets. Separate from
+// ScalingPolicy.TargetFor because custom targets are keyed by name and an app
+// may declare more than one, which a metric-keyed lookup cannot express.
+func customTargetsOf(policy *state.ScalingPolicy) []state.ScalingTarget {
+	var out []state.ScalingTarget
+	for _, t := range policy.EffectiveTargets() {
+		if t.Metric == api.ScalingMetricCustom && t.Name != "" && t.Value > 0 {
+			out = append(out, t)
+		}
+	}
+	return out
 }

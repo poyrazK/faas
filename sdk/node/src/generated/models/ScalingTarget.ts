@@ -11,6 +11,10 @@ export type ScalingTarget = {
    */
   metric?: 'rps' | 'cpu' | 'concurrent_requests' | 'queue_depth';
   /**
+   * Which custom metric this target watches (ADR-201). Required when metric is `custom`, and REJECTED otherwise — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove.
+   */
+  name?: string;
+  /**
    * Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100.
    */
   value?: number;

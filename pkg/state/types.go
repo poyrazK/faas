@@ -1659,8 +1659,24 @@ type ScalingPolicy struct {
 // release; it is rejected on write now. Rows that still carry it stay
 // inert, exactly as they always were.
 type ScalingTarget struct {
-	Metric string  // "" | "rps" | "cpu" | "concurrent_requests" | "queue_depth" | "queue_lag"
+	Metric string  // closed set: api.ScalingMetrics()
 	Value  float64 // target value (units depend on Metric)
+	// Name is the custom metric this target watches (ADR-201). Set only
+	// when Metric == "custom".
+	Name string
+}
+
+// CustomMetric is one customer-pushed gauge (ADR-201).
+//
+// Value is FLEET-TOTAL, not per-instance: the scheduler computes
+// ceil(Value / target), the ClassBacklog arithmetic queue_depth and
+// queue_lag already use. ObservedAt is load-bearing — a value older than
+// api.CustomMetricFreshnessSeconds reports no signal rather than being used,
+// so a dead pusher cannot pin the fleet at a frozen backlog.
+type CustomMetric struct {
+	Name       string
+	Value      float64
+	ObservedAt time.Time
 }
 
 // EffectiveTargets is the ADR-194 reader for a policy's declared signals.
