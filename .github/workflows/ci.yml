@@ -862,6 +862,15 @@ jobs:
         run: make spec-cited-tests-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
+      # The two encoding/quoting gates run in `make lint`, but the tests that
+      # prove those gates can still FAIL were not wired anywhere — a gate whose
+      # fixtures never run is a gate nobody knows is broken.
+      - name: text-encoding gate checker tests
+        run: make text-encoding-check-test
+      - name: shell-quoting gate checker tests
+        run: make shell-quoting-check-test
+      - name: synthetic-canary alert payload tests
+        run: make canary-alert-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job

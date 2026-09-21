@@ -263,6 +263,18 @@ migration-version-hygiene-check: ## Reject hand-typed migration versions and ver
 migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
 	bash scripts/ci/check_migration_version_hygiene_test.sh
 
+.PHONY: text-encoding-check-test
+text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
+	bash scripts/ci/check_text_encoding_test.sh
+
+.PHONY: shell-quoting-check-test
+shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture trees in both directions
+	python3 scripts/ci/check_shell_quoting_test.py
+
+.PHONY: canary-alert-test
+canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against a fixture receiver
+	bash scripts/ops/canary_alert_test.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier
