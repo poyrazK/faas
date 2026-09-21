@@ -438,6 +438,7 @@ func LoadConfig(path string) (*Config, error) {
 		"tenant_slice_max_mb", sizing.TenantSliceMaxMB,
 		"tenant_budget_mb", sizing.TenantBudgetMB,
 		"admission_ceiling_mb", sizing.AdmissionCeilingMB,
+		"non_tenant_reserve_mb", sizing.NonTenantReserveMB,
 		"vcpu_slots", sizing.VCPUSlots)
 	c := &Config{
 		SocketPath:         "/run/faas/vmmd.sock",
@@ -500,6 +501,28 @@ func LoadConfig(path string) (*Config, error) {
 	// gate at boot calls role.Require to refuse to start under the
 	// wrong box shape.
 	c.Role = role.FromConfig(string(c.Role), "FAAS_VMMD_ROLE")
+	// The reserve subtracted above assumed the single-box shape, which
+	// charges this host the full §13 control-plane slice (Postgres, apid,
+	// meterd, githubd, gatewayd-public). Under RoleComputeOnly none of
+	// those daemons may even start, so re-derive with the compute-only
+	// reserve now that the role is known. Only fields still holding the
+	// single-box default are replaced: an explicit [compute_node] value in
+	// vmmd.toml, and the FAAS_COMPUTE_* overlay applied further down, both
+	// stay authoritative.
+	if c.Role == role.RoleComputeOnly {
+		computeSizing := api.DeriveNodeSizingForRole(hostMemTotalMB(), hostCPUs(), api.NodeShapeComputeOnly)
+		if c.ComputeNode.AdmissionCeilingMB == sizing.AdmissionCeilingMB {
+			c.ComputeNode.AdmissionCeilingMB = computeSizing.AdmissionCeilingMB
+		}
+		slog.Default().Info("vmmd: compute node sizing re-derived for role",
+			"role", string(c.Role),
+			"non_tenant_reserve_mb", computeSizing.NonTenantReserveMB,
+			"tenant_slice_max_mb", computeSizing.TenantSliceMaxMB,
+			"tenant_budget_mb", computeSizing.TenantBudgetMB,
+			"admission_ceiling_mb", computeSizing.AdmissionCeilingMB,
+			"single_box_admission_ceiling_mb", sizing.AdmissionCeilingMB)
+		sizing = computeSizing
+	}
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): env-var overlay for
 	// [compute_node].name so the systemd drop-in (deploy/ansible/
 	// roles/vmmd_service/files/faas-vmmd.service.d/

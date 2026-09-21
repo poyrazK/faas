@@ -57,7 +57,7 @@ const dispatchComputeNodes = "compute-nodes"
 // explicit --break-glass-db path during an apid outage.
 func cmdComputeNodesDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|release-status|drain|drain-status|activate|force-drain|retire")
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|sizing|release-status|drain|drain-status|activate|force-drain|retire")
 		return 2
 	}
 	switch args[0] {
@@ -79,6 +79,8 @@ func cmdComputeNodesDispatch(args []string) int {
 		return cmdComputeNodesForceDrain(args[1:])
 	case "retire":
 		return cmdComputeNodesRetire(args[1:])
+	case "sizing":
+		return cmdComputeNodesSizing(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes: unknown subcommand %q\n", args[0])
 		return 2

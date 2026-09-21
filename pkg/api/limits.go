@@ -7110,6 +7110,34 @@ type NodeSizing struct {
 	TenantBudgetMB     int
 	AdmissionCeilingMB int
 	VCPUSlots          int
+	// NonTenantReserveMB is the host OS plus platform reserve that was
+	// subtracted to reach TenantSliceMaxMB. Deployment code writes the
+	// cgroup fence from TenantSliceMaxMB, so exposing the reserve lets an
+	// operator see why a node advertises what it does without re-deriving
+	// the arithmetic by hand.
+	NonTenantReserveMB int
+}
+
+// NodeRoleShape selects which non-tenant workloads share the host, and so
+// how much RAM must be held back before the tenant slice is computed.
+type NodeRoleShape int
+
+const (
+	// NodeShapeSingleBox is the spec §13 reference: one host running the
+	// whole platform, Postgres included. Reserve is ControlPlaneReserveMB.
+	NodeShapeSingleBox NodeRoleShape = iota
+	// NodeShapeComputeOnly is a multi-box compute host. It runs vmmd,
+	// gatewayd-internal, builderd, imaged, and schedd, but NOT Postgres,
+	// apid, meterd, githubd, or gatewayd-public. See pkg/role.
+	NodeShapeComputeOnly
+)
+
+// nonTenantReserveMB is the RAM held back from tenants for a box shape.
+func nonTenantReserveMB(shape NodeRoleShape) int {
+	if shape == NodeShapeComputeOnly {
+		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB
+	}
+	return ControlPlaneReserveMB
 }
 
 // DeriveNodeSizing generalises the spec §13 RAM budget to an arbitrary host.
@@ -7133,17 +7161,43 @@ type NodeSizing struct {
 // A non-positive memTotalMB (detection failed) returns the legacy single-box
 // constants: an unknown machine must not silently become an unbounded one.
 func DeriveNodeSizing(memTotalMB, hostCPUs int) NodeSizing {
+	return DeriveNodeSizingForRole(memTotalMB, hostCPUs, NodeShapeSingleBox)
+}
+
+// DeriveNodeSizingForRole is DeriveNodeSizing with the platform reserve
+// chosen for the box shape instead of always charging the single-box
+// control-plane slice.
+//
+// The §13 reserve of 6,144 MB is the *control-plane* budget: Postgres, apid,
+// schedd, meterd, githubd, gatewayd-public, and one builder slot, all on the
+// reference box. A multi-box compute host runs none of Postgres, apid,
+// meterd, githubd, or gatewayd-public — those daemons refuse to start under
+// RoleComputeOnly (see pkg/role). Charging it the full control-plane slice
+// hands ~2.5 GB of a 16 GiB node to daemons that are not there.
+//
+// Measured on the production compute nodes, every faas daemon together holds
+// roughly 490 MB RSS and the host agents another ~390 MB, so
+// ComputeNodeDaemonReserveMB carries a wide margin over observed use. The
+// builder slot is reserved separately because builderd is a compute-only
+// daemon: spec §4.5 guarantees one 2,048 MB build VM per node, and a build
+// must never be funded out of the tenant slice.
+//
+// A control-plane or single-box host keeps the spec constant unchanged, so
+// the 64 GB reference still resolves to exactly 57,344 / 56,000 / 47,600.
+func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) NodeSizing {
+	reserve := nonTenantReserveMB(shape)
 	out := NodeSizing{
 		MemMB:              memTotalMB,
 		TenantSliceMaxMB:   TenantSliceMaxMB,
 		TenantBudgetMB:     TenantRAMBudgetMB,
 		AdmissionCeilingMB: RAMAdmissionCeilingMB,
 		VCPUSlots:          VCPUSlots,
+		NonTenantReserveMB: HostOSReserveMB + reserve,
 	}
 	if memTotalMB <= 0 {
 		out.MemMB = TenantRAMBudgetMB
 	} else {
-		sliceMax := memTotalMB - HostOSReserveMB - ControlPlaneReserveMB
+		sliceMax := memTotalMB - HostOSReserveMB - reserve
 		if sliceMax < MinTenantSliceMB {
 			// Too small to host tenants under the reserves. Report the
 			// floor rather than a negative or zero ceiling, which would
@@ -7168,4 +7222,15 @@ const (
 	// than the reserves still registers with a positive, CHECK-satisfying
 	// ceiling instead of refusing to come up.
 	MinTenantSliceMB = 1_024
+	// ComputeNodeDaemonReserveMB is the non-tenant RAM held back on a
+	// multi-box compute host for the daemons that actually run there:
+	// vmmd, gatewayd-internal, builderd, imaged, schedd, plus the host
+	// telemetry agents. Measured steady-state on the production nodes is
+	// ~880 MB across all of them; this carries margin over that without
+	// charging the absent control-plane daemons.
+	ComputeNodeDaemonReserveMB = 1_536
+	// BuilderSlotReserveMB funds the one guaranteed builder microVM on a
+	// node that runs builderd. A build must never be paid for out of the
+	// tenant slice, so it is reserved rather than admitted.
+	BuilderSlotReserveMB = 2_048
 )

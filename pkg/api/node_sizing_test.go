@@ -71,3 +71,85 @@ func TestDeriveNodeSizing_TinyHostStillRegisters(t *testing.T) {
 		t.Errorf("ceiling = %d, must stay positive for the migration CHECK", got.AdmissionCeilingMB)
 	}
 }
+
+// TestDeriveNodeSizingForRole_ReferenceBoxIsUnchanged pins that making the
+// reserve role-aware did not move the spec §13 numbers on the 64 GB box.
+//
+// adr: 203
+// spec: §13
+func TestDeriveNodeSizingForRole_ReferenceBoxIsUnchanged(t *testing.T) {
+	for _, shape := range []struct {
+		name  string
+		shape NodeRoleShape
+		want  NodeSizing
+	}{
+		{"single-box", NodeShapeSingleBox, NodeSizing{
+			MemMB: 65_536, TenantSliceMaxMB: 57_344, TenantBudgetMB: 56_000,
+			AdmissionCeilingMB: 47_600, VCPUSlots: 160, NonTenantReserveMB: 8_192,
+		}},
+	} {
+		got := DeriveNodeSizingForRole(65_536, 20, shape.shape)
+		if got != shape.want {
+			t.Fatalf("%s: got %+v, want %+v", shape.name, got, shape.want)
+		}
+	}
+	// The exported wrapper must stay the single-box shape.
+	if DeriveNodeSizing(65_536, 20) != DeriveNodeSizingForRole(65_536, 20, NodeShapeSingleBox) {
+		t.Fatal("DeriveNodeSizing must equal the single-box role shape")
+	}
+}
+
+// TestDeriveNodeSizingForRole_ComputeOnlyRecoversControlPlaneReserve is the
+// point of ADR-203: a compute host must not be charged for Postgres, apid,
+// meterd, githubd, or gatewayd-public, none of which may start there.
+//
+// adr: 203
+// spec: §13
+func TestDeriveNodeSizingForRole_ComputeOnlyRecoversControlPlaneReserve(t *testing.T) {
+	const prodMemMB = 15_985 // the real MemTotal on the production nodes
+
+	single := DeriveNodeSizingForRole(prodMemMB, 4, NodeShapeSingleBox)
+	compute := DeriveNodeSizingForRole(prodMemMB, 4, NodeShapeComputeOnly)
+
+	if compute.NonTenantReserveMB >= single.NonTenantReserveMB {
+		t.Fatalf("compute-only reserve %d must be below single-box %d",
+			compute.NonTenantReserveMB, single.NonTenantReserveMB)
+	}
+	// The recovered RAM is exactly the control-plane daemons this host does
+	// not run, and it must land in the tenant slice rather than vanish.
+	recovered := single.NonTenantReserveMB - compute.NonTenantReserveMB
+	wantRecovered := ControlPlaneReserveMB - (ComputeNodeDaemonReserveMB + BuilderSlotReserveMB)
+	if recovered != wantRecovered {
+		t.Fatalf("recovered %d MB, want %d MB", recovered, wantRecovered)
+	}
+	if got := compute.TenantSliceMaxMB - single.TenantSliceMaxMB; got != recovered {
+		t.Fatalf("tenant slice grew by %d MB, want the full %d MB recovered", got, recovered)
+	}
+	if compute.AdmissionCeilingMB <= single.AdmissionCeilingMB {
+		t.Fatalf("compute-only ceiling %d must exceed single-box %d",
+			compute.AdmissionCeilingMB, single.AdmissionCeilingMB)
+	}
+	// The ceiling must stay strictly under the slice fence: schedd admits
+	// below the kernel's hard limit, never up to it. This is the invariant
+	// whose violation produced the CONSTRAINT_MEMCG kills.
+	if compute.AdmissionCeilingMB >= compute.TenantSliceMaxMB {
+		t.Fatalf("ceiling %d must stay under the tenant slice fence %d",
+			compute.AdmissionCeilingMB, compute.TenantSliceMaxMB)
+	}
+	// Nothing may be promised twice: reserve + slice cannot exceed the host.
+	if total := compute.NonTenantReserveMB + compute.TenantSliceMaxMB; total > prodMemMB {
+		t.Fatalf("reserve+slice = %d MB overcommits a %d MB host", total, prodMemMB)
+	}
+}
+
+// TestDeriveNodeSizingForRole_UndetectedHostKeepsSafeConstants pins that a
+// failed probe does not silently become an unbounded node.
+//
+// adr: 203
+// spec: §13
+func TestDeriveNodeSizingForRole_UndetectedHostKeepsSafeConstants(t *testing.T) {
+	got := DeriveNodeSizingForRole(0, 0, NodeShapeComputeOnly)
+	if got.AdmissionCeilingMB != RAMAdmissionCeilingMB || got.TenantSliceMaxMB != TenantSliceMaxMB {
+		t.Fatalf("undetected host must keep the legacy constants, got %+v", got)
+	}
+}

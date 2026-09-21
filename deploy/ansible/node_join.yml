@@ -774,6 +774,70 @@
           # /usr/local/bin/faas-guest-init override to survive node adoption.
           Environment=FAAS_GUEST_INIT=/opt/faas/current/bin/init
 
+    - name: Derive this host's capacity from one source of truth
+      # pkg/api.DeriveNodeSizingForRole is the only place the reserve
+      # arithmetic lives. Ansible used to carry its own
+      # `MemTotal * 85 / 100`, while the tenant cgroup fence was a
+      # hand-written drop-in no role owned. On the 15,985 MB production
+      # nodes that left schedd admitting to 13,587 MB against a kernel
+      # fence of 8,192 MB, and the gap surfaced as CONSTRAINT_MEMCG OOM
+      # kills of tenant firecracker processes. Both numbers now come from
+      # this one call.
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - sizing
+          - --role
+          - "{{ faas_box_role | default('compute-only', true) }}"
+          - --json
+      changed_when: false
+      register: faas_node_sizing_raw
+
+    - name: Parse the derived capacity
+      ansible.builtin.set_fact:
+        faas_node_sizing: "{{ faas_node_sizing_raw.stdout | from_json }}"
+
+    - name: Refuse to size a node the probe could not measure
+      # detected=false means /proc/meminfo was unreadable, so the report
+      # carries the single-box constants. Registering those on a small host
+      # is exactly the ~3x overcommit this contract exists to prevent.
+      ansible.builtin.assert:
+        that:
+          - faas_node_sizing.detected | bool
+          - (faas_node_sizing.admission_ceiling_mb | int) > 0
+          - (faas_node_sizing.tenant_slice_max_mb | int) > 0
+        fail_msg: >-
+          gregalectl compute-nodes sizing could not measure this host
+          (detected={{ faas_node_sizing.detected }}); refusing to register
+          single-box capacity constants on it.
+
+    - name: Ensure the tenant slice drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-tenant.slice.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Fence the tenant slice at the derived tenant slice maximum
+      # The kernel fence and the admission ceiling are two views of the same
+      # calculation. This drop-in was previously hand-written and unmanaged.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-tenant.slice.d/90-host-capacity.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Slice]
+          MemoryMax={{ faas_node_sizing.tenant_slice_max_mb }}M
+      register: faas_tenant_slice_fence
+
+    - name: Reload systemd after re-fencing the tenant slice
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: faas_tenant_slice_fence is changed
+
     - name: Install the hardware-derived vmmd capacity contract
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-capacity.conf
@@ -785,7 +849,7 @@
           Environment=FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}
           Environment=FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}
           Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}
-          Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}
+          Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
 
     # A fresh host has no /opt/faas/current yet, but release-bound base
@@ -814,7 +878,7 @@
           - --max-concurrency
           - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
           - --admission-ceiling-mb
-          - "{{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}"
+          - "{{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}"
           - --defer-activation
           # A newly adopted host deliberately has no interactive operator MFA
           # session. The trusted join already stages its root-only database

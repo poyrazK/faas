@@ -2,8 +2,8 @@
 
 package main
 
-// hostMemTotalMB is unavailable off Linux; callers keep the single-box
-// constants. Compute nodes are Linux-only.
-func hostMemTotalMB() int { return 0 }
+import "github.com/onebox-faas/faas/pkg/hostsize"
 
-func hostCPUs() int { return 0 }
+func hostMemTotalMB() int { return hostsize.MemTotalMB() }
+
+func hostCPUs() int { return hostsize.CPUs() }

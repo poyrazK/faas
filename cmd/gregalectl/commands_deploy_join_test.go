@@ -464,7 +464,16 @@ func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 	if inspectOperator < 0 || inspect < 0 || stage < 0 || stamp < 0 || prestage < 0 || !(inspectOperator < inspect && inspect < stage && stage < stamp && stamp < prestage) {
 		t.Fatalf("certificate convergence order invalid: operator=%d inspect=%d stage=%d stamp=%d prestage=%d", inspectOperator, inspect, stage, stamp, prestage)
 	}
-	block := playbook[inspectOperator:prestage]
+	// The legacy-binary hazard ends once the play installs the current
+	// release's CLI. Bound the block there rather than at prestage: every
+	// certificate convergence task runs before that staging, and tasks after
+	// it are entitled to use subcommands and --json that an old
+	// already-installed gregalectl would not have understood.
+	stageOperator := strings.Index(playbook, "Stage the bootstrap operator binary")
+	if stageOperator < stamp {
+		t.Fatalf("the bootstrap operator binary must be staged after certificate convergence: stamp=%d stageOperator=%d", stamp, stageOperator)
+	}
+	block := playbook[inspectOperator:stageOperator]
 	for _, token := range []string{"Inspect the existing compute-node operator binary", "ansible.builtin.stat", "path: /usr/local/bin/gregalectl", "faas_join_existing_operator.stat.exists", "default(3)", "compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint", "(faas_join_rollout_phase | default('full')) != 'prepare'"} {
 		if !strings.Contains(block, token) {
 			t.Errorf("certificate convergence block missing %q", token)
