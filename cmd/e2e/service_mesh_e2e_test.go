@@ -133,6 +133,10 @@ func TestE2E_ServiceMesh_WakesParkedTarget(t *testing.T) {
 		return
 	}
 	target := createServiceApp(t, f, "meshparked", nil)
+	// The wake mints the instance id, so it cannot be registered with the
+	// fake ahead of time; a default response stands in for the guest that
+	// the restore brings up.
+	f.vmmd.SetDefaultVersion("v1")
 
 	// A live deployment with a published layer but no running instance: the
 	// app is parked, exactly as scale-to-zero leaves it.

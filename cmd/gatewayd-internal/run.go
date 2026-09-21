@@ -2948,26 +2948,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WebSocketEnabled: app.WebSocketEnabled,
 				}, app.ID != "", nil
 			},
-			Authorize: func(ctx context.Context, callerAppID, targetAppID string) error {
-				caller, err := pgStore.AppByID(ctx, callerAppID)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ErrServiceProxyDenied
-				}
-				if err != nil {
-					return fmt.Errorf("load caller app: %w", err)
-				}
-				target, err := pgStore.AppByID(ctx, targetAppID)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ErrServiceProxyDenied
-				}
-				if err != nil {
-					return fmt.Errorf("load target app: %w", err)
-				}
-				if caller.AccountID == "" || caller.AccountID != target.AccountID {
-					return gateway.ErrServiceProxyDenied
-				}
-				return nil
-			},
+			Authorize:  newServiceProxyAuthorizer(pgStore),
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and
