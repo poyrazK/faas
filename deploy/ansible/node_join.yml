@@ -831,12 +831,15 @@
         content: |
           [Slice]
           MemoryMax={{ faas_node_sizing.tenant_slice_max_mb }}M
-      register: faas_tenant_slice_fence
 
-    - name: Reload systemd after re-fencing the tenant slice
+    - name: Reload systemd so the re-fenced tenant slice takes effect
+      # Unconditional rather than a handler: handlers flush at the end of
+      # the play, and the tenant fence must already be live before this play
+      # starts vmmd and lets tenants land on the node. daemon-reload is
+      # idempotent, so changed_when: false keeps the run honest.
       ansible.builtin.systemd:
         daemon_reload: true
-      when: faas_tenant_slice_fence is changed
+      changed_when: false
 
     - name: Install the hardware-derived vmmd capacity contract
       ansible.builtin.copy:
