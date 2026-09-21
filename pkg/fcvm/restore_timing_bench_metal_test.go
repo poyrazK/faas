@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -48,6 +49,11 @@ import (
 // cycle so two commits can be diffed offline.
 func TestMetalRestoreTimingBench(t *testing.T) {
 	cycles := benchCycles(t)
+	// Guest RAM is the variable the fault-bound phases scale with, so it must
+	// be settable: every earlier run used 128 MiB while the production app
+	// measured at 130 ms resume_hook is 1024 MB, and comparing the two
+	// without saying so overstates how good the platform looks.
+	memMiB := benchMemMiB(t)
 
 	// Self-contained fixture: the harness must run from a plain
 	// `make test-metal` on any designated acceptance host, not only from
@@ -123,7 +129,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// wake does after the idle reaper has parked the app.
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance: instance, Plan: "pro", BaseKey: base, LayerKey: layer,
-		VcpuCount: 2, MemSizeMiB: 128,
+		VcpuCount: 2, MemSizeMiB: memMiB,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
@@ -137,15 +143,37 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// loop mount of drive1, after it they share one. With the default of 0 the
 	// harness measures the single-writer (resolver only) shape.
 	apiEnv := benchAPIEnvEntries(t)
+	t.Logf("guest: %d MiB", memMiB)
 	t.Logf("pre-boot writers this run: resolver + %d api env keys", len(apiEnv))
+
+	dropCaches := os.Getenv("FAAS_RESTORE_BENCH_DROP_CACHES") == "1"
+	if dropCaches {
+		t.Log("dropping page cache before every restore: faults will be served from disk")
+	}
 
 	capture.reset()
 	wall := make([]int64, 0, cycles)
 	for i := 0; i < cycles; i++ {
+		// An idle acceptance node keeps the snapshot hot in page cache, so
+		// every restore faults from RAM. A production node does not: node-2
+		// writes 150-190 GiB of snapshots a day, which evicts exactly these
+		// pages. That is the leading explanation for resume_hook being
+		// ~130 ms in production against ~33 ms here, and it is why guest RAM
+		// alone changed nothing (128 MiB and 1024 MiB both measured ~33 ms --
+		// configured RAM is not working set).
+		//
+		// Dropping the cache makes this harness model the contended node
+		// rather than the quiet one, and discriminates the two candidate
+		// fixes: if resume_hook moves, the cost is fault I/O and prefetch
+		// helps; if it does not, the cost is fault COUNT and only hugepages
+		// or UFFD can help.
+		if dropCaches {
+			dropPageCache(t)
+		}
 		started := time.Now()
 		out, err := m.Wake(ctx, WakeRequest{
 			Instance: instance, Plan: "pro", BaseKey: base, LayerKey: layer,
-			VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
+			VcpuCount: 2, MemSizeMiB: memMiB, Snapshot: snap,
 			APIEnvEntries: apiEnv,
 		})
 		if err != nil {
@@ -450,4 +478,33 @@ func benchAPIEnvEntries(t *testing.T) []APIEnvEntry {
 		})
 	}
 	return out
+}
+
+// benchMemMiB sizes the guest. Default 128 MiB keeps earlier runs comparable;
+// set FAAS_RESTORE_BENCH_MEM_MIB=1024 to match a production app when the
+// question is about the page-fault-bound phases.
+func benchMemMiB(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("FAAS_RESTORE_BENCH_MEM_MIB")
+	if raw == "" {
+		return 128
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 64 || n > 4096 {
+		t.Fatalf("FAAS_RESTORE_BENCH_MEM_MIB=%q must be an integer in [64,4096]", raw)
+	}
+	return n
+}
+
+// dropPageCache evicts clean page cache so the next restore faults from disk.
+// Requires root, which test-metal already has. Fails the test rather than
+// silently measuring a warm cache and reporting it as a cold one.
+func dropPageCache(t *testing.T) {
+	t.Helper()
+	if err := exec.Command("sync").Run(); err != nil {
+		t.Fatalf("sync before drop_caches: %v", err)
+	}
+	if err := os.WriteFile("/proc/sys/vm/drop_caches", []byte("3\n"), 0o200); err != nil {
+		t.Fatalf("drop_caches (needs root): %v", err)
+	}
 }
