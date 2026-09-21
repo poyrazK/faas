@@ -1,5 +1,8 @@
 package gateway
 
+// adr: 070
+// spec: §4.1
+
 import (
 	"context"
 	"io"
