@@ -270,6 +270,27 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 				Field:  "scaling_policy.targets",
 			})
 		}
+		// ADR-195 schedules, same shared validator as the PATCH handler
+		// and the manifest loader.
+		if problem := api.ValidateScalingSchedules("scaling_policy.schedules", sp.Timezone, sp.Schedules); problem != nil {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: problem.Detail,
+				Field:  "scaling_policy.schedules",
+			})
+		}
+		// A schedule buys the same warm capacity min_instances does, so
+		// the plan gate must see the maximum REACHABLE floor. Gating the
+		// static field alone lets `min_instances: 0` plus a schedule of
+		// `min_instances: 3` past the Free rejection.
+		if reachable := sp.MaxReachableMinInstances(); reachable > 0 && !limits.MinInstancesAllowed {
+			out = append(out, Break{
+				Code: api.CodePlanMinInstancesNotAllowed, Severity: SeverityError,
+				Reason:   "min_instances is not enabled on this plan",
+				Field:    "scaling_policy.min_instances",
+				Observed: AsAny(reachable),
+			})
+		}
 	}
 	// Streaming gate.
 	if pending.AppConfig.StreamingEnabled != nil && *pending.AppConfig.StreamingEnabled && !limits.StreamingEnabled {

@@ -181,6 +181,23 @@ func TestScalingConfigValidation(t *testing.T) {
 		{"zero value in list", &ScalingConfig{Targets: []ScalingTarget{{Metric: "cpu", Value: 0}}}, "must be > 0"},
 		{"cpu above 100", &ScalingConfig{Targets: []ScalingTarget{{Metric: "cpu", Value: 140}}}, "<= 100"},
 		{"missing metric name", &ScalingConfig{Target: &ScalingTarget{Value: 5}}, "target.metric is required"},
+		// adr: 195 — scheduled scaling floors.
+		{"schedule bad cron", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "every morning", Duration: "1h", MinInstances: 1},
+		}}, "not a valid five-field cron"},
+		{"schedule bad duration", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * *", Duration: "half a day", MinInstances: 1},
+		}}, "not a valid duration"},
+		{"schedule duration too short", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * *", Duration: "10s", MinInstances: 1},
+		}}, "duration_s must be between"},
+		{"schedule zero floor", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * *", Duration: "1h", MinInstances: 0},
+		}}, "must be > 0"},
+		{"schedule bad timezone", &ScalingConfig{
+			Timezone:  "Mars/Olympus_Mons",
+			Schedules: []ScalingSchedule{{Cron: "0 8 * * *", Duration: "1h", MinInstances: 1}},
+		}, "not a valid IANA zone"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1093,3 +1110,34 @@ func TestValidate_BucketDependencyRejectsDuplicate(t *testing.T) {
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
 
 func manifestIntPtr(v int) *int { return &v }
+
+// adr: 195 — a valid schedule must survive Validate and land on the wire
+// shape with its duration converted to seconds.
+func TestScalingConfig_SchedulesToAPI(t *testing.T) {
+	cfg := &ScalingConfig{
+		Timezone: "Europe/Istanbul",
+		Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * 1-5", Duration: "12h", MinInstances: 3},
+			{Cron: "0 2 * * *", Duration: "90m", MinInstances: 1},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	out := cfg.ToAPI()
+	if out.Timezone != "Europe/Istanbul" {
+		t.Errorf("timezone = %q, want Europe/Istanbul", out.Timezone)
+	}
+	if len(out.Schedules) != 2 {
+		t.Fatalf("schedules = %d, want 2", len(out.Schedules))
+	}
+	if out.Schedules[0].DurationS != 12*3600 {
+		t.Errorf("12h -> %d seconds, want %d", out.Schedules[0].DurationS, 12*3600)
+	}
+	if out.Schedules[1].DurationS != 90*60 {
+		t.Errorf("90m -> %d seconds, want %d", out.Schedules[1].DurationS, 90*60)
+	}
+	if out.Schedules[0].MinInstances != 3 || out.Schedules[0].Cron != "0 8 * * 1-5" {
+		t.Errorf("schedule[0] = %+v, want the manifest values", out.Schedules[0])
+	}
+}

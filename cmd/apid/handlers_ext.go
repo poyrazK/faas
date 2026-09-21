@@ -715,9 +715,22 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				}
 			}
 		}
+		// ADR-195: schedules are validated BEFORE the plan gates so an
+		// unparseable cron is a 422 about the cron rather than a 403
+		// about a floor the customer cannot reach anyway.
+		if problem := api.ValidateScalingSchedules("schedules", sp.Timezone, sp.Schedules); problem != nil {
+			return problem
+		}
+		// ADR-195: every min_instances gate below reads the MAXIMUM
+		// REACHABLE floor, not the static field. A schedule buys the
+		// same warm capacity min_instances does, so gating only the
+		// static value would let `min_instances: 0` plus a schedule of
+		// `min_instances: 3` walk through the Free rejection and the
+		// per-plan cap alike.
+		reachableMin := sp.MaxReachableMinInstances()
 		// Plan gates first (403 supersedes 422): a Free customer
 		// patching a valid policy still sees the plan error.
-		if sp.MinInstances > 0 && !acct.Plan.MinInstancesAllowed() {
+		if reachableMin > 0 && !acct.Plan.MinInstancesAllowed() {
 			return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
 		}
 		if sp.MaxInstances > 0 && !acct.Plan.MaxInstancesAllowed() {
@@ -727,15 +740,15 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// 0 is the explicit "scale to zero" form below the engine
 		// floor (1) — the engine applies the floor at wake time, so
 		// the apid gate only rejects the negative / over-cap cases.
-		if sp.MinInstances < 0 || sp.MinInstances > limits.MaxConcurrency {
-			return api.ErrInvalidMinInstances(sp.MinInstances, limits.MaxConcurrency)
+		if sp.MinInstances < 0 || reachableMin > limits.MaxConcurrency {
+			return api.ErrInvalidMinInstances(reachableMin, limits.MaxConcurrency)
 		}
 		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
 		// to protect the §6.2-2 RAM ceiling from a single API
 		// call pinning a large fraction of the box.
-		if sp.MinInstances > acct.Plan.MaxMinInstances() {
-			return api.ErrMaxMinInstancesExceeded(sp.MinInstances, acct.Plan.MaxMinInstances())
+		if reachableMin > acct.Plan.MaxMinInstances() {
+			return api.ErrMaxMinInstancesExceeded(reachableMin, acct.Plan.MaxMinInstances())
 		}
 		// Bounds on max_instances: must be in [MinInstances, plan.MaxConcurrency].
 		// 0 means "use plan max_concurrency"; the engine reads the
@@ -749,8 +762,11 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if sp.MaxInstances > 0 && sp.MaxInstances > limits.MaxConcurrency {
 			return api.ErrInvalidMaxInstances(sp.MaxInstances, sp.MinInstances, limits.MaxConcurrency)
 		}
-		if sp.MaxInstances > 0 && sp.MaxInstances < sp.MinInstances {
-			return api.ErrInvalidMaxInstances(sp.MaxInstances, sp.MinInstances, limits.MaxConcurrency)
+		// max_instances must sit above every floor the app can reach,
+		// including a scheduled one — a window that demands 5 under a
+		// max of 2 is a policy that contradicts itself at 08:00.
+		if sp.MaxInstances > 0 && sp.MaxInstances < reachableMin {
+			return api.ErrInvalidMaxInstances(sp.MaxInstances, reachableMin, limits.MaxConcurrency)
 		}
 		// Cooldown floors + ceilings. The plan allows a customer
 		// to opt for a tighter cooldown (e.g. 5 s on Hobby) than

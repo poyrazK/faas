@@ -621,6 +621,44 @@ type ScalingConfig struct {
 	MaxQueueWaitMS          int `yaml:"max_queue_wait_ms,omitempty"`
 	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
+	// Timezone is the IANA zone the schedules below are evaluated in
+	// (ADR-195). Empty means UTC.
+	Timezone string `yaml:"timezone,omitempty"`
+	// Schedules keep the app warm on a recurring window:
+	//
+	//	scaling:
+	//	  min_instances: 0
+	//	  timezone: Europe/Istanbul
+	//	  schedules:
+	//	    - cron: "0 8 * * 1-5"
+	//	      duration: 12h
+	//	      min_instances: 3
+	//
+	// Outside every window the app falls back to min_instances and parks.
+	Schedules []ScalingSchedule `yaml:"schedules,omitempty"`
+}
+
+// ScalingSchedule is the manifest form of api.ScalingSchedule. Duration is a
+// Go duration string ("12h", "90m") rather than the wire's integer seconds
+// because this file is hand-written by a person; `duration_s: 43200` is a
+// number nobody can check at a glance.
+type ScalingSchedule struct {
+	Cron         string `yaml:"cron"`
+	Duration     string `yaml:"duration"`
+	MinInstances int    `yaml:"min_instances"`
+}
+
+// DurationSeconds parses the manifest duration string. Returns an error the
+// caller wraps with the schedule index.
+func (s ScalingSchedule) DurationSeconds() (int, error) {
+	d, err := time.ParseDuration(strings.TrimSpace(s.Duration))
+	if err != nil {
+		return 0, fmt.Errorf("duration %q is not a valid duration (for example 12h, 90m): %w", s.Duration, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("duration %q must be positive", s.Duration)
+	}
+	return int(d / time.Second), nil
 }
 
 // QueueBinding declares a durable app queue-to-workload mapping. The deploy
@@ -738,7 +776,40 @@ func (s *ScalingConfig) Validate() error {
 			return fmt.Errorf("scaling: %s", problem.Detail)
 		}
 	}
+	// ADR-195 schedules. The cron grammar, timezone and window bounds come
+	// from pkg/api so this file cannot drift from what the PATCH accepts;
+	// only the manifest-specific duration STRING is parsed here.
+	converted, err := s.apiSchedules()
+	if err != nil {
+		return err
+	}
+	if problem := api.ValidateScalingSchedules("schedules", s.Timezone, converted); problem != nil {
+		return fmt.Errorf("scaling: %s", problem.Detail)
+	}
 	return nil
+}
+
+// apiSchedules converts the manifest schedules to the wire shape, parsing
+// each duration string. The index is carried into the error because a
+// manifest with several schedules gives the author no other way to tell
+// which line is wrong.
+func (s *ScalingConfig) apiSchedules() ([]api.ScalingSchedule, error) {
+	if len(s.Schedules) == 0 {
+		return nil, nil
+	}
+	out := make([]api.ScalingSchedule, 0, len(s.Schedules))
+	for i, sched := range s.Schedules {
+		seconds, err := sched.DurationSeconds()
+		if err != nil {
+			return nil, fmt.Errorf("scaling: schedules[%d].%w", i, err)
+		}
+		out = append(out, api.ScalingSchedule{
+			Cron:         sched.Cron,
+			DurationS:    seconds,
+			MinInstances: sched.MinInstances,
+		})
+	}
+	return out, nil
 }
 
 // ToAPI converts the manifest declaration to the public PATCH shape. The
@@ -773,6 +844,15 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 	}
 	for _, t := range s.Targets {
 		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value})
+	}
+	out.Timezone = s.Timezone
+	// Validate() already rejected an unparseable duration, so a failure
+	// here cannot reach a caller that validated first. Dropping the error
+	// rather than panicking keeps ToAPI total: a caller that skipped
+	// validation gets a policy without schedules, which the API then
+	// rejects on its own terms.
+	if schedules, err := s.apiSchedules(); err == nil {
+		out.Schedules = schedules
 	}
 	return out
 }

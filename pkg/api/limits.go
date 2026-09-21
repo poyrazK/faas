@@ -3853,6 +3853,20 @@ const (
 	// limit. It is deliberately larger than the number of distinct sources
 	// that exist, so no app can hit it by declaring every real metric.
 	MaxScalingTargets = 8
+	// MaxScalingSchedules bounds the recurring windows one app may declare
+	// (ADR-195). Each schedule costs a cron parse per app per floor
+	// evaluation, and the floor is read on the wake hot path, so this is a
+	// latency bound rather than a product limit. Twelve covers a distinct
+	// window per month, which is well past any real weekly shape.
+	MaxScalingSchedules = 12
+	// MinScalingScheduleDurationS / MaxScalingScheduleDurationS bound a
+	// window. The floor is 60 s because the scheduler's own sweep is
+	// coarser than that, so a shorter window could close before any tick
+	// observed it — the customer would be billed for a floor that never
+	// produced an instance. The ceiling is 7 days, which lets "always
+	// warm" be expressed as a weekly window without an unbounded value.
+	MinScalingScheduleDurationS = 60
+	MaxScalingScheduleDurationS = 7 * 24 * 60 * 60
 	// ScaleDecisionEventMinIntervalSeconds bounds repeated durable scale
 	// decision events for one app. Metrics remain per-tick; the audit stream
 	// is sampled so a sustained hot app cannot flood events.

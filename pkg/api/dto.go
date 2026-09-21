@@ -829,6 +829,15 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
 	// uses the plan default; positive values are capped at 60 seconds.
 	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
+	// Timezone is the IANA zone every schedule's cron is evaluated in
+	// (ADR-195). Empty means UTC.
+	Timezone string `json:"timezone,omitempty"`
+	// Schedules raise the warm floor for recurring windows (ADR-195).
+	// Each entry is a cron fire plus a duration; while the window is open
+	// the app's min_instances is at least the entry's value. Schedules
+	// only ever raise the floor — they cannot lower one or cap
+	// max_instances.
+	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 	// unknownFields is the set of unknown JSON keys encountered
 	// during a strict Unmarshal. Stored as a one-shot value so
 	// the validator can surface a single error without
@@ -844,6 +853,16 @@ type ScalingPolicy struct {
 type ScalingTarget struct {
 	Metric string  `json:"metric,omitempty"`
 	Value  float64 `json:"value,omitempty"`
+}
+
+// ScalingSchedule is one recurring window that raises the warm floor
+// (ADR-195). Cron is a five-field expression evaluated in the policy's
+// Timezone; each fire opens a window of DurationS seconds during which the
+// app's floor is at least MinInstances.
+type ScalingSchedule struct {
+	Cron         string `json:"cron,omitempty"`
+	DurationS    int    `json:"duration_s,omitempty"`
+	MinInstances int    `json:"min_instances,omitempty"`
 }
 
 // EffectiveTargets projects the policy onto the ADR-194 multi-signal form:
@@ -893,6 +912,8 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"max_queue_wait_ms":           {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
+		"timezone":                    {},
+		"schedules":                   {},
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {

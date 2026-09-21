@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ScalingSchedule } from './ScalingSchedule.js';
 import type { ScalingTarget } from './ScalingTarget.js';
 /**
  * Per-app autoscaling configuration (issue #462 / ADR-058). Mirrors the on-disk jsonb column `apps.scaling_policy`. Empty values map to the engine default (the apid gate is load-bearing for the floor / ceiling, not the encoder). PR-A persists the DTO; PR-C wires the engine; PR-D carves out the worker-class branch.
@@ -47,5 +48,13 @@ export type ScalingPolicy = {
    * Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds.
    */
   wake_max_queue_wait_seconds?: number;
+  /**
+   * IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule.
+   */
+  timezone?: string;
+  /**
+   * Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor — they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap.
+   */
+  schedules?: Array<ScalingSchedule>;
 };
 

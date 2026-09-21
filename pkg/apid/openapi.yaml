@@ -20941,6 +20941,19 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        timezone:
+          description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
+          type: string
+          example: "Europe/Istanbul"
+        schedules:
+          description: "Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor \u2014 they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap."
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            $ref: '#/components/schemas/ScalingSchedule'
+          example:
+            - {cron: "0 8 * * 1-5", duration_s: 43200, min_instances: 3}
 
     PublicAuthBlock:
       description: "Per-app public-URL auth write shape (issue #477 / ADR-077 + ADR-118). Sent on PATCH /v1/apps/{slug}; apid seals the basic_user + basic_pass into a single APP_BASIC_AUTH secretbox blob before persistence. The plaintext is never echoed on read (see PublicAuthStatus). For mode='ip_allowlist' (ADR-118), ip_allowlist carries the per-app CIDR allowlist (Pro 16 max, Scale 64 max — Free/Hobby → 403 plan_public_auth_ip_allowlist_not_allowed)."
@@ -20994,6 +21007,28 @@ components:
           type: integer
           minimum: 0
           maximum: 64
+          example: 3
+
+    ScalingSchedule:
+      description: "One recurring window that raises the warm floor (ADR-195). `cron` is a five-field expression evaluated in the policy's `timezone`; each fire opens a window of `duration_s` seconds during which the app's floor is at least `min_instances`. Cron expresses instants rather than intervals, so the duration is what makes a window \u2014 and it needs no special case for a window that crosses midnight."
+      type: object
+      additionalProperties: false
+      required: [cron, duration_s, min_instances]
+      properties:
+        cron:
+          description: "Five-field cron expression (minute hour day-of-month month day-of-week), evaluated in the policy timezone."
+          type: string
+          example: "0 8 * * 1-5"
+        duration_s:
+          description: "How long the window stays open after each fire, in seconds. Between 60 and 604800 (7 days). The floor of 60 s exists because the scheduler sweep is coarser than that, so a shorter window could close before any tick observed it \u2014 billing a floor that never produced an instance."
+          type: integer
+          minimum: 60
+          maximum: 604800
+          example: 43200
+        min_instances:
+          description: "Warm floor while the window is open. Must be > 0: a schedule raises the floor and cannot lower it."
+          type: integer
+          minimum: 1
           example: 3
 
     ScalingTarget:

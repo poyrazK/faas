@@ -2,6 +2,7 @@ package state
 
 import (
 	"testing"
+	"time"
 )
 
 func TestEffectiveMinInstances(t *testing.T) {
@@ -58,7 +59,7 @@ func TestEffectiveMinInstances(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := effectiveMinInstances(c.app); got != c.want {
+			if got := effectiveMinInstances(c.app, time.Now()); got != c.want {
 				t.Errorf("effectiveMinInstances(%+v) = %d, want %d", c.app, got, c.want)
 			}
 			if got := c.app.EffectiveMinInstances(); got != c.want {

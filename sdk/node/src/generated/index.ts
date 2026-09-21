@@ -579,6 +579,7 @@ export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js'
 export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
 export type { ScalingPolicy } from './models/ScalingPolicy.js';
+export type { ScalingSchedule } from './models/ScalingSchedule.js';
 export type { ScalingTarget } from './models/ScalingTarget.js';
 export type { ScanResult } from './models/ScanResult.js';
 export type { ScopedAppEnvResponse } from './models/ScopedAppEnvResponse.js';
