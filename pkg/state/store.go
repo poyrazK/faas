@@ -6159,6 +6159,22 @@ type Store interface {
 	// the window.
 	ListDataUpstreamProbesByHostRegion(ctx context.Context, arg sqlc.ListDataUpstreamProbesByHostRegionParams) ([]DataUpstreamProbe, error)
 
+	// ListEgressCircuitCandidates (ADR-197 §3) backs schedd's egress
+	// circuit-breaker loop. Returns every opted-in upstream joined to its
+	// newest probe verdict no older than `since`; an opted-in upstream with
+	// no probe in the window comes back with a zero Sampled rather than
+	// being dropped, because "never measured" and "row gone" must stay
+	// distinguishable to the loop. Postgres-only — MemStore returns the
+	// ADR-098 sentinel.
+	ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error)
+
+	// UpdateDataUpstreamCircuitBreaker (ADR-197 §3) applies a partial
+	// per-upstream egress-breaker policy update. Scoped by (id, app_id) so
+	// a forged ID from a sibling app cannot enable a breaker on an upstream
+	// the caller cannot see — this rule can cut an app off from its own
+	// database. Postgres-only; MemStore returns the ADR-098 sentinel.
+	UpdateDataUpstreamCircuitBreaker(ctx context.Context, in UpdateDataUpstreamCircuitBreakerParams) error
+
 	// ListDataUpstreamProbeHistory backs
 	// GET /v1/apps/{slug}/upstreams/history. It aggregates the raw probe
 	// rows into server-side time buckets so the API never serializes the

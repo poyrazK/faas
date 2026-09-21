@@ -2138,6 +2138,13 @@ CREATE TABLE public.data_upstreams (
     last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     deployment_scope text DEFAULT 'default'::text NOT NULL,
+    circuit_breaker_enabled boolean DEFAULT false NOT NULL,
+    circuit_breaker_failure_threshold double precision,
+    circuit_breaker_min_samples integer,
+    circuit_breaker_open_seconds integer,
+    CONSTRAINT data_upstreams_circuit_min_samples_check CHECK (((circuit_breaker_min_samples IS NULL) OR ((circuit_breaker_min_samples >= 1) AND (circuit_breaker_min_samples <= 1000)))),
+    CONSTRAINT data_upstreams_circuit_open_seconds_check CHECK (((circuit_breaker_open_seconds IS NULL) OR ((circuit_breaker_open_seconds >= 1) AND (circuit_breaker_open_seconds <= 3600)))),
+    CONSTRAINT data_upstreams_circuit_threshold_check CHECK (((circuit_breaker_failure_threshold IS NULL) OR ((circuit_breaker_failure_threshold > (0)::double precision) AND (circuit_breaker_failure_threshold <= (1)::double precision)))),
     CONSTRAINT data_upstreams_declared_region_check CHECK (((declared_region IS NULL) OR (declared_region ~ '^[a-z0-9_-]{1,32}$'::text))),
     CONSTRAINT data_upstreams_deployment_scope_shape CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT data_upstreams_host_check CHECK (((host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'::text) AND (host !~ '^[0-9]+(\.[0-9]+)+$'::text) AND ((length(host) >= 1) AND (length(host) <= 253)))),
@@ -6060,6 +6067,13 @@ CREATE INDEX data_upstreams_app_created_idx ON public.data_upstreams USING btree
 --
 
 CREATE UNIQUE INDEX data_upstreams_dedupe_uniq ON public.data_upstreams USING btree (app_id, scope, deployment_scope, kind, host, port);
+
+
+--
+-- Name: data_upstreams_circuit_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_upstreams_circuit_enabled_idx ON public.data_upstreams USING btree (app_id, host_redacted_hash) WHERE circuit_breaker_enabled;
 
 
 --

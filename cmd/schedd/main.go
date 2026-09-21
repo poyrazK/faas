@@ -661,6 +661,54 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}()
 
+	// ADR-197 §3: egress circuit breaker. Off unless the operator sets
+	// FAAS_EGRESS_CIRCUIT_BREAKER, and additionally inert unless the
+	// ADR-098 probe is running — without probe rows the breaker has no
+	// health signal at all, so enabling one without the other would be a
+	// silent no-op that looks like protection. That combination is a
+	// startup error rather than a warning, per the ADR's rollout section.
+	if os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER") != "" {
+		if os.Getenv("FAAS_UPSTREAM_PROBE") == "" {
+			log.Error("schedd: FAAS_EGRESS_CIRCUIT_BREAKER is set but FAAS_UPSTREAM_PROBE is not; " +
+				"the breaker has no health signal without the ADR-098 probe")
+			return fmt.Errorf("schedd: FAAS_EGRESS_CIRCUIT_BREAKER requires FAAS_UPSTREAM_PROBE")
+		}
+		applier := sched.NewRoutedEgressCircuitApplier(
+			vmmRouter,
+			sched.NewStoreEgressCircuitNodeLister(store),
+		)
+		// The resolver is the node's own DNS. schedd resolves the upstream
+		// locally so the plaintext host never crosses the vmmd wire — the
+		// RPC carries a resolved address, and every label and log line
+		// carries only host_redacted_hash (ADR-098 §11).
+		resolver := func(ctx context.Context, host string) (string, error) {
+			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return "", err
+			}
+			if len(addrs) == 0 {
+				return "", fmt.Errorf("schedd: egress circuit: no address for upstream")
+			}
+			return addrs[0], nil
+		}
+		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log)
+		egressLoop := sched.NewEgressCircuitLoop(
+			egressBreaker,
+			sched.NewStoreEgressCircuitCandidateReader(store, 10*time.Minute, time.Now),
+			api.UpstreamAffinityTTL, // one probe cadence
+			0,                       // default: four intervals
+			log,
+		)
+		// One pass before the first tick so a schedd restart re-derives
+		// breaker state from the probe history instead of starting blind
+		// with every circuit closed.
+		if err := egressLoop.Tick(ctx); err != nil {
+			log.Warn("schedd: initial egress circuit reconcile failed", "err", err)
+		}
+		go egressLoop.Run(ctx)
+		log.Info("schedd: egress circuit breaker enabled", "interval", egressLoop.Interval())
+	}
+
 	// Issue #555 PR-6 — per-deployment 100% sampling window.
 	//
 	// otelinit.Init wires the OTel SDK (sampler chain:

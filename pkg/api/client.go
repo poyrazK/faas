@@ -5380,6 +5380,18 @@ func (c *Client) GetAppDataUpstream(ctx context.Context, slug, id string) (DataU
 	var out DataUpstreamResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/upstreams/"+id, nil, &out)
 }
+
+// UpdateAppDataUpstreamCircuitBreaker opts one upstream into (or out of)
+// egress circuit breaking and optionally tunes its thresholds (ADR-197 §3).
+//
+// Enabling this grants the platform permission to reject the app's
+// connections to that upstream while its circuit is open — which is the
+// point, but also why it is an explicit per-upstream call rather than
+// anything inferred.
+func (c *Client) UpdateAppDataUpstreamCircuitBreaker(ctx context.Context, slug, id string, req UpdateUpstreamCircuitBreakerRequest) (DataUpstreamResponse, error) {
+	var out DataUpstreamResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/upstreams/"+id+"/circuit-breaker", req, &out)
+}
 func (c *Client) CreateAppDataUpstream(ctx context.Context, slug string, req PutDataUpstreamRequest) (DataUpstreamResponse, error) {
 	var out DataUpstreamResponse
 	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/upstreams", req, &out)

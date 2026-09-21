@@ -2553,6 +2553,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getUpstream)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/upstreams", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.createUpstream)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.deleteUpstream)))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.updateUpstreamCircuitBreaker)))
 
 	// Usage.
 	// Usage endpoints are narrower than the read surface — a deploy-write

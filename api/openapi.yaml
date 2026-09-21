@@ -8718,6 +8718,60 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/upstreams/{id}/circuit-breaker:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Upstream id (UUID).
+    patch:
+      tags: [upstreams]
+      operationId: updateAppDataUpstreamCircuitBreaker
+      summary: Update an upstream's egress circuit-breaker policy.
+      description: |
+        Opts one upstream into (or out of) egress circuit breaking, and
+        optionally tunes its thresholds (ADR-197 §3).
+
+        Enabling this grants the platform permission to REJECT your app's
+        connections to this upstream while its circuit is open. Plaintext
+        hosts never appear in the request or the response; upstreams are
+        addressed by id and identified by `host_redacted_hash`.
+
+        Plan-gated: accounts whose plan allows no egress breakers receive
+        402. The per-app cap counts only ENABLED upstreams, so turning one
+        off, or re-saving one that is already on, is never blocked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUpstreamCircuitBreakerRequest'
+      responses:
+        '200':
+          description: The updated upstream envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataUpstreamResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: '402 — the plan does not allow egress circuit breakers, or the per-app cap is reached.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: '404 — upstream_not_found.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: '422 — validation failed on the circuit-breaker body.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # ─── Deployments ──────────────────────────────────────────────────────────
 
   /v1/deployments:
@@ -27633,6 +27687,90 @@ components:
           type: string
           description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (3..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp."
 
+    EgressCircuitBreakerPolicy:
+      description: |
+        Per-upstream egress circuit-breaker policy (ADR-197 §3).
+
+        When enabled, your app's NEW connections to this upstream are
+        rejected with a TCP reset while the circuit is open, instead of
+        hanging for a full TCP connect timeout. That is the point of the
+        feature: a blackholed dependency otherwise burns the per-request
+        budget and then holds the wake slot on every request, turning one
+        dependency outage into an app-wide capacity outage. Connections
+        already established are never torn down.
+
+        The circuit is driven by the platform's own 30-second TCP+TLS
+        probe of the upstream, not by your traffic, so the half-open trial
+        that decides recovery costs your app nothing.
+
+        Disabled by default. This rule can cut an app off from its own
+        database, so it is never inferred — you opt in per upstream.
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          default: false
+          description: Whether egress breaking is active for this upstream.
+        failure_threshold:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1
+          description: |
+            Failure RATIO (not a count) at or above which the circuit
+            opens. Omitted tracks the platform default (0.5), so the
+            upstream follows the default as it evolves rather than
+            freezing today's value.
+        min_samples:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: |
+            Probe samples required inside the window before the ratio is
+            consulted. Omitted tracks the platform default (3). The probe
+            samples every 30s, so a high value can take a long time to
+            accumulate — or never will on a short-lived app.
+        open_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          description: |
+            First open interval before a half-open probe is offered.
+            Omitted tracks the platform default (30). Each failed probe
+            doubles the interval, up to the platform ceiling.
+        state:
+          type: string
+          readOnly: true
+          enum: [closed, open, half_open]
+          description: |
+            Observed circuit state. Absent when the breaker is disabled or
+            the scheduler has not yet reported one.
+    UpdateUpstreamCircuitBreakerRequest:
+      description: |
+        Partial update of an upstream's egress circuit-breaker policy
+        (ADR-197 §3). Omitted fields are left unchanged.
+
+        Setting `enabled` to false leaves the threshold fields intact, so
+        toggling protection off does not discard your tuning.
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Turn egress breaking on or off for this upstream.
+        failure_threshold:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1
+        min_samples:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        open_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
     DataUpstreamResponse:
       type: object
       required: [id, source, kind, host_redacted_hash, port, created_at, last_seen_at]
@@ -27678,6 +27816,7 @@ components:
           description: "Timestamp of the most recent probe. Omitted when no probe yet."
         created_at: { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time }
+        circuit_breaker: { $ref: '#/components/schemas/EgressCircuitBreakerPolicy' }
 
     DataUpstreamListResponse:
       type: object

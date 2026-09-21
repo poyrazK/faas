@@ -7054,6 +7054,22 @@ type DataUpstream struct {
 	LastProbedAt *time.Time
 	LastSeenAt   time.Time
 	CreatedAt    time.Time
+	// CircuitBreakerEnabled is the ADR-197 §3 per-upstream opt-in.
+	//
+	// Default false, and that is load-bearing rather than conservative: an
+	// open circuit REJECTS the tenant's connections to their own database.
+	// Enabling it implicitly for every captured upstream would let an
+	// ADR-098 inference — which fires on a DATABASE_URL-shaped env var —
+	// silently cut an app off from its data store. The operator flips the
+	// node flag; the customer opts in per upstream.
+	CircuitBreakerEnabled bool
+	// CircuitBreakerFailureThreshold / MinSamples / OpenSeconds override the
+	// platform defaults (circuit.EgressConfig). nil means "track the
+	// platform default", so a row that only sets enabled=true follows the
+	// defaults as they evolve rather than freezing today's values.
+	CircuitBreakerFailureThreshold *float64
+	CircuitBreakerMinSamples       *int
+	CircuitBreakerOpenSeconds      *int
 }
 
 // DataUpstreamProbe is one row of data_upstream_probes. meterd is

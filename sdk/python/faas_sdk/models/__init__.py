@@ -568,6 +568,8 @@ from .edge_rule_throttle_action_key_by import EdgeRuleThrottleActionKeyBy
 from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
+from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
+from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .env_diff_cell import EnvDiffCell
@@ -1275,6 +1277,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
@@ -1875,6 +1878,8 @@ __all__ = (
     "EdgeRuleValidateAction",
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",
+    "EgressCircuitBreakerPolicy",
+    "EgressCircuitBreakerPolicyState",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnvDiffCell",
@@ -2550,6 +2555,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",
