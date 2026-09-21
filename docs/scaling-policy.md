@@ -46,7 +46,20 @@ scaling rule, choose a stabilization window, or decide how signals combine.
 | `concurrent_requests` | in-flight requests per instance | request apps; the signal a latency target is really reaching for |
 | `rps` | requests per second per instance | steady traffic with predictable per-request cost |
 | `cpu` | max CPU percent across instances | CPU-bound work whose request count understates its cost |
-| `queue_depth` | backlog each worker should drain | job and worker apps |
+| `queue_depth` | backlog each worker should drain, in Gregale's own queue | job and worker apps |
+| `queue_lag` | backlog still on the external broker | Kafka / AMQP / NATS / Redis Streams / SQS triggers |
+
+`queue_lag` and `queue_depth` are different quantities and are not
+interchangeable. A broker-backed trigger pulls at most one batch of messages
+per tick, so `queue_depth` counts what Gregale has **already pulled** while
+`queue_lag` counts what is **still waiting on the broker** — a
+million-message Kafka backlog with a batch size of 64 shows a queue depth of
+64. Scale a broker-backed consumer on `queue_lag`.
+
+`queue_lag` reports no signal at all when no broker answers (the trigger is
+disabled, the broker is unreachable, or the source does not report lag). It
+does not fall back to the local queue depth, so an app declaring only
+`queue_lag` simply does not scale on that axis until a reading arrives.
 
 When more than one target is declared, Gregale evaluates each independently
 and provisions for whichever asks for the most instances. So:

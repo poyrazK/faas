@@ -157,6 +157,16 @@ type BrokerLagReader interface {
 type queueDepthSignal struct {
 	queue    state.QueueStats
 	bindings []queueBindingDepth
+	// brokerLag is the consumer lag the broker itself reports, and
+	// haveBrokerLag distinguishes "the broker says zero" from "no broker
+	// reader answered". It is kept SEPARATE from queue.Depth because the
+	// two are different quantities: depth is what Gregale has already
+	// pulled into its own queue, lag is what is still sitting on the
+	// broker. Overloading one field with the other made queue_depth
+	// report lag whenever a broker answered, and made queue_lag report
+	// depth whenever none did.
+	brokerLag     int64
+	haveBrokerLag bool
 }
 
 type queueBindingDepth struct {
@@ -177,7 +187,20 @@ func (s queueDepthSignal) desiredWorkers(target float64, maxInstances int, minWo
 		return minAllowed
 	}
 	desired := 0
-	if len(s.bindings) == 0 {
+	// A broker-reported lag is the authoritative backlog for a
+	// broker-backed worker: it counts what is still on the broker, while
+	// queue.Depth counts only what the poller has already pulled into
+	// Gregale's own queue (at most one batch per tick). Sizing the pool
+	// off depth would size it off the batch size.
+	//
+	// This branch is why the lag has to be carried as its own field. It
+	// used to be written into queue.Depth, which made it reach this
+	// calculation correctly but also made queue_depth report lag.
+	if s.haveBrokerLag {
+		if s.brokerLag > 0 {
+			desired = int(math.Ceil(float64(s.brokerLag) / target))
+		}
+	} else if len(s.bindings) == 0 {
 		if s.queue.Depth > 0 {
 			desired = int(math.Ceil(float64(s.queue.Depth) / target))
 		}
@@ -520,14 +543,31 @@ func (t *Trigger) WithBrokerLagReader(r BrokerLagReader) *Trigger {
 // bindings. An app with no bindings falls back to the legacy app-wide queue
 // projection.
 func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time) (queueDepthSignal, bool, error) {
+	// Broker lag is an ADDITIONAL reading, not a replacement for the queue
+	// state. Returning here — as this did — threw away the binding
+	// breakdown, zeroed InFlight/DeadLetter/OldestPendingAt for the
+	// SetQueueState gauges, and handed queue_depth a number that was
+	// actually lag.
+	var brokerLag int64
+	var haveBrokerLag bool
 	if t.brokerLag != nil {
 		lag, ok, err := t.brokerLag.BrokerLag(ctx, app.ID)
 		if err != nil {
 			return queueDepthSignal{}, false, err
 		}
 		if ok {
-			return queueDepthSignal{queue: state.QueueStats{Depth: int(lag)}}, true, nil
+			brokerLag, haveBrokerLag = lag, true
 		}
+	}
+	// withBroker stamps the lag onto whichever queue projection the paths
+	// below produce, so every return carries it.
+	withBroker := func(sig queueDepthSignal, ok bool, err error) (queueDepthSignal, bool, error) {
+		sig.brokerLag = brokerLag
+		sig.haveBrokerLag = haveBrokerLag
+		// A broker reading alone is enough to have a signal, even when no
+		// queue reader is configured — that is the whole point of a
+		// broker-backed trigger.
+		return sig, ok || haveBrokerLag, err
 	}
 	if t.queueBindings != nil {
 		bindings, err := t.queueBindings.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
@@ -555,14 +595,14 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 					t.metrics.SetQueueBindingState(app.ID, binding.QueueName, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
 			}
-			return signal, true, nil
+			return withBroker(signal, true, nil)
 		}
 	}
 	if t.queueStats == nil {
-		return queueDepthSignal{}, false, nil
+		return withBroker(queueDepthSignal{}, false, nil)
 	}
 	queue, err := t.queueStats.QueueState(ctx, app.ID)
-	return queueDepthSignal{queue: queue}, true, err
+	return withBroker(queueDepthSignal{queue: queue}, true, err)
 }
 
 // Interval returns the tick rate. schedd's loop uses this when
@@ -669,6 +709,8 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		var dec Decision
 		var observedInflight int64
 		var observedQueueDepth int
+		var observedBrokerLag int64
+		var haveBrokerLag bool
 		workerQueuePath := false
 		workerDesired := 0
 		workerMaxInstances := 0
@@ -715,6 +757,8 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			if haveQueue {
 				queue := queueSignal.queue
 				observedQueueDepth = queue.Depth
+				observedBrokerLag = queueSignal.brokerLag
+				haveBrokerLag = queueSignal.haveBrokerLag
 				if t.metrics != nil {
 					// Queue gauges are sampled alongside the queue-depth decision;
 					// OpsMetrics bounds app labels before they reach Prometheus.
@@ -757,11 +801,17 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				})
 			}
 			if haveQueueLagTarget {
+				// queue_lag measures the BROKER's reported consumer lag,
+				// not the local queue depth. Falling back to depth here
+				// would make a metric named "lag" silently report a
+				// different quantity whenever no broker answered — and
+				// report it as a confident reading rather than as no
+				// signal.
 				obs = append(obs, scalesignal.Observation{
 					Metric:   api.ScalingMetricQueueLag,
 					Target:   queueLagTarget,
-					Measured: float64(observedQueueDepth),
-					Have:     haveQueue,
+					Measured: float64(observedBrokerLag),
+					Have:     haveBrokerLag,
 				})
 			}
 		}
