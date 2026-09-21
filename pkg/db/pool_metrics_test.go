@@ -247,7 +247,23 @@ func TestPoolCollectorReportsHubShape(t *testing.T) {
 	pool := openTestPoolWithMaxConns(t, 4)
 	c := NewPoolCollector("testd", pool)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+
+	// Tear the hub down before returning, not merely at pool close.
+	// notify_hub_test.go's listenBackends counts LISTEN backends across the
+	// whole database, so a hub still holding its connection when this test
+	// returns is counted by an unrelated test and fails it. Cancelling is not
+	// enough on its own — hub shutdown is asynchronous — so wait for it.
+	t.Cleanup(func() {
+		cancel()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if !NotifyHubStatsFor(pool).Running {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Error("hub still running after ctx cancel; it would leak a LISTEN backend into other tests")
+	})
 
 	// No hub yet: a pool nobody subscribed on parks nothing.
 	families := gather(t, c)

@@ -29,3 +29,11 @@ PgBouncer transaction pooling is not used because the daemons intentionally
 hold PostgreSQL `LISTEN` sessions. Larger fleets should split notification
 connections onto a direct DSN before routing ordinary query pools through
 transaction-mode PgBouncer.
+
+The per-daemon maxima come from `pkg/db.DaemonMaxConnections`, which applies
+while the ADR-190 notify hub is active — the supported configuration. Setting
+`FAAS_DB_NOTIFY_HUB=0` selects `DaemonMaxConnectionsNotifyHubDisabled`
+instead, which keeps the larger pre-hub sizing because every subscriber then
+parks its own connection. A fleet running any daemon with the hub disabled
+therefore needs more connections than the figures above; re-derive the
+ceiling before enabling that mode on more than one node.

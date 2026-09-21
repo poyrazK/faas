@@ -915,8 +915,29 @@ func SubscribeWithReconnect(
 	if notifyHubEnabled() {
 		return hubFor(pool, log).subscribe(ctx, channels)
 	}
-	inner, cancel, err := Subscribe(ctx, pool, channels)
+	// Bound the INITIAL acquire only. On this path every subscriber parks
+	// its own connection, so a daemon whose pool is sized for the hub runs
+	// out partway through its subscriptions — and pgxpool.Acquire waits for
+	// a release that is never coming, because the connections are held by
+	// this daemon's own earlier subscribers. Unbounded, that is a hang
+	// before sd_notify(READY=1) with no error anywhere: the unit sits in
+	// `activating` until systemd's TimeoutStartSec kills it.
+	//
+	// The reconnect loop below deliberately keeps its unbounded ctx; a
+	// transient drop must retry forever. This deadline only converts an
+	// unsatisfiable boot into a named failure.
+	subCtx, subCancel := context.WithTimeout(ctx, legacySubscribeAcquireTimeout)
+	inner, cancel, err := Subscribe(subCtx, pool, channels)
+	subCancel()
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, fmt.Errorf(
+				"db: SubscribeWithReconnect(%v): could not acquire a LISTEN connection within %s. "+
+					"%s=0 is set, so every subscriber parks its own connection; this pool is almost "+
+					"certainly sized for the notify hub (see db.DaemonMaxConnectionsNotifyHubDisabled). "+
+					"Unset %s or raise the daemon's pool budget: %w",
+				channels, legacySubscribeAcquireTimeout, NotifyHubEnv, NotifyHubEnv, err)
+		}
 		return nil, fmt.Errorf("db: SubscribeWithReconnect initial Subscribe: %w", err)
 	}
 	const (

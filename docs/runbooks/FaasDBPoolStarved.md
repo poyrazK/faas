@@ -56,7 +56,14 @@ Two distinct shapes, with opposite fixes:
 Also confirm the LISTEN hub is still collapsing subscribers. If
 `<daemon>_db_notify_hub_conns` is 0 while `_db_notify_hub_subscribers` is
 non-zero, `FAAS_DB_NOTIFY_HUB=0` is set and the daemon is parking one
-connection per subscriber — tens of slots the current budgets do not reserve.
+connection per subscriber.
+
+That is not itself a fault: the pool budget follows the switch
+(`db.DaemonMaxConnectionsNotifyHubDisabled`), so the daemon is sized for the
+mode it is in. It is a *fleet* capacity signal — that daemon is consuming its
+pre-hub connection count against the shared `max_connections`, and on a large
+fleet several daemons in that mode can exhaust the database host even though
+each one individually is within its own budget.
 
 ## Recover
 

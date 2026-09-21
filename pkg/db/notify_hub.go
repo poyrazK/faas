@@ -46,7 +46,24 @@ import (
 
 // NotifyHubEnv is the kill switch. Any value other than "0" (including
 // unset) routes SubscribeWithReconnect through the per-pool hub.
+//
+// The switch also selects the daemon's pool budget
+// (db.DaemonMaxConnectionsNotifyHubDisabled), so flipping it stays a safe
+// rollback even once the hub-on budgets are lowered to reflect the single
+// parked connection the hub actually uses.
 const NotifyHubEnv = "FAAS_DB_NOTIFY_HUB"
+
+// legacySubscribeAcquireTimeout bounds the first connection acquire on the
+// FAAS_DB_NOTIFY_HUB=0 path. Long enough that a slow-but-working Postgres
+// still subscribes; short enough that a pool which can never seat every
+// subscriber fails the unit's start rather than hanging in `activating`
+// until systemd's TimeoutStartSec. Only the initial acquire is bounded —
+// the reconnect loop retries indefinitely by design.
+//
+// A var rather than a const so the exhaustion test can shorten it: that test
+// must actually reach the timeout, and paying 15 s per run in the pg shard to
+// re-measure a constant is not worth it.
+var legacySubscribeAcquireTimeout = 15 * time.Second
 
 const (
 	// hubSubscriberBuffer is the per-subscriber fan-out buffer. 1024
