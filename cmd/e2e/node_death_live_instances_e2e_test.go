@@ -45,6 +45,16 @@ func TestE2E_NodeDeath_LiveInstancesFailAndReleaseCapacity(t *testing.T) {
 	seedNormalPathSnapshot(t, f, dep.ID, normalPathSnapshotOpts{})
 	wakeNormalPathApp(t, f)
 
+	// From here the bridge must refuse instances it never booted.
+	//
+	// Without this the fake answers for ANY instance id, so the gateway
+	// routing to a destroyed VM still gets a 200 — and "the app recovered"
+	// passes on a stale route to the dead instance, with no recovery having
+	// happened. A real vmmd has no such instance and fails the forward. That
+	// is exactly how this test passed its serve assertion while no replacement
+	// instance existed.
+	f.vmmd.SetStrictInstances(true)
+
 	instance, err := f.store.RunningInstanceForApp(f.ctx, f.app.ID)
 	if err != nil {
 		t.Fatalf("no running instance to kill under: %v", err)
@@ -70,6 +80,8 @@ func TestE2E_NodeDeath_LiveInstancesFailAndReleaseCapacity(t *testing.T) {
 	// staleness stick — schedd keeps probing, and a node that still answers
 	// gets its heartbeat refreshed no matter how far back the row is dated.
 	f.vmmd.SetUnreachable(true)
+	// The VMs went with the host. Anything still routed to them must fail.
+	f.vmmd.ForgetInstances()
 	if err := faults.StaleHeartbeat(state.DefaultLocalNodeName, 10*time.Minute); err != nil {
 		t.Fatalf("stale heartbeat: %v", err)
 	}

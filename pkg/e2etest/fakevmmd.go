@@ -142,6 +142,17 @@ type FakeVMMD struct {
 	// own: schedd keeps probing, and a fake that keeps answering refreshes the
 	// row within a tick, so the node never actually looks stale.
 	unreachable bool
+
+	// strictInstances makes ForwardHTTPStream refuse an instance the fake has
+	// not seen boot. Off by default: most tests seed RUNNING rows straight
+	// into SQL and never boot through this fake at all, and refusing those
+	// would break them for no gain.
+	//
+	// Tests about instance lifecycle need it on. Without it the fake answers
+	// for ANY instance id, so a gateway routing to a destroyed VM still gets a
+	// 200 — and an assertion that "the app recovered" passes on a stale route
+	// to a dead instance. A real vmmd has no such instance and fails.
+	strictInstances bool
 }
 
 type FakeResponse struct {
@@ -398,6 +409,40 @@ func (s *FakeVMMD) SetUnreachable(v bool) {
 	s.unreachable = v
 }
 
+// SetStrictInstances makes the bridge refuse instances the fake never booted,
+// so a stale route to a destroyed VM fails the way it would against a real
+// vmmd instead of being quietly served.
+func (s *FakeVMMD) SetStrictInstances(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.strictInstances = v
+}
+
+// ForgetInstances drops every instance the fake considers resident. This is
+// what a host death means: the VMs went with it. Pair it with
+// SetUnreachable(true) to model a node that died rather than one that is
+// merely slow.
+func (s *FakeVMMD) ForgetInstances() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.liveInstances = nil
+	s.instanceStats = make(map[string]*vmmdpb.InstanceStats)
+}
+
+func (s *FakeVMMD) rejectsInstance(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.strictInstances {
+		return false
+	}
+	for _, live := range s.liveInstances {
+		if live == id {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *FakeVMMD) isUnreachable() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -647,6 +692,10 @@ func (s *FakeVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer)
 	init := request.GetInit()
 	if init == nil {
 		return errors.New("fake vmmd: first frame was not init")
+	}
+	if s.rejectsInstance(init.Instance) {
+		return status.Errorf(codes.Unavailable,
+			"fake vmmd: no such instance %q on this node", init.Instance)
 	}
 	s.mu.Lock()
 	probe := s.probes[init.Instance]
