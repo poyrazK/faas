@@ -14,6 +14,22 @@
       faas_pgbouncer_direct_dsn_supported=false only if you have verified the
       running build has it.
 
+# pgbouncer's server pool is a fixed cost (default_pool_size +
+# reserve_pool_size) that replaces a per-node one. Below the crossover the
+# fixed cost is larger than the saving, so enabling it makes the fleet's
+# connection ceiling worse. 34n = 80 + 10n => n = 3.33.
+- name: pgbouncer — refuse a fleet too small to benefit from pooling
+  ansible.builtin.assert:
+    that:
+      - (groups['compute_nodes'] | default([]) | length | int) >= faas_pgbouncer_min_compute_nodes | int
+    fail_msg: >-
+      faas_pgbouncer_enabled is true with
+      {{ groups['compute_nodes'] | default([]) | length }} compute node(s).
+      Below {{ faas_pgbouncer_min_compute_nodes }} the pooler's fixed server
+      pool costs more connections than it saves — see
+      roles/postgres_capacity/README.md. Leave it disabled until the fleet
+      grows, or lower faas_pgbouncer_min_compute_nodes deliberately.
+
 - name: pgbouncer — install
   ansible.builtin.apt:
     name: pgbouncer

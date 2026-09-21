@@ -3,6 +3,23 @@
 # complete [compute_nodes] inventory; it never assumes a two-node ceiling.
 faas_postgres_control_plane_pool_budget: 40
 faas_postgres_per_compute_pool_budget: 34
+
+# Pooled fleet (faas_pgbouncer_enabled). A compute node's ORDINARY pools no
+# longer reach the postmaster — they terminate at pgbouncer and share its
+# server pool, which is a constant rather than a per-node cost. What still
+# scales per node is the session-scoped residue that cannot be pooled: LISTEN
+# and session advisory locks, on the direct DSN.
+#
+# 5 database daemons per compute node (vmmd, imaged, builderd, schedd,
+# gatewayd-internal — the same five whose pool budgets sum to the 34 above)
+# x db.directHubOnMaxConns (2, being one parked hub connection plus MigrateUp's
+# boot advisory lock).
+faas_postgres_per_compute_direct_budget: 10
+
+# pgbouncer's own backends against the postmaster: default_pool_size +
+# reserve_pool_size from the pgbouncer role. This is the whole compute fleet's
+# ordinary query traffic, collapsed to one constant.
+faas_pgbouncer_server_pool_budget: 80
 # Standalone joins overlap one generation. `gregalectl deploy join-fleet`
 # overrides this with its effective worker count for the current batch.
 faas_postgres_rollout_overlap_nodes: 1

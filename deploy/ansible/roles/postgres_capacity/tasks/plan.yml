@@ -13,6 +13,11 @@
       - (postgres_capacity_compute_nodes | int) >= 1
       - (faas_postgres_control_plane_pool_budget | int) > 0
       - (faas_postgres_per_compute_pool_budget | int) > 0
+      - (faas_postgres_per_compute_direct_budget | int) > 0
+      - (faas_pgbouncer_server_pool_budget | int) > 0
+      # Pooling must never raise the per-node cost; if it does, the direct
+      # budget has been mis-sized and the fleet would be worse off pooled.
+      - (faas_postgres_per_compute_direct_budget | int) <= (faas_postgres_per_compute_pool_budget | int)
       - (faas_postgres_rollout_overlap_nodes | int) >= 1
       - (faas_postgres_superuser_reserved_connections | int) >= 3
       - (faas_postgres_min_operator_headroom | int) >= 1
@@ -20,17 +25,34 @@
       PostgreSQL capacity needs the complete [compute_nodes] inventory and
       positive daemon, rollout-overlap, reserved, and operator budgets.
 
+# Pooling changes two terms and nothing else downstream. The per-node
+# coefficient drops from every daemon's full pool budget to only the
+# session-scoped work that cannot be pooled, and the fleet's ordinary query
+# traffic becomes a single constant (pgbouncer's server pool) added once to
+# the control plane rather than multiplied by the node count.
+- name: postgres capacity plan — select the per-node coefficient for this topology
+  ansible.builtin.set_fact:
+    postgres_capacity_per_compute_effective: >-
+      {{ (faas_postgres_per_compute_direct_budget | int)
+         if (faas_pgbouncer_enabled | default(false) | bool)
+         else (faas_postgres_per_compute_pool_budget | int) }}
+    postgres_capacity_control_plane_effective: >-
+      {{ ((faas_postgres_control_plane_pool_budget | int)
+          + (faas_pgbouncer_server_pool_budget | int))
+         if (faas_pgbouncer_enabled | default(false) | bool)
+         else (faas_postgres_control_plane_pool_budget | int) }}
+
 - name: postgres capacity plan — calculate fleet pool budgets
   ansible.builtin.set_fact:
     postgres_capacity_steady_pool_budget: >-
-      {{ (faas_postgres_control_plane_pool_budget | int)
+      {{ (postgres_capacity_control_plane_effective | int)
       + ((postgres_capacity_compute_nodes | int)
-      * (faas_postgres_per_compute_pool_budget | int)) }}
+      * (postgres_capacity_per_compute_effective | int)) }}
     postgres_capacity_rollout_pool_budget: >-
-      {{ (faas_postgres_control_plane_pool_budget | int)
+      {{ (postgres_capacity_control_plane_effective | int)
       + (((postgres_capacity_compute_nodes | int)
       + (faas_postgres_rollout_overlap_nodes | int))
-      * (faas_postgres_per_compute_pool_budget | int)) }}
+      * (postgres_capacity_per_compute_effective | int)) }}
 
 - name: postgres capacity plan — derive the ordinary-client ceiling
   ansible.builtin.set_fact:
