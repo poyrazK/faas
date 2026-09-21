@@ -6071,3 +6071,37 @@ func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowR
 	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/cancel", nil, &resp)
 	return resp, err
 }
+
+// --- ADR-201 custom application metrics ---------------------------------
+//
+// Method names come from cmd/sdk-coverage's explicit alias map rather than
+// its auto-derivation: the `custom-metrics` path segment contains a hyphen,
+// which is not a Go identifier. Same treatment as GetAppEnvDiff.
+
+// GetAppCustomMetrics lists the app's pushed metrics, including rows whose
+// last push has gone stale. Stale rows carry Stale=true rather than being
+// hidden — an operator debugging "why isn't my custom target scaling" needs
+// to see that the value is old, because a hidden expired row is
+// indistinguishable from one that was never pushed.
+func (c *Client) GetAppCustomMetrics(ctx context.Context, slug string) (CustomMetricListResponse, error) {
+	var out CustomMetricListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/custom-metrics", nil, &out)
+}
+
+// PutAppCustomMetric pushes one gauge. The value is FLEET-TOTAL: a
+// `metric: custom` scaling target divides it by the per-instance target.
+//
+// Safe to call from anywhere with a metrics:write token — the app itself, a
+// cron, or a database trigger. That is the point of the push: a parked app
+// has no process, so a signal only a running instance could produce could
+// never scale the app up from zero.
+func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, value float64) error {
+	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/custom-metrics/"+name,
+		CustomMetricRequest{Value: value}, nil)
+}
+
+// DeleteAppCustomMetric removes one gauge, freeing a slot against the
+// per-app name cap. Deleting a name that does not exist succeeds.
+func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
+}

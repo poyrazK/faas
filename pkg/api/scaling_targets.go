@@ -303,6 +303,6 @@ func ErrCustomMetricLimitReached(limit int) *Problem {
 		"Custom metric limit reached",
 		fmt.Sprintf("this app already holds %d custom metrics, which is the maximum. "+
 			"Pushing a new value for an existing metric always works; delete an unused "+
-			"metric to free a slot. See https://docs.gregale.dev/scaling-policy#custom-metrics",
+			"metric to free a slot. See "+docsBase+"/scaling-policy#custom-metrics",
 			limit))
 }
