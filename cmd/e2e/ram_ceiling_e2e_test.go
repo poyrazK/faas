@@ -85,20 +85,28 @@ func TestE2E_RAMCeiling_AdmissionNeverExceedsTheNodeCeiling(t *testing.T) {
 	}
 	faults := e2etest.NewRowFaults(f.h.Pool)
 
-	// Hobby is 256 MB, so each admitted instance costs 256+8 = 264 MB. A
-	// 600 MB ceiling holds exactly two; the rest must be refused.
-	const (
-		perInstanceMB = e2etest.FakeSnapshotRAMMB + api.PerVMOverheadMB
-		ceilingMB     = 2*perInstanceMB + 72 // room for two, nowhere near three
-		apps          = 5
-	)
-	if err := faults.SetNodeAdmissionCeiling(state.DefaultLocalNodeName, ceilingMB); err != nil {
-		t.Fatalf("set admission ceiling: %v", err)
+	// Stay inside the plan's app limit. Hobby allows 5 deployed apps and the
+	// fixture already created one, so this adds 4 and wakes all 5 — a sixth
+	// would be refused with plan_limit_apps before admission ever ran, which
+	// is a different gate doing its job and tells us nothing about RAM.
+	seeded := []ramCeilingApp{{slug: f.app.Slug, host: f.host}}
+	createNormalPathParkedDeployment(t, f)
+	for i := range 4 {
+		seeded = append(seeded, seedRamCeilingApp(t, f, fmt.Sprintf("ram-ceiling-app-%d", i)))
 	}
 
-	seeded := make([]ramCeilingApp, 0, apps)
-	for i := range apps {
-		seeded = append(seeded, seedRamCeilingApp(t, f, fmt.Sprintf("ram-ceiling-app-%d", i)))
+	// Derive the per-instance cost from what apid actually recorded rather
+	// than assuming the plan's number, so a plan-table change cannot silently
+	// turn this into a test of nothing.
+	app, err := f.store.AppBySlug(f.ctx, seeded[1].slug)
+	if err != nil {
+		t.Fatalf("load seeded app: %v", err)
+	}
+	perInstanceMB := app.RAMMB + api.PerVMOverheadMB
+	// Room for exactly two instances, nowhere near three.
+	ceilingMB := 2*perInstanceMB + (perInstanceMB / 4)
+	if err := faults.SetNodeAdmissionCeiling(state.DefaultLocalNodeName, ceilingMB); err != nil {
+		t.Fatalf("set admission ceiling: %v", err)
 	}
 	f.vmmd.SetDefaultVersion("v1")
 
@@ -165,7 +173,7 @@ func TestE2E_RAMCeiling_AdmissionNeverExceedsTheNodeCeiling(t *testing.T) {
 	if refused == 0 {
 		t.Errorf("no request was refused for capacity (statuses=%v); with %d apps of %d MB "+
 			"against a %d MB ceiling, at least one had to be turned away — the cap is not being "+
-			"enforced on the request path", statuses, apps, perInstanceMB, ceilingMB)
+			"enforced on the request path", statuses, len(seeded), perInstanceMB, ceilingMB)
 	}
 	if served == 0 {
 		t.Errorf("no request was served (statuses=%v); the ceiling held only because nothing "+
