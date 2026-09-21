@@ -37,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -74,11 +75,11 @@ func seedNormalPathSnapshot(t *testing.T, ctx context.Context, store *state.PgSt
 	t.Helper()
 	fcVersion := opts.fcVersion
 	if fcVersion == "" {
-		fcVersion = normalPathFCVersion
+		fcVersion = e2etest.FakeFCVersion
 	}
 	memBytes := opts.memBytes
 	if memBytes == 0 {
-		memBytes = int64(normalPathSnapshotRAMMB) << 20
+		memBytes = int64(e2etest.FakeSnapshotRAMMB) << 20
 	}
 	snap, err := store.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: deploymentID,
@@ -158,8 +159,8 @@ func TestE2E_NormalPath_ParkedAppWakesByRestore(t *testing.T) {
 	if got := restores[0].GetSnapshot().GetDeploymentId(); got != dep.ID {
 		t.Errorf("restore targeted deployment %q, want %q", got, dep.ID)
 	}
-	if got := restores[0].GetSnapshot().GetFcVersion(); got != normalPathFCVersion {
-		t.Errorf("restore carried fc_version %q, want %q", got, normalPathFCVersion)
+	if got := restores[0].GetSnapshot().GetFcVersion(); got != e2etest.FakeFCVersion {
+		t.Errorf("restore carried fc_version %q, want %q", got, e2etest.FakeFCVersion)
 	}
 	if n := len(f.vmmd.ColdBootCalls()); n != 0 {
 		t.Errorf("cold boots=%d, want 0 when the snapshot is usable", n)
@@ -197,7 +198,7 @@ func TestE2E_NormalPath_UnusableSnapshotColdBoots(t *testing.T) {
 			// into the admitted memory size.
 			name: "ram shape skew",
 			slug: "wake-ramskew",
-			opts: normalPathSnapshotOpts{memBytes: int64(normalPathSnapshotRAMMB+128) << 20},
+			opts: normalPathSnapshotOpts{memBytes: int64(e2etest.FakeSnapshotRAMMB+128) << 20},
 		},
 	}
 

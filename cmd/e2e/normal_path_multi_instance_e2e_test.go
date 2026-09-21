@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -40,13 +41,13 @@ func waitForNormalPathBodyPrefix(t *testing.T, f *normalPathFixture, prefix stri
 	return nil
 }
 
-func normalPathCaptureForURI(vmmd *normalPathVMMD, requestURI string) (normalPathRequestCapture, bool) {
+func normalPathCaptureForURI(vmmd *e2etest.FakeVMMD, requestURI string) (e2etest.RequestCapture, bool) {
 	for _, capture := range vmmd.Requests() {
 		if capture.Init.GetRequestUri() == requestURI {
 			return capture, true
 		}
 	}
-	return normalPathRequestCapture{}, false
+	return e2etest.RequestCapture{}, false
 }
 
 // TestE2E_NormalPath_TrafficSpreadsAcrossLiveInstances covers the real

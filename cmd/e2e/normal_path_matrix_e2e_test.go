@@ -13,6 +13,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,10 +35,10 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	defer gate.Release()
 	for i := 0; i < requestCount; i++ {
 		path := fmt.Sprintf("/concurrent/%d?case=%d", i, i)
-		f.vmmd.SetResponseForPath(instance.ID, path, normalPathResponse{
-			status:  http.StatusOK,
-			headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-			body:    []byte(fmt.Sprintf("response-%d\n", i)),
+		f.vmmd.SetResponseForPath(instance.ID, path, e2etest.FakeResponse{
+			Status:  http.StatusOK,
+			Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+			Body:    []byte(fmt.Sprintf("response-%d\n", i)),
 		})
 	}
 
@@ -82,7 +83,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	}
 
 	captures := f.vmmd.Requests()
-	seen := make(map[string]normalPathRequestCapture, requestCount)
+	seen := make(map[string]e2etest.RequestCapture, requestCount)
 	for _, capture := range captures {
 		if strings.HasPrefix(capture.Init.GetRequestUri(), "/concurrent/") {
 			seen[capture.Init.GetRequestUri()] = capture
@@ -236,16 +237,16 @@ func TestE2E_NormalPath_AppProtocolMatrix(t *testing.T) {
 			host := app.Slug + ".apps.test.example"
 			waitForNormalPathResponse(t, f.h, host, "normal-path:"+tc.name+"\n", 10*time.Second)
 			path := "/protocol/" + tc.name
-			f.vmmd.SetResponseForPath(instance.ID, path, normalPathResponse{
-				status:  http.StatusOK,
-				headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/grpc+proto"}, {Name: "X-Protocol-Response", Value: tc.protocol}},
-				trailers: func() []*vmmdpb.Header {
+			f.vmmd.SetResponseForPath(instance.ID, path, e2etest.FakeResponse{
+				Status:  http.StatusOK,
+				Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/grpc+proto"}, {Name: "X-Protocol-Response", Value: tc.protocol}},
+				Trailers: func() []*vmmdpb.Header {
 					if tc.protocol == api.AppProtocolGRPC {
 						return []*vmmdpb.Header{{Name: "grpc-status", Value: "0"}}
 					}
 					return nil
 				}(),
-				body: []byte("protocol-ok\n"),
+				Body: []byte("protocol-ok\n"),
 			})
 
 			req, err := http.NewRequestWithContext(f.ctx, http.MethodPost, f.h.GatewayURL+path, strings.NewReader("request-body"))
@@ -271,7 +272,7 @@ func TestE2E_NormalPath_AppProtocolMatrix(t *testing.T) {
 				t.Fatalf("grpc-status trailer=%q, want 0", resp.Trailer.Get("grpc-status"))
 			}
 
-			var capture *normalPathRequestCapture
+			var capture *e2etest.RequestCapture
 			for _, candidate := range f.vmmd.Requests() {
 				if candidate.Init.GetInstance() == instance.ID && candidate.Init.GetRequestUri() == path {
 					candidateCopy := candidate
@@ -302,9 +303,9 @@ func TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed(t *testing.T) {
 	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "response-headers")
 	f.vmmd.SetVersion(instance.ID, "response-headers")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:response-headers\n", 10*time.Second)
-	f.vmmd.SetResponseForPath(instance.ID, "/response-headers", normalPathResponse{
-		status: http.StatusOK,
-		headers: []*vmmdpb.Header{
+	f.vmmd.SetResponseForPath(instance.ID, "/response-headers", e2etest.FakeResponse{
+		Status: http.StatusOK,
+		Headers: []*vmmdpb.Header{
 			{Name: "Connection", Value: "keep-alive"},
 			{Name: "Keep-Alive", Value: "timeout=5"},
 			{Name: "Proxy-Authenticate", Value: "Basic realm=guest"},
@@ -314,7 +315,7 @@ func TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed(t *testing.T) {
 			{Name: "Upgrade", Value: "h2c"},
 			{Name: "X-Guest-Visible", Value: "yes"},
 		},
-		body: []byte("safe-response\n"),
+		Body: []byte("safe-response\n"),
 	})
 
 	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.GatewayURL+"/response-headers", nil)
