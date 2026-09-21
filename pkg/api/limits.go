@@ -6920,3 +6920,71 @@ const FunctionInterpreterMaxWorkers = 4
 // Startup attestation runs before the scheduler opens its readiness boundary.
 const StartupAttestationWorkers = 2
 const StartupAttestationLayerTimeout = 15 * time.Second
+
+// NodeSizing is the per-host RAM/vCPU shape derived from the machine a
+// compute node actually runs on, rather than the single-box constants.
+type NodeSizing struct {
+	MemMB              int
+	TenantSliceMaxMB   int
+	TenantBudgetMB     int
+	AdmissionCeilingMB int
+	VCPUSlots          int
+}
+
+// DeriveNodeSizing generalises the spec §13 RAM budget to an arbitrary host.
+//
+// The §13 table is written for the 64 GB reference box: 2,048 MB host OS
+// reserve, 6,144 MB control-plane reserve, leaving a 57,344 MB tenant slice,
+// a 56,000 MB tenant budget, and an admission ceiling at 85% of that —
+// 47,600 MB. Those are the constants above, and they were also the *defaults*
+// every compute node self-registered with, whatever hardware it was on. On a
+// 16 GiB n2-standard-4 that advertises ~3x the machine's real memory, so
+// admission enforces invariant §6.2-2 against a number the host cannot honour
+// and the node can be driven into OOM with no swap to absorb it.
+//
+// This applies the same arithmetic to the observed MemTotal, so the reference
+// box still resolves to exactly 57,344 / 56,000 / 47,600 (pinned by test) and
+// smaller hosts get the truthful, much smaller figure.
+//
+// The tenant budget keeps the spec's margin below the slice fence
+// (56,000 of 57,344) rather than admitting right up to the cgroup hard limit.
+//
+// A non-positive memTotalMB (detection failed) returns the legacy single-box
+// constants: an unknown machine must not silently become an unbounded one.
+func DeriveNodeSizing(memTotalMB, hostCPUs int) NodeSizing {
+	out := NodeSizing{
+		MemMB:              memTotalMB,
+		TenantSliceMaxMB:   TenantSliceMaxMB,
+		TenantBudgetMB:     TenantRAMBudgetMB,
+		AdmissionCeilingMB: RAMAdmissionCeilingMB,
+		VCPUSlots:          VCPUSlots,
+	}
+	if memTotalMB <= 0 {
+		out.MemMB = TenantRAMBudgetMB
+	} else {
+		sliceMax := memTotalMB - HostOSReserveMB - ControlPlaneReserveMB
+		if sliceMax < MinTenantSliceMB {
+			// Too small to host tenants under the reserves. Report the
+			// floor rather than a negative or zero ceiling, which would
+			// fail the migration 00123 CHECK and wedge registration.
+			sliceMax = MinTenantSliceMB
+		}
+		out.TenantSliceMaxMB = sliceMax
+		out.TenantBudgetMB = sliceMax * TenantRAMBudgetMB / TenantSliceMaxMB
+		out.AdmissionCeilingMB = out.TenantBudgetMB * RAMAdmissionPercent / 100
+	}
+	if hostCPUs > 0 {
+		out.VCPUSlots = hostCPUs * CPUOvercommit
+	}
+	return out
+}
+
+const (
+	// RAMAdmissionPercent is the headroom guard from spec §1: schedd admits
+	// only up to this share of the tenant budget.
+	RAMAdmissionPercent = 85
+	// MinTenantSliceMB floors the derived tenant slice so a host smaller
+	// than the reserves still registers with a positive, CHECK-satisfying
+	// ceiling instead of refusing to come up.
+	MinTenantSliceMB = 1_024
+)
