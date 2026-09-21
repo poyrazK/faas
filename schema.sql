@@ -1171,6 +1171,20 @@ CREATE TABLE public.app_error_requests (
 
 
 --
+-- Name: app_custom_metrics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_custom_metrics (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    value double precision NOT NULL,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_custom_metrics_name_shape CHECK ((name ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT app_custom_metrics_value_finite CHECK (((value >= (0)::double precision) AND (value = value) AND (value < 'Infinity'::double precision)))
+);
+
+
+--
 -- Name: app_errors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4315,6 +4329,14 @@ ALTER TABLE ONLY public.app_envs
 
 ALTER TABLE ONLY public.app_error_requests
     ADD CONSTRAINT app_error_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_custom_metrics app_custom_metrics_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metrics
+    ADD CONSTRAINT app_custom_metrics_pkey PRIMARY KEY (app_id, name);
 
 
 --
@@ -7875,6 +7897,14 @@ ALTER TABLE ONLY public.app_error_requests
 
 ALTER TABLE ONLY public.app_error_requests
     ADD CONSTRAINT app_error_requests_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_custom_metrics app_custom_metrics_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metrics
+    ADD CONSTRAINT app_custom_metrics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
