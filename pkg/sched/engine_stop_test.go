@@ -341,4 +341,3 @@ func TestWorker_ScaleDown_AppliesConfiguredDrainTimeoutAndSignal(t *testing.T) {
 		t.Errorf("expected one stopped, one running; got %s and %s", after1.State, after2.State)
 	}
 }
-
