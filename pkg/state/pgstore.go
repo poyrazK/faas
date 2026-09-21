@@ -12243,6 +12243,24 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			}
 		}
 	}
+	// ADR-197 §1/§2 per-kind quotas. Unlike the branches above, a zero
+	// quota DENIES rather than skipping the check — see
+	// pkg/state/edge_rule_kind_quota.go for why the two differ.
+	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {
+		return EdgeRule{}, denied
+	}
+	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
+		var perApp int
+		if err := tx.QueryRow(ctx,
+			`select count(*) from edge_rules where app_id = $1 and kind = $2`,
+			in.AppID, string(in.Kind),
+		).Scan(&perApp); err != nil {
+			return EdgeRule{}, fmt.Errorf("state: count edge_rules by kind=%s for app %s: %w", in.Kind, in.AppID, err)
+		}
+		if exceeded := edgeRuleKindQuotaExceeded(in.Kind, limits, perApp); exceeded != nil {
+			return EdgeRule{}, exceeded
+		}
+	}
 
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {

@@ -3562,6 +3562,65 @@ const (
 	// not the cap).
 	MaxEdgeRuleMaintenanceRetryAfterSeconds = 24 * 60 * 60 // 86400 (24h)
 
+	// --- ADR-197 §1: kind=retry bounds -------------------------------
+	// These are global bounds, not plan quotas. The per-plan rule count
+	// is EdgeRulesRetryPerApp above.
+
+	// EdgeRuleRetryDefaultMaxAttempts is the attempt count applied when a
+	// kind=retry rule omits max_attempts. 2 = the original plus one replay.
+	EdgeRuleRetryDefaultMaxAttempts = 2
+	// EdgeRuleRetryMaxAttempts caps total attempts at 3.
+	//
+	// The bound is deliberately tight. Every replay consumes a fresh
+	// instance's concurrency slot for the duration of the request, so a
+	// generous attempt count converts one client request into a
+	// multiplier against the app's own capacity at exactly the moment the
+	// app is already losing instances. Two attempts covers the case this
+	// feature exists for — one dead peer, one healthy sibling.
+	EdgeRuleRetryMaxAttempts = 3
+	// EdgeRuleRetryDefaultMinRemainingMs is the request-budget floor below
+	// which a replay is skipped. Below this a retry mostly converts a 502
+	// into a 504 without improving the customer's outcome.
+	EdgeRuleRetryDefaultMinRemainingMs = 250
+	// MaxEdgeRuleRetryMinRemainingMs caps the floor at 30 s so a customer
+	// cannot set a value that silently disables retry for every request.
+	MaxEdgeRuleRetryMinRemainingMs = 30_000
+	// MaxEdgeRuleRetryBackoffMs caps the inter-attempt delay at 1 s. The
+	// default is 0: the failure being retried is a dead peer, and the next
+	// instance is a different process, so waiting buys nothing. The knob
+	// exists only for the case where the sibling is still waking.
+	MaxEdgeRuleRetryBackoffMs = 1_000
+
+	// --- ADR-197 §2: kind=circuit_breaker bounds ----------------------
+
+	// EdgeRuleCircuitDefaultFailureThreshold is the failure ratio at or
+	// above which a closed breaker opens.
+	EdgeRuleCircuitDefaultFailureThreshold = 0.5
+	// EdgeRuleCircuitDefaultMinRequests is the minimum number of
+	// observations inside the window before the ratio is consulted.
+	//
+	// This is the field most likely to be set badly. At 1 a single
+	// transport blip opens the circuit, which on an app serving one
+	// request a minute reads as a 100% failure rate — so the validator
+	// requires an explicit value rather than letting a zero mean 1.
+	EdgeRuleCircuitDefaultMinRequests = 5
+	// MaxEdgeRuleCircuitMinRequests caps the low-traffic guard. Beyond
+	// this a breaker on a low-volume route can never accumulate enough
+	// observations to trip, which is a silent no-op.
+	MaxEdgeRuleCircuitMinRequests = 1_000
+	// EdgeRuleCircuitDefaultWindowSeconds is the rolling failure window.
+	EdgeRuleCircuitDefaultWindowSeconds = 10
+	// MaxEdgeRuleCircuitWindowSeconds caps the window at 5 minutes.
+	MaxEdgeRuleCircuitWindowSeconds = 300
+	// EdgeRuleCircuitDefaultOpenSeconds is the first open interval.
+	EdgeRuleCircuitDefaultOpenSeconds = 5
+	// EdgeRuleCircuitDefaultMaxOpenSeconds caps the exponential backoff.
+	EdgeRuleCircuitDefaultMaxOpenSeconds = 60
+	// MaxEdgeRuleCircuitOpenSeconds caps both open fields at 1 hour. A
+	// longer bench outlives most instances, so the breaker would be
+	// holding state about a target that no longer exists.
+	MaxEdgeRuleCircuitOpenSeconds = 3_600
+
 	// API-key lifetime (issue #189 / IAM-5). New non-admin keys
 	// minted by createKey get `expires_at = now + DefaultAPIKeyLifetimeDays`.
 	// 365 days is the issue-189 spec: long enough to be

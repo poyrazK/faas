@@ -6649,6 +6649,151 @@ type EdgeRuleValidateAction struct {
 	ValidateMode          string          `json:"validate_mode,omitempty"`
 }
 
+// EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
+// (ADR-197 §1). It tunes the replay of a request that died in transport
+// against a different healthy instance.
+//
+// There is deliberately NO "retry on status" field. Only a transport failure
+// may arm a replay — a guest that answered 5xx has served the request, and
+// replaying it would run the customer's side effects a second time — so the
+// set of retryable conditions is not customer-configurable. Requests to widen
+// it belong in an ADR, not a field.
+type EdgeRuleRetryAction struct {
+	// MaxAttempts counts attempts, not retries: 2 is the original plus one
+	// replay. Zero applies EdgeRuleRetryDefaultMaxAttempts.
+	MaxAttempts int `json:"max_attempts,omitempty"`
+	// AllowNonIdempotent opts POST and PATCH into replay.
+	//
+	// This is the only field here that can cost correctness rather than
+	// latency: a replayed POST runs the customer's side effect twice unless
+	// their handler is idempotent or they send an idempotency key. It
+	// defaults false and the CLI/docs state the consequence explicitly.
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
+	// MinRemainingMs is the request-budget floor below which a replay is
+	// skipped. Zero applies EdgeRuleRetryDefaultMinRemainingMs.
+	MinRemainingMs int `json:"min_remaining_ms,omitempty"`
+	// BackoffMs delays a replay. Defaults to 0.
+	BackoffMs int `json:"backoff_ms,omitempty"`
+}
+
+// Validate applies the ADR-197 §1 defaults and bounds. It mutates the
+// receiver so the stored row carries the effective values rather than zeros —
+// an operator reading the row later should not have to know the defaults to
+// know what the rule does.
+func (a *EdgeRuleRetryAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("retry action is required")
+	}
+	if a.MaxAttempts == 0 {
+		a.MaxAttempts = EdgeRuleRetryDefaultMaxAttempts
+	}
+	if a.MaxAttempts < 2 {
+		// A 1-attempt "retry" rule is a silent no-op that reads like
+		// protection — the same footgun class as a 0-rps throttle.
+		return ErrValidation(fmt.Sprintf(
+			"retry action: max_attempts must be at least 2 (got %d) — max_attempts counts attempts, not retries, so 1 means no replay at all",
+			a.MaxAttempts))
+	}
+	if a.MaxAttempts > EdgeRuleRetryMaxAttempts {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: max_attempts %d exceeds the platform ceiling %d — every replay holds another instance's concurrency slot, so a high attempt count multiplies load against your own capacity exactly when instances are already failing",
+			a.MaxAttempts, EdgeRuleRetryMaxAttempts))
+	}
+	if a.MinRemainingMs == 0 {
+		a.MinRemainingMs = EdgeRuleRetryDefaultMinRemainingMs
+	}
+	if a.MinRemainingMs < 0 || a.MinRemainingMs > MaxEdgeRuleRetryMinRemainingMs {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: min_remaining_ms must be in 0..%d (got %d)",
+			MaxEdgeRuleRetryMinRemainingMs, a.MinRemainingMs))
+	}
+	if a.BackoffMs < 0 || a.BackoffMs > MaxEdgeRuleRetryBackoffMs {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: backoff_ms must be in 0..%d (got %d) — the failure being retried is a dead peer, so a delay rarely helps",
+			MaxEdgeRuleRetryBackoffMs, a.BackoffMs))
+	}
+	return nil
+}
+
+// EdgeRuleCircuitBreakerAction is the wire shape for a kind=circuit_breaker
+// edge rule (ADR-197 §2).
+//
+// This rule TUNES a breaker that already runs for every app on every plan; it
+// does not enable protection. A customer with no rule is still protected from
+// a flapping instance by circuit.DefaultConfig.
+type EdgeRuleCircuitBreakerAction struct {
+	// FailureThreshold is the failure ratio at or above which a closed
+	// breaker opens. Zero applies the default.
+	FailureThreshold float64 `json:"failure_threshold,omitempty"`
+	// MinRequests is the minimum number of observations inside
+	// WindowSeconds before the ratio is consulted at all. Zero applies the
+	// default.
+	MinRequests int `json:"min_requests,omitempty"`
+	// WindowSeconds is the rolling failure window. Zero applies the default.
+	WindowSeconds int `json:"window_seconds,omitempty"`
+	// OpenSeconds is the first open interval. Zero applies the default.
+	OpenSeconds int `json:"open_seconds,omitempty"`
+	// MaxOpenSeconds caps the exponential backoff. Zero applies the default.
+	MaxOpenSeconds int `json:"max_open_seconds,omitempty"`
+}
+
+// Validate applies the ADR-197 §2 defaults and bounds, mutating the receiver
+// so the stored row carries effective values.
+func (a *EdgeRuleCircuitBreakerAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("circuit_breaker action is required")
+	}
+	if a.FailureThreshold == 0 {
+		a.FailureThreshold = EdgeRuleCircuitDefaultFailureThreshold
+	}
+	if a.FailureThreshold <= 0 || a.FailureThreshold > 1 {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: failure_threshold must be in (0, 1] (got %g) — it is a ratio, not a count",
+			a.FailureThreshold))
+	}
+	if a.MinRequests == 0 {
+		a.MinRequests = EdgeRuleCircuitDefaultMinRequests
+	}
+	if a.MinRequests < 1 || a.MinRequests > MaxEdgeRuleCircuitMinRequests {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: min_requests must be in 1..%d (got %d) — above that a low-volume route can never accumulate enough observations to trip, which is a silent no-op",
+			MaxEdgeRuleCircuitMinRequests, a.MinRequests))
+	}
+	if a.WindowSeconds == 0 {
+		a.WindowSeconds = EdgeRuleCircuitDefaultWindowSeconds
+	}
+	if a.WindowSeconds < 1 || a.WindowSeconds > MaxEdgeRuleCircuitWindowSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: window_seconds must be in 1..%d (got %d)",
+			MaxEdgeRuleCircuitWindowSeconds, a.WindowSeconds))
+	}
+	if a.OpenSeconds == 0 {
+		a.OpenSeconds = EdgeRuleCircuitDefaultOpenSeconds
+	}
+	if a.OpenSeconds < 1 || a.OpenSeconds > MaxEdgeRuleCircuitOpenSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: open_seconds must be in 1..%d (got %d)",
+			MaxEdgeRuleCircuitOpenSeconds, a.OpenSeconds))
+	}
+	if a.MaxOpenSeconds == 0 {
+		a.MaxOpenSeconds = EdgeRuleCircuitDefaultMaxOpenSeconds
+		if a.MaxOpenSeconds < a.OpenSeconds {
+			a.MaxOpenSeconds = a.OpenSeconds
+		}
+	}
+	if a.MaxOpenSeconds < a.OpenSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: max_open_seconds %d is below open_seconds %d — max_open_seconds is the ceiling the backoff grows toward, so it can never be the smaller of the two",
+			a.MaxOpenSeconds, a.OpenSeconds))
+	}
+	if a.MaxOpenSeconds > MaxEdgeRuleCircuitOpenSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: max_open_seconds must be at most %d (got %d) — a longer bench outlives most instances, so the breaker would be holding state about a target that no longer exists",
+			MaxEdgeRuleCircuitOpenSeconds, a.MaxOpenSeconds))
+	}
+	return nil
+}
+
 // EdgeRuleRespondAction is the wire shape for a kind=respond edge rule.
 // It returns a bounded, fixed JSON document directly from the gateway and is
 // only accepted for preview applications by the edge-rule handler.

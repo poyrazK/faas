@@ -18675,6 +18675,25 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 			}
 		}
 	}
+	// ADR-197 §1/§2 per-kind quotas. Shares its decision helpers with
+	// PgStore (pkg/state/edge_rule_kind_quota.go) so the two stores cannot
+	// drift — the failure mode behind the always-zero uppercase-state
+	// queries, where MemStore was right, PgStore's SQL was wrong, and no
+	// test ran both. A zero quota DENIES here, unlike the branches above.
+	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {
+		return EdgeRule{}, denied
+	}
+	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
+		perApp := 0
+		for _, r := range m.edgeRules {
+			if r.AppID == in.AppID && r.Kind == in.Kind {
+				perApp++
+			}
+		}
+		if exceeded := edgeRuleKindQuotaExceeded(in.Kind, limits, perApp); exceeded != nil {
+			return EdgeRule{}, exceeded
+		}
+	}
 	if in.MatchMethods == nil {
 		in.MatchMethods = []string{}
 	}
