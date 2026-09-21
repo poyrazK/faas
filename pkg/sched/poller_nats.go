@@ -201,8 +201,8 @@ type natsPoller struct {
 	durable     string
 	batchMax    int
 
-	mu          sync.Mutex
-	inFlight    map[string]natsMsg
+	mu       sync.Mutex
+	inFlight map[string]natsMsg
 	// seqFallback is an atomic-ish counter incremented under mu
 	// and used to disambiguate seqStr when msg.Metadata() returns
 	// an error or nil (e.g. legacy un-acked JetStream messages).
