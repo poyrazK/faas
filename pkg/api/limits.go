@@ -879,6 +879,37 @@ type Limits struct {
 	// CodePlanEdgeRuleKindQuotaReached.
 	EdgeRulesCachePerApp int
 
+	// EdgeRulesRetryPerApp caps how many kind='retry' rules one app
+	// may hold (ADR-195 §1). Per-plan: Free 0, Hobby 3, Pro 10,
+	// Scale 25.
+	//
+	// Free is 0 for a capacity reason, not a packaging one: a replay
+	// doubles the worst-case work a single request can cause, and a
+	// Free app is capped at max_concurrency 1, so there is rarely a
+	// healthy sibling to replay against in the first place. Enabling
+	// it there would spend the admission ledger without improving
+	// availability.
+	EdgeRulesRetryPerApp int
+
+	// EdgeRulesCircuitBreakerPerApp caps how many
+	// kind='circuit_breaker' rules one app may hold (ADR-195 §2).
+	// Per-plan: Free 0, Hobby 3, Pro 10, Scale 25.
+	//
+	// This gates TUNING, not protection. The breaker runs for every
+	// app on every plan with circuit.DefaultConfig; a Free customer
+	// is protected from a flapping instance exactly as a Scale
+	// customer is. What the paid tiers buy is the ability to move the
+	// thresholds, which is a knob that can also be set badly.
+	EdgeRulesCircuitBreakerPerApp int
+
+	// EgressCircuitBreakersPerApp caps how many declared upstreams one
+	// app may opt into egress breaking for (ADR-195 §3). Per-plan:
+	// Free 0, Hobby 3, Pro 10, Scale 50 — deliberately mirroring
+	// DataPlacementHintsPerApp, since a breaker can only exist for an
+	// upstream the ADR-098 capture path already recorded and Free
+	// captures none.
+	EgressCircuitBreakersPerApp int
+
 	// CorsPresetsPerAccount caps how many cors_presets rows one
 	// account may own in total (account-wide + app-scoped). The
 	// cap defends against a customer pinning one preset per
@@ -1812,6 +1843,13 @@ var planLimits = map[Plan]Limits{
 		// upsell is the wake-elision guarantee. Same posture as
 		// tenant_surfaces / alert_rules / cors_presets on Free.
 		EdgeRulesCachePerApp: 0,
+		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// paid; the breaker itself runs on every plan. Egress
+		// breaking mirrors DataPlacementHintsPerApp because it can
+		// only apply to an upstream ADR-098 already captured.
+		EdgeRulesRetryPerApp:          0,
+		EdgeRulesCircuitBreakerPerApp: 0,
+		EgressCircuitBreakersPerApp:   0,
 		// CORS presets (issue #975 item #4 / Mega-Foundation #979-b,
 		// slot 00294). Free=0 mirrors the tenant_surfaces / alert_rules
 		// posture: the abstraction is the upsell, the abuse-floor tier
@@ -2187,6 +2225,13 @@ var planLimits = map[Plan]Limits{
 		// to demonstrate the wake-elision value before the
 		// customer upgrades to Pro.
 		EdgeRulesCachePerApp: 1,
+		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// paid; the breaker itself runs on every plan. Egress
+		// breaking mirrors DataPlacementHintsPerApp because it can
+		// only apply to an upstream ADR-098 already captured.
+		EdgeRulesRetryPerApp:          3,
+		EdgeRulesCircuitBreakerPerApp: 3,
+		EgressCircuitBreakersPerApp:   3,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Hobby is the entry paid tier — 10 presets per
 		// account, 5 per app. MaxOrigins 25 covers the typical
@@ -2556,6 +2601,13 @@ var planLimits = map[Plan]Limits{
 		// plus one wildcard. Same five-fold upgrade as throttle and
 		// geo so the upsell curve is single-shape.
 		EdgeRulesCachePerApp: 5,
+		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// paid; the breaker itself runs on every plan. Egress
+		// breaking mirrors DataPlacementHintsPerApp because it can
+		// only apply to an upstream ADR-098 already captured.
+		EdgeRulesRetryPerApp:          10,
+		EdgeRulesCircuitBreakerPerApp: 10,
+		EgressCircuitBreakersPerApp:   10,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Pro is the typical SaaS tier — 50 presets per
 		// account, 15 per app, 100 origins per preset.
@@ -2919,6 +2971,13 @@ var planLimits = map[Plan]Limits{
 		// category, etc.). Pin in limits_test.go so the per-plan
 		// monotonic ladder Free < Hobby < Pro < Scale is enforced.
 		EdgeRulesCachePerApp: 20,
+		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// paid; the breaker itself runs on every plan. Egress
+		// breaking mirrors DataPlacementHintsPerApp because it can
+		// only apply to an upstream ADR-098 already captured.
+		EdgeRulesRetryPerApp:          25,
+		EdgeRulesCircuitBreakerPerApp: 25,
+		EgressCircuitBreakersPerApp:   50,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Scale is the large-fleet tier — 250 presets per
 		// account, 50 per app, 500 origins per preset. Numbers

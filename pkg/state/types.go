@@ -6223,6 +6223,27 @@ const (
 	// route. It is restricted to preview applications by the API and
 	// checked again by the gateway before it can short-circuit traffic.
 	EdgeRuleKindRespond EdgeRuleKind = "respond"
+	// EdgeRuleKindRetry tunes the replay of a request that died in
+	// transport against a different healthy instance (ADR-195 §1). The
+	// runtime is pkg/gateway/retry.go. Only a TRANSPORT failure arms a
+	// replay — a guest that answered 5xx has served the request, and
+	// replaying it would run the customer's side effects twice — so this
+	// rule cannot be configured to retry on status code. Non-idempotent
+	// methods require the explicit AllowNonIdempotent opt-in. Quota via
+	// Limits.EdgeRulesRetryPerApp (Free 0 / Hobby 3 / Pro 10 / Scale 25);
+	// Free is excluded because a replay doubles the worst-case work of a
+	// single request and a Free app has max_concurrency 1, so there is
+	// rarely a sibling to retry against. See
+	// migrations/20260921155758349_edge_rules_kind_retry_and_circuit_breaker.sql.
+	EdgeRuleKindRetry EdgeRuleKind = "retry"
+	// EdgeRuleKindCircuitBreaker tunes the closed/open/half-open breaker
+	// that decides whether an instance is selectable (ADR-195 §2). The
+	// runtime is pkg/circuit, shared with the egress breaker so both
+	// surfaces behave identically. The breaker runs for every app on every
+	// plan with DefaultConfig; this rule only adjusts its thresholds, which
+	// is why the quota (Limits.EdgeRulesCircuitBreakerPerApp) gates tuning
+	// rather than the protection itself — resilience is not a paid feature.
+	EdgeRuleKindCircuitBreaker EdgeRuleKind = "circuit_breaker"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -6234,7 +6255,8 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindHeaders, EdgeRuleKindCORSA, EdgeRuleKindJWT,
 		EdgeRuleKindIP, EdgeRuleKindValidate, EdgeRuleKindLimit,
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
-		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond:
+		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
+		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker:
 		return true
 	}
 	return false
@@ -6646,6 +6668,49 @@ type EdgeRuleAction struct {
 	Cache *EdgeRuleCacheAction `json:"cache,omitempty"`
 	// Respond carries the fixed JSON response for a preview-only mock route.
 	Respond *EdgeRuleRespondAction `json:"respond,omitempty"`
+	// Retry carries the replay knobs for kind=retry (ADR-195 §1). There is
+	// deliberately no "retry on status" field: only a transport failure may
+	// arm a replay, so the set of retryable conditions is not customer-
+	// configurable. The runtime is pkg/gateway/retry.go.
+	Retry *EdgeRuleRetryAction `json:"retry,omitempty"`
+	// CircuitBreaker carries the threshold knobs for kind=circuit_breaker
+	// (ADR-195 §2). The runtime is pkg/circuit.
+	CircuitBreaker *EdgeRuleCircuitBreakerAction `json:"circuit_breaker,omitempty"`
+}
+
+// EdgeRuleRetryAction is the kind=retry payload (ADR-195 §1).
+//
+// MaxAttempts counts attempts, not retries: 2 is the original plus one
+// replay. AllowNonIdempotent opts POST and PATCH into replay and is the one
+// field here that can cost a customer correctness rather than latency — a
+// replayed POST runs their side effect twice unless their handler is
+// idempotent — so it defaults false and the API documents the consequence.
+// MinRemainingMs is the request-budget floor below which a replay is skipped,
+// which is what stops a retry converting a 502 into a 504. BackoffMs defaults
+// to 0 because the failure being retried is a dead peer, not a loaded one.
+type EdgeRuleRetryAction struct {
+	MaxAttempts        int  `json:"max_attempts"`
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
+	MinRemainingMs     int  `json:"min_remaining_ms,omitempty"`
+	BackoffMs          int  `json:"backoff_ms,omitempty"`
+}
+
+// EdgeRuleCircuitBreakerAction is the kind=circuit_breaker payload
+// (ADR-195 §2).
+//
+// MinRequests is the low-traffic guard and the field most likely to be
+// misconfigured: setting it to 1 makes a single transport blip open the
+// circuit, which on an app serving one request a minute reads as a 100%
+// failure rate. FailureThreshold is only consulted once MinRequests
+// observations exist within WindowSeconds. OpenSeconds is the first open
+// interval; it doubles on each failed half-open probe up to
+// MaxOpenSeconds.
+type EdgeRuleCircuitBreakerAction struct {
+	FailureThreshold float64 `json:"failure_threshold"`
+	MinRequests      int     `json:"min_requests"`
+	WindowSeconds    int     `json:"window_seconds"`
+	OpenSeconds      int     `json:"open_seconds"`
+	MaxOpenSeconds   int     `json:"max_open_seconds,omitempty"`
 }
 
 // EdgeRule is the in-memory row mirrored from edge_rules.
