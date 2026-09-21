@@ -124,6 +124,29 @@ func listenBackends(ctx context.Context, t *testing.T, pool *pgxpool.Pool) int {
 	return n
 }
 
+// waitListenBackends polls until the LISTEN backend count reaches want.
+//
+// SubscribeWithReconnect returns once the subscription is accepted; the
+// backend's own `LISTEN` lands a moment later, and pg_stat_activity only shows
+// it once it has. Reading the count immediately therefore races the last
+// subscriber — the legacy-path test saw backends=2 want 3 intermittently on
+// CI, reddening PRs that had nothing to do with pkg/db.
+//
+// Polling keeps the assertion's meaning (the legacy path opens one connection
+// per subscriber) and drops the timing assumption.
+func waitListenBackends(ctx context.Context, t *testing.T, pool *pgxpool.Pool, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		if n = listenBackends(ctx, t, pool); n == want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("LISTEN backends=%d want %d after 10s", n, want)
+}
+
 func recv(t *testing.T, ch <-chan Notification, want string) {
 	t.Helper()
 	select {
@@ -299,9 +322,7 @@ func TestNotifyHub_KillSwitchRestoresConnectionPerSubscriber(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n := listenBackends(ctx, t, pool); n != 3 {
-		t.Fatalf("legacy path LISTEN backends=%d want 3", n)
-	}
+	waitListenBackends(ctx, t, pool, 3)
 	if st := NotifyHubStatsFor(pool); st.Subscribers != 0 {
 		t.Fatalf("hub must be unused under the kill switch: %+v", st)
 	}
