@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -66,11 +67,29 @@ func newParkWakeFixture(t *testing.T, slug string) *normalPathFixture {
 	}
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	return newNormalPathFixtureWith(t, slug, api.PlanHobby, e2etest.Imaged,
+	f := newNormalPathFixtureWith(t, slug, api.PlanHobby, e2etest.Imaged,
 		"FAAS_STORAGE_BACKEND=local",
 		"FAAS_STORAGE_ROOT="+storageRoot,
 		"FAAS_BUILDER_BASE_REF=127.0.0.1:1/onebox-faas/builder-base@sha256:"+repeatChar("0", 64),
 	)
+	if f == nil {
+		return nil
+	}
+	// Re-point the fixture's artifact store at the root the daemons were told
+	// to use.
+	//
+	// The normal-path fixture makes its own directory and passes it as
+	// FAAS_STORAGE_ROOT; the extraEnv above is appended after that, so the
+	// daemons follow ours while f.artifacts still pointed at theirs. The test
+	// then published its layer somewhere nothing reads, and the first wake
+	// failed with "live deployment artifact is unavailable" — the layer was
+	// written, just not where schedd verifies it.
+	artifacts, err := storage.NewLocalStorageBackend(storageRoot)
+	if err != nil {
+		t.Fatalf("open artifact store at the daemons' storage root: %v", err)
+	}
+	f.artifacts = artifacts
+	return f
 }
 
 // TestE2E_ParkWakeCycle_RestoresTheSnapshotItJustWrote is the whole loop in
