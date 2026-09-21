@@ -106,12 +106,40 @@ func TestE2E_NodeDeath_LiveInstancesFailAndReleaseCapacity(t *testing.T) {
 
 	// The replacement must be a different instance: the failed one is gone with
 	// its host, and reusing its row would mean routing to a dead VM.
-	replacement, err := f.store.RunningInstanceForApp(f.ctx, f.app.ID)
-	if err != nil {
-		t.Fatalf("no running instance after recovery: %v", err)
-	}
-	if replacement.ID == instance.ID {
+	//
+	// Asked of the live set rather than of RunningInstanceForApp. A serving
+	// instance is not necessarily in `running` at the instant you look — warm
+	// is resident and routable too, and schedd moves between them on its own
+	// schedule. Pinning the narrower state made this fail while the platform
+	// was behaving correctly.
+	var replacement string
+	waitForWake(t, 30*time.Second, func() bool {
+		id, ok := liveInstanceIDForApp(t, f, instance.ID)
+		if ok {
+			replacement = id
+		}
+		return ok
+	}, "the app served a request but no live instance other than the failed one ever "+
+		"appeared; either the failed row was resurrected or the response came from "+
+		"something that is not a tracked instance")
+	if replacement == instance.ID {
 		t.Errorf("the app came back on the SAME instance %s that was failed on the dead node; "+
 			"a failed instance must not be resurrected, its VM died with the host", instance.ID)
 	}
+}
+
+// liveInstanceIDForApp returns a resident instance for the app other than
+// `excluding`. Live means routable-and-resident — running or warm — not the
+// narrower `running`.
+func liveInstanceIDForApp(t *testing.T, f *normalPathFixture, excluding string) (string, bool) {
+	t.Helper()
+	var id string
+	err := f.h.Pool.QueryRow(f.ctx,
+		`SELECT id::text FROM instances
+		  WHERE app_id = $1 AND id::text <> $2 AND state IN ('running','warm')
+		  ORDER BY created_at DESC LIMIT 1`, f.app.ID, excluding).Scan(&id)
+	if err != nil {
+		return "", false
+	}
+	return id, true
 }
