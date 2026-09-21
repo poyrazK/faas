@@ -236,3 +236,51 @@ func repoRootForDirectTest(t *testing.T) string {
 	t.Skip("module root not reachable")
 	return ""
 }
+
+// TestDirectMaxConnsFollowsNotifyHubMode pins the coupling that makes the
+// pooled capacity numbers safe.
+//
+// postgres_capacity multiplies the per-daemon direct budget across every
+// compute node, so it has to be small — two, being one parked hub connection
+// plus MigrateUp's boot advisory lock. But with FAAS_DB_NOTIFY_HUB=0 the hub
+// is gone and every subscriber parks its own LISTEN connection on the DIRECT
+// pool, and apid, schedd and gatewayd-internal each subscribe from more than
+// twenty call sites. A fixed cap of two would block them partway through
+// their subscriptions and they would never reach sd_notify(READY=1) — the
+// kill switch would stop being a rollback and become a second outage.
+func TestDirectMaxConnsFollowsNotifyHubMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		hubEnv  string
+		appName string
+		want    int32
+	}{
+		{"hub on is the small pooled budget", "", "faas-schedd", directHubOnMaxConns},
+		{"hub on, unprefixed", "1", "gatewayd-internal", directHubOnMaxConns},
+		// Hub off: LISTEN moves onto the direct pool wholesale, so the direct
+		// pool needs the pre-hub per-subscriber sizing.
+		{"hub off uses the legacy per-subscriber budget", "0", "faas-schedd",
+			DaemonMaxConnectionsNotifyHubDisabled["schedd"]},
+		{"hub off, gatewayd-internal", "0", "faas-gatewayd-internal",
+			DaemonMaxConnectionsNotifyHubDisabled["gatewayd-internal"]},
+		{"hub off, unknown daemon falls back", "0", "faas-unknown", defaultMaxConnections},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(NotifyHubEnv, tc.hubEnv)
+			if got := directMaxConns(tc.appName); got != tc.want {
+				t.Errorf("directMaxConns(%q) with %s=%q = %d, want %d",
+					tc.appName, NotifyHubEnv, tc.hubEnv, got, tc.want)
+			}
+		})
+	}
+
+	// The hub-off budget must never be below the hub-on one: the hub can only
+	// ever reduce the connections a daemon needs.
+	t.Setenv(NotifyHubEnv, "0")
+	for _, daemon := range []string{"faas-schedd", "faas-gatewayd-internal", "faas-apid"} {
+		if got := directMaxConns(daemon); got < directHubOnMaxConns {
+			t.Errorf("%s hub-off direct budget %d < hub-on %d", daemon, got, directHubOnMaxConns)
+		}
+	}
+}

@@ -64,6 +64,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -320,64 +321,7 @@ kernel_path = %q
 	}
 
 	if which&Imaged != 0 {
-		// guest/init lives at repo root in dev; tests don't run a real guest,
-		// but imaged still wants the path. Use a placeholder file so its
-		// existence check passes — the metal test will overwrite with the
-		// real binary if it needs to.
-		guestInit := os.Getenv("FAAS_GUEST_INIT")
-		if guestInit == "" {
-			guestInit = filepath.Join(tmp, "init")
-			if err := os.WriteFile(guestInit, []byte("#!/bin/sh\n"), 0o755); err != nil {
-				t.Fatalf("e2etest: write placeholder guest init: %v", err)
-			}
-		}
-		env := imagedEnv(t, dbURL, guestInit, appsRoot, tmp)
-		// imaged must sign with the same keypair schedd verifies against
-		// (FAAS_SIGN_PUB). Without this it falls back to the host's
-		// /etc/faas/secrets/sign.key and every snapshot prime fails with
-		// sig_invalid.
-		if h.SignKeyPath != "" {
-			env = append(env, "FAAS_SIGN_KEY="+h.SignKeyPath)
-		}
-		// Optional builder-base override (Lima / CI without ghcr creds). When
-		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
-		// instead of the production ghcr.io/poyrazk/builder-base:latest
-		// (which 403s anonymously). FAAS_TEST_DEPLOY_BASE_REF, if set,
-		// overrides the per-runtime base ref used by aboveBaseLayers at
-		// deploy time so it also dials the stub registry. Default behavior
-		// is unchanged.
-		if ref := os.Getenv("FAAS_TEST_BUILDER_BASE_REF"); ref != "" {
-			env = append(env, "FAAS_BUILDER_BASE_REF="+ref)
-			if path := os.Getenv("FAAS_TEST_BUILDER_BASE_PATH"); path != "" {
-				env = append(env, "FAAS_BUILDER_BASE_PATH="+path)
-			}
-		}
-		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
-			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
-		}
-		if os.Getenv("FAAS_E2E_API_HOSTING_SMOKE") == "1" && h.GatewayURL != "" {
-			env = append(env, "FAAS_API_HOSTING_SMOKE_URL="+h.GatewayURL)
-			env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
-		}
-		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
-		// imaged is not ready when its process is up. It stages the builder
-		// base first — 70s on faas-acceptance-1 in smoke run 35157946150 —
-		// and only then subscribes to deployment_changed. Start used to return
-		// here immediately, the test POSTed a deployment into a LISTEN that
-		// did not exist yet, and imaged's catch-up sweep only looks at
-		// deployments older than two hours: the image deploy sat in `pending`
-		// until the test gave up, in every image-deploy test. Wait for the
-		// subscription itself, not the process.
-		imagedStart := time.Now()
-		if err := h.waitImagedListens(3 * time.Minute); err != nil {
-			// Say why: an imaged that exited (metrics port taken, base
-			// staging failed) is otherwise reported only as "never
-			// subscribed", with its last words lost — smoke run
-			// 35217250297.
-			dumpProcs(t)
-			t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
-		}
-		t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
+		startImaged(t, h, bin, dbURL, tmp, appsRoot, nil)
 	}
 
 	if which&Meterd != 0 {
@@ -844,6 +788,17 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// socket (/run/faas/schedd.sock). Re-point the row at the
 		// per-test socket so synth dispatch can find schedd.
 		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
+	}
+	// StartWithEnv implements a subset of Start's daemons. It used to ignore
+	// the rest SILENTLY: a test could ask for imaged, get no imaged, no error,
+	// and a deployment that simply never moved. Refuse instead, so the next
+	// caller learns in one second rather than after a three-minute poll.
+	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub); unsupported != 0 {
+		t.Fatalf("e2etest: StartWithEnv cannot start daemon mask %b (VMMD and Builderd are Start-only); "+
+			"use Start, or teach StartWithEnv to boot them", unsupported)
+	}
+	if which&Imaged != 0 {
+		startImaged(t, h, bin, dbURL, tmp, appsRoot, extraEnv)
 	}
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL, extraEnv)
@@ -2333,7 +2288,7 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 // without touching this file.
 func boundingSetPrefix(t *testing.T, name string) []string {
 	t.Helper()
-	if name != "imaged" || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+	if name != "imaged" || runtime.GOOS != "linux" {
 		return nil
 	}
 	unit, err := daemonunitspec.UnitByName("imaged")
@@ -2347,14 +2302,51 @@ func boundingSetPrefix(t *testing.T, name string) []string {
 	if err != nil {
 		// Failing here beats letting imaged exit with a capdecl error that
 		// reads like a product bug.
-		t.Fatalf("e2etest: setpriv is required to run imaged as root with a "+
+		t.Fatalf("e2etest: setpriv is required to run imaged with a "+
 			"restricted bounding set (capdecl refuses cap_sys_admin): %v", err)
 	}
 	set := "-all"
 	for _, c := range unit.CapabilityBoundingSet {
 		set += ",+" + strings.TrimPrefix(strings.ToLower(c), "cap_")
 	}
-	return []string{setpriv, "--bounding-set=" + set, "--"}
+	if os.Geteuid() == 0 {
+		return []string{setpriv, "--bounding-set=" + set, "--"}
+	}
+	// Unprivileged path — a GitHub-hosted runner.
+	//
+	// The runner user still carries cap_sys_admin in CapBnd, and imaged
+	// refuses to boot while it is reachable (ADR-075). Dropping a bounding-set
+	// capability needs CAP_SETPCAP in the EFFECTIVE set, which that user does
+	// not have, so this cannot be done from inside the test process.
+	//
+	// Escalate for exactly one execve and come straight back down: sudo to get
+	// CAP_SETPCAP, drop the bounding set, then --reuid/--regid to the original
+	// uid. imaged ends up unprivileged with production's capability boundary.
+	//
+	// Scoped to imaged's argv on purpose. Wrapping the whole test binary
+	// instead ALSO narrows vmmd's bounding set, and vmmd needs cap_sys_admin
+	// to do its job — that broke TestSec11_HostKey0400_Required, where vmmd
+	// then produced no output at all.
+	sudo, err := exec.LookPath("sudo")
+	if err != nil {
+		t.Skipf("e2etest: imaged needs a restricted bounding set and neither root nor sudo is available: %v", err)
+	}
+	// -E preserves the environment the harness built. Without it sudo resets
+	// it and imaged exits with "missing required environment variables:
+	// FAAS_DATABASE_URL, FAAS_FUNCTION_RUNNER_*" — its env contract doing its
+	// job against an env that sudo had already emptied.
+	//
+	// PATH is re-applied separately because sudoers' secure_path overrides it
+	// even under -E, and imaged resolves debugfs (and mkfs) from PATH.
+	return []string{
+		sudo, "-n", "-E", setpriv,
+		"--bounding-set=" + set,
+		"--reuid", strconv.Itoa(os.Getuid()),
+		"--regid", strconv.Itoa(os.Getgid()),
+		"--init-groups",
+		"--no-new-privs",
+		"--", "env", "PATH=" + os.Getenv("PATH"),
+	}
 }
 
 // spoolRootFor is the per-test source spool root.
@@ -2433,4 +2425,86 @@ func (h *Harness) EdgeURL() string {
 		return h.GatewayPublicURL
 	}
 	return h.GatewayURL
+}
+
+// startImaged boots imaged and waits for it to SUBSCRIBE, not merely to be
+// running: it stages the builder base first and only then listens, so a test
+// that posts a deployment before that point lands in a LISTEN that does not
+// exist yet and its row sits in `pending` until the test gives up.
+//
+// Extracted so Start and StartWithEnv share one implementation. They did not,
+// and StartWithEnv simply ignored the Imaged bit — a test could ask for imaged,
+// get no imaged, no error, and a deployment that never moved.
+func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, extraEnv []string) {
+	t.Helper()
+	// imaged signs every layer it publishes, and the signing key is minted by
+	// writeScheddSignPub — inside the SCHEDD block. A harness that starts
+	// imaged without schedd therefore left SignKeyPath empty, imaged fell back
+	// to the host's /etc/faas/secrets/sign.key, and on a machine without one
+	// every publish failed. imaged's need for a key does not depend on schedd
+	// being present, so mint one here when nothing else has.
+	if h.SignKeyPath == "" {
+		_ = writeScheddSignPub(t, h)
+	}
+	// guest/init lives at repo root in dev; tests don't run a real guest,
+	// but imaged still wants the path. Use a placeholder file so its
+	// existence check passes — the metal test will overwrite with the
+	// real binary if it needs to.
+	guestInit := os.Getenv("FAAS_GUEST_INIT")
+	if guestInit == "" {
+		guestInit = filepath.Join(tmp, "init")
+		if err := os.WriteFile(guestInit, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("e2etest: write placeholder guest init: %v", err)
+		}
+	}
+	env := imagedEnv(t, dbURL, guestInit, appsRoot, tmp)
+	// imaged must sign with the same keypair schedd verifies against
+	// (FAAS_SIGN_PUB). Without this it falls back to the host's
+	// /etc/faas/secrets/sign.key and every snapshot prime fails with
+	// sig_invalid.
+	if h.SignKeyPath != "" {
+		env = append(env, "FAAS_SIGN_KEY="+h.SignKeyPath)
+	}
+	// Optional builder-base override (Lima / CI without ghcr creds). When
+	// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
+	// instead of the production ghcr.io/poyrazk/builder-base:latest
+	// (which 403s anonymously). FAAS_TEST_DEPLOY_BASE_REF, if set,
+	// overrides the per-runtime base ref used by aboveBaseLayers at
+	// deploy time so it also dials the stub registry. Default behavior
+	// is unchanged.
+	if ref := os.Getenv("FAAS_TEST_BUILDER_BASE_REF"); ref != "" {
+		env = append(env, "FAAS_BUILDER_BASE_REF="+ref)
+		if path := os.Getenv("FAAS_TEST_BUILDER_BASE_PATH"); path != "" {
+			env = append(env, "FAAS_BUILDER_BASE_PATH="+path)
+		}
+	}
+	if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
+		env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
+	}
+	if os.Getenv("FAAS_E2E_API_HOSTING_SMOKE") == "1" && h.GatewayURL != "" {
+		env = append(env, "FAAS_API_HOSTING_SMOKE_URL="+h.GatewayURL)
+		env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
+	}
+	// extraEnv last so a caller can override a harness default — a test
+	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, bin, "imaged", env))
+	// imaged is not ready when its process is up. It stages the builder
+	// base first — 70s on faas-acceptance-1 in smoke run 35157946150 —
+	// and only then subscribes to deployment_changed. Start used to return
+	// here immediately, the test POSTed a deployment into a LISTEN that
+	// did not exist yet, and imaged's catch-up sweep only looks at
+	// deployments older than two hours: the image deploy sat in `pending`
+	// until the test gave up, in every image-deploy test. Wait for the
+	// subscription itself, not the process.
+	imagedStart := time.Now()
+	if err := h.waitImagedListens(3 * time.Minute); err != nil {
+		// Say why: an imaged that exited (metrics port taken, base
+		// staging failed) is otherwise reported only as "never
+		// subscribed", with its last words lost — smoke run
+		// 35217250297.
+		dumpProcs(t)
+		t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
+	}
+	t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
 }

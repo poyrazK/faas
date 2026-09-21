@@ -55,6 +55,44 @@ The script covers several phases; the log tells you which one:
 | `verify-placement` mismatch | Deployments did not spread across the expected `active_node_count`. Scheduler or a node out of rotation. |
 | `previous serving revision became unavailable during redeploy` | Zero-downtime redeploy regressed — the old revision stopped serving before the new one was ready. |
 
+## When the failure is `health probe reached deployment ""`
+
+An EMPTY served deployment (not a different one) means the gateway answered
+the health path at the edge instead of proxying to the candidate. The platform
+deployment header is set in exactly one place —
+`pkg/gateway/handler.go` after a target is picked — and only when the
+deployment-smoke bypass authorizes. `pkg/gateway/edge_answers.go` short-circuits
+the health path unless that same bypass passes:
+
+```go
+r.URL.Path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes && !h.authorizedDeploymentSmoke(r, app)
+```
+
+So the question is always "why did the bypass fail", and two counters answer it
+directly:
+
+```promql
+sum by (outcome) (rate(gateway_smoke_validation_total[15m]))
+sum by (outcome) (rate(gateway_smoke_challenge_total[15m]))
+```
+
+| `gateway_smoke_validation_total` outcome | Means |
+|---|---|
+| `match` | Bypass worked. The empty header is not from this gateway. |
+| `no_challenge` | No challenge under this (app, deployment). The map is process-local, so either the `deployment_smoke_challenge` notification never reached THIS gateway process, or the publisher and gateway disagree on the app identity. |
+| `token_mismatch` | A challenge IS present but the presented token differs — a stale or duplicated challenge, not a delivery problem. |
+| `expired` | The challenge arrived but aged out before the probe. Look at the publish-to-probe gap against the ~15s token lifetime. |
+| `missing_token` | The request reached the gateway without the token header. Suspect a hop between `imaged` and `gatewayd-internal` dropping `X-Faas-Platform-Smoke-Token`. |
+
+`gateway_smoke_challenge_total{outcome="stored"}` rising while validation shows
+`no_challenge` means the challenge landed on a DIFFERENT gateway process than
+the one serving the probe — expected to be impossible, since `pg_notify` fans
+out to every listener, so it points at a gateway whose LISTEN connection is
+down.
+
+Check `healthEdgeAnswered` alongside: a spike there during a deploy confirms
+the edge answered the probe.
+
 ## Correlate before digging
 
 Check whether a real alert already fired and this is a downstream symptom:

@@ -25,10 +25,39 @@ join shape; the 12-node, one-overlap contract requires about 14.3 GB and
 therefore fits a 16 GB database host. Higher batch concurrency can require a
 larger database host and is rejected before any new compute node is activated.
 
-PgBouncer transaction pooling is not used because the daemons intentionally
-hold PostgreSQL `LISTEN` sessions. Larger fleets should split notification
-connections onto a direct DSN before routing ordinary query pools through
-transaction-mode PgBouncer.
+## Pooled fleets
+
+`faas_pgbouncer_enabled` changes two terms in the derivation and nothing else.
+A compute node's ordinary pools no longer reach the postmaster — they
+terminate at pgbouncer and share its server pool, which is a constant rather
+than a per-node cost. What still scales per node is the session-scoped residue
+that cannot be pooled: `LISTEN` and session advisory locks on the direct DSN
+(`faas_postgres_per_compute_direct_budget`, 5 database daemons ×
+`db.directHubOnMaxConns`).
+
+| Nodes | Unpooled | Pooled |
+|---|---|---|
+| 2 | 160 conns / 3.4 GB | 200 conns / 4.4 GB |
+| 12 | 610 conns / 14.0 GB | 330 conns / 7.4 GB |
+| 50 | 2,330 conns / 54.3 GB | 840 conns / 19.4 GB |
+| 100 | 4,600 conns / 107.5 GB | 1,500 conns / 34.8 GB |
+
+**Do not enable the pooler below four compute nodes.** pgbouncer's server pool
+is a fixed 80 backends, so on a two-node fleet it costs more than the 68 it
+saves. The crossover is at 3⅓ nodes: `34n = 80 + 10n`.
+
+Note what pooling does and does not fix. It takes a 100-node fleet from
+impossible to a 48 GB database host, but the remaining 1,500 is dominated by
+the per-node `LISTEN` term, which is irreducible while every compute daemon
+subscribes to notifications. Cutting it further means fewer subscribing
+daemons per node, not a better pooler.
+
+The per-daemon direct budget is hub-dependent: with `FAAS_DB_NOTIFY_HUB=0`
+every subscriber parks its own `LISTEN` connection on the direct pool, so
+`db.directMaxConns` falls back to the pre-hub per-daemon sizing. A fleet
+running any daemon with the hub disabled needs materially more direct
+connections than the table above; re-derive before enabling that mode on more
+than one node.
 
 The per-daemon maxima come from `pkg/db.DaemonMaxConnections`, which applies
 while the ADR-190 notify hub is active — the supported configuration. Setting

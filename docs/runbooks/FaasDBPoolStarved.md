@@ -44,6 +44,13 @@ Two distinct shapes, with opposite fixes:
   a slow query, or a transaction leaked by an error path that skipped its
   `Rollback`. Find the holder:
 
+  **On a pooled fleet** (`faas_pgbouncer_enabled`) this query only sees the
+  control plane's own daemons and the session-scoped direct connections;
+  compute-node query traffic arrives as pgbouncer's server pool and carries
+  pgbouncer's `application_name`, not the client daemon's. Ask pgbouncer
+  instead — `SHOW POOLS` for `cl_waiting`, `SHOW CLIENTS` for who is queued —
+  and read `<daemon>-direct` here for anything session-scoped.
+
   ```sql
   SELECT pid, state, wait_event_type, wait_event,
          now() - xact_start AS xact_age, left(query, 120)

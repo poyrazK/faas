@@ -19,7 +19,6 @@
 package e2etest
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,6 +54,11 @@ type FaultInjector interface {
 // *exec.Cmd pointers + the row-level patch helpers. Tests get one
 // from StartTwoNode and pass it to every fault scenario.
 type CmdFaultInjector struct {
+	// RowFaults supplies StaleHeartbeat/Drain/Reactivate/Deactivate, which need
+	// only Postgres and therefore live in an untagged file so ordinary CI can
+	// use them too (fault_rows.go).
+	*RowFaults
+
 	t             *testing.T
 	pool          *pgxpool.Pool
 	procs         map[string]*exec.Cmd // keyed by node name (or "schedd-a" etc.)
@@ -78,6 +82,7 @@ type remoteRule struct {
 func NewCmdFaultInjector(t *testing.T, pool *pgxpool.Pool) *CmdFaultInjector {
 	t.Helper()
 	fi := &CmdFaultInjector{
+		RowFaults:     NewRowFaults(pool),
 		t:             t,
 		pool:          pool,
 		procs:         map[string]*exec.Cmd{},
@@ -195,39 +200,6 @@ func nodeSuffix(name string) string {
 		return "B"
 	}
 	return ""
-}
-
-// StaleHeartbeat rewinds the heartbeat stamp so the next
-// heartbeat tick flips the row to 'unavailable'. Uses raw SQL
-// because there's no public API to set last_heartbeat_at to a
-// past time (heartbeat owns the stamp by design).
-func (f *CmdFaultInjector) StaleHeartbeat(node string, age time.Duration) error {
-	_, err := f.pool.Exec(context.Background(),
-		`UPDATE compute_nodes SET last_heartbeat_at = now() - $2::interval
-		 WHERE name = $1`, node, age.String())
-	return err
-}
-
-// Drain flips lifecycle to 'draining' (operator-initiated; the
-// recovery arbiter then orchestrates the live-migrations to
-// completion).
-func (f *CmdFaultInjector) Drain(node string) error {
-	_, err := f.pool.Exec(context.Background(),
-		`UPDATE compute_nodes SET lifecycle = 'draining'
-		 WHERE name = $1 AND lifecycle = 'active'`, node)
-	return err
-}
-
-// Reactivate flips lifecycle back to 'active' (operator-initiated
-// recovery shortcut; the recovery arbiter is the canonical path
-// for failure-driven recovery, but ops gets a manual override).
-func (f *CmdFaultInjector) Reactivate(node string) error {
-	_, err := f.pool.Exec(context.Background(),
-		`UPDATE compute_nodes SET lifecycle = 'active',
-		 last_recovery_outcome = NULL,
-		 recovery_initiated_at = NULL
-		 WHERE name = $1`, node)
-	return err
 }
 
 // RestoreAll rolls back every fault the injector applied:

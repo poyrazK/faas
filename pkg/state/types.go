@@ -1602,6 +1602,14 @@ type ScalingPolicy struct {
 	// `concurrent_requests` and `queue_depth` metrics, PR-C the engine
 	// cooldown.
 	Target *ScalingTarget
+	// Targets is the ADR-194 multi-signal form: every entry is an
+	// independent statement of how much load one instance should carry,
+	// and the scheduler provisions for the maximum desired count across
+	// them. Empty means "use Target", which is promoted to a one-element
+	// list by EffectiveTargets — so every row written before ADR-194
+	// keeps its exact meaning and no migration is needed (the column is
+	// jsonb). Writers set one or the other; the apid gate rejects both.
+	Targets []ScalingTarget
 	// ScaleOutCooldownS is the minimum number of seconds between
 	// two scale-out events for the same app. Floor = 1 s (no
 	// `0` traps); ceiling = 3600 s (1 h). Default = 0 means
@@ -1626,15 +1634,63 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds is an optional per-app cold-wake wait budget.
 	// Zero means the gateway uses the plan-derived default.
 	WakeMaxQueueWaitSeconds int
+	// Timezone is the IANA zone every schedule's cron is evaluated in
+	// (ADR-195). Empty means UTC. One zone per app rather than one per
+	// schedule: a business has a working day, not a working day per rule.
+	Timezone string
+	// Schedules raise the warm floor for recurring windows (ADR-195).
+	// Empty means the floor is whatever MinInstances says at all times,
+	// which is every app written before ADR-195. The column is jsonb, so
+	// this needs no migration.
+	Schedules []ScalingSchedule
 }
 
 // ScalingTarget is the (metric, value) pair the engine watches for
-// the scale-up trigger. The metric surface is closed: `rps`,
-// `concurrent_requests`, `queue_depth`, `queue_lag`, `p99_latency_ms`. Empty Metric = "disabled"
-// (the engine falls back to the legacy autoscale_target_rps column).
+// the scale-up trigger. The metric surface is closed and lives in one
+// place — pkg/api.ScalingMetrics() — so validation cannot name a
+// metric no trigger reads. Empty Metric = "disabled" (the engine falls
+// back to the legacy autoscale_target_rps / autoscale_target_cpu_pct
+// columns).
+//
+// `p99_latency_ms` was in this set until ADR-194 and had no source in any
+// release; it is rejected on write now. Rows that still carry it stay
+// inert, exactly as they always were.
 type ScalingTarget struct {
-	Metric string  // "" | "rps" | "concurrent_requests" | "queue_depth" | "queue_lag" | "p99_latency_ms"
+	Metric string  // "" | "rps" | "cpu" | "concurrent_requests" | "queue_depth" | "queue_lag"
 	Value  float64 // target value (units depend on Metric)
+}
+
+// EffectiveTargets is the ADR-194 reader for a policy's declared signals.
+// It is the ONLY way a trigger should reach the targets: callers that read
+// Target directly miss the multi-signal form, and callers that read Targets
+// directly miss every policy written before ADR-194.
+//
+// Precedence is Targets, then the singular Target promoted to one element.
+// A nil policy and an empty policy both yield nil, which every trigger
+// already treats as "fall back to the legacy columns".
+func (p *ScalingPolicy) EffectiveTargets() []ScalingTarget {
+	if p == nil {
+		return nil
+	}
+	if len(p.Targets) > 0 {
+		return p.Targets
+	}
+	if p.Target != nil && p.Target.Metric != "" {
+		return []ScalingTarget{*p.Target}
+	}
+	return nil
+}
+
+// TargetFor returns the declared value for metric, and whether the app
+// declared that metric at all. Triggers use it to decide between a declared
+// target and the legacy column for their axis.
+func (p *ScalingPolicy) TargetFor(metric string) (float64, bool) {
+	for _, t := range p.EffectiveTargets() {
+		if t.Metric == metric {
+			return t.Value, true
+		}
+	}
+	return 0, false
 }
 
 // MarshalJSON encodes the policy as the canonical jsonb shape. The
@@ -1646,15 +1702,18 @@ type ScalingTarget struct {
 // (mirrors the DTO's `*ScalingTarget`).
 func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 	type policyShape struct {
-		MinInstances            int            `json:"min_instances,omitempty"`
-		MaxInstances            int            `json:"max_instances,omitempty"`
-		Target                  *ScalingTarget `json:"target,omitempty"`
-		ScaleOutCooldownS       int            `json:"scale_out_cooldown_s,omitempty"`
-		ScaleInCooldownS        int            `json:"scale_in_cooldown_s,omitempty"`
-		ConcurrencyOverflow     string         `json:"concurrency_overflow,omitempty"`
-		MaxQueueWaitMS          int            `json:"max_queue_wait_ms,omitempty"`
-		WakeMaxQueueDepth       int            `json:"wake_max_queue_depth,omitempty"`
-		WakeMaxQueueWaitSeconds int            `json:"wake_max_queue_wait_seconds,omitempty"`
+		MinInstances            int               `json:"min_instances,omitempty"`
+		MaxInstances            int               `json:"max_instances,omitempty"`
+		Target                  *ScalingTarget    `json:"target,omitempty"`
+		Targets                 []ScalingTarget   `json:"targets,omitempty"`
+		ScaleOutCooldownS       int               `json:"scale_out_cooldown_s,omitempty"`
+		ScaleInCooldownS        int               `json:"scale_in_cooldown_s,omitempty"`
+		ConcurrencyOverflow     string            `json:"concurrency_overflow,omitempty"`
+		MaxQueueWaitMS          int               `json:"max_queue_wait_ms,omitempty"`
+		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
+		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		Timezone                string            `json:"timezone,omitempty"`
+		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
 	// The struct conversion pins the jsonb encoder's tag set to the
 	// policyShape local — adding a json tag here does not silently
@@ -1669,29 +1728,33 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 // the in-memory struct.
 func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 	type policyShape struct {
-		MinInstances            int            `json:"min_instances,omitempty"`
-		MaxInstances            int            `json:"max_instances,omitempty"`
-		Target                  *ScalingTarget `json:"target,omitempty"`
-		ScaleOutCooldownS       int            `json:"scale_out_cooldown_s,omitempty"`
-		ScaleInCooldownS        int            `json:"scale_in_cooldown_s,omitempty"`
-		ConcurrencyOverflow     string         `json:"concurrency_overflow,omitempty"`
-		MaxQueueWaitMS          int            `json:"max_queue_wait_ms,omitempty"`
-		WakeMaxQueueDepth       int            `json:"wake_max_queue_depth,omitempty"`
-		WakeMaxQueueWaitSeconds int            `json:"wake_max_queue_wait_seconds,omitempty"`
+		MinInstances            int               `json:"min_instances,omitempty"`
+		MaxInstances            int               `json:"max_instances,omitempty"`
+		Target                  *ScalingTarget    `json:"target,omitempty"`
+		Targets                 []ScalingTarget   `json:"targets,omitempty"`
+		ScaleOutCooldownS       int               `json:"scale_out_cooldown_s,omitempty"`
+		ScaleInCooldownS        int               `json:"scale_in_cooldown_s,omitempty"`
+		ConcurrencyOverflow     string            `json:"concurrency_overflow,omitempty"`
+		MaxQueueWaitMS          int               `json:"max_queue_wait_ms,omitempty"`
+		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
+		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		Timezone                string            `json:"timezone,omitempty"`
+		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
 	var raw policyShape
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	p.MinInstances = raw.MinInstances
-	p.MaxInstances = raw.MaxInstances
-	p.Target = raw.Target
-	p.ScaleOutCooldownS = raw.ScaleOutCooldownS
-	p.ScaleInCooldownS = raw.ScaleInCooldownS
-	p.ConcurrencyOverflow = raw.ConcurrencyOverflow
-	p.MaxQueueWaitMS = raw.MaxQueueWaitMS
-	p.WakeMaxQueueDepth = raw.WakeMaxQueueDepth
-	p.WakeMaxQueueWaitSeconds = raw.WakeMaxQueueWaitSeconds
+	// Struct conversion, NOT a field-by-field copy. The copy this
+	// replaced was a hand-maintained list that silently dropped every
+	// field added after it was written: ADR-194's `targets` was written
+	// to apps.scaling_policy and discarded on every read, so the
+	// multi-signal surface was inert in production while every unit test
+	// passed — the tests all built state.App in memory and never crossed
+	// this decoder. The conversion makes the compiler enforce what the
+	// list did not: policyShape and ScalingPolicy must stay field-for-
+	// field identical, exactly as MarshalJSON above already requires.
+	*p = ScalingPolicy(raw)
 	return nil
 }
 

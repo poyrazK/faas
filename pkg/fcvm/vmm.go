@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/jailsetup"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -165,6 +166,17 @@ type restoreTimingBreakdown struct {
 	MaterializeVMStateMs int64
 	ResolveImagesMs      int64
 	StageDrivesMs        int64
+	// TunWaitMntnsMs .. CgroupFenceMs split the bind_tun window so an
+	// optimisation targets the right thing; see bindTunTimings. Operator-
+	// facing only: they ride the Debug record and are deliberately NOT on
+	// the wake.restore_breakdown event, which is a customer contract.
+	TunWaitMntnsMs  int64
+	TunWaitChrootMs int64
+	TunSetupJailMs  int64
+	// TunSetupJailWorkUs is the helper's own in-namespace duration, self
+	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
+	TunSetupJailWorkUs int64
+	CgroupFenceMs      int64
 	// StagePreBootFilesMs is the single loop-mount session that writes
 	// secrets.env / env.json / resolver / workload files onto drive1
 	// (ADR-192). It was folded into StageSnapshotMs before, which made the
@@ -824,7 +836,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}
 	startedJailerAt := time.Now()
 	if len(cfg.NetworkInterfaces) > 0 {
-		if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+		if _, err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -1383,11 +1395,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	tStartJailer := time.Now()
+	var tunTimings bindTunTimings
 	if !spec.Networkless {
-		if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+		if tunTimings, err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
+	tTunReady := time.Now()
 	var restoreCPU startupCPUProfile
 	trackRestoreCPU := !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
@@ -1452,6 +1466,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
 		StageDrivesMs:        tStageDrives.Sub(tResolve).Milliseconds(),
+		TunWaitMntnsMs:       tunTimings.WaitMntnsMs,
+		TunWaitChrootMs:      tunTimings.WaitChrootMs,
+		TunSetupJailMs:       tunTimings.SetupJailMs,
+		TunSetupJailWorkUs:   tunTimings.SetupJailWorkUs,
+		CgroupFenceMs:        tBindTun.Sub(tTunReady).Milliseconds(),
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
 		StageSnapshotMs:      tMemState.Sub(tPreBootFiles).Milliseconds(),
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
@@ -1489,6 +1508,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
 		"bind_tun_ms", breakdown.BindTunMs,
+		"tun_wait_mntns_ms", breakdown.TunWaitMntnsMs,
+		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
+		"tun_setup_jail_ms", breakdown.TunSetupJailMs,
+		"tun_setup_jail_work_us", breakdown.TunSetupJailWorkUs,
+		"cgroup_fence_ms", breakdown.CgroupFenceMs,
 		"load_snapshot_ms", breakdown.LoadSnapshotMs,
 		"resume_hook_ms", breakdown.ResumeHookMs,
 		"wait_ready_ms", breakdown.WaitReadyMs,
@@ -4311,31 +4335,70 @@ func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, 
 // open(2). A private device-capable tmpfs fixes KVM; the real host TUN remains
 // a bind mount because this kernel rejects a synthetic TUN node. The config
 // FIFO keeps Firecracker paused until both repairs are complete.
-func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) error {
+// bindTunTimings attributes the jail device-setup window. bind_tun measured
+// 32 ms mean on an idle SSD acceptance node — a third of a 96 ms restore, and
+// unlike the page-fault phases it does not shrink relative to a larger guest.
+// The window is four different things with four different fixes (waiting on
+// the jailer twice, one nsenter process spawn, then the cgroup fence), so it
+// is split before anything is optimised.
+type bindTunTimings struct {
+	// WaitMntnsMs waits for jailer to unshare its mount namespace.
+	WaitMntnsMs int64
+	// WaitChrootMs waits for the jailed helper and /dev to appear, which
+	// proves /proc/<pid>/root has switched to this instance.
+	WaitChrootMs int64
+	// SetupJailMs is the nsenter invocation that prepares /dev, binds the
+	// TUN device and mknods KVM. It is two process spawns (nsenter, then
+	// the helper it execs) plus a few mount/mknod syscalls.
+	SetupJailMs int64
+	// SetupJailWorkUs is what the helper reports for its own work inside
+	// the namespace, so SetupJailMs minus it isolates spawn overhead.
+	SetupJailWorkUs int64
+}
+
+// parseSetupJailWorkUs reads the helper's self-reported duration. A helper
+// that predates the marker simply yields 0, which reads as "unknown" rather
+// than "instant" — the caller only ever reports it alongside the total.
+func parseSetupJailWorkUs(out []byte) int64 {
+	for _, line := range strings.Split(string(out), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), jailsetup.SetupJailTimingPrefix)
+		if !ok {
+			continue
+		}
+		if us, err := strconv.ParseInt(strings.TrimSpace(rest), 10, 64); err == nil {
+			return us
+		}
+	}
+	return 0
+}
+
+func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (bindTunTimings, error) {
+	var timings bindTunTimings
 	if instance == "" {
-		return fmt.Errorf("vmm: bind TUN device: empty instance")
+		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
 	}
 	const source = "/dev/net/tun"
 	fi, err := os.Stat(source)
 	if err != nil {
-		return fmt.Errorf("vmm: stat TUN device: %w", err)
+		return timings, fmt.Errorf("vmm: stat TUN device: %w", err)
 	}
 	if fi.Mode()&os.ModeCharDevice == 0 {
-		return fmt.Errorf("vmm: TUN path %s is not a character device", source)
+		return timings, fmt.Errorf("vmm: TUN path %s is not a character device", source)
 	}
 	if fi.Mode().Perm()&0o006 != 0o006 {
-		return fmt.Errorf("vmm: TUN device %s must be accessible to jailer users (mode %04o)", source, fi.Mode().Perm())
+		return timings, fmt.Errorf("vmm: TUN device %s must be accessible to jailer users (mode %04o)", source, fi.Mode().Perm())
 	}
 	pid, ok := v.InstancePID(instance)
 	if !ok {
-		return fmt.Errorf("vmm: bind TUN device: jailer process is not alive")
+		return timings, fmt.Errorf("vmm: bind TUN device: jailer process is not alive")
 	}
 	selfNS, err := os.Readlink("/proc/self/ns/mnt")
 	if err != nil {
-		return fmt.Errorf("vmm: read vmmd mount namespace: %w", err)
+		return timings, fmt.Errorf("vmm: read vmmd mount namespace: %w", err)
 	}
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
+	tWaitMntnsStart := time.Now()
 	for {
 		childNS, readErr := os.Readlink(fmt.Sprintf("/proc/%d/ns/mnt", pid))
 		if readErr == nil && childNS != selfNS {
@@ -4343,10 +4406,12 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) e
 		}
 		select {
 		case <-deadline.C:
-			return fmt.Errorf("vmm: jailer did not create a private mount namespace")
+			return timings, fmt.Errorf("vmm: jailer did not create a private mount namespace")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
+	timings.WaitMntnsMs = time.Since(tWaitMntnsStart).Milliseconds()
+	tWaitChrootStart := time.Now()
 	// The jailer unshares its mount namespace before it finishes constructing
 	// the chroot. Under a concurrent boot burst that small gap is observable:
 	// nsenter succeeds, but /dev does not exist yet and the tmpfs mount fails
@@ -4362,28 +4427,33 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) e
 		}
 		select {
 		case <-deadline.C:
-			return fmt.Errorf("vmm: jailer chroot device tree did not become ready")
+			return timings, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
+	timings.WaitChrootMs = time.Since(tWaitChrootStart).Milliseconds()
+	tSetupJailStart := time.Now()
 	// Single-pass setup: prepare /dev tmpfs, bind TUN, and mknod KVM in one nsenter invocation.
-	if _, err := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); err != nil {
+	if setupOut, err := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); err != nil {
 		// Fallback to legacy 3-step sequence if the mounted helper doesn't support --setup-jail yet
 		if outDev, errDev := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-dev", "/dev").CombinedOutput(); errDev != nil {
-			return fmt.Errorf("vmm: prepare jail device tree: %w (%s)", errDev, strings.TrimSpace(string(outDev)))
+			return timings, fmt.Errorf("vmm: prepare jail device tree: %w (%s)", errDev, strings.TrimSpace(string(outDev)))
 		}
 		if outTun, errTun := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-bind", "/faas-host-tun", source).CombinedOutput(); errTun != nil {
-			return fmt.Errorf("vmm: bind TUN device: %w (%s)", errTun, strings.TrimSpace(string(outTun)))
+			return timings, fmt.Errorf("vmm: bind TUN device: %w (%s)", errTun, strings.TrimSpace(string(outTun)))
 		}
 		if outKvm, errKvm := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); errKvm != nil {
-			return fmt.Errorf("vmm: provision KVM device: %w (%s)", errKvm, strings.TrimSpace(string(outKvm)))
+			return timings, fmt.Errorf("vmm: provision KVM device: %w (%s)", errKvm, strings.TrimSpace(string(outKvm)))
 		}
+	} else {
+		timings.SetupJailWorkUs = parseSetupJailWorkUs(setupOut)
 	}
+	timings.SetupJailMs = time.Since(tSetupJailStart).Milliseconds()
 	_ = os.Remove(filepath.Join(root, "faas-mount-helper"))
 	v.mu.Lock()
 	v.bindMounts[instance] = append(v.bindMounts[instance], ephemeralBind{source: source, mountpoint: filepath.Join(root, "dev", "net", "tun")})
 	v.mu.Unlock()
-	return nil
+	return timings, nil
 }
 
 // unmountBindMounts releases image bind mounts before the jail chroot is

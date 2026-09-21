@@ -122,6 +122,13 @@ type Metrics struct {
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
 	drainWaitSeconds *prometheus.HistogramVec
+	// smokeChallenge and smokeValidation make the deployment-smoke bypass
+	// diagnosable. Before these, the receive path logged only on a parse
+	// failure and the validate path logged nothing at all, so a failing
+	// post-readiness smoke could not be told apart from a challenge that
+	// never arrived — which is exactly the state cd-platform sat in.
+	smokeChallenge  *prometheus.CounterVec
+	smokeValidation *prometheus.CounterVec
 	// routeLookupStaleServed (ADR-190) counts requests answered from
 	// the last-known-good route tier because the Router errored. A
 	// non-zero rate means Postgres is unreachable from this gateway
@@ -742,6 +749,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_requests_total",
 			Help: "Total gateway requests, labelled by app, plan, and HTTP status class.",
 		}, []string{"app", "plan", "code"}),
+		smokeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_smoke_challenge_total",
+			Help: "Deployment-smoke challenges received over pg_notify, labelled by outcome (stored, rejected).",
+		}, []string{"outcome"}),
+		smokeValidation: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_smoke_validation_total",
+			Help: "Deployment-smoke bypass authorizations, labelled by outcome (match, missing_token, no_challenge, expired, token_mismatch). Anything but match means the health path is edge-answered and the smoke sees an empty X-Faas-Deployment-Id.",
+		}, []string{"outcome"}),
 		notificationPayloadRejected: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_notification_payload_rejected_total",
 			Help: "Count of malformed cross-process notification payloads rejected by the gateway cache invalidator.",
@@ -1652,7 +1667,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1688,6 +1703,26 @@ func NewMetrics() *Metrics {
 	})
 	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
 	return m
+}
+
+// ObserveSmokeChallenge records a deployment-smoke challenge arriving over
+// pg_notify. outcome is "stored" or "rejected". Nil-safe.
+func (m *Metrics) ObserveSmokeChallenge(outcome string) {
+	if m == nil || m.smokeChallenge == nil {
+		return
+	}
+	m.smokeChallenge.WithLabelValues(outcome).Inc()
+}
+
+// ObserveSmokeValidation records the outcome of a deployment-smoke bypass
+// check. Anything other than "match" means the health path was edge-answered
+// without the platform deployment header, which fails the post-readiness
+// smoke with an empty served deployment. Nil-safe.
+func (m *Metrics) ObserveSmokeValidation(outcome string) {
+	if m == nil || m.smokeValidation == nil {
+		return
+	}
+	m.smokeValidation.WithLabelValues(outcome).Inc()
 }
 
 // ObserveRouteLookupStaleServed (ADR-190) increments

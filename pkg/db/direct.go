@@ -44,6 +44,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -59,12 +60,35 @@ import (
 // this one at the postmaster.
 const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 
-// directMaxConns caps the session-scoped pool. It is deliberately small: with
-// the ADR-190 hub a daemon parks exactly one LISTEN connection, and the two
-// advisory-lock sites are a per-app edge-rule mutation and a once-per-boot
-// migration. Four leaves room for both plus a spare without re-inflating the
-// per-daemon budget the split exists to shrink.
-const directMaxConns int32 = 4
+// directHubOnMaxConns caps the session-scoped pool while the ADR-190 notify
+// hub is active. The hub parks exactly ONE connection per pool no matter how
+// many channels the daemon subscribes to, and the only other session-scoped
+// work a compute daemon does is MigrateUp's advisory lock at boot. Two covers
+// both; anything larger re-inflates the very number the pooled fleet is
+// trying to shrink, because this budget is what postgres_capacity multiplies
+// across every node.
+const directHubOnMaxConns int32 = 2
+
+// directMaxConns resolves the session-scoped pool budget for the notify mode
+// this process runs in.
+//
+// With FAAS_DB_NOTIFY_HUB=0 the hub is gone and every subscriber parks its own
+// LISTEN connection — on the DIRECT pool, since that is where LISTEN now
+// resolves. apid, schedd and gatewayd-internal each subscribe from more than
+// twenty call sites, so a small fixed cap would block them partway through
+// their subscriptions and they would never reach sd_notify(READY=1). That is
+// the same coupling the ordinary pool has, so it takes the same table: the
+// kill switch stays a rollback rather than becoming a second outage.
+func directMaxConns(appName string) int32 {
+	if notifyHubEnabled() {
+		return directHubOnMaxConns
+	}
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
+	if limit, ok := DaemonMaxConnectionsNotifyHubDisabled[name]; ok {
+		return limit
+	}
+	return defaultMaxConnections
+}
 
 var (
 	directMu    sync.RWMutex
@@ -128,7 +152,7 @@ func openDirect(ctx context.Context, appName string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: parse %s: %w", DirectDSNEnv, err)
 	}
-	cfg.MaxConns = directMaxConns
+	cfg.MaxConns = directMaxConns(appName)
 	cfg.MinConns = 0
 	// No MaxConnIdleTime: a LISTEN connection is idle by definition between
 	// notifications, and reaping it would make the hub reconnect on a timer.

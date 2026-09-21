@@ -159,11 +159,45 @@ func TestScalingConfigValidation(t *testing.T) {
 	}{
 		{"negative min", &ScalingConfig{MinInstances: &min}, "min_instances"},
 		{"max below min", &ScalingConfig{MinInstances: manifestIntPtr(2), MaxInstances: &max}, "max_instances"},
-		{"bad metric", &ScalingConfig{Target: &ScalingTarget{Metric: "cpu"}}, "target.metric"},
+		// adr: 194 — "cpu" used to be this case's example of an invalid
+		// metric. It is now a first-class target, so the case needs a name
+		// that is genuinely outside the closed set.
+		{"bad metric", &ScalingConfig{Target: &ScalingTarget{Metric: "memory"}}, "target.metric"},
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
 		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
 		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
 		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
+		// adr: 194 — p99_latency_ms validated for releases with no source
+		// behind it. The rejection must name the replacement.
+		{"phantom latency metric", &ScalingConfig{Target: &ScalingTarget{Metric: "p99_latency_ms", Value: 250}}, "concurrent_requests"},
+		{"phantom latency metric in list", &ScalingConfig{Targets: []ScalingTarget{{Metric: "p99_latency_ms", Value: 250}}}, "concurrent_requests"},
+		{"target and targets both set", &ScalingConfig{
+			Target:  &ScalingTarget{Metric: "cpu", Value: 70},
+			Targets: []ScalingTarget{{Metric: "rps", Value: 50}},
+		}, "not both"},
+		{"duplicate metric in list", &ScalingConfig{Targets: []ScalingTarget{
+			{Metric: "cpu", Value: 70}, {Metric: "cpu", Value: 80},
+		}}, "more than once"},
+		{"zero value in list", &ScalingConfig{Targets: []ScalingTarget{{Metric: "cpu", Value: 0}}}, "must be > 0"},
+		{"cpu above 100", &ScalingConfig{Targets: []ScalingTarget{{Metric: "cpu", Value: 140}}}, "<= 100"},
+		{"missing metric name", &ScalingConfig{Target: &ScalingTarget{Value: 5}}, "target.metric is required"},
+		// adr: 195 — scheduled scaling floors.
+		{"schedule bad cron", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "every morning", Duration: "1h", MinInstances: 1},
+		}}, "not a valid five-field cron"},
+		{"schedule bad duration", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * *", Duration: "half a day", MinInstances: 1},
+		}}, "not a valid duration"},
+		{"schedule duration too short", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * *", Duration: "10s", MinInstances: 1},
+		}}, "duration_s must be between"},
+		{"schedule zero floor", &ScalingConfig{Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * *", Duration: "1h", MinInstances: 0},
+		}}, "must be > 0"},
+		{"schedule bad timezone", &ScalingConfig{
+			Timezone:  "Mars/Olympus_Mons",
+			Schedules: []ScalingSchedule{{Cron: "0 8 * * *", Duration: "1h", MinInstances: 1}},
+		}, "not a valid IANA zone"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1180,5 +1214,36 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 				t.Fatalf("Validate error = %v, want substring %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// adr: 195 — a valid schedule must survive Validate and land on the wire
+// shape with its duration converted to seconds.
+func TestScalingConfig_SchedulesToAPI(t *testing.T) {
+	cfg := &ScalingConfig{
+		Timezone: "Europe/Istanbul",
+		Schedules: []ScalingSchedule{
+			{Cron: "0 8 * * 1-5", Duration: "12h", MinInstances: 3},
+			{Cron: "0 2 * * *", Duration: "90m", MinInstances: 1},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	out := cfg.ToAPI()
+	if out.Timezone != "Europe/Istanbul" {
+		t.Errorf("timezone = %q, want Europe/Istanbul", out.Timezone)
+	}
+	if len(out.Schedules) != 2 {
+		t.Fatalf("schedules = %d, want 2", len(out.Schedules))
+	}
+	if out.Schedules[0].DurationS != 12*3600 {
+		t.Errorf("12h -> %d seconds, want %d", out.Schedules[0].DurationS, 12*3600)
+	}
+	if out.Schedules[1].DurationS != 90*60 {
+		t.Errorf("90m -> %d seconds, want %d", out.Schedules[1].DurationS, 90*60)
+	}
+	if out.Schedules[0].MinInstances != 3 || out.Schedules[0].Cron != "0 8 * * 1-5" {
+		t.Errorf("schedule[0] = %+v, want the manifest values", out.Schedules[0])
 	}
 }

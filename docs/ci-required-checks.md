@@ -16,127 +16,58 @@ gh api repos/poyrazK/faas/rulesets/19061133
 
 ## Currently required
 
-| Job name (exact)                          | Protects                                | Where in ci.yml       | Ruleset entry added |
-|-------------------------------------------|-----------------------------------------|-----------------------|---------------------|
-| `spec-check (OpenAPI lint + AST parity)`  | `api/openapi.yaml` ↔ `pkg/apid/openapi.yaml` drift (issue #745) | `ci.yml:426-481`      | 2026-08-08 / ADR-085 |
-
-## Next up (planned, not yet required)
-
-These CI jobs catch real drift but cannot be flipped to required until
-the open PR backlog clears (audit 2026-08-08: #763, #762, #761, #754,
-#753 were red on `lint + build`; #754 was also red on `CodeQL`; #753
-was red on `unit tests (pg shard 2)`).
-
-| Job name (exact)                                            | Protects                                  | Where in ci.yml   |
-|-------------------------------------------------------------|-------------------------------------------|-------------------|
-| `lint + build`                                              | golangci-lint v2.4.0 + gofmt repo-wide    | `ci.yml:70`       |
-| `unit tests (pg shard 1 — apid/meter/migrations)`          | apid + meter + migrations + db + alerts   | `ci.yml:222`      |
-| `unit tests (pg shard 2a — state/reconcile/reposcan)`       | pkg/state + reconcile + reposcan         | `ci.yml:461-545`  |
-| `unit tests (pg shard 2b — gregale/gregalectl/daemons)`     | gregale + gregalectl + meterd + schedd    | `ci.yml:461-545`  |
-| `unit tests (pure Go shard 1 — sched/fcvm/gateway)`        | sched + fcvm + gateway (-race)             | `ci.yml:~350`     |
-| `unit tests (pure Go shard 2 — light packages)`            | the rest of the race-enabled tree         | `ci.yml:~380`     |
-| `CodeQL`                                                    | CodeQL SARIF (security gate)              | `codeql.yml`      |
-| `supply-chain-scan (govulncheck high+)`                     | Go vulnerability scan (HIGH+)             | `ci.yml:~900`     |
-| `migrations (IDs + apply)`                                 | Migration ID, replay, and ledger-set safety (ADR-142) | `ci.yml:~1030` |
-| `daemonunit-check (generated drift)`                        | `pkg/daemonunitspec/*.go` drift           | `ci.yml:~600`     |
-| `sqlc-check (generated drift)`                              | sqlc query drift                          | `ci.yml:~440`     |
-| `sdk-go build + test`                                       | sdk/go compilation + tests                | `ci.yml:~520`     |
-| `terraform provider build and test`                        | terraform-provider-gregale compilation + unit tests | `ci.yml:~525`     |
-| `sdk-node (gen-check + smoke + unit)`                       | sdk/node drift                            | `ci.yml:~540`     |
-| `sdk-python (gen-check + smoke + unit)`                     | sdk/python drift                          | `ci.yml:~580`     |
-| `proto-check`                                               | checked-in `*.pb.go` matches protoc       | `ci.yml:200-208`  |
-| `load (1k rps hot-path)`                                    | p50 regression under load (issue #266)    | `ci.yml:~700`     |
-| `workflow-lint (actionlint)`                                | Workflow YAML semantic lint               | `ci.yml:~1175`    |
-| `runtime-contract-gate`                                     | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml:runtime-contract-gate` |
-| `capabilities-check (product registry + matrix)`             | Product capability registry ↔ generated customer matrix drift | `ci.yml:~800` |
-| `customer docs and pricing`                                  | Generated plan pricing and customer docs URL catalog drift | `ci.yml:~885` |
-| `api-hosting-contract-check (framework fixtures)`             | Framework profile inference against production-shaped source fixtures | `ci.yml:~820` |
-
-Runtime OCI vulnerability scanning is enforced by the `images.yml` builder and
-runtime matrix jobs. Those jobs scan the exact locally-built or published
-artifacts; Dockerfile source text is not treated as an image scan.
-
-`builder native (Firecracker amd64)` runs in `builder-native.yml` after a
-successful `images` workflow on `main` that published `builder-base`, once per
-night, and by manual dispatch from `main`. Non-publishing image runs are skipped;
-scheduled and manual runs select the most recent successful publish. It
-authenticates to GCP with workflow-bound GitHub OIDC, transfers the exact source
-commit to the designated amd64 KVM host, and tests the matching
-`builder-base:sha-<commit>` image. It is a post-merge release signal rather than
-a pull-request status check because this public repository must not execute
-untrusted pull-request code with root access to a persistent compute node.
-Changes to `pkg/fcvm/builder_acceptance_metal_test.go` are included in the
-runtime change detector so the post-merge native gate publishes and tests the
-commit containing the updated acceptance fixture.
-
-`metal smoke (Firecracker amd64, nightly)` runs in the same trusted workflow
-after the nightly builder gate, and by manual dispatch from `main`. It packages
-the exact current `main` source and a pinned Go toolchain, builds fresh
-guest-init/base/layer fixtures on the host, and runs `TestMetalHelloBoot` plus
-the pre/post leak checks. It shares the builder gate's host lock, service
-quiescing, restoration, marker, and workflow-bound OIDC identity. It replaces
-the old `ci.yml` manual job that targeted a nonexistent `[self-hosted, kvm]`
-runner. This first slice is post-merge-only; untrusted pull-request code is not
-given root execution on the persistent compute node.
-
-Every successful Dockerfile and Railpack fixture must also complete its Grype
-scan. The hardened Python 3.13 runtime rejects every CRITICAL finding to match
-vmmd admission. Legacy runtime bases and builder artifacts retain their
-fixable-finding gates while their base migrations land separately. The shared
-policy lives in `scripts/ci/scan-oci-image.sh`.
-
-## How to update this table
-
-1. Rename the job in `.github/workflows/ci.yml`.
-2. In the same PR, update the relevant row(s) in this file.
-3. Apply the ruleset update via:
+Regenerate this table from the live ruleset rather than editing it by hand:
 
 ```
-gh api -X PUT repos/poyrazK/faas/rulesets/19061133 --input <new-body>.json
+gh api repos/poyrazK/faas/rulesets/19061133 \
+  --jq '.rules[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context'
 ```
 
-4. Verify the new name is recognised:
+| Job name (exact) | Protects | Where in ci.yml |
+|---|---|---|
+| `boot-contract (production config)` | Daemons boot from production-rendered config with production capabilities (issue #1529 / ADR-075) | `ci.yml:boot-contract` |
+| `checks (drift + contract gates)` | Generated-artifact drift plus the repo policy gates (env contract, spec-cited tests, migrations hygiene) | `ci.yml:checks` |
+| `e2e (shard 1 — 18 tests)` | Sharded `./cmd/e2e` — real daemons against real Postgres | `ci.yml:e2e-shard1` |
+| `e2e (shard 2 — 15 tests)` | Sharded `./cmd/e2e` | `ci.yml:e2e-shard2` |
+| `e2e (shard 3 — 24 tests)` | Sharded `./cmd/e2e` | `ci.yml:e2e-shard3` |
+| `e2e (shard 4 — 22 tests)` | Sharded `./cmd/e2e` | `ci.yml:e2e-shard4` |
+| `lint + build` | golangci-lint + gofmt + vet + build, repo-wide | `ci.yml:test` |
+| `load (1k rps hot-path)` | p50 regression under load (issue #266) | `ci.yml:load` |
+| `migrations (IDs + apply)` | Migration ID, replay, and ledger-set safety (ADR-142) | `ci.yml:migrations` |
+| `runtime-contract-gate` | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml` |
+| `sdk-node (gen-check + smoke + unit)` | sdk/node drift | `ci.yml:sdk-node` |
+| `sdk-python (gen-check + smoke + unit)` | sdk/python drift | `ci.yml:sdk-python` |
+| `unit tests (pg shard 1 — apid/meter/migrations)` | apid + meter + migrations + db + alerts | `ci.yml:unit-tests-pg-1` |
+| `unit tests (pg shard 2a — state/reconcile/reposcan)` | pkg/state + reconcile + reposcan | `ci.yml:unit-tests-pg-2` |
+| `unit tests (pg shard 2b — gregale/gregalectl/daemons)` | gregale + gregalectl + meterd + schedd | `ci.yml:unit-tests-pg-2` |
+| `unit tests (pure Go shard 1 — sched/fcvm/gateway)` | sched + fcvm + gateway (-race) | `ci.yml:unit-tests-pure-1` |
+| `unit tests (pure Go shard 2 — light packages)` | the rest of the race-enabled tree | `ci.yml:unit-tests-pure-2` |
 
-```
-gh api repos/poyrazK/faas/rulesets/19061133 | jq '.rules[] | select(.type=="required_status_checks")'
-```
+## Not required (deliberately or not yet)
 
-5. Open a throwaway drift PR to prove the new check actually gates merges.
+`spec-check (OpenAPI lint + AST parity)`, `CodeQL`, `supply-chain-scan
+(govulncheck high+)`, `proto-check`, `daemonunit-check`, `sqlc-check`, `sdk-go
+build + test`, `terraform provider build and test`, and `workflow-lint
+(actionlint)` run on every PR but do not block a merge. Several are folded into
+`checks (drift + contract gates)`, which is required; the standalone ones are
+not.
 
-## Local aggregator
+The metal gates (`e2e-native`, `builder-native`) are deliberately excluded:
+they run on dedicated hardware, are dispatch-only, and cannot gate a PR.
 
-`make pre-pr` runs the regenerate-and-diff subset of these checks
-locally, in this order: `spec-check` → `proto-check` → `sqlc-check`
-→ `egress-check` → `sdk-gen`. Does NOT cover CI-only jobs that need
-Postgres service containers.
+## Renaming a required job
 
-## `gregalectl` checks (issue #911 / ADR-110 PR-6.5)
+GitHub matches a status check by its exact `name:` string, so renaming a
+required job in `ci.yml` makes its context stop reporting — and a required
+context that never reports blocks every PR, including the one doing the rename.
 
-The operator CLI (`cmd/gregalectl/`) is referenced by Makefile, 5
-ansible roles, deployctl, and 4 e2e suites. CI pins its surface +
-behaviour through these checks. None of these is currently required
-on the ruleset (the `unit tests (pg shard N)` jobs cover them by
-transitive invocation: every `_test.go` under `cmd/gregalectl/` runs
-under one of the shards). They are listed here so a future rename or
-split does not silently lose a load-bearing gate.
+The rename therefore cannot be done in a single PR. The sequence is:
 
-| Check                                          | Protects                                                                 | Where it lives                                        |
-|------------------------------------------------|--------------------------------------------------------------------------|-------------------------------------------------------|
-| `make build-clis`                              | Both `gregale` + `gregalectl` compile cleanly                            | `Makefile:16-19`                                      |
-| `make manifest-ansible`                        | `gregalectl manifest ansible` renders the inventory + host_vars tree    | `Makefile:497-498`                                    |
-| `make manifest-scale-check`                    | Generated 1/10/100/1000-node topology + Ansible check-mode gate       | `Makefile:534-535`                                    |
-| `make native-m9-acceptance`                    | Native x86_64 two-node failure-safe smoke: validate → render → release install → doctor --deep | `Makefile:504-506` |
-| `commands_completion_test.go::TestCompletion_ManifestDrift` | `main.go` dispatcher ↔ `cli_meta.go` ↔ `commands_completion_test.go` tri-way drift | `cmd/gregalectl/commands_completion_test.go:23` |
-| `json_parity_test.go::TestJSONOutputHonored`   | Every `cmdXxx` that references `jsonOutput`/`jsonEnabled` is exercised by a test (Tier A8.2) | `cmd/gregalectl/json_parity_test.go:38`     |
-| `cmd/e2e/manifest_render_test.go`              | e2e golden path: manifest validate → render → daemon reload              | `cmd/e2e/manifest_render_test.go`                     |
-| `cmd/e2e/release_install_test.go`              | e2e golden path: release bundle → install → UPSERT compute_nodes        | `cmd/e2e/release_install_test.go`                     |
-| `cmd/e2e/image_role_mutation_test.go`          | e2e golden path: PR-B role mutation (drain → mutate → UPSERT)           | `cmd/e2e/image_role_mutation_test.go`                 |
-| `cmd/e2e/doctor_test.go`                       | e2e golden path: doctor finds expected drift findings on poisoned fixtures | `cmd/e2e/doctor_test.go`                         |
+1. remove the old context from ruleset `19061133`;
+2. merge the PR that renames the job;
+3. add the new context to the ruleset.
 
-When a future PR adds a new top-level command to `gregalectl`, the
-`TestCompletion_ManifestDrift` guard catches missing dispatch ↔
-manifest entries immediately. When a new `--json` arm is added, the
-`json_parity_test` extractor catches a missing `_test.go` exercise of
-that arm immediately. Both gates are intentional tripwires, not
-primary enforcement — the primary enforcement is the unit-test
-shards' failure when the new code does not compile or test.
+Step 1 leaves the branch briefly unprotected by that check, which is why the
+e2e shard names still carry stale test counts (`18/15/24/22` against roughly
+370 actual tests). Correcting them is a coordinated ruleset edit, not a code
+change, and is worth doing only alongside another required-check change.

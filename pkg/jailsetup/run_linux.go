@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -22,6 +23,7 @@ func Run(args []string) bool {
 	}
 	switch args[1] {
 	case "--setup-jail":
+		started := time.Now()
 		if len(args) != 8 {
 			fmt.Fprintln(os.Stderr, "vmmd: --setup-jail requires devTarget hostTunSrc tunTarget kvmPath uid gid")
 			os.Exit(2)
@@ -65,6 +67,7 @@ func Run(args []string) bool {
 			fmt.Fprintf(os.Stderr, "vmmd: chown kvm: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Printf("%s%d\n", SetupJailTimingPrefix, time.Since(started).Microseconds())
 		return true
 	case "--mount-dev":
 		if len(args) != 3 {

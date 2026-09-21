@@ -3,6 +3,10 @@
 # so it is an explicit operator decision per fleet, not a silent upgrade.
 faas_pgbouncer_enabled: false
 
+# Below this the pooler's fixed server pool costs more than it saves; see
+# roles/postgres_capacity/README.md for the crossover arithmetic.
+faas_pgbouncer_min_compute_nodes: 4
+
 faas_pgbouncer_listen_port: 6432
 # Compute nodes reach the pooler over the control-plane mesh address, the same
 # one faas_postgres_listen_addresses already publishes for the postmaster.

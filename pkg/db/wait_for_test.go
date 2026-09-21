@@ -59,8 +59,16 @@ func TestWaitForNotification_Timeout(t *testing.T) {
 	if elapsed < 200*time.Millisecond {
 		t.Errorf("elapsed = %v, want >= 200ms (timeout should have been respected)", elapsed)
 	}
-	if elapsed > 2*time.Second {
-		t.Errorf("elapsed = %v, want < 2s (timeout should not have taken much longer)", elapsed)
+	// The upper bound only has to separate "the 250ms timeout fired" from "the
+	// 5s context deadline fired", and errors.Is above already proves which one
+	// it was. A tight ceiling here measures how loaded the runner is, not what
+	// the helper does: dialling and establishing a LISTEN on a CI box running
+	// four e2e shards beside a containerised Postgres can eat well over a
+	// second before the timer is even armed. That is what made this fail on
+	// main and redden unrelated PRs.
+	if elapsed >= 5*time.Second {
+		t.Errorf("elapsed = %v, want < 5s — the wait ran to the context deadline "+
+			"instead of returning on its own timeout", elapsed)
 	}
 }
 
@@ -75,17 +83,37 @@ func TestWaitForNotification_PredicateNoMatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Resend the pair until the waiter returns, rather than firing each once on
+	// a timer.
+	//
+	// A one-shot send races the thing under test: WaitForNotification only
+	// hears a payload once its LISTEN is established, and a notification
+	// delivered before that is gone for good. Under CI load the setup can
+	// outlast a 300ms timer, both sends land in the void, and the test fails
+	// having proved nothing about the predicate.
+	//
+	// Every round still delivers the non-matching payload before the matching
+	// one, so the contract under test — the helper keeps waiting past a
+	// non-match — is exercised exactly as before, without the timing bet.
+	done := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		time.Sleep(100 * time.Millisecond)
-		_ = Notify(ctx, pool, ch, `{"invocation_id":"other-1"}`)
-	}()
-	go func() {
-		defer wg.Done()
-		time.Sleep(300 * time.Millisecond)
-		_ = Notify(ctx, pool, ch, `{"invocation_id":"target-9"}`)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			_ = Notify(ctx, pool, ch, `{"invocation_id":"other-1"}`)
+			_ = Notify(ctx, pool, ch, `{"invocation_id":"target-9"}`)
+			select {
+			case <-done:
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 	}()
 
 	payload, err := WaitForNotification(ctx, pool, ch,
@@ -94,10 +122,11 @@ func TestWaitForNotification_PredicateNoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForNotification: %v", err)
 	}
+	close(done)
+	wg.Wait()
 	if !strings.Contains(payload, "target-9") {
 		t.Errorf("payload = %q, want contains target-9 (must be the SECOND notification)", payload)
 	}
-	wg.Wait()
 }
 
 // TestWaitForNotification_CtxCancel cancels the caller's context mid-wait;

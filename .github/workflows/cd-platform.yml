@@ -9,6 +9,15 @@ name: cd-platform
 on:
   workflow_dispatch:
     inputs:
+      rollback_on_gate_failure:
+        description: >-
+          Roll the control plane back to the previous release when a
+          post-activation gate fails. DEFAULT OFF: the acceptance gate has
+          never had a green run (0 successes in cd-platform's history), so
+          enabling this today rolls back every deploy. Turn it on once
+          cd-platform has passed once.
+        type: boolean
+        default: false
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -456,6 +465,13 @@ jobs:
             "env RELEASE_SHA='${DESIRED_RELEASE}' RUN_ID='${GITHUB_RUN_ID_VALUE}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh
 
+      # OFF BY DEFAULT — see the rollback_on_gate_failure input. The acceptance
+      # gate below it has never had a green run (0 successes across
+      # cd-platform's entire history), so an unconditional `if: failure()`
+      # would roll back every single deploy. That was not the intent when the
+      # step was added in #3177; it assumed a failing gate was exceptional
+      # rather than the steady state.
+      #
       # Every gate above runs AFTER deployctl has already activated the release
       # and returned success, so until now a failure left the bad release
       # serving and the documented remedy was "rerun CD".
@@ -473,7 +489,7 @@ jobs:
       # systemd. If the release is broken badly enough that its controller will
       # not run, the else branch below says so rather than reporting recovery.
       - name: Roll back the platform release on gate failure
-        if: failure()
+        if: failure() && inputs.rollback_on_gate_failure
         run: |
           set -euo pipefail
           # `if: failure()` fires for ANY earlier step in this job, including

@@ -787,10 +787,15 @@ type RenameAppRequest struct {
 //	  [MinInstances, plan.MaxConcurrency]. Hobby+ unlocked at PR-A
 //	  time. 0 = "use plan max_concurrency".
 //	Target: the per-instance signal the engine watches for the
-//	  scale-up trigger. Closed metric set: "rps" |
-//	  "concurrent_requests" | "queue_depth" | "p99_latency_ms". Empty Metric =
+//	  scale-up trigger. Closed metric set: "rps" | "cpu" |
+//	  "concurrent_requests" | "queue_depth". Empty Metric =
 //	  "disabled" (the engine falls back to the legacy
 //	  autoscale_target_rps / autoscale_target_cpu_pct columns).
+//	  Superseded by Targets (ADR-194); still accepted and read as a
+//	  one-element list.
+//	Targets: the multi-signal form. Every entry is evaluated and the
+//	  platform provisions for the maximum desired count. Mutually
+//	  exclusive with Target.
 //	ScaleOutCooldownS: minimum seconds between two scale-out
 //	  events. Floor 1 (no `0` traps); ceiling 3600 (1 h).
 //	ScaleInCooldownS: minimum seconds between two scale-in events.
@@ -802,11 +807,17 @@ type RenameAppRequest struct {
 // semantics. The handler rejects the JSON `null` value via strict
 // UnmarshalJSON.
 type ScalingPolicy struct {
-	MinInstances      int            `json:"min_instances,omitempty"`
-	MaxInstances      int            `json:"max_instances,omitempty"`
-	Target            *ScalingTarget `json:"target,omitempty"`
-	ScaleOutCooldownS int            `json:"scale_out_cooldown_s,omitempty"`
-	ScaleInCooldownS  int            `json:"scale_in_cooldown_s,omitempty"`
+	MinInstances int            `json:"min_instances,omitempty"`
+	MaxInstances int            `json:"max_instances,omitempty"`
+	Target       *ScalingTarget `json:"target,omitempty"`
+	// Targets is the ADR-194 multi-signal form. Each entry states how much
+	// load one instance should carry on that metric; the scheduler
+	// provisions for the maximum desired count across every entry and owns
+	// the combination itself. Mutually exclusive with Target — the handler
+	// rejects a body that sets both rather than guessing a precedence.
+	Targets           []ScalingTarget `json:"targets,omitempty"`
+	ScaleOutCooldownS int             `json:"scale_out_cooldown_s,omitempty"`
+	ScaleInCooldownS  int             `json:"scale_in_cooldown_s,omitempty"`
 	// ConcurrencyOverflow controls what happens when the app's
 	// concurrency boundary is saturated. Empty and "queue" preserve the
 	// legacy bounded-wait behavior; "drop" rejects immediately with 429.
@@ -820,6 +831,15 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
 	// uses the plan default; positive values are capped at 60 seconds.
 	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
+	// Timezone is the IANA zone every schedule's cron is evaluated in
+	// (ADR-195). Empty means UTC.
+	Timezone string `json:"timezone,omitempty"`
+	// Schedules raise the warm floor for recurring windows (ADR-195).
+	// Each entry is a cron fire plus a duration; while the window is open
+	// the app's min_instances is at least the entry's value. Schedules
+	// only ever raise the floor — they cannot lower one or cap
+	// max_instances.
+	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 	// unknownFields is the set of unknown JSON keys encountered
 	// during a strict Unmarshal. Stored as a one-shot value so
 	// the validator can surface a single error without
@@ -835,6 +855,33 @@ type ScalingPolicy struct {
 type ScalingTarget struct {
 	Metric string  `json:"metric,omitempty"`
 	Value  float64 `json:"value,omitempty"`
+}
+
+// ScalingSchedule is one recurring window that raises the warm floor
+// (ADR-195). Cron is a five-field expression evaluated in the policy's
+// Timezone; each fire opens a window of DurationS seconds during which the
+// app's floor is at least MinInstances.
+type ScalingSchedule struct {
+	Cron         string `json:"cron,omitempty"`
+	DurationS    int    `json:"duration_s,omitempty"`
+	MinInstances int    `json:"min_instances,omitempty"`
+}
+
+// EffectiveTargets projects the policy onto the ADR-194 multi-signal form:
+// Targets when set, otherwise the singular Target as one element. Mirrors
+// state.ScalingPolicy.EffectiveTargets so the wire and the store agree on
+// what "the app's declared signals" means.
+func (s *ScalingPolicy) EffectiveTargets() []ScalingTarget {
+	if s == nil {
+		return nil
+	}
+	if len(s.Targets) > 0 {
+		return s.Targets
+	}
+	if s.Target != nil && s.Target.Metric != "" {
+		return []ScalingTarget{*s.Target}
+	}
+	return nil
 }
 
 // UnmarshalJSON implements a strict decoder for ScalingPolicy:
@@ -860,12 +907,15 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"min_instances":               {},
 		"max_instances":               {},
 		"target":                      {},
+		"targets":                     {},
 		"scale_out_cooldown_s":        {},
 		"scale_in_cooldown_s":         {},
 		"concurrency_overflow":        {},
 		"max_queue_wait_ms":           {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
+		"timezone":                    {},
+		"schedules":                   {},
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
