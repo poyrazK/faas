@@ -4204,7 +4204,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/CustomMetricRequest' }
       responses:
-        '204': { description: Stored. }
+        '204':
+          description: "The gauge was stored and is now visible to the scheduler on its next tick."
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/CustomMetricInvalid' }
@@ -4214,7 +4215,8 @@ paths:
       description: "Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true, and a 404 would make a retry of a successful delete look like a failure."
       tags: [apps]
       responses:
-        '204': { description: Deleted, or already absent. }
+        '204':
+          description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
         '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/metrics:
     parameters:
