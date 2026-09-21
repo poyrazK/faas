@@ -2109,7 +2109,17 @@ type DeploymentResponse struct {
 	StageState json.RawMessage `json:"stage_state,omitempty"`
 	ID         string          `json:"id"`
 	AppID      string          `json:"app_id"`
-	BuildID    string          `json:"build_id,omitempty"`
+	// Revision (ADR-195) is the per-app deployment number rendered as
+	// `v42` by the CLI and dashboard, and accepted anywhere this API
+	// takes a deployment id. It is the same N that appears in the
+	// deploy-{N}-{slug} preview hostname.
+	//
+	// omitempty on purpose: a zero means the row predates the column or
+	// was written by a path that bypassed CreateDeployment, and emitting
+	// `"revision": 0` would render as a misleading `v0`. Consumers must
+	// treat an absent revision as "address this deployment by id".
+	Revision int    `json:"revision,omitempty"`
+	BuildID  string `json:"build_id,omitempty"`
 	// BuildCacheStatus and CacheKeySHA256 mirror the associated build's
 	// durable cache decision. They are populated on deployment detail reads
 	// after builderd reaches the cache lookup.

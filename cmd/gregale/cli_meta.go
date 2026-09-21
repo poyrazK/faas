@@ -1386,7 +1386,7 @@ var cliCommands = []cliCommand{
 		Short:       "Re-promote the previous deployment",
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
-			{Name: "to", Short: "target deployment id", Value: "deployment_id"},
+			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},
 			{Name: "json", Short: "machine-readable output"},
 		},
 	},
@@ -1598,7 +1598,8 @@ var cliCommands = []cliCommand{
 				Name:  "set",
 				Short: "Set the traffic split for a deployment",
 				Flags: []cliFlag{
-					{Name: "deployment", Short: "deployment id to set the traffic split on", Req: true, Value: "ID"},
+					{Name: "app", Short: "app slug; required when --deployment is a vN revision", Value: "SLUG"},
+					{Name: "deployment", Short: "deployment id or vN revision to set the traffic split on", Req: true, Value: "ID"},
 					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
 				},
 			},

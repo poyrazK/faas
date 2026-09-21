@@ -2401,6 +2401,7 @@ CREATE TABLE public.deployments (
     snapshot_miss_backoff_until timestamp with time zone,
     api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
     inferred_profile jsonb,
+    revision integer DEFAULT 0 NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -2416,6 +2417,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
     CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
     CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
@@ -6151,6 +6153,20 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployments_app_idx ON public.deployments USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: deployments_app_revision_desc_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_app_revision_desc_idx ON public.deployments USING btree (app_id, revision DESC);
+
+
+--
+-- Name: deployments_app_revision_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_app_revision_uniq ON public.deployments USING btree (app_id, revision) WHERE (revision > 0);
 
 
 --

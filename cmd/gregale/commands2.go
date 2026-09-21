@@ -3708,7 +3708,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -3900,7 +3900,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 // than silently PATCHing the wrong row.
 func cmdTrafficSet(args []string) int {
 	fs := newFlagSet("traffic set", flag.ContinueOnError)
-	deployment := fs.String("deployment", "", "deployment id to set the traffic split on")
+	// --app is optional: it is only needed to resolve a `v42` revision
+	// handle (ADR-195), because this endpoint is addressed by deployment
+	// id alone and carries no app context. Passing a uuid keeps working
+	// with no --app, so the pre-ADR-195 invocation is unchanged.
+	app := fs.String("app", "", "app slug (required when --deployment is a vN revision)")
+	deployment := fs.String("deployment", "", "deployment id or vN revision to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -3909,21 +3914,25 @@ func cmdTrafficSet(args []string) int {
 		return 1
 	}
 	if *deployment == "" || *percent < 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic set --deployment <id> --percent N", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic set [--app <slug>] --deployment <id|vN> --percent N", "traffic")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	dep, err := client.PatchDeploymentsIdTraffic(context.Background(), *deployment, *percent)
+	deploymentID, err := resolveDeploymentRef(context.Background(), client, *app, *deployment)
+	if err != nil {
+		return printErr("Traffic set failed", err)
+	}
+	dep, err := client.PatchDeploymentsIdTraffic(context.Background(), deploymentID, *percent)
 	if err != nil {
 		return printErr("Traffic set failed", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(dep))
 	}
-	PrintOK(osStdout, "Set %s → %d%%", dep.ID, dep.TrafficPercent)
+	PrintOK(osStdout, "Set %s → %d%%", deploymentLabel(dep), dep.TrafficPercent)
 	return 0
 }
 
@@ -3964,11 +3973,19 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "DEPLOYMENT\tSTATUS\tTRAFFIC")
+	// ADR-195: lead with the revision, because that is the handle the
+	// operator types back into `traffic set` / `rollback`. The id stays
+	// in the table so a pre-ADR-195 row (revision 0) is still
+	// addressable and so scripts parsing this output keep working.
+	_, _ = fmt.Fprintln(osStdout, "REVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC")
 	for _, deployment := range live {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d%%\n", deployment.ID, deployment.Status, deployment.TrafficPercent)
+		revision := renderRevision(deployment.Revision)
+		if revision == "" {
+			revision = "-"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d%%\n", revision, deployment.ID, deployment.Status, deployment.TrafficPercent)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total\t\t%d%%\n", total)
+	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
 }
 

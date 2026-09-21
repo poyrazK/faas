@@ -197,7 +197,6 @@ DeleteTenantSurface
 DeleteTrigger
 DeleteTriggerRecordsByIDs
 DeploymentClearSnapshotBackoff
-DeploymentOrdinal
 DeploymentRecordSnapshotMiss
 DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive

@@ -1995,6 +1995,17 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	mode := "latest_superseded"
 	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
 		mode = "explicit"
+		// ADR-195 — accept the customer-facing `v42` handle (or a bare
+		// `42`) in place of a uuid. Resolved here, inside the app scope,
+		// so a revision can only ever address a deployment of the app
+		// named in the request path; the IDOR posture is unchanged.
+		// Every downstream error message keeps echoing the original
+		// reference so the operator sees the string they typed.
+		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
+		if problem != nil {
+			return state.Deployment{}, problem
+		}
+		req.TargetDeploymentID = &resolved
 		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
 		if err != nil {
 			switch {
@@ -4816,6 +4827,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
 		AppID:             d.AppID,
+		Revision:          d.Revision, // ADR-195 — the `v42` handle.
 		BuildID:           d.BuildID,
 		ImageDigest:       d.ImageDigest,
 		Kind:              string(d.Kind),

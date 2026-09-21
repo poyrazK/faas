@@ -1832,11 +1832,11 @@ Rotate, finalize, or inspect static bearer auth (auth rotate|finalize|status)
 
 Re-promote the previous deployment
 
-`gregale rollback <slug> [--to <deployment_id>] [--json]`
+`gregale rollback <slug> [--to <deployment_id|vN>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--to <deployment_id>` | target deployment id |  |
+| `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--json` | machine-readable output |  |
 
 
@@ -2087,7 +2087,8 @@ Set the traffic split for a deployment
 
 | Flag | Meaning | |
 |---|---|---|
-| `--deployment <ID>` | deployment id to set the traffic split on | required |
+| `--app <SLUG>` | app slug; required when --deployment is a vN revision |  |
+| `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
 ### traffic status
