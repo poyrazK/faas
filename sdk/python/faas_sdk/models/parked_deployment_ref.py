@@ -19,8 +19,8 @@ T = TypeVar("T", bound="ParkedDeploymentRef")
 class ParkedDeploymentRef:
     """Reference to a deployment that was parked (issue #554 / ADR-079 follow-up). Returned in
     AppResponse.parked_deployment when the app has at least one parked deployment. The `parked_reason` field is closed-
-    set (liveness_exhausted | lifecycle_park | admin_park) — enforced at the schema layer via the
-    deployments_parked_reason_check constraint from migration 00157.
+    set (liveness_exhausted | lifecycle_park | admin_park | security_scan_regressed) — enforced at the schema layer via
+    the deployments_parked_reason_check constraint.
 
     """
 

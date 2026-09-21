@@ -537,6 +537,7 @@ from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
 from .edge_rule_cache_action_vary_on_item import EdgeRuleCacheActionVaryOnItem
+from .edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
 from .edge_rule_cors_action import EdgeRuleCORSAction
 from .edge_rule_geo_action import EdgeRuleGeoAction
 from .edge_rule_header_op import EdgeRuleHeaderOp
@@ -555,6 +556,7 @@ from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
+from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
 from .edge_rule_route_action import EdgeRuleRouteAction
 from .edge_rule_suggestion import EdgeRuleSuggestion
@@ -1842,6 +1844,7 @@ __all__ = (
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
     "EdgeRuleCacheActionVaryOnItem",
+    "EdgeRuleCircuitBreakerAction",
     "EdgeRuleCORSAction",
     "EdgeRuleGeoAction",
     "EdgeRuleHeaderOp",
@@ -1860,6 +1863,7 @@ __all__ = (
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
     "EdgeRuleResponseValidateMode",
+    "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
     "EdgeRuleRouteAction",
     "EdgeRuleSuggestion",

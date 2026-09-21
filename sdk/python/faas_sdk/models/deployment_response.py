@@ -150,8 +150,8 @@ class DeploymentResponse:
         | None
         | Unset
     ) = UNSET
-    """Per-deployment parking reason (issue #554 / ADR-079 follow-up, migration 00157). Closed-set vocabulary
-    enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
+    """Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set
+    vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
     deployments — surfaced as no field on the wire via omitempty."""
     parked_at: datetime.datetime | None | Unset = UNSET
     """Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles). nil for
