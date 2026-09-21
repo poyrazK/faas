@@ -56,7 +56,7 @@ means Gregale has observed a successful RTT within the last 15 minutes; it is
 not a new connectivity test.
 
 Same-account apps can call one another as
-`http://APP_ID.svc.gregale:10080`. For external VPC resources, Pro and Scale
+`http://APP_SLUG.svc.gregale:10080`. For external VPC resources, Pro and Scale
 customers can record a provider-neutral attachment intent with `network attach`.
 The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
 Scale), returns `pending`, and keeps traffic blocked until a provider connector
@@ -158,6 +158,6 @@ gregale app APP_ID --visibility public
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
-`APP_ID.svc.gregale:10080`, where the service proxy enforces caller identity
+`APP_SLUG.svc.gregale:10080`, where the service proxy enforces caller identity
 and same-account authorization. Visibility changes are audited and invalidate
 the gateway route cache.
