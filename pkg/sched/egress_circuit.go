@@ -52,12 +52,18 @@ func (u EgressUpstream) key() string {
 	return u.AppID + "\x00" + u.Hash + "\x00" + fmt.Sprint(u.Port)
 }
 
-// EgressCircuitApplier installs and removes reject rules in the netns of every
-// live instance of an app. The production implementation goes through vmmd,
-// which remains the only component that touches a network namespace.
+// EgressCircuitApplier makes an app's open-circuit set exactly `targets` in
+// the netns of every live instance. The production implementation is
+// RoutedEgressCircuitApplier, which fans out through vmmd — the only
+// component that touches a network namespace.
+//
+// Whole-set, not open/close deltas, because `nft delete element` errors when
+// the element is absent: after a vmmd restart the netns is re-rendered with
+// an empty set while the breaker still believes circuits are open, so a
+// delete-based close would fail forever against a set that was already in the
+// desired state. Pushing the full set converges from any prior state.
 type EgressCircuitApplier interface {
-	OpenEgressCircuit(ctx context.Context, appID string, target netns.EgressCircuitTarget) error
-	CloseEgressCircuit(ctx context.Context, appID string, target netns.EgressCircuitTarget) error
+	ApplyEgressCircuits(ctx context.Context, appID string, targets []netns.EgressCircuitTarget) error
 }
 
 // EgressResolver maps an upstream host to the address the guest would reach.
@@ -75,11 +81,13 @@ type EgressCircuitBreaker struct {
 	onChange func(appID, hash string, from, to circuit.State)
 
 	mu sync.Mutex
-	// open tracks the target currently installed per key, so a close
-	// deletes exactly the element that was added. nft errors on deleting a
-	// element that is not present, and re-resolving at close time could
-	// produce a different address after a DNS change.
-	open map[string]netns.EgressCircuitTarget
+	// open tracks the installed target per breaker key, grouped by app.
+	// Grouped because the applier takes an app's WHOLE set: a transition on
+	// one upstream has to re-push the union of that app's open circuits.
+	// Keeping the resolved target (rather than re-resolving at push time)
+	// means a DNS change mid-open cannot silently retarget a rule; the next
+	// half-open probe re-resolves.
+	open map[string]map[string]netns.EgressCircuitTarget
 }
 
 // NewEgressCircuitBreaker builds a breaker over circuit.EgressConfig. A nil
@@ -93,7 +101,7 @@ func NewEgressCircuitBreaker(applier EgressCircuitApplier, resolve EgressResolve
 		applier: applier,
 		resolve: resolve,
 		log:     log,
-		open:    make(map[string]netns.EgressCircuitTarget),
+		open:    make(map[string]map[string]netns.EgressCircuitTarget),
 	}
 	b.group = circuit.NewGroup(circuit.EgressConfig(), nil)
 	return b
@@ -158,23 +166,36 @@ func (b *EgressCircuitBreaker) reconcile(ctx context.Context, up EgressUpstream,
 		return nil // report-only
 	}
 	key := up.key()
+
 	b.mu.Lock()
-	installed, isInstalled := b.open[key]
+	_, installed := b.open[up.AppID][key]
 	b.mu.Unlock()
 
 	switch state {
 	case circuit.StateOpen, circuit.StateHalfOpen:
-		if isInstalled {
+		if installed {
 			return nil
 		}
 		return b.openCircuit(ctx, up, key)
 	case circuit.StateClosed:
-		if !isInstalled {
+		if !installed {
 			return nil
 		}
-		return b.closeCircuit(ctx, up, key, installed)
+		return b.closeCircuit(ctx, up, key)
 	}
 	return nil
+}
+
+// appTargetsLocked returns the union of an app's open circuits. Caller holds
+// b.mu.
+func (b *EgressCircuitBreaker) appTargetsLocked(appID string) []netns.EgressCircuitTarget {
+	byKey := b.open[appID]
+	out := make([]netns.EgressCircuitTarget, 0, len(byKey))
+	for _, t := range byKey {
+		out = append(out, t)
+	}
+	sortEgressTargets(out)
+	return out
 }
 
 func (b *EgressCircuitBreaker) openCircuit(ctx context.Context, up EgressUpstream, key string) error {
@@ -195,24 +216,56 @@ func (b *EgressCircuitBreaker) openCircuit(ctx context.Context, up EgressUpstrea
 			"app", up.AppID, "upstream", up.Hash, "err", err)
 		return nil
 	}
-	if err := b.applier.OpenEgressCircuit(ctx, up.AppID, target); err != nil {
+
+	// Record first, then push the union. On a push failure the entry is
+	// rolled back so the breaker's view cannot drift ahead of the data plane
+	// and silently believe a dependency is being blocked when it is not.
+	b.mu.Lock()
+	if b.open[up.AppID] == nil {
+		b.open[up.AppID] = make(map[string]netns.EgressCircuitTarget)
+	}
+	b.open[up.AppID][key] = target
+	targets := b.appTargetsLocked(up.AppID)
+	b.mu.Unlock()
+
+	if err := b.applier.ApplyEgressCircuits(ctx, up.AppID, targets); err != nil {
+		b.mu.Lock()
+		delete(b.open[up.AppID], key)
+		if len(b.open[up.AppID]) == 0 {
+			delete(b.open, up.AppID)
+		}
+		b.mu.Unlock()
 		return fmt.Errorf("sched: egress circuit open %s: %w", up.Hash, err)
 	}
-	b.mu.Lock()
-	b.open[key] = target
-	b.mu.Unlock()
 	b.log.Warn("sched: egress circuit opened; connections will fail fast",
 		"app", up.AppID, "upstream", up.Hash, "port", up.Port)
 	return nil
 }
 
-func (b *EgressCircuitBreaker) closeCircuit(ctx context.Context, up EgressUpstream, key string, installed netns.EgressCircuitTarget) error {
-	if err := b.applier.CloseEgressCircuit(ctx, up.AppID, installed); err != nil {
+func (b *EgressCircuitBreaker) closeCircuit(ctx context.Context, up EgressUpstream, key string) error {
+	b.mu.Lock()
+	prior, had := b.open[up.AppID][key]
+	delete(b.open[up.AppID], key)
+	if len(b.open[up.AppID]) == 0 {
+		delete(b.open, up.AppID)
+	}
+	targets := b.appTargetsLocked(up.AppID)
+	b.mu.Unlock()
+
+	if err := b.applier.ApplyEgressCircuits(ctx, up.AppID, targets); err != nil {
+		// Restore so the next probe retries the close. Leaving it removed
+		// would mean the breaker believes the dependency is reachable while
+		// the reject rule is still installed — the worst of both states.
+		if had {
+			b.mu.Lock()
+			if b.open[up.AppID] == nil {
+				b.open[up.AppID] = make(map[string]netns.EgressCircuitTarget)
+			}
+			b.open[up.AppID][key] = prior
+			b.mu.Unlock()
+		}
 		return fmt.Errorf("sched: egress circuit close %s: %w", up.Hash, err)
 	}
-	b.mu.Lock()
-	delete(b.open, key)
-	b.mu.Unlock()
 	b.log.Info("sched: egress circuit closed",
 		"app", up.AppID, "upstream", up.Hash, "port", up.Port)
 	return nil
@@ -223,11 +276,15 @@ func (b *EgressCircuitBreaker) closeCircuit(ctx context.Context, up EgressUpstre
 func (b *EgressCircuitBreaker) Forget(ctx context.Context, up EgressUpstream) {
 	key := up.key()
 	b.mu.Lock()
-	installed, isOpen := b.open[key]
-	delete(b.open, key)
+	_, wasOpen := b.open[up.AppID][key]
+	delete(b.open[up.AppID], key)
+	if len(b.open[up.AppID]) == 0 {
+		delete(b.open, up.AppID)
+	}
+	targets := b.appTargetsLocked(up.AppID)
 	b.mu.Unlock()
-	if isOpen && b.applier != nil {
-		if err := b.applier.CloseEgressCircuit(ctx, up.AppID, installed); err != nil {
+	if wasOpen && b.applier != nil {
+		if err := b.applier.ApplyEgressCircuits(ctx, up.AppID, targets); err != nil {
 			b.log.Warn("sched: egress circuit: forget could not remove rule",
 				"app", up.AppID, "upstream", up.Hash, "err", err)
 		}
@@ -241,15 +298,24 @@ func (b *EgressCircuitBreaker) Forget(ctx context.Context, up EgressUpstream) {
 func (b *EgressCircuitBreaker) OpenCircuits() []netns.EgressCircuitTarget {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make([]netns.EgressCircuitTarget, 0, len(b.open))
-	for _, t := range b.open {
-		out = append(out, t)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Addr != out[j].Addr {
-			return out[i].Addr.String() < out[j].Addr.String()
+	var out []netns.EgressCircuitTarget
+	for _, byKey := range b.open {
+		for _, t := range byKey {
+			out = append(out, t)
 		}
-		return out[i].Port < out[j].Port
-	})
+	}
+	sortEgressTargets(out)
 	return out
+}
+
+// sortEgressTargets gives the pushed set a stable order, so an unchanged set
+// renders byte-identical argv and an operator diffing two pushes sees only
+// real changes.
+func sortEgressTargets(in []netns.EgressCircuitTarget) {
+	sort.Slice(in, func(i, j int) bool {
+		if in[i].Addr != in[j].Addr {
+			return in[i].Addr.String() < in[j].Addr.String()
+		}
+		return in[i].Port < in[j].Port
+	})
 }

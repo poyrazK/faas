@@ -12,26 +12,41 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
+// fakeApplier records every whole-set push. `pushes` is the sequence of
+// desired sets, which is what the production RPC actually receives.
 type fakeApplier struct {
-	opened []netns.EgressCircuitTarget
-	closed []netns.EgressCircuitTarget
+	pushes [][]netns.EgressCircuitTarget
 	err    error
 }
 
-func (f *fakeApplier) OpenEgressCircuit(_ context.Context, _ string, t netns.EgressCircuitTarget) error {
+func (f *fakeApplier) ApplyEgressCircuits(_ context.Context, _ string, targets []netns.EgressCircuitTarget) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.opened = append(f.opened, t)
+	cp := make([]netns.EgressCircuitTarget, len(targets))
+	copy(cp, targets)
+	f.pushes = append(f.pushes, cp)
 	return nil
 }
 
-func (f *fakeApplier) CloseEgressCircuit(_ context.Context, _ string, t netns.EgressCircuitTarget) error {
-	if f.err != nil {
-		return f.err
+// last returns the most recent pushed set, or nil when nothing was pushed.
+func (f *fakeApplier) last() []netns.EgressCircuitTarget {
+	if len(f.pushes) == 0 {
+		return nil
 	}
-	f.closed = append(f.closed, t)
-	return nil
+	return f.pushes[len(f.pushes)-1]
+}
+
+// opened reports the pushes that installed at least one circuit, which is the
+// shape the older per-target assertions used.
+func (f *fakeApplier) opened() int {
+	n := 0
+	for _, p := range f.pushes {
+		if len(p) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func staticResolver(addr string) EgressResolver {
@@ -62,14 +77,12 @@ func TestEgressBreakerOpensAfterSustainedProbeFailures(t *testing.T) {
 	if got := b.State(up); got != circuit.StateOpen {
 		t.Fatalf("state = %q, want open after 3 failed probes", got)
 	}
-	if len(applier.opened) != 1 {
-		t.Fatalf("opened = %v, want exactly one reject rule installed", applier.opened)
+	if applier.opened() != 1 {
+		t.Fatalf("pushes = %v, want exactly one push installing a circuit", applier.pushes)
 	}
-	if got := applier.opened[0].Addr.String(); got != "203.0.113.9" {
-		t.Fatalf("installed address = %q, want the resolved upstream", got)
-	}
-	if applier.opened[0].Port != 5432 {
-		t.Fatalf("installed port = %d, want 5432", applier.opened[0].Port)
+	last := applier.last()
+	if len(last) != 1 || last[0].Addr.String() != "203.0.113.9" || last[0].Port != 5432 {
+		t.Fatalf("pushed set = %v, want exactly the resolved upstream on :5432", last)
 	}
 }
 
@@ -87,8 +100,8 @@ func TestEgressBreakerIgnoresSingleFailure(t *testing.T) {
 	if got := b.State(up); got != circuit.StateClosed {
 		t.Fatalf("state = %q, want closed after one failure", got)
 	}
-	if len(applier.opened) != 0 {
-		t.Fatalf("opened = %v, want no enforcement on a single blip", applier.opened)
+	if applier.opened() != 0 {
+		t.Fatalf("pushes = %v, want no enforcement on a single blip", applier.pushes)
 	}
 }
 
@@ -108,16 +121,17 @@ func TestEgressBreakerKeepsRuleThroughHalfOpenTrial(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		_ = b.Observe(ctx, up, false)
 	}
-	if len(applier.opened) != 1 {
-		t.Fatalf("opened = %v, want one", applier.opened)
+	if applier.opened() != 1 {
+		t.Fatalf("pushes = %v, want one", applier.pushes)
 	}
+	pushesBefore := len(applier.pushes)
 	// A success while still inside the open interval is recorded but does
 	// not close the circuit, and must not disturb the installed rule.
 	if err := b.Observe(ctx, up, true); err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if len(applier.closed) != 0 {
-		t.Fatalf("closed = %v, want the rule to survive until the circuit actually closes", applier.closed)
+	if len(applier.pushes) != pushesBefore {
+		t.Fatalf("pushes = %v, want the set untouched until the circuit actually closes", applier.pushes)
 	}
 	if got := b.OpenCircuits(); len(got) != 1 {
 		t.Fatalf("OpenCircuits = %v, want the circuit still enforced", got)
@@ -135,8 +149,8 @@ func TestEgressBreakerDoesNotReinstallWhileOpen(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		_ = b.Observe(ctx, up, false)
 	}
-	if len(applier.opened) != 1 {
-		t.Fatalf("opened = %v, want exactly one install across repeated failures", applier.opened)
+	if applier.opened() != 1 {
+		t.Fatalf("pushes = %v, want exactly one install across repeated failures", applier.pushes)
 	}
 }
 
@@ -160,8 +174,8 @@ func TestEgressBreakerDoesNotEnforceWhenResolveFails(t *testing.T) {
 	if got := b.State(up); got != circuit.StateOpen {
 		t.Fatalf("state = %q, want open — state tracking is independent of enforcement", got)
 	}
-	if len(applier.opened) != 0 {
-		t.Fatalf("opened = %v, want nothing enforced without a resolved address", applier.opened)
+	if applier.opened() != 0 {
+		t.Fatalf("pushes = %v, want nothing enforced without a resolved address", applier.pushes)
 	}
 }
 
@@ -178,8 +192,8 @@ func TestEgressBreakerReportOnlyWithoutResolver(t *testing.T) {
 	if got := b.State(up); got != circuit.StateOpen {
 		t.Fatalf("state = %q, want open in report-only mode", got)
 	}
-	if len(applier.opened) != 0 {
-		t.Fatalf("opened = %v, want no enforcement in report-only mode", applier.opened)
+	if applier.opened() != 0 {
+		t.Fatalf("pushes = %v, want no enforcement in report-only mode", applier.pushes)
 	}
 }
 
@@ -196,8 +210,8 @@ func TestEgressBreakerForgetRemovesInstalledRule(t *testing.T) {
 		_ = b.Observe(ctx, up, false)
 	}
 	b.Forget(ctx, up)
-	if len(applier.closed) != 1 {
-		t.Fatalf("closed = %v, want the rule removed on Forget", applier.closed)
+	if got := applier.last(); len(got) != 0 {
+		t.Fatalf("final pushed set = %v, want empty after Forget", got)
 	}
 	if got := b.OpenCircuits(); len(got) != 0 {
 		t.Fatalf("OpenCircuits = %v, want empty", got)
@@ -245,8 +259,8 @@ func TestEgressBreakerIsolatesUpstreamsByPort(t *testing.T) {
 	if got := b.State(redis); got != circuit.StateClosed {
 		t.Fatalf("redis state = %q, want closed — one failing dependency must not break another", got)
 	}
-	if len(applier.opened) != 1 {
-		t.Fatalf("opened = %v, want only the failing upstream enforced", applier.opened)
+	if got := applier.last(); len(got) != 1 || got[0].Port != 5432 {
+		t.Fatalf("pushed set = %v, want only the failing upstream enforced", got)
 	}
 }
 
@@ -268,8 +282,8 @@ func TestEgressBreakerClosesAndRemovesRuleAfterRecovery(t *testing.T) {
 	if got := b.State(up); got == circuit.StateClosed {
 		t.Fatalf("state = %q, want open or half_open after 3 failed probes", got)
 	}
-	if len(applier.opened) != 1 {
-		t.Fatalf("opened = %v, want the rule installed", applier.opened)
+	if applier.opened() != 1 {
+		t.Fatalf("pushes = %v, want the rule installed", applier.pushes)
 	}
 
 	// The upstream recovers; the next probe lands in half_open and closes it.
@@ -280,10 +294,128 @@ func TestEgressBreakerClosesAndRemovesRuleAfterRecovery(t *testing.T) {
 	if got := b.State(up); got != circuit.StateClosed {
 		t.Fatalf("state = %q, want closed after a successful half-open probe", got)
 	}
-	if len(applier.closed) != 1 {
-		t.Fatalf("closed = %v, want the rule removed exactly once on close", applier.closed)
+	if got := applier.last(); len(got) != 0 {
+		t.Fatalf("final pushed set = %v, want empty once the dependency is healthy again", got)
 	}
 	if got := b.OpenCircuits(); len(got) != 0 {
 		t.Fatalf("OpenCircuits = %v, want empty once the dependency is healthy again", got)
+	}
+}
+
+// Whole-set semantics: with two upstreams of one app open, every push must
+// carry BOTH. Pushing only the newly-transitioned one would flush the other
+// out of the set and silently un-break a dependency that is still down.
+func TestEgressBreakerPushesUnionOfAppCircuits(t *testing.T) {
+	applier := &fakeApplier{}
+	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	pg := EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db.example", Port: 5432}
+	redis := EgressUpstream{AppID: "app-1", Hash: "bbbb", Host: "cache.example", Port: 6379}
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		_ = b.Observe(ctx, pg, false)
+	}
+	for i := 0; i < 3; i++ {
+		_ = b.Observe(ctx, redis, false)
+	}
+
+	last := applier.last()
+	if len(last) != 2 {
+		t.Fatalf("final pushed set = %v, want both open circuits — a push must carry the app's union", last)
+	}
+	ports := map[int]bool{}
+	for _, tgt := range last {
+		ports[tgt.Port] = true
+	}
+	if !ports[5432] || !ports[6379] {
+		t.Fatalf("pushed ports = %v, want both 5432 and 6379", ports)
+	}
+}
+
+// Closing one of two open circuits must leave the other installed.
+func TestEgressBreakerCloseKeepsSiblingCircuit(t *testing.T) {
+	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	applier := &fakeApplier{}
+	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil).
+		WithClock(func() time.Time { return clock })
+	pg := EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db.example", Port: 5432}
+	redis := EgressUpstream{AppID: "app-1", Hash: "bbbb", Host: "cache.example", Port: 6379}
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		_ = b.Observe(ctx, pg, false)
+		_ = b.Observe(ctx, redis, false)
+		clock = clock.Add(30 * time.Second)
+	}
+	if got := applier.last(); len(got) != 2 {
+		t.Fatalf("pushed set = %v, want both circuits open", got)
+	}
+
+	// Postgres recovers; Redis is still down.
+	clock = clock.Add(30 * time.Second)
+	_ = b.Observe(ctx, pg, true)
+
+	last := applier.last()
+	if len(last) != 1 || last[0].Port != 6379 {
+		t.Fatalf("pushed set = %v, want only the still-failing redis circuit", last)
+	}
+}
+
+// Different apps must never share a pushed set — one tenant's broken
+// dependency cannot appear in another tenant's firewall.
+func TestEgressBreakerNeverMixesAppsInOnePush(t *testing.T) {
+	var seen []string
+	applier := &recordingAppApplier{}
+	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	a1 := EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db1.example", Port: 5432}
+	a2 := EgressUpstream{AppID: "app-2", Hash: "bbbb", Host: "db2.example", Port: 5433}
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		_ = b.Observe(ctx, a1, false)
+		_ = b.Observe(ctx, a2, false)
+	}
+	for _, p := range applier.pushes {
+		seen = append(seen, p.appID)
+		if len(p.targets) != 1 {
+			t.Fatalf("push for %s carried %d targets, want 1 — apps must not share a set", p.appID, len(p.targets))
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("no pushes recorded")
+	}
+}
+
+type appPush struct {
+	appID   string
+	targets []netns.EgressCircuitTarget
+}
+
+type recordingAppApplier struct{ pushes []appPush }
+
+func (r *recordingAppApplier) ApplyEgressCircuits(_ context.Context, appID string, targets []netns.EgressCircuitTarget) error {
+	cp := make([]netns.EgressCircuitTarget, len(targets))
+	copy(cp, targets)
+	r.pushes = append(r.pushes, appPush{appID: appID, targets: cp})
+	return nil
+}
+
+// A failed push must roll the breaker's view back, or it believes a
+// dependency is being blocked when the data plane never got the rule.
+func TestEgressBreakerRollsBackOnPushFailure(t *testing.T) {
+	applier := &fakeApplier{err: errors.New("vmmd unavailable")}
+	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	up := testUpstream()
+	ctx := context.Background()
+
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		lastErr = b.Observe(ctx, up, false)
+	}
+	if lastErr == nil {
+		t.Fatal("Observe returned nil after a failed push; the error must surface so the next probe retries")
+	}
+	if got := b.OpenCircuits(); len(got) != 0 {
+		t.Fatalf("OpenCircuits = %v, want empty — a failed push must not leave the breaker believing it enforced", got)
 	}
 }

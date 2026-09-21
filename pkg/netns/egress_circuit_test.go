@@ -88,7 +88,7 @@ func TestEgressCircuitRejectsRatherThanDrops(t *testing.T) {
 	}
 }
 
-func TestEgressCircuitElementCommands(t *testing.T) {
+func TestEgressCircuitSetCommands(t *testing.T) {
 	c := circuitConfig(true)
 	v4, err := ParseEgressCircuitTarget("203.0.113.9", 5432)
 	if err != nil {
@@ -99,40 +99,65 @@ func TestEgressCircuitElementCommands(t *testing.T) {
 		t.Fatalf("ParseEgressCircuitTarget v6: %v", err)
 	}
 
-	open := joinCmds(c.EgressCircuitOpenCommands([]EgressCircuitTarget{v4, v6}))
-	if len(open) != 2 {
-		t.Fatalf("open commands = %v, want one per address family", open)
+	cmds := joinCmds(c.EgressCircuitSetCommands([]EgressCircuitTarget{v4, v6}))
+	if len(cmds) != 4 {
+		t.Fatalf("commands = %v, want two flushes plus one add per family", cmds)
 	}
-	if !strings.Contains(open[0], "add element ip faas "+EgressCircuitSetName) ||
-		!strings.Contains(open[0], "203.0.113.9 . 5432") {
-		t.Fatalf("v4 open command = %q", open[0])
+	if !strings.Contains(cmds[0], "flush set ip faas "+EgressCircuitSetName) ||
+		!strings.Contains(cmds[1], "flush set ip6 faas "+EgressCircuitSetName) {
+		t.Fatalf("commands = %v, want both families flushed first", cmds)
 	}
-	if !strings.Contains(open[1], "add element ip6 faas "+EgressCircuitSetName) ||
-		!strings.Contains(open[1], "2001:db8::1 . 6379") {
-		t.Fatalf("v6 open command = %q", open[1])
+	if !strings.Contains(cmds[2], "add element ip faas") || !strings.Contains(cmds[2], "203.0.113.9 . 5432") {
+		t.Fatalf("v4 add = %q", cmds[2])
 	}
-
-	closed := joinCmds(c.EgressCircuitCloseCommands([]EgressCircuitTarget{v4}))
-	if len(closed) != 1 || !strings.Contains(closed[0], "delete element ip faas") {
-		t.Fatalf("close commands = %v, want a single v4 delete", closed)
+	if !strings.Contains(cmds[3], "add element ip6 faas") || !strings.Contains(cmds[3], "2001:db8::1 . 6379") {
+		t.Fatalf("v6 add = %q", cmds[3])
 	}
 	// Every command must run inside the instance's own netns; a circuit that
 	// leaked into the root namespace would break every tenant on the node.
-	for _, cmd := range append(open, closed...) {
+	for _, cmd := range cmds {
 		if !strings.HasPrefix(cmd, "ip netns exec "+c.Netns+" nft ") {
 			t.Fatalf("command %q does not execute inside the instance netns", cmd)
 		}
 	}
 }
 
-func TestEgressCircuitElementCommandsDisabledEmitNothing(t *testing.T) {
+// Closing every circuit is expressed as an empty desired set, which must
+// still flush. Emitting nothing would leave the previous elements installed
+// and the dependency permanently unreachable.
+func TestEgressCircuitSetCommandsEmptyStillFlushes(t *testing.T) {
+	cmds := joinCmds(circuitConfig(true).EgressCircuitSetCommands(nil))
+	if len(cmds) != 2 {
+		t.Fatalf("commands = %v, want exactly the two family flushes", cmds)
+	}
+	for _, cmd := range cmds {
+		if !strings.Contains(cmd, "flush set") {
+			t.Fatalf("command = %q, want a flush", cmd)
+		}
+	}
+}
+
+// Dropping from a v4+v6 set to v4-only must clear the v6 family too, or the
+// stale v6 element strands a circuit nothing is tracking.
+func TestEgressCircuitSetCommandsFlushesBothFamilies(t *testing.T) {
+	v4, _ := ParseEgressCircuitTarget("203.0.113.9", 5432)
+	cmds := joinCmds(circuitConfig(true).EgressCircuitSetCommands([]EgressCircuitTarget{v4}))
+	var sawV6Flush bool
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "flush set ip6 faas") {
+			sawV6Flush = true
+		}
+	}
+	if !sawV6Flush {
+		t.Fatalf("commands = %v, want the v6 family flushed even with a v4-only desired set", cmds)
+	}
+}
+
+func TestEgressCircuitSetCommandsDisabledEmitNothing(t *testing.T) {
 	c := circuitConfig(false)
 	tgt, _ := ParseEgressCircuitTarget("203.0.113.9", 5432)
-	if cmds := c.EgressCircuitOpenCommands([]EgressCircuitTarget{tgt}); len(cmds) != 0 {
-		t.Fatalf("disabled config emitted open commands: %v", cmds)
-	}
-	if cmds := c.EgressCircuitCloseCommands([]EgressCircuitTarget{tgt}); len(cmds) != 0 {
-		t.Fatalf("disabled config emitted close commands: %v", cmds)
+	if cmds := c.EgressCircuitSetCommands([]EgressCircuitTarget{tgt}); len(cmds) != 0 {
+		t.Fatalf("disabled config emitted commands: %v", cmds)
 	}
 }
 
@@ -145,12 +170,16 @@ func TestEgressCircuitSkipsInvalidTargets(t *testing.T) {
 	bad := EgressCircuitTarget{Port: 5432} // zero address
 	worse := EgressCircuitTarget{Addr: good.Addr, Port: 0}
 
-	cmds := joinCmds(c.EgressCircuitOpenCommands([]EgressCircuitTarget{good, bad, worse}))
-	if len(cmds) != 1 {
-		t.Fatalf("commands = %v, want only the valid target rendered", cmds)
+	cmds := joinCmds(c.EgressCircuitSetCommands([]EgressCircuitTarget{good, bad, worse}))
+	// Two flushes plus exactly one add carrying only the valid element.
+	if len(cmds) != 3 {
+		t.Fatalf("commands = %v, want two flushes and one add", cmds)
 	}
-	if strings.Count(cmds[0], ".") < 1 || !strings.Contains(cmds[0], "203.0.113.9 . 5432") {
-		t.Fatalf("command = %q, want only the valid element", cmds[0])
+	if !strings.Contains(cmds[2], "203.0.113.9 . 5432") {
+		t.Fatalf("command = %q, want the valid element", cmds[2])
+	}
+	if strings.Contains(cmds[2], "invalid") || strings.Count(cmds[2], " . ") != 1 {
+		t.Fatalf("command = %q, want ONLY the valid element — one malformed element fails the whole nft batch", cmds[2])
 	}
 
 	if _, err := ParseEgressCircuitTarget("not-an-ip", 5432); err == nil {

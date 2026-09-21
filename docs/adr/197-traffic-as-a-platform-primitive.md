@@ -209,10 +209,28 @@ probe outcomes instead of transport failures, whose open state adds one
 
 ### Mechanism
 
-`pkg/sched/egresscircuit` consumes `data_upstream_probes` (the probe
-already `pg_notify`s on insert for the ADR-098 affinity cache; the
-breaker subscribes to the same channel). Per `(app_id,
-host_redacted_hash, port)`:
+`pkg/sched` consumes `data_upstream_probes` by **polling at the probe's own
+cadence**, not by subscribing.
+
+An earlier draft of this ADR said the breaker would reuse an existing
+notify. That was wrong: `data_upstreams_changed` fires on the *capture*
+table, not on probe inserts, and `pkg/sched/upstream_affinity.go` records
+that schedd deliberately does not LISTEN on it. Adding a notify per probe
+row would put one notify per upstream per 30 s per app onto the same
+`pg_notify` pipe the wake path uses. A poll carries the same information
+for one indexed query per tick, and rebuilds breaker state after a schedd
+restart for free.
+
+Two properties the poll must have, both pinned by tests:
+
+- **Never re-fold the same row.** The breaker counts *observations*, so
+  re-observing one probe row on every tick would manufacture evidence and
+  trip a circuit on a single real sample.
+- **Ignore stale rows.** Past four probe intervals a verdict is treated as
+  unmeasured, so a stalled meterd cannot freeze a circuit on evidence
+  nobody is refreshing.
+
+Per `(app_id, host_redacted_hash, port)`:
 
 - `ok` → success. Anything else → failure. `tls_handshake` counts as a
   failure: the dependency is reachable but unusable.
@@ -236,10 +254,24 @@ host_redacted_hash, port)`:
   feature exists to remove. The guest never serves as the canary for its own
   dependency, and it never pays for the canary either.
 
-Rule installation is a new `vmmd` RPC alongside the existing netns
-surface; vmmd remains the only component that touches netns. Rules are
-keyed by instance and torn down with the netns, so a park/wake cycle
-cannot leak one — asserted by `make leakcheck`.
+Rule installation is `UpdateEgressCircuit`, a new `vmmd` RPC alongside the
+existing netns surface; vmmd remains the only component that touches netns.
+Rules are keyed by instance and torn down with the netns, so a park/wake
+cycle cannot leak one — asserted by `make leakcheck`.
+
+The RPC takes an app's **whole desired circuit set**, never a delta,
+mirroring `UpdateEgressAllowlist`. This is forced by nftables: `delete
+element` errors when the element is absent, so after a vmmd restart — which
+re-renders the netns with an empty set while schedd still believes circuits
+are open — every delete-based close would fail forever against a set that
+was already in the desired state. Flush-plus-add converges from any prior
+state, which makes a restart, a missed tick, or a partially-applied batch
+self-heal on the next reconcile instead of needing a repair path.
+
+Because the RPC is whole-set, a transition on one upstream re-pushes the
+union of that app's open circuits; the breaker therefore tracks open
+circuits grouped by app, and a failed push rolls its own view back so it
+can never believe it is enforcing a rule the data plane never received.
 
 ### Resolution and the hashed-host problem
 

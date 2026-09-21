@@ -91,25 +91,26 @@ func (c Config) egressCircuitRules(nft func(...string) []string, family string) 
 	}
 }
 
-// EgressCircuitOpenCommands returns the nft argv that opens circuits for the
-// given targets inside this instance's netns. Safe to call repeatedly: the
-// element form is idempotent because nft treats a duplicate add as a no-op
-// when the element already exists.
-func (c Config) EgressCircuitOpenCommands(targets []EgressCircuitTarget) [][]string {
-	return c.egressCircuitElementCommands("add", targets)
-}
-
-// EgressCircuitCloseCommands returns the nft argv that closes circuits,
-// returning the upstream to reachable. Deleting an element that is not
-// present is an error in nft, so callers that cannot know the current state
-// should close only circuits they previously opened; schedd's breaker tracks
-// exactly that.
-func (c Config) EgressCircuitCloseCommands(targets []EgressCircuitTarget) [][]string {
-	return c.egressCircuitElementCommands("delete", targets)
-}
-
-func (c Config) egressCircuitElementCommands(verb string, targets []EgressCircuitTarget) [][]string {
-	if !c.EgressCircuitEnabled || len(targets) == 0 {
+// EgressCircuitSetCommands renders the argv that makes this instance's
+// circuit set exactly `targets` — a flush followed by one add per family.
+//
+// Whole-set convergence, NOT add/delete deltas. Two reasons, both load-bearing:
+//
+//  1. `nft delete element` errors when the element is absent. After a vmmd
+//     restart the netns is re-rendered with an EMPTY set while schedd still
+//     believes circuits are open, so every close would fail forever against a
+//     set that was already in the desired state.
+//  2. Flush + add converges from any prior state, so a restart, a missed
+//     notify, or a partially-applied batch self-heals on the next reconcile
+//     instead of needing a repair path.
+//
+// This also matches UpdateEgressAllowlist, which pushes the whole list rather
+// than a delta — one convention for live netns mutation.
+//
+// An empty target list still emits the flush: "no open circuits" is a real
+// desired state and is how a close is expressed.
+func (c Config) EgressCircuitSetCommands(targets []EgressCircuitTarget) [][]string {
+	if !c.EgressCircuitEnabled {
 		return nil
 	}
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
@@ -126,13 +127,19 @@ func (c Config) egressCircuitElementCommands(verb string, targets []EgressCircui
 		}
 		v6 = append(v6, t.element())
 	}
-	var cmds [][]string
+	// Flush both families unconditionally. Flushing only the families that
+	// have new elements would strand a v6 circuit when the desired set drops
+	// to v4-only.
+	cmds := [][]string{
+		nft("flush", "set", "ip", "faas", EgressCircuitSetName),
+		nft("flush", "set", "ip6", "faas", EgressCircuitSetName),
+	}
 	if len(v4) > 0 {
-		cmds = append(cmds, nft(verb, "element", "ip", "faas", EgressCircuitSetName,
+		cmds = append(cmds, nft("add", "element", "ip", "faas", EgressCircuitSetName,
 			"{", joinElements(v4), "}"))
 	}
 	if len(v6) > 0 {
-		cmds = append(cmds, nft(verb, "element", "ip6", "faas", EgressCircuitSetName,
+		cmds = append(cmds, nft("add", "element", "ip6", "faas", EgressCircuitSetName,
 			"{", joinElements(v6), "}"))
 	}
 	return cmds
