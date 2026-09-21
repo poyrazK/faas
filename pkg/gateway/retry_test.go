@@ -1,3 +1,4 @@
+// adr: 200
 package gateway
 
 // ADR-200 §1 safety rules. Every test here pins one rule, because the cost of

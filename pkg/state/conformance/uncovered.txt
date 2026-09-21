@@ -375,6 +375,7 @@ ListDomainsForApp
 ListDueInvocations
 ListEdgeRulesForAccount
 ListEdgeRulesForApp
+ListEgressCircuitCandidates
 ListEnabledAlertRules
 ListEnabledAppLogDrains
 ListEnabledCrons
@@ -644,6 +645,7 @@ UpdateCorsPreset
 UpdateCron
 UpdateCronWithOptions
 UpdateCustomDomainCertStatus
+UpdateDataUpstreamCircuitBreaker
 UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule

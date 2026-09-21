@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -207,6 +208,32 @@ func streamingEnabledFromEnv() bool {
 		}
 	}
 	return false
+}
+
+// trafficResilienceEnabled resolves an ADR-200 operator gate. Reuses the
+// streaming flag's truthy vocabulary so every gateway kill switch answers to
+// the same values rather than each inventing its own.
+func trafficResilienceEnabled(name string) bool {
+	v := strings.ToLower(strings.TrimSpace(envOrGateway(name, streamingFlagFalse)))
+	for _, t := range streamingEnabledTruthy {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+// egressBreakerGroup returns the ServiceProxy's health breaker (ADR-200 §2).
+//
+// Nil is NOT returned when the flag is off: NewServiceProxy installs
+// circuit.LegacyQuarantineConfig for a nil breaker, which reproduces the
+// fixed-TTL quarantine exactly. Returning nil here is therefore the
+// flag-off path, and returning a DefaultConfig group is the flag-on one.
+func egressBreakerGroup() *circuit.Group {
+	if !trafficResilienceEnabled("FAAS_GATEWAY_CIRCUIT_BREAKER") {
+		return nil
+	}
+	return circuit.NewGroup(circuit.DefaultConfig(), nil)
 }
 
 // rawStreamEnabledFromEnv (issue #676 / ADR-080 follow-up) resolves the
@@ -2062,6 +2089,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// — run()
 	// populates deps.streamingEnabled; tests inject the bit directly.
 	handler.WithStreamingEnabled(deps.streamingEnabled)
+	// ADR-200 §1. Two gates on purpose: FAAS_GATEWAY_RETRY turns the
+	// machinery on, and a kind=retry edge rule still has to permit a replay.
+	// An operator can therefore enable the flag fleet-wide and roll retry out
+	// per app, rather than changing every app's behaviour at once — which is
+	// why the default policy here is inert rather than a 2-attempt default.
+	handler.WithRetryEnabled(trafficResilienceEnabled("FAAS_GATEWAY_RETRY"))
+	handler.WithRetryObserver(deps.metrics)
 	// ADR-093: arm the per-process routeMetricsEnabled kill-switch on
 	// the Handler so routeSetFor can AND the operator flag against the
 	// per-app flag (apps.route_metrics_enabled). Same merge point as
@@ -2981,6 +3015,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
 			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			// ADR-200 §2. Nil Breaker installs the legacy fixed-TTL
+			// quarantine, so with the flag off this is byte-identical to the
+			// pre-ADR-200 behaviour.
+			Breaker: egressBreakerGroup(),
+			Metrics: deps.metrics,
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
