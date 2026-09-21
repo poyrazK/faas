@@ -47,6 +47,8 @@ package sched
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -54,6 +56,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // fleet is a multi-node, multi-schedd fixture: nodeCount compute nodes and
@@ -261,4 +264,66 @@ func TestFleet_NodeCeilingHoldsAcrossSchedds(t *testing.T) {
 	if total == 0 {
 		t.Fatal("no instance was admitted anywhere; the test exercised nothing")
 	}
+}
+
+// TestFleet_OwnershipChecksCountDiscardedBroadcasts pins the consumer half of
+// the broadcast-amplification measurement.
+//
+// ADR-062 shards apps across schedds by apps.node_id, but pg_notify carries
+// no routing: every app-scoped notification reaches every schedd in the
+// fleet, and all but the owner discard it at ownsApp. That discarded work is
+// the cost of broadcast, and until it is counted the case for per-owner
+// channels rests on arithmetic nobody has checked against a running fleet.
+//
+// Three nodes, one app owned by node 0. The owner's check must record
+// `owned`; the two peers' checks must record `not_owned`. On a fleet of N
+// that ratio is the (N-1)/N amplification, which is the number the refactor
+// has to beat.
+func TestFleet_OwnershipChecksCountDiscardedBroadcasts(t *testing.T) {
+	f := newFleet(t, 3, 4096)
+	app := f.seedOwnedApp(t, 0, 256, 2)
+
+	owned, err := f.store.AppByID(f.ctx, app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+
+	ops := make([]*wire.OpsMetrics, len(f.engines))
+	for i := range f.engines {
+		ops[i] = wire.NewOpsMetrics("schedd")
+		f.engines[i] = f.engines[i].WithOpsMetrics(ops[i])
+		// Every schedd sees the notification, so every schedd runs the check.
+		f.engines[i].ownsApp(owned)
+	}
+
+	wantOwned := []int{1, 0, 0}
+	for i := range f.engines {
+		body := getMetricsBody(t, ops[i])
+		gotOwned := readCounter(t, body, `schedd_app_ownership_checks_total{outcome="owned"}`)
+		gotNot := readCounter(t, body, `schedd_app_ownership_checks_total{outcome="not_owned"}`)
+		if gotOwned != wantOwned[i] {
+			t.Errorf("engine %d owned=%d, want %d", i, gotOwned, wantOwned[i])
+		}
+		if want := 1 - wantOwned[i]; gotNot != want {
+			t.Errorf("engine %d not_owned=%d, want %d", i, gotNot, want)
+		}
+	}
+}
+
+// readCounter pulls an exact labelled counter line out of a /metrics body.
+// Returns 0 when absent, which is also what a pre-instantiated closed-set
+// counter reports before its first increment.
+func readCounter(t *testing.T, body, series string) int {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, series+" ") {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, series)), 64)
+		if err != nil {
+			t.Fatalf("parse %q: %v", line, err)
+		}
+		return int(v)
+	}
+	return 0
 }

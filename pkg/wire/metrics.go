@@ -1343,6 +1343,12 @@ type OpsMetrics struct {
 	// series surface in /metrics from boot (same precedent as
 	// stripePushDur / buildDur).
 	scaleUpDecisions *prometheus.CounterVec
+	// appOwnershipChecks counts every ownsApp decision, labelled by
+	// outcome. It is the consumer-side half of the broadcast-amplification
+	// measurement: pg_notify has no routing, so every schedd in the fleet
+	// receives every app-scoped notification and all but the owner discard
+	// it here. The not_owned rate is that discarded work, made countable.
+	appOwnershipChecks *prometheus.CounterVec
 	// scaleDownDecisions: per-app aggressive-reaper decisions
 	// (issue #171). Counter labelled by app_id and outcome ∈ {park,
 	// keep}; one observation per app per 10 s reaper tick that ran
@@ -1945,6 +1951,7 @@ type OpsMetrics struct {
 	// RegisterDefaultOps.
 	dbNotifyHubReconnects prometheus.Counter
 	dbNotifyHubDropped    *prometheus.CounterVec
+	dbNotifyHubDelivered  *prometheus.CounterVec
 	// loopWork / loopWorkDuration (ADR-191): schedd's bounded off-loop
 	// work pool. kind is the closed task set (prime, restart,
 	// app_reconcile, deployment_reconcile, job_cancel); outcome is
@@ -3326,6 +3333,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_scale_up_decisions_total",
 		Help: "Per-app scale-up trigger decisions. outcome ∈ {admit, reject_at_cap, no_signal, cooldown_held, min_floor_already, overage_cap_reached}; app label is the apps.id.",
 	}, []string{"app", "outcome"})
+	appOwnershipChecks := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_app_ownership_checks_total",
+		Help: "schedd ownsApp decisions, outcome ∈ {owned, not_owned}. ADR-062 shards apps across schedds by apps.node_id, but pg_notify has no routing: every app-scoped notification reaches every schedd in the fleet and all but the owner discard it. `not_owned` is that discarded work. The ratio not_owned/(owned+not_owned) is the broadcast amplification the fleet pays, and it should approach (N-1)/N as nodes are added — measure it before deciding whether per-owner notify channels are worth the change.",
+	}, []string{"outcome"})
+	// Closed two-value set: render zero from boot rather than appearing only
+	// once a fleet is large enough for the discard path to fire.
+	appOwnershipChecks.WithLabelValues("owned")
+	appOwnershipChecks.WithLabelValues("not_owned")
 	scaleUpAdmitRPS := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: prefix + "_scale_up_admit_rps",
 		Help: "Per-instance RPS at the moment the trigger admitted a new instance. Sized to the per-instance RPS target range (1..1000); p95/p99 is the spec §12 'scale-up aggressiveness' diagnostic.",
@@ -3625,6 +3640,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
 		scaleUpDecisions, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
+		appOwnershipChecks,
 		egressDeny, egressDenied,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
@@ -4481,6 +4497,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_db_notify_hub_dropped_total",
 		Help: "Notifications dropped because a subscriber's fan-out buffer was full (ADR-190), labelled by channel. Consumers recover from their durable table on the next safety tick; a sustained rate means that consumer is falling behind.",
 	}, []string{"channel"})
+	dbNotifyHubDelivered := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_db_notify_hub_delivered_total",
+		Help: "Notifications this daemon's LISTEN hub handed to a subscriber, by channel. pg_notify carries no routing, so one emit fans out to every interested subscriber on every daemon on every node. Summed fleet-wide and divided by the emit rate this is the broadcast amplification factor; read next to schedd_app_ownership_checks_total{outcome=\"not_owned\"}, which counts the share of that fan-out the receiving schedd then discards. Together they price per-owner notify channels before anyone builds them.",
+	}, []string{"channel"})
 	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_loop_work_total",
 		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
@@ -4507,6 +4527,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		loopStalled,
 		loopLastBeatAgeSeconds,
 		dbNotifyHubReconnects,
+		dbNotifyHubDelivered,
 		dbNotifyHubDropped,
 		loopWork,
 		loopWorkDuration,
@@ -5114,6 +5135,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarRestartTotal:                                   sidecarRestartTotal,
 		cpuStatsCollectDur:                                    cpuStatsCollectDurLocal,
 		scaleUpDecisions:                                      scaleUpDecisions,
+		appOwnershipChecks:                                    appOwnershipChecks,
 		scaleDownDecisions:                                    scaleDownDecisions,
 		floorReconcileDecisions:                               floorReconcileDecisions,
 		floorReconcileErrors:                                  floorReconcileErrors,
@@ -5189,6 +5211,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		loopStalled:                                         loopStalled,
 		loopLastBeatAgeSeconds:                              loopLastBeatAgeSeconds,
 		dbNotifyHubReconnects:                               dbNotifyHubReconnects,
+		dbNotifyHubDelivered:                                dbNotifyHubDelivered,
 		dbNotifyHubDropped:                                  dbNotifyHubDropped,
 		loopWork:                                            loopWork,
 		loopWorkDuration:                                    loopWorkDuration,
@@ -9959,4 +9982,26 @@ func (m *OpsMetrics) ESMRecordsCounterForTest(source string) (prometheus.Counter
 		return nil, errors.New("OpsMetrics.esmRecordsConsumedTotal not initialised")
 	}
 	return m.esmRecordsConsumedTotal.GetMetricWithLabelValues(source)
+}
+
+// ObserveAppOwnership records one ownsApp decision. owned=false is a
+// notification this schedd received and discarded because another schedd owns
+// the app — the per-event cost of pg_notify having no routing. Nil-safe.
+func (m *OpsMetrics) ObserveAppOwnership(owned bool) {
+	if m == nil || m.appOwnershipChecks == nil {
+		return
+	}
+	outcome := "not_owned"
+	if owned {
+		outcome = "owned"
+	}
+	m.appOwnershipChecks.WithLabelValues(outcome).Inc()
+}
+
+// HubDelivered implements db.NotifyHubObserver. nil-safe.
+func (m *OpsMetrics) HubDelivered(channel string) {
+	if m == nil || m.dbNotifyHubDelivered == nil {
+		return
+	}
+	m.dbNotifyHubDelivered.WithLabelValues(channel).Inc()
 }

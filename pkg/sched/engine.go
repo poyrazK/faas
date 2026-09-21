@@ -789,7 +789,20 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 // act on apps assigned to a real compute node, otherwise the central and
 // node-local schedulers race the same park and each keeps an independent
 // admission ledger.
+// Every call is counted (ADR-062 amplification): pg_notify carries no
+// routing, so an app-scoped notification reaches every schedd in the fleet
+// and all but one discard it right here. Counting the discards is what turns
+// "broadcast is wasteful in principle" into a number that can justify — or
+// not justify — per-owner channels.
 func (e *Engine) ownsApp(app state.App) bool {
+	owned := e.ownsAppDecision(app)
+	if e.ops != nil {
+		e.ops.ObserveAppOwnership(owned)
+	}
+	return owned
+}
+
+func (e *Engine) ownsAppDecision(app state.App) bool {
 	if app.NodeID == "" {
 		return true
 	}

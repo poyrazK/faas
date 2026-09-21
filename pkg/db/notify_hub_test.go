@@ -46,10 +46,12 @@ func TestListenDiff(t *testing.T) {
 type recordingHubObserver struct {
 	reconnects atomic.Int64
 	dropped    atomic.Int64
+	delivered  atomic.Int64
 }
 
-func (r *recordingHubObserver) HubReconnect()     { r.reconnects.Add(1) }
-func (r *recordingHubObserver) HubDropped(string) { r.dropped.Add(1) }
+func (r *recordingHubObserver) HubReconnect()       { r.reconnects.Add(1) }
+func (r *recordingHubObserver) HubDropped(string)   { r.dropped.Add(1) }
+func (r *recordingHubObserver) HubDelivered(string) { r.delivered.Add(1) }
 
 // TestNotifyHubDispatchDropsOnFullBufferWithoutBlocking pins the one
 // contract change: an overflowing subscriber never stalls dispatch.
@@ -302,5 +304,77 @@ func TestNotifyHub_KillSwitchRestoresConnectionPerSubscriber(t *testing.T) {
 	}
 	if st := NotifyHubStatsFor(pool); st.Subscribers != 0 {
 		t.Fatalf("hub must be unused under the kill switch: %+v", st)
+	}
+}
+
+// TestNotifyHubDeliveredCountsEveryFanOut pins the transport half of the
+// broadcast-amplification measurement.
+//
+// pg_notify has no routing: one emit reaches every subscriber that wants the
+// channel. The delivered counter has to count the FAN-OUT, not the receive,
+// or the amplification factor it feeds is off by the very multiplier it is
+// meant to expose. Three subscribers on one channel means one notification
+// produces three deliveries.
+func TestNotifyHubDeliveredCountsEveryFanOut(t *testing.T) {
+	obs := &recordingHubObserver{}
+	SetNotifyHubObserver(obs)
+	defer SetNotifyHubObserver(nil)
+
+	h := newNotifyHub(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := 0; i < 3; i++ {
+		h.subs[&hubSubscriber{
+			channels: map[string]struct{}{"amp": {}},
+			out:      make(chan Notification, 4),
+		}] = struct{}{}
+	}
+	// A subscriber on another channel must not be counted: the factor is
+	// per-channel, and counting uninterested subscribers would inflate it.
+	h.subs[&hubSubscriber{
+		channels: map[string]struct{}{"other": {}},
+		out:      make(chan Notification, 4),
+	}] = struct{}{}
+
+	h.dispatch(Notification{Channel: "amp", Payload: "x"})
+
+	if got := obs.delivered.Load(); got != 3 {
+		t.Errorf("delivered = %d, want 3 — one emit fanned out to three interested subscribers", got)
+	}
+	if got := obs.dropped.Load(); got != 0 {
+		t.Errorf("dropped = %d, want 0", got)
+	}
+}
+
+// TestNotifyHubDeliveredAndDroppedAccountForEveryFanOut pins that the two
+// counters partition the fan-out. An overflowing subscriber must be counted
+// exactly once, as a drop — never as both, and never as neither, or the
+// amplification arithmetic silently loses events.
+func TestNotifyHubDeliveredAndDroppedAccountForEveryFanOut(t *testing.T) {
+	obs := &recordingHubObserver{}
+	SetNotifyHubObserver(obs)
+	defer SetNotifyHubObserver(nil)
+
+	h := newNotifyHub(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	full := &hubSubscriber{channels: map[string]struct{}{"amp": {}}, out: make(chan Notification, 1)}
+	roomy := &hubSubscriber{channels: map[string]struct{}{"amp": {}}, out: make(chan Notification, 8)}
+	h.subs[full] = struct{}{}
+	h.subs[roomy] = struct{}{}
+
+	const emits = 3
+	for i := 0; i < emits; i++ {
+		h.dispatch(Notification{Channel: "amp", Payload: "x"})
+	}
+
+	// 2 subscribers × 3 emits = 6 fan-outs. The 1-deep subscriber takes one
+	// and drops two; the roomy one takes all three.
+	const wantFanOut = 2 * emits
+	if got := obs.delivered.Load() + obs.dropped.Load(); got != wantFanOut {
+		t.Errorf("delivered+dropped = %d, want %d — the counters must partition every fan-out",
+			got, wantFanOut)
+	}
+	if got := obs.delivered.Load(); got != 4 {
+		t.Errorf("delivered = %d, want 4", got)
+	}
+	if got := obs.dropped.Load(); got != 2 {
+		t.Errorf("dropped = %d, want 2", got)
 	}
 }

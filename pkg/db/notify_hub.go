@@ -87,6 +87,10 @@ const (
 type NotifyHubObserver interface {
 	HubReconnect()
 	HubDropped(channel string)
+	// HubDelivered records one notification handed to one subscriber.
+	// Together with HubDropped it accounts for every fan-out this daemon
+	// performed, per channel.
+	HubDelivered(channel string)
 }
 
 var (
@@ -504,6 +508,14 @@ func (h *notifyHub) dispatch(n Notification) {
 		}
 		select {
 		case s.out <- n:
+			// One delivery, per channel. pg_notify has no routing, so one
+			// emit fans out to every interested subscriber on every daemon
+			// on every node. Summed fleet-wide and divided by the emit rate,
+			// this counter is the broadcast amplification factor — the
+			// number that says whether per-owner channels would pay for
+			// themselves. Counted on the delivery, not the receive, so it
+			// pairs directly with the dropped counter below.
+			observeHub(func(o NotifyHubObserver) { o.HubDelivered(n.Channel) })
 		default:
 			s.dropped.Add(1)
 			observeHub(func(o NotifyHubObserver) { o.HubDropped(n.Channel) })
