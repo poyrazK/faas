@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Per-upstream egress circuit-breaker policy (ADR-197 §3).
+ * Per-upstream egress circuit-breaker policy (ADR-200 §3).
  *
  * When enabled, your app's NEW connections to this upstream are
  * rejected with a TCP reset while the circuit is open, instead of

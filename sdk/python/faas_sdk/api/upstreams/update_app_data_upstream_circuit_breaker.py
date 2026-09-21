@@ -92,7 +92,7 @@ def sync_detailed(
     """Update an upstream's egress circuit-breaker policy.
 
      Opts one upstream into (or out of) egress circuit breaking, and
-    optionally tunes its thresholds (ADR-197 §3).
+    optionally tunes its thresholds (ADR-200 §3).
 
     Enabling this grants the platform permission to REJECT your app's
     connections to this upstream while its circuit is open. Plaintext
@@ -108,7 +108,7 @@ def sync_detailed(
         id (UUID):
         body (UpdateUpstreamCircuitBreakerRequest): Partial update of an upstream's egress
             circuit-breaker policy
-            (ADR-197 §3). Omitted fields are left unchanged.
+            (ADR-200 §3). Omitted fields are left unchanged.
 
             Setting `enabled` to false leaves the threshold fields intact, so
             toggling protection off does not discard your tuning.
@@ -144,7 +144,7 @@ def sync(
     """Update an upstream's egress circuit-breaker policy.
 
      Opts one upstream into (or out of) egress circuit breaking, and
-    optionally tunes its thresholds (ADR-197 §3).
+    optionally tunes its thresholds (ADR-200 §3).
 
     Enabling this grants the platform permission to REJECT your app's
     connections to this upstream while its circuit is open. Plaintext
@@ -160,7 +160,7 @@ def sync(
         id (UUID):
         body (UpdateUpstreamCircuitBreakerRequest): Partial update of an upstream's egress
             circuit-breaker policy
-            (ADR-197 §3). Omitted fields are left unchanged.
+            (ADR-200 §3). Omitted fields are left unchanged.
 
             Setting `enabled` to false leaves the threshold fields intact, so
             toggling protection off does not discard your tuning.
@@ -191,7 +191,7 @@ async def asyncio_detailed(
     """Update an upstream's egress circuit-breaker policy.
 
      Opts one upstream into (or out of) egress circuit breaking, and
-    optionally tunes its thresholds (ADR-197 §3).
+    optionally tunes its thresholds (ADR-200 §3).
 
     Enabling this grants the platform permission to REJECT your app's
     connections to this upstream while its circuit is open. Plaintext
@@ -207,7 +207,7 @@ async def asyncio_detailed(
         id (UUID):
         body (UpdateUpstreamCircuitBreakerRequest): Partial update of an upstream's egress
             circuit-breaker policy
-            (ADR-197 §3). Omitted fields are left unchanged.
+            (ADR-200 §3). Omitted fields are left unchanged.
 
             Setting `enabled` to false leaves the threshold fields intact, so
             toggling protection off does not discard your tuning.
@@ -241,7 +241,7 @@ async def asyncio(
     """Update an upstream's egress circuit-breaker policy.
 
      Opts one upstream into (or out of) egress circuit breaking, and
-    optionally tunes its thresholds (ADR-197 §3).
+    optionally tunes its thresholds (ADR-200 §3).
 
     Enabling this grants the platform permission to REJECT your app's
     connections to this upstream while its circuit is open. Plaintext
@@ -257,7 +257,7 @@ async def asyncio(
         id (UUID):
         body (UpdateUpstreamCircuitBreakerRequest): Partial update of an upstream's egress
             circuit-breaker policy
-            (ADR-197 §3). Omitted fields are left unchanged.
+            (ADR-200 §3). Omitted fields are left unchanged.
 
             Setting `enabled` to false leaves the threshold fields intact, so
             toggling protection off does not discard your tuning.

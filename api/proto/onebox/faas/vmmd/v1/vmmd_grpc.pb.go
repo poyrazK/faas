@@ -232,7 +232,7 @@ type VmmdClient interface {
 	// re-pushed identical IP is a no-op. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error)
-	// UpdateEgressCircuit (ADR-197 §3) makes the open-circuit set of every
+	// UpdateEgressCircuit (ADR-200 §3) makes the open-circuit set of every
 	// live instance of an app exactly `circuits`. When a declared upstream is
 	// proven unhealthy by the ADR-098 probe, schedd opens a circuit and the
 	// guest's NEW connections to that (address, port) are rejected with a TCP
@@ -1031,7 +1031,7 @@ type VmmdServer interface {
 	// re-pushed identical IP is a no-op. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error)
-	// UpdateEgressCircuit (ADR-197 §3) makes the open-circuit set of every
+	// UpdateEgressCircuit (ADR-200 §3) makes the open-circuit set of every
 	// live instance of an app exactly `circuits`. When a declared upstream is
 	// proven unhealthy by the ADR-098 probe, schedd opens a circuit and the
 	// guest's NEW connections to that (address, port) are rejected with a TCP

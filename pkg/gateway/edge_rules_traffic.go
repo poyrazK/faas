@@ -1,6 +1,6 @@
 package gateway
 
-// Resolved subsets for the ADR-197 traffic-resilience kinds (retry,
+// Resolved subsets for the ADR-200 traffic-resilience kinds (retry,
 // circuit_breaker).
 //
 // Same shape as every kind since PR 3: a narrow struct carrying only the
@@ -16,7 +16,7 @@ import "time"
 // The compiled form is already clamped by the cmd-side compiler, so the hot
 // path performs no range checks: a rule that reached here is safe to apply
 // verbatim. There is no "retry on status" field because only a transport
-// failure may arm a replay (ADR-197 §1).
+// failure may arm a replay (ADR-200 §1).
 type EdgeRuleRetryResolved struct {
 	ID                 string
 	AccountID          string

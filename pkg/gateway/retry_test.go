@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-197 §1 safety rules. Every test here pins one rule, because the cost of
+// ADR-200 §1 safety rules. Every test here pins one rule, because the cost of
 // getting a rule wrong is not a failed request — it is a customer's side
 // effect running twice.
 
@@ -315,7 +315,7 @@ func TestRetryStopsAtMaxAttempts(t *testing.T) {
 
 // The flag-off equivalence claim: a disabled policy must call the attempt
 // exactly once, with the caller's own writer, and leave the response byte for
-// byte as the pre-ADR-197 path produced it.
+// byte as the pre-ADR-200 path produced it.
 func TestRetryDisabledIsPassThrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := replayableRequest(http.MethodGet, "")

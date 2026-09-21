@@ -1,7 +1,7 @@
-// adr: 197
+// adr: 200
 package main
 
-// Compile-step tests for the ADR-197 kinds. apid-Validate already bounds
+// Compile-step tests for the ADR-200 kinds. apid-Validate already bounds
 // these fields, so everything here is about the defence-in-depth pass: a row
 // that reached Postgres another way (direct write, seedEdgeRuleDirect) must
 // not produce an unsafe compiled rule.

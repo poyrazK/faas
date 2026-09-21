@@ -1,6 +1,6 @@
 package main
 
-// Compile + match for the ADR-197 traffic-resilience kinds (retry,
+// Compile + match for the ADR-200 traffic-resilience kinds (retry,
 // circuit_breaker).
 //
 // Mirrors compileBudgetRules / MatchBudget exactly. apid-Validate already
@@ -130,7 +130,7 @@ func compileCircuitBreakerRules(storeRules []state.EdgeRule) ([]gateway.EdgeRule
 	return out, parseErrs
 }
 
-// MatchRetry is the ADR-197 §1 matcher. Same shape as MatchBudget: a cache
+// MatchRetry is the ADR-200 §1 matcher. Same shape as MatchBudget: a cache
 // hit returns immediately; a miss triggers loadHost, which compiles every
 // kind's slice in one SQL roundtrip.
 func (g *gatewaydEdgeRules) MatchRetry(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleRetryResolved {
@@ -152,7 +152,7 @@ func (g *gatewaydEdgeRules) MatchRetry(ctx context.Context, host, requestPath, m
 	return gateway.PickFirstRetryMatch(rules, requestPath, method)
 }
 
-// MatchCircuitBreaker is the ADR-197 §2 matcher.
+// MatchCircuitBreaker is the ADR-200 §2 matcher.
 func (g *gatewaydEdgeRules) MatchCircuitBreaker(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleCircuitBreakerResolved {
 	if g == nil || g.cache == nil {
 		return nil

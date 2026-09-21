@@ -3659,7 +3659,7 @@ SET state = 'retired', retired_at = sqlc.arg(retired_at)
 WHERE catalog_key = sqlc.arg(catalog_key) AND state = 'ready';
 
 -- name: ListEgressCircuitCandidates :many
--- schedd's egress circuit-breaker feed (ADR-197 §3). Returns every
+-- schedd's egress circuit-breaker feed (ADR-200 §3). Returns every
 -- opted-in upstream joined to its NEWEST probe verdict, which is the
 -- complete input the breaker loop needs for one reconcile pass.
 --
@@ -3702,7 +3702,7 @@ WHERE u.circuit_breaker_enabled
 ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at DESC NULLS LAST;
 
 -- name: UpdateDataUpstreamCircuitBreaker :exec
--- ADR-197 §3 per-upstream egress-breaker policy. Each field uses the
+-- ADR-200 §3 per-upstream egress-breaker policy. Each field uses the
 -- COALESCE(sqlc.narg, existing) shape so a PATCH that omits a field
 -- leaves it untouched — the same partial-update convention the app
 -- PATCH paths use.

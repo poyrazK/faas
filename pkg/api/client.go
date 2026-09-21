@@ -5382,7 +5382,7 @@ func (c *Client) GetAppDataUpstream(ctx context.Context, slug, id string) (DataU
 }
 
 // UpdateAppDataUpstreamCircuitBreaker opts one upstream into (or out of)
-// egress circuit breaking and optionally tunes its thresholds (ADR-197 §3).
+// egress circuit breaking and optionally tunes its thresholds (ADR-200 §3).
 //
 // Enabling this grants the platform permission to reject the app's
 // connections to that upstream while its circuit is open — which is the

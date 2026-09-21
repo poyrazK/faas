@@ -271,9 +271,9 @@ type OpsMetrics struct {
 	// cluster plan's "Decisions baked in" §2 (Prometheus
 	// cardinality discipline).
 	gatewayInflightRequests *prometheus.GaugeVec
-	// egressCircuitState (ADR-197 §3) is schedd-emitted, so it belongs on
+	// egressCircuitState (ADR-200 §3) is schedd-emitted, so it belongs on
 	// the shared OpsMetrics registry rather than the gatewayd-local one.
-	// The four gateway-side ADR-197 metrics live in pkg/gateway.Metrics
+	// The four gateway-side ADR-200 metrics live in pkg/gateway.Metrics
 	// instead — per the rule recorded at pkg/gateway/metrics.go:48, a
 	// wire-side mirror is not added without a cross-daemon consumer.
 	//
@@ -4240,14 +4240,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	gatewayInflightRequests.WithLabelValues("gatewayd-public", "http")
 	gatewayInflightRequests.WithLabelValues("gatewayd-public", "upgrade")
 	gatewayInflightRequests.WithLabelValues("gatewayd-public", "control")
-	// ── ADR-197 §3 egress circuit state ──────────────────────────────
+	// ── ADR-200 §3 egress circuit state ──────────────────────────────
 	// Not pre-instantiated: the {app_id, upstream_hash} pair cannot be
 	// enumerated at boot. Series surface as customers opt upstreams in, and
 	// ClearEgressCircuitState drops them when a row is retired so a deleted
 	// upstream cannot leave a stale gauge asserting a dependency is broken.
 	egressCircuitState := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_egress_circuit_state",
-		Help: "ADR-197 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. While 2, the app's NEW connections to that upstream are rejected with a TCP reset instead of hanging. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
+		Help: "ADR-200 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. While 2, the app's NEW connections to that upstream are rejected with a TCP reset instead of hanging. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
 	}, []string{"app_id", "upstream_hash"})
 	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests,
 		egressCircuitState)
@@ -5274,7 +5274,7 @@ func (m *OpsMetrics) ObserveDrainWait(daemon, outcome string, seconds float64) {
 	m.gatewayDrainWaitSeconds.WithLabelValues(daemon, outcome).Observe(seconds)
 }
 
-// SetEgressCircuitState publishes the ADR-197 §3 state for one declared
+// SetEgressCircuitState publishes the ADR-200 §3 state for one declared
 // upstream: 0=closed, 1=half_open, 2=open.
 //
 // upstreamHash MUST be data_upstreams.host_redacted_hash. Passing a plaintext

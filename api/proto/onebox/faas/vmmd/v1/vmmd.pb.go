@@ -2953,7 +2953,7 @@ func (*UpdateEgressAllowlistAck) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP(), []int{32}
 }
 
-// UpdateEgressCircuitRequest (ADR-197 §3) is the input to
+// UpdateEgressCircuitRequest (ADR-200 §3) is the input to
 // UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need
 // the new circuit set. circuits is the COMPLETE desired set — an empty list
 // closes every circuit for the app.

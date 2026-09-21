@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// UpdateEgressCircuit handler (ADR-197 §3).
+// UpdateEgressCircuit handler (ADR-200 §3).
 
 import (
 	"context"

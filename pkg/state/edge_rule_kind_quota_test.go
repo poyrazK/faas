@@ -1,4 +1,4 @@
-// adr: 197
+// adr: 200
 package state
 
 import (
@@ -38,7 +38,7 @@ func createKindRule(m *MemStore, acct Account, app App, kind EdgeRuleKind, limit
 
 // The load-bearing case: Free's quota of 0 must DENY, not skip. The older
 // per-kind branches guard with `limits.X > 0`, which silently allows
-// unlimited rules at zero; ADR-197 needs Free = 0 to actually exclude Free.
+// unlimited rules at zero; ADR-200 needs Free = 0 to actually exclude Free.
 func TestEdgeRuleKindQuota_FreeZeroDeniesRatherThanSkips(t *testing.T) {
 	for _, kind := range []EdgeRuleKind{EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker} {
 		m, acct, app, limits := quotaFixture(t, api.PlanFree)
@@ -117,13 +117,13 @@ func TestEdgeRuleKindQuota_LeavesOtherKindsAlone(t *testing.T) {
 		EdgeRuleKindThrottle, EdgeRuleKindBudget, EdgeRuleKindGeo,
 	} {
 		if _, governed := edgeRuleKindQuota(kind, limits); governed {
-			t.Fatalf("kind=%s is governed by the ADR-197 helper; it must only cover retry and circuit_breaker", kind)
+			t.Fatalf("kind=%s is governed by the ADR-200 helper; it must only cover retry and circuit_breaker", kind)
 		}
 		if denied := edgeRuleKindQuotaDenied(kind, limits); denied != nil {
-			t.Fatalf("kind=%s was denied by the ADR-197 helper: %+v", kind, denied)
+			t.Fatalf("kind=%s was denied by the ADR-200 helper: %+v", kind, denied)
 		}
 		if exceeded := edgeRuleKindQuotaExceeded(kind, limits, 9999); exceeded != nil {
-			t.Fatalf("kind=%s was rejected by the ADR-197 helper: %+v", kind, exceeded)
+			t.Fatalf("kind=%s was rejected by the ADR-200 helper: %+v", kind, exceeded)
 		}
 	}
 }

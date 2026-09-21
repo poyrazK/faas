@@ -1,6 +1,6 @@
 package sched
 
-// The production EgressCircuitCandidateReader (ADR-197 §3): the seam between
+// The production EgressCircuitCandidateReader (ADR-200 §3): the seam between
 // the store's row shape and the breaker loop's domain type.
 //
 // Kept separate from the loop so the loop stays free of pkg/state and remains

@@ -1514,7 +1514,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (certmagic, httpsec, :443/:80 ACME mux). This daemon stays
 	// plain HTTP on :8080; the resolved-TLS branch was removed in PR-A.
 	deps.metrics = gateway.NewMetrics()
-	// ADR-197: surface the closed-vocabulary retry/breaker series from
+	// ADR-200: surface the closed-vocabulary retry/breaker series from
 	// process start so an operator alerting on `rate(...) == 0` is not
 	// reading a cold-start absence as a healthy zero.
 	deps.metrics.PreInstantiateTrafficResilience()

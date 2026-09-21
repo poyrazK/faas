@@ -18675,7 +18675,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 			}
 		}
 	}
-	// ADR-197 §1/§2 per-kind quotas. Shares its decision helpers with
+	// ADR-200 §1/§2 per-kind quotas. Shares its decision helpers with
 	// PgStore (pkg/state/edge_rule_kind_quota.go) so the two stores cannot
 	// drift — the failure mode behind the always-zero uppercase-state
 	// queries, where MemStore was right, PgStore's SQL was wrong, and no

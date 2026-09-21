@@ -1,6 +1,6 @@
 package api_test
 
-// Per-plan matrices for the ADR-197 traffic-resilience quotas. Mirrors the
+// Per-plan matrices for the ADR-200 traffic-resilience quotas. Mirrors the
 // shape of TestEdgeRulesCachePerApp_* so the quota ladder for every edge-rule
 // kind is pinned the same way.
 

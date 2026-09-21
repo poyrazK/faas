@@ -289,14 +289,14 @@ type DataUpstreamResponse struct {
 	LastProbedAt     string             `json:"last_probed_at,omitempty"`
 	CreatedAt        string             `json:"created_at"`
 	LastSeenAt       string             `json:"last_seen_at"`
-	// CircuitBreaker is the ADR-197 §3 egress-breaker policy for this
+	// CircuitBreaker is the ADR-200 §3 egress-breaker policy for this
 	// upstream. Always present so a client can tell "not opted in" from
 	// "field not supported by this API version".
 	CircuitBreaker EgressCircuitBreakerPolicy `json:"circuit_breaker"`
 }
 
 // EgressCircuitBreakerPolicy is the per-upstream egress-breaker policy
-// (ADR-197 §3).
+// (ADR-200 §3).
 //
 // When Enabled, connections from the app to this upstream are REJECTED with
 // a TCP reset while the circuit is open, instead of hanging for a full

@@ -14,7 +14,7 @@ T = TypeVar("T", bound="EdgeRuleRetryAction")
 @_attrs_define
 class EdgeRuleRetryAction:
     """Request replay against a different healthy instance
-    (ADR-197 §1, kind=retry).
+    (ADR-200 §1, kind=retry).
 
     There is deliberately NO "retry on status" field. Only a
     TRANSPORT failure may arm a replay — a guest that answered 5xx

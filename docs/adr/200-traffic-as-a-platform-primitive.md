@@ -1,4 +1,4 @@
-# ADR-197 · Traffic resilience as a platform primitive
+# ADR-200 · Traffic resilience as a platform primitive
 
 - **Status:** accepted
 - **Date:** 2026-09-21
@@ -335,7 +335,7 @@ captured upstream and Free captures none.
 Three flags, all default off, flipped per node:
 `FAAS_GATEWAY_RETRY`, `FAAS_GATEWAY_CIRCUIT_BREAKER`,
 `FAAS_EGRESS_CIRCUIT_BREAKER`. With all three off the tree is behaviourally
-identical to pre-ADR-197 — pinned by equivalence tests on the legacy
+identical to pre-ADR-200 — pinned by equivalence tests on the legacy
 quarantine parameters and on `GetBody` being unused when retry is off.
 
 The egress breaker additionally requires ADR-098's `FAAS_UPSTREAM_PROBE`

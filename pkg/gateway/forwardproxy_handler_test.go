@@ -182,7 +182,7 @@ func (s *stubVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 
-// UpdateEgressCircuit (ADR-197 §3) — the gateway hot path doesn't drive
+// UpdateEgressCircuit (ADR-200 §3) — the gateway hot path doesn't drive
 // circuit pushes; schedd's egress-circuit loop does. Returns success so the
 // gRPC VmmdClient interface stays satisfied. Mirrors UpdateEgressAllowlist.
 func (s *stubVmmdClient) UpdateEgressCircuit(context.Context, *vmmdpb.UpdateEgressCircuitRequest, ...grpc.CallOption) (*vmmdpb.UpdateEgressCircuitAck, error) {

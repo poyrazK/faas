@@ -294,7 +294,7 @@ type Metrics struct {
 	// synthetic (app_id, rule_id, mode, reason) tuples for the
 	// known fleet.
 	validateFailures *prometheus.CounterVec
-	// ADR-197 traffic-resilience metrics, on the gatewayd-internal-local
+	// ADR-200 traffic-resilience metrics, on the gatewayd-internal-local
 	// registry per the rule at the top of this file: no wire-side mirror
 	// without a cross-daemon consumer, and the instance breaker + retry
 	// loop both run here.
@@ -302,7 +302,7 @@ type Metrics struct {
 	retryExhausted     *prometheus.CounterVec
 	circuitTransitions *prometheus.CounterVec
 	// circuitOpenTargets is a COUNT per app, deliberately not a per-instance
-	// state gauge. ADR-197's original sketch had {app_id, target} keyed by
+	// state gauge. ADR-200's original sketch had {app_id, target} keyed by
 	// instance_id; instance IDs churn on every wake, so that series set
 	// grows for the daemon's lifetime. A count answers the same operator
 	// question — is this app losing instances — at one series per app.
@@ -895,19 +895,19 @@ func NewMetrics() *Metrics {
 		// bucket; reason is closed at 6).
 		retryAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_attempts_total",
-			Help: "Request attempts observed by the ADR-197 §1 retry loop, labelled by outcome ∈ {original_ok, original_failed, replay_ok, replay_failed}. A non-zero replay_ok rate is the feature working: transport failures converted into successful responses by a healthy sibling. A rising replay_failed rate means siblings are failing too — a fleet problem rather than one dead instance.",
+			Help: "Request attempts observed by the ADR-200 §1 retry loop, labelled by outcome ∈ {original_ok, original_failed, replay_ok, replay_failed}. A non-zero replay_ok rate is the feature working: transport failures converted into successful responses by a healthy sibling. A rising replay_failed rate means siblings are failing too — a fleet problem rather than one dead instance.",
 		}, []string{"outcome"}),
 		retryExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_exhausted_total",
-			Help: "Times the ADR-197 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|no_healthy_sibling|insufficient_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high non_idempotent_method rate means customers want the allow_non_idempotent opt-in; a high insufficient_budget rate means their kind=budget deadlines are too tight for a replay to help. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
+			Help: "Times the ADR-200 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|no_healthy_sibling|insufficient_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high non_idempotent_method rate means customers want the allow_non_idempotent opt-in; a high insufficient_budget rate means their kind=budget deadlines are too tight for a replay to help. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
 		}, []string{"reason"}),
 		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_circuit_transitions_total",
-			Help: "ADR-197 §2 instance-breaker state changes, labelled by {from, to}. A sustained closed->open rate is instance churn; a repeating open->half_open->open cycle that never reaches half_open->closed means the target is persistently dead and the exponential backoff is doing its job.",
+			Help: "ADR-200 §2 instance-breaker state changes, labelled by {from, to}. A sustained closed->open rate is instance churn; a repeating open->half_open->open cycle that never reaches half_open->closed means the target is persistently dead and the exponential backoff is doing its job.",
 		}, []string{"from", "to"}),
 		circuitOpenTargets: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_circuit_open_targets",
-			Help: "Count of instance circuits currently open for an app (ADR-197 §2). A COUNT rather than a per-instance state gauge on purpose: instance IDs churn on every wake, so an {app_id, instance_id} series set would grow for the daemon's lifetime.",
+			Help: "Count of instance circuits currently open for an app (ADR-200 §2). A COUNT rather than a per-instance state gauge on purpose: instance IDs churn on every wake, so an {app_id, instance_id} series set would grow for the daemon's lifetime.",
 		}, []string{"app_id"}),
 		edgeRuleValidateFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_rule_validate_failures_total",
@@ -3172,7 +3172,7 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 	m.requestTelemetryShipped.Add(float64(n))
 }
 
-// IncRetryAttempt records one attempt observed by the ADR-197 §1 retry loop.
+// IncRetryAttempt records one attempt observed by the ADR-200 §1 retry loop.
 // Satisfies retryObserver. Nil-safe.
 func (m *Metrics) IncRetryAttempt(outcome string) {
 	if m == nil || m.retryAttempts == nil {
@@ -3190,7 +3190,7 @@ func (m *Metrics) IncRetryExhausted(reason string) {
 	m.retryExhausted.WithLabelValues(reason).Inc()
 }
 
-// IncCircuitTransition records an ADR-197 §2 instance-breaker state change.
+// IncCircuitTransition records an ADR-200 §2 instance-breaker state change.
 // Nil-safe.
 func (m *Metrics) IncCircuitTransition(from, to string) {
 	if m == nil || m.circuitTransitions == nil {
@@ -3208,7 +3208,7 @@ func (m *Metrics) SetCircuitOpenTargets(appID string, count float64) {
 	m.circuitOpenTargets.WithLabelValues(appID).Set(count)
 }
 
-// PreInstantiateTrafficResilience surfaces the ADR-197 closed-set series at
+// PreInstantiateTrafficResilience surfaces the ADR-200 closed-set series at
 // process start.
 //
 // Without it an operator alerting on `rate(...) == 0` cannot distinguish "no

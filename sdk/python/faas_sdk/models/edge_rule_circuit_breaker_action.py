@@ -13,7 +13,7 @@ T = TypeVar("T", bound="EdgeRuleCircuitBreakerAction")
 
 @_attrs_define
 class EdgeRuleCircuitBreakerAction:
-    """Instance health thresholds (ADR-197 §2, kind=circuit_breaker).
+    """Instance health thresholds (ADR-200 §2, kind=circuit_breaker).
 
     This rule TUNES a breaker that already runs for every app on
     every plan; it does not enable protection. With no rule your

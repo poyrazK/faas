@@ -1,4 +1,4 @@
-// adr: 197
+// adr: 200
 package gateway
 
 import (
@@ -115,7 +115,7 @@ func labelledCounterValue(t *testing.T, reg *prometheus.Registry, name, label, v
 	return -1
 }
 
-// §11: no ADR-197 metric may carry a plaintext hostname. The gateway metrics
+// §11: no ADR-200 metric may carry a plaintext hostname. The gateway metrics
 // are keyed by app/instance identifiers only; the egress gauge (on the shared
 // OpsMetrics registry) takes the redacted hash. This pins the gateway half.
 func TestTrafficResilienceMetricsCarryNoHostLabels(t *testing.T) {

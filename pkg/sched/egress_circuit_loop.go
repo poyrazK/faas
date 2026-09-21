@@ -1,6 +1,6 @@
 package sched
 
-// The probe → breaker feed (ADR-197 §3).
+// The probe → breaker feed (ADR-200 §3).
 //
 // meterd writes one data_upstream_probes row per (host, region) every 30s.
 // schedd reads the opted-in upstreams, folds the newest probe outcome for
