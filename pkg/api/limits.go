@@ -880,7 +880,7 @@ type Limits struct {
 	EdgeRulesCachePerApp int
 
 	// EdgeRulesRetryPerApp caps how many kind='retry' rules one app
-	// may hold (ADR-195 §1). Per-plan: Free 0, Hobby 3, Pro 10,
+	// may hold (ADR-197 §1). Per-plan: Free 0, Hobby 3, Pro 10,
 	// Scale 25.
 	//
 	// Free is 0 for a capacity reason, not a packaging one: a replay
@@ -892,7 +892,7 @@ type Limits struct {
 	EdgeRulesRetryPerApp int
 
 	// EdgeRulesCircuitBreakerPerApp caps how many
-	// kind='circuit_breaker' rules one app may hold (ADR-195 §2).
+	// kind='circuit_breaker' rules one app may hold (ADR-197 §2).
 	// Per-plan: Free 0, Hobby 3, Pro 10, Scale 25.
 	//
 	// This gates TUNING, not protection. The breaker runs for every
@@ -903,7 +903,7 @@ type Limits struct {
 	EdgeRulesCircuitBreakerPerApp int
 
 	// EgressCircuitBreakersPerApp caps how many declared upstreams one
-	// app may opt into egress breaking for (ADR-195 §3). Per-plan:
+	// app may opt into egress breaking for (ADR-197 §3). Per-plan:
 	// Free 0, Hobby 3, Pro 10, Scale 50 — deliberately mirroring
 	// DataPlacementHintsPerApp, since a breaker can only exist for an
 	// upstream the ADR-098 capture path already recorded and Free
@@ -1843,7 +1843,7 @@ var planLimits = map[Plan]Limits{
 		// upsell is the wake-elision guarantee. Same posture as
 		// tenant_surfaces / alert_rules / cors_presets on Free.
 		EdgeRulesCachePerApp: 0,
-		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// ADR-197 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -2225,7 +2225,7 @@ var planLimits = map[Plan]Limits{
 		// to demonstrate the wake-elision value before the
 		// customer upgrades to Pro.
 		EdgeRulesCachePerApp: 1,
-		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// ADR-197 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -2601,7 +2601,7 @@ var planLimits = map[Plan]Limits{
 		// plus one wildcard. Same five-fold upgrade as throttle and
 		// geo so the upsell curve is single-shape.
 		EdgeRulesCachePerApp: 5,
-		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// ADR-197 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.
@@ -2971,7 +2971,7 @@ var planLimits = map[Plan]Limits{
 		// category, etc.). Pin in limits_test.go so the per-plan
 		// monotonic ladder Free < Hobby < Pro < Scale is enforced.
 		EdgeRulesCachePerApp: 20,
-		// ADR-195 traffic primitives. Retry and breaker TUNING are
+		// ADR-197 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
 		// only apply to an upstream ADR-098 already captured.

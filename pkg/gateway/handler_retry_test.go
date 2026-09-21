@@ -1,4 +1,4 @@
-// adr: 195
+// adr: 197
 package gateway
 
 // End-to-end retry through the real Handler path. pkg/gateway/retry_test.go
@@ -56,7 +56,7 @@ func retryRequest(t *testing.T, h *Handler) *httptest.ResponseRecorder {
 }
 
 // With the gate off the handler must behave exactly as it did before
-// ADR-195: one forward, and the transport failure reaches the client.
+// ADR-197: one forward, and the transport failure reaches the client.
 func TestHandlerRetryDisabledSurfacesTransportFailure(t *testing.T) {
 	h, _, forwards := retryTestHandler(t)
 

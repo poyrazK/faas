@@ -1,6 +1,6 @@
 package netns
 
-// Egress circuit breaking (ADR-195 §3).
+// Egress circuit breaking (ADR-197 §3).
 //
 // When an app's declared upstream is proven unhealthy by the ADR-098 probe,
 // schedd opens a circuit and the guest's connections to that (address, port)
@@ -66,7 +66,7 @@ func (t EgressCircuitTarget) element() string {
 // egressCircuitRules declares the set, its counter and the reject rule for
 // one address family. Emitted only when the feature is enabled, so a node
 // with FAAS_EGRESS_CIRCUIT_BREAKER off produces byte-identical per-netns
-// output to the pre-ADR-195 renderer.
+// output to the pre-ADR-197 renderer.
 //
 // The rule is placed by the caller AFTER the established/related accept —
 // an open circuit must not tear down connections the guest already has, only

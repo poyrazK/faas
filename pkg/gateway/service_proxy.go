@@ -83,7 +83,7 @@ type ServiceProxyConfig struct {
 	EndpointTTL   time.Duration
 	Now           func() time.Time
 	Log           *slog.Logger
-	// Breaker is the endpoint health breaker (ADR-195 §2). Nil installs
+	// Breaker is the endpoint health breaker (ADR-197 §2). Nil installs
 	// circuit.LegacyQuarantineConfig, which reproduces the fixed-TTL
 	// quarantine this field replaced: one failure benches an endpoint for
 	// EndpointTTL with no backoff growth. cmd/gatewayd-internal passes a

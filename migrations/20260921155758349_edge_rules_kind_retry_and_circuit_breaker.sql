@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-195 §1 / §2 — widen the closed edge-rule kind vocabulary with the two
+-- ADR-197 §1 / §2 — widen the closed edge-rule kind vocabulary with the two
 -- traffic-resilience primitives. Both rules only TUNE behaviour that the
 -- gateway performs by default; the gateway enforces plan entitlement and the
 -- per-kind quotas, so this migration carries no policy of its own.

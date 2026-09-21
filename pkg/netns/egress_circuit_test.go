@@ -1,4 +1,4 @@
-// adr: 195
+// adr: 197
 package netns
 
 import (
@@ -22,8 +22,8 @@ func joinCmds(cmds [][]string) []string {
 	return out
 }
 
-// The flag-off equivalence claim in ADR-195 §4: a node without
-// FAAS_EGRESS_CIRCUIT_BREAKER must render exactly the pre-ADR-195 ruleset,
+// The flag-off equivalence claim in ADR-197 §4: a node without
+// FAAS_EGRESS_CIRCUIT_BREAKER must render exactly the pre-ADR-197 ruleset,
 // command for command.
 func TestNftCommandsUnchangedWhenEgressCircuitDisabled(t *testing.T) {
 	off := joinCmds(circuitConfig(false).NftCommands())

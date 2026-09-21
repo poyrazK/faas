@@ -1,8 +1,8 @@
-// adr: 195
+// adr: 197
 package gateway
 
 // The capability kind=circuit_breaker adds over the fixed-TTL quarantine it
-// replaced (ADR-195 §2). The pre-existing ServiceProxy tests pin the flag-off
+// replaced (ADR-197 §2). The pre-existing ServiceProxy tests pin the flag-off
 // equivalence; these pin what is genuinely new.
 
 import (

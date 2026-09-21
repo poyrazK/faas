@@ -1,6 +1,6 @@
 package sched
 
-// Egress circuit breaking (ADR-195 §3).
+// Egress circuit breaking (ADR-197 §3).
 //
 // This is the half of the feature that decides; pkg/netns owns the half that
 // enforces. The decision input is the ADR-098 probe: meterd already dials

@@ -177,7 +177,7 @@ func TestHalfOpenFailureDoublesBackoffAndCaps(t *testing.T) {
 }
 
 // TestLegacyConfigMatchesQuarantine pins the flag-off equivalence claim in
-// ADR-195 §2: with FAAS_GATEWAY_CIRCUIT_BREAKER off, the breaker must behave
+// ADR-197 §2: with FAAS_GATEWAY_CIRCUIT_BREAKER off, the breaker must behave
 // exactly like the fixed 5s ServiceProxy quarantine map it replaces — one
 // failure benches the target for 5s flat, with no backoff growth.
 func TestLegacyConfigMatchesQuarantine(t *testing.T) {

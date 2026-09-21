@@ -158,10 +158,10 @@ type Config struct {
 	// single-host dev keeps the legacy "deny wins on RFC1918"
 	// posture.
 	OperatorExceptions []netip.Prefix
-	// EgressCircuitEnabled emits the ADR-195 §3 egress-circuit set, counter
+	// EgressCircuitEnabled emits the ADR-197 §3 egress-circuit set, counter
 	// and reject rule into the per-netns ruleset. False (the default) emits
 	// nothing, so a node with FAAS_EGRESS_CIRCUIT_BREAKER off renders
-	// byte-identical output to the pre-ADR-195 renderer — asserted by
+	// byte-identical output to the pre-ADR-197 renderer — asserted by
 	// TestNftCommandsUnchangedWhenEgressCircuitDisabled.
 	//
 	// Declaring the set at wake rather than on first use matters: schedd can
@@ -471,7 +471,7 @@ func (c Config) NftCommands() [][]string {
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
-	// ADR-195 §3: reject NEW connections to an upstream whose circuit is
+	// ADR-197 §3: reject NEW connections to an upstream whose circuit is
 	// open. Deliberately placed AFTER the established/related accept — an
 	// open circuit must refuse new connections, never tear down calls the
 	// guest already has in flight, which would convert a recoverable blip
