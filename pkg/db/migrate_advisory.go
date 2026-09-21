@@ -79,7 +79,9 @@ func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func
 		return nil, errors.New("db: AcquireMigrationLock: nil pool")
 	}
 
-	conn, err := pool.Acquire(ctx)
+	// Session-scoped: pg_advisory_lock (not _xact_) is held across
+	// statements on this pinned connection, so it must not be pooled.
+	conn, err := DirectPool(pool).Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("db: acquire pool conn for migration lock: %w", err)
 	}

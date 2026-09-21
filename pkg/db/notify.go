@@ -841,7 +841,8 @@ func Subscribe(ctx context.Context, pool *pgxpool.Pool, channels []string) (<-ch
 	if len(channels) == 0 {
 		return nil, func() {}, fmt.Errorf("db: Subscribe requires at least one channel")
 	}
-	conn, err := pool.Acquire(ctx)
+	// Session-scoped: see direct.go.
+	conn, err := DirectPool(pool).Acquire(ctx)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("db: acquire listener: %w", err)
 	}

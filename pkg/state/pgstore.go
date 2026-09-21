@@ -76,7 +76,10 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
-	conn, err := s.pool.Acquire(ctx)
+	// Session-scoped: pg_advisory_lock below is held across statements on
+	// this pinned connection and released by the returned closure, so it
+	// must not run on a transaction-pooled connection (db/direct.go).
+	conn, err := db.DirectPool(s.pool).Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("state: acquire edge-rule mutation lock connection: %w", err)
 	}

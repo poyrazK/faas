@@ -110,6 +110,12 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 
 const defaultMaxConnections int32 = 4
 
+// Shared with direct.go so both pools age and probe identically.
+const (
+	healthCheckPeriod = 30 * time.Second
+	pingTimeout       = 5 * time.Second
+)
+
 // OpenWithAppName is Open plus an application_name tag set on every
 // connection pgxpool acquires. The tag is sent at session-start (via
 // RuntimeParams), so it survives on the long-lived LISTEN connection
@@ -164,22 +170,44 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 	cfg.MaxConns = daemonMaxConnections(appName)
 	cfg.MinConns = 0
 	cfg.MaxConnIdleTime = time.Minute
-	cfg.HealthCheckPeriod = 30 * time.Second
+	cfg.HealthCheckPeriod = healthCheckPeriod
 	if appName != "" {
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName
 	}
+	// Safe under a transaction-mode pooler; a no-op without one.
+	applyPooledExecMode(cfg)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: open pool: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
+	// Session-scoped work (LISTEN, session advisory locks) resolves through
+	// DirectPool to this sibling. Unset FAAS_DATABASE_URL_DIRECT leaves it
+	// nil, and DirectPool then returns the ordinary pool — today's behaviour.
+	direct, err := openDirect(ctx, appName)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	registerDirectPool(pool, direct)
 	return pool, nil
+}
+
+// Close closes p and its session-scoped sibling. Daemons that call
+// pool.Close() directly still work — they simply leave the direct pool to
+// process exit, which is the same lifetime it had before this split.
+func Close(p *pgxpool.Pool) {
+	if p == nil {
+		return
+	}
+	closeDirectPool(p)
+	p.Close()
 }
 
 // WithBudget wraps a per-DB-call context with a reqbudget.WithOverhead

@@ -167,6 +167,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_COMPUTE_VCPUS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "host vCPU count reported by node_join"},
 	{Name: "FAAS_CONTROL_PLANE_API_TARGET", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_DATABASE_URL", Owners: []string{"shared"}, Source: EnvSourceDefault, Required: true, Validate: EnvValidationURL, Note: "DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement"},
+	{Name: "FAAS_DATABASE_URL_DIRECT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "Session-scoped DSN reaching PostgreSQL directly, bypassing a transaction-mode pooler on the ordinary DSN. LISTEN and session pg_advisory_lock resolve here (pkg/db/direct.go); setting it also switches the ordinary pool to QueryExecModeExec so named prepared statements cannot outlive a pooled transaction. Unset = no pooler, direct pool is the ordinary pool"},
 	{Name: "FAAS_DATA_PLACEMENT", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_DB_NOTIFY_HUB", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "ADR-190; \"0\" restores one LISTEN connection per subscriber instead of one per daemon, and selects db.DaemonMaxConnectionsNotifyHubDisabled so the daemon's pool is sized for that mode"},
 	{Name: "FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},

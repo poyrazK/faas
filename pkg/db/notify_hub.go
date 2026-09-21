@@ -253,7 +253,8 @@ func (h *notifyHub) subscribe(ctx context.Context, channels []string) (<-chan No
 // loop under the hub's own lifetime context: the connection must
 // outlive any single subscriber. Caller holds h.mu.
 func (h *notifyHub) startLocked(ctx context.Context, initial []string) error {
-	conn, err := h.pool.Acquire(ctx)
+	// Session-scoped: LISTEN cannot survive transaction pooling.
+	conn, err := DirectPool(h.pool).Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("db: notify hub acquire listener: %w", err)
 	}
@@ -360,7 +361,7 @@ func (h *notifyHub) run(ctx context.Context, conn *pgxpool.Conn, listened map[st
 		case <-ctx.Done():
 			return
 		}
-		c, err := h.pool.Acquire(ctx)
+		c, err := DirectPool(h.pool).Acquire(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
