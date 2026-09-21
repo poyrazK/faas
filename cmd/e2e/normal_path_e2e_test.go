@@ -112,6 +112,20 @@ type normalPathFixture struct {
 	artifacts storage.StorageBackend
 }
 
+const (
+	// normalPathSnapshotRAMMB matches the RAM every seeded instance is created
+	// with. Engine.snapshotMatchesRAM rejects a snapshot whose mem_bytes does
+	// not equal the admitted size, so a seeded snapshot has to agree with the
+	// seeded instance or the wake silently cold-boots for the wrong reason.
+	normalPathSnapshotRAMMB = 256
+
+	// normalPathFCVersion is what the harness pins schedd's Firecracker
+	// version to. CI has no firecracker binary, so detection would leave the
+	// version "" and Engine.snapshotCompatible would reject every snapshot —
+	// making the restore path unreachable. See cmd/schedd/fcversion.go.
+	normalPathFCVersion = "1.7.0-e2e"
+)
+
 func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {
 	return newNormalPathFixtureWithPlan(t, slug, api.PlanHobby)
 }
@@ -138,6 +152,12 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 	vmmdSock := filepath.Join(vmmdSockDir, "vmmd.sock")
 	vmmd := startNormalPathVMMD(t, vmmdSock)
 	t.Setenv("FAAS_E2E_VMMD_SOCKET", vmmdSock)
+	// Pin the Firecracker version for every normal-path test, not just the
+	// snapshot ones. An unpinned schedd runs with fcVer="" — a state a
+	// production node never has — and silently routes every wake down the
+	// cold-boot edge, which is exactly how the restore path escaped e2e
+	// coverage in the first place.
+	extraEnv = append([]string{"FAAS_SCHEDD_FC_VERSION=" + normalPathFCVersion}, extraEnv...)
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
@@ -1797,6 +1817,22 @@ type normalPathVMMD struct {
 	lastBodyChunks   int
 	forwardCount     int
 	defaultVersion   string
+
+	// Lifecycle-RPC bookkeeping. Before these existed the fake implemented
+	// four of vmmd's thirty-six RPCs (Ping, Heartbeat, CreateColdBoot,
+	// ForwardHTTPStream) and inherited Unimplemented for the rest, so PR CI
+	// could not observe restore-vs-cold-boot selection, park, or teardown at
+	// all. Recording the calls — rather than only their side effects — is
+	// what lets a test assert which wake edge schedd actually took, which is
+	// the distinction ADR-005 turns on.
+	restoreCalls  []*vmmdpb.CreateFromSnapshotRequest
+	coldBootCalls []*vmmdpb.CreateColdBootRequest
+	snapshotCalls []*vmmdpb.PauseAndSnapshotRequest
+	destroyCalls  []string
+	stopCalls     []string
+	failRestore   error
+	failSnapshot  error
+	degradeWake   bool
 }
 
 type normalPathResponse struct {
@@ -2037,6 +2073,9 @@ func (s *normalPathVMMD) Ping(context.Context, *vmmdpb.PingRequest) (*vmmdpb.Pin
 }
 
 func (s *normalPathVMMD) CreateColdBoot(_ context.Context, request *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {
+	s.mu.Lock()
+	s.coldBootCalls = append(s.coldBootCalls, proto.Clone(request).(*vmmdpb.CreateColdBootRequest))
+	s.mu.Unlock()
 	return &vmmdpb.WakeResponse{
 		Instance: request.GetInstance(),
 		LeaseUid: 20000,
@@ -2044,6 +2083,135 @@ func (s *normalPathVMMD) CreateColdBoot(_ context.Context, request *vmmdpb.Creat
 		Netns:    "fake-" + request.GetInstance(),
 		Method:   vmmdpb.WakeMethod_WAKE_COLD_BOOT,
 	}, nil
+}
+
+// CreateFromSnapshot is the restore edge — what every production wake of a
+// parked app actually does. It was Unimplemented here until now, so the whole
+// e2e suite silently exercised only the cold-boot path.
+//
+// Two distinct failure shapes matter, and schedd treats them very differently
+// (engine.go, the CreateFromSnapshot call site):
+//
+//   - DegradeRestoreToColdBoot: vmmd could not load the snapshot and booted
+//     the rootfs instead, reporting Method=WAKE_COLD_BOOT against
+//     RequestedMethod=WAKE_RESTORE. This is where ADR-005's fallback actually
+//     lives — inside vmmd, not schedd. The wake SUCCEEDS and schedd retires
+//     the snapshot on the method mismatch.
+//   - FailRestore: the RPC itself errors. schedd does NOT fall back here; it
+//     releases the ledger reservation and transitions the instance to FAILED.
+//     The customer request fails.
+//
+// Conflating the two is easy to do from the spec prose alone, so both are
+// modelled explicitly.
+func (s *normalPathVMMD) CreateFromSnapshot(_ context.Context, request *vmmdpb.CreateFromSnapshotRequest) (*vmmdpb.WakeResponse, error) {
+	s.mu.Lock()
+	s.restoreCalls = append(s.restoreCalls, proto.Clone(request).(*vmmdpb.CreateFromSnapshotRequest))
+	failure := s.failRestore
+	degrade := s.degradeWake
+	s.mu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
+	method := vmmdpb.WakeMethod_WAKE_RESTORE
+	if degrade {
+		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
+	}
+	return &vmmdpb.WakeResponse{
+		Instance:        request.GetInstance(),
+		LeaseUid:        20001,
+		HostIp:          "127.0.0.1",
+		Netns:           "fake-" + request.GetInstance(),
+		Method:          method,
+		RequestedMethod: vmmdpb.WakeMethod_WAKE_RESTORE,
+	}, nil
+}
+
+// PauseAndSnapshot is the park edge. A failure here must leave the app
+// cold-bootable rather than parked (spec §6.0: snapshot failure ends at
+// `stopped`, never at a state that implies a snapshot exists).
+func (s *normalPathVMMD) PauseAndSnapshot(_ context.Context, request *vmmdpb.PauseAndSnapshotRequest) (*vmmdpb.SnapshotResponse, error) {
+	s.mu.Lock()
+	s.snapshotCalls = append(s.snapshotCalls, proto.Clone(request).(*vmmdpb.PauseAndSnapshotRequest))
+	failure := s.failSnapshot
+	s.mu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
+	return &vmmdpb.SnapshotResponse{
+		MemBytes:     int64(normalPathSnapshotRAMMB) << 20,
+		VmstateBytes: 4096,
+		StoredBytes:  int64(normalPathSnapshotRAMMB)<<20 + 4096,
+	}, nil
+}
+
+func (s *normalPathVMMD) Destroy(_ context.Context, request *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
+	s.mu.Lock()
+	s.destroyCalls = append(s.destroyCalls, request.GetInstance())
+	s.mu.Unlock()
+	return &vmmdpb.DestroyResponse{Instance: request.GetInstance()}, nil
+}
+
+func (s *normalPathVMMD) StopInstance(_ context.Context, request *vmmdpb.StopInstanceRequest) (*vmmdpb.StopInstanceResponse, error) {
+	s.mu.Lock()
+	s.stopCalls = append(s.stopCalls, request.GetInstance())
+	s.mu.Unlock()
+	return &vmmdpb.StopInstanceResponse{Instance: request.GetInstance()}, nil
+}
+
+// FailRestore makes the next and every subsequent CreateFromSnapshot return a
+// gRPC error, which schedd treats as a terminal wake failure rather than as a
+// reason to cold boot.
+func (s *normalPathVMMD) FailRestore(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failRestore = err
+}
+
+// DegradeRestoreToColdBoot reproduces vmmd's own ADR-005 fallback: the restore
+// RPC succeeds, but vmmd reports it booted the rootfs instead of loading the
+// snapshot. schedd must accept the wake and retire the snapshot.
+func (s *normalPathVMMD) DegradeRestoreToColdBoot() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.degradeWake = true
+}
+
+// FailSnapshot makes PauseAndSnapshot fail, exercising the park path that must
+// degrade to `stopped` rather than claiming a snapshot exists.
+func (s *normalPathVMMD) FailSnapshot(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failSnapshot = err
+}
+
+func (s *normalPathVMMD) RestoreCalls() []*vmmdpb.CreateFromSnapshotRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.CreateFromSnapshotRequest(nil), s.restoreCalls...)
+}
+
+func (s *normalPathVMMD) ColdBootCalls() []*vmmdpb.CreateColdBootRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.CreateColdBootRequest(nil), s.coldBootCalls...)
+}
+
+func (s *normalPathVMMD) SnapshotCalls() []*vmmdpb.PauseAndSnapshotRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.PauseAndSnapshotRequest(nil), s.snapshotCalls...)
+}
+
+func (s *normalPathVMMD) DestroyCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.destroyCalls...)
+}
+
+func (s *normalPathVMMD) StopCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.stopCalls...)
 }
 
 func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer) error {
