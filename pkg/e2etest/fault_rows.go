@@ -98,6 +98,26 @@ func (f *RowFaults) Deactivate(node string) error {
 	return nil
 }
 
+// SetNodeAdmissionCeiling lowers (or raises) a node's RAM admission ceiling.
+//
+// Invariant §6.2-2 caps live RAM at 85% of the tenant budget — 47,600 MB on
+// the reference box. A test cannot fill that on a CI runner, and should not
+// try: the interesting behaviour is what happens AT the ceiling, not what the
+// number is. Shrinking the node's own ceiling reaches the same code path
+// (NodeLedger.Admit against compute_nodes.admission_ceiling_mb) in a few
+// hundred megabytes.
+func (f *RowFaults) SetNodeAdmissionCeiling(node string, mb int) error {
+	tag, err := f.pool.Exec(context.Background(),
+		`UPDATE compute_nodes SET admission_ceiling_mb = $2 WHERE name = $1`, node, mb)
+	if err != nil {
+		return fmt.Errorf("e2etest: set admission ceiling for %s: %w", node, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("e2etest: set admission ceiling: no compute_node named %q", node)
+	}
+	return nil
+}
+
 // NodeLifecycle reads a node's current lifecycle and active flag, so a test
 // can assert on what the daemons converged to rather than on its own writes.
 func (f *RowFaults) NodeLifecycle(node string) (lifecycle string, active bool, err error) {
