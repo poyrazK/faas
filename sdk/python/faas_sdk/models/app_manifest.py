@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
     from ..models.service_replicas import ServiceReplicas
+    from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
 
@@ -110,6 +111,8 @@ class AppManifest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    worker_replicas: WorkerScaling | Unset = UNSET
+    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
     favicon: None | str | Unset = UNSET
     """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
     robots_txt: None | str | Unset = UNSET
@@ -231,6 +234,10 @@ class AppManifest:
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
 
+        worker_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_replicas, Unset):
+            worker_replicas = self.worker_replicas.to_dict()
+
         favicon: None | str | Unset
         if isinstance(self.favicon, Unset):
             favicon = UNSET
@@ -294,6 +301,8 @@ class AppManifest:
             field_dict["request_timeout_s"] = request_timeout_s
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if worker_replicas is not UNSET:
+            field_dict["worker_replicas"] = worker_replicas
         if favicon is not UNSET:
             field_dict["favicon"] = favicon
         if robots_txt is not UNSET:
@@ -317,6 +326,7 @@ class AppManifest:
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
         from ..models.service_replicas import ServiceReplicas
+        from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
@@ -536,6 +546,13 @@ class AppManifest:
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
 
+        _worker_replicas = d.pop("worker_replicas", UNSET)
+        worker_replicas: WorkerScaling | Unset
+        if isinstance(_worker_replicas, Unset):
+            worker_replicas = UNSET
+        else:
+            worker_replicas = WorkerScaling.from_dict(_worker_replicas)
+
         def _parse_favicon(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -587,6 +604,7 @@ class AppManifest:
             max_retries=max_retries,
             request_timeout_s=request_timeout_s,
             service_replicas=service_replicas,
+            worker_replicas=worker_replicas,
             favicon=favicon,
             robots_txt=robots_txt,
             head_wakes=head_wakes,

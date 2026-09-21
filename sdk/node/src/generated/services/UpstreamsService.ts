@@ -291,7 +291,7 @@ export class UpstreamsService {
      */
     slug: string,
     /**
-     * Upstream id (UUID).
+     * Id of the upstream whose egress circuit-breaker policy is being changed.
      */
     id: string,
     requestBody: UpdateUpstreamCircuitBreakerRequest,
@@ -308,7 +308,7 @@ export class UpstreamsService {
       errors: {
         401: `code: unauthorized`,
         402: `402 — the plan does not allow egress circuit breakers, or the per-app cap is reached.`,
-        404: `404 — upstream_not_found.`,
+        404: `404 — upstream_not_found: no upstream with this id belongs to the app.`,
         422: `422 — validation failed on the circuit-breaker body.`,
       },
     });

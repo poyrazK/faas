@@ -8725,7 +8725,7 @@ paths:
         in: path
         required: true
         schema: { type: string, format: uuid }
-        description: Upstream id (UUID).
+        description: Id of the upstream whose egress circuit-breaker policy is being changed.
     patch:
       tags: [upstreams]
       operationId: updateAppDataUpstreamCircuitBreaker
@@ -8762,7 +8762,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404':
-          description: '404 — upstream_not_found.'
+          description: '404 — upstream_not_found: no upstream with this id belongs to the app.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
