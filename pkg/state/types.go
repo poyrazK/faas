@@ -1496,6 +1496,8 @@ type AppManifest struct {
 	RestartPolicy    string             `json:"restart_policy,omitempty"`
 	StartupDeadlineS int                `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                `json:"max_retries,omitempty"`
+	StopGracePeriodS int                `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string             `json:"stop_signal,omitempty"`
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
@@ -1534,6 +1536,7 @@ func (m AppManifest) IsZero() bool {
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
+		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity

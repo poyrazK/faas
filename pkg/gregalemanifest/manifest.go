@@ -1010,6 +1010,8 @@ type LifecycleConfig struct {
 	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
 	RequestTimeoutS  *int                 `yaml:"request_timeout_s,omitempty"`
+	StopGracePeriodS *int                 `yaml:"stop_grace_period_s,omitempty"`
+	StopSignal       *string              `yaml:"stop_signal,omitempty"`
 	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
 }
 
@@ -1024,6 +1026,8 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
+		StopGracePeriodS: c.StopGracePeriodS,
+		StopSignal:       c.StopSignal,
 		ServiceReplicas:  c.ServiceReplicas,
 	}
 }
@@ -1031,7 +1035,8 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
 	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil &&
-		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil && c.ServiceReplicas == nil)
+		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
+		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
 
 // Validate checks lifecycle shape locally. Plan-specific admission is still
@@ -1056,16 +1061,57 @@ func (c *LifecycleConfig) Validate() error {
 	if c.RequestTimeoutS != nil {
 		m.RequestTimeoutS = *c.RequestTimeoutS
 	}
+	if c.StopGracePeriodS != nil {
+		if *c.StopGracePeriodS < 0 {
+			return fmt.Errorf("lifecycle: stop_grace_period_s %d cannot be negative", *c.StopGracePeriodS)
+		}
+		m.StopGracePeriod = time.Duration(*c.StopGracePeriodS) * time.Second
+	}
+	if c.StopSignal != nil && *c.StopSignal != "" {
+		if err := validateStopSignal(*c.StopSignal); err != nil {
+			return fmt.Errorf("lifecycle: %w", err)
+		}
+		m.StopSignal = *c.StopSignal
+	}
 	m.ServiceReplicas = c.ServiceReplicas
 	return m.ValidateLifecyclePlan(api.PlanScale)
+}
+
+// validateStopSignal checks that s is an accepted POSIX signal name or number.
+func validateStopSignal(s string) error {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "", "SIGTERM", "TERM", "15", "SIGINT", "INT", "2", "SIGQUIT", "QUIT", "3", "SIGHUP", "HUP", "1", "SIGUSR1", "USR1", "10", "SIGUSR2", "USR2", "12":
+		return nil
+	default:
+		return fmt.Errorf("unsupported stop_signal %q; must be one of SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2", s)
+	}
 }
 
 // WorkerSpec declares a native background worker workload with optional
 // queue-backlog autoscaling (min=0 supported for scale-to-zero).
 type WorkerSpec struct {
-	Command string          `yaml:"command,omitempty"`
-	Scale   WorkerScaleSpec `yaml:"scale"`
-	Source  *Trigger        `yaml:"source,omitempty"`
+	Command       string          `yaml:"command,omitempty"`
+	DrainTimeout  string          `yaml:"drain_timeout,omitempty"`
+	DrainTimeoutS int             `yaml:"drain_timeout_s,omitempty"`
+	StopSignal    string          `yaml:"stop_signal,omitempty"`
+	Scale         WorkerScaleSpec `yaml:"scale"`
+	Source        *Trigger        `yaml:"source,omitempty"`
+}
+
+// DrainTimeoutSeconds returns the effective drain timeout in seconds.
+func (w *WorkerSpec) DrainTimeoutSeconds() int {
+	if w == nil {
+		return 0
+	}
+	if w.DrainTimeoutS > 0 {
+		return w.DrainTimeoutS
+	}
+	if strings.TrimSpace(w.DrainTimeout) != "" {
+		if d, err := time.ParseDuration(strings.TrimSpace(w.DrainTimeout)); err == nil && d > 0 {
+			return int(math.Ceil(d.Seconds()))
+		}
+	}
+	return 0
 }
 
 // WorkerScaleSpec defines autoscaling parameters for background workers.
@@ -1090,6 +1136,23 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 func (w *WorkerSpec) Validate() error {
 	if w == nil {
 		return nil
+	}
+	if w.DrainTimeoutS < 0 {
+		return fmt.Errorf("worker: drain_timeout_s %d cannot be negative", w.DrainTimeoutS)
+	}
+	if strings.TrimSpace(w.DrainTimeout) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(w.DrainTimeout))
+		if err != nil {
+			return fmt.Errorf("worker: invalid drain_timeout %q: %w", w.DrainTimeout, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("worker: drain_timeout %q cannot be negative", w.DrainTimeout)
+		}
+	}
+	if w.StopSignal != "" {
+		if err := validateStopSignal(w.StopSignal); err != nil {
+			return fmt.Errorf("worker: %w", err)
+		}
 	}
 	if err := w.Scale.Validate(); err != nil {
 		return fmt.Errorf("worker.scale: %w", err)

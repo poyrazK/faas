@@ -5678,7 +5678,7 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 		// StopInstance owns the mode-aware signal/grace/destroy sequence, but
 		// it must acquire the same app lock, so release this lock first.
 		e.unlockApp(ins.AppID)
-		_, err := e.StopInstance(ctx, instanceID, StopOptions{GraceSeconds: 30})
+		_, err := e.StopInstance(ctx, instanceID, StopOptions{})
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
@@ -5829,7 +5829,8 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				// Worker/job instances are durable workload processes, not
 				// snapshot cache entries. App eviction therefore follows the
 				// signal/grace/destroy path even when the row is RUNNING.
-				if _, stopErr := e.vmm.StopInstanceOnNode(ctx, fresh.NodeID, fresh.ID, int32(syscall.SIGTERM), 30); stopErr != nil {
+				opts := e.workerStopOptions(app)
+				if _, stopErr := e.vmm.StopInstanceOnNode(ctx, fresh.NodeID, fresh.ID, opts.Signal, opts.GraceSeconds); stopErr != nil {
 					e.log.Warn("sched: park app: stop worker/job signal failed; falling through to destroy", "instance", fresh.ID, "err", stopErr)
 				}
 				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
@@ -6153,14 +6154,28 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 	switch mode {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		// Signal-grace-SIGKILL sequence (ADR-138 §Decision 1).
-		// signal=0 → SIGTERM default; graceSeconds comes from
-		// manifest.StopGracePeriodS capped at the per-plan tier
-		// (commit 10).
+		// signal=0 → manifest.StopSignal (defaulting to SIGTERM);
+		// graceSeconds comes from opts.GraceSeconds, or manifest.StopGracePeriodS
+		// (capped at the per-plan tier), defaulting to 30.
 		signal := syscall.Signal(opts.Signal)
+		grace := opts.GraceSeconds
+		if signal == 0 || grace <= 0 {
+			if app, aerr := e.store.AppByID(ctx, ins.AppID); aerr == nil {
+				if signal == 0 {
+					signal = parseStopSignal(app.Manifest.StopSignal)
+				}
+				if grace <= 0 && app.Manifest.StopGracePeriodS > 0 {
+					grace = int32(app.Manifest.StopGracePeriodS)
+				}
+			}
+		}
 		if signal == 0 {
 			signal = syscall.SIGTERM
 		}
-		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), int32(opts.GraceSeconds))
+		if grace <= 0 {
+			grace = 30
+		}
+		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace)
 		if serr != nil {
 			e.log.Warn("sched: stop instance signal-grace failed; falling through to destroy",
 				"op", op, "instance", instanceID, "err", serr)

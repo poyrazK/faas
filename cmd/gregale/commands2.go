@@ -1281,6 +1281,15 @@ func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest)
 	if desired.MaxRetries != nil && manifest.MaxRetries != *desired.MaxRetries {
 		return true
 	}
+	if desired.StopGracePeriodS != nil {
+		currentGraceS := int(manifest.StopGracePeriod / time.Second)
+		if currentGraceS != *desired.StopGracePeriodS {
+			return true
+		}
+	}
+	if desired.StopSignal != nil && manifest.StopSignal != *desired.StopSignal {
+		return true
+	}
 	if desired.RequestTimeoutS != nil && manifest.RequestTimeoutS != *desired.RequestTimeoutS {
 		return true
 	}
@@ -1318,6 +1327,13 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 		workerMode := api.ExecutionModeWorker
 		desired.ExecutionMode = &workerMode
 		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			desired.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			desired.StopSignal = &sig
+		}
 	}
 	current, err := client.GetApp(ctx, slug)
 	if err != nil {

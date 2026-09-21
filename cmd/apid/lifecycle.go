@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -72,11 +74,17 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 	if healthPath == "" {
 		healthPath = "/healthz"
 	}
+	var stopGrace time.Duration
+	if req.StopGracePeriodS > 0 {
+		stopGrace = time.Duration(req.StopGracePeriodS) * time.Second
+	}
 	return api.AppManifest{
 		ExecutionMode:    req.ExecutionMode,
 		RestartPolicy:    req.RestartPolicy,
 		StartupDeadlineS: req.StartupDeadlineS,
 		MaxRetries:       req.MaxRetries,
+		StopGracePeriod:  stopGrace,
+		StopSignal:       req.StopSignal,
 		RequestTimeoutS:  req.RequestTimeoutS,
 		ServiceReplicas:  req.ServiceReplicas,
 		WorkerReplicas:   req.WorkerReplicas,
@@ -106,11 +114,17 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
 		}
 	}
+	stopGracePeriodS := 0
+	if manifest.StopGracePeriod > 0 {
+		stopGracePeriodS = int(math.Ceil(manifest.StopGracePeriod.Seconds()))
+	}
 	return state.AppManifest{
 		ExecutionMode:    manifest.ExecutionMode,
 		RestartPolicy:    manifest.RestartPolicy,
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
+		StopGracePeriodS: stopGracePeriodS,
+		StopSignal:       manifest.StopSignal,
 		RequestTimeoutS:  manifest.RequestTimeoutS,
 		ServiceReplicas:  replicas,
 		WorkerReplicas:   workerReplicas,
@@ -140,11 +154,17 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
 		}
 	}
+	var stopGrace time.Duration
+	if manifest.StopGracePeriodS > 0 {
+		stopGrace = time.Duration(manifest.StopGracePeriodS) * time.Second
+	}
 	return api.AppManifest{
 		ExecutionMode:    manifest.ExecutionMode,
 		RestartPolicy:    manifest.RestartPolicy,
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
+		StopGracePeriod:  stopGrace,
+		StopSignal:       manifest.StopSignal,
 		RequestTimeoutS:  manifest.RequestTimeoutS,
 		ServiceReplicas:  replicas,
 		WorkerReplicas:   workerReplicas,
@@ -162,7 +182,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
-		req.WorkerReplicas != nil ||
+		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.Ports != nil
 	if !changed {
@@ -180,6 +200,12 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	}
 	if req.MaxRetries != nil {
 		manifest.MaxRetries = *req.MaxRetries
+	}
+	if req.StopGracePeriodS != nil {
+		manifest.StopGracePeriod = time.Duration(*req.StopGracePeriodS) * time.Second
+	}
+	if req.StopSignal != nil {
+		manifest.StopSignal = *req.StopSignal
 	}
 	if req.RequestTimeoutS != nil {
 		manifest.RequestTimeoutS = *req.RequestTimeoutS
@@ -234,6 +260,8 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.RestartPolicy = manifest.RestartPolicy
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
+	updated.StopGracePeriodS = stateManifestFromAPI(manifest).StopGracePeriodS
+	updated.StopSignal = manifest.StopSignal
 	updated.RequestTimeoutS = manifest.RequestTimeoutS
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
 	updated.WorkerReplicas = stateManifestFromAPI(manifest).WorkerReplicas

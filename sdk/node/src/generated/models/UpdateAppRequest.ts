@@ -41,6 +41,14 @@ export type UpdateAppRequest = {
    */
   startup_deadline_s?: number | null;
   /**
+   * Upper bound on worker or service shutdown draining time in seconds before SIGKILL. Omit for no change; 0 uses the mode/plan default.
+   */
+  stop_grace_period_s?: number | null;
+  /**
+   * Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omit for no change.
+   */
+  stop_signal?: string | null;
+  /**
    * Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default.
    */
   max_retries?: number | null;

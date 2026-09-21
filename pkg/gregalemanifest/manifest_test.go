@@ -1133,6 +1133,8 @@ func TestWorkerManifest_ParseAndValidate(t *testing.T) {
 	content := `
 worker:
   command: ./consumer
+  drain_timeout: 45s
+  stop_signal: SIGINT
   scale:
     min: 0
     max: 50
@@ -1158,6 +1160,12 @@ worker:
 	}
 	if m.Worker.Command != "./consumer" {
 		t.Errorf("Command = %q, want ./consumer", m.Worker.Command)
+	}
+	if m.Worker.DrainTimeout != "45s" || m.Worker.DrainTimeoutSeconds() != 45 {
+		t.Errorf("DrainTimeout = %q (%d s), want 45s (45 s)", m.Worker.DrainTimeout, m.Worker.DrainTimeoutSeconds())
+	}
+	if m.Worker.StopSignal != "SIGINT" {
+		t.Errorf("StopSignal = %q, want SIGINT", m.Worker.StopSignal)
 	}
 	if m.Worker.Scale.Min != 0 || m.Worker.Scale.Max != 50 {
 		t.Errorf("Scale min/max = %d/%d, want 0/50", m.Worker.Scale.Min, m.Worker.Scale.Max)
@@ -1203,6 +1211,30 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 				Source: &Trigger{Kind: "unsupported"},
 			},
 			want: "unsupported kind",
+		},
+		{
+			name: "negative drain_timeout_s",
+			spec: WorkerSpec{
+				DrainTimeoutS: -5,
+				Scale:         WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+			},
+			want: "cannot be negative",
+		},
+		{
+			name: "invalid drain_timeout string",
+			spec: WorkerSpec{
+				DrainTimeout: "not-a-duration",
+				Scale:        WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+			},
+			want: "invalid drain_timeout",
+		},
+		{
+			name: "unsupported stop signal",
+			spec: WorkerSpec{
+				StopSignal: "SIGKILL",
+				Scale:      WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+			},
+			want: "unsupported stop_signal",
 		},
 	}
 
