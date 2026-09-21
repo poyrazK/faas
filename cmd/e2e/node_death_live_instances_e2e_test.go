@@ -24,9 +24,12 @@
 package e2e_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -149,7 +152,7 @@ func instanceRowsForApp(t *testing.T, f *normalPathFixture) string {
 	t.Helper()
 	rows, err := f.h.Pool.Query(f.ctx,
 		`SELECT id::text, state, coalesce(node_id::text,'') FROM instances
-		  WHERE app_id = $1 ORDER BY created_at`, f.app.ID)
+		  WHERE app_id = $1 ORDER BY started_at NULLS FIRST`, f.app.ID)
 	if err != nil {
 		return "<unreadable: " + err.Error() + ">"
 	}
@@ -184,9 +187,15 @@ func liveInstanceIDForApp(t *testing.T, f *normalPathFixture, excluding string) 
 	err := f.h.Pool.QueryRow(f.ctx,
 		`SELECT id::text FROM instances
 		  WHERE app_id = $1 AND id::text <> $2 AND state IN ('running','warm')
-		  ORDER BY created_at DESC LIMIT 1`, f.app.ID, excluding).Scan(&id)
-	if err != nil {
+		  ORDER BY started_at DESC NULLS LAST LIMIT 1`, f.app.ID, excluding).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false
+	}
+	if err != nil {
+		// A malformed query here silently returns "no replacement" on every
+		// poll and the test fails for the wrong reason — which is exactly what
+		// `ORDER BY created_at` did, on a table that has no such column.
+		t.Fatalf("query live instances for app: %v", err)
 	}
 	return id, true
 }
