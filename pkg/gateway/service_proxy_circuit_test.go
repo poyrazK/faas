@@ -28,8 +28,10 @@ func breakerProxy(t *testing.T, group *circuit.Group, now func() time.Time) (*Se
 	}}
 	var lastServed string
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider:  provider,
-		Resolve:   func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
+		Provider: provider,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
 		Authorize: func(context.Context, string, string) error { return nil },
 		Forward: func(target Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,8 +118,10 @@ func TestServiceProxyBreakerReadmitsRecoveredEndpoint(t *testing.T) {
 		Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
 	}}
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider:  provider,
-		Resolve:   func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
+		Provider: provider,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
 		Authorize: func(context.Context, string, string) error { return nil },
 		Forward: func(Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
