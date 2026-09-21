@@ -324,3 +324,83 @@ func makeRelease(t *testing.T, root, id string) string {
 	}
 	return releaseRoot
 }
+
+// TestDeployAcceptsSBOMBaselineInTargetRelease covers the CD retry path.
+//
+// KGV rotation writes the operator-owned sbom-baseline.json sidecar into the
+// release directory after a successful activation. Re-running the same
+// release must therefore tolerate the sidecar in the *target* directory, not
+// only in the currently-active one. The strict walk rejected it, so the first
+// rollout of a release passed and every retry failed.
+//
+// adr: 005
+// spec: §14
+func TestDeployAcceptsSBOMBaselineInTargetRelease(t *testing.T) {
+	root := t.TempDir()
+	newRelease := makeRelease(t, root, "new")
+	if err := os.WriteFile(filepath.Join(newRelease, "sbom-baseline.json"), []byte(`{"counts":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := makeRelease(t, root, "old")
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(old, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	controller := newController(t, root, current, runtime)
+
+	if err := controller.Deploy(context.Background(), "new"); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if got, err := os.Readlink(current); err != nil || got != newRelease {
+		t.Fatalf("current = %q, %v; want %q", got, err, newRelease)
+	}
+}
+
+// TestDeployStillRejectsUnknownExtraFileInTargetRelease pins that the
+// installed-release allowance is narrow: only the KGV sidecar is permitted.
+//
+// adr: 005
+// spec: §14
+func TestDeployStillRejectsUnknownExtraFileInTargetRelease(t *testing.T) {
+	root := t.TempDir()
+	newRelease := makeRelease(t, root, "new")
+	if err := os.WriteFile(filepath.Join(newRelease, "rogue.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(makeRelease(t, root, "old"), current); err != nil {
+		t.Fatal(err)
+	}
+	controller := newController(t, root, current, &fakeRuntime{})
+
+	err := controller.Deploy(context.Background(), "new")
+	if err == nil || !strings.Contains(err.Error(), "unexpected files: rogue.json") {
+		t.Fatalf("Deploy err = %v; want rejection of rogue.json", err)
+	}
+}
+
+// TestDryRunAcceptsSBOMBaselineInTargetRelease mirrors the Deploy retry
+// contract for the migration dry run, which reads the same installed
+// directory under ReleasesRoot.
+//
+// adr: 005
+// spec: §14
+func TestDryRunAcceptsSBOMBaselineInTargetRelease(t *testing.T) {
+	root := t.TempDir()
+	newRelease := makeRelease(t, root, "new")
+	if err := os.WriteFile(filepath.Join(newRelease, "sbom-baseline.json"), []byte(`{"counts":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(makeRelease(t, root, "old"), current); err != nil {
+		t.Fatal(err)
+	}
+	report, err := DryRun(Config{ReleasesRoot: root, CurrentPath: current, LockPath: filepath.Join(root, "deploy.lock")}, "new")
+	if err != nil {
+		t.Fatalf("DryRun: %v", err)
+	}
+	if report.ReleaseID != "new" {
+		t.Fatalf("report.ReleaseID = %q, want %q", report.ReleaseID, "new")
+	}
+}

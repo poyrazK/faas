@@ -58,7 +58,11 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 	if manifest.ReleaseID != releaseID {
 		return fmt.Errorf("deploycontroller: release id %q does not match manifest %q", releaseID, manifest.ReleaseID)
 	}
-	if err := releasebundle.Verify(releaseRoot, manifest); err != nil {
+	// The release directory is already installed on the host, so a prior
+	// activation may have written the operator-owned KGV baseline sidecar
+	// beside the signed bundle. Apply the same installed-release policy the
+	// rest of this controller uses; the strict walk would reject a rerun.
+	if err := verifyInstalledRelease(releaseRoot, manifest); err != nil {
 		return fmt.Errorf("deploycontroller: verify release %q: %w", releaseID, err)
 	}
 

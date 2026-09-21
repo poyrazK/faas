@@ -59,7 +59,9 @@ func DryRun(config Config, releaseID string) (MigrationReport, error) {
 	if manifest.ReleaseID != releaseID {
 		return MigrationReport{}, fmt.Errorf("deploycontroller: dry-run release id %q does not match manifest %q", releaseID, manifest.ReleaseID)
 	}
-	if err := releasebundle.Verify(root, manifest); err != nil {
+	// Same installed-release policy as Deploy: this directory lives under
+	// ReleasesRoot and may already carry the KGV baseline sidecar.
+	if err := verifyInstalledRelease(root, manifest); err != nil {
 		return MigrationReport{}, fmt.Errorf("deploycontroller: dry-run verify: %w", err)
 	}
 
