@@ -50,7 +50,11 @@ func cmdComputeNodesSizing(args []string) int {
 	fs := flag.NewFlagSet("sizing", flag.ContinueOnError)
 	fs.SetOutput(osStderr)
 	roleFlag := fs.String("role", "", "box role: compute-only, control-plane, or single-box")
-	asJSON := fs.Bool("json", false, "emit the machine-readable report")
+	// run() calls applyJSONFlag, which strips a bare --json from the argv and
+	// sets the process-wide jsonOutput before dispatch. A subcommand-local
+	// flag therefore never sees it, so both must be consulted — the same
+	// `*jsonOut || jsonOutput` shape every other gregalectl command uses.
+	jsonOut := fs.Bool("json", false, "emit the machine-readable report")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -69,7 +73,7 @@ func cmdComputeNodesSizing(args []string) int {
 		MemMB:              sizing.MemMB,
 		Detected:           memMB > 0,
 	}
-	if *asJSON {
+	if *jsonOut || jsonOutput {
 		body, err := json.Marshal(report)
 		if err != nil {
 			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes sizing: %v\n", err)

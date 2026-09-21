@@ -138,3 +138,60 @@ func captureSizingStdout(t *testing.T) (*os.File, func() string) {
 		return out
 	}
 }
+
+// TestComputeNodesSizingEmitsJSONThroughRun is the regression test for the
+// bug that broke the ADR-203 deploy contract on the first real rollout.
+//
+// run() calls applyJSONFlag, which strips a bare --json from the argv and
+// sets the process-wide jsonOutput *before* dispatch. The subcommand's own
+// flag therefore never sees it, so `gregalectl compute-nodes sizing --json`
+// printed the human form and node_join's `from_json` got an empty string:
+//
+//	the field 'args' has an invalid value ... Expecting value: line 1 column 1
+//
+// The original unit test missed this because it called the command function
+// directly and skipped applyJSONFlag entirely. This one goes through run().
+//
+// adr: 203
+// spec: §13
+func TestComputeNodesSizingEmitsJSONThroughRun(t *testing.T) {
+	prevJSON := jsonOutput
+	t.Cleanup(func() { jsonOutput = prevJSON })
+
+	for _, args := range [][]string{
+		{"compute-nodes", "sizing", "--role", "compute-only", "--json"},
+		{"compute-nodes", "sizing", "--json", "--role", "compute-only"},
+		{"--json", "compute-nodes", "sizing", "--role", "compute-only"},
+	} {
+		jsonOutput = false
+		_, restore := captureSizingStdout(t)
+		code := run(append([]string(nil), args...))
+		out := restore()
+		if code != 0 {
+			t.Fatalf("%v: exit = %d, output %q", args, code, out)
+		}
+		var report nodeSizingReport
+		if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &report); err != nil {
+			t.Fatalf("%v: output is not JSON (%v): %q", args, err, out)
+		}
+		if report.Role != string(role.RoleComputeOnly) {
+			t.Fatalf("%v: role = %q, want compute-only", args, report.Role)
+		}
+	}
+
+	// Without the flag the human form is still the default, so an operator
+	// reading the terminal is unaffected.
+	jsonOutput = false
+	_, restore := captureSizingStdout(t)
+	code := run([]string{"compute-nodes", "sizing", "--role", "compute-only"})
+	out := restore()
+	if code != 0 {
+		t.Fatalf("human form exit = %d, output %q", code, out)
+	}
+	if strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Fatalf("human form emitted JSON: %q", out)
+	}
+	if !strings.Contains(out, "admission_ceiling_mb=") {
+		t.Fatalf("human form is missing the ceiling: %q", out)
+	}
+}

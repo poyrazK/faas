@@ -794,6 +794,20 @@
       changed_when: false
       register: faas_node_sizing_raw
 
+    - name: Require machine-readable capacity output before parsing it
+      # A non-JSON stdout here used to surface as ansible's opaque
+      # "the field 'args' has an invalid value ... Expecting value: line 1
+      # column 1", which says nothing about the actual cause. Assert the
+      # shape first so the failure names the command and shows what it
+      # printed.
+      ansible.builtin.assert:
+        that:
+          - faas_node_sizing_raw.stdout | default('') | trim is match('^\{')
+        fail_msg: >-
+          gregalectl compute-nodes sizing --json did not emit JSON
+          (stdout={{ faas_node_sizing_raw.stdout | default('') | trim }});
+          the installed operator binary may predate the sizing subcommand.
+
     - name: Parse the derived capacity
       ansible.builtin.set_fact:
         faas_node_sizing: "{{ faas_node_sizing_raw.stdout | from_json }}"
