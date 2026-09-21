@@ -455,3 +455,41 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
             "env RELEASE_SHA='${DESIRED_RELEASE}' RUN_ID='${GITHUB_RUN_ID_VALUE}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh
+
+      # Every gate above runs AFTER deployctl has already activated the release
+      # and returned success, so until now a failure left the bad release
+      # serving and the documented remedy was "rerun CD".
+      #
+      # deployctl rollback activates the newest verified retained release under
+      # the same lock a deploy takes. It re-verifies the target first, so a
+      # drifted retained directory is refused rather than shipped as a
+      # recovery. The step keeps the job red either way: a successful rollback
+      # means the fleet is safe, not that the release was good.
+      #
+      # The binary comes from the release that just failed, which is the same
+      # path cd-controlplane already uses. That is sound because the gates
+      # above fail on daemon health — apid, the gateway, metering — while
+      # deployctl only reads release directories, verifies manifests and drives
+      # systemd. If the release is broken badly enough that its controller will
+      # not run, the else branch below says so rather than reporting recovery.
+      - name: Roll back the platform release on gate failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          # `if: failure()` fires for ANY earlier step in this job, including
+          # the SSH setup that runs before the release is even identified.
+          # Rolling back on one of those would undo a release that is serving
+          # fine, so require the marker that the verification phase was
+          # actually reached.
+          if [[ -z "${DESIRED_RELEASE:-}" ]]; then
+            echo "::error::this job failed before the release was identified; nothing was rolled back"
+            exit 1
+          fi
+          echo "::warning::a post-activation gate failed; rolling the control plane back"
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+              '/opt/faas/current/bin/deployctl rollback'; then
+            echo "::error::release ${DESIRED_RELEASE} failed its post-activation gates and was rolled back"
+          else
+            echo "::error::release ${DESIRED_RELEASE} failed its post-activation gates AND the rollback did not complete — the control plane needs an operator now"
+          fi
+          exit 1
