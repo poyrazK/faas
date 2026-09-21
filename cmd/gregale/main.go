@@ -377,6 +377,8 @@ func run(args []string) (status int) {
 		return cmdCrons(args[1:])
 	case "triggers":
 		return cmdTriggers(args[1:])
+	case "workers":
+		return cmdWorkers(args[1:])
 	case "delayed-task":
 		// Tier D: scheduled-at deferred invocations (issue #557 /
 		// ADR-072 sibling). Mirrors crons for dispatcher shape
