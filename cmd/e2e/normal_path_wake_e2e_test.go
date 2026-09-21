@@ -367,8 +367,22 @@ func TestE2E_NormalPath_ParkCapturesSnapshotAndReleasesInstance(t *testing.T) {
 		if ins, err := f.store.InstanceByID(f.ctx, instance.ID); err == nil {
 			stateNow = ins.State
 		}
-		t.Fatalf("park did not reach PauseAndSnapshot for %s (instance state=%q; Engine.Park is a silent no-op unless the state is running or warm)",
-			instance.ID, stateNow)
+		// Dump what the VM boundary actually saw. "parked with no capture" has
+		// several possible causes — Engine.Park's warm branch destroys instead
+		// of capturing, a RAM mismatch discards, the reaper may have taken a
+		// different path — and they are indistinguishable without the calls.
+		var snaps []string
+		for _, c := range f.vmmd.SnapshotCalls() {
+			snaps = append(snaps, c.GetInstance())
+		}
+		t.Fatalf("park did not reach PauseAndSnapshot for %s\n"+
+			"  instance state = %q (Engine.Park is a silent no-op unless running or warm)\n"+
+			"  PauseAndSnapshot = %v\n"+
+			"  Destroy          = %v\n"+
+			"  StopInstance     = %v\n"+
+			"  CreateFromSnapshot=%d  CreateColdBoot=%d",
+			instance.ID, stateNow, snaps, f.vmmd.DestroyCalls(), f.vmmd.StopCalls(),
+			len(f.vmmd.RestoreCalls()), len(f.vmmd.ColdBootCalls()))
 	}
 
 	// The instance must leave RUNNING: a park that captures but keeps the VM

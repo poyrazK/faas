@@ -40,6 +40,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
@@ -560,8 +561,71 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			w.Header().Add(k, v)
 		}
 	}
+	// Announce whatever trailers the upstream declared up front. Over an
+	// HTTP/1.1 upstream Go pre-populates resp.Trailer from the peer's
+	// "Trailer:" header, so this is the whole story there.
+	//
+	// It is NOT the whole story over H2C, which is the DEFAULT for the unix
+	// upstream (see gatewayd-public: FAAS_INTERNAL_H2C defaults on for
+	// internalUpstreamUnix). Go's HTTP/2 transport does not pre-populate
+	// resp.Trailer — the keys only appear once the body has been fully read.
+	// So this loop sees an empty map, nothing is announced, and the
+	// post-body copy below then writes trailer values that Go's HTTP/1.1
+	// server silently discards because they were never declared.
+	//
+	// The result was that trailers vanished at the public hop while working
+	// perfectly across gatewayd-internal, which is why no test caught it:
+	// until the normal-path family was routed through gatewayd-public,
+	// nothing exercised the pair. grpc-status travels in trailers, so this
+	// broke gRPC through the real edge.
+	// Announcing BEFORE WriteHeader is not optional: an HTTP/1.1 response can
+	// only carry trailers when it is chunked, and Go's server picks
+	// Content-Length for a small buffered body unless a "Trailer" header tells
+	// it otherwise. Announce nothing here and the trailer values written after
+	// the body are unsendable no matter how they are keyed.
+	//
+	// Two sources, because neither alone is complete:
+	//
+	//   - resp.Trailer covers an HTTP/1.1 upstream, where Go pre-populates the
+	//     keys from the peer's "Trailer" header at response-header time.
+	//   - resp.Header["Trailer"] covers H2C, the DEFAULT for the unix upstream
+	//     (FAAS_INTERNAL_H2C). Go's HTTP/2 transport leaves resp.Trailer empty
+	//     until the body is drained, but gatewayd-internal's own
+	//     `w.Header().Add("Trailer", name)` still arrives as an ordinary header
+	//     field, so the names are knowable up front after all.
+	//
+	// Reading only resp.Trailer is what dropped every trailer at the public
+	// hop while gatewayd-internal alone handled them correctly — invisible
+	// until the normal-path e2e family was routed through gatewayd-public.
+	// grpc-status travels in trailers, so this broke gRPC through the real edge.
+	announced := make(map[string]bool, len(resp.Trailer)+1)
+	announce := func(name string) {
+		key := textproto.CanonicalMIMEHeaderKey(name)
+		if key == "" || announced[key] {
+			return
+		}
+		announced[key] = true
+		w.Header().Add("Trailer", key)
+	}
 	for name := range resp.Trailer {
-		w.Header().Add("Trailer", name)
+		announce(name)
+	}
+	for _, value := range resp.Header.Values("Trailer") {
+		for _, name := range strings.Split(value, ",") {
+			announce(strings.TrimSpace(name))
+		}
+	}
+	if len(announced) > 0 {
+		// An HTTP/1.1 response can only carry trailers when it is chunked, and
+		// Go's server uses identity encoding whenever Content-Length is set
+		// explicitly. We copy the upstream's headers verbatim just above, so a
+		// small upstream body hands us a Content-Length that silently disables
+		// every trailer we just announced — the response still advertises
+		// "Trailer: grpc-status" and then never sends one.
+		//
+		// Dropping it lets the server choose chunked. The length was upstream's
+		// framing decision for its own hop, not a promise we owe the client.
+		w.Header().Del("Content-Length")
 	}
 	responseStatus := resp.StatusCode
 	if encodeOrigin504 {
@@ -583,10 +647,36 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
+		// Abort rather than return. The status line and headers are already on
+		// the wire, so returning normally ends the response cleanly and the
+		// customer receives a TRUNCATED body under a success status with no
+		// way to tell it apart from a complete one. That is silent data loss:
+		// gatewayd-internal dying mid-stream looked to the client exactly like
+		// a successful short response.
+		//
+		// ErrAbortHandler is the supported way to kill a response in progress
+		// without a stack dump — the chunked stream is left unterminated (or
+		// the connection is closed), so the client surfaces a transport error,
+		// which is the truth.
+		//
+		// context.Canceled stays exempt: that is the CLIENT having hung up, so
+		// there is nobody left to mislead.
+		panic(http.ErrAbortHandler)
 	}
+	// Now that the body is drained, resp.Trailer is populated for every
+	// protocol. A key that was announced above is written under its plain
+	// name; one that only appeared now (the H2C case) goes out under
+	// http.TrailerPrefix, which is Go's supported way to send a trailer that
+	// was not declared before the header was flushed. Distinguishing the two
+	// matters: adding an already-announced key under the prefix as well would
+	// send it twice.
 	for name, values := range resp.Trailer {
+		key := name
+		if !announced[textproto.CanonicalMIMEHeaderKey(name)] {
+			key = http.TrailerPrefix + name
+		}
 		for _, value := range values {
-			w.Header().Add(name, value)
+			w.Header().Add(key, value)
 		}
 	}
 }
