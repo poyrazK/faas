@@ -34,6 +34,11 @@ table inet faas {
     ip saddr {{ cidr }} tcp dport 5432 accept comment "faas postgres from compute"
 {% endfor -%}
 {% endif -%}
+{% if faas_pgbouncer_enabled | default(false) and faas_postgres_allowed_cidrs is defined and faas_postgres_allowed_cidrs -%}
+{% for cidr in faas_postgres_allowed_cidrs -%}
+    ip saddr {{ cidr }} tcp dport {{ faas_pgbouncer_listen_port | default(6432) }} accept comment "faas pgbouncer from compute"
+{% endfor -%}
+{% endif -%}
 {% if faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport { {{ faas_compute_allowed_ports | join(', ') }} } accept comment "faas control services from compute"

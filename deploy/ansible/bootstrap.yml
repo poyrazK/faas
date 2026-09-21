@@ -107,6 +107,8 @@
     # Control-plane-only:
     - role: postgres
     - role: postgres_capacity
+    - role: pgbouncer
+      when: faas_pgbouncer_enabled | default(false) | bool
     - role: postgres_backup
       when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service

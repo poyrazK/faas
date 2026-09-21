@@ -32,6 +32,11 @@ masquerade_cidr_v6: ''
 # Split-box PostgreSQL ingress. The manifest generator sets these only on
 # the control-plane host; an empty list preserves the single-box firewall.
 faas_postgres_allowed_cidrs: []
+# Pooler port, opened to the same CIDRs already trusted for 5432 and only when
+# the pooler is enabled. 5432 stays open because FAAS_DATABASE_URL_DIRECT
+# still reaches the postmaster for LISTEN and session advisory locks.
+faas_pgbouncer_enabled: false
+faas_pgbouncer_listen_port: 6432
 # Split-box scheduler ingress. Compute nodes stream capacity to schedd on
 # TCP/9091; keep this separate from PostgreSQL so the firewall contract is
 # explicit even though both lists are currently derived from the same fleet.

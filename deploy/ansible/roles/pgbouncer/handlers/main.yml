@@ -1,0 +1,14 @@
+---
+- name: reload pgbouncer
+  ansible.builtin.systemd:
+    name: pgbouncer
+    state: reloaded
+  when: faas_pgbouncer_enabled | bool
+
+# pool_mode, listen_addr and the pool sizes are start-time settings; a reload
+# leaves the old values in place and the change looks applied when it is not.
+- name: restart pgbouncer
+  ansible.builtin.systemd:
+    name: pgbouncer
+    state: restarted
+  when: faas_pgbouncer_enabled | bool

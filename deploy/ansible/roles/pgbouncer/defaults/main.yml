@@ -1,0 +1,39 @@
+---
+# Disabled by default. Enabling changes the endpoint every compute node dials,
+# so it is an explicit operator decision per fleet, not a silent upgrade.
+faas_pgbouncer_enabled: false
+
+faas_pgbouncer_listen_port: 6432
+# Compute nodes reach the pooler over the control-plane mesh address, the same
+# one faas_postgres_listen_addresses already publishes for the postmaster.
+faas_pgbouncer_listen_address: "{{ faas_postgres_listen_addresses | default('127.0.0.1') }}"
+
+# Transaction mode is the whole point: a server connection is returned to the
+# pool at COMMIT, so N client connections share far fewer backends. It is also
+# what makes session state unsafe — see pkg/db/direct.go for the code-side
+# contract that keeps LISTEN and session advisory locks off this path.
+faas_pgbouncer_pool_mode: transaction
+
+# max_client_conn is what compute daemons may open in aggregate. It replaces
+# the postmaster's max_connections as the number that scales with fleet size,
+# and costs ~2 KB of pgbouncer memory per connection rather than a backend
+# process.
+faas_pgbouncer_max_client_conn: 5000
+
+# default_pool_size is what actually reaches PostgreSQL, per (user, database).
+# This is the number the fleet's backend count collapses to: 100 nodes no
+# longer means thousands of backends, it means this.
+faas_pgbouncer_default_pool_size: 64
+# Headroom for a burst without growing the steady pool.
+faas_pgbouncer_reserve_pool_size: 16
+faas_pgbouncer_reserve_pool_timeout: 3
+
+# The pooler reaches the postmaster over the peer-authenticated Unix socket,
+# so no password is needed for the server leg and none is stored on disk.
+faas_pgbouncer_server_host: /run/postgresql
+faas_pgbouncer_database: faas
+faas_pgbouncer_db_role: faas
+
+faas_pgbouncer_config_dir: /etc/pgbouncer
+faas_pgbouncer_socket_dir: /run/pgbouncer
+faas_pgbouncer_os_user: postgres
