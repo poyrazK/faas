@@ -860,6 +860,14 @@ jobs:
         run: make spec-cited-tests-check
       - name: spec-cited-tests checker tests
         run: make spec-cited-tests-check-test
+      # ADR numbers are hand-picked, so two concurrent PRs routinely claim the
+      # same one and whichever merges second keeps it. main already carries 71
+      # duplicated numbers. This holds that set at a frozen baseline and fails
+      # any NEW collision.
+      - name: ADR number uniqueness
+        run: make adr-number-uniqueness-check
+      - name: ADR number gate checker tests
+        run: make adr-number-uniqueness-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that
