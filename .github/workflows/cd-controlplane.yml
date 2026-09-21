@@ -712,7 +712,7 @@ jobs:
             "https://api.gregale.dev/v1/status" -- \
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
-            "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
+            "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&
              if test ! -s /opt/faas/releases/sbom-baseline.json; then
                current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true);
                if test -n \"\$current_release\" && test -s \"\$current_release/release.sbom.json\"; then

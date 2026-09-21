@@ -358,3 +358,45 @@ func TestCDControlPlanePromotesDPAArtifactWithRelease(t *testing.T) {
 		t.Fatalf("DPA must be bundled before activation and installed after it: bundle=%d deploy=%d install=%d", bundle, deploy, install)
 	}
 }
+
+// TestCDControlPlaneActivationToleratesKGVSidecarOnRetry pins the retry
+// contract for an already-installed release directory.
+//
+// KGV rotation writes the operator-owned sbom-baseline.json sidecar beside
+// the immutable bundle *after* a successful activation. The sidecar is
+// deliberately absent from the signed manifest, so the strict
+// `deployctl bundle-check` rejects it as an unexpected file. That made the
+// first rollout of a release pass and every retry of the same release fail.
+// Activation must therefore use the installed-release policy, exactly as the
+// earlier reuse probe already does.
+//
+// adr: 005
+// spec: §14
+func TestCDControlPlaneActivationToleratesKGVSidecarOnRetry(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+
+	activationCheck := strings.Index(workflow, "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&")
+	rotate := strings.Index(workflow, "gregalectl release kgv rotate --git-sha")
+	activate := strings.Index(workflow, "${release_dir}/bin/deployctl deploy ${RELEASE_ID}")
+	if activationCheck < 0 || rotate < 0 || activate < 0 {
+		t.Fatalf("activation must verify the installed bundle before KGV rotation and deploy: check=%d rotate=%d activate=%d", activationCheck, rotate, activate)
+	}
+	if !(activationCheck < rotate && rotate < activate) {
+		t.Fatalf("activation order is wrong: check=%d rotate=%d activate=%d", activationCheck, rotate, activate)
+	}
+
+	// The strict variant must never run against a release directory that a
+	// prior activation may already have written the KGV sidecar into.
+	for _, banned := range []string{
+		"deployctl bundle-check ${release_dir}",
+		"deployctl' bundle-check '${release_dir}'",
+	} {
+		if strings.Contains(workflow, banned) {
+			t.Errorf("control-plane workflow runs the strict bundle check against an installed release: %q", banned)
+		}
+	}
+}
