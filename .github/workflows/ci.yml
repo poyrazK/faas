@@ -1828,7 +1828,22 @@ jobs:
       - name: e2e tests (shard 1)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even for the
+          # unprivileged runner user. faas-imaged.service removes it from
+          # CapabilityBoundingSet and imaged REFUSES TO BOOT while it is
+          # reachable (ADR-075), so any e2e that starts imaged died at boot
+          # with a capdecl error. Reproduce the production bounding set, then
+          # drop straight back to the runner uid — same recipe as the
+          # boot-contract job, which has run this way on this image for months.
+          E2E_PATH="$PATH"
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- env "PATH=$E2E_PATH" \
+            go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -1915,7 +1930,22 @@ jobs:
       - name: e2e tests (shard 2)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=2 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even for the
+          # unprivileged runner user. faas-imaged.service removes it from
+          # CapabilityBoundingSet and imaged REFUSES TO BOOT while it is
+          # reachable (ADR-075), so any e2e that starts imaged died at boot
+          # with a capdecl error. Reproduce the production bounding set, then
+          # drop straight back to the runner uid — same recipe as the
+          # boot-contract job, which has run this way on this image for months.
+          E2E_PATH="$PATH"
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- env "PATH=$E2E_PATH" \
+            go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
@@ -1992,7 +2022,22 @@ jobs:
       - name: e2e tests (shard 3)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=3 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even for the
+          # unprivileged runner user. faas-imaged.service removes it from
+          # CapabilityBoundingSet and imaged REFUSES TO BOOT while it is
+          # reachable (ADR-075), so any e2e that starts imaged died at boot
+          # with a capdecl error. Reproduce the production bounding set, then
+          # drop straight back to the runner uid — same recipe as the
+          # boot-contract job, which has run this way on this image for months.
+          E2E_PATH="$PATH"
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- env "PATH=$E2E_PATH" \
+            go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
@@ -2069,4 +2114,19 @@ jobs:
       - name: e2e tests (shard 4)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=4 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even for the
+          # unprivileged runner user. faas-imaged.service removes it from
+          # CapabilityBoundingSet and imaged REFUSES TO BOOT while it is
+          # reachable (ADR-075), so any e2e that starts imaged died at boot
+          # with a capdecl error. Reproduce the production bounding set, then
+          # drop straight back to the runner uid — same recipe as the
+          # boot-contract job, which has run this way on this image for months.
+          E2E_PATH="$PATH"
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- env "PATH=$E2E_PATH" \
+            go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
