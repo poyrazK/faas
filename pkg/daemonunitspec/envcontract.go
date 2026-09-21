@@ -417,6 +417,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCHEDD_ADDR", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_CONFIG", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1"},
+	{Name: "FAAS_SCHEDD_FC_VERSION", Owners: []string{"schedd"}, Source: EnvSourceDevOnly, Note: "pins the Firecracker version instead of detecting it, so KVM-free acceptance can reach the snapshot-restore path and the ADR-005 staleness contract; must never be set on a production host, where the running binary is the only truthful source"},
 	{Name: "FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_RECONCILE_ENFORCE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDefault, Note: "ADR-191; \"1\" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row"},
 	{Name: "FAAS_SCHEDD_ROLE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDropin},

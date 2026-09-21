@@ -416,13 +416,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Snapshots load only on the Firecracker version that made them (ADR-005);
-	// detect it so the engine restores compatible snapshots and cold boots the
-	// rest.
-	fcVersion, err := deps.detectFC(ctx)
-	if err != nil {
-		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
-	}
+	fcVersion := resolveFCVersion(ctx, os.Getenv(fcVersionPinEnv), deps.detectFC, log)
 
 	// Issue #95 / ADR-025: dial vmmd through the location-transparent
 	// helper. tcp/dns targets require the vmmd_tls_* cluster; nil TLS on
