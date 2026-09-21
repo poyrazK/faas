@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -457,21 +458,28 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	appFoo := createApp(t, e, "foo-app")
 	appBar := createApp(t, e, "bar-app")
+	foreignAccount, _ := mustCreateAccount(t, e.store, "metrics-foreign", api.PlanHobby)
+	foreignAppID := mustSeedAppFor(t, e.store, foreignAccount.ID, "foreign-app")
 	// Two-vector response: request_count per app.
 	// Bucket response: per-app histogram (3 buckets each).
 	// Scalar response: fleet wake p95.
+	var queryCount atomic.Int32
 	responder := func(query string) string {
-		switch {
-		case strings.Contains(query, "sum by (app)(increase(gateway_request_duration_seconds_count"):
-			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"42"]},{"metric":{"app":"%s"},"value":[1,"17"]}]}}`, appFoo.ID, appBar.ID)
-		case strings.Contains(query, "sum by (app)(rate(gateway_request_duration_seconds_count{class"):
-			if !strings.Contains(query, `class=~"2xx|5xx"`) {
-				t.Fatalf("account error-rate denominator includes customer 4xx responses: %s", query)
+		queryCount.Add(1)
+		if !strings.Contains(query, "gateway_wake_latency_seconds") {
+			if !strings.Contains(query, appFoo.ID) || !strings.Contains(query, appBar.ID) {
+				t.Errorf("account metrics query lacks owned app IDs: %s", query)
 			}
-			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"1.4"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, appFoo.ID, appBar.ID)
-		case strings.Contains(query, "sum by (app)(rate(gateway_cold_boot_total"):
+			if strings.Contains(query, foreignAppID) {
+				t.Errorf("account metrics query includes foreign app ID: %s", query)
+			}
+		}
+		switch {
+		case strings.Contains(query, "sum by (app, class)(increase(gateway_request_duration_seconds_count"):
+			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","class":"2xx"},"value":[1,"40"]},{"metric":{"app":"%s","class":"5xx"},"value":[1,"2"]},{"metric":{"app":"%s","class":"2xx"},"value":[1,"17"]}]}}`, appFoo.ID, appFoo.ID, appBar.ID)
+		case strings.Contains(query, "sum by (app)(increase(gateway_cold_boot_total"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"5"]},{"metric":{"app":"%s"},"value":[1,"3"]}]}}`, appFoo.ID, appBar.ID)
-		case strings.Contains(query, "sum by (app, le)(rate(gateway_request_duration_seconds_bucket"):
+		case strings.Contains(query, "sum by (app, le)(increase(gateway_request_duration_seconds_bucket"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","le":"0.1"},"value":[1,"20"]},{"metric":{"app":"%s","le":"0.5"},"value":[1,"35"]},{"metric":{"app":"%s","le":"+Inf"},"value":[1,"42"]},{"metric":{"app":"%s","le":"0.1"},"value":[1,"10"]},{"metric":{"app":"%s","le":"0.5"},"value":[1,"15"]},{"metric":{"app":"%s","le":"+Inf"},"value":[1,"17"]}]}}`,
 				appFoo.ID, appFoo.ID, appFoo.ID, appBar.ID, appBar.ID, appBar.ID)
 		case strings.Contains(query, "histogram_quantile(0.95, sum by (le)(rate(gateway_wake_latency_seconds_bucket"):
@@ -495,6 +503,9 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 	}
 	if len(out.Apps) != 2 {
 		t.Fatalf("expected 2 per-app rows, got %d (%v)", len(out.Apps), out.Apps)
+	}
+	if got := queryCount.Load(); got != 4 {
+		t.Fatalf("Prometheus query count = %d, want 4 bounded queries", got)
 	}
 	for slug, row := range out.Apps {
 		if row.RequestCount == 0 {
@@ -533,13 +544,10 @@ func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
 
 	responder := func(query string) string {
 		switch {
-		case strings.Contains(query, "sum by (app)(increase(gateway_request_duration_seconds_count"):
-			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"12"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID, idle.ID)
-		case strings.Contains(query, "gateway_request_duration_seconds_count{class") || strings.Contains(query, "gateway_cold_boot_total"):
-			if !strings.Contains(query, "and on (app)") || !strings.Contains(query, "> 0") {
-				return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"NaN"]}]}}`, idle.ID)
-			}
-			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID)
+		case strings.Contains(query, "sum by (app, class)(increase(gateway_request_duration_seconds_count"):
+			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","class":"2xx"},"value":[1,"12"]},{"metric":{"app":"%s","class":"2xx"},"value":[1,"0"]}]}}`, active.ID, idle.ID)
+		case strings.Contains(query, "gateway_cold_boot_total"):
+			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"0"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID, idle.ID)
 		case strings.Contains(query, "gateway_request_duration_seconds_bucket"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","le":"0.005"},"value":[1,"0"]},{"metric":{"app":"%s","le":"0.01"},"value":[1,"0"]},{"metric":{"app":"%s","le":"+Inf"},"value":[1,"0"]},{"metric":{"app":"%s","le":"0.005"},"value":[1,"0"]},{"metric":{"app":"%s","le":"0.01"},"value":[1,"0"]},{"metric":{"app":"%s","le":"+Inf"},"value":[1,"0"]}]}}`, active.ID, active.ID, active.ID, idle.ID, idle.ID, idle.ID)
 		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
@@ -607,6 +615,9 @@ func TestGetAppsMetrics_Degraded_FirstQueryFails(t *testing.T) {
 	}
 	if !strings.HasPrefix(out.Source, "degraded:") {
 		t.Fatalf("source: got %q want degraded:<reason>", out.Source)
+	}
+	if strings.Contains(out.Source, "parse error") || strings.Contains(out.Source, "prometheus 500") {
+		t.Fatalf("source leaked internal Prometheus failure: %q", out.Source)
 	}
 	if out.Apps != nil {
 		t.Fatalf("apps must be nil on degraded, got %+v", out.Apps)

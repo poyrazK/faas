@@ -13,8 +13,8 @@
 // "<slug>|<key>" (the SQL splits it back via split_part).
 //
 // The metrics rollup reuses the PromQL pipeline that handlers_metrics.go
-// already runs — but instead of N scalar queries per app, it issues 6
-// vector queries (QueryMap + QueryBuckets + QueryScalar) regardless of N.
+// already runs — but instead of N scalar queries per app, it issues one
+// bounded account snapshot regardless of N.
 // First degraded result short-circuits the whole response (the dashboard
 // has one empty-state branch across the per-app and account-scoped
 // endpoints — same `source: "degraded: <reason>"` contract).
@@ -169,16 +169,21 @@ func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, a
 // shape exactly so the dashboard can render the rollup with one code
 // path that already handles the per-app data.
 //
-// The rollup runs 6 PromQL round-trips regardless of N apps:
+// The rollup runs 4 PromQL round-trips regardless of N apps:
 //
-//   - 3 vector queries via QueryMap for request_count, error_rate,
-//     cold_start (each is `sum by (app) (rate(...))`).
-//   - 1 vector query via QueryBuckets for latency percentiles
-//     (sum by (app, le) (rate(...))). The histogram_quantile call
+//   - 1 vector query grouped by (app, class) supplies request_count and
+//     error_rate without rescanning the same counters.
+//   - 1 vector query supplies cold_start counts.
+//   - 1 vector query via QueryBuckets supplies latency percentiles
+//     (sum by (app, le) (increase(...))). The histogram_quantile call
 //     runs in-process per app — see histogramQuantile below.
 //   - 1 scalar query via QueryScalar for the FLEET wake p95
 //     (gateway_wake_latency_seconds is unlabeled, same as the per-app
 //     handler).
+//
+// Every tenant-bearing selector is constrained to the account's closed app
+// set. The old global selectors scanned every customer and timed out on 24h
+// windows as the beta fleet grew.
 //
 // First degraded result short-circuits the whole response (never
 // partial-populated). The dashboard renders the same empty-state
@@ -217,69 +222,43 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 
-	// 1. request_count per app.
-	countByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`sum by (app)(increase(gateway_request_duration_seconds_count[%s]))`, rng))
-	if err != nil {
-		writeMetricsDegraded(w, s, resp, err, "request_count")
+	appIDs := make([]string, 0, len(apps))
+	for _, app := range apps {
+		appIDs = append(appIDs, app.ID)
+	}
+	snapshot := fetchAccountMetricsSnapshot(r.Context(), s.promqlClient, appIDs, rng, false, true)
+	if snapshot.requestsErr != nil {
+		writeMetricsDegraded(w, s, resp, snapshot.requestsErr, "request_count")
 		return
 	}
-
-	// 2. error_rate per app (share of 5xx among eligible 2xx and 5xx). The
-	// positive-denominator filter drops idle series before QueryMap sees
-	// Prometheus' 0/0 = NaN result; the response map's missing-key value
-	// correctly represents an idle app as 0%.
-	errRateByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_request_duration_seconds_count{class="5xx"}[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s])) > 0)`, rng, rng, rng))
-	if err != nil {
-		writeMetricsDegraded(w, s, resp, err, "error_rate")
+	if snapshot.coldBootsErr != nil {
+		writeMetricsDegraded(w, s, resp, snapshot.coldBootsErr, "cold_start")
 		return
 	}
-
-	// 3. cold_start per app. Apply the same zero-traffic guard as the
-	// error-rate ratio so dormant apps cannot degrade the whole rollup.
-	coldByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count[%s])) > 0)`, rng, rng, rng))
-	if err != nil {
-		writeMetricsDegraded(w, s, resp, err, "cold_start")
+	if snapshot.latencyErr != nil {
+		writeMetricsDegraded(w, s, resp, snapshot.latencyErr, "p50")
 		return
 	}
-
-	// 4-6. latency percentiles per app: one QueryBuckets call, three
-	// histogram_quantile evaluations in Go (each is O(buckets) work).
-	buckets, err := s.promqlClient.QueryBuckets(r.Context(),
-		fmt.Sprintf(`sum by (app, le)(rate(gateway_request_duration_seconds_bucket{class="2xx"}[%s]))`, rng))
-	if err != nil {
-		writeMetricsDegraded(w, s, resp, err, "p50")
-		return
-	}
-
-	// 7. Fleet wake p95 (unlabeled — single scalar, same as the
-	// per-app handler).
-	wakeQ := appmetrics.HistogramQuantileMSQuery(
-		0.95,
-		fmt.Sprintf(`sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
-		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng))
-	wakeV, err := s.promqlClient.QueryScalar(r.Context(), wakeQ)
-	if err != nil {
-		writeMetricsDegraded(w, s, resp, err, "wake_p95")
+	if snapshot.wakeErr != nil {
+		writeMetricsDegraded(w, s, resp, snapshot.wakeErr, "wake_p95")
 		return
 	}
 
 	for _, app := range apps {
-		appBuckets := buckets[app.ID]
+		requests := snapshot.requestsByApp[app.ID]
+		appBuckets := snapshot.latencyBucketsByApp[app.ID]
 		single := api.AppMetricsResponse{
 			AppID:        app.ID,
 			Range:        rng,
 			Source:       appmetrics.SourcePrometheus,
 			AsOf:         now,
-			RequestCount: int64(appmetrics.SafeRoundNonNeg(countByApp[app.ID])),
-			ErrorRatePct: appmetrics.SafePercent(errRateByApp[app.ID]),
-			ColdStartPct: appmetrics.SafePercent(coldByApp[app.ID]),
+			RequestCount: int64(appmetrics.SafeRoundNonNeg(requests)),
+			ErrorRatePct: appmetrics.SafePercent(percentOf(snapshot.errorsByApp[app.ID], snapshot.eligibleByApp[app.ID])),
+			ColdStartPct: appmetrics.SafePercent(percentOf(snapshot.coldBootsByApp[app.ID], requests)),
 			LatencyP50MS: appmetrics.SafeFloat(histogramQuantile(0.50, appBuckets) * 1000),
 			LatencyP95MS: appmetrics.SafeFloat(histogramQuantile(0.95, appBuckets) * 1000),
 			LatencyP99MS: appmetrics.SafeFloat(histogramQuantile(0.99, appBuckets) * 1000),
-			WakeP95MS:    appmetrics.SafeFloat(wakeV),
+			WakeP95MS:    appmetrics.SafeFloat(snapshot.wakeP95MS),
 		}
 		resp.Apps[app.Slug] = single
 	}
@@ -309,7 +288,7 @@ func writeMetricsDegraded(w http.ResponseWriter, s *server, resp api.AppsMetrics
 		s.log.Warn("apid: apps-metrics query failed", "label", label, "err", msg)
 	}
 	resp.Apps = nil
-	resp.Source = "degraded: " + err.Error()
+	resp.Source = appmetrics.SourceDegradedPrefix + telemetryDegradedReason(err)
 	writeJSON(w, http.StatusOK, resp)
 }
 

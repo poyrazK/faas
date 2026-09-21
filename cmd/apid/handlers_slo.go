@@ -54,6 +54,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -270,71 +271,40 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		}
 		return resp, appmetrics.SourcePrometheus
 	}
-	appMatcher := appmetrics.AppIDMatcher(appIDs)
-
-	// 1. requests_total.
-	reqCountQ := fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window)
-	if v, err := s.promqlClient.QueryScalar(ctx, reqCountQ); err == nil {
-		resp.RequestsTotal = int64(appmetrics.SafeRoundNonNeg(v))
-	} else {
-		return degradedAccountSLO(err, s.log, "requests_total", acct.ID, window)
+	snapshot := fetchAccountMetricsSnapshot(ctx, s.promqlClient, appIDs, window, true, false)
+	if snapshot.requestsErr != nil {
+		return degradedAccountSLO(snapshot.requestsErr, s.log, "requests_total", acct.ID, window)
+	}
+	if snapshot.latencyErr != nil {
+		return degradedAccountSLO(snapshot.latencyErr, s.log, "latency", acct.ID, window)
+	}
+	if snapshot.coldBootsErr != nil {
+		return degradedAccountSLO(snapshot.coldBootsErr, s.log, "cold_boot", acct.ID, window)
 	}
 
-	// 2-4. latency percentiles (2xx class).
-	for _, p := range []struct {
-		q     float64
-		dest  *float64
-		label string
-	}{
-		{q: 0.50, dest: &resp.RequestDuration.P50MS, label: "p50"},
-		{q: 0.95, dest: &resp.RequestDuration.P95MS, label: "p95"},
-		{q: 0.99, dest: &resp.RequestDuration.P99MS, label: "p99"},
-	} {
-		q := appmetrics.HistogramQuantileMSQuery(
-			p.q,
-			fmt.Sprintf(`sum by (le)(rate(gateway_request_duration_seconds_bucket{%s,class="2xx"}[%s]))`, appMatcher, window),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class="2xx"}[%s]))`, appMatcher, window))
-		v, err := s.promqlClient.QueryScalar(ctx, q)
-		if err != nil {
-			return degradedAccountSLO(err, s.log, p.label, acct.ID, window)
-		}
-		*p.dest = appmetrics.SafeFloat(v)
-	}
-
-	// 5. error_rate_pct.
-	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class="5xx"}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"2xx|5xx"}[%s]))`, appMatcher, window))
-	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
-		resp.ErrorRatePct = appmetrics.SafePercent(v)
-	} else {
-		return degradedAccountSLO(err, s.log, "error_rate", acct.ID, window)
-	}
-
-	// 6. cold_boot_rate_pct.
-	coldQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{%s}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
-	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
-		resp.ColdBootRatePct = appmetrics.SafePercent(v)
-	} else {
-		return degradedAccountSLO(err, s.log, "cold_boot", acct.ID, window)
-	}
+	requests := aggregateMetricValues(snapshot.requestsByApp, appIDs)
+	eligible := aggregateMetricValues(snapshot.eligibleByApp, appIDs)
+	errorsTotal := aggregateMetricValues(snapshot.errorsByApp, appIDs)
+	coldBoots := aggregateMetricValues(snapshot.coldBootsByApp, appIDs)
+	buckets := aggregateLatencyBuckets(snapshot.latencyBucketsByApp, appIDs)
+	resp.RequestsTotal = int64(appmetrics.SafeRoundNonNeg(requests))
+	resp.RequestDuration.P50MS = appmetrics.SafeFloat(histogramQuantile(0.50, buckets) * 1000)
+	resp.RequestDuration.P95MS = appmetrics.SafeFloat(histogramQuantile(0.95, buckets) * 1000)
+	resp.RequestDuration.P99MS = appmetrics.SafeFloat(histogramQuantile(0.99, buckets) * 1000)
+	resp.ErrorRatePct = appmetrics.SafePercent(percentOf(errorsTotal, eligible))
+	resp.ColdBootRatePct = appmetrics.SafePercent(percentOf(coldBoots, requests))
 
 	// The wake-queue histogram has no app or account label. Keep the tenant
 	// projection explicitly unavailable.
 
-	// 8. throttled_total. An absent rate-limit counter is a
-	// healthy zero, not a missing SLO panel. Keep the fallback in PromQL so
-	// QueryScalar receives a finite sample when no throttling series exists.
-	thrQ := fmt.Sprintf(`sum(increase(gateway_rate_limited_total{%s}[%s])) or vector(0)`, appMatcher, window)
-	if v, err := s.promqlClient.QueryScalar(ctx, thrQ); err == nil {
-		resp.ThrottledTotal = int64(appmetrics.SafeRoundNonNeg(v))
+	// 8. throttled_total. An absent rate-limit vector is a healthy zero.
+	if snapshot.throttledErr == nil {
+		resp.ThrottledTotal = int64(appmetrics.SafeRoundNonNeg(aggregateMetricValues(snapshot.throttledByApp, appIDs)))
 	} else {
 		// This is an optional component. Preserve the request and latency
 		// fields collected above so a real Prometheus failure is visibly
 		// partial degradation instead of an all-zero account panel.
-		return degradedAccountSLOPartial(resp, err, s.log, "throttled_total", acct.ID, window)
+		return degradedAccountSLOPartial(resp, snapshot.throttledErr, s.log, "throttled_total", acct.ID, window)
 	}
 
 	// 9. usage_minutes rollup (instance_hours / gb_hours).
@@ -388,7 +358,7 @@ func degradedAppSLO(err error, log *slog.Logger, label, appID, window string) (a
 	if log != nil {
 		log.Warn("handlers_slo: query failed", "label", label, "app_id", appID, "window", window, "err", msg)
 	}
-	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + msg
+	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + telemetryDegradedReason(err)
 }
 
 // degradedAccountSLO mirrors degradedAppSLO for the
@@ -404,5 +374,17 @@ func degradedAccountSLOPartial(resp api.AccountSLOResponse, err error, log *slog
 	if log != nil {
 		log.Warn("handlers_slo: query failed", "label", label, "account_id", accountID, "window", window, "err", msg)
 	}
-	return resp, appmetrics.SourceDegradedPrefix + msg
+	return resp, appmetrics.SourceDegradedPrefix + telemetryDegradedReason(err)
+}
+
+// telemetryDegradedReason is safe for customer-visible Source fields. The
+// underlying net/http error contains the internal Prometheus URL and the full
+// PromQL expression, including every app UUID in an account matcher. Keep that
+// diagnostic in the sanitized server log above, never in the API response or
+// dashboard HTML.
+func telemetryDegradedReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "telemetry timeout"
+	}
+	return "telemetry unavailable"
 }
