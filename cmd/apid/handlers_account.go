@@ -938,7 +938,7 @@ func buildDeploymentsForExport(rows []state.Deployment) ([]api.DeploymentRespons
 	for _, d := range rows {
 		out = append(out, api.DeploymentResponse{
 			ID: d.ID, AppID: d.AppID, BuildID: d.BuildID,
-			// ADR-195 — the revision is the handle the customer used to
+			// ADR-198 — the revision is the handle the customer used to
 			// refer to this deployment, so the GDPR export carries it.
 			Revision:    d.Revision,
 			ImageDigest: d.ImageDigest, Kind: string(d.Kind),

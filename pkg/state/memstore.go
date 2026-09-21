@@ -6077,7 +6077,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
-	// ADR-195 — mirror PgStore's `max(revision) + 1` per app. PgStore
+	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
 	// derives this in SQL under the apps FOR UPDATE lock; here m.mu
 	// serves the same role. A caller-supplied positive Revision is
 	// honoured so fixtures can pin a specific ladder.
@@ -6106,7 +6106,7 @@ func (m *MemStore) nextDeploymentRevisionLocked(appID string) int {
 	return max + 1
 }
 
-// DeploymentByRevision mirrors PgStore.DeploymentByRevision (ADR-195).
+// DeploymentByRevision mirrors PgStore.DeploymentByRevision (ADR-198).
 func (m *MemStore) DeploymentByRevision(_ context.Context, appID string, revision int) (Deployment, error) {
 	if revision <= 0 {
 		return Deployment{}, ErrNotFound
@@ -6146,7 +6146,7 @@ func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentI
 func (m *MemStore) DeploymentOrdinal(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// ADR-195 — prefer the stored revision, matching PgStore. The
+	// ADR-198 — prefer the stored revision, matching PgStore. The
 	// legacy rank computation below stays as the 0-sentinel fallback
 	// for rows a fixture wrote directly into m.deployments without
 	// going through CreateDeployment.
@@ -7717,7 +7717,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	}
 	newDep.StageState = seed
 	newDep.CreatedAt = now
-	// ADR-195 — a retry is a new immutable row and takes the next
+	// ADR-198 — a retry is a new immutable row and takes the next
 	// revision rather than reusing the failed row's. retryDeploymentInput
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.

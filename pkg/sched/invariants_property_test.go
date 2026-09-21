@@ -1,3 +1,6 @@
+// spec: §6.2
+// adr: 199
+
 package sched
 
 // Property tests pinning the §6.2 invariants that schedd enforces in-process.
@@ -663,7 +666,7 @@ func TestProperty_EnsureWake_BurstCoalescesToOneBoot(t *testing.T) {
 	}
 }
 
-// TestProperty_RolloutGrant_AllowsExactlyOneOverlap pins the ADR-196
+// TestProperty_RolloutGrant_AllowsExactlyOneOverlap pins the ADR-199
 // amendment to invariant §6.2-1.
 //
 // The invariant used to read "≤ max_concurrency(plan) instances in {WAKING,
@@ -727,7 +730,7 @@ func TestProperty_RolloutGrant_AllowsExactlyOneOverlap(t *testing.T) {
 		t.Fatalf("admit canary revision: %v", err)
 	}
 	if canary.AtCapacity || canary.InstanceID == "" {
-		t.Fatalf("canary admit = %+v, want an admitted instance (ADR-196 grant did not apply)", canary)
+		t.Fatalf("canary admit = %+v, want an admitted instance (ADR-199 grant did not apply)", canary)
 	}
 	if got := e.ledger.Concurrency(app.ID); got != maxConc+api.RolloutConcurrencyGrant {
 		t.Fatalf("concurrency during overlap = %d, want %d (cap + grant)", got, maxConc+api.RolloutConcurrencyGrant)

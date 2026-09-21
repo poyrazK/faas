@@ -487,7 +487,7 @@ func TestCmdTrafficStatusListsOnlyLiveDeploymentWeights(t *testing.T) {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
-			// ADR-195: dep-live-b carries no revision on purpose — it
+			// ADR-198: dep-live-b carries no revision on purpose — it
 			// stands in for a row written before the column existed, and
 			// pins that such a row still renders (as "-" plus its id)
 			// rather than showing a meaningless "v0".
@@ -507,7 +507,7 @@ func TestCmdTrafficStatusListsOnlyLiveDeploymentWeights(t *testing.T) {
 	}
 	output := out.String()
 	for _, want := range []string{
-		"REVISION", // ADR-195 column header
+		"REVISION", // ADR-198 column header
 		"v42",      // the revision handle, not just the uuid
 		"dep-live-a", "75%",
 		"-", "dep-live-b", "25%", // revision-less row falls back to the id

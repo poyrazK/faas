@@ -2285,7 +2285,7 @@ func testCronQuota(t *testing.T, fx *Fixture) {
 	}
 }
 
-// testDeploymentRevisions pins the ADR-195 revision contract across both
+// testDeploymentRevisions pins the ADR-198 revision contract across both
 // stores. Assertions are absolute (1, 2, 3 …), not "the two stores agree" —
 // per this file's header, an agreement check would have passed while both
 // implementations were identically wrong.
@@ -2317,7 +2317,7 @@ func testDeploymentRevisions(t *testing.T, fx *Fixture) {
 		t.Errorf("second deployment Revision = %d, want 2", second.Revision)
 	}
 
-	// A preview-scope deploy shares the app's single ladder (ADR-195: the
+	// A preview-scope deploy shares the app's single ladder (ADR-198: the
 	// counter is per-app, never per-scope, so it cannot fork away from the
 	// ordinal baked into preview hostnames).
 	preview, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{

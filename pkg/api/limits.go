@@ -1255,7 +1255,7 @@ type Limits struct {
 	// deployments) is the plan gate for the per-deployment
 	// traffic_percent opt-in and the canary ladder.
 	//
-	// TRUE ON EVERY PLAN as of ADR-196. It is retained as a
+	// TRUE ON EVERY PLAN as of ADR-199. It is retained as a
 	// field rather than deleted because it is the single
 	// switch an operator flips if the rollout cost shape ever
 	// needs to be re-tiered, and because the 403
@@ -1264,7 +1264,7 @@ type Limits struct {
 	//
 	// The original Pro+ gate reasoned that keeping N canary
 	// deployments warm is RAM-billable per running second.
-	// ADR-196 answers that with RolloutConcurrencyGrant: the
+	// ADR-199 answers that with RolloutConcurrencyGrant: the
 	// overlap is capped at +1 instance, lasts only while the
 	// rollout is in flight, and never bypasses the physical
 	// gates (RAM ledger invariant §6.2-2, the per-node ceiling
@@ -1961,11 +1961,11 @@ var planLimits = map[Plan]Limits{
 		// if a Free customer tries PATCH app_protocol=grpc.
 		AppProtocolGrpcAllowed: false,
 		// TrafficSplit (issue #556; opened to every plan by
-		// ADR-196): Free unlocks per-deployment traffic
+		// ADR-199): Free unlocks per-deployment traffic
 		// splitting and the canary ladder. The original
 		// Pro+ gate reasoned that keeping N canary
 		// deployments warm is RAM-billable per running
-		// second; ADR-196 answers that with the rollout
+		// second; ADR-199 answers that with the rollout
 		// concurrency grant (RolloutConcurrencyGrant) — the
 		// extra resident deployment is bounded to +1, lasts
 		// only while the rollout is in flight, and is still
@@ -2342,7 +2342,7 @@ var planLimits = map[Plan]Limits{
 		// app_protocol=grpc freely.
 		AppProtocolGrpcAllowed: true,
 		// TrafficSplit (issue #556; opened to every plan by
-		// ADR-196): Hobby unlocks per-deployment traffic
+		// ADR-199): Hobby unlocks per-deployment traffic
 		// splitting and the canary ladder. The original gate
 		// priced this as a sustained "2-3 live deployment
 		// bill shape"; that is the steady-state cost of
@@ -2350,7 +2350,7 @@ var planLimits = map[Plan]Limits{
 		// cost of a rollout. A canary ladder is bounded by
 		// its own stage durations and collapses back to one
 		// deployment when it completes or aborts, and
-		// ADR-196's grant caps the overlap at exactly +1
+		// ADR-199's grant caps the overlap at exactly +1
 		// instance.
 		//
 		// See the Free block above for the full rationale.
@@ -3182,7 +3182,7 @@ const (
 	// billing; the tenant-slice ceiling remains the aggregate safety fence.
 	SnapshotVMOverheadMB = 256
 
-	// RolloutConcurrencyGrant (ADR-196) is the number of instances an app
+	// RolloutConcurrencyGrant (ADR-199) is the number of instances an app
 	// may exceed its plan's max_concurrency by, and ONLY while a second
 	// deployment is coming up alongside the one already serving — i.e. the
 	// overlap window of a traffic split or a canary stage.

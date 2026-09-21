@@ -12,7 +12,7 @@ import (
 )
 
 // ParseDeploymentRevisionRef reports whether ref is a customer-facing
-// revision handle (ADR-195) and, if so, the revision it names.
+// revision handle (ADR-198) and, if so, the revision it names.
 //
 // Accepted: "v42" / "V42" (the rendered form) and a bare "42" (what a
 // customer types after reading `v42` in the CLI). Anything else — most
@@ -43,7 +43,7 @@ func ParseDeploymentRevisionRef(ref string) (int, bool) {
 
 // resolveDeploymentRef turns a deployment reference into a deployment id.
 // A uuid passes through untouched; a `v42` / `42` revision handle is
-// resolved against appID's ladder (ADR-195).
+// resolved against appID's ladder (ADR-198).
 //
 // Scoping the lookup to appID is what keeps revisions safe as a public
 // handle: `v42` is only ever meaningful relative to one app, so this can

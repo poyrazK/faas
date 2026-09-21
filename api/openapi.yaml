@@ -21429,7 +21429,7 @@ components:
           type: integer
           minimum: 1
           example: 42
-          description: "Per-app deployment revision (ADR-195), rendered as `v42`. Accepted in place of a deployment id wherever this API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id."
+          description: "Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id."
         build_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$' }
         build_cache_status:
           type: string

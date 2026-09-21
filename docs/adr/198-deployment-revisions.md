@@ -1,4 +1,4 @@
-# ADR-195 · Customer-addressable deployment revisions
+# ADR-198 · Customer-addressable deployment revisions
 
 - **Status:** accepted
 - **Date:** 2026-09-21

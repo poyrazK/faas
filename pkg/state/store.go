@@ -2391,7 +2391,7 @@ type Store interface {
 	// (handled by the apid handler with the standard 404 +
 	// IDOR posture).
 	//
-	// ADR-195: this now reads the stored deployments.revision column
+	// ADR-198: this now reads the stored deployments.revision column
 	// rather than recomputing row_number() on every call. The
 	// migration backfilled that column with the identical window, so
 	// the stability contract above is unchanged — and strengthened,
@@ -2399,7 +2399,7 @@ type Store interface {
 	// removed.
 	DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error)
 	// DeploymentByRevision resolves an app's deployment by its per-app
-	// revision (ADR-195) — the customer-facing `v42` handle accepted
+	// revision (ADR-198) — the customer-facing `v42` handle accepted
 	// anywhere a deployment id is taken (`gregale rollback --to v42`,
 	// `gregale traffic set --deployment v42`). Returns ErrNotFound for
 	// an unknown or non-positive revision, preserving the 404 + IDOR

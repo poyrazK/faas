@@ -2,7 +2,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Human-addressable deployment revisions (ADR-195).
+-- Human-addressable deployment revisions (ADR-198).
 --
 -- Deployments have always been immutable rows, but the only handle a
 -- customer could use was the uuid. Every rollout surface that names a

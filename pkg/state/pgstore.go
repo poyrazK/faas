@@ -6226,7 +6226,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
-		         -- ADR-195: next per-app revision. Safe without extra
+		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
 		         -- on the parent apps row for this tx, so concurrent
 		         -- deploys of the same app serialize here.
@@ -6320,7 +6320,7 @@ func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deploymen
 // is O(N log N) and uses the index on (app_id, created_at) added
 // in migration 00006.
 func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error) {
-	// ADR-195 — read the stored revision rather than recomputing
+	// ADR-198 — read the stored revision rather than recomputing
 	// row_number(). Migration 20260921153729254 backfilled the column
 	// with the identical (partition by app_id order by created_at, id)
 	// window, so every pre-existing row keeps the ordinal its preview
@@ -6356,7 +6356,7 @@ func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID str
 }
 
 // DeploymentByRevision resolves an app's deployment by its per-app
-// revision number (ADR-195) — the `v42` handle the CLI and API accept
+// revision number (ADR-198) — the `v42` handle the CLI and API accept
 // anywhere a deployment id is taken. Returns ErrNotFound for an unknown
 // or non-positive revision so callers keep the standard 404 + IDOR
 // posture used by DeploymentByID.
@@ -8995,7 +8995,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
 		         coalesce(nullif($28, ''), 'pending'), $29,
 		         coalesce(nullif($30, ''), 'default'),
-		         -- ADR-195: a retry is a new immutable row, so it takes the
+		         -- ADR-198: a retry is a new immutable row, so it takes the
 		         -- next revision rather than reusing the failed row's. The
 		         -- FOR UPDATE on apps above serializes concurrent retries.
 		         (select coalesce(max(revision), 0) + 1 from deployments
@@ -22347,7 +22347,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.LivenessRestartCount,
 		&d.ParkedReason, &parkedAt, &d.TrafficPercent, &d.TrafficPercentExplicit,
 		&d.Scope,
-		// ADR-195 — per-(app, scope) revision. NOT NULL DEFAULT 0 in
+		// ADR-198 — per-(app, scope) revision. NOT NULL DEFAULT 0 in
 		// the schema, so this is a plain int destination.
 		&d.Revision,
 		&d.StageState,

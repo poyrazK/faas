@@ -19,6 +19,10 @@ export type DeploymentResponse = {
   stage_state?: Record<string, any>;
   id: string;
   app_id: string;
+  /**
+   * Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id.
+   */
+  revision?: number;
   build_id?: string | null;
   /**
    * Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup.

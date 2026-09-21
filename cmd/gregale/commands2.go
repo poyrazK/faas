@@ -3901,9 +3901,9 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 func cmdTrafficSet(args []string) int {
 	fs := newFlagSet("traffic set", flag.ContinueOnError)
 	// --app is optional: it is only needed to resolve a `v42` revision
-	// handle (ADR-195), because this endpoint is addressed by deployment
+	// handle (ADR-198), because this endpoint is addressed by deployment
 	// id alone and carries no app context. Passing a uuid keeps working
-	// with no --app, so the pre-ADR-195 invocation is unchanged.
+	// with no --app, so the pre-ADR-198 invocation is unchanged.
 	app := fs.String("app", "", "app slug (required when --deployment is a vN revision)")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
@@ -3973,9 +3973,9 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
-	// ADR-195: lead with the revision, because that is the handle the
+	// ADR-198: lead with the revision, because that is the handle the
 	// operator types back into `traffic set` / `rollback`. The id stays
-	// in the table so a pre-ADR-195 row (revision 0) is still
+	// in the table so a pre-ADR-198 row (revision 0) is still
 	// addressable and so scripts parsing this output keep working.
 	_, _ = fmt.Fprintln(osStdout, "REVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC")
 	for _, deployment := range live {

@@ -1635,12 +1635,12 @@ type ScalingPolicy struct {
 	// Zero means the gateway uses the plan-derived default.
 	WakeMaxQueueWaitSeconds int
 	// Timezone is the IANA zone every schedule's cron is evaluated in
-	// (ADR-195). Empty means UTC. One zone per app rather than one per
+	// (ADR-198). Empty means UTC. One zone per app rather than one per
 	// schedule: a business has a working day, not a working day per rule.
 	Timezone string
-	// Schedules raise the warm floor for recurring windows (ADR-195).
+	// Schedules raise the warm floor for recurring windows (ADR-198).
 	// Empty means the floor is whatever MinInstances says at all times,
-	// which is every app written before ADR-195. The column is jsonb, so
+	// which is every app written before ADR-198. The column is jsonb, so
 	// this needs no migration.
 	Schedules []ScalingSchedule
 }
@@ -2127,7 +2127,7 @@ type Deployment struct {
 	// live row per (app_id, scope)). A scope change requires a
 	// NEW deployment — there is no update-time scope change.
 	Scope string `json:"scope,omitempty"`
-	// Revision (ADR-195) is the per-AppID monotonic counter that makes
+	// Revision (ADR-198) is the per-AppID monotonic counter that makes
 	// an immutable deployment row addressable as `v42` instead of a
 	// uuid. Assigned inside CreateDeployment's existing `FOR UPDATE`
 	// window on the parent apps row, so concurrent deploys of the same

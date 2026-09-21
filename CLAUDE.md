@@ -71,7 +71,7 @@ docs/adr/
 ## Invariants — enforce with property-based tests, never delete (§6.2)
 
 1. ≤ `max_concurrency(plan)` + `RolloutConcurrencyGrant` instances of an app in
-   {WAKING, COLD_BOOTING, RUNNING}. The grant (ADR-196) is 1 and applies ONLY
+   {WAKING, COLD_BOOTING, RUNNING}. The grant (ADR-199) is 1 and applies ONLY
    while a second deployment is coming up alongside the one already serving —
    a traffic split or canary overlap. Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).

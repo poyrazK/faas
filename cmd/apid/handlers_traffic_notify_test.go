@@ -169,7 +169,7 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 
 // TestPatchDeploymentTraffic_AllowsFreePlan_Notifies is the inverse of the
 // gate this test used to pin. Issue #556 refused a Free account 403
-// plan_traffic_split_not_allowed before the notify emit; ADR-196 opened
+// plan_traffic_split_not_allowed before the notify emit; ADR-199 opened
 // traffic splitting to every plan, so a Free account setting a legal split
 // must now get 200 AND the kind=traffic deployment_changed notify — without
 // that notify the gateway would never reload the weights and the split would
@@ -237,7 +237,7 @@ func TestPatchDeploymentTraffic_AllowsFreePlan_Notifies(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code == http.StatusForbidden {
-		t.Fatalf("Free account refused 403; ADR-196 opened traffic splitting to every plan. body=%s", rec.Body.String())
+		t.Fatalf("Free account refused 403; ADR-199 opened traffic splitting to every plan. body=%s", rec.Body.String())
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())

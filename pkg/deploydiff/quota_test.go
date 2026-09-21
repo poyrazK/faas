@@ -43,7 +43,7 @@ func TestQuota_FreshAppAtCapBlocksButExistingAppDoesNot(t *testing.T) {
 // adr: 122
 // adr: 196
 //
-// ADR-196 opened traffic splitting to every plan, so Hobby no longer
+// ADR-199 opened traffic splitting to every plan, so Hobby no longer
 // collects plan_traffic_split_not_allowed here. The two breaks that remain
 // are the ones that are about the REQUEST rather than the plan: an invalid
 // (ram_mb, vcpu) pair, and traffic_percent + canary being mutually exclusive
@@ -65,12 +65,12 @@ func TestQuotaValidatesVCPUAndRolloutParity(t *testing.T) {
 		}
 	}
 	if hasCode(got, api.CodePlanTrafficSplitNotAllowed) {
-		t.Errorf("Hobby collected %s; ADR-196 unlocked traffic splitting on every plan: %+v",
+		t.Errorf("Hobby collected %s; ADR-199 unlocked traffic splitting on every plan: %+v",
 			api.CodePlanTrafficSplitNotAllowed, got)
 	}
 }
 
-// TestQuota_TrafficSplit_AllowedOnEveryPlan pins ADR-196 across the whole
+// TestQuota_TrafficSplit_AllowedOnEveryPlan pins ADR-199 across the whole
 // plan set: a legal non-100 traffic_percent must not raise a plan break on
 // ANY plan, including Free. Free is the case that matters — it is the plan
 // the old gate locked hardest and the one the rollout concurrency grant in
@@ -81,7 +81,7 @@ func TestQuota_TrafficSplit_AllowedOnEveryPlan(t *testing.T) {
 		got := Quota(plan, Baseline{}, Pending{TrafficPercent: &traffic},
 			QuotaConfig{Limits: api.MustLimitsFor(plan)})
 		if hasCode(got, api.CodePlanTrafficSplitNotAllowed) {
-			t.Errorf("plan %s: traffic_percent=10 raised %s; want allowed (ADR-196): %+v",
+			t.Errorf("plan %s: traffic_percent=10 raised %s; want allowed (ADR-199): %+v",
 				plan, api.CodePlanTrafficSplitNotAllowed, got)
 		}
 	}
@@ -95,7 +95,7 @@ func TestQuota_CanaryPreset_AllowedOnEveryPlan(t *testing.T) {
 		got := Quota(plan, Baseline{}, Pending{Canary: &api.CanaryPresetSpec{Preset: "balanced"}},
 			QuotaConfig{Limits: api.MustLimitsFor(plan)})
 		if hasCode(got, api.CodePlanTrafficSplitNotAllowed) {
-			t.Errorf("plan %s: canary preset raised %s; want allowed (ADR-196): %+v",
+			t.Errorf("plan %s: canary preset raised %s; want allowed (ADR-199): %+v",
 				plan, api.CodePlanTrafficSplitNotAllowed, got)
 		}
 	}

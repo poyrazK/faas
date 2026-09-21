@@ -2641,7 +2641,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// non-resident state without touching this process's in-memory ledger.
 		// Reconcile only when the local view would reject at the app cap, so
 		// healthy cold wakes keep the existing zero-query fast path.
-		// ADR-196: compare against the rollout-aware ceiling so a canary
+		// ADR-199: compare against the rollout-aware ceiling so a canary
 		// overlap does not trigger a reconcile sweep on every wake.
 		if e.ledger.Concurrency(app.ID) >= e.maxConcurrencyForWake(app, limits, dep.ID) {
 			if repaired, reconcileErr := e.reconcileAppAdmission(ctx, app.ID); reconcileErr != nil {
@@ -2889,7 +2889,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-		// ADR-196 widens this from the deployment verifier to any rollout
+		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
 		// max+1 allowance the smoke verifier has always had. The ledger
@@ -8534,7 +8534,7 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 
 // rolloutGrantApplies reports whether this wake is the overlap window of a
 // traffic split or canary stage — a second deployment coming up alongside
-// the one already serving (ADR-196).
+// the one already serving (ADR-199).
 //
 // The test is two O(1) ledger reads, deliberately: this runs on the wake hot
 // path and must not add a query. The shape it detects is exactly:
@@ -8559,7 +8559,7 @@ func (e *Engine) rolloutGrantApplies(appID, deploymentID string) bool {
 	return e.ledger.Concurrency(appID) >= 1
 }
 
-// maxConcurrencyForWake is effectiveMaxConcurrency plus the ADR-196 rollout
+// maxConcurrencyForWake is effectiveMaxConcurrency plus the ADR-199 rollout
 // grant when this wake is a rollout overlap. Every caller that decides
 // "is this app at its concurrency cap" during a wake must use this rather
 // than effectiveMaxConcurrency, or the engine-side gate would reject a
@@ -8590,7 +8590,7 @@ func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limit
 	// admit normally. Without the clamp, an app with MaxConcurrency=0
 	// would always return wakeRejectAtCap and every wake would 429.
 	//
-	// ADR-196: maxConcurrencyForWake adds RolloutConcurrencyGrant while a
+	// ADR-199: maxConcurrencyForWake adds RolloutConcurrencyGrant while a
 	// second deployment is coming up alongside the one already serving, so
 	// a canary can overlap two revisions on a plan whose cap equals its
 	// steady-state instance count (Free = 1).

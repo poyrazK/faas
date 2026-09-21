@@ -2109,7 +2109,7 @@ type DeploymentResponse struct {
 	StageState json.RawMessage `json:"stage_state,omitempty"`
 	ID         string          `json:"id"`
 	AppID      string          `json:"app_id"`
-	// Revision (ADR-195) is the per-app deployment number rendered as
+	// Revision (ADR-198) is the per-app deployment number rendered as
 	// `v42` by the CLI and dashboard, and accepted anywhere this API
 	// takes a deployment id. It is the same N that appears in the
 	// deploy-{N}-{slug} preview hostname.

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// parseRevisionRef reports whether ref is a revision handle (ADR-195) and
+// parseRevisionRef reports whether ref is a revision handle (ADR-198) and
 // the revision it names. Mirrors apid's ParseDeploymentRevisionRef exactly —
 // both sides must agree on what "v42" means or the CLI would resolve a
 // reference the server would have rejected (and vice versa).
@@ -48,7 +48,7 @@ func renderRevision(revision int) string {
 // deploymentLabel is what the CLI prints to identify a deployment: the
 // revision when the row has one, otherwise the raw id. Every human-facing
 // deployment reference should go through this so output stays consistent
-// for pre-ADR-195 rows.
+// for pre-ADR-198 rows.
 func deploymentLabel(d api.DeploymentResponse) string {
 	if label := renderRevision(d.Revision); label != "" {
 		return label

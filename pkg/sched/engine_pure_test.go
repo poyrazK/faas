@@ -1,3 +1,4 @@
+// adr: 199
 // engine_pure_test.go — fill pkg/sched/engine.go coverage of the pure
 // helpers that don't require a store or a ledger: bootTimeout,
 // prefixesToCIDRStrings, budgetFor / budgetForWake (with override),

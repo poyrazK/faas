@@ -119,7 +119,7 @@ func TestRecoverRollout_HappyPath_Abort(t *testing.T) {
 }
 
 // TestRecoverRollout_PlanGate: rollout recovery is available on every plan
-// as of ADR-196. This test inverts: Free and Hobby used to be refused 403
+// as of ADR-199. This test inverts: Free and Hobby used to be refused 403
 // plan_traffic_split_not_allowed before the store was touched, and must now
 // get past the plan gate and be judged on the request itself.
 //
@@ -136,7 +136,7 @@ func TestRecoverRollout_PlanGate(t *testing.T) {
 			rec := e.do(t, "POST", "/v1/apps/recov/rollouts/recover",
 				api.RecoverRolloutRequest{Action: "abort", Reason: "plan-gate-regression-guard"}, nil)
 			if rec.Code == http.StatusForbidden {
-				t.Fatalf("plan=%s: rollout recovery refused 403; ADR-196 opened it to every plan. body %s",
+				t.Fatalf("plan=%s: rollout recovery refused 403; ADR-199 opened it to every plan. body %s",
 					plan, rec.Body.String())
 			}
 			if rec.Code != http.StatusOK {

@@ -259,7 +259,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// — opt-in is a paid-tier feature (Cloud Run's
 			// `--no-allow-unauthenticated` shape).
 			RequireAuthn: false,
-			// ADR-196: Free unlocks traffic splitting and the canary
+			// ADR-199: Free unlocks traffic splitting and the canary
 			// ladder. The rollout concurrency grant keeps the cost
 			// bounded to +1 instance for the length of the rollout,
 			// so this does not move Free's steady-state RAM shape.
@@ -415,7 +415,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #560: Hobby is gated off for the same
 			// posture-change shape as Free.
 			RequireAuthn: false,
-			// ADR-196: Hobby unlocks traffic splitting and the canary
+			// ADR-199: Hobby unlocks traffic splitting and the canary
 			// ladder — see the Free row above for the rationale.
 			TrafficSplit: true,
 			// ADR-124: Hobby unlocks gRPC framing. Hobby is the
@@ -1872,10 +1872,10 @@ func TestPlanRequireAuthnDefault(t *testing.T) {
 
 // TestPlanTrafficSplitAllowed pins the per-plan gate for the
 // traffic-splitting feature (issue #556 PR-A, opened to every plan by
-// ADR-196).
+// ADR-199).
 //
 // Every known plan is now true: a safe rollout is a correctness primitive
-// rather than a paid tier, and ADR-196's rollout concurrency grant is what
+// rather than a paid tier, and ADR-199's rollout concurrency grant is what
 // makes it actually work on a plan whose max_concurrency equals its
 // steady-state instance count (see
 // TestProperty_RolloutGrant_AllowsExactlyOneOverlap in pkg/sched).
