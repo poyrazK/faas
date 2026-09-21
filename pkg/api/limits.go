@@ -1284,20 +1284,28 @@ type Limits struct {
 
 	// TrafficSplit (issue #556 / traffic splitting across
 	// deployments) is the plan gate for the per-deployment
-	// traffic_percent opt-in. Pro/Scale = true; Free/Hobby =
-	// false. Differs from RequireAuthn in the Hobby tier: Hobby
-	// unlocks require_authn (issue #462 / ADR-058) but stays
-	// locked on traffic_split because the audience is more
-	// expensive — keeping N canary deployments warm is
-	// RAM-billable per running second for every "extra" live
-	// deployment, and Hobby's value-prop is "near-Free with a
-	// floor", not "production canary rollout". Apid's create
-	// + PATCH-traffic handlers reject Free/Hobby with 403
-	// plan_traffic_split_not_allowed. Column default
-	// (migration 00160) is 100, so every existing app routes
-	// 100% to its single live row regardless of plan — the
-	// gate only fires when a Free/Hobby customer tries to
-	// opt-in to a non-100 traffic_percent (which is denied).
+	// traffic_percent opt-in and the canary ladder.
+	//
+	// TRUE ON EVERY PLAN as of ADR-199. It is retained as a
+	// field rather than deleted because it is the single
+	// switch an operator flips if the rollout cost shape ever
+	// needs to be re-tiered, and because the 403
+	// plan_traffic_split_not_allowed problem code stays in the
+	// wire contract for older clients.
+	//
+	// The original Pro+ gate reasoned that keeping N canary
+	// deployments warm is RAM-billable per running second.
+	// ADR-199 answers that with RolloutConcurrencyGrant: the
+	// overlap is capped at +1 instance, lasts only while the
+	// rollout is in flight, and never bypasses the physical
+	// gates (RAM ledger invariant §6.2-2, the per-node ceiling
+	// from ADR-193, or vCPU). A customer on Free can now ship
+	// a canary; they cannot use it to hold more RAM than their
+	// plan's instance would have held anyway.
+	//
+	// Column default (migration 00160) is 100, so every app
+	// that never opts in still routes 100% to its single live
+	// row.
 	TrafficSplit bool
 
 	// RollbackOn5xxAllowed (issue #961 / ADR-118) gates the
@@ -1990,14 +1998,24 @@ var planLimits = map[Plan]Limits{
 		// the legacy H1 path regardless; the gate only fires
 		// if a Free customer tries PATCH app_protocol=grpc.
 		AppProtocolGrpcAllowed: false,
-		// TrafficSplit (issue #556): Free does not unlock
-		// per-deployment traffic splitting. The column
-		// default (100) keeps today's behaviour — 100% to the
-		// single live row — so no existing Free customer is
-		// affected; the gate only fires when a Free customer
-		// passes a non-100 traffic_percent on create (403
-		// plan_traffic_split_not_allowed).
-		TrafficSplit:         false,
+		// TrafficSplit (issue #556; opened to every plan by
+		// ADR-199): Free unlocks per-deployment traffic
+		// splitting and the canary ladder. The original
+		// Pro+ gate reasoned that keeping N canary
+		// deployments warm is RAM-billable per running
+		// second; ADR-199 answers that with the rollout
+		// concurrency grant (RolloutConcurrencyGrant) — the
+		// extra resident deployment is bounded to +1, lasts
+		// only while the rollout is in flight, and is still
+		// subject to every physical gate (RAM ledger,
+		// per-node ceiling, vCPU). A safe rollout is a
+		// correctness primitive, not a luxury tier: the
+		// customer most likely to ship a bad deploy is the
+		// one who cannot afford an outage.
+		//
+		// The column default (100) still keeps today's
+		// behaviour for every app that never opts in.
+		TrafficSplit:         true,
 		RollbackOn5xxAllowed: false,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
@@ -2368,16 +2386,20 @@ var planLimits = map[Plan]Limits{
 		// floor" value-prop. Customers on Hobby may PATCH
 		// app_protocol=grpc freely.
 		AppProtocolGrpcAllowed: true,
-		// TrafficSplit (issue #556): Hobby does not unlock
-		// per-deployment traffic splitting. Hobby's value-prop
-		// is "near-Free with a floor" (MinInstancesAllowed
-		// unlocked by issue #462 / ADR-058), not "production
-		// canary rollout". The 2-3 live deployment bill shape
-		// costs 2-3× the per-running-second RAM; Hobby's price
-		// point doesn't cover it. Free/Hobby see 403
-		// plan_traffic_split_not_allowed when they try to
-		// pass a non-100 traffic_percent on create or PATCH.
-		TrafficSplit:         false,
+		// TrafficSplit (issue #556; opened to every plan by
+		// ADR-199): Hobby unlocks per-deployment traffic
+		// splitting and the canary ladder. The original gate
+		// priced this as a sustained "2-3 live deployment
+		// bill shape"; that is the steady-state cost of
+		// running several deployments indefinitely, not the
+		// cost of a rollout. A canary ladder is bounded by
+		// its own stage durations and collapses back to one
+		// deployment when it completes or aborts, and
+		// ADR-199's grant caps the overlap at exactly +1
+		// instance.
+		//
+		// See the Free block above for the full rationale.
+		TrafficSplit:         true,
 		RollbackOn5xxAllowed: false,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
@@ -3219,6 +3241,28 @@ const (
 	// billing; the tenant-slice ceiling remains the aggregate safety fence.
 	SnapshotVMOverheadMB = 256
 
+	// RolloutConcurrencyGrant (ADR-199) is the number of instances an app
+	// may exceed its plan's max_concurrency by, and ONLY while a second
+	// deployment is coming up alongside the one already serving — i.e. the
+	// overlap window of a traffic split or a canary stage.
+	//
+	// Without it, opening traffic splitting to every plan would ship a
+	// broken feature: the concurrency ledger is per-app
+	// (NodeLedger.perApp), so on Free (max_concurrency 1) the second
+	// deployment's wake hits the cap and that slice of traffic returns a
+	// plan-limit error instead of the new revision.
+	//
+	// It is exactly 1, not a per-plan value: the grant exists to make a
+	// rollout *possible*, not to widen steady-state concurrency. A 3-way
+	// split on Free still admits at most max_concurrency + 1.
+	//
+	// THIS GRANT RELAXES THE PLAN GATE ONLY. Every physical gate still
+	// applies unchanged — the RAM ledger (invariant §6.2-2), the
+	// transactional per-node ceiling (ADR-193), and vCPU admission. A node
+	// under memory pressure refuses the extra instance exactly as it would
+	// refuse any other, and the rollout simply holds at its current stage.
+	RolloutConcurrencyGrant = 1
+
 	// FloorDecisionIntervalSeconds (issue #557 / ADR-071 §Decision 1)
 	// is the cadence at which the proactive floor trigger in
 	// pkg/sched/floor wakes instances up to the per-app floor. 1 s
@@ -3964,6 +4008,27 @@ const (
 	// but admissions are deliberately paced across ticks so one bad metric
 	// sample cannot turn into an unbounded cold-boot fan-out.
 	ScaleUpMaxBurstPerTick = 4
+	// MaxScalingTargets bounds the declared signal list on
+	// ScalingPolicy.Targets (ADR-194). The arbiter is O(n) per app per
+	// scheduler tick and n is a human-authored list, so this exists to keep
+	// a pathological manifest from inflating the sweep — not as a product
+	// limit. It is deliberately larger than the number of distinct sources
+	// that exist, so no app can hit it by declaring every real metric.
+	MaxScalingTargets = 8
+	// MaxScalingSchedules bounds the recurring windows one app may declare
+	// (ADR-195). Each schedule costs a cron parse per app per floor
+	// evaluation, and the floor is read on the wake hot path, so this is a
+	// latency bound rather than a product limit. Twelve covers a distinct
+	// window per month, which is well past any real weekly shape.
+	MaxScalingSchedules = 12
+	// MinScalingScheduleDurationS / MaxScalingScheduleDurationS bound a
+	// window. The floor is 60 s because the scheduler's own sweep is
+	// coarser than that, so a shorter window could close before any tick
+	// observed it — the customer would be billed for a floor that never
+	// produced an instance. The ceiling is 7 days, which lets "always
+	// warm" be expressed as a weekly window without an unbounded value.
+	MinScalingScheduleDurationS = 60
+	MaxScalingScheduleDurationS = 7 * 24 * 60 * 60
 	// ScaleDecisionEventMinIntervalSeconds bounds repeated durable scale
 	// decision events for one app. Metrics remain per-tick; the audit stream
 	// is sampled so a sustained hot app cannot flood events.
@@ -7017,3 +7082,71 @@ const FunctionInterpreterMaxWorkers = 4
 // Startup attestation runs before the scheduler opens its readiness boundary.
 const StartupAttestationWorkers = 2
 const StartupAttestationLayerTimeout = 15 * time.Second
+
+// NodeSizing is the per-host RAM/vCPU shape derived from the machine a
+// compute node actually runs on, rather than the single-box constants.
+type NodeSizing struct {
+	MemMB              int
+	TenantSliceMaxMB   int
+	TenantBudgetMB     int
+	AdmissionCeilingMB int
+	VCPUSlots          int
+}
+
+// DeriveNodeSizing generalises the spec §13 RAM budget to an arbitrary host.
+//
+// The §13 table is written for the 64 GB reference box: 2,048 MB host OS
+// reserve, 6,144 MB control-plane reserve, leaving a 57,344 MB tenant slice,
+// a 56,000 MB tenant budget, and an admission ceiling at 85% of that —
+// 47,600 MB. Those are the constants above, and they were also the *defaults*
+// every compute node self-registered with, whatever hardware it was on. On a
+// 16 GiB n2-standard-4 that advertises ~3x the machine's real memory, so
+// admission enforces invariant §6.2-2 against a number the host cannot honour
+// and the node can be driven into OOM with no swap to absorb it.
+//
+// This applies the same arithmetic to the observed MemTotal, so the reference
+// box still resolves to exactly 57,344 / 56,000 / 47,600 (pinned by test) and
+// smaller hosts get the truthful, much smaller figure.
+//
+// The tenant budget keeps the spec's margin below the slice fence
+// (56,000 of 57,344) rather than admitting right up to the cgroup hard limit.
+//
+// A non-positive memTotalMB (detection failed) returns the legacy single-box
+// constants: an unknown machine must not silently become an unbounded one.
+func DeriveNodeSizing(memTotalMB, hostCPUs int) NodeSizing {
+	out := NodeSizing{
+		MemMB:              memTotalMB,
+		TenantSliceMaxMB:   TenantSliceMaxMB,
+		TenantBudgetMB:     TenantRAMBudgetMB,
+		AdmissionCeilingMB: RAMAdmissionCeilingMB,
+		VCPUSlots:          VCPUSlots,
+	}
+	if memTotalMB <= 0 {
+		out.MemMB = TenantRAMBudgetMB
+	} else {
+		sliceMax := memTotalMB - HostOSReserveMB - ControlPlaneReserveMB
+		if sliceMax < MinTenantSliceMB {
+			// Too small to host tenants under the reserves. Report the
+			// floor rather than a negative or zero ceiling, which would
+			// fail the migration 00123 CHECK and wedge registration.
+			sliceMax = MinTenantSliceMB
+		}
+		out.TenantSliceMaxMB = sliceMax
+		out.TenantBudgetMB = sliceMax * TenantRAMBudgetMB / TenantSliceMaxMB
+		out.AdmissionCeilingMB = out.TenantBudgetMB * RAMAdmissionPercent / 100
+	}
+	if hostCPUs > 0 {
+		out.VCPUSlots = hostCPUs * CPUOvercommit
+	}
+	return out
+}
+
+const (
+	// RAMAdmissionPercent is the headroom guard from spec §1: schedd admits
+	// only up to this share of the tenant budget.
+	RAMAdmissionPercent = 85
+	// MinTenantSliceMB floors the derived tenant slice so a host smaller
+	// than the reserves still registers with a positive, CHECK-satisfying
+	// ceiling instead of refusing to come up.
+	MinTenantSliceMB = 1_024
+)

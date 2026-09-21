@@ -1260,6 +1260,13 @@ func serviceReplicasEqual(a, b *api.ServiceReplicas) bool {
 	return a.Min == b.Min && a.Max == b.Max && a.Desired == b.Desired
 }
 
+func workerReplicasEqual(a, b *api.WorkerScaling) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Target == b.Target
+}
+
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
 	manifest := current.Manifest
 	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
@@ -1274,10 +1281,22 @@ func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest)
 	if desired.MaxRetries != nil && manifest.MaxRetries != *desired.MaxRetries {
 		return true
 	}
+	if desired.StopGracePeriodS != nil {
+		currentGraceS := int(manifest.StopGracePeriod / time.Second)
+		if currentGraceS != *desired.StopGracePeriodS {
+			return true
+		}
+	}
+	if desired.StopSignal != nil && manifest.StopSignal != *desired.StopSignal {
+		return true
+	}
 	if desired.RequestTimeoutS != nil && manifest.RequestTimeoutS != *desired.RequestTimeoutS {
 		return true
 	}
 	if desired.ServiceReplicas != nil && !serviceReplicasEqual(manifest.ServiceReplicas, desired.ServiceReplicas) {
+		return true
+	}
+	if desired.WorkerReplicas != nil && !workerReplicasEqual(manifest.WorkerReplicas, desired.WorkerReplicas) {
 		return true
 	}
 	return false
@@ -1294,13 +1313,28 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || m.Lifecycle == nil || m.Lifecycle.Empty() {
+	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	desired := m.Lifecycle.ToAPI()
+	desired := api.UpdateAppRequest{}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		desired = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		desired.ExecutionMode = &workerMode
+		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			desired.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			desired.StopSignal = &sig
+		}
+	}
 	current, err := client.GetApp(ctx, slug)
 	if err != nil {
 		return fmt.Errorf("read app before applying lifecycle policy: %w", err)
@@ -1327,7 +1361,7 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil) {
+	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil && (m.Worker == nil || m.Worker.Scale.Metric == "")) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1339,7 +1373,20 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	}
 	update := api.UpdateAppRequest{}
 	changed := false
-	if m.Scaling != nil {
+	if m.Worker != nil && m.Worker.Scale.Metric != "" {
+		policy := &api.ScalingPolicy{
+			MinInstances: m.Worker.Scale.Min,
+			MaxInstances: m.Worker.Scale.Max,
+			Target: &api.ScalingTarget{
+				Metric: m.Worker.Scale.Metric,
+				Value:  m.Worker.Scale.Target,
+			},
+		}
+		if !scalingPolicyEqual(current.ScalingPolicy, policy) {
+			update.ScalingPolicy = policy
+			changed = true
+		}
+	} else if m.Scaling != nil {
 		desired := m.Scaling.ToAPI()
 		if !scalingPolicyEqual(current.ScalingPolicy, desired) {
 			update.ScalingPolicy = desired
@@ -3677,7 +3724,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -3869,7 +3916,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 // than silently PATCHing the wrong row.
 func cmdTrafficSet(args []string) int {
 	fs := newFlagSet("traffic set", flag.ContinueOnError)
-	deployment := fs.String("deployment", "", "deployment id to set the traffic split on")
+	// --app is optional: it is only needed to resolve a `v42` revision
+	// handle (ADR-198), because this endpoint is addressed by deployment
+	// id alone and carries no app context. Passing a uuid keeps working
+	// with no --app, so the pre-ADR-198 invocation is unchanged.
+	app := fs.String("app", "", "app slug (required when --deployment is a vN revision)")
+	deployment := fs.String("deployment", "", "deployment id or vN revision to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -3878,21 +3930,25 @@ func cmdTrafficSet(args []string) int {
 		return 1
 	}
 	if *deployment == "" || *percent < 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic set --deployment <id> --percent N", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic set [--app <slug>] --deployment <id|vN> --percent N", "traffic")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	dep, err := client.PatchDeploymentsIdTraffic(context.Background(), *deployment, *percent)
+	deploymentID, err := resolveDeploymentRef(context.Background(), client, *app, *deployment)
+	if err != nil {
+		return printErr("Traffic set failed", err)
+	}
+	dep, err := client.PatchDeploymentsIdTraffic(context.Background(), deploymentID, *percent)
 	if err != nil {
 		return printErr("Traffic set failed", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(dep))
 	}
-	PrintOK(osStdout, "Set %s → %d%%", dep.ID, dep.TrafficPercent)
+	PrintOK(osStdout, "Set %s → %d%%", deploymentLabel(dep), dep.TrafficPercent)
 	return 0
 }
 
@@ -3933,11 +3989,19 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "DEPLOYMENT\tSTATUS\tTRAFFIC")
+	// ADR-198: lead with the revision, because that is the handle the
+	// operator types back into `traffic set` / `rollback`. The id stays
+	// in the table so a pre-ADR-198 row (revision 0) is still
+	// addressable and so scripts parsing this output keep working.
+	_, _ = fmt.Fprintln(osStdout, "REVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC")
 	for _, deployment := range live {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d%%\n", deployment.ID, deployment.Status, deployment.TrafficPercent)
+		revision := renderRevision(deployment.Revision)
+		if revision == "" {
+			revision = "-"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d%%\n", revision, deployment.ID, deployment.Status, deployment.TrafficPercent)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total\t\t%d%%\n", total)
+	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
 }
 

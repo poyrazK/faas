@@ -128,7 +128,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "crons", "delayed-task", "events", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline":
+	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -582,6 +582,32 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "metrics", Short: "Show per-state trigger metrics"},
 		},
+	},
+	{
+		Name:    "workers",
+		DocSlug: "workers",
+		Short:   "Inspect and manage background worker pools",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List background worker pools"},
+			{Name: "status", Short: "Show real-time status and autoscaling for a worker pool", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (optional; defaults to linked context)", Value: "slug"},
+			}},
+			{Name: "logs", Short: "Tail logs for a background worker pool", Flags: []cliFlag{
+				{Name: "follow", Short: "follow new log lines"},
+				{Name: "grep", Short: "filter log lines by substring", Value: "SUBSTR"},
+				{Name: "since", Short: "filter log lines after timestamp", Value: "RFC3339"},
+				{Name: "level", Short: "filter log lines by level (info|warn|error)", Value: "LEVEL"},
+			}},
+			{Name: "scale", Short: "Adjust scaling bounds and graceful drain for a worker pool", Flags: []cliFlag{
+				{Name: "min", Short: "min worker replicas (0 = scale-to-zero)", Value: "N"},
+				{Name: "max", Short: "max worker replicas", Value: "N"},
+				{Name: "target", Short: "target messages per worker", Value: "N"},
+				{Name: "metric", Short: "autoscaling metric (queue_lag | queue_depth)", Value: "METRIC"},
+				{Name: "drain-timeout", Short: "shutdown grace duration (e.g. 90s, 2m)", Value: "DURATION"},
+				{Name: "stop-signal", Short: "stop signal (e.g. SIGTERM, SIGINT, SIGQUIT)", Value: "SIG"},
+			}},
+		},
+		Positionals: []string{"[<slug>]"},
 	},
 	{
 		Name:    "jobs",
@@ -1386,7 +1412,7 @@ var cliCommands = []cliCommand{
 		Short:       "Re-promote the previous deployment",
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
-			{Name: "to", Short: "target deployment id", Value: "deployment_id"},
+			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},
 			{Name: "json", Short: "machine-readable output"},
 		},
 	},
@@ -1598,7 +1624,8 @@ var cliCommands = []cliCommand{
 				Name:  "set",
 				Short: "Set the traffic split for a deployment",
 				Flags: []cliFlag{
-					{Name: "deployment", Short: "deployment id to set the traffic split on", Req: true, Value: "ID"},
+					{Name: "app", Short: "app slug; required when --deployment is a vN revision", Value: "SLUG"},
+					{Name: "deployment", Short: "deployment id or vN revision to set the traffic split on", Req: true, Value: "ID"},
 					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
 				},
 			},

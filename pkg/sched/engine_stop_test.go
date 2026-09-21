@@ -1,3 +1,4 @@
+// adr: 138 — container lifecycle contract: stop signal and graceful drain.
 // engine_stop_test.go — portable (no KVM, no pgtest) tests for the
 // M-2 / ADR-138 mode-aware Engine.StopInstance dispatch. The tests
 // pin three behaviours:
@@ -235,5 +236,108 @@ func TestEngineStopInstance_NotRunningReturnsZero(t *testing.T) {
 	defer rec.mu.Unlock()
 	if rec.stopInstanceOnNodeN != 0 {
 		t.Errorf("StopInstanceOnNode = %d; want 0 (instance wasn't running)", rec.stopInstanceOnNodeN)
+	}
+}
+
+// TestEngineStopInstance_WorkerUsesManifestSignalAndGrace pins that StopInstance
+// without explicit signal/grace falls back to the app manifest's StopSignal and StopGracePeriodS.
+func TestEngineStopInstance_WorkerUsesManifestSignalAndGrace(t *testing.T) {
+	store := state.NewMemStore()
+	rec := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, rec, &fakeNotifier{}, "1.10.0")
+
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	manifest := app.Manifest
+	manifest.ExecutionMode = api.ExecutionModeWorker
+	manifest.StopSignal = "SIGINT"
+	manifest.StopGracePeriodS = 45
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+
+	ins, err := store.CreateInstanceWithMode(context.Background(),
+		app.ID, dep.ID, string(state.StateRunning), 256,
+		"node-1", "wake-1", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+	if err := e.ledger.Admit(Request{
+		Kind: KindWake, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
+		Instance: ins.ID, NodeID: "node-1", RAMMB: 256, VCPUBudget: 2,
+		NodeCeilingMB: 47600,
+	}); err != nil {
+		t.Fatalf("ledger.Admit: %v", err)
+	}
+
+	out, err := e.StopInstance(context.Background(), ins.ID, StopOptions{})
+	if err != nil {
+		t.Fatalf("StopInstance: %v", err)
+	}
+	if out.Mode != string(state.InstanceModeWorker) {
+		t.Errorf("out.Mode = %q; want worker", out.Mode)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.stopInstanceOnNodeN != 1 {
+		t.Errorf("StopInstanceOnNode = %d; want 1", rec.stopInstanceOnNodeN)
+	}
+	// SIGINT = 2
+	if rec.stopSignalLast != 2 {
+		t.Errorf("signal = %d; want 2 (SIGINT)", rec.stopSignalLast)
+	}
+	if rec.stopGraceLast != 45 {
+		t.Errorf("grace = %d; want 45", rec.stopGraceLast)
+	}
+}
+
+// TestWorker_ScaleDown_AppliesConfiguredDrainTimeoutAndSignal verifies that surplus
+// worker instances during scale-down are drained using the manifest's stop signal and grace period.
+func TestWorker_ScaleDown_AppliesConfiguredDrainTimeoutAndSignal(t *testing.T) {
+	store := state.NewMemStore()
+	rec := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, rec, &fakeNotifier{}, "1.10.0")
+
+	ctx := context.Background()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	manifest := app.Manifest
+	manifest.ExecutionMode = api.ExecutionModeWorker
+	manifest.StopSignal = "SIGQUIT"
+	manifest.StopGracePeriodS = 50
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+
+	ins1, err := store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "wake-1", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+	ins2, err := store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "wake-2", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+
+	// ReconcileWorkerPool with desired=1 drains one surplus worker
+	if err := e.ReconcileWorkerPool(ctx, app.ID, 1, TriggerWorkerPool); err != nil {
+		t.Fatalf("ReconcileWorkerPool: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.stopInstanceOnNodeN != 1 {
+		t.Fatalf("StopInstanceOnNode = %d; want 1 surplus worker stopped", rec.stopInstanceOnNodeN)
+	}
+	// SIGQUIT = 3
+	if rec.stopSignalLast != 3 {
+		t.Errorf("signal = %d; want 3 (SIGQUIT)", rec.stopSignalLast)
+	}
+	if rec.stopGraceLast != 50 {
+		t.Errorf("grace = %d; want 50", rec.stopGraceLast)
+	}
+
+	// Confirm one is STOPPED and one is RUNNING
+	after1, _ := store.InstanceByID(ctx, ins1.ID)
+	after2, _ := store.InstanceByID(ctx, ins2.ID)
+	if after1.State == after2.State {
+		t.Errorf("expected one stopped, one running; got %s and %s", after1.State, after2.State)
 	}
 }

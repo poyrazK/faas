@@ -167,13 +167,19 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	}
 }
 
-// TestPatchDeploymentTraffic_RejectsFreePlan_NoNotify pins that the
-// plan-tier gate (issue #556) fires before the notify emit — a Free
-// account that PATCHes any value sees the 403 plan_traffic_split_not_allowed
-// and no deployment_changed notify is emitted. Without this gate a
-// Free plan could spam the gateway with weight-change events it has
-// no business triggering.
-func TestPatchDeploymentTraffic_RejectsFreePlan_NoNotify(t *testing.T) {
+// TestPatchDeploymentTraffic_AllowsFreePlan_Notifies is the inverse of the
+// gate this test used to pin. Issue #556 refused a Free account 403
+// plan_traffic_split_not_allowed before the notify emit; ADR-199 opened
+// traffic splitting to every plan, so a Free account setting a legal split
+// must now get 200 AND the kind=traffic deployment_changed notify — without
+// that notify the gateway would never reload the weights and the split would
+// be silently inert.
+//
+// The fixture mirrors the Pro happy path above (two live rows summing to
+// 100) because that is what makes 25 a legal value; a sole live row stamped
+// to 25 is a Σ≠100 violation and would 409 on any plan, which would test the
+// sum invariant rather than the plan gate.
+func TestPatchDeploymentTraffic_AllowsFreePlan_Notifies(t *testing.T) {
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), "traffic-free@example.com", api.PlanFree)
 	if err != nil {
@@ -196,6 +202,20 @@ func TestPatchDeploymentTraffic_RejectsFreePlan_NoNotify(t *testing.T) {
 	if err := store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
 		t.Fatalf("MarkDeploymentLive: %v", err)
 	}
+	// Second live row in its own scope, so 25/75 is a legal split.
+	depB, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
+		Status: state.DeployPending, Scope: "traffic-free-b",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment (B): %v", err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), depB.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive (B): %v", err)
+	}
+	if _, err := store.UpdateDeploymentTraffic(context.Background(), dep.ID, 0); err != nil {
+		t.Fatalf("zero dep traffic: %v", err)
+	}
 	apiKey, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		t.Fatalf("GenerateAPIKey: %v", err)
@@ -216,11 +236,34 @@ func TestPatchDeploymentTraffic_RejectsFreePlan_NoNotify(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 plan_traffic_split_not_allowed; body=%s", rec.Code, rec.Body.String())
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("Free account refused 403; ADR-199 opened traffic splitting to every plan. body=%s", rec.Body.String())
 	}
-	if calls := notif.byChannel(db.NotifyDeploymentChanged); len(calls) != 0 {
-		t.Errorf("deployment_changed emitted on Free plan: %v", calls)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// The notify is what makes the split real: gatewayd-internal reloads
+	// deployment weights off kind=traffic. A 200 with no notify would leave
+	// the customer's split applied in the database and ignored at the edge.
+	var sawTraffic bool
+	for _, call := range notif.byChannel(db.NotifyDeploymentChanged) {
+		var p struct {
+			Kind           string `json:"kind"`
+			TrafficPercent int    `json:"traffic_percent"`
+		}
+		if err := json.Unmarshal([]byte(call.payload), &p); err != nil {
+			continue
+		}
+		if p.Kind == "traffic" {
+			sawTraffic = true
+			if p.TrafficPercent != 25 {
+				t.Errorf("notify traffic_percent = %d, want 25", p.TrafficPercent)
+			}
+			break
+		}
+	}
+	if !sawTraffic {
+		t.Errorf("no kind=traffic deployment_changed notify emitted on Free plan; the split would be inert at the edge")
 	}
 }
 

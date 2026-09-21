@@ -118,16 +118,36 @@ func TestRecoverRollout_HappyPath_Abort(t *testing.T) {
 	}
 }
 
-// TestRecoverRollout_PlanGate: Hobby/Free operators get 403
-// plan_traffic_split_not_allowed before the store is touched.
+// TestRecoverRollout_PlanGate: rollout recovery is available on every plan
+// as of ADR-199. This test inverts: Free and Hobby used to be refused 403
+// plan_traffic_split_not_allowed before the store was touched, and must now
+// get past the plan gate and be judged on the request itself.
+//
+// A Free operator whose canary wedged needs the recovery escape hatch more
+// than a Scale operator does, not less — refusing it was the sharpest edge
+// of the old gate.
 func TestRecoverRollout_PlanGate(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby} {
 		t.Run(string(plan), func(t *testing.T) {
 			e := setup(t, plan)
-			rec := e.do(t, "POST", "/v1/apps/foo/rollouts/recover",
-				api.RecoverRolloutRequest{Action: "promote"}, nil)
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("plan=%s: status %d, body %s", plan, rec.Code, rec.Body.String())
+			// A real rollout on a real app: the request must be judged
+			// on its merits, not on the account's plan.
+			seedAppWithRollout(t, e, "recov", "rolling_out", 1, 4, time.Now().Add(-2*time.Hour))
+			rec := e.do(t, "POST", "/v1/apps/recov/rollouts/recover",
+				api.RecoverRolloutRequest{Action: "abort", Reason: "plan-gate-regression-guard"}, nil)
+			if rec.Code == http.StatusForbidden {
+				t.Fatalf("plan=%s: rollout recovery refused 403; ADR-199 opened it to every plan. body %s",
+					plan, rec.Body.String())
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("plan=%s: status %d, want 200; body %s", plan, rec.Code, rec.Body.String())
+			}
+			var out api.RolloutTransitionResponse
+			if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Deployment.RolloutState != "aborted" {
+				t.Errorf("plan=%s: rollout_state=%q, want aborted", plan, out.Deployment.RolloutState)
 			}
 		})
 	}

@@ -20,6 +20,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
 | [`crons`](#crons) | Manage scheduled requests |
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
+| [`workers`](#workers) | Inspect and manage background worker pools |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
 | [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
@@ -651,6 +652,49 @@ List dead-letter records
 ### triggers metrics
 
 Show per-state trigger metrics
+
+
+## workers
+
+Inspect and manage background worker pools
+
+`gregale workers [<subcommand>] [<slug>]`
+
+### workers list
+
+List background worker pools
+
+### workers status
+
+Show real-time status and autoscaling for a worker pool
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (optional; defaults to linked context) |  |
+
+### workers logs
+
+Tail logs for a background worker pool
+
+| Flag | Meaning | |
+|---|---|---|
+| `--follow` | follow new log lines |  |
+| `--grep <SUBSTR>` | filter log lines by substring |  |
+| `--since <RFC3339>` | filter log lines after timestamp |  |
+| `--level <LEVEL>` | filter log lines by level (info\|warn\|error) |  |
+
+### workers scale
+
+Adjust scaling bounds and graceful drain for a worker pool
+
+| Flag | Meaning | |
+|---|---|---|
+| `--min <N>` | min worker replicas (0 = scale-to-zero) |  |
+| `--max <N>` | max worker replicas |  |
+| `--target <N>` | target messages per worker |  |
+| `--metric <METRIC>` | autoscaling metric (queue_lag \| queue_depth) |  |
+| `--drain-timeout <DURATION>` | shutdown grace duration (e.g. 90s, 2m) |  |
+| `--stop-signal <SIG>` | stop signal (e.g. SIGTERM, SIGINT, SIGQUIT) |  |
 
 
 ## jobs
@@ -1832,11 +1876,11 @@ Rotate, finalize, or inspect static bearer auth (auth rotate|finalize|status)
 
 Re-promote the previous deployment
 
-`gregale rollback <slug> [--to <deployment_id>] [--json]`
+`gregale rollback <slug> [--to <deployment_id|vN>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--to <deployment_id>` | target deployment id |  |
+| `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--json` | machine-readable output |  |
 
 
@@ -2087,7 +2131,8 @@ Set the traffic split for a deployment
 
 | Flag | Meaning | |
 |---|---|---|
-| `--deployment <ID>` | deployment id to set the traffic split on | required |
+| `--app <SLUG>` | app slug; required when --deployment is a vN revision |  |
+| `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
 ### traffic status

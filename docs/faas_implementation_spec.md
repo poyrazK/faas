@@ -1049,7 +1049,7 @@ Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FA
 
 ### 6.2 Invariants (test these, they are the product)
 
-1. At most `max_concurrency(plan)` instances of one app in {WAKING, COLD_BOOTING, RUNNING}. **Issue #168:** `gatewayd-internal` routes requests across the entire live set via atomic round-robin so a fan-out burst actually distributes load; `Backend.Admit` atomically refuses over-cap callers under the same `tgtMu` lock that mutates the cache.
+1. At most `max_concurrency(plan)` + `RolloutConcurrencyGrant` instances of one app in {WAKING, COLD_BOOTING, RUNNING}. **Issue #168:** `gatewayd-internal` routes requests across the entire live set via atomic round-robin so a fan-out burst actually distributes load; `Backend.Admit` atomically refuses over-cap callers under the same `tgtMu` lock that mutates the cache. **ADR-199:** the grant is `1` and applies only while a second deployment is coming up alongside the one already serving — the overlap window of a traffic split or canary stage. Steady state remains `max_concurrency(plan)`; the grant retires on its own when the old revision's instances are reaped, and it never relaxes invariant 2, the per-node ceiling (ADR-193), or vCPU admission.
 2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).

@@ -6077,8 +6077,48 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
+	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
+	// derives this in SQL under the apps FOR UPDATE lock; here m.mu
+	// serves the same role. A caller-supplied positive Revision is
+	// honoured so fixtures can pin a specific ladder.
+	if d.Revision <= 0 {
+		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
+	}
 	m.deployments[d.ID] = d
 	return d, nil
+}
+
+// nextDeploymentRevisionLocked returns the next per-app revision. Caller
+// must hold m.mu. Not partitioned by scope — this is the same N that
+// DeploymentOrdinal stamps into preview hostnames. O(N) over the
+// deployments map matches the scan style of the supersede search above;
+// rows-per-app stay bounded by the build cadence (spec §6).
+func (m *MemStore) nextDeploymentRevisionLocked(appID string) int {
+	max := 0
+	for _, existing := range m.deployments {
+		if existing.AppID != appID {
+			continue
+		}
+		if existing.Revision > max {
+			max = existing.Revision
+		}
+	}
+	return max + 1
+}
+
+// DeploymentByRevision mirrors PgStore.DeploymentByRevision (ADR-198).
+func (m *MemStore) DeploymentByRevision(_ context.Context, appID string, revision int) (Deployment, error) {
+	if revision <= 0 {
+		return Deployment{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range m.deployments {
+		if d.AppID == appID && d.Revision == revision {
+			return d, nil
+		}
+	}
+	return Deployment{}, ErrNotFound
 }
 
 func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, error) {
@@ -6106,7 +6146,14 @@ func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentI
 func (m *MemStore) DeploymentOrdinal(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Mirror the pg-side query: row_number() over (partition by
+	// ADR-198 — prefer the stored revision, matching PgStore. The
+	// legacy rank computation below stays as the 0-sentinel fallback
+	// for rows a fixture wrote directly into m.deployments without
+	// going through CreateDeployment.
+	if d, ok := m.deployments[deploymentID]; ok && d.AppID == appID && d.Revision > 0 {
+		return d.Revision, nil
+	}
+	// Mirror the pg-side fallback: row_number() over (partition by
 	// app_id order by created_at, id). MemStore keeps no
 	// monotonic key, so we sort a slice of (CreatedAt, ID, AppID)
 	// for this app and find the row's rank.
@@ -7670,6 +7717,11 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	}
 	newDep.StageState = seed
 	newDep.CreatedAt = now
+	// ADR-198 — a retry is a new immutable row and takes the next
+	// revision rather than reusing the failed row's. retryDeploymentInput
+	// builds a fresh struct and never copies Revision, so this is always
+	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
+	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
 	m.deployments[newDep.ID] = newDep
 	return newDep, nil
 }

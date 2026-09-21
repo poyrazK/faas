@@ -2390,7 +2390,21 @@ type Store interface {
 	// Returns ErrNotFound when no row exists for deploymentID
 	// (handled by the apid handler with the standard 404 +
 	// IDOR posture).
+	//
+	// ADR-198: this now reads the stored deployments.revision column
+	// rather than recomputing row_number() on every call. The
+	// migration backfilled that column with the identical window, so
+	// the stability contract above is unchanged — and strengthened,
+	// because a stored value cannot shift when an earlier row is
+	// removed.
 	DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error)
+	// DeploymentByRevision resolves an app's deployment by its per-app
+	// revision (ADR-198) — the customer-facing `v42` handle accepted
+	// anywhere a deployment id is taken (`gregale rollback --to v42`,
+	// `gregale traffic set --deployment v42`). Returns ErrNotFound for
+	// an unknown or non-positive revision, preserving the 404 + IDOR
+	// posture of DeploymentByID.
+	DeploymentByRevision(ctx context.Context, appID string, revision int) (Deployment, error)
 	// LiveDeployment returns the app's current live deployment (status='live').
 	// schedd's wake path boots from this; ErrNotFound if the app has never had a
 	// successful deploy (an app always has a live snapshot OR a cold-bootable

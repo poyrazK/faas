@@ -608,6 +608,13 @@ func diffLifecycleConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 			modify("service_replicas", current.ServiceReplicas, *p.ServiceReplicas)
 		}
 	}
+	if p.WorkerReplicas != nil && (base == nil || !reflect.DeepEqual(p.WorkerReplicas, current.WorkerReplicas)) {
+		if base == nil {
+			add("worker_replicas", *p.WorkerReplicas)
+		} else {
+			modify("worker_replicas", current.WorkerReplicas, *p.WorkerReplicas)
+		}
+	}
 }
 
 // diffScalingPolicy compares the nested policy as one atomic app-level

@@ -90,7 +90,8 @@ type Loop struct {
 	// triggerPollers caches one triggerSource per trigger id. The
 	// cache is invalidated by NotifyTriggerChanged (commit #16);
 	// for now we never rebuild within a process lifetime.
-	triggerPollers map[string]triggerSource
+	triggerPollersMu sync.Mutex
+	triggerPollers   map[string]triggerSource
 	// triggerSecretIdentities opens Kafka credentials only in the
 	// short-lived trigger copy passed to a poller factory. Current and
 	// previous identities coexist here during host-key rotation.
@@ -196,11 +197,15 @@ type Loop struct {
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
-	return &Loop{
+	l := &Loop{
 		pool: pool, engine: engine, log: log,
 		now:        time.Now,
 		flowCounts: noopFlowCounter{},
 	}
+	if engine != nil {
+		engine.SetBrokerLagReader(l)
+	}
+	return l
 }
 
 // WithJobsDispatched opts the Loop into the jobs dispatch + reaper
@@ -568,6 +573,9 @@ func (l *Loop) WithScaleUp(t *scaleup.Trigger) *Loop {
 // via nil. The trigger's own Interval() governs the cadence.
 func (l *Loop) WithTargets(t *targets.Trigger) *Loop {
 	l.targets = t
+	if t != nil {
+		t.WithBrokerLagReader(l)
+	}
 	return l
 }
 

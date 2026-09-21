@@ -60,6 +60,7 @@ type kafkaBrokerOp interface {
 	FetchMessage(ctx context.Context) (kafka.Message, error)
 	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
 	SetOffset(offset int64) error
+	Stats() kafka.ReaderStats
 	Close() error
 }
 
@@ -501,6 +502,19 @@ func (k *kafkaPoller) Close() error {
 		delete(k.inFlight, kk)
 	}
 	return k.reader.Close()
+}
+
+// BrokerStats returns consumer lag and queue depth from segmentio/kafka-go.
+func (k *kafkaPoller) BrokerStats(_ context.Context, _ sqlc.Trigger) BrokerStats {
+	if k == nil || k.reader == nil {
+		return BrokerStats{Available: false}
+	}
+	stats := k.reader.Stats()
+	return BrokerStats{
+		Lag:       stats.Lag,
+		Depth:     stats.QueueLength,
+		Available: true,
+	}
 }
 
 func init() {

@@ -41,6 +41,14 @@ func TestQuota_FreshAppAtCapBlocksButExistingAppDoesNot(t *testing.T) {
 }
 
 // adr: 122
+// adr: 196
+//
+// ADR-199 opened traffic splitting to every plan, so Hobby no longer
+// collects plan_traffic_split_not_allowed here. The two breaks that remain
+// are the ones that are about the REQUEST rather than the plan: an invalid
+// (ram_mb, vcpu) pair, and traffic_percent + canary being mutually exclusive
+// rollout policies. The negative assertion is the point of the test now —
+// it is what would fail if the plan gate were ever quietly reinstated.
 func TestQuotaValidatesVCPUAndRolloutParity(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanHobby)
 	badVCPU := limits.VCPU + 1
@@ -51,9 +59,44 @@ func TestQuotaValidatesVCPUAndRolloutParity(t *testing.T) {
 		TrafficPercent: &traffic,
 		Canary:         canary,
 	}, QuotaConfig{Limits: limits})
-	for _, code := range []string{api.CodeValidation, api.CodePlanTrafficSplitNotAllowed} {
+	for _, code := range []string{api.CodeValidation, api.CodeInvalidCPURAMPair} {
 		if !hasCode(got, code) {
 			t.Errorf("missing %s break: %+v", code, got)
+		}
+	}
+	if hasCode(got, api.CodePlanTrafficSplitNotAllowed) {
+		t.Errorf("Hobby collected %s; ADR-199 unlocked traffic splitting on every plan: %+v",
+			api.CodePlanTrafficSplitNotAllowed, got)
+	}
+}
+
+// TestQuota_TrafficSplit_AllowedOnEveryPlan pins ADR-199 across the whole
+// plan set: a legal non-100 traffic_percent must not raise a plan break on
+// ANY plan, including Free. Free is the case that matters — it is the plan
+// the old gate locked hardest and the one the rollout concurrency grant in
+// pkg/sched exists to make workable.
+func TestQuota_TrafficSplit_AllowedOnEveryPlan(t *testing.T) {
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		traffic := 10
+		got := Quota(plan, Baseline{}, Pending{TrafficPercent: &traffic},
+			QuotaConfig{Limits: api.MustLimitsFor(plan)})
+		if hasCode(got, api.CodePlanTrafficSplitNotAllowed) {
+			t.Errorf("plan %s: traffic_percent=10 raised %s; want allowed (ADR-199): %+v",
+				plan, api.CodePlanTrafficSplitNotAllowed, got)
+		}
+	}
+}
+
+// TestQuota_CanaryPreset_AllowedOnEveryPlan is the canary-ladder twin of the
+// test above: the preset is the surface most customers will actually use
+// (`gregale deploy --canary-preset balanced`), so it needs its own pin.
+func TestQuota_CanaryPreset_AllowedOnEveryPlan(t *testing.T) {
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		got := Quota(plan, Baseline{}, Pending{Canary: &api.CanaryPresetSpec{Preset: "balanced"}},
+			QuotaConfig{Limits: api.MustLimitsFor(plan)})
+		if hasCode(got, api.CodePlanTrafficSplitNotAllowed) {
+			t.Errorf("plan %s: canary preset raised %s; want allowed (ADR-199): %+v",
+				plan, api.CodePlanTrafficSplitNotAllowed, got)
 		}
 	}
 }

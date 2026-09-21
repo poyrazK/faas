@@ -85,6 +85,11 @@ const (
 	// with source IN ('queue','delayed_task') become a Trigger.
 	// Config schema: QueueConfig{Mode}.
 	TriggerKindQueue TriggerKind = "queue"
+	// TriggerKindAMQP — AMQP 0-9-1 / RabbitMQ queue consumer.
+	// Config schema: AMQPConfig{URL, Queue, Consumer}.
+	TriggerKindAMQP TriggerKind = "amqp"
+	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
+	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
 )
 
 // EventTrigger is a content-based internal event subscription declaration.
@@ -559,6 +564,9 @@ type RedisStreamsConfig struct {
 	Stream   string `json:"stream"`
 	Group    string `json:"group"`
 	Consumer string `json:"consumer,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	TLS      bool   `json:"tls,omitempty"`
 }
 
 // SQSCompatConfig is the per-kind config for kind=sqs_compat (issue
@@ -579,6 +587,13 @@ type QueueConfig struct {
 	Mode string `json:"mode"`
 }
 
+// AMQPConfig is the per-kind config for kind=amqp / kind=rabbitmq.
+type AMQPConfig struct {
+	URL      string `json:"url"`
+	Queue    string `json:"queue"`
+	Consumer string `json:"consumer,omitempty"`
+}
+
 // ScalingTarget is the manifest form of api.ScalingTarget. It uses explicit
 // YAML tags because the API DTO intentionally only carries JSON tags.
 type ScalingTarget struct {
@@ -591,11 +606,27 @@ type ScalingTarget struct {
 // explicit zero (for example, min_instances: 0 means scale to zero).
 // Cooldowns default to the platform's documented safe values when omitted.
 type ScalingConfig struct {
-	MinInstances      *int           `yaml:"min_instances,omitempty"`
-	MaxInstances      *int           `yaml:"max_instances,omitempty"`
-	Target            *ScalingTarget `yaml:"target,omitempty"`
-	ScaleOutCooldownS *int           `yaml:"scale_out_cooldown_s,omitempty"`
-	ScaleInCooldownS  *int           `yaml:"scale_in_cooldown_s,omitempty"`
+	MinInstances *int           `yaml:"min_instances,omitempty"`
+	MaxInstances *int           `yaml:"max_instances,omitempty"`
+	Target       *ScalingTarget `yaml:"target,omitempty"`
+	// Targets is the multi-signal form (ADR-194). Each entry says how much
+	// load one instance should carry on that metric; the platform evaluates
+	// all of them and provisions for the largest resulting count. Declaring
+	// signals is the whole configuration surface — windowing, cooldowns and
+	// the combination rule stay platform policy, which is the difference
+	// between this and an HPA `behavior:` block.
+	//
+	//	scaling:
+	//	  targets:
+	//	    - metric: concurrent_requests
+	//	      value: 80
+	//	    - metric: cpu
+	//	      value: 70
+	//
+	// Mutually exclusive with the singular target.
+	Targets           []ScalingTarget `yaml:"targets,omitempty"`
+	ScaleOutCooldownS *int            `yaml:"scale_out_cooldown_s,omitempty"`
+	ScaleInCooldownS  *int            `yaml:"scale_in_cooldown_s,omitempty"`
 	// ConcurrencyOverflow controls admission when the app's request
 	// concurrency boundary is saturated. Empty uses the platform default
 	// (queue), while drop rejects immediately with 429.
@@ -605,6 +636,44 @@ type ScalingConfig struct {
 	MaxQueueWaitMS          int `yaml:"max_queue_wait_ms,omitempty"`
 	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
+	// Timezone is the IANA zone the schedules below are evaluated in
+	// (ADR-195). Empty means UTC.
+	Timezone string `yaml:"timezone,omitempty"`
+	// Schedules keep the app warm on a recurring window:
+	//
+	//	scaling:
+	//	  min_instances: 0
+	//	  timezone: Europe/Istanbul
+	//	  schedules:
+	//	    - cron: "0 8 * * 1-5"
+	//	      duration: 12h
+	//	      min_instances: 3
+	//
+	// Outside every window the app falls back to min_instances and parks.
+	Schedules []ScalingSchedule `yaml:"schedules,omitempty"`
+}
+
+// ScalingSchedule is the manifest form of api.ScalingSchedule. Duration is a
+// Go duration string ("12h", "90m") rather than the wire's integer seconds
+// because this file is hand-written by a person; `duration_s: 43200` is a
+// number nobody can check at a glance.
+type ScalingSchedule struct {
+	Cron         string `yaml:"cron"`
+	Duration     string `yaml:"duration"`
+	MinInstances int    `yaml:"min_instances"`
+}
+
+// DurationSeconds parses the manifest duration string. Returns an error the
+// caller wraps with the schedule index.
+func (s ScalingSchedule) DurationSeconds() (int, error) {
+	d, err := time.ParseDuration(strings.TrimSpace(s.Duration))
+	if err != nil {
+		return 0, fmt.Errorf("duration %q is not a valid duration (for example 12h, 90m): %w", s.Duration, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("duration %q must be positive", s.Duration)
+	}
+	return int(d / time.Second), nil
 }
 
 // QueueBinding declares a durable app queue-to-workload mapping. The deploy
@@ -691,20 +760,71 @@ func (s *ScalingConfig) Validate() error {
 	if s.WakeMaxQueueWaitSeconds < 0 || s.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 		return fmt.Errorf("scaling: wake_max_queue_wait_seconds must be between 0 and %d; got %d", api.WakeQueueMaxWaitSeconds, s.WakeMaxQueueWaitSeconds)
 	}
+	// The closed metric set and the per-metric value rules come from
+	// pkg/api (ADR-194) rather than being restated here. This file used to
+	// carry its own copy of the switch, and it drifted: it accepted `rps`
+	// and `p99_latency_ms`, neither of which any scheduler trigger read
+	// through this field.
+	if s.Target != nil && len(s.Targets) > 0 {
+		return errors.New("scaling: set either target or targets, not both; targets is the multi-signal form of the same field")
+	}
 	if s.Target != nil {
-		switch s.Target.Metric {
-		case "rps", "concurrent_requests", "queue_depth", "p99_latency_ms":
-		default:
-			return fmt.Errorf("scaling: target.metric %q is invalid; use rps, concurrent_requests, queue_depth, or p99_latency_ms", s.Target.Metric)
+		// The manifest is stricter than the API on one point: an empty
+		// metric is a typo in a hand-written file, whereas the API must
+		// keep accepting it as the stored "fall back to the legacy
+		// columns" state.
+		if s.Target.Metric == "" {
+			return fmt.Errorf("scaling: target.metric is required; use one of %s", strings.Join(api.ScalingMetrics(), ", "))
 		}
-		if s.Target.Value < 0 || math.IsNaN(s.Target.Value) || math.IsInf(s.Target.Value, 0) {
-			return fmt.Errorf("scaling: target.value must be >= 0; got %v", s.Target.Value)
-		}
-		if s.Target.Metric == "queue_depth" && s.Target.Value <= 0 {
-			return fmt.Errorf("scaling: target.value must be > 0 for queue_depth; got %v", s.Target.Value)
+		if problem := api.ValidateLegacyScalingTarget(&api.ScalingTarget{
+			Metric: s.Target.Metric, Value: s.Target.Value,
+		}); problem != nil {
+			return fmt.Errorf("scaling: %s", problem.Detail)
 		}
 	}
+	if len(s.Targets) > 0 {
+		converted := make([]api.ScalingTarget, 0, len(s.Targets))
+		for _, t := range s.Targets {
+			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value})
+		}
+		if problem := api.ValidateScalingTargets("targets", converted); problem != nil {
+			return fmt.Errorf("scaling: %s", problem.Detail)
+		}
+	}
+	// ADR-195 schedules. The cron grammar, timezone and window bounds come
+	// from pkg/api so this file cannot drift from what the PATCH accepts;
+	// only the manifest-specific duration STRING is parsed here.
+	converted, err := s.apiSchedules()
+	if err != nil {
+		return err
+	}
+	if problem := api.ValidateScalingSchedules("schedules", s.Timezone, converted); problem != nil {
+		return fmt.Errorf("scaling: %s", problem.Detail)
+	}
 	return nil
+}
+
+// apiSchedules converts the manifest schedules to the wire shape, parsing
+// each duration string. The index is carried into the error because a
+// manifest with several schedules gives the author no other way to tell
+// which line is wrong.
+func (s *ScalingConfig) apiSchedules() ([]api.ScalingSchedule, error) {
+	if len(s.Schedules) == 0 {
+		return nil, nil
+	}
+	out := make([]api.ScalingSchedule, 0, len(s.Schedules))
+	for i, sched := range s.Schedules {
+		seconds, err := sched.DurationSeconds()
+		if err != nil {
+			return nil, fmt.Errorf("scaling: schedules[%d].%w", i, err)
+		}
+		out = append(out, api.ScalingSchedule{
+			Cron:         sched.Cron,
+			DurationS:    seconds,
+			MinInstances: sched.MinInstances,
+		})
+	}
+	return out, nil
 }
 
 // ToAPI converts the manifest declaration to the public PATCH shape. The
@@ -736,6 +856,18 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 	}
 	if s.Target != nil {
 		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value}
+	}
+	for _, t := range s.Targets {
+		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value})
+	}
+	out.Timezone = s.Timezone
+	// Validate() already rejected an unparseable duration, so a failure
+	// here cannot reach a caller that validated first. Dropping the error
+	// rather than panicking keeps ToAPI total: a caller that skipped
+	// validation gets a policy without schedules, which the API then
+	// rejects on its own terms.
+	if schedules, err := s.apiSchedules(); err == nil {
+		out.Schedules = schedules
 	}
 	return out
 }
@@ -856,6 +988,7 @@ type Manifest struct {
 	Workflows     []api.WorkflowSpec   `yaml:"workflows,omitempty"`
 	Databases     []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets       []BucketDependency   `yaml:"buckets,omitempty"`
+	Worker        *WorkerSpec          `yaml:"worker,omitempty"`
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -877,6 +1010,8 @@ type LifecycleConfig struct {
 	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
 	RequestTimeoutS  *int                 `yaml:"request_timeout_s,omitempty"`
+	StopGracePeriodS *int                 `yaml:"stop_grace_period_s,omitempty"`
+	StopSignal       *string              `yaml:"stop_signal,omitempty"`
 	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
 }
 
@@ -891,6 +1026,8 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
+		StopGracePeriodS: c.StopGracePeriodS,
+		StopSignal:       c.StopSignal,
 		ServiceReplicas:  c.ServiceReplicas,
 	}
 }
@@ -898,7 +1035,8 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
 	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil &&
-		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil && c.ServiceReplicas == nil)
+		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
+		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
 
 // Validate checks lifecycle shape locally. Plan-specific admission is still
@@ -923,8 +1061,140 @@ func (c *LifecycleConfig) Validate() error {
 	if c.RequestTimeoutS != nil {
 		m.RequestTimeoutS = *c.RequestTimeoutS
 	}
+	if c.StopGracePeriodS != nil {
+		if *c.StopGracePeriodS < 0 {
+			return fmt.Errorf("lifecycle: stop_grace_period_s %d cannot be negative", *c.StopGracePeriodS)
+		}
+		m.StopGracePeriod = time.Duration(*c.StopGracePeriodS) * time.Second
+	}
+	if c.StopSignal != nil && *c.StopSignal != "" {
+		if err := validateStopSignal(*c.StopSignal); err != nil {
+			return fmt.Errorf("lifecycle: %w", err)
+		}
+		m.StopSignal = *c.StopSignal
+	}
 	m.ServiceReplicas = c.ServiceReplicas
 	return m.ValidateLifecyclePlan(api.PlanScale)
+}
+
+// validateStopSignal checks that s is an accepted POSIX signal name or number.
+func validateStopSignal(s string) error {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "", "SIGTERM", "TERM", "15", "SIGINT", "INT", "2", "SIGQUIT", "QUIT", "3", "SIGHUP", "HUP", "1", "SIGUSR1", "USR1", "10", "SIGUSR2", "USR2", "12":
+		return nil
+	default:
+		return fmt.Errorf("unsupported stop_signal %q; must be one of SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2", s)
+	}
+}
+
+// WorkerSpec declares a native background worker workload with optional
+// queue-backlog autoscaling (min=0 supported for scale-to-zero).
+type WorkerSpec struct {
+	Command       string          `yaml:"command,omitempty"`
+	DrainTimeout  string          `yaml:"drain_timeout,omitempty"`
+	DrainTimeoutS int             `yaml:"drain_timeout_s,omitempty"`
+	StopSignal    string          `yaml:"stop_signal,omitempty"`
+	Scale         WorkerScaleSpec `yaml:"scale"`
+	Source        *Trigger        `yaml:"source,omitempty"`
+}
+
+// DrainTimeoutSeconds returns the effective drain timeout in seconds.
+func (w *WorkerSpec) DrainTimeoutSeconds() int {
+	if w == nil {
+		return 0
+	}
+	if w.DrainTimeoutS > 0 {
+		return w.DrainTimeoutS
+	}
+	if strings.TrimSpace(w.DrainTimeout) != "" {
+		if d, err := time.ParseDuration(strings.TrimSpace(w.DrainTimeout)); err == nil && d > 0 {
+			return int(math.Ceil(d.Seconds()))
+		}
+	}
+	return 0
+}
+
+// WorkerScaleSpec defines autoscaling parameters for background workers.
+type WorkerScaleSpec struct {
+	Min    int     `yaml:"min"`
+	Max    int     `yaml:"max"`
+	Metric string  `yaml:"metric"`
+	Target float64 `yaml:"target,omitempty"`
+}
+
+// ToAPI converts WorkerScaleSpec to api.WorkerScaling.
+func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
+	return &api.WorkerScaling{
+		Min:    s.Min,
+		Max:    s.Max,
+		Metric: s.Metric,
+		Target: s.Target,
+	}
+}
+
+// Validate checks worker configuration syntax and constraints.
+func (w *WorkerSpec) Validate() error {
+	if w == nil {
+		return nil
+	}
+	if w.DrainTimeoutS < 0 {
+		return fmt.Errorf("worker: drain_timeout_s %d cannot be negative", w.DrainTimeoutS)
+	}
+	if strings.TrimSpace(w.DrainTimeout) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(w.DrainTimeout))
+		if err != nil {
+			return fmt.Errorf("worker: invalid drain_timeout %q: %w", w.DrainTimeout, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("worker: drain_timeout %q cannot be negative", w.DrainTimeout)
+		}
+	}
+	if w.StopSignal != "" {
+		if err := validateStopSignal(w.StopSignal); err != nil {
+			return fmt.Errorf("worker: %w", err)
+		}
+	}
+	if err := w.Scale.Validate(); err != nil {
+		return fmt.Errorf("worker.scale: %w", err)
+	}
+	if w.Source != nil {
+		switch w.Source.Kind {
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindAMQP, TriggerKindRabbitMQ:
+			// valid broker kinds
+		case "":
+			return errors.New("worker.source: kind is required")
+		default:
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq", w.Source.Kind)
+		}
+		if err := w.Source.validateKindConfig(0); err != nil {
+			return fmt.Errorf("worker.source: %w", err)
+		}
+	}
+	return nil
+}
+
+// Validate checks worker autoscaling parameters.
+func (s WorkerScaleSpec) Validate() error {
+	if s.Min < 0 {
+		return fmt.Errorf("min instances %d cannot be negative", s.Min)
+	}
+	if s.Max <= 0 {
+		return fmt.Errorf("max instances %d must be greater than 0", s.Max)
+	}
+	if s.Max < s.Min {
+		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
+	}
+	switch s.Metric {
+	case "queue_lag", "queue_depth":
+		if s.Target <= 0 {
+			return fmt.Errorf("target for metric %q must be greater than 0", s.Metric)
+		}
+	case "":
+		// manual fixed replica count without metric
+	default:
+		return fmt.Errorf("unsupported worker metric %q; supported metrics: queue_lag, queue_depth", s.Metric)
+	}
+	return nil
 }
 
 // Load reads `gregale.yaml`, `gregale.yml`, or the event-only `gregale.toml`
@@ -1085,6 +1355,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("lifecycle: %w", err)
 		}
 	}
+	if m.Worker != nil {
+		if err := m.Worker.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(m.Extensions) > 0 {
 		sidecars, err := m.ToSidecars()
 		if err != nil {
@@ -1125,7 +1400,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindNATS,
 			TriggerKindRedisStreams,
 			TriggerKindSQSCompat,
-			TriggerKindQueue:
+			TriggerKindQueue,
+			TriggerKindAMQP,
+			TriggerKindRabbitMQ:
 			// fall through to per-kind validation below
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -1367,7 +1644,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq"
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -1428,8 +1705,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if err != nil || (u.Scheme != "nats" && u.Scheme != "tls") || u.Host == "" {
 			return fmt.Errorf("trigger[%d]: nats url must be nats:// or tls:// with a host (got %q)", idx, c.URL)
 		}
-		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return fmt.Errorf("trigger[%d]: nats url must not contain credentials, query parameters, or fragments", idx)
+		if u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("trigger[%d]: nats url must not contain query parameters or fragments", idx)
 		}
 		if c.Stream == "" {
 			return fmt.Errorf("trigger[%d]: nats config requires non-empty stream", idx)
@@ -1486,6 +1763,22 @@ func (t Trigger) validateKindConfig(idx int) error {
 		default:
 			return fmt.Errorf("trigger[%d]: queue config mode %q not in {queue, delayed_task}", idx, c.Mode)
 		}
+	case TriggerKindAMQP, TriggerKindRabbitMQ:
+		var c AMQPConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad %s config: %w", idx, t.Kind, err)
+		}
+		if c.URL == "" {
+			return fmt.Errorf("trigger[%d]: %s config requires non-empty url", idx, t.Kind)
+		}
+		u, err := url.Parse(c.URL)
+		if err != nil || (u.Scheme != "amqp" && u.Scheme != "amqps") || u.Host == "" {
+			return fmt.Errorf("trigger[%d]: %s url must be amqp:// or amqps:// with a host (got %q)", idx, t.Kind, c.URL)
+		}
+		if c.Queue == "" {
+			return fmt.Errorf("trigger[%d]: %s config requires non-empty queue", idx, t.Kind)
+		}
+		return nil
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and

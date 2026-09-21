@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ScalingSchedule } from './ScalingSchedule.js';
 import type { ScalingTarget } from './ScalingTarget.js';
 /**
  * Per-app autoscaling configuration (issue #462 / ADR-058). Mirrors the on-disk jsonb column `apps.scaling_policy`. Empty values map to the engine default (the apid gate is load-bearing for the floor / ceiling, not the encoder). PR-A persists the DTO; PR-C wires the engine; PR-D carves out the worker-class branch.
@@ -16,9 +17,13 @@ export type ScalingPolicy = {
    */
   max_instances?: number;
   /**
-   * Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out).
+   * Single-signal form, superseded by `targets` (ADR-194) and still accepted: it is read as a one-element list. Closed metric set: rps | cpu | concurrent_requests | queue_depth. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out). Mutually exclusive with `targets` — setting both is 422.
    */
   target?: (null | ScalingTarget);
+  /**
+   * Multi-signal autoscaling (ADR-194). Each entry states how much load ONE instance should carry on that metric; the platform evaluates every entry independently and provisions for the largest resulting instance count. The combination rule, the windowing and the cooldowns are platform policy and are not configurable per metric — declaring the signals is the whole surface. Each metric may appear at most once, every value must be > 0, and cpu is a percentage capped at 100. Mutually exclusive with `target`.
+   */
+  targets?: Array<ScalingTarget>;
   /**
    * Minimum seconds between two scale-out events. Floor 1 (no 0 traps); ceiling 3600 (1 h). Out-of-range → 422 invalid_cooldown.
    */
@@ -43,5 +48,13 @@ export type ScalingPolicy = {
    * Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds.
    */
   wake_max_queue_wait_seconds?: number;
+  /**
+   * IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule.
+   */
+  timezone?: string;
+  /**
+   * Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor — they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap.
+   */
+  schedules?: Array<ScalingSchedule>;
 };
 

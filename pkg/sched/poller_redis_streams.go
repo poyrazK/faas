@@ -24,6 +24,7 @@ package sched
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,9 +55,8 @@ type redisPoller struct {
 	mu       sync.Mutex
 	inFlight map[string]string // id → original stream value (for header passthrough)
 
-	// closeOnce + closeErr make Close idempotent (review
-	// finding #7). The underlying redis.Client uses atomic CAS
-	// internally and returns redis.ErrClosed on the second call;
+	// closeOnce serializes Close calls. redismock's ExpectClose
+	// allows at most one matched Close per expected client;
 	// wrapping in sync.Once avoids surfacing that error twice
 	// for callers (leakcheck's TestTriggerPollers_*) which
 	// expect Close#2 == nil.
@@ -69,14 +69,20 @@ type redisPoller struct {
 // Schema (validated in pkg/gregalemanifest.validateKindConfig):
 //
 //	{
-//	  "addr":   "redis:6379",
-//	  "stream": "cacheinvalids",
-//	  "group":  "faas-cache"
+//	  "addr":     "redis:6379",
+//	  "stream":   "cacheinvalids",
+//	  "group":    "faas-cache",
+//	  "username": "default",
+//	  "password": "secret",
+//	  "tls":      true
 //	}
 type redisConfig struct {
-	Addr   string `json:"addr"`
-	Stream string `json:"stream"`
-	Group  string `json:"group"`
+	Addr     string `json:"addr"`
+	Stream   string `json:"stream"`
+	Group    string `json:"group"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	TLS      bool   `json:"tls,omitempty"`
 }
 
 func decodeRedisConfig(t sqlc.Trigger) (redisConfig, error) {
@@ -113,14 +119,20 @@ func newRedisPoller(t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:         cfg.Addr,
+		Username:     cfg.Username,
+		Password:     cfg.Password,
 		Dialer:       oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second}),
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
 		PoolSize:     4,
-	})
+	}
+	if cfg.TLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
 	// Verify the connection up-front — a misconfigured addr is a
 	// startup failure, not a per-tick surprise.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -339,6 +351,27 @@ func (r *redisPoller) Close() error {
 		r.closeErr = r.client.Close()
 	})
 	return r.closeErr
+}
+
+// BrokerStats queries Redis Streams XInfoGroups for pending and lag metrics.
+func (r *redisPoller) BrokerStats(ctx context.Context, _ sqlc.Trigger) BrokerStats {
+	if r == nil || r.client == nil {
+		return BrokerStats{Available: false}
+	}
+	groups, err := r.client.XInfoGroups(ctx, r.stream).Result()
+	if err != nil {
+		return BrokerStats{Available: false}
+	}
+	for _, g := range groups {
+		if g.Name == r.group {
+			return BrokerStats{
+				Lag:       g.Lag,
+				Depth:     g.Lag + g.Pending,
+				Available: true,
+			}
+		}
+	}
+	return BrokerStats{Available: false}
 }
 
 func init() {

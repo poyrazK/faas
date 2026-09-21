@@ -62,7 +62,8 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 	if pending.AppConfig.ExecutionMode != nil || pending.AppConfig.RestartPolicy != nil ||
 		pending.AppConfig.StartupDeadlineS != nil || pending.AppConfig.MaxRetries != nil ||
 		pending.AppConfig.RequestTimeoutS != nil ||
-		pending.AppConfig.ServiceReplicas != nil {
+		pending.AppConfig.ServiceReplicas != nil ||
+		pending.AppConfig.WorkerReplicas != nil {
 		lifecycle := api.AppManifest{}
 		if baseline.App != nil {
 			lifecycle = baseline.App.Manifest
@@ -84,6 +85,9 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 		}
 		if pending.AppConfig.ServiceReplicas != nil {
 			lifecycle.ServiceReplicas = pending.AppConfig.ServiceReplicas
+		}
+		if pending.AppConfig.WorkerReplicas != nil {
+			lifecycle.WorkerReplicas = pending.AppConfig.WorkerReplicas
 		}
 		if err := lifecycle.ValidateLifecyclePlan(p); err != nil {
 			out = append(out, Break{Code: api.CodeValidation, Severity: SeverityError,
@@ -244,23 +248,52 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 				Field:  "scaling_policy.scale_in_cooldown_s", Observed: AsAny(sp.ScaleInCooldownS), Limit: AsAny(api.MaxScaleInCooldownS),
 			})
 		}
-		if sp.Target != nil {
-			switch sp.Target.Metric {
-			case "", "rps", "concurrent_requests", "p99_latency_ms":
-			default:
-				out = append(out, Break{
-					Code: api.CodeValidation, Severity: SeverityError,
-					Reason: "scaling_policy.target.metric is not supported",
-					Field:  "scaling_policy.target.metric", Observed: AsAny(sp.Target.Metric),
-				})
-			}
-			if sp.Target.Value < 0 {
-				out = append(out, Break{
-					Code: api.CodeValidation, Severity: SeverityError,
-					Reason: "scaling_policy.target.value must be >= 0",
-					Field:  "scaling_policy.target.value", Observed: AsAny(sp.Target.Value),
-				})
-			}
+		// ADR-194: delegate to the one validator in pkg/api. This was the
+		// third hand-maintained copy of the closed metric set, and it had
+		// drifted furthest — it omitted `queue_depth` entirely, so a
+		// deploy preview reported a perfectly valid worker scaling target
+		// as unsupported while the PATCH that followed accepted it.
+		if sp.Target != nil && len(sp.Targets) > 0 {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: "scaling_policy sets both target and targets",
+				Field:  "scaling_policy.targets",
+			})
+		}
+		if problem := api.ValidateLegacyScalingTarget(sp.Target); problem != nil {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: problem.Detail,
+				Field:  "scaling_policy.target", Observed: AsAny(sp.Target.Metric),
+			})
+		}
+		if problem := api.ValidateScalingTargets("scaling_policy.targets", sp.Targets); problem != nil {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: problem.Detail,
+				Field:  "scaling_policy.targets",
+			})
+		}
+		// ADR-195 schedules, same shared validator as the PATCH handler
+		// and the manifest loader.
+		if problem := api.ValidateScalingSchedules("scaling_policy.schedules", sp.Timezone, sp.Schedules); problem != nil {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: problem.Detail,
+				Field:  "scaling_policy.schedules",
+			})
+		}
+		// A schedule buys the same warm capacity min_instances does, so
+		// the plan gate must see the maximum REACHABLE floor. Gating the
+		// static field alone lets `min_instances: 0` plus a schedule of
+		// `min_instances: 3` past the Free rejection.
+		if reachable := sp.MaxReachableMinInstances(); reachable > 0 && !limits.MinInstancesAllowed {
+			out = append(out, Break{
+				Code: api.CodePlanMinInstancesNotAllowed, Severity: SeverityError,
+				Reason:   "min_instances is not enabled on this plan",
+				Field:    "scaling_policy.min_instances",
+				Observed: AsAny(reachable),
+			})
 		}
 	}
 	// Streaming gate.

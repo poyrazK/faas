@@ -521,6 +521,66 @@ func TestTrigger_WorkerPoolScalesBindingsWithinPerBindingCaps(t *testing.T) {
 	}
 }
 
+type fakeBrokerLag struct {
+	byApp map[string]int64
+}
+
+func (f *fakeBrokerLag) BrokerLag(_ context.Context, appID string) (int64, bool, error) {
+	if f == nil || f.byApp == nil {
+		return 0, false, nil
+	}
+	lag, ok := f.byApp[appID]
+	return lag, ok, nil
+}
+
+func TestTrigger_BrokerLagScalesWorkerPool(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID:             "worker-kafka",
+		WorkloadClass:  state.WorkloadClassWorker,
+		MaxConcurrency: 50,
+		ScalingPolicy: &state.ScalingPolicy{
+			Target: &state.ScalingTarget{Metric: "queue_lag", Value: 500},
+		},
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"worker-kafka": 1}}
+	engine := &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}
+	lagReader := &fakeBrokerLag{byApp: map[string]int64{"worker-kafka": 20000}}
+	tr := New(store, nil, engine, ledger, Options{BrokerLagReader: lagReader})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	// 20,000 lag with target 500 = 40 workers
+	if len(engine.desired) != 1 || engine.desired[0] != 40 {
+		t.Fatalf("worker desired = %v, want [40]", engine.desired)
+	}
+}
+
+func TestTrigger_WorkerScaleToZero(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID:             "worker-s2z",
+		WorkloadClass:  state.WorkloadClassWorker,
+		MaxConcurrency: 50,
+		Manifest: state.AppManifest{
+			WorkerReplicas: &state.WorkerScaling{Min: 0, Max: 50, Metric: "queue_lag", Target: 500},
+		},
+		ScalingPolicy: &state.ScalingPolicy{
+			MinInstances: 0,
+			Target:       &state.ScalingTarget{Metric: "queue_lag", Value: 500},
+		},
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"worker-s2z": 2}}
+	engine := &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}
+	lagReader := &fakeBrokerLag{byApp: map[string]int64{"worker-s2z": 0}}
+	tr := New(store, nil, engine, ledger, Options{BrokerLagReader: lagReader})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	// 0 messages with min=0 = 0 workers
+	if len(engine.desired) != 1 || engine.desired[0] != 0 {
+		t.Fatalf("worker desired for 0 lag = %v, want [0]", engine.desired)
+	}
+}
+
 func TestDecideQueueDepthColdStartAndCap(t *testing.T) {
 	tests := []struct {
 		name       string

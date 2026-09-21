@@ -141,6 +141,20 @@ type triggerSource interface {
 	Close() error
 }
 
+// BrokerStats contains backlog and consumer lag telemetry reported by a broker.
+type BrokerStats struct {
+	Lag       int64 // consumer lag (HighWaterMark - committed offset for Kafka, NumPending for NATS, etc.)
+	Depth     int64 // approximate queue depth / unconsumed message count
+	Available bool  // true if the broker provided a valid measurement
+}
+
+// triggerStatsSource is an optional interface pollers can implement
+// to report broker lag/depth for autoscaling.
+type triggerStatsSource interface {
+	triggerSource
+	BrokerStats(ctx context.Context, t sqlc.Trigger) BrokerStats
+}
+
 // pollerRegistry maps a kind string to its triggerSource factory.
 // The dispatcher initialises this lazily on the first poll attempt
 // for a given kind (commits #8..12 ship one factory each).

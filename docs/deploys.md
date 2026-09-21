@@ -49,3 +49,52 @@ Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live
 release, use `gregale rollback APP`; rollback reuses the previous live
 artifact instead of rebuilding it. See [deployment history](deployments.md)
 for annotations and receipts.
+
+## Revisions
+
+Every deploy creates an immutable revision, numbered per app and shown as
+`v41`, `v42`, `v43`. A revision is never rewritten — a redeploy supersedes it
+and creates the next one — so it is a stable handle you can keep in a runbook
+or an incident channel.
+
+Use a revision anywhere a deployment ID is accepted:
+
+```bash
+gregale rollback my-api --to v41
+gregale traffic set --app my-api --deployment v42 --percent 10
+```
+
+`gregale traffic status my-api` lists the live revisions and their weights.
+Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
+another. Numbers may skip values: preview deploys and retries consume them
+too.
+
+## Progressive rollouts
+
+Instead of moving all traffic at once, shift it in stages and let the platform
+promote only while the app stays healthy:
+
+```bash
+gregale deploy --canary-preset balanced
+```
+
+`balanced` sends 1% of traffic to the new revision for 2 minutes, then 10%,
+then 50%, then 100%. `slow` and `aggressive` trade speed against exposure, and
+`--canary-stages "5@1m,25@5m,100@0s"` defines your own ladder. Preview how a
+preset would behave against your app's recent traffic before deploying:
+
+```bash
+gregale canary simulate my-api --canary-preset balanced
+```
+
+Promotion is health-gated. If an alert rule with a `rollback` or `demote`
+action is firing, the ladder holds at its current stage rather than advancing.
+`gregale deploy --safe` combines the balanced ladder with automatic rollback
+when the new revision returns 5xx responses in its first window. If a rollout
+wedges, `gregale rollouts recover my-api` is the manual escape hatch.
+
+Traffic splitting and canary rollouts are available on every plan. During a
+rollout an app runs one instance above its plan's concurrency limit so both
+revisions can serve at once; that extra instance lasts only as long as the
+rollout and is still subject to available capacity. If a node has no headroom,
+the rollout holds at its current stage instead of promoting.

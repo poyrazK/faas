@@ -582,6 +582,7 @@ export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js'
 export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
 export type { ScalingPolicy } from './models/ScalingPolicy.js';
+export type { ScalingSchedule } from './models/ScalingSchedule.js';
 export type { ScalingTarget } from './models/ScalingTarget.js';
 export type { ScanResult } from './models/ScanResult.js';
 export type { ScopedAppEnvResponse } from './models/ScopedAppEnvResponse.js';
@@ -665,6 +666,7 @@ export type { WakeTimelineApp } from './models/WakeTimelineApp.js';
 export type { WakeTimelineEvent } from './models/WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './models/WakeTimelineJSONRow.js';
 export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
+export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowRetrySpec } from './models/WorkflowRetrySpec.js';
 export type { WorkflowRunResponse } from './models/WorkflowRunResponse.js';
 export type { WorkflowSpec } from './models/WorkflowSpec.js';

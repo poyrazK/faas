@@ -87,4 +87,13 @@ const (
 	// TriggerAppWake is an explicit customer pre-warm request from the API or
 	// dashboard. It is distinct from request-driven gateway recovery.
 	TriggerAppWake = "app.wake"
+
+	// TriggerServiceMesh — a request-driven wake from the node-local service
+	// proxy (ADR-196). Another same-account workload called this app over
+	// <slug>.svc.gregale and the call is being held while the snapshot
+	// restores. It is deliberately distinct from TriggerGateway: the waiter
+	// is a peer workload rather than an Internet client, so an operator
+	// reading the wake timeline can tell internal fan-out apart from customer
+	// traffic when attributing latency or cold-start cost.
+	TriggerServiceMesh = "service.mesh"
 )

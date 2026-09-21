@@ -4279,6 +4279,44 @@ func TestUpdateAppScalingPolicy_QueueDepthTargetMustBePositive(t *testing.T) {
 	assertProblem(t, rec, 422, api.CodeValidation)
 }
 
+// TestUpdateAppScalingPolicy_WorkerQueueLagAccepted verifies that a worker can use queue_lag.
+func TestUpdateAppScalingPolicy_WorkerQueueLagAccepted(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedAppWithWorkloadClass(t, e, "pro-worker-queue-lag", state.WorkloadClassWorker)
+	rec := e.do(t, "PATCH", "/v1/apps/pro-worker-queue-lag", api.UpdateAppRequest{
+		ScalingPolicy: &api.ScalingPolicy{
+			ScaleOutCooldownS: 1,
+			ScaleInCooldownS:  5,
+			Target: &api.ScalingTarget{
+				Metric: "queue_lag",
+				Value:  500,
+			},
+		},
+		SetScalingPolicy: true,
+	}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestUpdateAppScalingPolicy_QueueLagTargetMustBePositive verifies queue_lag value > 0.
+func TestUpdateAppScalingPolicy_QueueLagTargetMustBePositive(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedAppWithWorkloadClass(t, e, "pro-worker-queue-lag-zero", state.WorkloadClassWorker)
+	rec := e.do(t, "PATCH", "/v1/apps/pro-worker-queue-lag-zero", api.UpdateAppRequest{
+		ScalingPolicy: &api.ScalingPolicy{
+			ScaleOutCooldownS: 1,
+			ScaleInCooldownS:  5,
+			Target: &api.ScalingTarget{
+				Metric: "queue_lag",
+				Value:  0,
+			},
+		},
+		SetScalingPolicy: true,
+	}, nil)
+	assertProblem(t, rec, 422, api.CodeValidation)
+}
+
 // TestUpdateAppScalingPolicy_UnknownFieldRejected pins the
 // strict-unmarshal contract. A typo on the wire
 // (`min_instance` instead of `min_instances`) must surface as

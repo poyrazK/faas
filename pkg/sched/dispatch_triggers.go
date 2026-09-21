@@ -287,29 +287,9 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 // caps rather than collapsing to Free.
 func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store storeLike, planFor func(string) api.Plan) error {
 	// 1. Poller lookup. Cached on the Loop.
-	if l.triggerPollers == nil {
-		l.triggerPollers = map[string]triggerSource{}
-	}
-	poller, ok := l.triggerPollers[t.ID.String()]
-	if !ok {
-		pollerTrigger := t
-		openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
-		if err != nil {
-			return fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
-		}
-		pollerTrigger.Config = openedConfig
-		src, registered, err := l.newPollerForTrigger(pollerTrigger)
-		if !registered {
-			l.log.Debug("sched trigger tick: no poller for kind",
-				"trigger_id", t.ID.String(),
-				"kind", t.Kind)
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
-		}
-		poller = src
-		l.triggerPollers[t.ID.String()] = poller
+	poller, _, err := l.pollerForTrigger(t)
+	if err != nil {
+		return err
 	}
 	if poller == nil {
 		return nil
@@ -1485,13 +1465,27 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 	if res.Error != nil {
 		observation.Error = res.Error.Error()
 	}
-	if res.Error == nil && t.Kind == string(api.TriggerKindKafka) {
-		lagMessages := int64(0)
+	if res.Error == nil {
+		if poller, _, err := l.pollerForTrigger(t); err == nil && poller != nil {
+			if ss, ok := poller.(triggerStatsSource); ok {
+				stats := ss.BrokerStats(ctx, t)
+				if stats.Available {
+					lag := stats.Lag
+					observation.LagMessages = &lag
+				}
+			}
+		}
+		if observation.LagMessages == nil && t.Kind == string(api.TriggerKindKafka) {
+			lagMessages := int64(0)
+			for _, rec := range res.Records {
+				if lag, ok := consumerLagFor(rec, t.Kind); ok && lag > lagMessages {
+					lagMessages = lag
+				}
+			}
+			observation.LagMessages = &lagMessages
+		}
 		lagAgeSeconds := float64(0)
 		for _, rec := range res.Records {
-			if lag, ok := consumerLagFor(rec, t.Kind); ok && lag > lagMessages {
-				lagMessages = lag
-			}
 			if !rec.ReceivedAt.IsZero() {
 				age := time.Since(rec.ReceivedAt).Seconds()
 				if age > lagAgeSeconds {
@@ -1502,7 +1496,6 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		if lagAgeSeconds < 0 {
 			lagAgeSeconds = 0
 		}
-		observation.LagMessages = &lagMessages
 		observation.LagAgeSeconds = &lagAgeSeconds
 	}
 	if err := writer.RecordTriggerConsumerHealth(ctx, t.ID.String(), observation); err != nil {
@@ -1800,7 +1793,12 @@ func (l *Loop) filterBatch(
 // the Loop and a per-tick snapshot would race the cache
 // invalidation on enable/disable transitions.
 func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) error {
-	if l == nil || l.triggerPollers == nil {
+	if l == nil {
+		return nil
+	}
+	l.triggerPollersMu.Lock()
+	defer l.triggerPollersMu.Unlock()
+	if l.triggerPollers == nil {
 		return nil
 	}
 	poller, ok := l.triggerPollers[t.ID.String()]
@@ -1815,4 +1813,78 @@ func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) e
 		return nil
 	}
 	return poller.Ack(ctx, t, []string{rec.ItemIdentifier})
+}
+
+// pollerForTrigger returns the cached triggerSource for t, constructing
+// and caching it if not yet present.
+func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+	if l == nil {
+		return nil, false, nil
+	}
+	l.triggerPollersMu.Lock()
+	defer l.triggerPollersMu.Unlock()
+	if l.triggerPollers == nil {
+		l.triggerPollers = map[string]triggerSource{}
+	}
+	if p, ok := l.triggerPollers[t.ID.String()]; ok {
+		return p, true, nil
+	}
+	pollerTrigger := t
+	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
+	if err != nil {
+		return nil, false, fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
+	}
+	pollerTrigger.Config = openedConfig
+	src, registered, err := l.newPollerForTrigger(pollerTrigger)
+	if !registered {
+		if l.log != nil {
+			l.log.Debug("sched trigger tick: no poller for kind",
+				"trigger_id", t.ID.String(),
+				"kind", t.Kind)
+		}
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
+	}
+	l.triggerPollers[t.ID.String()] = src
+	return src, true, nil
+}
+
+// BrokerLag implements BrokerLagReader on Loop. It queries active broker
+// pollers for queue lag / backlog stats across all enabled triggers for the app.
+func (l *Loop) BrokerLag(ctx context.Context, appID string) (int64, bool, error) {
+	if l == nil || l.engine == nil {
+		return 0, false, nil
+	}
+	store := l.engine.Store()
+	if store == nil {
+		return 0, false, nil
+	}
+	triggers, err := store.ListTriggersForApp(ctx, appID)
+	if err != nil {
+		return 0, false, fmt.Errorf("broker lag: list triggers for app %s: %w", appID, err)
+	}
+	if len(triggers) == 0 {
+		return 0, false, nil
+	}
+	var totalLag int64
+	var haveStats bool
+	for _, t := range triggers {
+		if !t.Enabled {
+			continue
+		}
+		poller, registered, err := l.pollerForTrigger(t)
+		if err != nil || !registered || poller == nil {
+			continue
+		}
+		if ss, ok := poller.(triggerStatsSource); ok {
+			stats := ss.BrokerStats(ctx, t)
+			if stats.Available {
+				haveStats = true
+				totalLag += stats.Lag
+			}
+		}
+	}
+	return totalLag, haveStats, nil
 }

@@ -465,11 +465,11 @@ func TestSnapKeys_Mega4(t *testing.T) {
 func TestEffectiveMinInstances_Mega4(t *testing.T) {
 	t.Parallel()
 
-	if got := effectiveMinInstances(nil); got != 0 {
+	if got := effectiveMinInstances(nil, time.Now()); got != 0 {
 		t.Errorf("nil App: got %d, want 0", got)
 	}
 	// Legacy column wins when set.
-	if got := effectiveMinInstances(&App{MinInstances: 3}); got != 3 {
+	if got := effectiveMinInstances(&App{MinInstances: 3}, time.Now()); got != 3 {
 		t.Errorf("legacy column: got %d, want 3", got)
 	}
 }

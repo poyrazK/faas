@@ -77,6 +77,7 @@ func Run(t *testing.T, open Open) {
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
@@ -2281,5 +2282,113 @@ func testCronQuota(t *testing.T, fx *Fixture) {
 	}
 	if qe.Observed != limits.CronLimitPerApp {
 		t.Errorf("Observed = %d, want %d", qe.Observed, limits.CronLimitPerApp)
+	}
+}
+
+// testDeploymentRevisions pins the ADR-198 revision contract across both
+// stores. Assertions are absolute (1, 2, 3 …), not "the two stores agree" —
+// per this file's header, an agreement check would have passed while both
+// implementations were identically wrong.
+//
+// The case deliberately covers the three properties that make `v42` a safe
+// customer-facing handle:
+//
+//  1. revisions start at 1 and increment by 1 per deploy of the same app;
+//  2. they are NOT partitioned by scope, so a preview deploy consumes a
+//     number and DeploymentOrdinal keeps returning the same N that already
+//     went into an issued deploy-{N}-{slug} hostname;
+//  3. a second app has its own independent ladder, so revision is only ever
+//     meaningful relative to one app.
+func testDeploymentRevisions(t *testing.T, fx *Fixture) {
+	// Seed already created one deployment for fx.App, so it holds v1.
+	if fx.Deployment.Revision != 1 {
+		t.Fatalf("seed deployment Revision = %d, want 1 (revisions are 1-based)", fx.Deployment.Revision)
+	}
+
+	// Two further deploys on the default scope take v2 and v3.
+	second, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:rev-second", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(second): %v", err)
+	}
+	if second.Revision != 2 {
+		t.Errorf("second deployment Revision = %d, want 2", second.Revision)
+	}
+
+	// A preview-scope deploy shares the app's single ladder (ADR-198: the
+	// counter is per-app, never per-scope, so it cannot fork away from the
+	// ordinal baked into preview hostnames).
+	preview, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:rev-preview", Status: state.DeployPending,
+		Scope: "pr-42",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(preview): %v", err)
+	}
+	if preview.Revision != 3 {
+		t.Errorf("preview-scope deployment Revision = %d, want 3 (the ladder is per-app, not per-scope)", preview.Revision)
+	}
+
+	// DeploymentOrdinal must agree with the stored revision — they are one
+	// number. A divergence here means an issued preview hostname no longer
+	// resolves to the row it was minted for.
+	for _, want := range []struct {
+		id  string
+		rev int
+	}{{fx.Deployment.ID, 1}, {second.ID, 2}, {preview.ID, 3}} {
+		ord, err := fx.Store.DeploymentOrdinal(fx.Ctx, fx.App.ID, want.id)
+		if err != nil {
+			t.Fatalf("DeploymentOrdinal(%s): %v", want.id, err)
+		}
+		if ord != want.rev {
+			t.Errorf("DeploymentOrdinal(%s) = %d, want %d (must equal the stored revision)", want.id, ord, want.rev)
+		}
+	}
+
+	// DeploymentByRevision is the resolver behind `gregale rollback --to v2`.
+	got, err := fx.Store.DeploymentByRevision(fx.Ctx, fx.App.ID, 2)
+	if err != nil {
+		t.Fatalf("DeploymentByRevision(2): %v", err)
+	}
+	if got.ID != second.ID {
+		t.Errorf("DeploymentByRevision(2).ID = %s, want %s", got.ID, second.ID)
+	}
+
+	// Unknown and non-positive revisions are ErrNotFound, never a silent
+	// fallback to some other row — a wrong row here would roll a customer
+	// back to code they did not name.
+	for _, rev := range []int{0, -1, 999} {
+		if _, err := fx.Store.DeploymentByRevision(fx.Ctx, fx.App.ID, rev); !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("DeploymentByRevision(%d) error = %v, want ErrNotFound", rev, err)
+		}
+	}
+
+	// A different app has its own ladder starting at 1: revision is only
+	// ever meaningful relative to one app, so cross-app lookups must not
+	// leak (same IDOR posture as DeploymentByID).
+	limits := api.MustLimitsFor(api.PlanPro)
+	otherApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "rev-other-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(other): %v", err)
+	}
+	otherDep, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: otherApp.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:rev-other", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(other): %v", err)
+	}
+	if otherDep.Revision != 1 {
+		t.Errorf("second app's first deployment Revision = %d, want 1 (per-app ladder)", otherDep.Revision)
+	}
+	if _, err := fx.Store.DeploymentByRevision(fx.Ctx, otherApp.ID, 2); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("DeploymentByRevision(otherApp, 2) error = %v, want ErrNotFound (fx.App's v2 must not leak)", err)
 	}
 }

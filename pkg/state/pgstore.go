@@ -6218,6 +6218,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          rollout_state,
 		                          rollout_started_at,
 		                          scope,
+		                          revision,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
@@ -6225,6 +6226,16 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
+		         -- ADR-198: next per-app revision. Safe without extra
+		         -- locking because step 1 above already holds FOR UPDATE
+		         -- on the parent apps row for this tx, so concurrent
+		         -- deploys of the same app serialize here.
+		         -- deployments_app_revision_uniq is the schema-side
+		         -- backstop if a future caller ever skips that lock.
+		         -- Not partitioned by scope: this is the same N that
+		         -- DeploymentOrdinal stamps into preview hostnames.
+		         (select coalesce(max(revision), 0) + 1 from deployments
+		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
 		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46)
@@ -6309,13 +6320,32 @@ func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deploymen
 // is O(N log N) and uses the index on (app_id, created_at) added
 // in migration 00006.
 func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error) {
+	// ADR-198 — read the stored revision rather than recomputing
+	// row_number(). Migration 20260921153729254 backfilled the column
+	// with the identical (partition by app_id order by created_at, id)
+	// window, so every pre-existing row keeps the ordinal its preview
+	// hostname was issued with, and the lookup is now a point read on
+	// deployments_pkey instead of a full-table window scan.
+	//
+	// The coalesce to the legacy window covers the 0 sentinel: a row
+	// inserted by a raw-SQL fixture that bypassed CreateDeployment has
+	// revision 0, and callers of this method (preview hostnames) must
+	// still get a stable positive N rather than a broken URL.
 	var ord int
 	err := s.pool.QueryRow(ctx,
-		`select ord from (
-		   select id, app_id, row_number() over (partition by app_id order by created_at, id) as ord
-		   from deployments
-		 ) ranks
-		 where id = $1 and app_id = $2`, deploymentID, appID).Scan(&ord)
+		`select case
+		          when d.revision > 0 then d.revision
+		          else (
+		            select ranks.ord from (
+		              select id, row_number() over (partition by app_id order by created_at, id) as ord
+		                from deployments
+		               where app_id = $2
+		            ) ranks
+		            where ranks.id = $1
+		          )
+		        end
+		   from deployments d
+		  where d.id = $1 and d.app_id = $2`, deploymentID, appID).Scan(&ord)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
@@ -6323,6 +6353,21 @@ func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID str
 		return 0, fmt.Errorf("deployment ordinal: %w", err)
 	}
 	return ord, nil
+}
+
+// DeploymentByRevision resolves an app's deployment by its per-app
+// revision number (ADR-198) — the `v42` handle the CLI and API accept
+// anywhere a deployment id is taken. Returns ErrNotFound for an unknown
+// or non-positive revision so callers keep the standard 404 + IDOR
+// posture used by DeploymentByID.
+func (s *PgStore) DeploymentByRevision(ctx context.Context, appID string, revision int) (Deployment, error) {
+	if revision <= 0 {
+		return Deployment{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		 from deployments where app_id = $1 and revision = $2`, appID, revision)
+	return scanDeploymentWithRootfs(row)
 }
 
 func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment, error) {
@@ -8939,6 +8984,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          rollout_state, rollout_started_at,
 		                          scope,
+		                          revision,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
@@ -8949,6 +8995,11 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
 		         coalesce(nullif($28, ''), 'pending'), $29,
 		         coalesce(nullif($30, ''), 'default'),
+		         -- ADR-198: a retry is a new immutable row, so it takes the
+		         -- next revision rather than reusing the failed row's. The
+		         -- FOR UPDATE on apps above serializes concurrent retries.
+		         (select coalesce(max(revision), 0) + 1 from deployments
+		           where app_id = $1),
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
@@ -22150,6 +22201,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(parked_reason,''), parked_at,
 	traffic_percent, traffic_percent_explicit,
 	scope,
+	revision,
 	stage_state,
 	coalesce(deployed_by_user_id::text,''), deployed_via, coalesce(host(deployed_from_ip),''), coalesce(pusher_login,''),
 	coalesce(reason,''), coalesce(tag,''), coalesce(deployed_by,''), pr_number,
@@ -22207,6 +22259,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.parked_reason,''), d.parked_at,
 	d.traffic_percent, d.traffic_percent_explicit,
 	d.scope,
+	d.revision,
 	d.stage_state,
 	coalesce(d.deployed_by_user_id::text,''), d.deployed_via, coalesce(host(d.deployed_from_ip),''), coalesce(d.pusher_login,''),
 	coalesce(d.reason,''), coalesce(d.tag,''), coalesce(d.deployed_by,''), d.pr_number,
@@ -22312,6 +22365,9 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.LivenessRestartCount,
 		&d.ParkedReason, &parkedAt, &d.TrafficPercent, &d.TrafficPercentExplicit,
 		&d.Scope,
+		// ADR-198 — per-(app, scope) revision. NOT NULL DEFAULT 0 in
+		// the schema, so this is a plain int destination.
+		&d.Revision,
 		&d.StageState,
 		&d.DeployedByUserID, &d.DeployedVia, &d.DeployedFromIP, &d.PusherLogin,
 		// Issue #977 / ADR-116: annotation columns. reason / tag /

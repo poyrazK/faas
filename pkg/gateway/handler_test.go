@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -308,12 +309,12 @@ func TestColdStartReconcilesOnlyThroughWakeLeader(t *testing.T) {
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	results := make(chan error, 2)
 	go func() {
-		_, _, _, err := h.coldStart(context.Background(), "app-1", "acct-1", "", 1, api.PlanFree, 0)
+		_, _, _, err := h.coldStart(context.Background(), "app-1", "acct-1", "", 1, api.PlanFree, 0, sched.TriggerGateway)
 		results <- err
 	}()
 	<-b.reconcileStart
 	go func() {
-		_, _, _, err := h.coldStart(context.Background(), "app-1", "acct-1", "", 1, api.PlanFree, 0)
+		_, _, _, err := h.coldStart(context.Background(), "app-1", "acct-1", "", 1, api.PlanFree, 0, sched.TriggerGateway)
 		results <- err
 	}()
 	deadline := time.Now().Add(time.Second)

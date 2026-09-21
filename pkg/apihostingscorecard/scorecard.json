@@ -106,10 +106,13 @@
       "id": "rollback-recovery",
       "name": "Rollback recovery",
       "category": "reliability",
-      "description": "A bad deployment can be rolled back without rebuilding and traffic returns healthy inside the recovery budget.",
-      "capabilities": ["github-deploys", "pr-previews", "source-deploy"],
+      "description": "A bad deployment can be rolled back without rebuilding and traffic returns healthy inside the recovery budget. Recovery includes shifting traffic between revisions and holding a canary ladder when health signals degrade, so a bad release can be contained before it reaches every request.",
+      "capabilities": ["github-deploys", "pr-previews", "progressive-rollouts", "source-deploy"],
       "targets": [{"metric": "p95", "operator": "lte", "value": 60, "unit": "seconds"}],
-      "evidence": [{"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"}]
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"},
+        {"kind": "test", "locator": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"}
+      ]
     },
     {
       "id": "snapshot-wake",

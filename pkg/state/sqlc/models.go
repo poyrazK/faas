@@ -858,6 +858,7 @@ type Deployment struct {
 	SnapshotMissBackoffUntil pgtype.Timestamptz
 	ApiHostingReceipt        []byte
 	InferredProfile          []byte
+	Revision                 int32
 }
 
 type DeploymentAudit struct {

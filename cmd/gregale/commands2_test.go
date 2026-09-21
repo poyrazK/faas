@@ -487,9 +487,13 @@ func TestCmdTrafficStatusListsOnlyLiveDeploymentWeights(t *testing.T) {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
-			{ID: "dep-live-a", Status: statusLive, TrafficPercent: 75},
+			// ADR-198: dep-live-b carries no revision on purpose — it
+			// stands in for a row written before the column existed, and
+			// pins that such a row still renders (as "-" plus its id)
+			// rather than showing a meaningless "v0".
+			{ID: "dep-live-a", Revision: 42, Status: statusLive, TrafficPercent: 75},
 			{ID: "dep-live-b", Status: statusLive, TrafficPercent: 25},
-			{ID: "dep-old", Status: "superseded", TrafficPercent: 0},
+			{ID: "dep-old", Revision: 41, Status: "superseded", TrafficPercent: 0},
 		}})
 	}))
 	defer srv.Close()
@@ -502,10 +506,21 @@ func TestCmdTrafficStatusListsOnlyLiveDeploymentWeights(t *testing.T) {
 		t.Fatalf("traffic status exit = %d", code)
 	}
 	output := out.String()
-	for _, want := range []string{"dep-live-a", "75%", "dep-live-b", "25%", "Total\t\t100%"} {
+	for _, want := range []string{
+		"REVISION", // ADR-198 column header
+		"v42",      // the revision handle, not just the uuid
+		"dep-live-a", "75%",
+		"-", "dep-live-b", "25%", // revision-less row falls back to the id
+		"Total\t\t\t100%",
+	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q: %s", want, output)
 		}
+	}
+	// A revision-less row must never render as "v0" — that would look like
+	// a real handle the customer could type back into `traffic set`.
+	if strings.Contains(output, "v0") {
+		t.Errorf("revision-less deployment rendered as v0: %s", output)
 	}
 	if strings.Contains(output, "dep-old") {
 		t.Fatalf("superseded deployment shown in traffic status: %s", output)

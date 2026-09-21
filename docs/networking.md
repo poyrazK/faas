@@ -56,7 +56,7 @@ means Gregale has observed a successful RTT within the last 15 minutes; it is
 not a new connectivity test.
 
 Same-account apps can call one another as
-`http://APP_ID.svc.gregale:10080`. For external VPC resources, Pro and Scale
+`http://APP_SLUG.svc.gregale:10080`. For external VPC resources, Pro and Scale
 customers can record a provider-neutral attachment intent with `network attach`.
 The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
 Scale), returns `pending`, and keeps traffic blocked until a provider connector
@@ -158,6 +158,33 @@ gregale app APP_ID --visibility public
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
-`APP_ID.svc.gregale:10080`, where the service proxy enforces caller identity
+`APP_SLUG.svc.gregale:10080`, where the service proxy enforces caller identity
 and same-account authorization. Visibility changes are audited and invalidate
 the gateway route cache.
+
+Internal services scale to zero like any other app. A service call to a parked
+target is held at the node-local proxy while the snapshot is restored, then
+forwarded — the same wake-blocking contract the public edge offers (ADR-196).
+The restore is coalesced with any concurrent public request for that app, so a
+burst of internal callers costs one restore rather than one per caller. Set
+client timeouts above the platform wake budget plus your own handler time, and
+note that a fully cold chain (`public-api` → `auth` → `billing`) pays each
+restore in sequence. `min_instances` remains available to trade resident RAM
+for first-call latency, but it is no longer required for an internal
+dependency to be reachable.
+
+When a wake cannot produce a replica, the proxy answers `503`. A saturated
+wake queue carries `Retry-After`; a target at its plan concurrency ceiling
+reports `service has no healthy replicas`. Internal wakes appear in the wake
+timeline with trigger `service.mesh`, distinct from public `gateway` traffic.
+
+Internal calls honour the target's wire protocol (ADR-197). An app configured
+`app_protocol: grpc` or `http2` is reached over the H2C guest bridge, and the
+node-local listener accepts H2C prior knowledge, so a workload can use an
+ordinary gRPC client against `http://APP_SLUG.svc.gregale:10080`. Response
+trailers — including `grpc-status` — are preserved across the hop.
+`Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
+bridge and are neither buffered nor retried; they require the target app to
+have WebSockets enabled and return `501` otherwise. Non-HTTP raw TCP between
+services is not part of the discovery contract: address those listeners
+through named ports instead.
