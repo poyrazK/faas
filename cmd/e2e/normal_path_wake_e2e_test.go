@@ -312,6 +312,14 @@ func TestE2E_NormalPath_RestoreRPCErrorFailsTheWake(t *testing.T) {
 // the VM down deliberately WITHOUT capturing, so the next wake cold-boots.
 // Asserting a snapshot against it would be asserting the opposite of what it
 // promises.
+//
+// The RPC is best-effort on purpose. Engine.Park is a silent no-op when the
+// instance has already left RUNNING (lockedParkable returns nil,nil and Park
+// returns a nil error), and the idle reaper can legitimately park first — it
+// became able to now that Destroy and PauseAndSnapshot are implemented. What
+// the contract actually says is "a park captures a snapshot for this
+// instance", not "my RPC is the thing that triggered it", so the assertion
+// polls for the capture and does not care who won the race.
 func TestE2E_NormalPath_ParkCapturesSnapshotAndReleasesInstance(t *testing.T) {
 	f := newNormalPathFixture(t, "park-writes-snapshot")
 	if f == nil {
@@ -339,16 +347,33 @@ func TestE2E_NormalPath_ParkCapturesSnapshotAndReleasesInstance(t *testing.T) {
 		t.Fatalf("park instance: %v", err)
 	}
 
-	calls := f.vmmd.SnapshotCalls()
-	if len(calls) == 0 {
-		t.Fatal("park did not reach PauseAndSnapshot")
+	captured := func() bool {
+		for _, call := range f.vmmd.SnapshotCalls() {
+			if call.GetInstance() == instance.ID {
+				return true
+			}
+		}
+		return false
 	}
-	if got := calls[0].GetInstance(); got != instance.ID {
-		t.Errorf("snapshot captured instance %q, want %q", got, instance.ID)
+	// Report the instance's actual state on failure: "no snapshot" and "the
+	// instance was never parkable" are different defects, and the state at the
+	// moment of failure tells them apart without another CI round trip.
+	deadline := time.Now().Add(20 * time.Second)
+	for !captured() && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !captured() {
+		stateNow := "<unreadable>"
+		if ins, err := f.store.InstanceByID(f.ctx, instance.ID); err == nil {
+			stateNow = ins.State
+		}
+		t.Fatalf("park did not reach PauseAndSnapshot for %s (instance state=%q; Engine.Park is a silent no-op unless the state is running or warm)",
+			instance.ID, stateNow)
 	}
 
 	// The instance must leave RUNNING: a park that captures but keeps the VM
-	// resident would violate invariant §6.2-4 (a parked app holds zero RAM).
+	// resident would satisfy the assertion above while violating invariant
+	// §6.2-4 (a parked app holds zero resident RAM).
 	waitForWake(t, 10*time.Second, func() bool {
 		ins, err := f.store.InstanceByID(f.ctx, instance.ID)
 		return err == nil && ins.State != string(state.StateRunning)
