@@ -86,6 +86,8 @@ func TestDeriveNodeSizingForRole_ReferenceBoxIsUnchanged(t *testing.T) {
 		{"single-box", NodeShapeSingleBox, NodeSizing{
 			MemMB: 65_536, TenantSliceMaxMB: 57_344, TenantBudgetMB: 56_000,
 			AdmissionCeilingMB: 47_600, VCPUSlots: 160, NonTenantReserveMB: 8_192,
+			// vpcpus is physical (ADR-204); 20 cores * CPUOvercommit = 160 slots.
+			HostCPUs: 20,
 		}},
 	} {
 		got := DeriveNodeSizingForRole(65_536, 20, shape.shape)
