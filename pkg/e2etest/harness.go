@@ -64,6 +64,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -2287,7 +2288,7 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 // without touching this file.
 func boundingSetPrefix(t *testing.T, name string) []string {
 	t.Helper()
-	if name != "imaged" || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+	if name != "imaged" || runtime.GOOS != "linux" {
 		return nil
 	}
 	unit, err := daemonunitspec.UnitByName("imaged")
@@ -2301,14 +2302,44 @@ func boundingSetPrefix(t *testing.T, name string) []string {
 	if err != nil {
 		// Failing here beats letting imaged exit with a capdecl error that
 		// reads like a product bug.
-		t.Fatalf("e2etest: setpriv is required to run imaged as root with a "+
+		t.Fatalf("e2etest: setpriv is required to run imaged with a "+
 			"restricted bounding set (capdecl refuses cap_sys_admin): %v", err)
 	}
 	set := "-all"
 	for _, c := range unit.CapabilityBoundingSet {
 		set += ",+" + strings.TrimPrefix(strings.ToLower(c), "cap_")
 	}
-	return []string{setpriv, "--bounding-set=" + set, "--"}
+	if os.Geteuid() == 0 {
+		return []string{setpriv, "--bounding-set=" + set, "--"}
+	}
+	// Unprivileged path — a GitHub-hosted runner.
+	//
+	// The runner user still carries cap_sys_admin in CapBnd, and imaged
+	// refuses to boot while it is reachable (ADR-075). Dropping a bounding-set
+	// capability needs CAP_SETPCAP in the EFFECTIVE set, which that user does
+	// not have, so this cannot be done from inside the test process.
+	//
+	// Escalate for exactly one execve and come straight back down: sudo to get
+	// CAP_SETPCAP, drop the bounding set, then --reuid/--regid to the original
+	// uid. imaged ends up unprivileged with production's capability boundary.
+	//
+	// Scoped to imaged's argv on purpose. Wrapping the whole test binary
+	// instead ALSO narrows vmmd's bounding set, and vmmd needs cap_sys_admin
+	// to do its job — that broke TestSec11_HostKey0400_Required, where vmmd
+	// then produced no output at all.
+	sudo, err := exec.LookPath("sudo")
+	if err != nil {
+		t.Skipf("e2etest: imaged needs a restricted bounding set and neither root nor sudo is available: %v", err)
+	}
+	return []string{
+		sudo, "-n", setpriv,
+		"--bounding-set=" + set,
+		"--reuid", strconv.Itoa(os.Getuid()),
+		"--regid", strconv.Itoa(os.Getgid()),
+		"--init-groups",
+		"--no-new-privs",
+		"--",
+	}
 }
 
 // spoolRootFor is the per-test source spool root.
