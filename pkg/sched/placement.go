@@ -289,11 +289,31 @@ func placementForNode(n state.ComputeNode, usedMB int64) Placement {
 	}
 }
 
+// cpuBudgetMillicores is the sustained CPU a node may admit, in millicores.
+//
+// An app's CPUMillicores is a cgroup v2 cpu.max *quota* — a ceiling on burst,
+// not a reservation. Summing those ceilings against raw physical cores
+// therefore reserves peak capacity for every idle instance, which is the
+// opposite of what a scale-to-zero platform needs and the opposite of what
+// spec §1 says: CPUOvercommit is 8, and it is the same factor the
+// guest-vCPU gate already applies through VCPUBudget
+// (api.DeriveNodeSizing sets VCPUSlots = hostCPUs * CPUOvercommit).
+//
+// Without the factor the two gates in ChoosePlacement disagreed about the
+// same resource and the stricter one silently won: a 4-core node advertising
+// vcpu_budget=32 would admit exactly 4 apps at the default 1000 millicores,
+// making the overcommit-aware budget dead code. On the production fleet that
+// left every node unable to satisfy its own pinned min_instances floors.
+//
+// Oversubscribing CPU degrades latency under simultaneous load; the kernel
+// throttles each instance to its own cpu.max. That is a different and far
+// more recoverable failure than oversubscribing RAM, which OOM-kills. The
+// RAM ceiling stays un-overcommitted for exactly that reason.
 func cpuBudgetMillicores(n state.ComputeNode) int64 {
 	if n.VPCPUs <= 0 {
 		return 0
 	}
-	return int64(n.VPCPUs) * 1000
+	return int64(n.VPCPUs) * 1000 * int64(api.CPUOvercommit)
 }
 
 func cpuHeadroomMillicores(n state.ComputeNode, used int64) int64 {

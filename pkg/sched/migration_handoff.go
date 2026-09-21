@@ -239,7 +239,9 @@ func NewMigrationHarness(
 	}
 	if newOwnerNodeID != "" {
 		if node, err := store.ComputeNodeByID(ctx, newOwnerNodeID); err == nil && node.VPCPUs > 0 {
-			h.destinationCPUBudgetMillicores = node.VPCPUs * 1000
+			// cpuBudgetMillicores is the single formula (spec §1
+			// CPUOvercommit); do not reintroduce a local copy.
+			h.destinationCPUBudgetMillicores = int(cpuBudgetMillicores(node))
 		}
 	}
 	return h

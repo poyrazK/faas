@@ -470,7 +470,14 @@ func LoadConfig(path string) (*Config, error) {
 			// vcpu_budget > 0 CHECK, while smaller hosts register the
 			// capacity they actually have. Heterogeneous fleets can
 			// still pin any field via [compute_node] or FAAS_*.
-			VPCPUs:             sizing.VCPUSlots,
+			// vpcpus is the PHYSICAL CPU count. pkg/sched's
+			// cpuBudgetMillicores multiplies it by spec §1's
+			// CPUOvercommit, so storing the already-overcommitted
+			// VCPUSlots here would apply the factor twice. When the
+			// host could not be probed, HostCPUs is 0 and the legacy
+			// VCPUSlots constant stands in, matching the fallback the
+			// rest of this block uses.
+			VPCPUs:             vpcpusDefault(sizing),
 			MemMB:              sizing.MemMB,
 			MaxConcurrency:     200,
 			AdmissionCeilingMB: sizing.AdmissionCeilingMB,
@@ -915,4 +922,15 @@ func ipLiteralIsWildcard(host string) bool {
 		return false
 	}
 	return !ip.IsValid() || ip.IsUnspecified()
+}
+
+// vpcpusDefault is the physical CPU count vmmd should advertise as
+// compute_nodes.vpcpus. It falls back to the legacy single-box constant only
+// when the host probe failed, so a node never registers vpcpus=0 and trips
+// migration 00123's positive-value CHECK.
+func vpcpusDefault(sizing api.NodeSizing) int {
+	if sizing.HostCPUs > 0 {
+		return sizing.HostCPUs
+	}
+	return api.VCPUSlots
 }

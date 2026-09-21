@@ -7163,6 +7163,12 @@ type NodeSizing struct {
 	// operator see why a node advertises what it does without re-deriving
 	// the arithmetic by hand.
 	NonTenantReserveMB int
+	// HostCPUs is the physical CPU count probed on the host, before the
+	// spec §1 CPUOvercommit factor. compute_nodes.vpcpus must carry this
+	// value, not VCPUSlots: the placement CPU budget multiplies vpcpus by
+	// CPUOvercommit, so storing an already-overcommitted count there would
+	// apply the factor twice.
+	HostCPUs int
 }
 
 // NodeRoleShape selects which non-tenant workloads share the host, and so
@@ -7256,6 +7262,7 @@ func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) Node
 		out.AdmissionCeilingMB = out.TenantBudgetMB * RAMAdmissionPercent / 100
 	}
 	if hostCPUs > 0 {
+		out.HostCPUs = hostCPUs
 		out.VCPUSlots = hostCPUs * CPUOvercommit
 	}
 	return out

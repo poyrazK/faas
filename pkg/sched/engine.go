@@ -4698,10 +4698,13 @@ func (e *Engine) resolveNodeCPUBudgetMillicores(ctx context.Context, nodeID stri
 		return 0
 	}
 	n, err := e.store.ComputeNodeByID(ctx, nodeID)
-	if err != nil || n.VPCPUs <= 0 {
+	if err != nil {
 		return 0
 	}
-	return n.VPCPUs * 1000
+	// One formula for the whole package: see cpuBudgetMillicores, which
+	// applies spec §1's CPUOvercommit. A second copy here is how the
+	// overcommit factor went missing from the admission path before.
+	return int(cpuBudgetMillicores(n))
 }
 
 // BuildAppSpecForMigration (Tier A5 / ADR-066) rebuilds the
@@ -6448,11 +6451,11 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			return b
 		}
 		n, err := e.store.ComputeNodeByID(ctx, nodeID)
-		if err != nil || n.VPCPUs <= 0 {
+		if err != nil {
 			cpuBudgets[nodeID] = 0
 			return 0
 		}
-		budget := n.VPCPUs * 1000
+		budget := int(cpuBudgetMillicores(n))
 		cpuBudgets[nodeID] = budget
 		return budget
 	}
