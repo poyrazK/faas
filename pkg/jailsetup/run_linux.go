@@ -193,6 +193,20 @@ func parseJailIDs(uidArg, gidArg string) (int, int, bool) {
 func enterJailNamespace(pid int) error {
 	runtime.LockOSThread()
 
+	// setns(CLONE_NEWNS) fails with EINVAL when the caller shares its
+	// filesystem state (fs_struct: root, cwd, umask) with another thread,
+	// and every thread the Go runtime creates is cloned with CLONE_FS. So a
+	// plain setns from Go always returns EINVAL — this is why runc enters
+	// namespaces from a C constructor before the Go runtime starts.
+	//
+	// unshare(CLONE_FS) gives this locked thread a private fs_struct, which
+	// both makes the setns legal and confines the chroot below to this
+	// thread. Verified: without it, setns returns "invalid argument" on
+	// every call and the caller silently falls back to nsenter.
+	if err := unix.Unshare(unix.CLONE_FS); err != nil {
+		return fmt.Errorf("unshare filesystem state: %w", err)
+	}
+
 	rootFd, err := unix.Open(fmt.Sprintf("/proc/%d/root", pid), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("open jail root for pid %d: %w", pid, err)
