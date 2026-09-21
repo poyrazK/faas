@@ -36,6 +36,8 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -134,6 +136,12 @@ type FakeVMMD struct {
 	liveInstances  []string
 	instanceStats  map[string]*vmmdpb.InstanceStats
 	frameworkReady []*vmmdpb.FrameworkReadyRequest
+
+	// unreachable makes the liveness RPCs fail, which is how a node that has
+	// died looks to schedd. Backdating last_heartbeat_at is not enough on its
+	// own: schedd keeps probing, and a fake that keeps answering refreshes the
+	// row within a tick, so the node never actually looks stale.
+	unreachable bool
 }
 
 type FakeResponse struct {
@@ -363,11 +371,37 @@ func (s *FakeVMMD) InstallRequestGate(instanceID string, want int) *RequestGate 
 }
 
 func (s *FakeVMMD) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest) (*vmmdpb.HeartbeatResponse, error) {
+	if s.isUnreachable() {
+		return nil, status.Error(codes.Unavailable, "fake vmmd: node is unreachable")
+	}
 	return &vmmdpb.HeartbeatResponse{}, nil
 }
 
 func (s *FakeVMMD) Ping(context.Context, *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+	if s.isUnreachable() {
+		return nil, status.Error(codes.Unavailable, "fake vmmd: node is unreachable")
+	}
 	return &vmmdpb.PingResponse{}, nil
+}
+
+// SetUnreachable makes the liveness RPCs (Ping, Heartbeat) fail, simulating a
+// node that has stopped answering — a crashed vmmd, a severed link, a box that
+// went away. Set it back to false to bring the node back.
+//
+// This is the difference between a node that LOOKS stale for one moment and a
+// node that IS down: schedd keeps probing, so a fake that still answers
+// refreshes last_heartbeat_at on the next tick no matter how far back a test
+// dated it.
+func (s *FakeVMMD) SetUnreachable(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unreachable = v
+}
+
+func (s *FakeVMMD) isUnreachable() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unreachable
 }
 
 func (s *FakeVMMD) CreateColdBoot(_ context.Context, request *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {

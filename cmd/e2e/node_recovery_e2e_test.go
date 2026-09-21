@@ -58,8 +58,16 @@ func TestE2E_NodeRecovery_StaleHeartbeatIsDetectedAndRecovered(t *testing.T) {
 	seedNormalPathSnapshot(t, f, dep.ID, normalPathSnapshotOpts{})
 	wakeNormalPathApp(t, f)
 
-	// The node stops reporting. The row stays present and plausible; only its
-	// age says anything is wrong, which is exactly what schedd has to notice.
+	// The node stops answering, THEN its row is backdated.
+	//
+	// Both halves are needed. Backdating alone does not simulate a dead node:
+	// schedd keeps probing, the fake keeps answering, and last_heartbeat_at is
+	// refreshed on the next tick no matter how far back the test dated it — the
+	// first version of this test failed exactly there, reporting that schedd
+	// had ignored a stale heartbeat when schedd had in fact healed it.
+	// Silencing the node is what makes the staleness persist; backdating just
+	// spares the test from waiting out the real window.
+	f.vmmd.SetUnreachable(true)
 	if err := faults.StaleHeartbeat(state.DefaultLocalNodeName, 10*time.Minute); err != nil {
 		t.Fatalf("stale heartbeat: %v", err)
 	}
@@ -70,9 +78,10 @@ func TestE2E_NodeRecovery_StaleHeartbeatIsDetectedAndRecovered(t *testing.T) {
 	}, "schedd never reacted to a heartbeat that was 10 minutes stale; a node can stop "+
 		"reporting and keep receiving placements")
 
-	// The node recovers. schedd's heartbeat loop is still running and the fake
-	// vmmd never stopped answering, so nothing outside the platform needs to
-	// intervene — which is the whole question.
+	// The node comes back. Nothing outside the platform intervenes: schedd's
+	// own heartbeat loop should find it answering again and return it to
+	// service. Whether it does is the whole question.
+	f.vmmd.SetUnreachable(false)
 	waitForWake(t, 60*time.Second, func() bool {
 		lifecycle, active, err := faults.NodeLifecycle(state.DefaultLocalNodeName)
 		return err == nil && lifecycle == string(state.NodeLifecycleActive) && active
