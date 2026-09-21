@@ -69,7 +69,7 @@ func TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity(t *testing.T) {
 	for i := 0; i < slotCount; i++ {
 		ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 		defer cancel()
-		active = append(active, normalPathAdmissionRequest(client, ctx, f.h.GatewayURL, f.host,
+		active = append(active, normalPathAdmissionRequest(client, ctx, f.h.EdgeURL(), f.host,
 			fmt.Sprintf("/admission-cancel/active/%d", i)))
 	}
 	if !gate.WaitArrived(5 * time.Second) {
@@ -77,7 +77,7 @@ func TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity(t *testing.T) {
 	}
 
 	waiterCtx, cancelWaiter := context.WithCancel(f.ctx)
-	waiter := normalPathAdmissionRequest(client, waiterCtx, f.h.GatewayURL, f.host, "/admission-cancel/waiter")
+	waiter := normalPathAdmissionRequest(client, waiterCtx, f.h.EdgeURL(), f.host, "/admission-cancel/waiter")
 	time.Sleep(150 * time.Millisecond)
 	cancelWaiter()
 	select {
@@ -109,7 +109,7 @@ func TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
-	after := normalPathAdmissionRequest(client, ctx, f.h.GatewayURL, f.host, "/admission-cancel/after")
+	after := normalPathAdmissionRequest(client, ctx, f.h.EdgeURL(), f.host, "/admission-cancel/after")
 	select {
 	case got := <-after:
 		if got.err != nil || got.status != http.StatusOK || string(got.body) != "normal-path:admission-cancel\n" {
@@ -147,7 +147,7 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 	for i := 0; i < slotCount; i++ {
 		ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 		defer cancel()
-		active = append(active, normalPathAdmissionRequest(client, ctx, f.h.GatewayURL, f.host,
+		active = append(active, normalPathAdmissionRequest(client, ctx, f.h.EdgeURL(), f.host,
 			fmt.Sprintf("/admission-timeout/active/%d", i)))
 	}
 	if !gate.WaitArrived(5 * time.Second) {
@@ -167,7 +167,7 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 
 	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
-	waiter := normalPathAdmissionRequest(client, ctx, f.h.GatewayURL, f.host, "/admission-timeout/waiter")
+	waiter := normalPathAdmissionRequest(client, ctx, f.h.EdgeURL(), f.host, "/admission-timeout/waiter")
 	select {
 	case got := <-waiter:
 		t.Fatalf("queued request completed before capacity was released: status=%d body=%q err=%v", got.status, got.body, got.err)

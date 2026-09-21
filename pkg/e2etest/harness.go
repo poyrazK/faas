@@ -100,7 +100,10 @@ type Harness struct {
 	// SignKeyPath is the PRIVATE half of the cosign keypair whose public half
 	// schedd verifies with. imaged must sign with this exact key; see
 	// writeScheddSignPub.
-	SignKeyPath             string
+	SignKeyPath string
+	// GatewayURL addresses gatewayd-internal directly. Prefer EdgeURL for a
+	// customer-shaped request; reach for this only when a test is
+	// deliberately bypassing the public hop.
 	GatewayURL              string
 	GatewayControlURL       string // /metrics + /healthz, loopback only
 	GatewayPublicURL        string
@@ -2409,4 +2412,25 @@ func metricsAddrFor(t *testing.T, daemon string) string {
 	addr := "127.0.0.1:0"
 	t.Logf("e2etest: %s metrics on %s", daemon, addr)
 	return addr
+}
+
+// EdgeURL is the customer-facing entry point: gatewayd-public when the test
+// booted it, and gatewayd-internal directly otherwise.
+//
+// Production has no path that reaches gatewayd-internal from outside — every
+// customer request arrives at gatewayd-public and is handed over the unix
+// socket (ADR-070). A test that talks to gatewayd-internal directly therefore
+// cannot observe anything that happens in the handover, which is where the
+// two-hop bugs live: PR #1284's `kind=budget` rules were silently capped
+// because gatewayd-public stamped its own 3s parent budget first, and unit
+// tests on either side of that boundary passed.
+//
+// Selecting by what the harness booted keeps this opt-in. Adding
+// e2etest.GatewaydPublic to a Which mask is all it takes to move that family
+// onto the production-shaped path; every other family is untouched.
+func (h *Harness) EdgeURL() string {
+	if h.GatewayPublicURL != "" {
+		return h.GatewayPublicURL
+	}
+	return h.GatewayURL
 }

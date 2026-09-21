@@ -169,7 +169,21 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 		"FAAS_STORAGE_BACKEND=local",
 		"FAAS_STORAGE_ROOT=" + artifactDir,
 	}, extraEnv...)
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd, extraEnv)
+	// Boot the real public edge in front of gatewayd-internal (ADR-070).
+	//
+	// Production has no path that reaches gatewayd-internal from outside: every
+	// customer request lands on gatewayd-public and is handed over a unix
+	// socket. Testing against gatewayd-internal directly cannot observe
+	// anything in that handover, and that is exactly where two-hop bugs live —
+	// PR #1284 shipped because gatewayd-public's own 3s parent budget silently
+	// capped every `kind=budget` rule, with unit tests on both sides passing.
+	//
+	// gatewayd-public was previously booted by exactly one e2e test, which is
+	// metal-tagged and therefore never runs; this is its first coverage on a
+	// gate that executes. Requests go through h.EdgeURL(), which resolves to
+	// the public listener whenever it is booted.
+	h := e2etest.StartWithEnv(t, pool,
+		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
 	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
@@ -520,7 +534,7 @@ func TestE2E_NormalPath_PreservesResponseTrailers(t *testing.T) {
 		Body:     []byte("trailer-body\n"),
 	})
 
-	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.GatewayURL+"/trailers", nil)
+	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.EdgeURL()+"/trailers", nil)
 	if err != nil {
 		t.Fatalf("new trailer request: %v", err)
 	}
@@ -1556,7 +1570,7 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 
 	requestCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.GatewayURL+"/restart-stream", nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.EdgeURL()+"/restart-stream", nil)
 	if err != nil {
 		t.Fatalf("new restart stream request: %v", err)
 	}

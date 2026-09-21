@@ -59,7 +59,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 			payload := []byte(fmt.Sprintf(`{"request":%d,"body":"%s"}`, i, strings.Repeat("x", i+1)))
 			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.h.GatewayURL+path, bytes.NewReader(payload))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.h.EdgeURL()+path, bytes.NewReader(payload))
 			if err != nil {
 				results <- result{index: i, err: err}
 				return
@@ -149,7 +149,7 @@ func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 		go func() {
 			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.GatewayURL+path, nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.EdgeURL()+path, nil)
 			if err != nil {
 				result <- normalPathHTTPResult{err: err}
 				return
@@ -249,7 +249,7 @@ func TestE2E_NormalPath_AppProtocolMatrix(t *testing.T) {
 				Body: []byte("protocol-ok\n"),
 			})
 
-			req, err := http.NewRequestWithContext(f.ctx, http.MethodPost, f.h.GatewayURL+path, strings.NewReader("request-body"))
+			req, err := http.NewRequestWithContext(f.ctx, http.MethodPost, f.h.EdgeURL()+path, strings.NewReader("request-body"))
 			if err != nil {
 				t.Fatalf("new %s request: %v", tc.protocol, err)
 			}
@@ -318,7 +318,7 @@ func TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed(t *testing.T) {
 		Body: []byte("safe-response\n"),
 	})
 
-	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.GatewayURL+"/response-headers", nil)
+	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.EdgeURL()+"/response-headers", nil)
 	if err != nil {
 		t.Fatalf("new response-header request: %v", err)
 	}

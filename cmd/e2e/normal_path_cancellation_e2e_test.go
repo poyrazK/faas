@@ -30,7 +30,7 @@ func TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge(t *testing.T) {
 	defer cancel()
 	bodyReader, bodyWriter := io.Pipe()
 	defer func() { _ = bodyWriter.Close() }()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, f.h.GatewayURL+"/cancel-upload", bodyReader)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, f.h.EdgeURL()+"/cancel-upload", bodyReader)
 	if err != nil {
 		t.Fatalf("new cancel upload request: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 
 	requestCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.GatewayURL+"/cancel-response", nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.EdgeURL()+"/cancel-response", nil)
 	if err != nil {
 		t.Fatalf("new cancel response request: %v", err)
 	}
