@@ -61,6 +61,19 @@ git -C "$with_test" commit -q -m 'fix: guard the regression'
 make_event "$with_test" 'ci: enforce regression tests' '' '[]'
 expect_pass 'fix commit with test' "$with_test"
 
+# A conformance case counts as a regression test. pkg/state/conformance keeps
+# its cases in ordinary .go files so one case can run against MemStore and
+# PgStore from two entry points; a fix that adds one there is tested, and the
+# gate used to reject it for want of a *_test.go suffix.
+with_conformance="$test_root/with-conformance"
+git_init "$with_conformance"
+mkdir -p "$with_conformance/pkg/state/conformance"
+printf 'package conformance\n' > "$with_conformance/pkg/state/conformance/conformance.go"
+git -C "$with_conformance" add pkg/state/conformance/conformance.go
+git -C "$with_conformance" commit -q -m 'fix: guard the regression'
+make_event "$with_conformance" 'ci: enforce regression tests' '' '[]'
+expect_pass 'fix commit with a conformance case' "$with_conformance"
+
 # A fix-shaped PR with no test fails, even when the title itself is neutral.
 without_test="$test_root/without-test"
 git_init "$without_test"

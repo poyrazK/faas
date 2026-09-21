@@ -90,7 +90,16 @@ if [[ -z "$trigger" ]]; then
   exit 0
 fi
 
-changed_tests="$(git diff --name-only --diff-filter=ACMRTUXB "$base_sha" "$head_sha" -- '*_test.go')"
+# Test coverage is not always in a *_test.go file. The store conformance
+# harness (pkg/state/conformance) is a library of cases deliberately kept in
+# ordinary .go files so the SAME case can be run against MemStore and PgStore
+# from two different _test.go entry points. A regression test added there is a
+# regression test; before this the gate could not see it, and the only ways
+# past were to move the case somewhere it would stop running against both
+# stores, or to claim a "Why no test" exception that was not true.
+conformance_lib='pkg/state/conformance/*.go'
+changed_tests="$(git diff --name-only --diff-filter=ACMRTUXB "$base_sha" "$head_sha" \
+  -- '*_test.go' "$conformance_lib")"
 if [[ -n "$changed_tests" ]]; then
   echo "fix-has-test-check: OK — $trigger changes Go test coverage:"
   printf '  %s\n' "$changed_tests"
@@ -111,7 +120,7 @@ if (( has_bypass_label == 1 )) && printf '%s\n' "$pr_body" \
   exit 0
 fi
 
-echo "::error::fix-has-test-check: $trigger must change a *_test.go file" >&2
+echo "::error::fix-has-test-check: $trigger must change a *_test.go file (or a pkg/state/conformance case)" >&2
 echo "::error::Add a regression test to this PR. For an intentional exception, add the no-regression-test label and a non-empty Why no test: line to the PR body." >&2
 [[ -z "$pr_number" ]] || echo "::error::PR #$pr_number changed files:" >&2
 git diff --name-only "$base_sha" "$head_sha" -- | sed 's/^/  /' >&2
