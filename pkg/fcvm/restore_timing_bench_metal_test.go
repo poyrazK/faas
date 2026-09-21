@@ -284,6 +284,7 @@ var restoreTimingPhases = []string{
 	"tun_wait_chroot_ms",
 	"tun_setup_jail_ms",
 	"tun_setup_jail_work_us",
+	"tun_setup_jail_entered",
 	"cgroup_fence_ms",
 	"start_jailer_ms",
 	"chroot_ms",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -28,43 +29,44 @@ func Run(args []string) bool {
 			fmt.Fprintln(os.Stderr, "vmmd: --setup-jail requires devTarget hostTunSrc tunTarget kvmPath uid gid")
 			os.Exit(2)
 		}
-		devTarget := args[2]
-		hostTunSrc := args[3]
-		tunTarget := args[4]
-		kvmPath := args[5]
-		uid, uidErr := strconv.Atoi(args[6])
-		gid, gidErr := strconv.Atoi(args[7])
-		if uidErr != nil || gidErr != nil || uid < 0 || gid < 0 {
-			fmt.Fprintln(os.Stderr, "vmmd: --setup-jail uid/gid must be non-negative integers")
+		uid, gid, ok := parseJailIDs(args[6], args[7])
+		if !ok {
 			os.Exit(2)
 		}
-		if err := syscall.Mount("tmpfs", devTarget, "tmpfs", 0, "mode=0755"); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: mount device tmpfs: %v\n", err)
+		if err := setupJail(args[2], args[3], args[4], args[5], uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: %v\n", err)
 			os.Exit(1)
 		}
-		devNet := filepath.Join(devTarget, "net")
-		if err := os.MkdirAll(devNet, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: create device net directory: %v\n", err)
+		fmt.Printf("%s%d\n", SetupJailTimingPrefix, time.Since(started).Microseconds())
+		return true
+	case "--enter-jail":
+		// Same work as --setup-jail, but this process enters the jailer's
+		// mount namespace itself instead of being launched through nsenter.
+		//
+		// Measured on an acceptance node: the nsenter form cost ~23.7 ms per
+		// restore while the work inside it was ~136 us — 99.4 % was the two
+		// process creations (nsenter, then the helper it execs) forked from a
+		// ~79 MB vmmd. Doing the setns here removes one of the two.
+		started := time.Now()
+		if len(args) != 9 {
+			fmt.Fprintln(os.Stderr, "vmmd: --enter-jail requires pid devTarget hostTunSrc tunTarget kvmPath uid gid")
+			os.Exit(2)
+		}
+		pid, pidErr := strconv.Atoi(args[2])
+		if pidErr != nil || pid <= 0 {
+			fmt.Fprintln(os.Stderr, "vmmd: --enter-jail pid must be a positive integer")
+			os.Exit(2)
+		}
+		uid, gid, ok := parseJailIDs(args[7], args[8])
+		if !ok {
+			os.Exit(2)
+		}
+		if err := enterJailNamespace(pid); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: %v\n", err)
 			os.Exit(1)
 		}
-		if err := unix.Mknod(tunTarget, unix.S_IFCHR|0660, int(unix.Mkdev(10, 200))); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: create TUN target: %v\n", err)
-			os.Exit(1)
-		}
-		if err := syscall.Mount(hostTunSrc, tunTarget, "", syscall.MS_BIND, ""); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: mount bind tun: %v\n", err)
-			os.Exit(1)
-		}
-		if err := os.Remove(kvmPath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "vmmd: remove kvm device: %v\n", err)
-			os.Exit(1)
-		}
-		if err := unix.Mknod(kvmPath, unix.S_IFCHR|0660, int(unix.Mkdev(10, 232))); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: mknod kvm: %v\n", err)
-			os.Exit(1)
-		}
-		if err := unix.Chown(kvmPath, uid, gid); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: chown kvm: %v\n", err)
+		if err := setupJail(args[3], args[4], args[5], args[6], uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("%s%d\n", SetupJailTimingPrefix, time.Since(started).Microseconds())
@@ -165,4 +167,84 @@ func Run(args []string) bool {
 	default:
 		return false
 	}
+}
+
+func parseJailIDs(uidArg, gidArg string) (int, int, bool) {
+	uid, uidErr := strconv.Atoi(uidArg)
+	gid, gidErr := strconv.Atoi(gidArg)
+	if uidErr != nil || gidErr != nil || uid < 0 || gid < 0 {
+		fmt.Fprintln(os.Stderr, "vmmd: jail uid/gid must be non-negative integers")
+		return 0, 0, false
+	}
+	return uid, gid, true
+}
+
+// enterJailNamespace joins the jailer's mount namespace and chroots into its
+// root, which is what `nsenter -t <pid> -m -r` did for us.
+//
+// The thread is locked and deliberately never unlocked: setns(CLONE_NEWNS)
+// changes the mount namespace of the CALLING THREAD only, so the Go runtime
+// must never hand this thread to another goroutine. The process performs its
+// mounts and exits, so the locked thread dies with it.
+//
+// The root descriptor is opened before the setns, exactly as nsenter does:
+// afterwards /proc/<pid>/root would be resolved through the namespace we just
+// joined. File descriptors survive setns, so the pre-opened fd stays valid.
+func enterJailNamespace(pid int) error {
+	runtime.LockOSThread()
+
+	rootFd, err := unix.Open(fmt.Sprintf("/proc/%d/root", pid), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open jail root for pid %d: %w", pid, err)
+	}
+	defer func() { _ = unix.Close(rootFd) }()
+
+	nsFd, err := unix.Open(fmt.Sprintf("/proc/%d/ns/mnt", pid), unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open jail mount namespace for pid %d: %w", pid, err)
+	}
+	defer func() { _ = unix.Close(nsFd) }()
+
+	if err := unix.Setns(nsFd, unix.CLONE_NEWNS); err != nil {
+		return fmt.Errorf("setns mount namespace for pid %d: %w", pid, err)
+	}
+	if err := unix.Fchdir(rootFd); err != nil {
+		return fmt.Errorf("chdir to jail root for pid %d: %w", pid, err)
+	}
+	if err := unix.Chroot("."); err != nil {
+		return fmt.Errorf("chroot to jail root for pid %d: %w", pid, err)
+	}
+	if err := unix.Chdir("/"); err != nil {
+		return fmt.Errorf("chdir after chroot for pid %d: %w", pid, err)
+	}
+	return nil
+}
+
+// setupJail is the shared body of --setup-jail and --enter-jail: prepare the
+// device tmpfs, bind the host TUN device in, and provision KVM. The caller is
+// already inside the jailer's mount namespace and chroot.
+func setupJail(devTarget, hostTunSrc, tunTarget, kvmPath string, uid, gid int) error {
+	if err := syscall.Mount("tmpfs", devTarget, "tmpfs", 0, "mode=0755"); err != nil {
+		return fmt.Errorf("mount device tmpfs: %w", err)
+	}
+	devNet := filepath.Join(devTarget, "net")
+	if err := os.MkdirAll(devNet, 0o755); err != nil {
+		return fmt.Errorf("create device net directory: %w", err)
+	}
+	if err := unix.Mknod(tunTarget, unix.S_IFCHR|0660, int(unix.Mkdev(10, 200))); err != nil {
+		return fmt.Errorf("create TUN target: %w", err)
+	}
+	if err := syscall.Mount(hostTunSrc, tunTarget, "", syscall.MS_BIND, ""); err != nil {
+		return fmt.Errorf("mount bind tun: %w", err)
+	}
+	if err := os.Remove(kvmPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove kvm device: %w", err)
+	}
+	if err := unix.Mknod(kvmPath, unix.S_IFCHR|0660, int(unix.Mkdev(10, 232))); err != nil {
+		return fmt.Errorf("mknod kvm: %w", err)
+	}
+	if err := unix.Chown(kvmPath, uid, gid); err != nil {
+		return fmt.Errorf("chown kvm: %w", err)
+	}
+	return nil
 }
