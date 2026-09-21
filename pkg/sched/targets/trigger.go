@@ -833,6 +833,23 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {
 			t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+			// Attribute the admission to the signal that actually drove
+			// it. Decision.Winner was carried from the arbiter and read
+			// by nothing until now, so its doc comment's promise — that
+			// an operator can see WHICH signal scaled an app — was not
+			// true. With a list of declared targets, "it scaled" is not
+			// a complete answer.
+			//
+			// The outcome check is belt-and-braces: decideTargets only
+			// sets Winner on the admit return, and the accessor ignores
+			// an empty metric, so either guard alone would do. Keeping
+			// both states the invariant at the call site, where a future
+			// branch that sets Winner without admitting would otherwise
+			// silently break the identity
+			// sum(winning_signal) == decisions{outcome="admit"}.
+			if dec.Outcome == OutcomeAdmit {
+				t.metrics.ObserveScaleUpWinningSignal(app.ID, dec.Winner)
+			}
 		}
 		if workerQueuePath {
 			pool, ok := t.engine.(WorkerPoolEngine)

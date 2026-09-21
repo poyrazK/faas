@@ -205,6 +205,11 @@ type Decision struct {
 	// decision should request, before the per-tick burst bound.
 	Desired    int
 	Admissions int
+	// Winner is the metric that produced Desired (ADR-194 arbitration),
+	// carried so the admission can be attributed. Without it an operator
+	// tuning an app with both an rps and a cpu target cannot tell which
+	// one is binding.
+	Winner string
 }
 
 // decide is the pure decision function. Extracted so tests can drive
@@ -253,6 +258,7 @@ func decide(s AppStats) Decision {
 	return Decision{
 		ShouldAdmit: true,
 		Outcome:     OutcomeAdmit,
+		Winner:      res.Winner,
 		Headroom:    headroom,
 		ObservedRPS: s.PerInstanceRPS,
 		Desired:     desired,
@@ -527,6 +533,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit is observable.
 		t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+		// Attribute the admission to the signal that drove it, so an app
+		// declaring both rps and cpu shows which one is binding.
+		if dec.Outcome == OutcomeAdmit {
+			t.metrics.ObserveScaleUpWinningSignal(app.ID, dec.Winner)
+		}
 		t.emitScaleDecision(ctx, stats, dec, time.Now())
 		if !dec.ShouldAdmit {
 			continue

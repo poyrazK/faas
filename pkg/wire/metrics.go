@@ -1343,6 +1343,12 @@ type OpsMetrics struct {
 	// series surface in /metrics from boot (same precedent as
 	// stripePushDur / buildDur).
 	scaleUpDecisions *prometheus.CounterVec
+	// scaleUpWinningSignal: which declared target produced the highest
+	// desired count on an admit (ADR-194). See the CounterOpts below for
+	// why this is a separate series rather than a label.
+	scaleUpWinningSignal *prometheus.CounterVec
+	// scheduledFloorActive: per-app floor from an open ADR-195 schedule.
+	scheduledFloorActive *prometheus.GaugeVec
 	// appOwnershipChecks counts every ownsApp decision, labelled by
 	// outcome. It is the consumer-side half of the broadcast-amplification
 	// measurement: pg_notify has no routing, so every schedd in the fleet
@@ -3333,6 +3339,30 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_scale_up_decisions_total",
 		Help: "Per-app scale-up trigger decisions. outcome ∈ {admit, reject_at_cap, no_signal, cooldown_held, min_floor_already, overage_cap_reached}; app label is the apps.id.",
 	}, []string{"app", "outcome"})
+	// ADR-194 shipped a multi-signal arbiter but no way to see which
+	// signal won. `_scale_up_decisions_total{outcome="admit"}` answers
+	// "did it scale"; with a list of declared targets that is no longer a
+	// complete answer, and an operator tuning a policy needs to know WHICH
+	// target is binding before changing any of them.
+	//
+	// A separate counter rather than a `signal` label on
+	// _scale_up_decisions_total: adding a dimension to an existing series
+	// breaks every dashboard and recording rule already summing it.
+	scaleUpWinningSignal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_scale_up_winning_signal_total",
+		Help: "Per-app admissions attributed to the scaling signal that produced the highest desired instance count (ADR-194 arbitration). metric ∈ the closed api.ScalingMetrics() set. Sum over `metric` equals _scale_up_decisions_total{outcome=\"admit\"} for apps scaled by the targets trigger. Use this to find which declared target is actually binding before tuning a policy.",
+	}, []string{"app", "metric"})
+	// ADR-195 scheduled floors are invisible in the existing floor
+	// metrics: _meterd_floor_applied_total tells an operator a floor was
+	// applied and billed, not that a SCHEDULE raised it. Without this
+	// gauge the only way to answer "is the 08:00 window actually open
+	// right now?" is to re-evaluate the cron by hand — and a scheduled
+	// floor is billed, so "is it on when it should be" is a revenue
+	// question, not just an operational one.
+	scheduledFloorActive := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_scheduled_floor_instances",
+		Help: "Per-app warm floor currently demanded by an open ADR-195 scaling schedule, or 0 when no window is open. Compare against the app's static min_instances to see which one is binding; a persistent non-zero value on an app whose window should have closed means the cron or its timezone is not what the author intended.",
+	}, []string{"app"})
 	appOwnershipChecks := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_app_ownership_checks_total",
 		Help: "schedd ownsApp decisions, outcome ∈ {owned, not_owned}. ADR-062 shards apps across schedds by apps.node_id, but pg_notify has no routing: every app-scoped notification reaches every schedd in the fleet and all but the owner discard it. `not_owned` is that discarded work. The ratio not_owned/(owned+not_owned) is the broadcast amplification the fleet pays, and it should approach (N-1)/N as nodes are added — measure it before deciding whether per-owner notify channels are worth the change.",
@@ -3639,7 +3669,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
-		scaleUpDecisions, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
+		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
 		egressDeny, egressDenied,
 		failedLoginTotal, failedLoginDropped,
@@ -5135,6 +5165,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarRestartTotal:                                   sidecarRestartTotal,
 		cpuStatsCollectDur:                                    cpuStatsCollectDurLocal,
 		scaleUpDecisions:                                      scaleUpDecisions,
+		scaleUpWinningSignal:                                  scaleUpWinningSignal,
+		scheduledFloorActive:                                  scheduledFloorActive,
 		appOwnershipChecks:                                    appOwnershipChecks,
 		scaleDownDecisions:                                    scaleDownDecisions,
 		floorReconcileDecisions:                               floorReconcileDecisions,
@@ -8556,6 +8588,32 @@ func (m *OpsMetrics) ObserveScaleUp(app, outcome string) {
 		return
 	}
 	m.scaleUpDecisions.WithLabelValues(app, outcome).Inc()
+}
+
+// SetScheduledFloor records the warm floor an open ADR-195 schedule is
+// currently demanding for an app, or 0 when no window is open.
+//
+// Emitted every floor tick rather than only when a window opens, so the
+// series returns to zero on its own when a window closes. A gauge that only
+// ever went up would leave a closed window looking permanently open.
+func (m *OpsMetrics) SetScheduledFloor(app string, instances int) {
+	if m == nil {
+		return
+	}
+	m.scheduledFloorActive.WithLabelValues(app).Set(float64(instances))
+}
+
+// ObserveScaleUpWinningSignal attributes one admission to the scaling metric
+// that produced the highest desired count (ADR-194 arbitration).
+//
+// Called only on the admit branch: a no_signal or cooldown_held tick has no
+// winner, and emitting one would make the sum diverge from
+// _scale_up_decisions_total{outcome="admit"}.
+func (m *OpsMetrics) ObserveScaleUpWinningSignal(app, metric string) {
+	if m == nil || metric == "" {
+		return
+	}
+	m.scaleUpWinningSignal.WithLabelValues(app, metric).Inc()
 }
 
 // ObserveScaleDown records one reaper scale-down decision per app
