@@ -114,7 +114,10 @@ type ServiceProxyConfig struct {
 	RawForward func(Target) http.Handler
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
-	Wake        ServiceProxyWaker
+	Wake ServiceProxyWaker
+	// Metrics observes internal call outcomes and cold-path wake latency.
+	// nil is allowed and every observation is a no-op.
+	Metrics     *Metrics
 	EndpointTTL time.Duration
 	Now         func() time.Time
 	Log         *slog.Logger
@@ -132,6 +135,7 @@ type ServiceProxy struct {
 	forward       func(Target) http.Handler
 	rawForward    func(Target) http.Handler
 	wake          ServiceProxyWaker
+	metrics       *Metrics
 	endpointTTL   time.Duration
 	now           func() time.Time
 	log           *slog.Logger
@@ -169,6 +173,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		forward:       cfg.Forward,
 		rawForward:    cfg.RawForward,
 		wake:          cfg.Wake,
+		metrics:       cfg.Metrics,
 		endpointTTL:   ttl,
 		now:           now,
 		log:           log,
@@ -191,26 +196,31 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.resolveCaller != nil {
 		resolved, err := p.resolveCaller(r.Context(), r.RemoteAddr)
 		if err != nil {
+			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "caller identity is unavailable")
 			return
 		}
 		if resolved == "" {
+			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 			serviceProxyProblem(w, http.StatusForbidden, "caller identity is unknown")
 			return
 		}
 		if caller != "" && resolved != caller {
+			p.metrics.IncServiceCall(ServiceCallDenied)
 			serviceProxyProblem(w, http.StatusForbidden, "caller identity does not match the node identity")
 			return
 		}
 		caller = resolved
 	}
 	if caller == "" {
+		p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 		serviceProxyProblem(w, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
 	target, err := p.resolveTarget(r.Context(), service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
+			p.metrics.IncServiceCall(ServiceCallNotFound)
 			serviceProxyProblem(w, http.StatusNotFound, "service is not registered")
 			return
 		}
@@ -223,6 +233,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := p.authorize(r.Context(), caller, target.AppID); err != nil {
 		if errors.Is(err, ErrServiceProxyDenied) {
+			p.metrics.IncServiceCall(ServiceCallDenied)
 			serviceProxyProblem(w, http.StatusForbidden, "caller is not allowed to reach this service")
 			return
 		}
@@ -233,11 +244,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, served := p.routableEndpoints(w, r, target.AppID)
+	endpoints, woken, served := p.routableEndpoints(w, r, target.AppID)
 	if !served {
 		return
 	}
-	p.dispatch(w, r, targetPath, target, endpoints) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	p.dispatch(w, r, targetPath, target, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
 }
 
 // dispatch picks the guest bridge for the resolved target (ADR-197).
@@ -247,20 +258,35 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint) {
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint, woken bool) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
+			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
 			serviceProxyProblem(w, http.StatusNotImplemented, "target service does not accept upgrade requests")
 			return
 		}
 		if p.rawForward == nil {
+			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
 			serviceProxyProblem(w, http.StatusNotImplemented, "raw-bytes bridge is not enabled on this node")
 			return
 		}
+		p.countForward(woken)
 		p.forwardUpgrade(w, r, targetPath, target, endpoints)
 		return
 	}
+	p.countForward(woken)
 	p.forwardOnce(w, r, targetPath, target, endpoints, serviceProxyRetryable(r))
+}
+
+// countForward records a call that reached the guest bridge. The warm/cold
+// split is the internal cold-start rate, which is the signal ADR-196 defers
+// the depends_on wake-ahead decision on.
+func (p *ServiceProxy) countForward(woken bool) {
+	if woken {
+		p.metrics.IncServiceCall(ServiceCallWoken)
+		return
+	}
+	p.metrics.IncServiceCall(ServiceCallForwarded)
 }
 
 // parseServiceProxyRequest accepts the original explicit path form and the
@@ -371,31 +397,34 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 // waking a parked target on the way (ADR-196). It writes the error response
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
-func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID string) ([]ServiceEndpoint, bool) {
+func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID string) (_ []ServiceEndpoint, woken, served bool) {
 	endpoints, err := p.endpoints(r.Context(), appID)
 	if err != nil {
+		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
-		return nil, false
+		return nil, false, false
 	}
 	if len(endpoints) > 0 {
-		return endpoints, true
+		return endpoints, false, true
 	}
 	endpoints, err = p.wakeAndRefresh(r.Context(), appID)
 	if err != nil {
 		p.writeWakeFailure(w, appID, err)
-		return nil, false
+		return nil, false, false
 	}
 	if len(endpoints) == 0 {
+		p.metrics.IncServiceCall(ServiceCallNoReplica)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
-		return nil, false
+		return nil, false, false
 	}
-	return endpoints, true
+	return endpoints, true, true
 }
 
 // writeWakeFailure maps a wake error onto the caller-facing response.
 func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err error) {
 	var full *WakeQueueFullError
 	if errors.As(err, &full) {
+		p.metrics.IncServiceCall(ServiceCallWakeQueueFull)
 		// Mirror the public edge: a saturated wake queue is a bounded,
 		// retryable condition, not a failure of the service. Hand the caller
 		// the same Retry-After the edge would so a peer workload can back off
@@ -404,6 +433,7 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service is waking and its wake queue is full")
 		return
 	}
+	p.metrics.IncServiceCall(ServiceCallWakeFailed)
 	p.log.Warn("gateway: service proxy wake failed", "app", appID, "err", err)
 	serviceProxyProblem(w, http.StatusServiceUnavailable, "service could not be woken")
 }
@@ -423,9 +453,11 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]Serv
 	if p.wake == nil {
 		return nil, nil
 	}
+	start := p.now()
 	if err := p.wake(ctx, appID); err != nil {
 		return nil, err
 	}
+	p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
 	p.invalidateEndpoints(appID)
 	return p.endpoints(ctx, appID)
 }

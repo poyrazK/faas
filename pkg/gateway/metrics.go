@@ -647,6 +647,18 @@ type Metrics struct {
 	// rows from idle fleet, non-zero as soon as production WS
 	// traffic arrives.
 	wsUpgradeTotal *prometheus.CounterVec
+	// serviceCallTotal (ADR-196 / ADR-197) counts every call that reaches the
+	// node-local service proxy, labelled by a closed outcome set. It is the
+	// only view of internal service-to-service traffic: these calls never
+	// touch the public edge, so gateway_requests_total cannot see them.
+	// Deliberately NOT labelled by app — the label set must stay bounded, and
+	// per-app attribution already exists in the wake timeline.
+	serviceCallTotal *prometheus.CounterVec
+	// serviceWakeLatency (ADR-196) observes how long an internal caller was
+	// held while a parked target service was restored. ADR-196 defers
+	// speculative wake-ahead along depends_on edges "until measured evidence";
+	// this histogram is that evidence.
+	serviceWakeLatency prometheus.Histogram
 	// wsActiveSessions (issue #676 / ADR-080 follow-up, PR-B) is
 	// the in-flight raw-bytes Upgrade session gauge, labelled by
 	// plan. Inc/Dec happens via IncWSSessionStart /
@@ -1349,6 +1361,24 @@ func NewMetrics() *Metrics {
 		// (WSOutcome / WSDirection constants) so the constructor
 		// pre-instantiate loop and the runtime helpers share one
 		// source of truth.
+		serviceCallTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_call_total",
+				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
+			},
+			[]string{"outcome"},
+		),
+		// Buckets span 10 ms (a warm in-rack hop) to 30 s (the wake gate's
+		// lifecycle TTL). The middle of the range is where the platform wake
+		// budget lives (§6.3, p95 < 350 ms on the reference node), so the
+		// resolution is deliberately densest there.
+		serviceWakeLatency: prometheus.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "gateway_service_wake_latency_seconds",
+				Help:    "Time an internal service caller was held while a parked target was restored (ADR-196), measured across the wake-and-refresh cycle. Observed only on the cold path; a warm call records nothing.",
+				Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5, 10, 30},
+			},
+		),
 		wsUpgradeTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_ws_upgrade_total",
@@ -1392,6 +1422,12 @@ func NewMetrics() *Metrics {
 	// ws_session_duration_seconds histogram excludes plan_denied
 	// / bridge_disided because those never open a session — the
 	// counter is sufficient for the rejected-at-gate outcomes.
+	// Pre-instantiate every service-call outcome so an idle node renders
+	// zeros rather than absent series — a dashboard cannot distinguish "no
+	// internal traffic" from "the proxy is not wired" without them.
+	for _, outcome := range ServiceCallOutcomes {
+		m.serviceCallTotal.WithLabelValues(string(outcome))
+	}
 	wsOutcomes := []WSOutcome{WSOutcomeAccepted, WSOutcomePlanDenied, WSOutcomeBridgeDisabled}
 	wsSessionOutcomes := []WSOutcome{WSOutcomeAccepted, WSOutcomeInitFailed, WSOutcomeUpstreamUnavailable, WSOutcomeClientDisconnect}
 	wsDirections := []WSDirection{WSDirectionTx, WSDirectionRx}
@@ -1667,7 +1703,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.serviceCallTotal, m.serviceWakeLatency, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3046,6 +3082,68 @@ func (m *Metrics) IncWSUpgrade(plan string, outcome WSOutcome) {
 		return
 	}
 	m.wsUpgradeTotal.WithLabelValues(plan, string(outcome)).Inc()
+}
+
+// ServiceCallOutcome is the closed label set for gateway_service_call_total.
+// Declared alongside the helper so the constructor's pre-instantiate loop and
+// the runtime call sites share one source of truth.
+type ServiceCallOutcome string
+
+const (
+	// ServiceCallForwarded — the target was already warm.
+	ServiceCallForwarded ServiceCallOutcome = "forwarded"
+	// ServiceCallWoken — the target was parked; a wake produced a replica and
+	// the held request was then forwarded. The ratio of this to Forwarded is
+	// the internal cold-start rate.
+	ServiceCallWoken ServiceCallOutcome = "woken"
+	// ServiceCallNoReplica — the wake finished but nothing became routable
+	// (typically the app sits at its plan concurrency ceiling).
+	ServiceCallNoReplica ServiceCallOutcome = "no_replica"
+	// ServiceCallRegistryUnavailable — the endpoint registry read failed. A
+	// control-plane fault, not a parked service; no wake is attempted.
+	ServiceCallRegistryUnavailable ServiceCallOutcome = "registry_unavailable"
+	// ServiceCallWakeFailed — admission itself failed (no headroom, scheduler
+	// unreachable, store error).
+	ServiceCallWakeFailed ServiceCallOutcome = "wake_failed"
+	// ServiceCallWakeQueueFull — the target's wake queue was saturated; the
+	// caller received Retry-After.
+	ServiceCallWakeQueueFull ServiceCallOutcome = "wake_queue_full"
+	// ServiceCallUnauthenticated — no caller identity could be established.
+	ServiceCallUnauthenticated ServiceCallOutcome = "unauthenticated"
+	// ServiceCallDenied — caller and target belong to different accounts.
+	ServiceCallDenied ServiceCallOutcome = "denied"
+	// ServiceCallNotFound — the service name resolves to no app.
+	ServiceCallNotFound ServiceCallOutcome = "not_found"
+	// ServiceCallUpgradeRejected — an Upgrade request the target does not
+	// accept, or no raw bridge is wired on this node (ADR-197).
+	ServiceCallUpgradeRejected ServiceCallOutcome = "upgrade_rejected"
+)
+
+// ServiceCallOutcomes is the full closed set, used to pre-instantiate every
+// series so an idle node still renders zeros rather than absent series.
+var ServiceCallOutcomes = []ServiceCallOutcome{
+	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
+	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
+	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallNotFound,
+	ServiceCallUpgradeRejected,
+}
+
+// IncServiceCall bumps gateway_service_call_total for one outcome.
+// nil-safe: the pre-metrics test corpus constructs proxies without a Metrics.
+func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
+	if m == nil {
+		return
+	}
+	m.serviceCallTotal.WithLabelValues(string(outcome)).Inc()
+}
+
+// ObserveServiceWakeLatency records how long an internal caller waited for a
+// parked target to come back. Only the cold path calls this.
+func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.serviceWakeLatency.Observe(d.Seconds())
 }
 
 // IncWSSessionStart (issue #676 / ADR-080 follow-up, PR-B)
