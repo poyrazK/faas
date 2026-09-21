@@ -684,6 +684,12 @@ func smokeChallengeKey(appID, deploymentID string) string { return appID + "\x00
 // replayed only until expiresAt.
 func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, expiresAt time.Time) {
 	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
+		// An already-expired challenge lands here too, which is worth counting
+		// separately from one that never arrived: it means the publish-to-
+		// receive gap exceeded the token lifetime.
+		if b != nil {
+			b.metrics.ObserveSmokeChallenge("rejected")
+		}
 		return
 	}
 	b.smokeMu.Lock()
@@ -704,12 +710,16 @@ func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, 
 	}
 	key := smokeChallengeKey(appID, deploymentID)
 	b.smokeChallenges[key] = append(b.smokeChallenges[key], deploymentSmokeChallenge{token: token, expiresAt: expiresAt})
+	b.metrics.ObserveSmokeChallenge("stored")
 }
 
 // ValidateDeploymentSmoke authenticates the edge-health bypass. A valid token
 // is bound to both app and deployment, so it cannot authorize another tenant.
 func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) bool {
 	if b == nil || token == "" {
+		if b != nil {
+			b.metrics.ObserveSmokeValidation("missing_token")
+		}
 		return false
 	}
 	b.smokeMu.Lock()
@@ -717,6 +727,11 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 	key := smokeChallengeKey(appID, deploymentID)
 	challenges, ok := b.smokeChallenges[key]
 	if !ok {
+		// No challenge under this (app, deployment). Either the pg_notify
+		// never reached THIS gateway process — the map is process-local, so a
+		// restart or a missed notification looks identical — or the publisher
+		// and this gateway disagree on the app identity.
+		b.metrics.ObserveSmokeValidation("no_challenge")
 		return false
 	}
 	now := time.Now()
@@ -731,10 +746,16 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 	}
 	if len(live) == 0 {
 		delete(b.smokeChallenges, key)
-	} else {
-		b.smokeChallenges[key] = live
+		b.metrics.ObserveSmokeValidation("expired")
+		return false
 	}
-	return matched == 1
+	b.smokeChallenges[key] = live
+	if matched == 1 {
+		b.metrics.ObserveSmokeValidation("match")
+		return true
+	}
+	b.metrics.ObserveSmokeValidation("token_mismatch")
+	return false
 }
 
 // appPicker (PR-B / issue #556) is the per-app picker state the
