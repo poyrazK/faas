@@ -346,3 +346,90 @@ func attemptOutcome(index int, stale bool) string {
 		return "replay_ok"
 	}
 }
+
+// WithRetryEnabled sets the FAAS_GATEWAY_RETRY operator gate.
+func (h *Handler) WithRetryEnabled(enabled bool) *Handler {
+	h.retryEnabled = enabled
+	return h
+}
+
+// WithRetryDefault sets the policy used when the gate is on and no kind=retry
+// rule matched.
+func (h *Handler) WithRetryDefault(p RetryPolicy) *Handler {
+	h.retryDefault = p
+	return h
+}
+
+// WithRetryMatcher installs the kind=retry rule resolver.
+func (h *Handler) WithRetryMatcher(fn func(app App, r *http.Request) (RetryPolicy, bool)) *Handler {
+	h.retryMatch = fn
+	return h
+}
+
+// WithRetryObserver installs the retry metric sink.
+func (h *Handler) WithRetryObserver(obs retryObserver) *Handler {
+	h.retryObs = obs
+	return h
+}
+
+// retryPolicyFor resolves the effective policy for one request. A matched
+// kind=retry rule wins; otherwise the operator default applies. Both are
+// inert until the gate is on.
+func (h *Handler) retryPolicyFor(app App, r *http.Request) RetryPolicy {
+	if !h.retryEnabled {
+		return RetryPolicy{}
+	}
+	if h.retryMatch != nil {
+		if policy, ok := h.retryMatch(app, r); ok {
+			policy.Enabled = true
+			return policy
+		}
+	}
+	policy := h.retryDefault
+	policy.Enabled = policy.MaxAttempts >= 2
+	return policy
+}
+
+// proxyAttempt runs the forwarder for one request, replaying against a fresh
+// target when ADR-195 §1 permits.
+//
+// Streaming is excluded outright rather than left to rule 1. A streaming
+// response commits on its first flush, so a replay is impossible by
+// construction — but routing it through the retry writer would put a
+// buffering ResponseWriter in front of the one path whose entire purpose is
+// not to buffer, and the plan's per-flush write deadline is measured against
+// that writer.
+func (h *Handler) proxyAttempt(
+	w http.ResponseWriter,
+	r *http.Request,
+	target Target,
+	isStreaming bool,
+	retire func(Target),
+	forward retryAttempt,
+	app App,
+) {
+	if isStreaming {
+		forward(w, r, target)
+		return
+	}
+	policy := h.retryPolicyFor(app, r)
+	if !policy.Enabled {
+		forward(w, r, target)
+		return
+	}
+	repick := func() (Target, bool) {
+		pick := h.backend.Pick(app.ID)
+		if !pick.OK {
+			return Target{}, false
+		}
+		// The failed instance was evicted synchronously by retire(), so the
+		// picker cannot hand it back. Guard anyway: a backend that does not
+		// implement EvictInstance would otherwise replay onto the same dead
+		// target and burn the attempt budget for nothing.
+		if pick.Target.InstanceID == target.InstanceID {
+			return Target{}, false
+		}
+		return pick.Target, true
+	}
+	runWithRetry(w, r, target, policy, retire, forward, repick, h.retryObs)
+}

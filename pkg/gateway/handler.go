@@ -957,6 +957,20 @@ type Handler struct {
 	// cmd/gatewayd-internal/main.go so production defaults to off and operators
 	// opt in per-cluster after PR-B ships.
 	streamingEnabled bool
+	// retryEnabled is the FAAS_GATEWAY_RETRY operator gate (ADR-195 §1).
+	// Off by default; with it off, proxyAttempt calls the forwarder directly
+	// and the tree is byte-identical to the pre-ADR-195 path.
+	retryEnabled bool
+	// retryDefault is the policy applied when the gate is on and no
+	// kind=retry rule matched. Zero MaxAttempts means no replay, so an
+	// operator can enable the gate and roll the behaviour out per-app via
+	// edge rules rather than fleet-wide in one step.
+	retryDefault RetryPolicy
+	// retryMatch resolves the matched kind=retry rule for a request. Nil
+	// falls back to retryDefault.
+	retryMatch func(app App, r *http.Request) (RetryPolicy, bool)
+	// retryObs counts attempts and exhaustions. Nil disables the metric.
+	retryObs retryObserver
 	// streamingWarned is the once-per-process log dedup for the
 	// buffered-fallback deprecation. Keyed on (appID, content-type) so
 	// the first instance of an SSE-emitting app under the flag-off
@@ -6312,24 +6326,30 @@ haveApp:
 	// bridge on transport/liveness failures; ordinary guest 502/503 responses
 	// are therefore left untouched.
 	staleContext := r.Context()
+	// retireStaleTarget is shared by the plain path's signal below and by the
+	// ADR-195 §1 retry loop, which reports each attempt's own failed target.
+	// Extracted so both report identically — a retry that evicted differently
+	// from a non-retry failure would make the two paths diverge in exactly the
+	// situation an operator is trying to read.
+	retireStaleTarget := func(failed Target) {
+		// Evict synchronously with the transport failure so a
+		// concurrent request cannot pick this known-dead target.
+		// RecoverStaleTarget detaches and bounds lifecycle work in
+		// the production backend; it does not inherit the client
+		// cancellation even though the request context is passed in.
+		if evictor, ok := h.backend.(interface {
+			EvictInstance(appID, instanceID string)
+		}); ok {
+			evictor.EvictInstance(app.ID, failed.InstanceID)
+			h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
+				"instance_id", failed.InstanceID, "node_id", failed.NodeID)
+		}
+		if recovery, ok := h.backend.(staleTargetRecovery); ok {
+			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
+		}
+	}
 	staleSignal := &staleTargetSignal{
-		onStale: func() {
-			// Evict synchronously with the transport failure so a
-			// concurrent request cannot pick this known-dead target.
-			// RecoverStaleTarget detaches and bounds lifecycle work in
-			// the production backend; it does not inherit the client
-			// cancellation even though the request context is passed in.
-			if evictor, ok := h.backend.(interface {
-				EvictInstance(appID, instanceID string)
-			}); ok {
-				evictor.EvictInstance(app.ID, target.InstanceID)
-				h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
-					"instance_id", target.InstanceID, "node_id", target.NodeID)
-			}
-			if recovery, ok := h.backend.(staleTargetRecovery); ok {
-				recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
-			}
-		},
+		onStale: func() { retireStaleTarget(target) },
 	}
 	//nolint:contextcheck // withStaleTargetSignal intentionally inherits r.Context.
 	r = r.WithContext(withStaleTargetSignal(r.Context(), staleSignal))
@@ -6564,7 +6584,15 @@ haveApp:
 		// re-frames to H1+chunked on the guest side per
 		// PR #750).
 		r.Header.Set("x-faas-protocol", decideProtocol(app))
-		h.proxyByNode(target).ServeHTTP(capped, r)
+		// ADR-195 §1. Retry only wraps the BUFFERED path: a streaming
+		// response commits on its first flush, so a replay is impossible by
+		// construction, and wrapping it would put a buffering writer in front
+		// of the very path whose point is not to buffer. Upgrade requests
+		// returned above and never reach here.
+		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
+			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				h.proxyByNode(tgt).ServeHTTP(w, req)
+			}, app)
 	} else {
 		platformWakeTrace.markProxyStarted(time.Now())
 		// Legacy addr-based path. Target.NodeID is treated as a
@@ -6576,7 +6604,10 @@ haveApp:
 		// branch above for the onCap-vs-connection-reset contract.
 		planCap := app.Plan.MaxResponseBodyBytes()
 		capped := h.setupBufferedCapWriter(w, app, planCap)
-		h.proxyFor(target.NodeID, planCap).ServeHTTP(capped, r)
+		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
+			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
+			}, app)
 	}
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
