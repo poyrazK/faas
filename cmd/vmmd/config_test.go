@@ -108,15 +108,23 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.ListenAddr != "" || cfg.TLSCertPath != "" || cfg.TLSKeyPath != "" || cfg.TLSCAPath != "" {
 		t.Errorf("TLS/listen defaults not all empty: %+v", cfg)
 	}
-	// PR scale-out readiness #4: the compute-node default
-	// AdmissionCeilingMB must route through api.DefaultComputeNodeCeilingMB
-	// so the vmmd default and the MemStore seed share a single source
-	// of truth. This is the load-bearing assertion that proves
-	// cmd/vmmd/config.go is wired to the helper (changing fixtures in
-	// other tests wouldn't catch a literal regression here).
-	if got := cfg.ComputeNode.AdmissionCeilingMB; got != api.DefaultComputeNodeCeilingMB() {
-		t.Errorf("ComputeNode.AdmissionCeilingMB = %d, want %d (api.DefaultComputeNodeCeilingMB())",
-			got, api.DefaultComputeNodeCeilingMB())
+	// PR scale-out readiness #4 asserted this against
+	// api.DefaultComputeNodeCeilingMB to prove config.go routed through a
+	// shared helper rather than a literal. That intent still holds, but the
+	// ceiling is now derived from the host: on the 64 GB reference box the
+	// derivation resolves to DefaultComputeNodeCeilingMB, while on a
+	// CI runner it is correctly much smaller. Asserting the constant here
+	// would pass on macOS (where detection is stubbed to 0 and the legacy
+	// fallback applies) and fail on Linux — so assert the derivation, which
+	// is the real wiring under test.
+	want := api.DeriveNodeSizing(hostMemTotalMB(), hostCPUs())
+	if got := cfg.ComputeNode.AdmissionCeilingMB; got != want.AdmissionCeilingMB {
+		t.Errorf("ComputeNode.AdmissionCeilingMB = %d, want %d (derived for this host)",
+			got, want.AdmissionCeilingMB)
+	}
+	if cfg.ComputeNode.AdmissionCeilingMB <= 0 {
+		t.Errorf("ceiling must stay positive for the migration 00123 CHECK, got %d",
+			cfg.ComputeNode.AdmissionCeilingMB)
 	}
 }
 
