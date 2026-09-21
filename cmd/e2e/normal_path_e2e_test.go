@@ -1602,14 +1602,23 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	waitNormalPathProbe(t, probe.Canceled(), "restart bridge cancellation")
 	select {
 	case outcome := <-requestDone:
-		// The old response must terminate once its owning gateway exits.
-		// A clean EOF here is the failure that matters: the customer cannot
-		// tell a truncated body from a complete one, so report exactly what
-		// arrived. The fake sends "partial-response\n" and then blocks, so a
-		// body equal to that with a nil error means the platform served a
-		// half-response as a success.
-		if outcome.err == nil {
-			t.Fatalf("in-flight response completed successfully after gateway restart: status=%d body=%q (a clean EOF mid-stream is indistinguishable from a complete response)",
+		// The old response must not terminate as a SUCCESS once its owning
+		// gateway exits. What "terminate" looks like depends on the topology,
+		// and both shapes are correct:
+		//
+		//   - direct to gatewayd-internal: the listener dies under the open
+		//     connection, so the client gets a transport error;
+		//   - through gatewayd-public: the public hop outlives the internal
+		//     one and turns the failed round-trip into a 502, which is
+		//     strictly better — the customer gets a status instead of a
+		//     severed socket.
+		//
+		// The failure that actually matters is neither of those: a 2xx whose
+		// body is the partial one the fake sent before blocking. That is a
+		// truncated response presented as a complete one, which no client can
+		// detect. Assert on that, not on the transport artifact.
+		if outcome.err == nil && outcome.status/100 == 2 {
+			t.Fatalf("in-flight response completed as a SUCCESS after gateway restart: status=%d body=%q (a truncated body under a 2xx is indistinguishable from a complete response)",
 				outcome.status, outcome.body)
 		}
 	case <-time.After(5 * time.Second):

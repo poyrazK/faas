@@ -402,9 +402,28 @@ func TestE2E_NormalPath_ParkCapturesOnlyWhatIsNotAlreadyDurable(t *testing.T) {
 				}
 			}
 
-			// §6.2-3: the app must still be wakeable either way.
-			if _, err := f.store.LatestSnapshotForTier(f.ctx, dep.ID, state.SnapshotTierInit); err != nil {
-				t.Errorf("app has no usable snapshot after park: %v", err)
+			// §6.2-3: the app must still be wakeable. What proves that differs
+			// per case, because imaged owns the snapshots row (spec §6.0) and
+			// this fixture does not boot imaged — so a fresh capture here
+			// never produces a row to read back.
+			//
+			//   - reuse case: the seeded row must SURVIVE, proving a park does
+			//     not invalidate the snapshot it just declined to rewrite;
+			//   - capture case: the deployment must still carry its
+			//     cold-bootable rootfs, which is the other half of §6.2-3 and
+			//     the only half observable without imaged.
+			if tc.seedSnap {
+				if _, err := f.store.LatestSnapshotForTier(f.ctx, dep.ID, state.SnapshotTierInit); err != nil {
+					t.Errorf("park invalidated the snapshot it reused: %v", err)
+				}
+				return
+			}
+			after, err := f.store.DeploymentByID(f.ctx, dep.ID)
+			if err != nil {
+				t.Fatalf("read deployment after park: %v", err)
+			}
+			if after.RootfsPath == "" {
+				t.Error("app has neither a snapshot nor a cold-bootable rootfs after park (§6.2-3)")
 			}
 		})
 	}
