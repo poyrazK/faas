@@ -273,6 +273,13 @@ type App struct {
 	PurgeClaimedAt            pgtype.Timestamptz
 }
 
+type AppCustomMetric struct {
+	AppID      pgtype.UUID
+	Name       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
 type AppEnv struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
