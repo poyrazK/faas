@@ -118,6 +118,14 @@ func newNormalPathFixtureWithPlan(t *testing.T, slug string, plan api.Plan) *nor
 
 func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan, extraEnv ...string) *normalPathFixture {
 	t.Helper()
+	return newNormalPathFixtureWith(t, slug, plan, 0, extraEnv...)
+}
+
+// newNormalPathFixtureWith is the constructor above plus `extra`, additional
+// daemons to boot. Callers that need imaged in the loop pass e2etest.Imaged;
+// everyone else gets the same fixture as before.
+func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, extraEnv ...string) *normalPathFixture {
+	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return nil
@@ -183,7 +191,7 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 	// gate that executes. Requests go through h.EdgeURL(), which resolves to
 	// the public listener whenever it is booted.
 	h := e2etest.StartWithEnv(t, pool,
-		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic, extraEnv)
+		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic|extra, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
 	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
