@@ -1,0 +1,117 @@
+// node_death_live_instances_e2e_test.go — a node dying with work on it.
+//
+// The recovery tests in node_recovery_e2e_test.go cover an idle node. The
+// expensive case is a node that dies while instances are RUNNING, because
+// three things have to happen and each fails silently on its own:
+//
+//   - the instances must reach a terminal state, and the RIGHT one;
+//   - their capacity must be released, or the ledger keeps charging a node for
+//     VMs that no longer exist and the fleet shrinks without anyone noticing;
+//   - the apps must still be servable afterwards (§6.2-3).
+//
+// FAILED is the correct terminal state, not PARKED, and the distinction is
+// load-bearing: the VM died with its host, so no snapshot was taken. Claiming
+// PARKED would assert a snapshot that does not exist, and the next wake would
+// try to restore from it. FAILED is cold-bootable (ADR-005 — snapshots are
+// cache, not truth), so the customer's next request still serves; it just pays
+// the cold-boot path.
+//
+// This was previously metal-only, in twonode_failure_safe_metal_test.go, on a
+// gate that has never passed. FakeVMMD.SetUnreachable makes it reachable
+// without KVM: a node that stops answering is a node that stops answering,
+// whether its vmmd crashed or its fake stopped replying.
+
+package e2e_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// TestE2E_NodeDeath_LiveInstancesFailAndReleaseCapacity kills the node under a
+// running instance and checks the whole arc: terminal state, capacity release,
+// and that the app is still servable once the node returns.
+func TestE2E_NodeDeath_LiveInstancesFailAndReleaseCapacity(t *testing.T) {
+	f := newNodeRecoveryFixture(t, "node-death-live")
+	if f == nil {
+		return
+	}
+	faults := e2etest.NewRowFaults(f.h.Pool)
+
+	dep := createNormalPathParkedDeployment(t, f)
+	seedNormalPathSnapshot(t, f, dep.ID, normalPathSnapshotOpts{})
+	wakeNormalPathApp(t, f)
+
+	instance, err := f.store.RunningInstanceForApp(f.ctx, f.app.ID)
+	if err != nil {
+		t.Fatalf("no running instance to kill under: %v", err)
+	}
+	node, err := f.store.ComputeNodeByName(f.ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("load node: %v", err)
+	}
+
+	// Capacity is charged while the instance is live. Establishing this before
+	// the kill is what makes the release assertion below mean something: a
+	// reading of zero proves nothing if it was always zero.
+	usedBefore, err := f.store.ComputeNodeUsedMB(f.ctx, node.ID)
+	if err != nil {
+		t.Fatalf("read used mb before death: %v", err)
+	}
+	if usedBefore == 0 {
+		t.Fatal("node shows no resident RAM while an instance is running; " +
+			"the release assertion below would be vacuous")
+	}
+
+	// The node dies with the instance on it. Silencing it is what makes the
+	// staleness stick — schedd keeps probing, and a node that still answers
+	// gets its heartbeat refreshed no matter how far back the row is dated.
+	f.vmmd.SetUnreachable(true)
+	if err := faults.StaleHeartbeat(state.DefaultLocalNodeName, 10*time.Minute); err != nil {
+		t.Fatalf("stale heartbeat: %v", err)
+	}
+
+	// FAILED, specifically. PARKED would claim a snapshot that was never
+	// taken, and the next wake would try to restore from it.
+	waitForWake(t, 60*time.Second, func() bool {
+		ins, err := f.store.InstanceByID(f.ctx, instance.ID)
+		return err == nil && ins.State == string(state.StateFailed)
+	}, "an instance on a dead node never reached FAILED. If it is still running, the "+
+		"platform is routing to a VM that no longer exists; if it reached PARKED, it is "+
+		"claiming a snapshot that was never taken and the next wake will try to restore it")
+
+	// The quiet one. A node charged for VMs that no longer exist accepts less
+	// and less work until it accepts none, and nothing reports it.
+	waitForWake(t, 30*time.Second, func() bool {
+		used, err := f.store.ComputeNodeUsedMB(f.ctx, node.ID)
+		return err == nil && used == 0
+	}, "capacity was never released after the instances on a dead node failed; the ledger "+
+		"keeps charging the node for VMs that are gone, so it accepts less work after every "+
+		"node failure until it accepts none")
+
+	// §6.2-3: the app must still be servable. The snapshot seeded earlier is
+	// untouched by the node's death, so this proves the app is not stranded by
+	// a failure that had nothing to do with its artifacts.
+	f.vmmd.SetUnreachable(false)
+	waitForWake(t, 60*time.Second, func() bool {
+		lifecycle, active, err := faults.NodeLifecycle(state.DefaultLocalNodeName)
+		return err == nil && lifecycle == string(state.NodeLifecycleActive) && active
+	}, "the node never returned to service after answering again")
+
+	f.vmmd.SetDefaultVersion("v1")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 60*time.Second)
+
+	// The replacement must be a different instance: the failed one is gone with
+	// its host, and reusing its row would mean routing to a dead VM.
+	replacement, err := f.store.RunningInstanceForApp(f.ctx, f.app.ID)
+	if err != nil {
+		t.Fatalf("no running instance after recovery: %v", err)
+	}
+	if replacement.ID == instance.ID {
+		t.Errorf("the app came back on the SAME instance %s that was failed on the dead node; "+
+			"a failed instance must not be resurrected, its VM died with the host", instance.ID)
+	}
+}
