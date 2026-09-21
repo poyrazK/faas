@@ -1278,10 +1278,22 @@ type Limits struct {
 	TrafficSplit bool
 
 	// RollbackOn5xxAllowed (issue #961 / ADR-118) gates the
-	// per-deployment first-wake 5xx auto-rollback opt-in. Pro and
-	// Scale unlock it; Free and Hobby retain the safe default-off
-	// behavior. The deployment column remains available to internal
-	// workers and existing rows on every plan.
+	// per-deployment first-wake 5xx auto-rollback opt-in.
+	//
+	// TRUE ON EVERY PLAN as of ADR-200. Unlike TrafficSplit, this one
+	// never had a cost argument to answer: auto-rollback consumes no
+	// extra runtime resources. It reads the first_5xx_count column the
+	// platform already increments on every deployment regardless of
+	// plan, and on threshold it flips traffic back to a snapshot that
+	// already exists. The work is strictly cheaper than the outage it
+	// prevents — a bad revision left serving burns wake and RAM
+	// seconds for as long as it stays up.
+	//
+	// The opt-in remains OFF by default on every plan (the column
+	// default is false), so nothing changes for a customer who does
+	// not ask for it. Retained as a field so an operator can re-tier
+	// it, and because plan_rollback_on_5xx_not_allowed stays in the
+	// wire contract for older clients.
 	RollbackOn5xxAllowed bool
 
 	// MirrorRuleAllowed (issue #72 / ADR-125) is the plan gate
@@ -1977,8 +1989,13 @@ var planLimits = map[Plan]Limits{
 		//
 		// The column default (100) still keeps today's
 		// behaviour for every app that never opts in.
-		TrafficSplit:         true,
-		RollbackOn5xxAllowed: false,
+		TrafficSplit: true,
+		// ADR-200: Free unlocks first-wake 5xx auto-rollback. It costs
+		// no extra runtime resources — the 5xx counters are already
+		// collected on every plan — and the tier least able to absorb
+		// a bad release is the one that benefits most. Still off by
+		// default; the customer must opt in per deployment.
+		RollbackOn5xxAllowed: true,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
 		// rationale. MirrorTargetsPerApp = 0 keeps the field
@@ -2354,8 +2371,10 @@ var planLimits = map[Plan]Limits{
 		// instance.
 		//
 		// See the Free block above for the full rationale.
-		TrafficSplit:         true,
-		RollbackOn5xxAllowed: false,
+		TrafficSplit: true,
+		// ADR-200: Hobby unlocks first-wake 5xx auto-rollback — see the
+		// Free row above. Still opt-in per deployment.
+		RollbackOn5xxAllowed: true,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
 		// rationale. MirrorTargetsPerApp = 0 keeps the field

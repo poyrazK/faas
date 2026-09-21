@@ -264,6 +264,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// bounded to +1 instance for the length of the rollout,
 			// so this does not move Free's steady-state RAM shape.
 			TrafficSplit: true,
+			// ADR-200: auto-rollback costs no extra runtime resources —
+			// the 5xx counters are already collected on every plan.
+			RollbackOn5xxAllowed: true,
 			// ADR-124: Free stays on http1/http2 (universal) but is
 			// gated off gRPC entirely — the abuse-floor tier doesn't
 			// host the gRPC service-migration use case that prompted
@@ -418,6 +421,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-199: Hobby unlocks traffic splitting and the canary
 			// ladder — see the Free row above for the rationale.
 			TrafficSplit: true,
+			// ADR-200: see the Free row above.
+			RollbackOn5xxAllowed: true,
 			// ADR-124: Hobby unlocks gRPC framing. Hobby is the
 			// smallest paid tier where the gRPC service-migration
 			// use case (issue #67) makes sense — Free stays
@@ -1903,13 +1908,24 @@ func TestPlanTrafficSplitAllowed(t *testing.T) {
 	}
 }
 
+// TestPlanRollbackOn5xxAllowed pins the per-plan gate for the first-wake 5xx
+// auto-rollback opt-in (issue #961 / ADR-118, opened to every plan by
+// ADR-200).
+//
+// Every known plan is now true. Unlike TrafficSplit this never had a cost
+// argument to answer: the 5xx counters are already collected on every plan,
+// and rolling back is cheaper than leaving a bad revision serving.
+//
+// The UNKNOWN plan is the case that still carries weight now that the four
+// known plans agree: MustLimitsFor has no entry for it, so the accessor must
+// fail closed rather than inherit a zero-value default.
 func TestPlanRollbackOn5xxAllowed(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want bool
 	}{
-		{PlanFree, false},
-		{PlanHobby, false},
+		{PlanFree, true},
+		{PlanHobby, true},
 		{PlanPro, true},
 		{PlanScale, true},
 		{Plan("unknown"), false},
