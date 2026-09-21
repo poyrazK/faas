@@ -24,6 +24,7 @@
 package e2e_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -133,11 +134,45 @@ func TestE2E_NodeDeath_LiveInstancesFailAndReleaseCapacity(t *testing.T) {
 		return ok
 	}, "the app served a request but no live instance other than the failed one ever "+
 		"appeared; either the failed row was resurrected or the response came from "+
-		"something that is not a tracked instance")
+		"something that is not a tracked instance. Rows: "+instanceRowsForApp(t, f))
 	if replacement == instance.ID {
 		t.Errorf("the app came back on the SAME instance %s that was failed on the dead node; "+
 			"a failed instance must not be resurrected, its VM died with the host", instance.ID)
 	}
+}
+
+// instanceRowsForApp renders every instance row for the app, so a failure says
+// what the state machine actually did instead of only what it did not do.
+// "No live instance" has several causes — resurrected row, wrong state, wrong
+// app — and they are indistinguishable without the rows.
+func instanceRowsForApp(t *testing.T, f *normalPathFixture) string {
+	t.Helper()
+	rows, err := f.h.Pool.Query(f.ctx,
+		`SELECT id::text, state, coalesce(node_id::text,'') FROM instances
+		  WHERE app_id = $1 ORDER BY created_at`, f.app.ID)
+	if err != nil {
+		return "<unreadable: " + err.Error() + ">"
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id, st, node string
+		if err := rows.Scan(&id, &st, &node); err != nil {
+			return "<scan error: " + err.Error() + ">"
+		}
+		out = append(out, id[:8]+"="+st+"@"+firstN(node, 8))
+	}
+	if len(out) == 0 {
+		return "<none>"
+	}
+	return strings.Join(out, " ")
+}
+
+func firstN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // liveInstanceIDForApp returns a resident instance for the app other than
