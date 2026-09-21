@@ -100,7 +100,7 @@ func newImagedFixture(t *testing.T) *imagedFixture {
 	// the app's own layer lands in `above` — the two-drive shape (§4.6).
 	deployBase, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", imagedHelloBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBase)
-	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
+	deployBaseRef := registry.Host() + "/onebox-faas/deploy-base:latest"
 
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Imaged, []string{
 		"FAAS_STORAGE_BACKEND=local",
@@ -108,6 +108,13 @@ func newImagedFixture(t *testing.T) *imagedFixture {
 		// Digest-pinned (imaged refuses a tag and exits) and unservable, so the
 		// staged base above is what imaged falls back to.
 		"FAAS_BUILDER_BASE_REF=" + registry.Host() + "/onebox-faas/builder-base@sha256:" + repeatChar("0", 64),
+		// Passed directly rather than through OverrideDeployBase, which
+		// deliberately no-ops once a host "has a real base" — and the staged
+		// fixture above makes that true. Its caution is aimed at clobbering a
+		// genuine base on an acceptance node; here the base IS the fixture, so
+		// the runtime base has to be redirected too or imaged reaches for the
+		// production ghcr ref and 403s.
+		"FAAS_TEST_DEPLOY_BASE_REF=" + deployBaseRef,
 	})
 	ctx := context.Background()
 	return &imagedFixture{

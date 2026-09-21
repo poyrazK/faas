@@ -2331,14 +2331,21 @@ func boundingSetPrefix(t *testing.T, name string) []string {
 	if err != nil {
 		t.Skipf("e2etest: imaged needs a restricted bounding set and neither root nor sudo is available: %v", err)
 	}
+	// -E preserves the environment the harness built. Without it sudo resets
+	// it and imaged exits with "missing required environment variables:
+	// FAAS_DATABASE_URL, FAAS_FUNCTION_RUNNER_*" — its env contract doing its
+	// job against an env that sudo had already emptied.
+	//
+	// PATH is re-applied separately because sudoers' secure_path overrides it
+	// even under -E, and imaged resolves debugfs (and mkfs) from PATH.
 	return []string{
-		sudo, "-n", setpriv,
+		sudo, "-n", "-E", setpriv,
 		"--bounding-set=" + set,
 		"--reuid", strconv.Itoa(os.Getuid()),
 		"--regid", strconv.Itoa(os.Getgid()),
 		"--init-groups",
 		"--no-new-privs",
-		"--",
+		"--", "env", "PATH=" + os.Getenv("PATH"),
 	}
 }
 
