@@ -28,6 +28,16 @@ func parseRevisionRef(ref string) (int, bool) {
 	if digits == "" {
 		return 0, false
 	}
+	// Digits only. strconv.Atoi accepts a leading sign, so without this a
+	// "+42" would parse as revision 42 — a form the product never renders
+	// and a customer would never copy out of `traffic status`. Accepting
+	// input we cannot produce only widens the surface a typo can slip
+	// through. The n <= 0 check below already covers "-1".
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, false
+		}
+	}
 	n, err := strconv.Atoi(digits)
 	if err != nil || n <= 0 {
 		return 0, false

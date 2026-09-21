@@ -108,8 +108,14 @@ can never be misparsed as a revision.
 - Two parse implementations exist (`cmd/apid/deployment_ref.go` and
   `cmd/gregale/deployment_ref.go`) and must agree on what `v42` means. They
   are each ~20 lines and deliberately duplicated rather than shared, because
-  `cmd/gregale` must not import `cmd/apid`; the divergence risk is pinned by
-  tests on both sides.
+  `cmd/gregale` must not import `cmd/apid`. The divergence risk is pinned by a
+  19-case table asserted identically on both sides —
+  `cmd/apid/deployment_ref_test.go::TestParseDeploymentRevisionRef` and
+  `cmd/gregale/deployment_ref_test.go::TestParseRevisionRef`. The two tables
+  must stay byte-identical; a change to one parser that is not mirrored fails
+  the other side's test. If they ever diverged, a customer would watch the same
+  string resolve in `traffic set` (client-side) and 404 in `rollback`
+  (server-side).
 
 ## Validation
 
