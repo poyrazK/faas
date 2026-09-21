@@ -1484,6 +1484,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"mem_state_resolve_ms", tMemStateResolve.Sub(tMemStateResolveStart).Milliseconds(),
 		"stage_drives_ms", breakdown.StageDrivesMs,
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
+		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
