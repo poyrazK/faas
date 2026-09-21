@@ -244,23 +244,31 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 				Field:  "scaling_policy.scale_in_cooldown_s", Observed: AsAny(sp.ScaleInCooldownS), Limit: AsAny(api.MaxScaleInCooldownS),
 			})
 		}
-		if sp.Target != nil {
-			switch sp.Target.Metric {
-			case "", "rps", "concurrent_requests", "p99_latency_ms":
-			default:
-				out = append(out, Break{
-					Code: api.CodeValidation, Severity: SeverityError,
-					Reason: "scaling_policy.target.metric is not supported",
-					Field:  "scaling_policy.target.metric", Observed: AsAny(sp.Target.Metric),
-				})
-			}
-			if sp.Target.Value < 0 {
-				out = append(out, Break{
-					Code: api.CodeValidation, Severity: SeverityError,
-					Reason: "scaling_policy.target.value must be >= 0",
-					Field:  "scaling_policy.target.value", Observed: AsAny(sp.Target.Value),
-				})
-			}
+		// ADR-194: delegate to the one validator in pkg/api. This was the
+		// third hand-maintained copy of the closed metric set, and it had
+		// drifted furthest — it omitted `queue_depth` entirely, so a
+		// deploy preview reported a perfectly valid worker scaling target
+		// as unsupported while the PATCH that followed accepted it.
+		if sp.Target != nil && len(sp.Targets) > 0 {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: "scaling_policy sets both target and targets",
+				Field:  "scaling_policy.targets",
+			})
+		}
+		if problem := api.ValidateLegacyScalingTarget(sp.Target); problem != nil {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: problem.Detail,
+				Field:  "scaling_policy.target", Observed: AsAny(sp.Target.Metric),
+			})
+		}
+		if problem := api.ValidateScalingTargets("scaling_policy.targets", sp.Targets); problem != nil {
+			out = append(out, Break{
+				Code: api.CodeValidation, Severity: SeverityError,
+				Reason: problem.Detail,
+				Field:  "scaling_policy.targets",
+			})
 		}
 	}
 	// Streaming gate.

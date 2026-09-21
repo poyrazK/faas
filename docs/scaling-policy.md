@@ -22,9 +22,11 @@ For deploys, the policy can be kept beside the source in `gregale.yaml`:
 scaling:
   min_instances: 1
   max_instances: 4
-  target:
-    metric: rps
-    value: 10
+  targets:
+    - metric: concurrent_requests
+      value: 80
+    - metric: cpu
+      value: 70
   scale_out_cooldown_s: 5
   scale_in_cooldown_s: 60
   concurrency_overflow: queue # queue or drop
@@ -32,6 +34,44 @@ scaling:
   wake_max_queue_depth: 32 # 0 uses the plan default; max 8x plan default
   wake_max_queue_wait_seconds: 30 # 0 uses the plan default; max 60
 ```
+
+## Scaling signals
+
+Each entry under `targets` states how much load **one instance** should carry.
+Declaring the signals is the whole configuration surface: you do not write a
+scaling rule, choose a stabilization window, or decide how signals combine.
+
+| metric | meaning | good for |
+|---|---|---|
+| `concurrent_requests` | in-flight requests per instance | request apps; the signal a latency target is really reaching for |
+| `rps` | requests per second per instance | steady traffic with predictable per-request cost |
+| `cpu` | max CPU percent across instances | CPU-bound work whose request count understates its cost |
+| `queue_depth` | backlog each worker should drain | job and worker apps |
+
+When more than one target is declared, Gregale evaluates each independently
+and provisions for whichever asks for the most instances. So:
+
+```yaml
+scaling:
+  targets:
+    - metric: concurrent_requests
+      value: 100
+    - metric: cpu
+      value: 70
+```
+
+means "100 in-flight requests per instance is the target, **and** never let an
+instance sit above 70% CPU" — if requests stay flat but CPU climbs, the app
+still scales out. Each metric may appear at most once, and every value must be
+greater than zero.
+
+The single `target:` form is still accepted and behaves as a one-element
+`targets` list, so existing manifests keep working unchanged.
+
+`p99_latency_ms` was accepted by older releases and never did anything — no
+component ever measured a per-app p99 for scaling. It is now rejected with a
+422 pointing at `concurrent_requests`, which is what rises first when an
+instance starts queueing.
 
 The CLI validates the shape and shows the nested policy in `gregale deploy
 --dry-run`. The server then applies the complete policy atomically and checks

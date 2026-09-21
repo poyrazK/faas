@@ -159,11 +159,28 @@ func TestScalingConfigValidation(t *testing.T) {
 	}{
 		{"negative min", &ScalingConfig{MinInstances: &min}, "min_instances"},
 		{"max below min", &ScalingConfig{MinInstances: manifestIntPtr(2), MaxInstances: &max}, "max_instances"},
-		{"bad metric", &ScalingConfig{Target: &ScalingTarget{Metric: "cpu"}}, "target.metric"},
+		// adr: 194 — "cpu" used to be this case's example of an invalid
+		// metric. It is now a first-class target, so the case needs a name
+		// that is genuinely outside the closed set.
+		{"bad metric", &ScalingConfig{Target: &ScalingTarget{Metric: "memory"}}, "target.metric"},
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
 		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
 		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
 		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
+		// adr: 194 — p99_latency_ms validated for releases with no source
+		// behind it. The rejection must name the replacement.
+		{"phantom latency metric", &ScalingConfig{Target: &ScalingTarget{Metric: "p99_latency_ms", Value: 250}}, "concurrent_requests"},
+		{"phantom latency metric in list", &ScalingConfig{Targets: []ScalingTarget{{Metric: "p99_latency_ms", Value: 250}}}, "concurrent_requests"},
+		{"target and targets both set", &ScalingConfig{
+			Target:  &ScalingTarget{Metric: "cpu", Value: 70},
+			Targets: []ScalingTarget{{Metric: "rps", Value: 50}},
+		}, "not both"},
+		{"duplicate metric in list", &ScalingConfig{Targets: []ScalingTarget{
+			{Metric: "cpu", Value: 70}, {Metric: "cpu", Value: 80},
+		}}, "more than once"},
+		{"zero value in list", &ScalingConfig{Targets: []ScalingTarget{{Metric: "cpu", Value: 0}}}, "must be > 0"},
+		{"cpu above 100", &ScalingConfig{Targets: []ScalingTarget{{Metric: "cpu", Value: 140}}}, "<= 100"},
+		{"missing metric name", &ScalingConfig{Target: &ScalingTarget{Value: 5}}, "target.metric is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

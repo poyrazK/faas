@@ -772,28 +772,20 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// triggers the workload-class gate, but the actual reject
 		// runs in updateApp after loadApp — the validator here
 		// only checks the value shape.
-		if sp.Target != nil {
-			switch sp.Target.Metric {
-			case "", "rps", "concurrent_requests", "queue_depth", "p99_latency_ms":
-				// ok
-			default:
-				return api.NewProblem(http.StatusUnprocessableEntity,
-					api.CodeValidation,
-					"Invalid scaling policy",
-					fmt.Sprintf("target.metric=%q is not in the closed set (rps, concurrent_requests, queue_depth, p99_latency_ms).", sp.Target.Metric))
-			}
-			if sp.Target.Value < 0 {
-				return api.NewProblem(http.StatusUnprocessableEntity,
-					api.CodeValidation,
-					"Invalid scaling policy",
-					fmt.Sprintf("target.value must be >= 0; got %v.", sp.Target.Value))
-			}
-			if sp.Target.Metric == "queue_depth" && sp.Target.Value <= 0 {
-				return api.NewProblem(http.StatusUnprocessableEntity,
-					api.CodeValidation,
-					"Invalid scaling policy",
-					fmt.Sprintf("target.value must be > 0 for queue_depth; got %v.", sp.Target.Value))
-			}
+		//
+		// ADR-194: the closed set and the per-metric value rules live in
+		// pkg/api so this handler, the manifest loader and the deploy-diff
+		// quota gate cannot drift apart again — they held three copies of
+		// the set, and all three agreed on metrics the scheduler did not
+		// implement.
+		if sp.Target != nil && len(sp.Targets) > 0 {
+			return api.ErrScalingTargetConflict()
+		}
+		if err := api.ValidateLegacyScalingTarget(sp.Target); err != nil {
+			return err
+		}
+		if err := api.ValidateScalingTargets("targets", sp.Targets); err != nil {
+			return err
 		}
 	}
 	// Issue #472 / ADR-054: per-app cosign signature-enforcement flag

@@ -3846,6 +3846,13 @@ const (
 	// but admissions are deliberately paced across ticks so one bad metric
 	// sample cannot turn into an unbounded cold-boot fan-out.
 	ScaleUpMaxBurstPerTick = 4
+	// MaxScalingTargets bounds the declared signal list on
+	// ScalingPolicy.Targets (ADR-194). The arbiter is O(n) per app per
+	// scheduler tick and n is a human-authored list, so this exists to keep
+	// a pathological manifest from inflating the sweep — not as a product
+	// limit. It is deliberately larger than the number of distinct sources
+	// that exist, so no app can hit it by declaring every real metric.
+	MaxScalingTargets = 8
 	// ScaleDecisionEventMinIntervalSeconds bounds repeated durable scale
 	// decision events for one app. Metrics remain per-tick; the audit stream
 	// is sampled so a sustained hot app cannot flood events.

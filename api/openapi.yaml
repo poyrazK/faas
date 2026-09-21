@@ -20893,10 +20893,20 @@ components:
           minimum: 0
           example: 5
         target:
-          description: "Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out)."
+          description: "Single-signal form, superseded by `targets` (ADR-194) and still accepted: it is read as a one-element list. Closed metric set: rps | cpu | concurrent_requests | queue_depth. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out). Mutually exclusive with `targets` — setting both is 422."
           oneOf:
             - type: "null"
             - $ref: '#/components/schemas/ScalingTarget'
+        targets:
+          description: "Multi-signal autoscaling (ADR-194). Each entry states how much load ONE instance should carry on that metric; the platform evaluates every entry independently and provisions for the largest resulting instance count. The combination rule, the windowing and the cooldowns are platform policy and are not configurable per metric — declaring the signals is the whole surface. Each metric may appear at most once, every value must be > 0, and cpu is a percentage capped at 100. Mutually exclusive with `target`."
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/ScalingTarget'
+          example:
+            - {metric: concurrent_requests, value: 80}
+            - {metric: cpu, value: 70}
         scale_out_cooldown_s:
           description: "Minimum seconds between two scale-out events. Floor 1 (no 0 traps); ceiling 3600 (1 h). Out-of-range → 422 invalid_cooldown."
           type: integer
@@ -20987,16 +20997,17 @@ components:
           example: 3
 
     ScalingTarget:
-      description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed; the unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
+      description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and since ADR-194 every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
       type: object
       additionalProperties: false
       properties:
         metric:
+          description: "rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-instance in-flight requests. queue_depth = fleet backlog budget per worker."
           type: string
-          enum: [rps, concurrent_requests, queue_depth, p99_latency_ms]
+          enum: [rps, cpu, concurrent_requests, queue_depth]
           example: "rps"
         value:
-          description: "Target value (units depend on Metric). Must be >= 0; queue_depth requires a positive per-worker backlog budget."
+          description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number
           minimum: 0
           example: 1.0
