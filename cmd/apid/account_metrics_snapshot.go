@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/promql"
 )
+
+const accountMetricsPromQLTimeout = 5 * time.Second
 
 // accountMetricsSnapshot is one bounded Prometheus projection for the apps
 // owned by an account. Request totals and error-rate inputs deliberately come
@@ -34,7 +37,7 @@ type accountMetricsSnapshot struct {
 // fetchAccountMetricsSnapshot evaluates the two raw 24h scans sequentially,
 // then fans out the cheap metric families. Running the request counter and
 // latency-bucket scans together can saturate a small Prometheus and make both
-// exceed their independent 3s budgets even though each finishes comfortably
+// exceed their independent budgets even though each finishes comfortably
 // on its own. Every tenant-bearing selector is constrained to the closed
 // app-ID set before Prometheus evaluates it; the allowed map is a second
 // boundary on returned labels. includeThrottled is used by the account SLO panel;
@@ -45,6 +48,7 @@ func fetchAccountMetricsSnapshot(ctx context.Context, client *promql.Client, app
 	if client == nil || len(appIDs) == 0 {
 		return out
 	}
+	client = client.WithTimeout(accountMetricsPromQLTimeout)
 
 	allowed := make(map[string]struct{}, len(appIDs))
 	for _, id := range appIDs {
