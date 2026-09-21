@@ -20256,6 +20256,8 @@ components:
           description: "Initial app-level invocation retry default; queue binding and per-invocation policies may override it."
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        worker_replicas:
+          $ref: '#/components/schemas/WorkerScaling'
         ports:
           type: array
           maxItems: 16
@@ -20580,6 +20582,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'
           description: "Full replacement of the service replica policy. Omit for no change."
+        worker_replicas:
+          allOf:
+            - $ref: '#/components/schemas/WorkerScaling'
+          description: "Full replacement of the worker replica scaling policy. Omit for no change."
         ports:
           type: [array, "null"]
           maxItems: 16
@@ -21087,6 +21093,8 @@ components:
         # other than 'service' is a Validate error.
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        worker_replicas:
+          $ref: '#/components/schemas/WorkerScaling'
         favicon:
           type: [string, "null"]
           format: byte
@@ -21231,6 +21239,31 @@ components:
           minimum: 0
           description: "Desired replica count. Engine wakes replacement instances to maintain this when one fails or is destroyed."
           example: 2
+
+    WorkerScaling:
+      description: "Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."
+      type: object
+      required: [min, max, metric, target]
+      properties:
+        min:
+          type: integer
+          minimum: 0
+          description: "Minimum worker instances to maintain. 0 enables scale-to-zero."
+          example: 0
+        max:
+          type: integer
+          minimum: 1
+          description: "Maximum worker instances (bounded by plan WorkerReplicasMax and app max_concurrency)."
+          example: 50
+        metric:
+          type: string
+          enum: [queue_lag, queue_depth]
+          description: "Queue metric driving autoscaling."
+          example: queue_lag
+        target:
+          type: number
+          description: "Target backlog per worker instance (e.g. 500 messages per worker)."
+          example: 500
 
     # ─── Deployments ──────────────────────────────────────────────────────
 
