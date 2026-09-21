@@ -1576,16 +1576,21 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	}
 	req.Host = f.host
 	client := *f.h.HTTPClient()
-	requestDone := make(chan error, 1)
+	type streamOutcome struct {
+		err    error
+		status int
+		body   string
+	}
+	requestDone := make(chan streamOutcome, 1)
 	go func() {
 		resp, err := client.Do(req)
 		if err != nil {
-			requestDone <- err
+			requestDone <- streamOutcome{err: err}
 			return
 		}
-		_, bodyErr := io.ReadAll(resp.Body)
+		body, bodyErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		requestDone <- bodyErr
+		requestDone <- streamOutcome{err: bodyErr, status: resp.StatusCode, body: string(body)}
 	}()
 
 	waitNormalPathProbe(t, probe.FirstResponseBody(), "restart first response body")
@@ -1596,10 +1601,16 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	f.h.Stop()
 	waitNormalPathProbe(t, probe.Canceled(), "restart bridge cancellation")
 	select {
-	case requestErr := <-requestDone:
+	case outcome := <-requestDone:
 		// The old response must terminate once its owning gateway exits.
-		if requestErr == nil {
-			t.Fatal("in-flight response completed successfully after gateway restart")
+		// A clean EOF here is the failure that matters: the customer cannot
+		// tell a truncated body from a complete one, so report exactly what
+		// arrived. The fake sends "partial-response\n" and then blocks, so a
+		// body equal to that with a nil error means the platform served a
+		// half-response as a success.
+		if outcome.err == nil {
+			t.Fatalf("in-flight response completed successfully after gateway restart: status=%d body=%q (a clean EOF mid-stream is indistinguishable from a complete response)",
+				outcome.status, outcome.body)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight response remained blocked after gateway restart")

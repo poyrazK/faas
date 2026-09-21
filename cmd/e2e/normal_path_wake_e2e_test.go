@@ -302,112 +302,110 @@ func TestE2E_NormalPath_RestoreRPCErrorFailsTheWake(t *testing.T) {
 	}
 }
 
-// TestE2E_NormalPath_ParkReleasesInstanceByTheRightPath covers the park edge,
-// which was unreachable until now: PauseAndSnapshot was Unimplemented, so no
-// CI test had ever observed a park reach the VM boundary at all.
+// TestE2E_NormalPath_ParkCapturesOnlyWhatIsNotAlreadyDurable covers the park
+// edge, unreachable until now because PauseAndSnapshot was Unimplemented.
 //
-// schedd has TWO correct parks and picks between them on the instance's state
-// (Engine.Park), which nothing in the spec prose distinguishes at the call
-// site:
+// schedd captures on park only when the result would not duplicate something
+// already on disk (Engine.captureInitOrReuse). That is not an optimisation
+// detail — capture runs at roughly 100s/GiB, so re-writing an identical
+// snapshot on every park would be one of the most expensive things the
+// platform could do to itself. Both halves are pinned here:
 //
-//   - RUNNING -> capture, then release. The resident guest holds the only copy
-//     of its current memory, so it must be written down before the VM dies.
-//   - WARM    -> release, no capture. A warm instance is a paused restore of a
-//     snapshot that is still on disk; capturing it again would write a second
-//     copy of something already durable.
+//   - no reusable snapshot (the app cold-booted) -> PauseAndSnapshot must run,
+//     because the resident guest holds the only copy of its memory;
+//   - a reusable snapshot exists (the app was restored from it and nothing
+//     changed) -> PauseAndSnapshot must NOT run; the existing row is kept.
 //
-// The test asserts whichever contract applies to the state the instance is
-// actually in rather than forcing one. Pinning only the RUNNING path made this
-// flaky and, worse, would have read as "park is broken" when schedd was doing
-// exactly the right thing — the first version of this test failed that way.
+// A third path exists and is also correct: Engine.Park releases a WARM
+// instance without capturing, since warm is a paused restore of a snapshot
+// still on disk. The subtests tolerate it rather than asserting against it —
+// which state the scheduler has the instance in at park time is its business,
+// and an earlier version of this test read "park is broken" when schedd was
+// behaving correctly.
 //
-// The invariant underneath both is the one that matters: after a park the
-// instance is no longer resident (§6.2-4) and the app is still wakeable
-// (§6.2-3).
-//
-// It drives schedd's ParkInstance RPC — the entry point meterd's quota path
-// and the operator tooling use — not POST /v1/apps/{slug}/park, which marks
-// the app evicted_cold. That endpoint is a COLD eviction: it tears the VM down
-// deliberately without capturing, so asserting a snapshot against it would be
-// asserting the opposite of what it promises.
-func TestE2E_NormalPath_ParkReleasesInstanceByTheRightPath(t *testing.T) {
-	f := newNormalPathFixture(t, "park-releases-instance")
-	if f == nil {
-		return
-	}
-	dep := createNormalPathParkedDeployment(t, f)
-	seedNormalPathSnapshot(t, f, dep.ID, normalPathSnapshotOpts{})
-	wakeNormalPathApp(t, f)
-
-	instance, err := f.store.RunningInstanceForApp(f.ctx, f.app.ID)
-	if err != nil {
-		t.Fatalf("no running instance after wake: %v", err)
-	}
-
-	// Read the state schedd will branch on, as late as possible before the
-	// call. A change between this read and the RPC only costs a clear failure
-	// message, not a wrong assertion.
-	before, err := f.store.InstanceByID(f.ctx, instance.ID)
-	if err != nil {
-		t.Fatalf("read instance before park: %v", err)
-	}
-
-	conn, err := grpc.NewClient("unix://"+f.h.ScheddSock,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial schedd: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
-	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
-	defer cancel()
-	if _, err := scheddpb.NewScheddClient(conn).ParkInstance(ctx,
-		&scheddpb.ParkInstanceRequest{InstanceId: instance.ID, Reason: "e2e_park"}); err != nil {
-		t.Fatalf("park instance: %v", err)
-	}
-
-	captured := func() bool {
-		for _, call := range f.vmmd.SnapshotCalls() {
-			if call.GetInstance() == instance.ID {
-				return true
+// Drives schedd's ParkInstance RPC — the entry point meterd's quota path and
+// operator tooling use — not POST /v1/apps/{slug}/park, which marks the app
+// evicted_cold. That endpoint is a COLD eviction: it tears the VM down
+// deliberately without capturing.
+func TestE2E_NormalPath_ParkCapturesOnlyWhatIsNotAlreadyDurable(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		slug        string
+		seedSnap    bool
+		wantCapture bool
+	}{
+		{name: "cold booted app captures", slug: "park-captures", seedSnap: false, wantCapture: true},
+		{name: "restored app reuses", slug: "park-reuses", seedSnap: true, wantCapture: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newNormalPathFixture(t, tc.slug)
+			if f == nil {
+				return
 			}
-		}
-		return false
-	}
-	released := func() bool {
-		for _, id := range f.vmmd.DestroyCalls() {
-			if id == instance.ID {
-				return true
+			dep := createNormalPathParkedDeployment(t, f)
+			if tc.seedSnap {
+				seedNormalPathSnapshot(t, f, dep.ID, normalPathSnapshotOpts{})
 			}
-		}
-		return false
-	}
+			wakeNormalPathApp(t, f)
 
-	switch before.State {
-	case string(state.StateRunning):
-		waitForWake(t, 20*time.Second, captured,
-			"a RUNNING instance was parked without capturing its memory first")
-	case string(state.StateWarm):
-		waitForWake(t, 20*time.Second, released,
-			"a WARM instance was parked without releasing its VM")
-		if captured() {
-			t.Error("a WARM instance was captured on park; its snapshot is already on disk")
-		}
-	default:
-		t.Fatalf("instance was %q before park, which Engine.Park ignores entirely (it acts only on running or warm)", before.State)
-	}
+			instance, err := f.store.RunningInstanceForApp(f.ctx, f.app.ID)
+			if err != nil {
+				t.Fatalf("no running instance after wake: %v", err)
+			}
+			before, err := f.store.InstanceByID(f.ctx, instance.ID)
+			if err != nil {
+				t.Fatalf("read instance before park: %v", err)
+			}
 
-	// §6.2-4: a parked app holds zero resident RAM, whichever path ran.
-	waitForWake(t, 10*time.Second, func() bool {
-		ins, err := f.store.InstanceByID(f.ctx, instance.ID)
-		if err != nil {
-			return false
-		}
-		return ins.State != string(state.StateRunning) && ins.State != string(state.StateWarm)
-	}, "instance stayed resident after a successful park")
+			conn, err := grpc.NewClient("unix://"+f.h.ScheddSock,
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("dial schedd: %v", err)
+			}
+			defer func() { _ = conn.Close() }()
+			ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
+			defer cancel()
+			if _, err := scheddpb.NewScheddClient(conn).ParkInstance(ctx,
+				&scheddpb.ParkInstanceRequest{InstanceId: instance.ID, Reason: "e2e_park"}); err != nil {
+				t.Fatalf("park instance: %v", err)
+			}
 
-	// §6.2-3: the app must still be wakeable. The seeded snapshot is the
-	// cheapest proof that a park never leaves an app stranded.
-	if _, err := f.store.LatestSnapshotForTier(f.ctx, dep.ID, state.SnapshotTierInit); err != nil {
-		t.Errorf("app has no usable snapshot after park: %v", err)
+			captured := func() bool {
+				for _, call := range f.vmmd.SnapshotCalls() {
+					if call.GetInstance() == instance.ID {
+						return true
+					}
+				}
+				return false
+			}
+
+			// §6.2-4: a parked app holds zero resident RAM, whichever path ran.
+			waitForWake(t, 20*time.Second, func() bool {
+				ins, err := f.store.InstanceByID(f.ctx, instance.ID)
+				if err != nil {
+					return false
+				}
+				return ins.State != string(state.StateRunning) && ins.State != string(state.StateWarm)
+			}, "instance stayed resident after a successful park")
+
+			switch {
+			case before.State == string(state.StateWarm):
+				// Warm never captures; nothing to assert beyond the release above.
+			case tc.wantCapture:
+				waitForWake(t, 20*time.Second, captured,
+					"a cold-booted RUNNING instance was parked without capturing its memory; "+
+						"nothing was on disk to reuse, so the guest's state is now lost")
+			default:
+				if captured() {
+					t.Error("park re-captured a snapshot the app was already restored from; " +
+						"capture is ~100s/GiB, so this doubles park cost for no durability gain")
+				}
+			}
+
+			// §6.2-3: the app must still be wakeable either way.
+			if _, err := f.store.LatestSnapshotForTier(f.ctx, dep.ID, state.SnapshotTierInit); err != nil {
+				t.Errorf("app has no usable snapshot after park: %v", err)
+			}
+		})
 	}
 }
