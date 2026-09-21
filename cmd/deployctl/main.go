@@ -45,7 +45,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff> [dirs...]")
+		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|bundle-create|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -84,6 +84,11 @@ func main() {
 	case "deploy":
 		if err := runDeploy(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl deploy:", err)
+			os.Exit(1)
+		}
+	case "rollback":
+		if err := runRollback(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl rollback:", err)
 			os.Exit(1)
 		}
 	case "migration-dry-run":
@@ -343,6 +348,38 @@ func runDeploy(args []string) error {
 		return err
 	}
 	return controller.Deploy(context.Background(), args[0])
+}
+
+// runRollback activates the newest verified retained release other than the
+// one currently active.
+//
+// Deploy already unwinds its own steps, but the CD pipeline's post-activation
+// gates — liveness, the public customer path, metering convergence — run after
+// deploy has returned success, and until now had no way to undo. `bundle-check`
+// has reported "rollback available: true" the whole time with nothing able to
+// act on it.
+//
+// Takes the same lock as deploy, so it cannot interleave with one, and prints
+// the release it activated so the CD log records what the fleet was put back
+// to.
+func runRollback(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: deployctl rollback")
+	}
+	controller, err := deploycontroller.New(deploycontroller.Config{
+		ReleasesRoot: "/opt/faas/releases",
+		CurrentPath:  "/opt/faas/current",
+		LockPath:     "/run/lock/faas-deploy.lock",
+	}, defaultHostRuntime())
+	if err != nil {
+		return err
+	}
+	target, err := controller.Rollback(context.Background())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("rolled back to: %s\n", target)
+	return nil
 }
 
 // generateTo is the core: write unit files + slice + JSON to named
