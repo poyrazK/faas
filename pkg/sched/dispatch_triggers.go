@@ -77,6 +77,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -466,6 +467,13 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.observeESMLag(t.Kind, shard, ageSeconds)
 		if lagMessages, ok := consumerLagFor(rec, t.Kind); ok {
 			l.observeESMConsumerLag(t.Kind, shard, lagMessages, ageSeconds)
+			// ADR-198: the same number the dashboard already showed now
+			// also reaches the scheduler. Recorded per partition because
+			// each message's high_water_mark describes only its own; the
+			// tracker sums the freshest sample per partition.
+			if l.kafkaLag != nil {
+				l.kafkaLag.Observe(t.AppID.String(), partitionKeyFor(rec), lagMessages, time.Now())
+			}
 		}
 	}
 
@@ -1815,4 +1823,27 @@ func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) e
 		return nil
 	}
 	return poller.Ack(ctx, t, []string{rec.ItemIdentifier})
+}
+
+// partitionKeyFor identifies the partition a record came from, for ADR-198's
+// per-partition lag accounting. Topic is included because one app may bind
+// several Kafka triggers and partition numbers repeat across topics — summing
+// "partition 0" from two topics into one bucket would hide one of them.
+//
+// Falls back to the topic alone, then to a single shared key, so a record
+// with incomplete metadata still contributes a reading rather than being
+// silently dropped.
+func partitionKeyFor(rec SourceRecord) string {
+	if rec.Metadata == nil {
+		return "_unknown"
+	}
+	topic, _ := rec.Metadata["topic"].(string)
+	partition, ok := numericMetadataInt64(rec.Metadata["partition"])
+	if !ok {
+		if topic != "" {
+			return topic
+		}
+		return "_unknown"
+	}
+	return topic + "/" + strconv.FormatInt(partition, 10)
 }

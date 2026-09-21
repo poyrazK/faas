@@ -47,6 +47,18 @@ scaling rule, choose a stabilization window, or decide how signals combine.
 | `rps` | requests per second per instance | steady traffic with predictable per-request cost |
 | `cpu` | max CPU percent across instances | CPU-bound work whose request count understates its cost |
 | `queue_depth` | backlog each worker should drain | job and worker apps |
+| `kafka_lag` | messages behind the consumer group, per instance | apps with a Kafka trigger |
+
+`kafka_lag` is **not** a synonym for `queue_depth`. The Kafka poller pulls at
+most a batch of messages per tick, so `queue_depth` shows what Gregale has
+already pulled while `kafka_lag` shows what is still waiting on the broker — a
+million-message backlog with a batch size of 64 shows a queue depth of 64.
+Scale a Kafka consumer on `kafka_lag`.
+
+The lag reading comes from the messages the poller fetches, so it is only
+available while the trigger is dispatching. If a topic is idle, a broker is
+unreachable, or the trigger is disabled, the app reports no lag and scales on
+its other declared signals rather than on a stale number.
 
 When more than one target is declared, Gregale evaluates each independently
 and provisions for whichever asks for the most instances. So:

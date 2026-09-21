@@ -7,9 +7,9 @@
  */
 export type ScalingTarget = {
   /**
-   * rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-instance in-flight requests. queue_depth = fleet backlog budget per worker.
+   * rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-instance in-flight requests. queue_depth = fleet backlog budget per worker. kafka_lag = messages behind the consumer group, per instance (ADR-198) — distinct from queue_depth, which only reflects what the poller has already pulled.
    */
-  metric?: 'rps' | 'cpu' | 'concurrent_requests' | 'queue_depth';
+  metric?: 'rps' | 'cpu' | 'concurrent_requests' | 'queue_depth' | 'kafka_lag';
   /**
    * Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100.
    */

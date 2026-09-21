@@ -1754,6 +1754,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Interval:                cfg.ScaleUpInterval,
 			QueueStatsReader:        store,
 			QueueBindingStatsReader: store,
+			// ADR-198: the SAME tracker the dispatch loop writes to.
+			// Handing the trigger its own instance would give it a
+			// permanently empty one, which reads as "no signal" — a
+			// kafka_lag target would validate and never scale, the
+			// phantom shape ADR-194 exists to prevent.
+			KafkaLagReader: loop.KafkaLagTracker(),
 		},
 	)
 	targetsTrigger.WithOwnerNodeID(ownerNodeID)

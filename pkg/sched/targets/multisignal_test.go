@@ -4,6 +4,7 @@ package targets
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -180,5 +181,110 @@ func TestTrigger_MaxInstancesBoundsTheInflightAxis(t *testing.T) {
 	// Unbounded demand is 50*2/1 = 100; max_instances 3 minus 2 live = 1.
 	if engine.burstCounts[0] != 1 {
 		t.Errorf("admissions = %d, want 1: max_instances=3 must bound the in-flight axis", engine.burstCounts[0])
+	}
+}
+
+// fakeKafkaLag is a KafkaLagReader whose reading is fixed per app.
+type fakeKafkaLag struct {
+	byApp map[string]int64
+	have  bool
+}
+
+func (f *fakeKafkaLag) LagForApp(appID string, _ time.Time) (int64, bool) {
+	v, ok := f.byApp[appID]
+	if !ok {
+		return 0, false
+	}
+	return v, f.have
+}
+
+// adr: 198 — a declared kafka_lag target must actually scale the app.
+//
+// The signal is distinct from queue_depth and not a synonym: the Kafka poller
+// pulls at most batchMax messages per tick, so queue_depth reflects what
+// Gregale has already PULLED while kafka_lag reflects what is still waiting
+// on the broker.
+func TestTrigger_KafkaLagScales(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID:             "app1",
+		MaxConcurrency: 20,
+		ScalingPolicy:  multiPolicy(0, state.ScalingTarget{Metric: api.ScalingMetricKafkaLag, Value: 100}),
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
+	engine := &burstFakeEngine{fakeEngine: &fakeEngine{}}
+	lag := &fakeKafkaLag{byApp: map[string]int64{"app1": 450}, have: true}
+
+	tr := New(store, nil, engine, ledger, Options{
+		Metrics:        wire.NewOpsMetrics("schedd"),
+		KafkaLagReader: lag,
+	})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.burstCounts) != 1 {
+		t.Fatalf("burstCounts = %v, want one batch: a declared kafka_lag target did not scale", engine.burstCounts)
+	}
+	// ceil(450/100) = 5 desired, minus 2 live = 3 admissions.
+	if engine.burstCounts[0] != 3 {
+		t.Errorf("admissions = %d, want 3 (ceil(450/100) - 2)", engine.burstCounts[0])
+	}
+}
+
+// adr: 198 — a stale or absent lag reading must never admit. A wedged poller
+// freezes its last reading; treating that as current would pin the fleet.
+func TestTrigger_KafkaLagWithoutReadingDoesNotScale(t *testing.T) {
+	newTrigger := func(reader KafkaLagReader) (*Trigger, *fakeEngine) {
+		store := &fakeStore{apps: []state.App{{
+			ID:             "app1",
+			MaxConcurrency: 20,
+			ScalingPolicy:  multiPolicy(0, state.ScalingTarget{Metric: api.ScalingMetricKafkaLag, Value: 10}),
+		}}}
+		engine := &fakeEngine{}
+		return New(store, nil, engine, &fakeLedger{conc: map[string]int{"app1": 2}},
+			Options{Metrics: wire.NewOpsMetrics("schedd"), KafkaLagReader: reader}), engine
+	}
+	// A reader that holds a huge backlog but reports it as not fresh.
+	stale, staleEngine := newTrigger(&fakeKafkaLag{byApp: map[string]int64{"app1": 99999}, have: false})
+	if err := stale.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(staleEngine.admitCalls) != 0 {
+		t.Errorf("stale reading admitted %v; a frozen backlog must not drive capacity", staleEngine.admitCalls)
+	}
+	// No reader wired at all (a deployment with no Kafka triggers).
+	none, noneEngine := newTrigger(nil)
+	if err := none.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(noneEngine.admitCalls) != 0 {
+		t.Errorf("nil reader admitted %v", noneEngine.admitCalls)
+	}
+}
+
+// adr: 198 — kafka_lag composes with the other signals through the same
+// ADR-194 arbiter, and an unreadable lag must not suppress a hot sibling.
+func TestTrigger_KafkaLagCombinesWithInflight(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID:             "app1",
+		MaxConcurrency: 20,
+		ScalingPolicy: multiPolicy(0,
+			state.ScalingTarget{Metric: api.ScalingMetricConcurrentRequests, Value: 4},
+			state.ScalingTarget{Metric: api.ScalingMetricKafkaLag, Value: 100},
+		),
+	}}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
+	engine := &burstFakeEngine{fakeEngine: &fakeEngine{}}
+	// In-flight demands ceil(5*2/4) = 3 (1 admission); lag demands
+	// ceil(400/100) = 4 (2 admissions). The larger must win.
+	tr := New(store, &fakeInstats{byApp: map[string]int64{"app1": 5}}, engine, ledger, Options{
+		Metrics:        wire.NewOpsMetrics("schedd"),
+		KafkaLagReader: &fakeKafkaLag{byApp: map[string]int64{"app1": 400}, have: true},
+	})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.burstCounts) != 1 || engine.burstCounts[0] != 2 {
+		t.Fatalf("burstCounts = %v, want [2]: the lag signal's 4 desired must beat in-flight's 3",
+			engine.burstCounts)
 	}
 }

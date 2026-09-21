@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
+	"github.com/onebox-faas/faas/pkg/sched/kafkalag"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
@@ -91,6 +92,12 @@ type Loop struct {
 	// cache is invalidated by NotifyTriggerChanged (commit #16);
 	// for now we never rebuild within a process lifetime.
 	triggerPollers map[string]triggerSource
+
+	// kafkaLag accumulates per-app Kafka consumer backlog from the
+	// high_water_mark stamped on every fetched message (ADR-198), so the
+	// targets trigger can scale on it. Nil in deployments with no Kafka
+	// triggers; every write site is nil-safe.
+	kafkaLag *kafkalag.Tracker
 	// triggerSecretIdentities opens Kafka credentials only in the
 	// short-lived trigger copy passed to a poller factory. Current and
 	// previous identities coexist here during host-key rotation.
@@ -3822,4 +3829,18 @@ func (l *Loop) RunCronNow(ctx context.Context, cronID, accountID string) (CronRu
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// KafkaLagTracker returns the loop's Kafka consumer-lag tracker (ADR-198),
+// creating it on first use. cmd/schedd hands the same tracker to the targets
+// trigger as its KafkaLagReader, which is the only thing connecting a
+// dispatched Kafka record to a scaling decision.
+func (l *Loop) KafkaLagTracker() *kafkalag.Tracker {
+	if l == nil {
+		return nil
+	}
+	if l.kafkaLag == nil {
+		l.kafkaLag = kafkalag.New(0)
+	}
+	return l.kafkaLag
 }

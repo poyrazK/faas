@@ -159,3 +159,13 @@ not exist yet (a consumer-group reader, a push or scrape path for app-defined
 series, a cron evaluator against `min_instances`), and each can be added as a
 new metric in this list without changing the arbitration contract — which is
 the point of fixing the contract first.
+
+> **Correction (ADR-198, ADR-195).** The parenthetical above was wrong about
+> two of the three. `pkg/sched/poller_kafka.go` is a consumer-group reader
+> that has run in production since issue #757, and `consumerLagFor` in
+> `dispatch_triggers.go` already turned its `high_water_mark` into a message
+> count — the number existed and reached a dashboard, it simply never reached
+> the scheduler. ADR-198 adds `kafka_lag` as the fifth metric. `pkg/cronexpr`
+> likewise already existed, and ADR-195 used it for scheduled floors. Only
+> custom application metrics genuinely lacked a source. The arbitration
+> contract held in both cases, which was the point.

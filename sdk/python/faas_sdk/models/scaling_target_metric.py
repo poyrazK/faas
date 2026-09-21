@@ -1,10 +1,11 @@
 from typing import Literal
 
-ScalingTargetMetric = Literal["concurrent_requests", "cpu", "queue_depth", "rps"]
+ScalingTargetMetric = Literal["concurrent_requests", "cpu", "kafka_lag", "queue_depth", "rps"]
 
 SCALING_TARGET_METRIC_VALUES: set[ScalingTargetMetric] = {
     "concurrent_requests",
     "cpu",
+    "kafka_lag",
     "queue_depth",
     "rps",
 }

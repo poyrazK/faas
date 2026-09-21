@@ -28,6 +28,15 @@ const (
 	// drain. Unlike the others this is compared fleet-wide: the fleet is
 	// hot when depth exceeds target × workers.
 	ScalingMetricQueueDepth = "queue_depth"
+	// ScalingMetricKafkaLag targets the messages each consumer should be
+	// behind (ADR-198). Like queue_depth it is compared fleet-wide.
+	//
+	// Distinct from queue_depth, not a synonym: the Kafka poller pulls at
+	// most batchMax messages per tick, so queue_depth shows what Gregale
+	// has already PULLED while this shows what is still waiting on the
+	// broker. A million-message backlog at batch size 64 presents a queue
+	// depth of 64.
+	ScalingMetricKafkaLag = "kafka_lag"
 )
 
 // ScalingMetricP99LatencyMS was in the closed set before ADR-194 and had no
@@ -46,6 +55,7 @@ func ScalingMetrics() []string {
 		ScalingMetricCPU,
 		ScalingMetricConcurrentRequests,
 		ScalingMetricQueueDepth,
+		ScalingMetricKafkaLag,
 	}
 }
 

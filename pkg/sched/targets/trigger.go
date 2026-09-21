@@ -144,6 +144,18 @@ type QueueBindingStatsReader interface {
 	QueueStateForQueue(ctx context.Context, appID, queueName string) (state.QueueStats, error)
 }
 
+// KafkaLagReader supplies the per-app Kafka consumer backlog for kafka_lag
+// targets (ADR-198). Optional: a deployment with no Kafka triggers wires nil
+// and the axis simply reports no signal.
+//
+// The concrete implementation is *pkg/sched/kafkalag.Tracker, which the
+// schedd dispatch loop fills from the high_water_mark stamped on every
+// fetched message. The interface takes the clock so the trigger's own tick
+// time drives the freshness bound rather than a second call to time.Now.
+type KafkaLagReader interface {
+	LagForApp(appID string, now time.Time) (int64, bool)
+}
+
 // queueDepthSignal keeps the aggregate queue projection used by the generic
 // scaler together with the binding-level samples needed to size a worker
 // fleet fairly. A single app-level depth is not enough when two bindings have
@@ -421,6 +433,7 @@ type Trigger struct {
 	instats       InstatsReader
 	queueStats    QueueStatsReader
 	queueBindings QueueBindingStatsReader
+	kafkaLag      KafkaLagReader
 	engine        Engine
 	ledger        Ledger
 	metrics       *wire.OpsMetrics
@@ -464,6 +477,9 @@ type Options struct {
 	// enabled binding backlogs for queue_depth targets. It is optional so
 	// legacy app-wide queues continue to use QueueStatsReader.
 	QueueBindingStatsReader QueueBindingStatsReader
+	// KafkaLagReader supplies the backlog for kafka_lag targets (ADR-198).
+	// Optional, like the queue readers above.
+	KafkaLagReader KafkaLagReader
 }
 
 // New constructs the trigger. instats is REQUIRED (unlike the
@@ -483,6 +499,7 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 		instats:          instats,
 		queueStats:       opts.QueueStatsReader,
 		queueBindings:    opts.QueueBindingStatsReader,
+		kafkaLag:         opts.KafkaLagReader,
 		engine:           engine,
 		ledger:           ledger,
 		metrics:          opts.Metrics,
@@ -585,7 +602,12 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // effects are the admission/reconciliation call on the scale branch and the
 // metric observations.
 func (t *Trigger) Tick(ctx context.Context) error {
-	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil) {
+	// Every signal source this trigger can read must appear here, or an app
+	// declaring only the missing one is never evaluated. kafkaLag was
+	// omitted on the first cut of ADR-198 and a kafka_lag-only app on a
+	// schedd without instats or a queue reader silently never scaled.
+	if t == nil || t.appStore == nil ||
+		(t.instats == nil && t.queueStats == nil && t.queueBindings == nil && t.kafkaLag == nil) {
 		return nil
 	}
 	now := time.Now()
@@ -616,7 +638,8 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// raised. Across a tick pair that is the max over all signals.
 		inflightTarget, haveInflightTarget := policy.TargetFor(api.ScalingMetricConcurrentRequests)
 		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
-		if !haveInflightTarget && !haveQueueTarget {
+		kafkaTarget, haveKafkaTarget := policy.TargetFor(api.ScalingMetricKafkaLag)
+		if !haveInflightTarget && !haveQueueTarget && !haveKafkaTarget {
 			continue
 		}
 		conc := 0
@@ -634,7 +657,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// must not suppress a different one that is hot. When it is the
 		// only declared axis, arbitration returns not-hot and the app still
 		// reports no_signal exactly as it did before ADR-194.
-		obs := make([]scalesignal.Observation, 0, 2)
+		obs := make([]scalesignal.Observation, 0, 3)
 		var dec Decision
 		var observedInflight int64
 		var observedQueueDepth int
@@ -711,6 +734,24 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				Target:   queueTarget,
 				Measured: float64(observedQueueDepth),
 				Have:     haveQueue,
+			})
+		}
+
+		if haveKafkaTarget {
+			// ADR-198. A nil reader (no Kafka triggers wired on this
+			// schedd) and a stale sample are the same answer: no
+			// reading. Never admit on a frozen backlog — a wedged
+			// poller would otherwise pin the fleet at whatever the lag
+			// was when it stopped, and bill for it.
+			lag, haveLag := int64(0), false
+			if t.kafkaLag != nil {
+				lag, haveLag = t.kafkaLag.LagForApp(app.ID, now)
+			}
+			obs = append(obs, scalesignal.Observation{
+				Metric:   api.ScalingMetricKafkaLag,
+				Target:   kafkaTarget,
+				Measured: float64(lag),
+				Have:     haveLag,
 			})
 		}
 
