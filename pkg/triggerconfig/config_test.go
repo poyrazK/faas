@@ -203,3 +203,97 @@ func TestMergeForUpdatePreservesRotatesAndDeletesSecretBlocks(t *testing.T) {
 		t.Fatalf("whole block removal retained secrets: %s", removed)
 	}
 }
+
+func TestRedisConfigSealOpenRedactRoundTrip(t *testing.T) {
+	identity := newIdentity(t)
+	raw := json.RawMessage(`{"addr":"redis.example.com:6379","stream":"s1","group":"g1","password":"redis-secret-pass","tls":{"client_key":"tls-private-key"}}`)
+
+	sealed, err := Seal(api.TriggerKindRedisStreams, raw, identity.Recipient())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	if bytes.Contains(sealed, []byte("redis-secret-pass")) || bytes.Contains(sealed, []byte("tls-private-key")) {
+		t.Fatalf("sealed redis leaked secrets: %s", sealed)
+	}
+	sealedObj := decodeMap(t, sealed)
+	if sealedObj["password_sealed"] == nil {
+		t.Fatalf("expected password_sealed on redis config: %s", sealed)
+	}
+	if _, ok := sealedObj["password"]; ok {
+		t.Fatalf("plaintext password retained: %s", sealed)
+	}
+	tlsObj := nestedMap(t, sealedObj, "tls")
+	if tlsObj["client_key_sealed"] == nil {
+		t.Fatalf("expected client_key_sealed on redis tls: %s", sealed)
+	}
+
+	redacted := Redact(api.TriggerKindRedisStreams, sealed)
+	redactedObj := decodeMap(t, redacted)
+	if redactedObj["password_set"] != true {
+		t.Fatalf("expected password_set: true on redacted redis: %s", redacted)
+	}
+	if redactedObj["password_sealed"] != nil || redactedObj["password"] != nil {
+		t.Fatalf("redacted redis leaked password/ciphertext: %s", redacted)
+	}
+
+	opened, err := Open(api.TriggerKindRedisStreams, sealed, []*age.X25519Identity{identity})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !bytes.Contains(opened, []byte("redis-secret-pass")) || !bytes.Contains(opened, []byte("tls-private-key")) {
+		t.Fatalf("opened redis config lost secrets: %s", opened)
+	}
+
+	// MergeForUpdate
+	merged, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed,
+		json.RawMessage(`{"addr":"new.redis.internal:6379","stream":"s2","group":"g2"}`),
+		[]*age.X25519Identity{identity})
+	if err != nil {
+		t.Fatalf("MergeForUpdate: %v", err)
+	}
+	if !bytes.Contains(merged, []byte("redis-secret-pass")) {
+		t.Fatalf("merged redis config did not preserve password: %s", merged)
+	}
+}
+
+func TestNATSConfigSealOpenRedactRoundTrip(t *testing.T) {
+	identity := newIdentity(t)
+	raw := json.RawMessage(`{"url":"nats://nats.cloud:4222","stream":"events","subject":"events.>","token":"nats-auth-token","tls":{"client_key":"nats-key"}}`)
+
+	sealed, err := Seal(api.TriggerKindNATS, raw, identity.Recipient())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	if bytes.Contains(sealed, []byte("nats-auth-token")) || bytes.Contains(sealed, []byte("nats-key")) {
+		t.Fatalf("sealed nats leaked secrets: %s", sealed)
+	}
+	sealedObj := decodeMap(t, sealed)
+	if sealedObj["token_sealed"] == nil {
+		t.Fatalf("expected token_sealed on nats config: %s", sealed)
+	}
+
+	redacted := Redact(api.TriggerKindNATS, sealed)
+	redactedObj := decodeMap(t, redacted)
+	if redactedObj["token_set"] != true {
+		t.Fatalf("expected token_set: true on redacted nats: %s", redacted)
+	}
+
+	opened, err := Open(api.TriggerKindNATS, sealed, []*age.X25519Identity{identity})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !bytes.Contains(opened, []byte("nats-auth-token")) || !bytes.Contains(opened, []byte("nats-key")) {
+		t.Fatalf("opened nats config lost secrets: %s", opened)
+	}
+
+	// MergeForUpdate
+	merged, err := MergeForUpdate(api.TriggerKindNATS, sealed,
+		json.RawMessage(`{"url":"nats://nats-v2.cloud:4222","stream":"events","subject":"events.>"}`),
+		[]*age.X25519Identity{identity})
+	if err != nil {
+		t.Fatalf("MergeForUpdate: %v", err)
+	}
+	if !bytes.Contains(merged, []byte("nats-auth-token")) {
+		t.Fatalf("merged nats config did not preserve token: %s", merged)
+	}
+}

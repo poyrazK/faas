@@ -23,8 +23,10 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,25 +66,60 @@ type redisPoller struct {
 	closeErr  error
 }
 
+type redisTLSConfig struct {
+	CACert     string `json:"ca_cert,omitempty"`
+	ClientCert string `json:"client_cert,omitempty"`
+	ClientKey  string `json:"client_key,omitempty"`
+	SkipVerify bool   `json:"skip_verify,omitempty"`
+}
+
+type redisFlexibleTLS struct {
+	Enabled bool
+	Config  *redisTLSConfig
+}
+
+func (r *redisFlexibleTLS) UnmarshalJSON(b []byte) error {
+	trimmed := bytes.TrimSpace(b)
+	if bytes.Equal(trimmed, []byte("true")) {
+		r.Enabled = true
+		return nil
+	}
+	if bytes.Equal(trimmed, []byte("false")) || bytes.Equal(trimmed, []byte("null")) {
+		r.Enabled = false
+		return nil
+	}
+	var cfg redisTLSConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return err
+	}
+	r.Enabled = true
+	r.Config = &cfg
+	return nil
+}
+
 // redisConfig is the per-kind config blob.
 //
 // Schema (validated in pkg/gregalemanifest.validateKindConfig):
 //
 //	{
 //	  "addr":     "redis:6379",
+//	  "url":      "rediss://...",
 //	  "stream":   "cacheinvalids",
 //	  "group":    "faas-cache",
 //	  "username": "default",
 //	  "password": "secret",
+//	  "db":       0,
 //	  "tls":      true
 //	}
 type redisConfig struct {
-	Addr     string `json:"addr"`
-	Stream   string `json:"stream"`
-	Group    string `json:"group"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	TLS      bool   `json:"tls,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Addr     string            `json:"addr,omitempty"`
+	Stream   string            `json:"stream"`
+	Group    string            `json:"group"`
+	Username string            `json:"username,omitempty"`
+	Password string            `json:"password,omitempty"`
+	DB       int               `json:"db,omitempty"`
+	TLS      *redisFlexibleTLS `json:"tls,omitempty"`
 }
 
 func decodeRedisConfig(t sqlc.Trigger) (redisConfig, error) {
@@ -93,8 +130,8 @@ func decodeRedisConfig(t sqlc.Trigger) (redisConfig, error) {
 	if err := json.Unmarshal(t.Config, &cfg); err != nil {
 		return cfg, fmt.Errorf("redis_poller: decode config: %w", err)
 	}
-	if cfg.Addr == "" {
-		return cfg, fmt.Errorf("redis_poller: trigger missing addr")
+	if cfg.Addr == "" && cfg.URL == "" {
+		return cfg, fmt.Errorf("redis_poller: trigger missing addr or url")
 	}
 	if cfg.Stream == "" {
 		return cfg, fmt.Errorf("redis_poller: trigger missing stream")
@@ -119,18 +156,65 @@ func newRedisPoller(t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := &redis.Options{
-		Addr:         cfg.Addr,
-		Username:     cfg.Username,
-		Password:     cfg.Password,
-		Dialer:       oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second}),
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-		PoolSize:     4,
+	var opts *redis.Options
+	if cfg.URL != "" {
+		parsedOpts, err := redis.ParseURL(cfg.URL)
+		if err != nil {
+			return nil, fmt.Errorf("redis_poller: parse url %q: %w", cfg.URL, err)
+		}
+		opts = parsedOpts
+	} else {
+		opts = &redis.Options{
+			Addr:     cfg.Addr,
+			Username: cfg.Username,
+			Password: cfg.Password,
+			DB:       cfg.DB,
+		}
 	}
-	if cfg.TLS {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.Addr != "" && cfg.URL != "" {
+		opts.Addr = cfg.Addr
+	}
+	if cfg.Username != "" {
+		opts.Username = cfg.Username
+	}
+	if cfg.Password != "" {
+		opts.Password = cfg.Password
+	}
+	if cfg.DB != 0 {
+		opts.DB = cfg.DB
+	}
+	opts.Dialer = oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second})
+	opts.DialTimeout = 5 * time.Second
+	opts.ReadTimeout = 3 * time.Second
+	opts.WriteTimeout = 3 * time.Second
+	opts.PoolSize = 4
+
+	if cfg.TLS != nil && cfg.TLS.Enabled {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if opts.TLSConfig != nil {
+			tlsCfg = opts.TLSConfig
+			tlsCfg.MinVersion = tls.VersionTLS12
+		}
+		if cfg.TLS.Config != nil {
+			if cfg.TLS.Config.CACert != "" {
+				pool := x509.NewCertPool()
+				if !pool.AppendCertsFromPEM([]byte(cfg.TLS.Config.CACert)) {
+					return nil, errors.New("redis_poller: malformed CA certificate PEM")
+				}
+				tlsCfg.RootCAs = pool
+			}
+			if cfg.TLS.Config.ClientCert != "" && cfg.TLS.Config.ClientKey != "" {
+				cert, err := tls.X509KeyPair([]byte(cfg.TLS.Config.ClientCert), []byte(cfg.TLS.Config.ClientKey))
+				if err != nil {
+					return nil, fmt.Errorf("redis_poller: client cert/key: %w", err)
+				}
+				tlsCfg.Certificates = []tls.Certificate{cert}
+			}
+			if cfg.TLS.Config.SkipVerify {
+				tlsCfg.InsecureSkipVerify = true
+			}
+		}
+		opts.TLSConfig = tlsCfg
 	}
 	client := redis.NewClient(opts)
 	// Verify the connection up-front — a misconfigured addr is a
@@ -139,7 +223,7 @@ func newRedisPoller(t sqlc.Trigger) (triggerSource, error) {
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("redis_poller: ping %s: %w", cfg.Addr, err)
+		return nil, fmt.Errorf("redis_poller: ping %s: %w", opts.Addr, err)
 	}
 	consumer := "faas-" + strings.ReplaceAll(t.ID.String(), "-", "")
 	// Create the group if missing. BUSYGROUP error means the
