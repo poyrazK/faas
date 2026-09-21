@@ -33,6 +33,8 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 		"nats":          false,
 		"redis_streams": false,
 		"sqs_compat":    false,
+		"amqp":          false,
+		"rabbitmq":      false,
 	}
 	defaultRegistry.mu.Lock()
 	defer defaultRegistry.mu.Unlock()

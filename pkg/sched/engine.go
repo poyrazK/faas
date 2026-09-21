@@ -390,6 +390,11 @@ type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
 }
 
+// BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
+type BrokerLagReader interface {
+	BrokerLag(ctx context.Context, appID string) (int64, bool, error)
+}
+
 // Engine drives wakes and parks. It is safe for concurrent use: all mutation of
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
@@ -597,6 +602,8 @@ type Engine struct {
 	// (increment before delegation); a single mutex keeps the
 	// reads race-free without burning atomic shims.
 	pressureSweepMu sync.Mutex
+
+	brokerLag BrokerLagReader
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
@@ -875,6 +882,19 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		}
 	}
 	return e, nil
+}
+
+// SetBrokerLagReader attaches a broker lag reader for worker queue autoscaling.
+func (e *Engine) SetBrokerLagReader(r BrokerLagReader) {
+	if e != nil {
+		e.brokerLag = r
+	}
+}
+
+// WithBrokerLagReader attaches a broker lag reader for builder-style wiring.
+func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
+	e.SetBrokerLagReader(r)
+	return e
 }
 
 // WithOpsMetrics attaches a metrics bag to the engine for the §6.1

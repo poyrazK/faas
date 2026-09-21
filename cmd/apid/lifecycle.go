@@ -79,6 +79,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		MaxRetries:       req.MaxRetries,
 		RequestTimeoutS:  req.RequestTimeoutS,
 		ServiceReplicas:  req.ServiceReplicas,
+		WorkerReplicas:   req.WorkerReplicas,
 		Ports:            cloneWorkloadPorts(req.Ports),
 		Favicon:          append([]byte(nil), req.Favicon...),
 		RobotsTxt:        req.RobotsTxt,
@@ -98,6 +99,13 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 			Desired: manifest.ServiceReplicas.Desired,
 		}
 	}
+	var workerReplicas *state.WorkerScaling
+	if manifest.WorkerReplicas != nil {
+		workerReplicas = &state.WorkerScaling{
+			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
+			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
+		}
+	}
 	return state.AppManifest{
 		ExecutionMode:    manifest.ExecutionMode,
 		RestartPolicy:    manifest.RestartPolicy,
@@ -105,6 +113,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		MaxRetries:       manifest.MaxRetries,
 		RequestTimeoutS:  manifest.RequestTimeoutS,
 		ServiceReplicas:  replicas,
+		WorkerReplicas:   workerReplicas,
 		Ports:            cloneWorkloadPorts(manifest.Ports),
 		Favicon:          append([]byte(nil), manifest.Favicon...),
 		RobotsTxt:        manifest.RobotsTxt,
@@ -124,6 +133,13 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 			Desired: manifest.ServiceReplicas.Desired,
 		}
 	}
+	var workerReplicas *api.WorkerScaling
+	if manifest.WorkerReplicas != nil {
+		workerReplicas = &api.WorkerScaling{
+			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
+			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
+		}
+	}
 	return api.AppManifest{
 		ExecutionMode:    manifest.ExecutionMode,
 		RestartPolicy:    manifest.RestartPolicy,
@@ -131,6 +147,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		MaxRetries:       manifest.MaxRetries,
 		RequestTimeoutS:  manifest.RequestTimeoutS,
 		ServiceReplicas:  replicas,
+		WorkerReplicas:   workerReplicas,
 		Ports:            cloneWorkloadPorts(manifest.Ports),
 		Favicon:          append([]byte(nil), manifest.Favicon...),
 		RobotsTxt:        manifest.RobotsTxt,
@@ -145,6 +162,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
+		req.WorkerReplicas != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.Ports != nil
 	if !changed {
@@ -170,6 +188,11 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 		manifest.ServiceReplicas = req.ServiceReplicas
 	} else if manifest.EffectiveExecutionMode() != api.ExecutionModeService {
 		manifest.ServiceReplicas = nil
+	}
+	if req.WorkerReplicas != nil {
+		manifest.WorkerReplicas = req.WorkerReplicas
+	} else if manifest.EffectiveExecutionMode() != api.ExecutionModeWorker {
+		manifest.WorkerReplicas = nil
 	}
 	if req.Ports != nil {
 		manifest.Ports = cloneWorkloadPorts(*req.Ports)
@@ -213,6 +236,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.MaxRetries = manifest.MaxRetries
 	updated.RequestTimeoutS = manifest.RequestTimeoutS
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
+	updated.WorkerReplicas = stateManifestFromAPI(manifest).WorkerReplicas
 	updated.Ports = cloneWorkloadPorts(manifest.Ports)
 	updated.Favicon = append([]byte(nil), manifest.Favicon...)
 	updated.RobotsTxt = manifest.RobotsTxt

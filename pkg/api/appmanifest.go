@@ -78,6 +78,14 @@ type ServiceReplicas struct {
 	Desired int `json:"desired" yaml:"desired"`
 }
 
+// WorkerScaling is the queue-driven autoscaling policy for worker-mode apps.
+type WorkerScaling struct {
+	Min    int     `json:"min" yaml:"min"`
+	Max    int     `json:"max" yaml:"max"`
+	Metric string  `json:"metric,omitempty" yaml:"metric,omitempty"`
+	Target float64 `json:"target,omitempty" yaml:"target,omitempty"`
+}
+
 // AppManifest is the /etc/faas/app.json contract: the single handoff from the
 // build/imaging side (imaged) to the guest side (guest-init). imaged writes it
 // into the app layer; guest-init applies env, execs the entrypoint as the app
@@ -156,6 +164,8 @@ type AppManifest struct {
 	// lays the schema + admission; M-4 workstream E lands the
 	// rolling deploy / rollback / digest-pinning semantics.
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	// WorkerReplicas is the queue-driven autoscaling policy for worker mode.
+	WorkerReplicas *WorkerScaling `json:"worker_replicas,omitempty"`
 	// Favicon is an optional base64-encoded favicon payload for the edge
 	// /favicon.ico answer. The gateway enforces a 32 KiB maximum.
 	Favicon []byte `json:"favicon,omitempty"`
@@ -534,6 +544,19 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		}
 		if r.Max > limits.ServiceReplicasMax {
 			return fmt.Errorf("app manifest: service_replicas.max %d exceeds plan %q cap %d", r.Max, plan, limits.ServiceReplicasMax)
+		}
+	}
+	// WorkerReplicas shape: only meaningful when ExecutionMode=worker.
+	if m.WorkerReplicas != nil {
+		if m.EffectiveExecutionMode() != ExecutionModeWorker {
+			return fmt.Errorf("app manifest: worker_replicas requires execution_mode=worker")
+		}
+		r := m.WorkerReplicas
+		if r.Min < 0 || r.Max <= 0 || r.Max < r.Min {
+			return fmt.Errorf("app manifest: worker_replicas values invalid (got min=%d max=%d)", r.Min, r.Max)
+		}
+		if r.Max > limits.WorkerReplicasMax {
+			return fmt.Errorf("app manifest: worker_replicas.max %d exceeds plan %q cap %d", r.Max, plan, limits.WorkerReplicasMax)
 		}
 	}
 	// Per-plan execution-mode allowlist (ADR-137 §Decision 3,

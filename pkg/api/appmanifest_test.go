@@ -216,6 +216,27 @@ func TestManifestValidate(t *testing.T) {
 			Entrypoint:      []string{"x"},
 			ServiceReplicas: &ServiceReplicas{Min: 1, Max: 5, Desired: 10},
 		}, false},
+		// WorkerReplicas shape
+		{"worker_replicas requires worker mode", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeRequest,
+			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: "queue_lag", Target: 100},
+		}, false},
+		{"worker_replicas negative min rejected", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: -1, Max: 5, Metric: "queue_lag", Target: 100},
+		}, false},
+		{"worker_replicas min>max rejected", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 10, Max: 5, Metric: "queue_lag", Target: 100},
+		}, false},
+		{"worker_replicas valid", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: "queue_lag", Target: 100},
+		}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

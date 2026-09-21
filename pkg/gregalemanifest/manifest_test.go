@@ -372,16 +372,13 @@ func TestValidate_HappyPath(t *testing.T) {
 
 func TestValidate_UnknownKind(t *testing.T) {
 	// "rabbitmq" is a kind we genuinely don't support — neither in
-	// the cron-PR-C vocabulary nor in the ADR-0NN six-value widening.
-	// (ADR-0NN widens to cron/kafka/nats/redis_streams/sqs_compat/queue,
-	// so "queue" is now a valid kind and would not exercise the
-	// unknown-kind branch — pinning "rabbitmq" here keeps the
-	// pre-widening test stable through the rename.)
+	// ADR-0NN and subsequent widening added rabbitmq/amqp as valid kinds,
+	// so "pulsar" is used here to exercise the unknown-kind rejection branch.
 	m := &Manifest{Triggers: []Trigger{
-		{Kind: "rabbitmq", App: "x", Schedule: "0 3 * * *", Path: "/y"},
+		{Kind: "pulsar", App: "x", Schedule: "0 3 * * *", Path: "/y"},
 	}}
 	err := m.Validate()
-	if err == nil || !strings.Contains(err.Error(), "unsupported trigger kind \"rabbitmq\"") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported trigger kind \"pulsar\"") {
 		t.Errorf("err = %v, want unsupported-kind message", err)
 	}
 }
@@ -590,6 +587,26 @@ func TestValidate_Queue_BadMode(t *testing.T) {
 	}}}
 	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "mode") {
 		t.Errorf("err = %v, want mode message", err)
+	}
+}
+
+func TestValidate_AMQP_Happy(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindRabbitMQ, App: "my-api", Slug: "rabbit-orders",
+		Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
+	}}}
+	if err := m.Validate(); err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+}
+
+func TestValidate_AMQP_BadScheme(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindAMQP, App: "my-api", Slug: "rabbit-bad",
+		Config: map[string]any{"url": "http://localhost:5672/", "queue": "orders"},
+	}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "url must be amqp:// or amqps://") {
+		t.Errorf("err = %v, want bad scheme error", err)
 	}
 }
 
@@ -1076,3 +1093,92 @@ func TestValidate_BucketDependencyRejectsDuplicate(t *testing.T) {
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
 
 func manifestIntPtr(v int) *int { return &v }
+
+func TestWorkerManifest_ParseAndValidate(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+worker:
+  command: ./consumer
+  scale:
+    min: 0
+    max: 50
+    metric: queue_lag
+    target: 500
+  source:
+    kind: kafka
+    config:
+      brokers: ["localhost:9092"]
+      topic: events
+      group: worker-grp
+`
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write gregale.yaml: %v", err)
+	}
+
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || m.Worker == nil {
+		t.Fatalf("Worker not parsed: %+v", m)
+	}
+	if m.Worker.Command != "./consumer" {
+		t.Errorf("Command = %q, want ./consumer", m.Worker.Command)
+	}
+	if m.Worker.Scale.Min != 0 || m.Worker.Scale.Max != 50 {
+		t.Errorf("Scale min/max = %d/%d, want 0/50", m.Worker.Scale.Min, m.Worker.Scale.Max)
+	}
+	if m.Worker.Scale.Metric != "queue_lag" || m.Worker.Scale.Target != 500 {
+		t.Errorf("Scale metric/target = %q/%v, want queue_lag/500", m.Worker.Scale.Metric, m.Worker.Scale.Target)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestWorkerManifest_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		spec WorkerSpec
+		want string
+	}{
+		{
+			name: "negative min",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: -1, Max: 10, Metric: "queue_lag", Target: 100}},
+			want: "cannot be negative",
+		},
+		{
+			name: "max less than min",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 10, Max: 5, Metric: "queue_lag", Target: 100}},
+			want: "cannot be less than min",
+		},
+		{
+			name: "invalid metric",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 10, Metric: "cpu_percent", Target: 80}},
+			want: "unsupported worker metric",
+		},
+		{
+			name: "queue_lag non-positive target",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 0}},
+			want: "target for metric \"queue_lag\" must be greater than 0",
+		},
+		{
+			name: "unsupported source kind",
+			spec: WorkerSpec{
+				Scale:  WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+				Source: &Trigger{Kind: "unsupported"},
+			},
+			want: "unsupported kind",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &Manifest{Worker: &tt.spec}
+			err := m.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}

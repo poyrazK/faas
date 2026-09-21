@@ -99,6 +99,7 @@ type CreateAppRequest struct {
 	// and per-invocation overrides take precedence over this policy.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
 	// Ports declares additional workload listeners. Named TCP entries may be
 	// selected at the public edge with the `--port-<name>` hostname form;
 	// UDP entries remain guest-only discovery endpoints.
@@ -293,6 +294,7 @@ type UpdateAppRequest struct {
 	// explicit empty object clears the default; nil leaves it unchanged.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
 	// Ports replaces the app-owned listener declaration. An empty slice clears
 	// the declaration; nil leaves it unchanged.
 	Ports *[]WorkloadPort `json:"ports,omitempty"`

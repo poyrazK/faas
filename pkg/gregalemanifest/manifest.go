@@ -85,6 +85,11 @@ const (
 	// with source IN ('queue','delayed_task') become a Trigger.
 	// Config schema: QueueConfig{Mode}.
 	TriggerKindQueue TriggerKind = "queue"
+	// TriggerKindAMQP — AMQP 0-9-1 / RabbitMQ queue consumer.
+	// Config schema: AMQPConfig{URL, Queue, Consumer}.
+	TriggerKindAMQP TriggerKind = "amqp"
+	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
+	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
 )
 
 // EventTrigger is a content-based internal event subscription declaration.
@@ -559,6 +564,9 @@ type RedisStreamsConfig struct {
 	Stream   string `json:"stream"`
 	Group    string `json:"group"`
 	Consumer string `json:"consumer,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	TLS      bool   `json:"tls,omitempty"`
 }
 
 // SQSCompatConfig is the per-kind config for kind=sqs_compat (issue
@@ -577,6 +585,13 @@ type SQSCompatConfig struct {
 // delayed-task surface (invocations.source='delayed_task').
 type QueueConfig struct {
 	Mode string `json:"mode"`
+}
+
+// AMQPConfig is the per-kind config for kind=amqp / kind=rabbitmq.
+type AMQPConfig struct {
+	URL      string `json:"url"`
+	Queue    string `json:"queue"`
+	Consumer string `json:"consumer,omitempty"`
 }
 
 // ScalingTarget is the manifest form of api.ScalingTarget. It uses explicit
@@ -856,6 +871,7 @@ type Manifest struct {
 	Workflows     []api.WorkflowSpec   `yaml:"workflows,omitempty"`
 	Databases     []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets       []BucketDependency   `yaml:"buckets,omitempty"`
+	Worker        *WorkerSpec          `yaml:"worker,omitempty"`
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -926,6 +942,81 @@ func (c *LifecycleConfig) Validate() error {
 	m.ServiceReplicas = c.ServiceReplicas
 	return m.ValidateLifecyclePlan(api.PlanScale)
 }
+
+// WorkerSpec declares a native background worker workload with optional
+// queue-backlog autoscaling (min=0 supported for scale-to-zero).
+type WorkerSpec struct {
+	Command string          `yaml:"command,omitempty"`
+	Scale   WorkerScaleSpec `yaml:"scale"`
+	Source  *Trigger        `yaml:"source,omitempty"`
+}
+
+// WorkerScaleSpec defines autoscaling parameters for background workers.
+type WorkerScaleSpec struct {
+	Min    int     `yaml:"min"`
+	Max    int     `yaml:"max"`
+	Metric string  `yaml:"metric"`
+	Target float64 `yaml:"target,omitempty"`
+}
+
+// ToAPI converts WorkerScaleSpec to api.WorkerScaling.
+func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
+	return &api.WorkerScaling{
+		Min:    s.Min,
+		Max:    s.Max,
+		Metric: s.Metric,
+		Target: s.Target,
+	}
+}
+
+// Validate checks worker configuration syntax and constraints.
+func (w *WorkerSpec) Validate() error {
+	if w == nil {
+		return nil
+	}
+	if err := w.Scale.Validate(); err != nil {
+		return fmt.Errorf("worker.scale: %w", err)
+	}
+	if w.Source != nil {
+		switch w.Source.Kind {
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindAMQP, TriggerKindRabbitMQ:
+			// valid broker kinds
+		case "":
+			return errors.New("worker.source: kind is required")
+		default:
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq", w.Source.Kind)
+		}
+		if err := w.Source.validateKindConfig(0); err != nil {
+			return fmt.Errorf("worker.source: %w", err)
+		}
+	}
+	return nil
+}
+
+// Validate checks worker autoscaling parameters.
+func (s WorkerScaleSpec) Validate() error {
+	if s.Min < 0 {
+		return fmt.Errorf("min instances %d cannot be negative", s.Min)
+	}
+	if s.Max <= 0 {
+		return fmt.Errorf("max instances %d must be greater than 0", s.Max)
+	}
+	if s.Max < s.Min {
+		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
+	}
+	switch s.Metric {
+	case "queue_lag", "queue_depth":
+		if s.Target <= 0 {
+			return fmt.Errorf("target for metric %q must be greater than 0", s.Metric)
+		}
+	case "":
+		// manual fixed replica count without metric
+	default:
+		return fmt.Errorf("unsupported worker metric %q; supported metrics: queue_lag, queue_depth", s.Metric)
+	}
+	return nil
+}
+
 
 // Load reads `gregale.yaml`, `gregale.yml`, or the event-only `gregale.toml`
 // from dir. Returns
@@ -1085,6 +1176,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("lifecycle: %w", err)
 		}
 	}
+	if m.Worker != nil {
+		if err := m.Worker.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(m.Extensions) > 0 {
 		sidecars, err := m.ToSidecars()
 		if err != nil {
@@ -1125,7 +1221,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindNATS,
 			TriggerKindRedisStreams,
 			TriggerKindSQSCompat,
-			TriggerKindQueue:
+			TriggerKindQueue,
+			TriggerKindAMQP,
+			TriggerKindRabbitMQ:
 			// fall through to per-kind validation below
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -1367,7 +1465,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq"
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -1428,8 +1526,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if err != nil || (u.Scheme != "nats" && u.Scheme != "tls") || u.Host == "" {
 			return fmt.Errorf("trigger[%d]: nats url must be nats:// or tls:// with a host (got %q)", idx, c.URL)
 		}
-		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return fmt.Errorf("trigger[%d]: nats url must not contain credentials, query parameters, or fragments", idx)
+		if u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("trigger[%d]: nats url must not contain query parameters or fragments", idx)
 		}
 		if c.Stream == "" {
 			return fmt.Errorf("trigger[%d]: nats config requires non-empty stream", idx)
@@ -1486,6 +1584,22 @@ func (t Trigger) validateKindConfig(idx int) error {
 		default:
 			return fmt.Errorf("trigger[%d]: queue config mode %q not in {queue, delayed_task}", idx, c.Mode)
 		}
+	case TriggerKindAMQP, TriggerKindRabbitMQ:
+		var c AMQPConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad %s config: %w", idx, t.Kind, err)
+		}
+		if c.URL == "" {
+			return fmt.Errorf("trigger[%d]: %s config requires non-empty url", idx, t.Kind)
+		}
+		u, err := url.Parse(c.URL)
+		if err != nil || (u.Scheme != "amqp" && u.Scheme != "amqps") || u.Host == "" {
+			return fmt.Errorf("trigger[%d]: %s url must be amqp:// or amqps:// with a host (got %q)", idx, t.Kind, c.URL)
+		}
+		if c.Queue == "" {
+			return fmt.Errorf("trigger[%d]: %s config requires non-empty queue", idx, t.Kind)
+		}
+		return nil
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and

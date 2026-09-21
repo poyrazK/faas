@@ -62,7 +62,8 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 	if pending.AppConfig.ExecutionMode != nil || pending.AppConfig.RestartPolicy != nil ||
 		pending.AppConfig.StartupDeadlineS != nil || pending.AppConfig.MaxRetries != nil ||
 		pending.AppConfig.RequestTimeoutS != nil ||
-		pending.AppConfig.ServiceReplicas != nil {
+		pending.AppConfig.ServiceReplicas != nil ||
+		pending.AppConfig.WorkerReplicas != nil {
 		lifecycle := api.AppManifest{}
 		if baseline.App != nil {
 			lifecycle = baseline.App.Manifest
@@ -84,6 +85,9 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 		}
 		if pending.AppConfig.ServiceReplicas != nil {
 			lifecycle.ServiceReplicas = pending.AppConfig.ServiceReplicas
+		}
+		if pending.AppConfig.WorkerReplicas != nil {
+			lifecycle.WorkerReplicas = pending.AppConfig.WorkerReplicas
 		}
 		if err := lifecycle.ValidateLifecyclePlan(p); err != nil {
 			out = append(out, Break{Code: api.CodeValidation, Severity: SeverityError,

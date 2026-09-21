@@ -708,10 +708,12 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				if app.WorkloadClass == state.WorkloadClassWorker {
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass("concurrent_requests")
 				}
-			case "queue_depth":
+			case "queue_depth", "queue_lag":
 				if app.WorkloadClass != state.WorkloadClassWorker &&
-					app.WorkloadClass != state.WorkloadClassJob {
-					return api.ErrScalingTargetIncompatibleWithWorkloadClass("queue_depth")
+					app.WorkloadClass != state.WorkloadClassJob &&
+					app.Manifest.ExecutionMode != api.ExecutionModeWorker &&
+					app.Manifest.ExecutionMode != api.ExecutionModeJob {
+					return api.ErrScalingTargetIncompatibleWithWorkloadClass(sp.Target.Metric)
 				}
 			}
 		}
@@ -774,13 +776,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// only checks the value shape.
 		if sp.Target != nil {
 			switch sp.Target.Metric {
-			case "", "rps", "concurrent_requests", "queue_depth", "p99_latency_ms":
+			case "", "rps", "concurrent_requests", "queue_depth", "queue_lag", "p99_latency_ms":
 				// ok
 			default:
 				return api.NewProblem(http.StatusUnprocessableEntity,
 					api.CodeValidation,
 					"Invalid scaling policy",
-					fmt.Sprintf("target.metric=%q is not in the closed set (rps, concurrent_requests, queue_depth, p99_latency_ms).", sp.Target.Metric))
+					fmt.Sprintf("target.metric=%q is not in the closed set (rps, concurrent_requests, queue_depth, queue_lag, p99_latency_ms).", sp.Target.Metric))
 			}
 			if sp.Target.Value < 0 {
 				return api.NewProblem(http.StatusUnprocessableEntity,
@@ -788,11 +790,11 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 					"Invalid scaling policy",
 					fmt.Sprintf("target.value must be >= 0; got %v.", sp.Target.Value))
 			}
-			if sp.Target.Metric == "queue_depth" && sp.Target.Value <= 0 {
+			if (sp.Target.Metric == "queue_depth" || sp.Target.Metric == "queue_lag") && sp.Target.Value <= 0 {
 				return api.NewProblem(http.StatusUnprocessableEntity,
 					api.CodeValidation,
 					"Invalid scaling policy",
-					fmt.Sprintf("target.value must be > 0 for queue_depth; got %v.", sp.Target.Value))
+					fmt.Sprintf("target.value must be > 0 for %s; got %v.", sp.Target.Metric, sp.Target.Value))
 			}
 		}
 	}

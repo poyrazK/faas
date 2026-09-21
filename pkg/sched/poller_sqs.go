@@ -345,6 +345,36 @@ func (s *sqsPoller) Close() error {
 	return nil
 }
 
+// BrokerStats queries the SQS endpoint /stats for approximate message counts.
+func (s *sqsPoller) BrokerStats(ctx context.Context, _ sqlc.Trigger) BrokerStats {
+	if s == nil || s.client == nil || s.baseURL == "" {
+		return BrokerStats{Available: false}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/stats", nil)
+	if err != nil {
+		return BrokerStats{Available: false}
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return BrokerStats{Available: false}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return BrokerStats{Available: false}
+	}
+	var stats struct {
+		ApproximateMessageCount int64 `json:"approximate_message_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return BrokerStats{Available: false}
+	}
+	return BrokerStats{
+		Lag:       stats.ApproximateMessageCount,
+		Depth:     stats.ApproximateMessageCount,
+		Available: true,
+	}
+}
+
 func init() {
 	registerPoller("sqs_compat", func(t sqlc.Trigger) (triggerSource, error) {
 		return newSQSPoller(t)

@@ -1260,6 +1260,13 @@ func serviceReplicasEqual(a, b *api.ServiceReplicas) bool {
 	return a.Min == b.Min && a.Max == b.Max && a.Desired == b.Desired
 }
 
+func workerReplicasEqual(a, b *api.WorkerScaling) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Target == b.Target
+}
+
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
 	manifest := current.Manifest
 	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
@@ -1280,6 +1287,9 @@ func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest)
 	if desired.ServiceReplicas != nil && !serviceReplicasEqual(manifest.ServiceReplicas, desired.ServiceReplicas) {
 		return true
 	}
+	if desired.WorkerReplicas != nil && !workerReplicasEqual(manifest.WorkerReplicas, desired.WorkerReplicas) {
+		return true
+	}
 	return false
 }
 
@@ -1294,13 +1304,21 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || m.Lifecycle == nil || m.Lifecycle.Empty() {
+	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	desired := m.Lifecycle.ToAPI()
+	desired := api.UpdateAppRequest{}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		desired = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		desired.ExecutionMode = &workerMode
+		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
+	}
 	current, err := client.GetApp(ctx, slug)
 	if err != nil {
 		return fmt.Errorf("read app before applying lifecycle policy: %w", err)
@@ -1327,7 +1345,7 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil) {
+	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil && (m.Worker == nil || m.Worker.Scale.Metric == "")) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1339,7 +1357,20 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	}
 	update := api.UpdateAppRequest{}
 	changed := false
-	if m.Scaling != nil {
+	if m.Worker != nil && m.Worker.Scale.Metric != "" {
+		policy := &api.ScalingPolicy{
+			MinInstances: m.Worker.Scale.Min,
+			MaxInstances: m.Worker.Scale.Max,
+			Target: &api.ScalingTarget{
+				Metric: m.Worker.Scale.Metric,
+				Value:  m.Worker.Scale.Target,
+			},
+		}
+		if !scalingPolicyEqual(current.ScalingPolicy, policy) {
+			update.ScalingPolicy = policy
+			changed = true
+		}
+	} else if m.Scaling != nil {
 		desired := m.Scaling.ToAPI()
 		if !scalingPolicyEqual(current.ScalingPolicy, desired) {
 			update.ScalingPolicy = desired
