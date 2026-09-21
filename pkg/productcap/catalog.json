@@ -105,6 +105,16 @@
       "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"
     },
     {
+      "id": "progressive-rollouts",
+      "name": "Progressive rollouts and rollback",
+      "category": "delivery",
+      "description": "Shift traffic between immutable deployment revisions, advance a canary ladder automatically while health signals stay clean, and roll back to a named revision.",
+      "maturity": "preview",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"
+    },
+    {
       "id": "scale-to-zero",
       "name": "Scale to zero",
       "category": "runtime",

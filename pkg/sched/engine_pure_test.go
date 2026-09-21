@@ -253,10 +253,10 @@ func TestScaleOutBurstContinuationOnlyBypassesCooldown(t *testing.T) {
 		t.Fatalf("seed ledger: %v", err)
 	}
 	limits := api.MustLimitsFor(api.PlanPro)
-	if got, _, _, _, _ := e.admitGate(context.Background(), app, limits); got != wakeCooldownHeld {
+	if got, _, _, _, _ := e.admitGate(context.Background(), app, limits, ""); got != wakeCooldownHeld {
 		t.Fatalf("ordinary admission outcome = %v, want cooldown held", got)
 	}
-	if got, _, _, _, _ := e.admitGate(withScaleOutBurstContinuation(context.Background()), app, limits); got != wakeAdmit {
+	if got, _, _, _, _ := e.admitGate(withScaleOutBurstContinuation(context.Background()), app, limits, ""); got != wakeAdmit {
 		t.Fatalf("burst continuation outcome = %v, want admit", got)
 	}
 }

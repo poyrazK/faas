@@ -1253,20 +1253,28 @@ type Limits struct {
 
 	// TrafficSplit (issue #556 / traffic splitting across
 	// deployments) is the plan gate for the per-deployment
-	// traffic_percent opt-in. Pro/Scale = true; Free/Hobby =
-	// false. Differs from RequireAuthn in the Hobby tier: Hobby
-	// unlocks require_authn (issue #462 / ADR-058) but stays
-	// locked on traffic_split because the audience is more
-	// expensive — keeping N canary deployments warm is
-	// RAM-billable per running second for every "extra" live
-	// deployment, and Hobby's value-prop is "near-Free with a
-	// floor", not "production canary rollout". Apid's create
-	// + PATCH-traffic handlers reject Free/Hobby with 403
-	// plan_traffic_split_not_allowed. Column default
-	// (migration 00160) is 100, so every existing app routes
-	// 100% to its single live row regardless of plan — the
-	// gate only fires when a Free/Hobby customer tries to
-	// opt-in to a non-100 traffic_percent (which is denied).
+	// traffic_percent opt-in and the canary ladder.
+	//
+	// TRUE ON EVERY PLAN as of ADR-196. It is retained as a
+	// field rather than deleted because it is the single
+	// switch an operator flips if the rollout cost shape ever
+	// needs to be re-tiered, and because the 403
+	// plan_traffic_split_not_allowed problem code stays in the
+	// wire contract for older clients.
+	//
+	// The original Pro+ gate reasoned that keeping N canary
+	// deployments warm is RAM-billable per running second.
+	// ADR-196 answers that with RolloutConcurrencyGrant: the
+	// overlap is capped at +1 instance, lasts only while the
+	// rollout is in flight, and never bypasses the physical
+	// gates (RAM ledger invariant §6.2-2, the per-node ceiling
+	// from ADR-193, or vCPU). A customer on Free can now ship
+	// a canary; they cannot use it to hold more RAM than their
+	// plan's instance would have held anyway.
+	//
+	// Column default (migration 00160) is 100, so every app
+	// that never opts in still routes 100% to its single live
+	// row.
 	TrafficSplit bool
 
 	// RollbackOn5xxAllowed (issue #961 / ADR-118) gates the
@@ -1952,14 +1960,24 @@ var planLimits = map[Plan]Limits{
 		// the legacy H1 path regardless; the gate only fires
 		// if a Free customer tries PATCH app_protocol=grpc.
 		AppProtocolGrpcAllowed: false,
-		// TrafficSplit (issue #556): Free does not unlock
-		// per-deployment traffic splitting. The column
-		// default (100) keeps today's behaviour — 100% to the
-		// single live row — so no existing Free customer is
-		// affected; the gate only fires when a Free customer
-		// passes a non-100 traffic_percent on create (403
-		// plan_traffic_split_not_allowed).
-		TrafficSplit:         false,
+		// TrafficSplit (issue #556; opened to every plan by
+		// ADR-196): Free unlocks per-deployment traffic
+		// splitting and the canary ladder. The original
+		// Pro+ gate reasoned that keeping N canary
+		// deployments warm is RAM-billable per running
+		// second; ADR-196 answers that with the rollout
+		// concurrency grant (RolloutConcurrencyGrant) — the
+		// extra resident deployment is bounded to +1, lasts
+		// only while the rollout is in flight, and is still
+		// subject to every physical gate (RAM ledger,
+		// per-node ceiling, vCPU). A safe rollout is a
+		// correctness primitive, not a luxury tier: the
+		// customer most likely to ship a bad deploy is the
+		// one who cannot afford an outage.
+		//
+		// The column default (100) still keeps today's
+		// behaviour for every app that never opts in.
+		TrafficSplit:         true,
 		RollbackOn5xxAllowed: false,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
@@ -2323,16 +2341,20 @@ var planLimits = map[Plan]Limits{
 		// floor" value-prop. Customers on Hobby may PATCH
 		// app_protocol=grpc freely.
 		AppProtocolGrpcAllowed: true,
-		// TrafficSplit (issue #556): Hobby does not unlock
-		// per-deployment traffic splitting. Hobby's value-prop
-		// is "near-Free with a floor" (MinInstancesAllowed
-		// unlocked by issue #462 / ADR-058), not "production
-		// canary rollout". The 2-3 live deployment bill shape
-		// costs 2-3× the per-running-second RAM; Hobby's price
-		// point doesn't cover it. Free/Hobby see 403
-		// plan_traffic_split_not_allowed when they try to
-		// pass a non-100 traffic_percent on create or PATCH.
-		TrafficSplit:         false,
+		// TrafficSplit (issue #556; opened to every plan by
+		// ADR-196): Hobby unlocks per-deployment traffic
+		// splitting and the canary ladder. The original gate
+		// priced this as a sustained "2-3 live deployment
+		// bill shape"; that is the steady-state cost of
+		// running several deployments indefinitely, not the
+		// cost of a rollout. A canary ladder is bounded by
+		// its own stage durations and collapses back to one
+		// deployment when it completes or aborts, and
+		// ADR-196's grant caps the overlap at exactly +1
+		// instance.
+		//
+		// See the Free block above for the full rationale.
+		TrafficSplit:         true,
 		RollbackOn5xxAllowed: false,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
@@ -3159,6 +3181,28 @@ const (
 	// the guest RAM and ordinary VMM overhead. It is not part of admission or
 	// billing; the tenant-slice ceiling remains the aggregate safety fence.
 	SnapshotVMOverheadMB = 256
+
+	// RolloutConcurrencyGrant (ADR-196) is the number of instances an app
+	// may exceed its plan's max_concurrency by, and ONLY while a second
+	// deployment is coming up alongside the one already serving — i.e. the
+	// overlap window of a traffic split or a canary stage.
+	//
+	// Without it, opening traffic splitting to every plan would ship a
+	// broken feature: the concurrency ledger is per-app
+	// (NodeLedger.perApp), so on Free (max_concurrency 1) the second
+	// deployment's wake hits the cap and that slice of traffic returns a
+	// plan-limit error instead of the new revision.
+	//
+	// It is exactly 1, not a per-plan value: the grant exists to make a
+	// rollout *possible*, not to widen steady-state concurrency. A 3-way
+	// split on Free still admits at most max_concurrency + 1.
+	//
+	// THIS GRANT RELAXES THE PLAN GATE ONLY. Every physical gate still
+	// applies unchanged — the RAM ledger (invariant §6.2-2), the
+	// transactional per-node ceiling (ADR-193), and vCPU admission. A node
+	// under memory pressure refuses the extra instance exactly as it would
+	// refuse any other, and the rollout simply holds at its current stage.
+	RolloutConcurrencyGrant = 1
 
 	// FloorDecisionIntervalSeconds (issue #557 / ADR-071 §Decision 1)
 	// is the cadence at which the proactive floor trigger in
