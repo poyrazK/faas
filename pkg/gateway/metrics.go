@@ -294,6 +294,19 @@ type Metrics struct {
 	// synthetic (app_id, rule_id, mode, reason) tuples for the
 	// known fleet.
 	validateFailures *prometheus.CounterVec
+	// ADR-197 traffic-resilience metrics, on the gatewayd-internal-local
+	// registry per the rule at the top of this file: no wire-side mirror
+	// without a cross-daemon consumer, and the instance breaker + retry
+	// loop both run here.
+	retryAttempts      *prometheus.CounterVec
+	retryExhausted     *prometheus.CounterVec
+	circuitTransitions *prometheus.CounterVec
+	// circuitOpenTargets is a COUNT per app, deliberately not a per-instance
+	// state gauge. ADR-197's original sketch had {app_id, target} keyed by
+	// instance_id; instance IDs churn on every wake, so that series set
+	// grows for the daemon's lifetime. A count answers the same operator
+	// question — is this app losing instances — at one series per app.
+	circuitOpenTargets *prometheus.GaugeVec
 	// ruleLabels (ADR-128 §D3) is the per-app admission set
 	// backing the (app_id, rule_id) label pair on
 	// validateFailures. See pkg/gateway/rule_label_set.go for
@@ -880,6 +893,22 @@ func NewMetrics() *Metrics {
 		// closed sets, so cardinality is bounded by mode × reason =
 		// 4 × 6 = 24 (mode includes `other` as the coerce-on-unknown
 		// bucket; reason is closed at 6).
+		retryAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_retry_attempts_total",
+			Help: "Request attempts observed by the ADR-197 §1 retry loop, labelled by outcome ∈ {original_ok, original_failed, replay_ok, replay_failed}. A non-zero replay_ok rate is the feature working: transport failures converted into successful responses by a healthy sibling. A rising replay_failed rate means siblings are failing too — a fleet problem rather than one dead instance.",
+		}, []string{"outcome"}),
+		retryExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_retry_exhausted_total",
+			Help: "Times the ADR-197 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|no_healthy_sibling|insufficient_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high non_idempotent_method rate means customers want the allow_non_idempotent opt-in; a high insufficient_budget rate means their kind=budget deadlines are too tight for a replay to help. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
+		}, []string{"reason"}),
+		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_circuit_transitions_total",
+			Help: "ADR-197 §2 instance-breaker state changes, labelled by {from, to}. A sustained closed->open rate is instance churn; a repeating open->half_open->open cycle that never reaches half_open->closed means the target is persistently dead and the exponential backoff is doing its job.",
+		}, []string{"from", "to"}),
+		circuitOpenTargets: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_circuit_open_targets",
+			Help: "Count of instance circuits currently open for an app (ADR-197 §2). A COUNT rather than a per-instance state gauge on purpose: instance IDs churn on every wake, so an {app_id, instance_id} series set would grow for the daemon's lifetime.",
+		}, []string{"app_id"}),
 		edgeRuleValidateFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_rule_validate_failures_total",
 			Help: "Edge-rule kind=validate body mismatches, labelled by validate_mode (observe|warn|block|other) and reason (required_missing|type_mismatch|additional_properties_not_allowed|enum_violation|format_violation|other). The counter increments in every mode; the reject decision is independent. `other` is the coerce bucket for unknown inputs. Issue #975 #3 / Mega-Foundation #979-a. DEPRECATED (ADR-128 §5): use gateway_validate_failures_total instead.",
@@ -1667,7 +1696,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3141,4 +3170,75 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 		return
 	}
 	m.requestTelemetryShipped.Add(float64(n))
+}
+
+// IncRetryAttempt records one attempt observed by the ADR-197 §1 retry loop.
+// Satisfies retryObserver. Nil-safe.
+func (m *Metrics) IncRetryAttempt(outcome string) {
+	if m == nil || m.retryAttempts == nil {
+		return
+	}
+	m.retryAttempts.WithLabelValues(outcome).Inc()
+}
+
+// IncRetryExhausted records a declined replay and the safety rule that
+// stopped it. Satisfies retryObserver. Nil-safe.
+func (m *Metrics) IncRetryExhausted(reason string) {
+	if m == nil || m.retryExhausted == nil {
+		return
+	}
+	m.retryExhausted.WithLabelValues(reason).Inc()
+}
+
+// IncCircuitTransition records an ADR-197 §2 instance-breaker state change.
+// Nil-safe.
+func (m *Metrics) IncCircuitTransition(from, to string) {
+	if m == nil || m.circuitTransitions == nil {
+		return
+	}
+	m.circuitTransitions.WithLabelValues(from, to).Inc()
+}
+
+// SetCircuitOpenTargets publishes how many instance circuits are currently
+// open for an app. Nil-safe.
+func (m *Metrics) SetCircuitOpenTargets(appID string, count float64) {
+	if m == nil || m.circuitOpenTargets == nil {
+		return
+	}
+	m.circuitOpenTargets.WithLabelValues(appID).Set(count)
+}
+
+// PreInstantiateTrafficResilience surfaces the ADR-197 closed-set series at
+// process start.
+//
+// Without it an operator alerting on `rate(...) == 0` cannot distinguish "no
+// retries happened" from "the series does not exist yet" — the cold-start
+// ambiguity called out for validateFailures above. Only the closed-vocabulary
+// metrics are pre-instantiated; circuitOpenTargets is keyed by app_id and
+// cannot be enumerated at boot.
+func (m *Metrics) PreInstantiateTrafficResilience() {
+	if m == nil {
+		return
+	}
+	if m.retryAttempts != nil {
+		for _, o := range []string{"original_ok", "original_failed", "replay_ok", "replay_failed"} {
+			m.retryAttempts.WithLabelValues(o)
+		}
+	}
+	if m.retryExhausted != nil {
+		for _, r := range []string{
+			RetrySkipCommitted, RetrySkipNonIdempotent, RetrySkipNoTarget,
+			RetrySkipBudget, RetrySkipAttempts, RetrySkipBodyNotReplay,
+		} {
+			m.retryExhausted.WithLabelValues(r)
+		}
+	}
+	if m.circuitTransitions != nil {
+		for _, t := range [][2]string{
+			{"closed", "open"}, {"open", "half_open"},
+			{"half_open", "closed"}, {"half_open", "open"},
+		} {
+			m.circuitTransitions.WithLabelValues(t[0], t[1])
+		}
+	}
 }

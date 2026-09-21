@@ -271,6 +271,17 @@ type OpsMetrics struct {
 	// cluster plan's "Decisions baked in" §2 (Prometheus
 	// cardinality discipline).
 	gatewayInflightRequests *prometheus.GaugeVec
+	// egressCircuitState (ADR-197 §3) is schedd-emitted, so it belongs on
+	// the shared OpsMetrics registry rather than the gatewayd-local one.
+	// The four gateway-side ADR-197 metrics live in pkg/gateway.Metrics
+	// instead — per the rule recorded at pkg/gateway/metrics.go:48, a
+	// wire-side mirror is not added without a cross-daemon consumer.
+	//
+	// Bounded by Limits.EgressCircuitBreakersPerApp
+	// (≤50 per app), so {app_id, upstream_hash} is safe. upstream_hash is
+	// the §11-redacted identifier — the plaintext host must never reach a
+	// label.
+	egressCircuitState *prometheus.GaugeVec
 	// wakeSnapshotTier (issue #470 / PR C / ADR-074) — closed-set
 	// counter for the warm-vs-init-vs-cold-boot choice Engine.usableSnapshotForWake
 	// makes on every wake. Labels ∈ {warm, init, cold_boot_fallback}.
@@ -4229,7 +4240,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	gatewayInflightRequests.WithLabelValues("gatewayd-public", "http")
 	gatewayInflightRequests.WithLabelValues("gatewayd-public", "upgrade")
 	gatewayInflightRequests.WithLabelValues("gatewayd-public", "control")
-	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests)
+	// ── ADR-197 §3 egress circuit state ──────────────────────────────
+	// Not pre-instantiated: the {app_id, upstream_hash} pair cannot be
+	// enumerated at boot. Series surface as customers opt upstreams in, and
+	// ClearEgressCircuitState drops them when a row is retired so a deleted
+	// upstream cannot leave a stale gauge asserting a dependency is broken.
+	egressCircuitState := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_egress_circuit_state",
+		Help: "ADR-197 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. While 2, the app's NEW connections to that upstream are rejected with a TCP reset instead of hanging. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
+	}, []string{"app_id", "upstream_hash"})
+	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests,
+		egressCircuitState)
 	// Issue #757 / ADR-118 commit 9: ESM metric collectors. All
 	// three are pre-instantiated at boot from the closed sets
 	// below so the rows surface in /metrics from process start —
@@ -4988,6 +5009,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		wakeRPCDuration:                            wakeRPCDuration,
 		gatewayDrainWaitSeconds:                    gatewayDrainWaitSeconds,
 		gatewayInflightRequests:                    gatewayInflightRequests,
+		egressCircuitState:                         egressCircuitState,
 		wakeSnapshotTier:                           wakeSnapshotTier,
 		executionActive:                            executionActive,
 		executionTotal:                             executionTotal,
@@ -5250,6 +5272,30 @@ func (m *OpsMetrics) ObserveDrainWait(daemon, outcome string, seconds float64) {
 		return
 	}
 	m.gatewayDrainWaitSeconds.WithLabelValues(daemon, outcome).Observe(seconds)
+}
+
+// SetEgressCircuitState publishes the ADR-197 §3 state for one declared
+// upstream: 0=closed, 1=half_open, 2=open.
+//
+// upstreamHash MUST be data_upstreams.host_redacted_hash. Passing a plaintext
+// host here would put a customer's database hostname into a Prometheus label,
+// which is exactly the §11 leak the redacted hash exists to prevent.
+// Nil-safe.
+func (m *OpsMetrics) SetEgressCircuitState(appID, upstreamHash string, state float64) {
+	if m == nil || m.egressCircuitState == nil {
+		return
+	}
+	m.egressCircuitState.WithLabelValues(appID, upstreamHash).Set(state)
+}
+
+// ClearEgressCircuitState drops the series for a retired upstream, so a
+// deleted data_upstreams row does not leave a stale gauge asserting that a
+// dependency is broken forever. Nil-safe.
+func (m *OpsMetrics) ClearEgressCircuitState(appID, upstreamHash string) {
+	if m == nil || m.egressCircuitState == nil {
+		return
+	}
+	m.egressCircuitState.DeleteLabelValues(appID, upstreamHash)
 }
 
 // SetInflightRequests (issue #587 / PR-A) sets the per-daemon

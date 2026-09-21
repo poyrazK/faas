@@ -29,6 +29,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // EgressUpstream identifies one breakable dependency of one app.
@@ -105,6 +106,42 @@ func NewEgressCircuitBreaker(applier EgressCircuitApplier, resolve EgressResolve
 	}
 	b.group = circuit.NewGroup(circuit.EgressConfig(), nil)
 	return b
+}
+
+// WithMetrics publishes circuit state to the shared OpsMetrics registry
+// (ADR-197 §3).
+//
+// The gauge carries the REDACTED upstream hash, never the plaintext host —
+// a customer's database hostname in a Prometheus label is exactly the §11
+// leak the hash exists to prevent. Registering here rather than at each
+// transition site means the metric cannot drift from the state machine.
+func (b *EgressCircuitBreaker) WithMetrics(ops *wire.OpsMetrics) *EgressCircuitBreaker {
+	if ops == nil {
+		return b
+	}
+	prior := b.onChange
+	b.onChange = func(appID, hash string, from, to circuit.State) {
+		ops.SetEgressCircuitState(appID, hash, egressCircuitStateValue(to))
+		if prior != nil {
+			prior(appID, hash, from, to)
+		}
+	}
+	return b
+}
+
+// egressCircuitStateValue maps the state to the gauge encoding documented on
+// the metric: 0=closed, 1=half_open, 2=open. Ordered by severity so a
+// dashboard can alert on `> 0` for "not healthy" and `== 2` for "actively
+// rejecting".
+func egressCircuitStateValue(s circuit.State) float64 {
+	switch s {
+	case circuit.StateOpen:
+		return 2
+	case circuit.StateHalfOpen:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // WithChangeObserver registers a transition callback for the metric surface.

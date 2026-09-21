@@ -30,12 +30,26 @@
   per-app egress policy surface, four new limits in `pkg/api/limits.go`,
   three migrations. `ServiceProxyMaxAttempts` and the fixed-TTL quarantine
   map are removed in favour of the breaker. New metrics:
-  `gateway_retry_attempts_total{kind,outcome}`,
+  `gateway_retry_attempts_total{outcome}`,
   `gateway_retry_exhausted_total{reason}`,
-  `gateway_circuit_state{app_id,target}`,
   `gateway_circuit_transitions_total{from,to}`,
-  `egress_circuit_state{app_id,upstream_hash}`,
-  `egress_circuit_rejects_total{app_id,upstream_hash}`. New env:
+  `gateway_circuit_open_targets{app_id}` (all four on the
+  gatewayd-internal-local registry), and
+  `<prefix>_egress_circuit_state{app_id,upstream_hash}` on the shared
+  `OpsMetrics` registry, since schedd emits it.
+
+  Two corrections to an earlier draft of this list. `circuit_state{app_id,
+  target}` keyed by instance id is **unbounded** — instance ids churn on
+  every wake, so that series set grows for the daemon's lifetime; it is
+  replaced by `circuit_open_targets{app_id}`, a count, which answers the same
+  operator question at one series per app. And `retry_attempts_total` carries
+  no `kind` label, because retry has exactly one kind.
+
+  `egress_circuit_rejects_total` is **deferred**: the reject count lives in
+  an nftables counter inside each guest netns, so surfacing it needs a
+  vmmd-side `nft list counter` scrape that does not exist yet. The state
+  gauge already tells an operator that a circuit is open; the packet count is
+  a refinement. New env:
   `FAAS_GATEWAY_RETRY`, `FAAS_GATEWAY_CIRCUIT_BREAKER`,
   `FAAS_EGRESS_CIRCUIT_BREAKER` — all default **off**, matching the
   ADR-098 rollout posture. No change to the wake path or the §6.3 budget.

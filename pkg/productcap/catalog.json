@@ -2,12 +2,28 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "circuit-breaking",
+      "name": "Circuit breaking",
+      "category": "edge",
+      "description": "Stop routing to an instance that is failing in transport, and probe it back into service once it recovers.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/197-traffic-as-a-platform-primitive",
+      "operator_flag": "FAAS_GATEWAY_CIRCUIT_BREAKER",
+      "acceptance_test": "pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint"
+    },
+    {
       "id": "container-deployments",
       "name": "Container deployments",
       "category": "delivery",
       "description": "Deploy a stateless Linux/amd64 Docker or OCI image without rewriting it as a function.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/container-compatibility",
       "acceptance_test": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"
     },
@@ -17,7 +33,12 @@
       "category": "edge",
       "description": "Serve an API on a customer-owned domain with managed TLS.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/custom-domains",
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
     },
@@ -27,10 +48,25 @@
       "category": "runtime",
       "description": "Execute untrusted Node.js or Python source in a fresh, networkless Firecracker microVM with bounded time, memory, and output.",
       "maturity": "preview",
-      "plans": ["hobby", "pro", "scale"],
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/executions",
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
       "acceptance_test": "cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
+    },
+    {
+      "id": "egress-circuit-breaking",
+      "name": "Dependency circuit breaking",
+      "category": "data",
+      "description": "Fail an app's connections to a declared upstream fast while that upstream is unhealthy, instead of letting each request wait out a full connect timeout.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/197-traffic-as-a-platform-primitive",
+      "operator_flag": "FAAS_EGRESS_CIRCUIT_BREAKER",
+      "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery"
     },
     {
       "id": "firecracker-isolation",
@@ -38,7 +74,12 @@
       "category": "runtime",
       "description": "Run each workload in an isolated Firecracker microVM.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/security",
       "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"
     },
@@ -48,7 +89,12 @@
       "category": "delivery",
       "description": "Detect common API frameworks and suggest a start command, port, and health path.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/deploy-from-source",
       "acceptance_test": "pkg/apihostingcontract/catalog_test.go::TestCatalogProfiles"
     },
@@ -58,7 +104,12 @@
       "category": "delivery",
       "description": "Deploy an API from a connected GitHub repository and ref.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/deploy-from-github",
       "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
     },
@@ -79,7 +130,11 @@
       "category": "data",
       "description": "Use private managed object buckets and signed URLs from an API.",
       "maturity": "preview",
-      "plans": ["hobby", "pro", "scale"],
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/object-storage",
       "operator_flag": "s3_enabled",
       "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"
@@ -90,7 +145,12 @@
       "category": "edge",
       "description": "Compare declared routes with observed routes and matching edge policy before deployment.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/api-hosting-openapi",
       "acceptance_test": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview"
     },
@@ -100,9 +160,25 @@
       "category": "delivery",
       "description": "Create an isolated, reviewable API URL for a pull request.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/preview-environments",
       "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"
+    },
+    {
+      "id": "request-retry",
+      "name": "Request retry",
+      "category": "edge",
+      "description": "Replay a request that died in transport against a different healthy instance of the same app.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/197-traffic-as-a-platform-primitive",
+      "operator_flag": "FAAS_GATEWAY_RETRY",
+      "acceptance_test": "pkg/gateway/handler_retry_test.go::TestHandlerRetryConvertsTransportFailureIntoSuccess"
     },
     {
       "id": "scale-to-zero",
@@ -110,7 +186,12 @@
       "category": "runtime",
       "description": "Park idle APIs and wake them on the next request.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/scale-to-zero",
       "acceptance_test": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"
     },
@@ -120,7 +201,12 @@
       "category": "delivery",
       "description": "Deploy an API from a local source tree, tarball, Dockerfile, or OCI image.",
       "maturity": "beta",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/deploy-from-source",
       "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball"
     },
@@ -130,7 +216,11 @@
       "category": "edge",
       "description": "Serve streaming HTTP responses, SSE, and gRPC APIs.",
       "maturity": "beta",
-      "plans": ["hobby", "pro", "scale"],
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/runtime-node",
       "acceptance_test": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
     },
@@ -140,7 +230,11 @@
       "category": "async",
       "description": "Run long-lived non-HTTP OCI workers with queue bindings and queue-depth scaling.",
       "maturity": "preview",
-      "plans": ["hobby", "pro", "scale"],
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/cli/deploy",
       "acceptance_test": "pkg/api/appmanifest_test.go::TestAppManifestWorkerMode"
     },
@@ -150,7 +244,11 @@
       "category": "async",
       "description": "Run asynchronous jobs and durable workflows alongside an API.",
       "maturity": "preview",
-      "plans": ["hobby", "pro", "scale"],
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/faas_openapi_spec",
       "acceptance_test": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"
     }

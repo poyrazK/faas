@@ -439,5 +439,12 @@ func (h *Handler) proxyAttempt(
 		}
 		return pick.Target, true
 	}
-	runWithRetry(w, r, target, policy, retire, forward, repick, h.retryObs)
+	obs := h.retryObs
+	if obs == nil && h.metrics != nil {
+		// Default to the daemon's own registry rather than silently
+		// dropping the counters. WithRetryObserver stays available for
+		// tests that need to assert on the sequence.
+		obs = h.metrics
+	}
+	runWithRetry(w, r, target, policy, retire, forward, repick, obs)
 }

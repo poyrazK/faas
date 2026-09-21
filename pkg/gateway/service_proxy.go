@@ -89,6 +89,10 @@ type ServiceProxyConfig struct {
 	// EndpointTTL with no backoff growth. cmd/gatewayd-internal passes a
 	// DefaultConfig group when FAAS_GATEWAY_CIRCUIT_BREAKER is on.
 	Breaker *circuit.Group
+	// Metrics receives breaker transitions (ADR-197 §2). Optional — nil
+	// keeps the breaker fully working and simply publishes nothing, the
+	// posture every other metrics hook in this package takes.
+	Metrics *Metrics
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -141,6 +145,15 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		legacy.OpenDuration = ttl
 		legacy.MaxOpenDuration = ttl
 		breaker = circuit.NewGroup(legacy, now)
+	}
+	// Transitions are observed here rather than at each call site so the
+	// metric cannot drift from the state machine: every state change goes
+	// through the group, including the ones settled lazily inside Allow and
+	// State.
+	if cfg.Metrics != nil {
+		breaker = breaker.WithTransitionObserver(func(key string, from, to circuit.State) {
+			cfg.Metrics.IncCircuitTransition(string(from), string(to))
+		})
 	}
 	return &ServiceProxy{
 		provider:      cfg.Provider,

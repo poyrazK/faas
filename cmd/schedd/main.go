@@ -691,7 +691,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return addrs[0], nil
 		}
-		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log)
+		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log).WithMetrics(ops)
 		egressLoop := sched.NewEgressCircuitLoop(
 			egressBreaker,
 			sched.NewStoreEgressCircuitCandidateReader(store, 10*time.Minute, time.Now),
