@@ -54,10 +54,27 @@ var (
 	ErrServiceProxyDenied = errors.New("service proxy access denied")
 )
 
-// ServiceProxyResolver maps a service name to its app identity. The context
-// is part of the contract so production implementations can use the request
-// deadline for the app/account lookup.
-type ServiceProxyResolver func(ctx context.Context, service string) (appID string, ok bool, err error)
+// ServiceTarget is the resolved routing identity of a named service. It
+// carries the target's wire-protocol posture alongside its app id so the
+// proxy can pick the guest bridge (ADR-197) without a second store read on
+// the request path.
+type ServiceTarget struct {
+	AppID string
+	// AppProtocol mirrors apps.app_protocol (ADR-124): http1, http2, or grpc.
+	// Empty is treated as http1, which preserves the behaviour of every
+	// caller written before the protocol became part of this contract.
+	AppProtocol string
+	// WebSocketEnabled mirrors apps.websocket_enabled. It gates the raw-bytes
+	// Upgrade bridge for internal callers exactly as it does at the public
+	// edge, so a customer who turned WebSockets off does not silently get
+	// them back through the service mesh.
+	WebSocketEnabled bool
+}
+
+// ServiceProxyResolver maps a service name to its routing identity. The
+// context is part of the contract so production implementations can use the
+// request deadline for the app/account lookup.
+type ServiceProxyResolver func(ctx context.Context, service string) (target ServiceTarget, ok bool, err error)
 
 // ServiceProxyAuthorizer enforces the tenant boundary between caller and
 // target apps. A nil authorizer is treated as a wiring error and fails closed.
@@ -91,6 +108,10 @@ type ServiceProxyConfig struct {
 	Authorize     ServiceProxyAuthorizer
 	ResolveCaller ServiceProxyCallerResolver
 	Forward       func(Target) http.Handler
+	// RawForward is the optional verbatim-bytes bridge used for Upgrade
+	// traffic (ADR-197). nil rejects internal upgrade requests with 501
+	// rather than letting the ordinary forwarder strip the handshake.
+	RawForward func(Target) http.Handler
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake        ServiceProxyWaker
@@ -109,6 +130,7 @@ type ServiceProxy struct {
 	authorize     ServiceProxyAuthorizer
 	resolveCaller ServiceProxyCallerResolver
 	forward       func(Target) http.Handler
+	rawForward    func(Target) http.Handler
 	wake          ServiceProxyWaker
 	endpointTTL   time.Duration
 	now           func() time.Time
@@ -145,6 +167,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		authorize:     cfg.Authorize,
 		resolveCaller: cfg.ResolveCaller,
 		forward:       cfg.Forward,
+		rawForward:    cfg.RawForward,
 		wake:          cfg.Wake,
 		endpointTTL:   ttl,
 		now:           now,
@@ -185,7 +208,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
-	targetApp, err := p.resolveTargetApp(r.Context(), service)
+	target, err := p.resolveTarget(r.Context(), service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
 			serviceProxyProblem(w, http.StatusNotFound, "service is not registered")
@@ -198,7 +221,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
 	}
-	if err := p.authorize(r.Context(), caller, targetApp); err != nil {
+	if err := p.authorize(r.Context(), caller, target.AppID); err != nil {
 		if errors.Is(err, ErrServiceProxyDenied) {
 			serviceProxyProblem(w, http.StatusForbidden, "caller is not allowed to reach this service")
 			return
@@ -210,15 +233,34 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, served := p.routableEndpoints(w, r, targetApp)
+	endpoints, served := p.routableEndpoints(w, r, target.AppID)
 	if !served {
 		return
 	}
-	if !serviceProxyRetryable(r) {
-		p.forwardOnce(w, r, targetPath, targetApp, endpoints, false)
+	p.dispatch(w, r, targetPath, target, endpoints) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+// dispatch picks the guest bridge for the resolved target (ADR-197).
+//
+// An Upgrade request needs the verbatim-bytes path: the ordinary forwarder
+// strips Connection/Upgrade as hop-by-hop headers (RFC 7230 §6.1), which
+// turns a WebSocket handshake into a confusing upstream error. It also
+// cannot be buffered or retried, because the response is a hijacked
+// connection rather than a body.
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint) {
+	if isUpgradeRequest(r) {
+		if !target.WebSocketEnabled {
+			serviceProxyProblem(w, http.StatusNotImplemented, "target service does not accept upgrade requests")
+			return
+		}
+		if p.rawForward == nil {
+			serviceProxyProblem(w, http.StatusNotImplemented, "raw-bytes bridge is not enabled on this node")
+			return
+		}
+		p.forwardUpgrade(w, r, targetPath, target, endpoints)
 		return
 	}
-	p.forwardOnce(w, r, targetPath, targetApp, endpoints, true)
+	p.forwardOnce(w, r, targetPath, target, endpoints, serviceProxyRetryable(r))
 }
 
 // parseServiceProxyRequest accepts the original explicit path form and the
@@ -275,18 +317,34 @@ func validServiceDNSLabel(service string) bool {
 	return true
 }
 
-func (p *ServiceProxy) resolveTargetApp(ctx context.Context, service string) (string, error) {
+func (p *ServiceProxy) resolveTarget(ctx context.Context, service string) (ServiceTarget, error) {
 	if p.resolve == nil {
-		return "", fmt.Errorf("service name resolver is not wired")
+		return ServiceTarget{}, fmt.Errorf("service name resolver is not wired")
 	}
-	appID, ok, err := p.resolve(ctx, service)
+	target, ok, err := p.resolve(ctx, service)
 	if err != nil {
-		return "", fmt.Errorf("service name lookup: %w", err)
+		return ServiceTarget{}, fmt.Errorf("service name lookup: %w", err)
 	}
-	if !ok || appID == "" {
-		return "", fmt.Errorf("%w: %s", ErrServiceProxyNotFound, service)
+	if !ok || target.AppID == "" {
+		return ServiceTarget{}, fmt.Errorf("%w: %s", ErrServiceProxyNotFound, service)
 	}
-	return appID, nil
+	return target, nil
+}
+
+// serviceGuestProtocol maps the target's app_protocol onto the value vmmd
+// reads to choose the guest bridge. It mirrors decideProtocol on the public
+// path: http1 and http2/grpc select the H1 and H2C bridges respectively, and
+// any value outside the column's closed set degrades to http1 rather than
+// failing the call.
+func serviceGuestProtocol(target ServiceTarget) string {
+	switch target.AppProtocol {
+	case api.AppProtocolHTTP2:
+		return api.AppProtocolHTTP2
+	case api.AppProtocolGRPC:
+		return api.AppProtocolGRPC
+	default:
+		return api.AppProtocolHTTP1
+	}
 }
 
 func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
@@ -405,19 +463,53 @@ func validServiceEndpoints(in []ServiceEndpoint) []ServiceEndpoint {
 	return out
 }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath, appID string, endpoints []ServiceEndpoint, retry bool) {
+// guestRequest builds the outbound request for the guest hop: the caller
+// header is stripped, inbound identity claims are cleared before the target
+// identity this hop actually knows is applied, and the target's wire protocol
+// is stamped so vmmd selects the H1 or H2C guest bridge (ADR-197).
+//
+// The request id is preserved so an internal hop stays correlated end to end.
+func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target ServiceTarget) *http.Request {
 	request := r.Clone(r.Context())
 	request.URL.Path = targetPath
 	request.URL.RawPath = ""
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
 	request.Header.Del(ServiceProxyCallerAppHeader)
-	// The service hop does not have the full deployment record, so clear all
-	// inbound identity claims before adding the target identity it does know.
-	// Preserve the request id for end-to-end correlation through the shared
-	// platform identity renderer.
 	requestID := request.Header.Get(api.RequestIDHeader)
-	api.PlatformIdentity{RequestID: requestID, AppID: appID}.ApplyGuestHeaders(request.Header)
+	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
+	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
+	return request
+}
+
+// forwardUpgrade carries an Upgrade request to the guest over the raw-bytes
+// bridge. There is no retry and no response buffering: the response is a
+// hijacked connection, so the first endpoint chosen is the only one, and a
+// stale-target signal cannot be acted on after bytes have flowed.
+func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint) {
+	endpoint, ok := p.pick(target.AppID, endpoints)
+	if !ok {
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
+		return
+	}
+	request := p.guestRequest(r, targetPath, target)
+	api.PlatformIdentity{
+		RequestID:  request.Header.Get(api.RequestIDHeader),
+		AppID:      target.AppID,
+		InstanceID: endpoint.InstanceID,
+		NodeID:     endpoint.NodeID,
+	}.ApplyGuestHeaders(request.Header)
+	// Mirrors the public edge (ADR-080): the wake-timeline vocabulary marks a
+	// raw-bytes session so observability does not have to re-derive it from
+	// the Connection/Upgrade pair.
+	request.Header.Set("x-faas-upgrade", "true")
+	p.rawForward(Target{NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, Port: endpoint.Port}).ServeHTTP(w, request)
+}
+
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint, retry bool) {
+	appID := target.AppID
+	request := p.guestRequest(r, targetPath, target)
+	requestID := request.Header.Get(api.RequestIDHeader)
 	for attempt := 0; attempt < ServiceProxyMaxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok {
@@ -441,6 +533,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			continue
 		}
 		buffer.commit()
+		buffer.commitTrailers()
 		return
 	}
 }
@@ -546,6 +639,29 @@ func (w *serviceProxyResponseWriter) Flush() {
 	w.commit()
 	if flusher, ok := w.dst.(http.Flusher); ok {
 		flusher.Flush()
+	}
+}
+
+// commitTrailers copies trailer entries the guest set after the header block
+// was already flushed (ADR-197).
+//
+// commit() snapshots w.header once, but trailers are by definition written
+// after the headers. Go records an undeclared trailer as an ordinary header
+// key carrying http.TrailerPrefix, and a declared one appears as a new plain
+// key after the response starts. Either way it lands in this buffer's own map
+// and never reaches the client unless it is copied across afterwards --
+// which for gRPC means the caller reads a complete stream carrying no
+// grpc-status and has to infer success.
+func (w *serviceProxyResponseWriter) commitTrailers() {
+	if !w.committed {
+		return
+	}
+	dst := w.dst.Header()
+	for key, values := range w.header {
+		if _, present := dst[key]; present && !strings.HasPrefix(key, http.TrailerPrefix) {
+			continue
+		}
+		dst[key] = append([]string(nil), values...)
 	}
 }
 

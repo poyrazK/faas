@@ -2931,15 +2931,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider: serviceEndpointProvider,
-			Resolve: func(ctx context.Context, service string) (string, bool, error) {
+			Resolve: func(ctx context.Context, service string) (gateway.ServiceTarget, bool, error) {
 				app, err := pgStore.AppBySlug(ctx, service)
 				if errors.Is(err, state.ErrNotFound) {
-					return "", false, nil
+					return gateway.ServiceTarget{}, false, nil
 				}
 				if err != nil {
-					return "", false, fmt.Errorf("resolve service %q: %w", service, err)
+					return gateway.ServiceTarget{}, false, fmt.Errorf("resolve service %q: %w", service, err)
 				}
-				return app.ID, app.ID != "", nil
+				// ADR-197: carry the target's wire-protocol posture with its
+				// identity so the guest hop can pick the H1 or H2C bridge
+				// without a second store read on the request path.
+				return gateway.ServiceTarget{
+					AppID:            app.ID,
+					AppProtocol:      app.AppProtocol,
+					WebSocketEnabled: app.WebSocketEnabled,
+				}, app.ID != "", nil
 			},
 			Authorize: func(ctx context.Context, callerAppID, targetAppID string) error {
 				caller, err := pgStore.AppByID(ctx, callerAppID)
@@ -2961,7 +2968,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return nil
 			},
-			Forward: deps.nodeCache.Forwarding(),
+			Forward:    deps.nodeCache.Forwarding(),
+			RawForward: deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
 			// scale-to-zero internal service 503s on every cold call, which
@@ -3151,6 +3159,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		} else {
 			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
 			srv.Addr = serviceProxyAddr
+			// ADR-197: the guest listener must accept H2C prior-knowledge so
+			// a workload's gRPC client can reach a same-account service. The
+			// server factory builds the control listener's HTTP/1.1-only
+			// posture, which silently downgrades every internal gRPC call.
+			srv.Protocols = new(http.Protocols)
+			srv.Protocols.SetHTTP1(true)
+			srv.Protocols.SetUnencryptedHTTP2(true)
+			// Those same control-listener defaults carry a 30 s write
+			// deadline. http.Server starts WriteTimeout before the handler
+			// runs, so it bounds the whole exchange: it would cut a streaming
+			// gRPC response, a long-lived upgrade session, and any call held
+			// through a snapshot restore (ADR-196). Widen both to the
+			// customer request envelope the public listener uses.
+			srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+			srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
 			addSrv(srv)
 			l, lerr := deps.listen("tcp", serviceProxyAddr)
 			if lerr != nil {

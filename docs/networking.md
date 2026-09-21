@@ -177,3 +177,14 @@ When a wake cannot produce a replica, the proxy answers `503`. A saturated
 wake queue carries `Retry-After`; a target at its plan concurrency ceiling
 reports `service has no healthy replicas`. Internal wakes appear in the wake
 timeline with trigger `service.mesh`, distinct from public `gateway` traffic.
+
+Internal calls honour the target's wire protocol (ADR-197). An app configured
+`app_protocol: grpc` or `http2` is reached over the H2C guest bridge, and the
+node-local listener accepts H2C prior knowledge, so a workload can use an
+ordinary gRPC client against `http://APP_SLUG.svc.gregale:10080`. Response
+trailers — including `grpc-status` — are preserved across the hop.
+`Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
+bridge and are neither buffered nor retried; they require the target app to
+have WebSockets enabled and return `501` otherwise. Non-HTTP raw TCP between
+services is not part of the discovery contract: address those listeners
+through named ports instead.
