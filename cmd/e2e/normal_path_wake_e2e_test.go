@@ -30,15 +30,18 @@
 package e2e_test
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
+	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -299,10 +302,17 @@ func TestE2E_NormalPath_RestoreRPCErrorFailsTheWake(t *testing.T) {
 	}
 }
 
-// TestE2E_NormalPath_IdleParkWritesSnapshotAndReleasesInstance covers the park
+// TestE2E_NormalPath_ParkCapturesSnapshotAndReleasesInstance covers the park
 // edge, which was equally unreachable: PauseAndSnapshot was Unimplemented, so
-// no CI test had ever observed a park.
-func TestE2E_NormalPath_IdleParkWritesSnapshotAndReleasesInstance(t *testing.T) {
+// no CI test had ever observed a snapshotting park.
+//
+// It drives schedd's ParkInstance RPC — the same entry point meterd's quota
+// path and the operator tooling use — rather than POST /v1/apps/{slug}/park.
+// That endpoint marks the app evicted_cold, which is a COLD eviction: it tears
+// the VM down deliberately WITHOUT capturing, so the next wake cold-boots.
+// Asserting a snapshot against it would be asserting the opposite of what it
+// promises.
+func TestE2E_NormalPath_ParkCapturesSnapshotAndReleasesInstance(t *testing.T) {
 	f := newNormalPathFixture(t, "park-writes-snapshot")
 	if f == nil {
 		return
@@ -316,34 +326,31 @@ func TestE2E_NormalPath_IdleParkWritesSnapshotAndReleasesInstance(t *testing.T) 
 		t.Fatalf("no running instance after wake: %v", err)
 	}
 
-	if err := parkNormalPathInstance(t, f, instance.ID); err != nil {
-		t.Fatalf("park: %v", err)
+	conn, err := grpc.NewClient("unix://"+f.h.ScheddSock,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial schedd: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
+	defer cancel()
+	if _, err := scheddpb.NewScheddClient(conn).ParkInstance(ctx,
+		&scheddpb.ParkInstanceRequest{InstanceId: instance.ID, Reason: "e2e_park"}); err != nil {
+		t.Fatalf("park instance: %v", err)
 	}
 
-	if n := len(f.vmmd.SnapshotCalls()); n == 0 {
+	calls := f.vmmd.SnapshotCalls()
+	if len(calls) == 0 {
 		t.Fatal("park did not reach PauseAndSnapshot")
 	}
-	if got := f.vmmd.SnapshotCalls()[0].GetInstance(); got != instance.ID {
+	if got := calls[0].GetInstance(); got != instance.ID {
 		t.Errorf("snapshot captured instance %q, want %q", got, instance.ID)
 	}
-}
 
-// parkNormalPathInstance asks schedd to park through the same durable path the
-// idle reaper uses. Kept as a seam so the assertion above does not depend on
-// which trigger fired the park.
-func parkNormalPathInstance(t *testing.T, f *normalPathFixture, instanceID string) error {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	body, statusCode := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+f.app.Slug+"/park", nil)
-	if statusCode != http.StatusAccepted && statusCode != http.StatusOK && statusCode != http.StatusNoContent {
-		return fmt.Errorf("park request status=%d body=%s", statusCode, body)
-	}
-	for time.Now().Before(deadline) {
-		ins, err := f.store.InstanceByID(f.ctx, instanceID)
-		if err == nil && ins.State != string(state.StateRunning) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("instance %s never left running", instanceID)
+	// The instance must leave RUNNING: a park that captures but keeps the VM
+	// resident would violate invariant §6.2-4 (a parked app holds zero RAM).
+	waitForWake(t, 10*time.Second, func() bool {
+		ins, err := f.store.InstanceByID(f.ctx, instance.ID)
+		return err == nil && ins.State != string(state.StateRunning)
+	}, "instance stayed RUNNING after a successful park")
 }
