@@ -6072,7 +6072,7 @@ func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowR
 	return resp, err
 }
 
-// --- ADR-201 custom application metrics ---------------------------------
+// --- ADR-202 custom application metrics ---------------------------------
 //
 // Method names come from cmd/sdk-coverage's explicit alias map rather than
 // its auto-derivation: the `custom-metrics` path segment contains a hyphen,

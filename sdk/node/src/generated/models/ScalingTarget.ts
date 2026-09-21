@@ -11,7 +11,7 @@ export type ScalingTarget = {
    */
   metric?: 'rps' | 'cpu' | 'concurrent_requests' | 'queue_depth';
   /**
-   * Which custom metric this target watches (ADR-201). Required when metric is `custom`, and REJECTED otherwise — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove.
+   * Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove.
    */
   name?: string;
   /**

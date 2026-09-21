@@ -133,7 +133,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	// customMetrics[appID][name] holds ADR-201 pushed gauges. Nested so
+	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics             map[string]map[string]CustomMetric

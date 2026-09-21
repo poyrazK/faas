@@ -509,7 +509,7 @@ type Limits struct {
 	// the max_concurrency cap is bounded). apid's updateApp handler
 	// gates the PATCH body on this flag.
 	MinInstancesAllowed bool
-	// CustomMetricsAllowed toggles ADR-201 pushed application metrics.
+	// CustomMetricsAllowed toggles ADR-202 pushed application metrics.
 	// Gated for two reasons: the push buys the same scaling capability
 	// min_instances does, and an unbounded free-tier write endpoint is an
 	// abuse surface.
@@ -4048,7 +4048,7 @@ const (
 	// latency bound rather than a product limit. Twelve covers a distinct
 	// window per month, which is well past any real weekly shape.
 	MaxScalingSchedules = 12
-	// MaxCustomMetricsPerApp caps distinct ADR-201 metric names per app.
+	// MaxCustomMetricsPerApp caps distinct ADR-202 metric names per app.
 	//
 	// The bound is a LATENCY property before it is a storage one: the
 	// targets trigger reads an app's custom metrics on every tick for
@@ -4079,7 +4079,7 @@ const (
 	// decision events for one app. Metrics remain per-tick; the audit stream
 	// is sampled so a sustained hot app cannot flood events.
 	ScaleDecisionEventMinIntervalSeconds = 30
-	// CustomMetricFreshnessSeconds bounds how long a pushed ADR-201 value
+	// CustomMetricFreshnessSeconds bounds how long a pushed ADR-202 value
 	// stands in for the current reading.
 	//
 	// Five minutes is deliberately longer than the broker-lag equivalent:
@@ -4977,7 +4977,7 @@ func (p Plan) MinInstancesAllowed() bool {
 	return l.MinInstancesAllowed
 }
 
-// CustomMetricsAllowed (ADR-201) reports whether the plan may push custom
+// CustomMetricsAllowed (ADR-202) reports whether the plan may push custom
 // application metrics and scale on them.
 func (p Plan) CustomMetricsAllowed() bool {
 	l, ok := LimitsFor(p)

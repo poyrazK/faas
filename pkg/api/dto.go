@@ -859,7 +859,7 @@ type ScalingPolicy struct {
 type ScalingTarget struct {
 	Metric string  `json:"metric,omitempty"`
 	Value  float64 `json:"value,omitempty"`
-	// Name identifies WHICH custom metric this target watches (ADR-201).
+	// Name identifies WHICH custom metric this target watches (ADR-202).
 	// Required when Metric is "custom" and rejected otherwise — a name on
 	// a platform-measured metric would be silently ignored, which is the
 	// kind of accepted-but-inert field this codebase keeps having to
@@ -9563,7 +9563,7 @@ type JobDeletedResponse struct {
 	DeletedAt string `json:"deleted_at"`
 }
 
-// CustomMetricRequest is the ADR-201 push body. The name travels in the URL
+// CustomMetricRequest is the ADR-202 push body. The name travels in the URL
 // path, so the body carries only the number that actually varies — which is
 // what makes the push idempotent by construction.
 type CustomMetricRequest struct {

@@ -24,7 +24,7 @@ class ScalingTarget:
     """rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-
     instance in-flight requests. queue_depth = fleet backlog budget per worker."""
     name: str | Unset = UNSET
-    """Which custom metric this target watches (ADR-201). Required when metric is `custom`, and REJECTED otherwise
+    """Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise
     — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API
     keeps having to remove."""
     value: float | Unset = UNSET

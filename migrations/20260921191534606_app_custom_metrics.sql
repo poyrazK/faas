@@ -2,7 +2,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Customer-pushed application metrics used as a scaling signal (ADR-201).
+-- Customer-pushed application metrics used as a scaling signal (ADR-202).
 --
 -- Every other scaling signal is something the platform measures about an
 -- app: request rate, CPU, in-flight requests, local queue depth, broker
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS app_custom_metrics (
     -- shape as other customer-authored identifiers so it is safe in a
     -- Prometheus label and in a URL path.
     name        text        NOT NULL,
-    -- value is the FLEET-TOTAL quantity (ADR-201): the scheduler computes
+    -- value is the FLEET-TOTAL quantity (ADR-202): the scheduler computes
     -- ceil(value / target), the ClassBacklog arithmetic already used by
     -- queue_depth and queue_lag. Stored as double precision because a
     -- customer metric is not necessarily integral (a ratio, a seconds

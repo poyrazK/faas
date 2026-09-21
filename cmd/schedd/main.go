@@ -1802,7 +1802,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Interval:                cfg.ScaleUpInterval,
 			QueueStatsReader:        store,
 			QueueBindingStatsReader: store,
-			// ADR-201: the store IS the custom-metric reader — pushes
+			// ADR-202: the store IS the custom-metric reader — pushes
 			// land in app_custom_metrics via apid, and the trigger reads
 			// them back. Without this a declared `custom` target
 			// validates and never scales.

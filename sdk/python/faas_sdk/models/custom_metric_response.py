@@ -12,7 +12,7 @@ T = TypeVar("T", bound="CustomMetricResponse")
 
 @_attrs_define
 class CustomMetricResponse:
-    """One stored ADR-201 gauge.
+    """One stored ADR-202 gauge.
 
     Example:
         {'name': 'orders_pending', 'value': 1284, 'observed_at': '2026-09-21T12:00:00Z', 'stale': False}

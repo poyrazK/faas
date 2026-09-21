@@ -149,7 +149,7 @@ type BrokerLagReader interface {
 	BrokerLag(ctx context.Context, appID string) (int64, bool, error)
 }
 
-// CustomMetricReader supplies an app's pushed ADR-201 gauges. Optional: a
+// CustomMetricReader supplies an app's pushed ADR-202 gauges. Optional: a
 // deployment whose apps declare no custom targets wires nil and the axis
 // reports no signal.
 //
@@ -511,7 +511,7 @@ type Options struct {
 	QueueBindingStatsReader QueueBindingStatsReader
 	// BrokerLagReader supplies broker-reported consumer lag for queue_lag / queue_depth targets.
 	BrokerLagReader BrokerLagReader
-	// CustomMetricReader supplies pushed ADR-201 gauges. Optional.
+	// CustomMetricReader supplies pushed ADR-202 gauges. Optional.
 	CustomMetricReader CustomMetricReader
 }
 
@@ -702,7 +702,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		inflightTarget, haveInflightTarget := policy.TargetFor(api.ScalingMetricConcurrentRequests)
 		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
 		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
-		// ADR-201: custom targets are keyed by NAME, so they cannot be
+		// ADR-202: custom targets are keyed by NAME, so they cannot be
 		// resolved with TargetFor — an app may declare several.
 		customTargets := customTargetsOf(policy)
 		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
@@ -841,7 +841,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			// sibling signal that does have a reading.
 			//
 			// Failing to "no signal" rather than holding the last value
-			// is the deliberate choice (ADR-201). If the pusher dies —
+			// is the deliberate choice (ADR-202). If the pusher dies —
 			// the cron stops, the customer's infrastructure has an
 			// outage — a frozen backlog would pin the fleet at whatever
 			// it was when the pusher stopped, indefinitely, and bill for
@@ -973,7 +973,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	return nil
 }
 
-// customTargetsOf returns the app's ADR-201 targets. Separate from
+// customTargetsOf returns the app's ADR-202 targets. Separate from
 // ScalingPolicy.TargetFor because custom targets are keyed by name and an app
 // may declare more than one, which a metric-keyed lookup cannot express.
 func customTargetsOf(policy *state.ScalingPolicy) []state.ScalingTarget {

@@ -10,7 +10,7 @@ T = TypeVar("T", bound="CustomMetricRequest")
 
 @_attrs_define
 class CustomMetricRequest:
-    """ADR-201 push body. The metric name travels in the URL path, so the body carries only the number that varies — which
+    """ADR-202 push body. The metric name travels in the URL path, so the body carries only the number that varies — which
     is what makes the push idempotent by construction.
 
     """

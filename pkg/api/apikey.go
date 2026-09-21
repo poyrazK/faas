@@ -330,7 +330,7 @@ const (
 	// can't POST, and a Scale customer with only env:write still
 	// can't POST upstreams).
 	ScopeUpstreamsWrite = "upstreams:write"
-	// ScopeMetricsWrite grants the ADR-201 custom-metric push. It is its
+	// ScopeMetricsWrite grants the ADR-202 custom-metric push. It is its
 	// own scope rather than riding deploy:write because the caller is
 	// usually NOT a deploy pipeline — it is a cron, a database trigger,
 	// or the customer's own infrastructure, and that token should not be
@@ -462,7 +462,7 @@ var (
 	ScopesUpstreamWriteSurface = []string{ScopeAdmin, ScopeUpstreamsWrite}
 
 	// ScopesMetricsWriteSurface: PUT/DELETE on
-	// /v1/apps/{slug}/metrics/{name} (ADR-201). Granted by admin or
+	// /v1/apps/{slug}/metrics/{name} (ADR-202). Granted by admin or
 	// metrics:write. NOT MFA-gated: a pushed gauge is non-sensitive
 	// runtime telemetry on the same trust model as env vars, and the
 	// pusher is typically unattended automation that cannot satisfy MFA.

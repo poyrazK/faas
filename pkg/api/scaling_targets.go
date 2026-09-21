@@ -32,7 +32,7 @@ const (
 	// drain.
 	ScalingMetricQueueLag = "queue_lag"
 	// ScalingMetricCustom targets a customer-pushed application metric
-	// (ADR-201), named by ScalingTarget.Name. Like queue_depth and
+	// (ADR-202), named by ScalingTarget.Name. Like queue_depth and
 	// queue_lag it is compared FLEET-WIDE: the value is the total backlog
 	// one instance should carry, so desired = ceil(measured / target).
 	//
@@ -153,7 +153,7 @@ func ValidateScalingTargets(field string, targets []ScalingTarget) *Problem {
 				fmt.Sprintf("%s[%d].value must be > 0 for %s; got %v.",
 					field, i, t.Metric, t.Value))
 		}
-		// ADR-201: a name identifies WHICH pushed metric to watch, so it
+		// ADR-202: a name identifies WHICH pushed metric to watch, so it
 		// is required for custom and meaningless anywhere else. Accepting
 		// it on a platform-measured metric would store a field nothing
 		// reads — the accepted-but-inert shape this codebase keeps having

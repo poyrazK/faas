@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * ADR-201 push body. The metric name travels in the URL path, so the body carries only the number that varies — which is what makes the push idempotent by construction.
+ * ADR-202 push body. The metric name travels in the URL path, so the body carries only the number that varies — which is what makes the push idempotent by construction.
  */
 export type CustomMetricRequest = {
   /**

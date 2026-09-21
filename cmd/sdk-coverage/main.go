@@ -402,7 +402,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/deployments/{id}/reorder":                       "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
 	"POST /v1/apps/{slug}/deployments/{id}/cancel":            "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
 	"POST /v1/apps/{slug}/deployments/clear-obsolete":         "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
-	// ADR-201 custom application metrics. Auto-derivation would produce
+	// ADR-202 custom application metrics. Auto-derivation would produce
 	// `GetAppsSlugCustom-metrics` because of the literal hyphen in the
 	// path segment, which is not a Go identifier. Same treatment as
 	// env-diff above: drop the slug placeholder and the hyphen.

@@ -1645,7 +1645,7 @@ func (s *server) handler() http.Handler {
 	// createAlertRule). The microVM captures the doc during
 	// cold boot on every plan; the apid only SERVES the doc
 	// on paid plans.
-	// ADR-201 custom application metrics. The PUT is the one scaling-path
+	// ADR-202 custom application metrics. The PUT is the one scaling-path
 	// write a customer's own infrastructure calls directly — a cron, a
 	// database trigger — so it takes the ordinary app-write scope rather
 	// than a deploy scope.

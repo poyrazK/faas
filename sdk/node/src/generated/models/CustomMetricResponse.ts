@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One stored ADR-201 gauge.
+ * One stored ADR-202 gauge.
  */
 export type CustomMetricResponse = {
   name: string;

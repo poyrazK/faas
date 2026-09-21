@@ -537,7 +537,7 @@ export class AppsService {
     });
   }
   /**
-   * List the app's pushed custom metrics (ADR-201)
+   * List the app's pushed custom metrics (ADR-202)
    * Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator debugging "why isn't my custom target scaling" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured.
    * @returns CustomMetricListResponse The app's custom metrics.
    * @throws ApiError
@@ -562,7 +562,7 @@ export class AppsService {
     });
   }
   /**
-   * Push a custom application metric (ADR-201)
+   * Push a custom application metric (ADR-202)
    * Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap.
    * @returns void
    * @throws ApiError
@@ -599,7 +599,7 @@ export class AppsService {
     });
   }
   /**
-   * Delete a custom application metric (ADR-201)
+   * Delete a custom application metric (ADR-202)
    * Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not exist returns 204, not 404: the caller's intent is "this metric is gone", which is already true, and a 404 would make a retry of a successful delete look like a failure.
    * @returns void
    * @throws ApiError

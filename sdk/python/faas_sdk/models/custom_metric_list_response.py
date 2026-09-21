@@ -15,7 +15,7 @@ T = TypeVar("T", bound="CustomMetricListResponse")
 
 @_attrs_define
 class CustomMetricListResponse:
-    """The app's ADR-201 gauges, plus the two limits needed to interpret them so debugging does not require reading the
+    """The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the
     docs.
 
     """

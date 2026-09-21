@@ -77,7 +77,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CustomMetricRequest,
 ) -> Response[Any | Problem]:
-    """Push a custom application metric (ADR-201)
+    """Push a custom application metric (ADR-202)
 
      Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller
     is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which
@@ -89,7 +89,7 @@ def sync_detailed(
     Args:
         slug (str):
         name (str):
-        body (CustomMetricRequest): ADR-201 push body. The metric name travels in the URL path, so
+        body (CustomMetricRequest): ADR-202 push body. The metric name travels in the URL path, so
             the body carries only the number that varies — which is what makes the push idempotent by
             construction.
 
@@ -121,7 +121,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CustomMetricRequest,
 ) -> Any | Problem | None:
-    """Push a custom application metric (ADR-201)
+    """Push a custom application metric (ADR-202)
 
      Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller
     is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which
@@ -133,7 +133,7 @@ def sync(
     Args:
         slug (str):
         name (str):
-        body (CustomMetricRequest): ADR-201 push body. The metric name travels in the URL path, so
+        body (CustomMetricRequest): ADR-202 push body. The metric name travels in the URL path, so
             the body carries only the number that varies — which is what makes the push idempotent by
             construction.
 
@@ -160,7 +160,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CustomMetricRequest,
 ) -> Response[Any | Problem]:
-    """Push a custom application metric (ADR-201)
+    """Push a custom application metric (ADR-202)
 
      Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller
     is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which
@@ -172,7 +172,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         name (str):
-        body (CustomMetricRequest): ADR-201 push body. The metric name travels in the URL path, so
+        body (CustomMetricRequest): ADR-202 push body. The metric name travels in the URL path, so
             the body carries only the number that varies — which is what makes the push idempotent by
             construction.
 
@@ -202,7 +202,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CustomMetricRequest,
 ) -> Any | Problem | None:
-    """Push a custom application metric (ADR-201)
+    """Push a custom application metric (ADR-202)
 
      Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller
     is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which
@@ -214,7 +214,7 @@ async def asyncio(
     Args:
         slug (str):
         name (str):
-        body (CustomMetricRequest): ADR-201 push body. The metric name travels in the URL path, so
+        body (CustomMetricRequest): ADR-202 push body. The metric name travels in the URL path, so
             the body carries only the number that varies — which is what makes the push idempotent by
             construction.
 

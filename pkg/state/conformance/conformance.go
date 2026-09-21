@@ -2394,7 +2394,7 @@ func testDeploymentRevisions(t *testing.T, fx *Fixture) {
 	}
 }
 
-// testCustomMetricsContract pins the ADR-201 store contract on both
+// testCustomMetricsContract pins the ADR-202 store contract on both
 // implementations.
 //
 // The load-bearing case is the distinct-name cap. PgStore enforces it inside

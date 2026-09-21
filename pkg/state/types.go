@@ -1661,12 +1661,12 @@ type ScalingPolicy struct {
 type ScalingTarget struct {
 	Metric string  // closed set: api.ScalingMetrics()
 	Value  float64 // target value (units depend on Metric)
-	// Name is the custom metric this target watches (ADR-201). Set only
+	// Name is the custom metric this target watches (ADR-202). Set only
 	// when Metric == "custom".
 	Name string
 }
 
-// CustomMetric is one customer-pushed gauge (ADR-201).
+// CustomMetric is one customer-pushed gauge (ADR-202).
 //
 // Value is FLEET-TOTAL, not per-instance: the scheduler computes
 // ceil(Value / target), the ClassBacklog arithmetic queue_depth and

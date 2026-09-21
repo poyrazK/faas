@@ -1,4 +1,4 @@
-// Custom application metrics (ADR-201).
+// Custom application metrics (ADR-202).
 //
 //	PUT    /v1/apps/{slug}/custom-metrics/{name}
 //	GET    /v1/apps/{slug}/custom-metrics

@@ -1,4 +1,4 @@
-# ADR-201 · Custom application metrics as a scaling signal
+# ADR-202 · Custom application metrics as a scaling signal
 
 - **Status:** accepted
 - **Date:** 2026-09-21

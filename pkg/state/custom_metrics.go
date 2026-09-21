@@ -9,7 +9,7 @@ import (
 )
 
 // ErrCustomMetricLimit is returned when a push would exceed an app's
-// distinct-name cap (ADR-201). Callers map it to a 422 naming the limit.
+// distinct-name cap (ADR-202). Callers map it to a 422 naming the limit.
 var ErrCustomMetricLimit = errors.New("state: app custom metric limit reached")
 
 // PutCustomMetric upserts one pushed gauge.

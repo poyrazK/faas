@@ -3963,7 +3963,7 @@ type Store interface {
 	// when the app has no pending rows; callers translate to nil.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)
 
-	// --- ADR-201 custom application metrics -------------------------
+	// --- ADR-202 custom application metrics -------------------------
 	//
 	// PutCustomMetric upserts one customer-pushed gauge. Keyed
 	// (app_id, name), so a push to an existing name replaces the value

@@ -60,7 +60,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CustomMetricListResponse | Problem]:
-    r"""List the app's pushed custom metrics (ADR-201)
+    r"""List the app's pushed custom metrics (ADR-202)
 
      Returns every stored custom metric for the app, including rows whose last push is older than the
     freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator
@@ -95,7 +95,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> CustomMetricListResponse | Problem | None:
-    r"""List the app's pushed custom metrics (ADR-201)
+    r"""List the app's pushed custom metrics (ADR-202)
 
      Returns every stored custom metric for the app, including rows whose last push is older than the
     freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator
@@ -125,7 +125,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CustomMetricListResponse | Problem]:
-    r"""List the app's pushed custom metrics (ADR-201)
+    r"""List the app's pushed custom metrics (ADR-202)
 
      Returns every stored custom metric for the app, including rows whose last push is older than the
     freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator
@@ -158,7 +158,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> CustomMetricListResponse | Problem | None:
-    r"""List the app's pushed custom metrics (ADR-201)
+    r"""List the app's pushed custom metrics (ADR-202)
 
      Returns every stored custom metric for the app, including rows whose last push is older than the
     freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator

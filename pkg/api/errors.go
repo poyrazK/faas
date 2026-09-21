@@ -1091,7 +1091,7 @@ const (
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
 	CodePlanQueueDepth = "plan_queue_depth"
-	// CodeCustomMetricLimit: a push of a NEW ADR-201 metric name by an app
+	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
 	CodeCustomMetricLimit = "custom_metric_limit"
@@ -6033,7 +6033,7 @@ func ErrNodeLifecycleInvalid(from, to string) *Problem {
 		WithDocs(docsBase + "/admin/compute-nodes#lifecycle")
 }
 
-// ErrPlanCustomMetricsNotAllowed is the 402 for an ADR-201 push on a plan
+// ErrPlanCustomMetricsNotAllowed is the 402 for an ADR-202 push on a plan
 // without the feature. Pushing a metric buys the same scaling capability the
 // other targets do, and an unbounded free-tier write endpoint is an abuse
 // surface.

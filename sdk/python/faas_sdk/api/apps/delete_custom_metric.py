@@ -57,7 +57,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    r"""Delete a custom application metric (ADR-201)
+    r"""Delete a custom application metric (ADR-202)
 
      Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not
     exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true,
@@ -93,7 +93,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    r"""Delete a custom application metric (ADR-201)
+    r"""Delete a custom application metric (ADR-202)
 
      Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not
     exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true,
@@ -124,7 +124,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    r"""Delete a custom application metric (ADR-201)
+    r"""Delete a custom application metric (ADR-202)
 
      Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not
     exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true,
@@ -158,7 +158,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    r"""Delete a custom application metric (ADR-201)
+    r"""Delete a custom application metric (ADR-202)
 
      Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not
     exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true,

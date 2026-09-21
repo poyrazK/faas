@@ -599,7 +599,7 @@ type AMQPConfig struct {
 type ScalingTarget struct {
 	Metric string  `yaml:"metric"`
 	Value  float64 `yaml:"value"`
-	// Name selects WHICH custom metric to watch (ADR-201). Required with
+	// Name selects WHICH custom metric to watch (ADR-202). Required with
 	// `metric: custom`, rejected with any other metric.
 	Name string `yaml:"name,omitempty"`
 }

@@ -4175,7 +4175,7 @@ paths:
       - $ref: '#/components/parameters/Slug'
     get:
       operationId: listCustomMetrics
-      summary: List the app's pushed custom metrics (ADR-201)
+      summary: List the app's pushed custom metrics (ADR-202)
       description: "Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden \u2014 an operator debugging \"why isn't my custom target scaling\" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured."
       tags: [apps]
       responses:
@@ -4195,7 +4195,7 @@ paths:
         schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' }
     put:
       operationId: putCustomMetric
-      summary: Push a custom application metric (ADR-201)
+      summary: Push a custom application metric (ADR-202)
       description: "Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app \u2014 a cron, a database trigger, or the customer's own infrastructure \u2014 which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap."
       tags: [apps]
       requestBody:
@@ -4211,7 +4211,7 @@ paths:
         '422': { $ref: '#/components/responses/CustomMetricInvalid' }
     delete:
       operationId: deleteCustomMetric
-      summary: Delete a custom application metric (ADR-201)
+      summary: Delete a custom application metric (ADR-202)
       description: "Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true, and a 404 would make a retry of a successful delete look like a failure."
       tags: [apps]
       responses:
@@ -21158,7 +21158,7 @@ components:
           example: 3
 
     CustomMetricRequest:
-      description: "ADR-201 push body. The metric name travels in the URL path, so the body carries only the number that varies \u2014 which is what makes the push idempotent by construction."
+      description: "ADR-202 push body. The metric name travels in the URL path, so the body carries only the number that varies \u2014 which is what makes the push idempotent by construction."
       type: object
       additionalProperties: false
       required: [value]
@@ -21169,7 +21169,7 @@ components:
           minimum: 0
           example: 1284
     CustomMetricResponse:
-      description: "One stored ADR-201 gauge."
+      description: "One stored ADR-202 gauge."
       type: object
       required: [name, value, observed_at, stale]
       properties:
@@ -21181,7 +21181,7 @@ components:
           type: boolean
       example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false }
     CustomMetricListResponse:
-      description: "The app's ADR-201 gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
+      description: "The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
       required: [metrics, freshness_seconds, max_metrics]
       properties:
@@ -21208,7 +21208,7 @@ components:
           enum: [rps, cpu, concurrent_requests, queue_depth]
           example: "rps"
         name:
-          description: "Which custom metric this target watches (ADR-201). Required when metric is `custom`, and REJECTED otherwise \u2014 a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove."
+          description: "Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise \u2014 a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove."
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
