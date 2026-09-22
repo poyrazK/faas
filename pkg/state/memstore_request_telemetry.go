@@ -32,6 +32,13 @@ func (m *MemStore) InsertRequestTelemetry(_ context.Context, _ sqlc.InsertReques
 	return errMemStoreRequestTelemetry
 }
 
+// InsertRequestTelemetryWithLogEvent is production Postgres only. Tests of the
+// receiver use a narrow fake so an in-memory call cannot acknowledge a row
+// without atomically writing both stores.
+func (m *MemStore) InsertRequestTelemetryWithLogEvent(_ context.Context, _ sqlc.InsertRequestTelemetryParams, _ string) error {
+	return errMemStoreRequestTelemetry
+}
+
 // ListRequestTelemetryByApp (ADR-127 §Decision 1) — MemStore stub.
 // Postgres-only. Handlers depending on this query against MemStore
 // should be //go:build metal.
