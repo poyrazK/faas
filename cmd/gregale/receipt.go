@@ -29,6 +29,7 @@ package main
 
 import (
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
 // DeployReleaseSummary is the compact release-to-release context attached to
@@ -43,6 +44,22 @@ type DeployReleaseSummary struct {
 	RollbackCommand      string                 `json:"rollback_command,omitempty"`
 }
 
+// SimpleAppReceiptPlan is the non-secret, effective stateless application
+// contract attached to deploy receipts. It deliberately excludes the
+// customer's source, environment, and credentials while preserving the
+// runtime choices automation needs to understand after a deploy.
+type SimpleAppReceiptPlan struct {
+	ResourceProfile string `json:"resource_profile"`
+	MemoryMB        int    `json:"memory_mb,omitempty"`
+	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
+	Port            int    `json:"port"`
+	HealthPath      string `json:"health_path"`
+	ExecutionMode   string `json:"execution_mode"`
+	ScaleToZero     bool   `json:"scale_to_zero"`
+	LocalStorage    string `json:"local_storage"`
+	DurableState    string `json:"durable_state"`
+}
+
 // DeployReceipt is the `gregale deploy --json` wire envelope. See
 // cmd/gregale/receipt.go header comment for field provenance.
 type DeployReceipt struct {
@@ -54,6 +71,7 @@ type DeployReceipt struct {
 	TimedOut       bool                  `json:"timed_out,omitempty"`
 	ResumeCommand  string                `json:"resume_command,omitempty"`
 	ReleaseSummary *DeployReleaseSummary `json:"release_summary,omitempty"`
+	SimpleAppPlan  *SimpleAppReceiptPlan `json:"simple_app_plan,omitempty"`
 }
 
 // newDeployReceipt builds a DeployReceipt from the post-deploy
@@ -71,7 +89,7 @@ type DeployReceipt struct {
 // appURL is empty (CLI failed to resolve a slug), the omitempty
 // tag on AppURL drops the key so consumers don't see a malformed
 // `https://.gregale.dev` string.
-func newDeployReceipt(dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256 string) *DeployReceipt {
+func newDeployReceipt(dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256 string, simplePlans ...*simpleapp.Plan) *DeployReceipt {
 	r := &DeployReceipt{
 		DeploymentResponse: dep,
 		SourceSHA256:       sourceSHA256,
@@ -82,6 +100,20 @@ func newDeployReceipt(dep api.DeploymentResponse, prov *zeroConfigProvenance, ap
 	if prov != nil {
 		r.CommitSHA = prov.SHA
 		r.Dirty = prov.Dirty
+	}
+	if len(simplePlans) > 0 && simplePlans[0] != nil {
+		plan := simplePlans[0]
+		r.SimpleAppPlan = &SimpleAppReceiptPlan{
+			ResourceProfile: plan.ResourceProfile,
+			MemoryMB:        plan.MemoryMB,
+			CPUMillicores:   plan.CPUMillicores,
+			Port:            plan.Port,
+			HealthPath:      plan.HealthPath,
+			ExecutionMode:   plan.ExecutionMode,
+			ScaleToZero:     plan.ScaleToZero,
+			LocalStorage:    plan.LocalStorage,
+			DurableState:    plan.DurableState,
+		}
 	}
 	return r
 }

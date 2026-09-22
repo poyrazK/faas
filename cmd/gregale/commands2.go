@@ -3608,6 +3608,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		execution.notifyQueued(dep)
+		if !jsonOutput {
+			renderSimpleAppDeploySummary(osStdout, resolvedSimplePlan)
+		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
@@ -3623,7 +3626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if err := applyManifestScaling(); err != nil {
 					return printErr("Manifest scaling policy failed", err)
 				}
-				code := jsonOut(writeJSON(newDeployReceipt(dep, prov, appURL, sourceSHA256)))
+				code := jsonOut(writeJSON(newDeployReceipt(dep, prov, appURL, sourceSHA256, resolvedSimplePlan)))
 				if code == 0 {
 					commitManifestTriggers()
 				}
@@ -3639,7 +3642,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 0
 		}
 		if jsonWait {
-			code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy)
+			code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, resolvedSimplePlan)
 			if code == 0 {
 				if err := applyManifestScaling(); err != nil {
 					return printErr("Manifest scaling policy failed", err)
@@ -3703,6 +3706,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return code
 	}
 	execution.notifyQueued(dep)
+	if !jsonOutput {
+		renderSimpleAppDeploySummary(osStdout, resolvedSimplePlan)
+	}
 	if jsonOutput && !jsonWait && !streamLogsOnJSON {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is
@@ -3715,7 +3721,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := applyManifestScaling(); err != nil {
 			return printErr("Manifest scaling policy failed", err)
 		}
-		code := jsonOut(writeJSON(newDeployReceipt(dep, nil, appURL, "")))
+		code := jsonOut(writeJSON(newDeployReceipt(dep, nil, appURL, "", resolvedSimplePlan)))
 		if code == 0 {
 			commitManifestTriggers()
 		}
@@ -3730,7 +3736,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return 0
 	}
 	if jsonWait {
-		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy)
+		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, resolvedSimplePlan)
 		if code == 0 {
 			if err := applyManifestScaling(); err != nil {
 				return printErr("Manifest scaling policy failed", err)

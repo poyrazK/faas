@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
 // deploymentReceiptFetchTimeout keeps a successful deploy from hanging on a
@@ -257,7 +258,7 @@ func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.D
 	return writeWaitedDeploymentReceiptUntilWithOptions(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, false)
 }
 
-func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout bool) int {
+func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout bool, simplePlans ...*simpleapp.Plan) int {
 	if deadline <= 0 {
 		deadline = defaultDeployWaitTimeout
 	}
@@ -278,7 +279,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		if final.ID != "" {
 			receiptDep = final
 		}
-		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256)
+		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256, simplePlans...)
 		receipt.TimedOut = true
 		receipt.ResumeCommand = resumeCommand
 		if code := jsonOut(writeJSON(receipt)); code != 0 {
@@ -286,7 +287,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		}
 		return 3
 	}
-	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256)
+	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
 	if final.Status == statusLive {
 		if summary, summaryOK := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); summaryOK {
 			receipt.ReleaseSummary = newDeployReleaseSummary(summary, appSlug)
