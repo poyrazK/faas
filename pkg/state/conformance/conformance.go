@@ -84,6 +84,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
@@ -1188,6 +1189,61 @@ func testPendingInvocationCancel(t *testing.T, fx *Fixture) {
 	result, err = fx.Store.CancelPendingInvocation(fx.Ctx, dispatching.ID)
 	if err != nil || result != state.InvocationDispatching {
 		t.Fatalf("CancelPendingInvocation(dispatching) = (%q, %v), want dispatching", result, err)
+	}
+}
+
+func testDelayedTaskListing(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC()
+	first, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(first delayed task): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: now,
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(async control): %v", err)
+	}
+	second, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: now.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(second delayed task): %v", err)
+	}
+
+	limits := api.MustLimitsFor(api.PlanPro)
+	foreignApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "delayed-list-foreign-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(foreign): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: foreignApp.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(foreign delayed task): %v", err)
+	}
+
+	page, err := fx.Store.ListDelayedTasksForApp(fx.Ctx, fx.App.ID, 1, "")
+	if err != nil {
+		t.Fatalf("ListDelayedTasksForApp(first page): %v", err)
+	}
+	if len(page) != 1 || page[0].ID != second.ID {
+		t.Fatalf("first delayed-task page = %+v, want newest task %s", page, second.ID)
+	}
+	next, err := fx.Store.ListDelayedTasksForApp(fx.Ctx, fx.App.ID, 1, page[0].ID)
+	if err != nil {
+		t.Fatalf("ListDelayedTasksForApp(next page): %v", err)
+	}
+	if len(next) != 1 || next[0].ID != first.ID {
+		t.Fatalf("next delayed-task page = %+v, want older task %s", next, first.ID)
 	}
 }
 
