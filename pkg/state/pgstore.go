@@ -8777,15 +8777,10 @@ func (s *PgStore) MarkBuildCancelled(ctx context.Context, buildID, _ string, cas
 //     untouched — the active row stays active until a future
 //     `from != to` call closes it.
 //
-// Implementation: read-modify-write at the Go layer. The existing
-// `UpdateDeploymentStatus` (and `transition` chokepoint at
-// pkg/imaged/handler.go:2349) is itself a bare UPDATE with no
-// per-deployment mutex — concurrent transitions are "last write
-// wins" by design, so this method preserves that same posture. A
-// future PR could move the merge into a single SQL expression
-// with `jsonb_set + jsonb_build_array`, but the Go-side shape is
-// easier to reason about and matches the codebase's existing
-// transition-write pattern.
+// Implementation: read-modify-write at the Go layer, with a compare-and-swap
+// on stage_state. Duplicate notifications can overlap even when the status
+// transition is idempotent; only the writer that saw the current stage may
+// close it and report its duration.
 //
 // The from / to StageName vocabulary is enforced at the schema
 // layer via `deployments_stage_state_current_check`
@@ -8879,14 +8874,15 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 	if err != nil {
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: encode stage_state for %s: %w", id, err)
 	}
-	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1`, id, encoded)
+	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1 and stage_state = $3`, id, encoded, existing.StageState)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return Deployment{}, ErrNotFound
 	}
-	return s.DeploymentByID(ctx, id)
+	existing.StageState = encoded
+	return existing, nil
 }
 
 // derefTime dereferences *time.Time to time.Time, returning the
@@ -8929,23 +8925,18 @@ func ptrTime(t time.Time) *time.Time {
 // Returns ErrNotFound when the deployment row does not exist or
 // when state.Current is the zero value (no stage ever started).
 func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at time.Time, reason string) (Deployment, error) {
-	var raw []byte
-	var createdAt time.Time
-	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
+	existing, err := s.DeploymentByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, ErrNotFound
-		}
-		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: read stage_state for %s: %w", id, err)
+		return Deployment{}, err
 	}
 	var state StageState
-	if uerr := json.Unmarshal(raw, &state); uerr != nil {
+	if uerr := json.Unmarshal(existing.StageState, &state); uerr != nil {
 		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: decode stage_state for %s: %w", id, uerr)
 	}
 	if state.Current == "" {
 		return Deployment{}, ErrNotFound
 	}
-	ensureDeploymentStageStarted(&state, createdAt, at)
+	ensureDeploymentStageStarted(&state, existing.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -8975,14 +8966,15 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 	if err != nil {
 		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: encode stage_state for %s: %w", id, err)
 	}
-	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1`, id, encoded)
+	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1 and stage_state = $3`, id, encoded, existing.StageState)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return Deployment{}, ErrNotFound
 	}
-	return s.DeploymentByID(ctx, id)
+	existing.StageState = encoded
+	return existing, nil
 }
 
 // CloseDeploymentStage — pgstore mirror of the Store contract.
@@ -8991,17 +8983,12 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 // status="completed" so the customer-facing wire shape carries a
 // `duration_ms` for the readiness stage on a successful deploy.
 func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name StageName, at time.Time) (Deployment, error) {
-	var raw []byte
-	var createdAt time.Time
-	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
+	existing, err := s.DeploymentByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, ErrNotFound
-		}
-		return Deployment{}, fmt.Errorf("CloseDeploymentStage: read stage_state for %s: %w", id, err)
+		return Deployment{}, err
 	}
 	var state StageState
-	if uerr := json.Unmarshal(raw, &state); uerr != nil {
+	if uerr := json.Unmarshal(existing.StageState, &state); uerr != nil {
 		return Deployment{}, fmt.Errorf("CloseDeploymentStage: decode stage_state for %s: %w", id, uerr)
 	}
 	if state.Current == "" || state.Current != name {
@@ -9015,7 +9002,7 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 		// stamp.
 		return Deployment{}, ErrNotFound
 	}
-	ensureDeploymentStageStarted(&state, createdAt, at)
+	ensureDeploymentStageStarted(&state, existing.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -9037,14 +9024,15 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 	if err != nil {
 		return Deployment{}, fmt.Errorf("CloseDeploymentStage: encode stage_state for %s: %w", id, err)
 	}
-	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1`, id, encoded)
+	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1 and stage_state = $3`, id, encoded, existing.StageState)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return Deployment{}, ErrNotFound
 	}
-	return s.DeploymentByID(ctx, id)
+	existing.StageState = encoded
+	return existing, nil
 }
 
 // RetryDeploymentFromStage creates a pending retry under the parent-app lock.

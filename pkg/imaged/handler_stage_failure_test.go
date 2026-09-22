@@ -3,11 +3,14 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // TestTransitionFailureClosesActiveStage guards the post-build failure seam:
@@ -87,7 +90,8 @@ func TestSnapshotWrittenRedeliveryDoesNotReplayStages(t *testing.T) {
 	if _, err := store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageSnapshotPrepare, time.Now().Add(-time.Second), ""); err != nil {
 		t.Fatal(err)
 	}
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	ops := wire.NewOpsMetrics("imaged_stage_replay_test")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithOpsMetrics(ops)
 	n := db.Notification{Channel: db.NotifySnapshotWritten, Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`}
 	h.HandleNotification(ctx, n)
 	h.HandleNotification(ctx, n)
@@ -109,6 +113,14 @@ func TestSnapshotWrittenRedeliveryDoesNotReplayStages(t *testing.T) {
 	for i, want := range []state.StageName{state.StageSourceDownload, state.StageSnapshotPrepare, state.StageReadiness} {
 		if stages.History[i].Name != want {
 			t.Fatalf("history[%d]=%q, want %q", i, stages.History[i].Name, want)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	for _, stage := range []state.StageName{state.StageSnapshotPrepare, state.StageReadiness} {
+		want := `imaged_stage_replay_test_deploy_stage_duration_seconds_count{stage="` + string(stage) + `",status="completed"} 1`
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Errorf("metric %q missing after activation and redelivery", want)
 		}
 	}
 }
