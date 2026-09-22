@@ -104,6 +104,18 @@ message IncrementAppErrorRequest {
   // request reached a live microVM. Empty when the error fired
   // before instance resolution (cold-boot, wake failure).
   string instance_id = 12;
+
+  // Deployment provenance copied from the authoritative platform identity.
+  // Empty values are valid for legacy/partially-resolved requests.
+  string node_id = 13;
+  string region = 14;
+  string commit_sha = 15;
+  string deployment_tag = 16;
+  string deployment_created_at = 17;
+  string image_digest = 18;
+  // request_id is the platform request/trace UUID used by the drill-down
+  // surface. Empty or malformed values are replaced by apid for compatibility.
+  string request_id = 19;
 }
 
 // IncrementAppErrorResponse is the per-record outcome the server

@@ -26589,16 +26589,23 @@ func (s *PgStore) ListAppErrorGroups(ctx context.Context, arg sqlc.ListAppErrorG
 	out := make([]AppErrorGroup, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, AppErrorGroup{
-			ID:            uuidFromPgtype(r.ID),
-			Fingerprint:   r.Fingerprint,
-			ErrorClass:    r.ErrorClass,
-			Route:         r.Route,
-			HTTPStatus:    r.HttpStatus,
-			Count:         r.Count,
-			RequestCount:  r.RequestCount,
-			FirstSeenAt:   timeFromPgtype(r.FirstSeenAt),
-			LastSeenAt:    timeFromPgtype(r.LastSeenAt),
-			SampleMessage: r.SampleMessage,
+			ID:                      uuidFromPgtype(r.ID),
+			Fingerprint:             r.Fingerprint,
+			ErrorClass:              r.ErrorClass,
+			Route:                   r.Route,
+			HTTPStatus:              r.HttpStatus,
+			Count:                   r.Count,
+			RequestCount:            r.RequestCount,
+			FirstSeenAt:             timeFromPgtype(r.FirstSeenAt),
+			LastSeenAt:              timeFromPgtype(r.LastSeenAt),
+			SampleMessage:           r.SampleMessage,
+			LastInstanceID:          r.LastInstanceID,
+			LastNodeID:              r.LastNodeID,
+			LastRegion:              r.LastRegion,
+			LastCommitSHA:           r.LastCommitSha,
+			LastDeploymentTag:       r.LastDeploymentTag,
+			LastDeploymentCreatedAt: r.LastDeploymentCreatedAt,
+			LastImageDigest:         r.LastImageDigest,
 		})
 	}
 	return out, nil
@@ -26619,14 +26626,21 @@ func (s *PgStore) ListAppErrorRequests(ctx context.Context, arg sqlc.ListAppErro
 			depID = &d
 		}
 		out = append(out, AppErrorRequestRow{
-			ID:            uuidFromPgtype(r.ID),
-			RequestID:     uuidFromPgtype(r.RequestID),
-			ReceivedAt:    timeFromPgtype(r.ReceivedAt),
-			Route:         r.Route,
-			HTTPStatus:    r.HttpStatus,
-			ErrorClass:    r.ErrorClass,
-			SampleMessage: r.SampleMessage,
-			DeploymentID:  depID,
+			ID:                  uuidFromPgtype(r.ID),
+			RequestID:           uuidFromPgtype(r.RequestID),
+			ReceivedAt:          timeFromPgtype(r.ReceivedAt),
+			Route:               r.Route,
+			HTTPStatus:          r.HttpStatus,
+			ErrorClass:          r.ErrorClass,
+			SampleMessage:       r.SampleMessage,
+			DeploymentID:        depID,
+			InstanceID:          r.InstanceID,
+			NodeID:              r.NodeID,
+			Region:              r.Region,
+			CommitSHA:           r.CommitSha,
+			DeploymentTag:       r.DeploymentTag,
+			DeploymentCreatedAt: r.DeploymentCreatedAt,
+			ImageDigest:         r.ImageDigest,
 		})
 	}
 	return out, nil
@@ -26651,14 +26665,21 @@ func (s *PgStore) GetAppErrorSample(ctx context.Context, arg sqlc.GetAppErrorSam
 	}
 	return AppErrorSampleRow{
 		AppErrorRequestRow: AppErrorRequestRow{
-			ID:            uuidFromPgtype(row.ID),
-			RequestID:     uuidFromPgtype(row.RequestID),
-			ReceivedAt:    timeFromPgtype(row.ReceivedAt),
-			Route:         row.Route,
-			HTTPStatus:    row.HttpStatus,
-			ErrorClass:    row.ErrorClass,
-			SampleMessage: row.SampleMessage,
-			DeploymentID:  depID,
+			ID:                  uuidFromPgtype(row.ID),
+			RequestID:           uuidFromPgtype(row.RequestID),
+			ReceivedAt:          timeFromPgtype(row.ReceivedAt),
+			Route:               row.Route,
+			HTTPStatus:          row.HttpStatus,
+			ErrorClass:          row.ErrorClass,
+			SampleMessage:       row.SampleMessage,
+			DeploymentID:        depID,
+			InstanceID:          row.InstanceID,
+			NodeID:              row.NodeID,
+			Region:              row.Region,
+			CommitSHA:           row.CommitSha,
+			DeploymentTag:       row.DeploymentTag,
+			DeploymentCreatedAt: row.DeploymentCreatedAt,
+			ImageDigest:         row.ImageDigest,
 		},
 		HeadersSample: headers,
 		Redactions:    row.Redactions,
@@ -28278,6 +28299,32 @@ func (s *PgStore) DeleteDeadLetterEvents(ctx context.Context, accountID, appID s
 		return 0, err
 	}
 	return purged, nil
+}
+
+// PurgeExpiredDeadLetterEvents removes only old rows from the unified failed
+// events projection. The invocation, trigger, webhook, job, or workflow
+// source row remains untouched, as do the append-only audit events used to
+// explain replay and discard actions.
+func (s *PgStore) PurgeExpiredDeadLetterEvents(ctx context.Context, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with victims as (
+			select id
+			  from dead_letter_events
+			 where last_failed_at < $1
+			 order by last_failed_at asc, id asc
+			 limit $2
+			 for update skip locked
+		)
+		delete from dead_letter_events d
+		 using victims v
+		 where d.id = v.id`, before, limit)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 const (

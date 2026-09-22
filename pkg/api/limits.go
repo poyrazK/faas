@@ -4597,6 +4597,10 @@ const (
 	// hourly cadence means a row that just crossed 30d is deleted within
 	// the next hour.
 	DefaultRetentionInterval = 1 * time.Hour
+	// DefaultDeadLetterRetention is the default age of a unified failed-events
+	// projection before the scheduler removes it. Source rows remain in their
+	// terminal state and audit events are retained independently.
+	DefaultDeadLetterRetention = 30 * 24 * time.Hour
 
 	// DefaultDiskDriftInterval is the cadence for the read-only
 	// /srv/fc/snap vs DB size-tracking drift sweep (PR scale-out

@@ -1711,6 +1711,12 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 		row.GuestOutcome,
 		row.GuestErrorClass,
 		row.ConsumerID,
+		row.NodeID,
+		row.Region,
+		row.CommitSha,
+		row.DeploymentTag,
+		row.DeploymentCreatedAt,
+		row.ImageDigest,
 	)
 }
 
@@ -1733,6 +1739,12 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIdentifierRo
 		row.GuestOutcome,
 		row.GuestErrorClass,
 		row.ConsumerID,
+		row.NodeID,
+		row.Region,
+		row.CommitSha,
+		row.DeploymentTag,
+		row.DeploymentCreatedAt,
+		row.ImageDigest,
 	)
 }
 
@@ -1747,23 +1759,30 @@ func debugTelemetryItemFromFields(
 	wakeID, instanceID pgtype.Text,
 	guestDurationMS int32, guestRuntime, guestOutcome, guestErrorClass string,
 	consumerID pgtype.UUID,
+	nodeID, region, commitSHA, deploymentTag, deploymentCreatedAt, imageDigest string,
 ) api.DebugTelemetryRequestItem {
 	item := api.DebugTelemetryRequestItem{
 		// pgtype.UUID -> hyphenated hex string. Falls back to "" when
 		// Valid=false so the JSON renders "" rather than the driver's
 		// base64 zero-bytes shape.
-		ID:           uuidFromPg(id),
-		DeploymentID: uuidFromPg(deploymentID),
-		Route:        route,
-		Method:       method,
-		Status:       int(status),
-		LatencyMS:    int(latencyMS),
-		Count:        int(count),
-		ColdBoot:     coldBoot,
-		ReceivedAt:   timeFromPg(receivedAt),
-		WakeID:       textFromPg(wakeID),
-		InstanceID:   textFromPg(instanceID),
-		ConsumerID:   uuidFromPg(consumerID),
+		ID:                  uuidFromPg(id),
+		DeploymentID:        uuidFromPg(deploymentID),
+		Route:               route,
+		Method:              method,
+		Status:              int(status),
+		LatencyMS:           int(latencyMS),
+		Count:               int(count),
+		ColdBoot:            coldBoot,
+		ReceivedAt:          timeFromPg(receivedAt),
+		WakeID:              textFromPg(wakeID),
+		InstanceID:          textFromPg(instanceID),
+		ConsumerID:          uuidFromPg(consumerID),
+		NodeID:              nodeID,
+		Region:              region,
+		CommitSHA:           commitSHA,
+		DeploymentTag:       deploymentTag,
+		DeploymentCreatedAt: deploymentCreatedAt,
+		ImageDigest:         imageDigest,
 	}
 	if traceID.Valid {
 		s := traceID.String

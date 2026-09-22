@@ -30193,6 +30193,13 @@ components:
         first_seen_at: { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time }
         sample_message: { type: string, description: "PII-redacted sample message (already-redacted at write time; ≤AppErrorsSampleMessageCapBytes=512 bytes)." }
+        last_instance_id: { type: string, description: "Most recent platform instance that produced this fingerprint." }
+        last_node_id: { type: string, description: "Most recent compute node that produced this fingerprint." }
+        last_region: { type: string }
+        last_commit_sha: { type: string }
+        last_deployment_tag: { type: string }
+        last_deployment_created_at: { type: string }
+        last_image_digest: { type: string }
       x-since: "2026-08"
       x-issue: "ADR-096"
 
@@ -30231,6 +30238,13 @@ components:
         error_class: { type: string }
         sample_message: { type: string }
         deployment_id: { type: [string, 'null'], pattern: '^[a-f0-9]{32}$', description: "Nullable — the FK is ON DELETE SET NULL so an evicted deployment leaves the drill-down row intact." }
+        instance_id: { type: string }
+        node_id: { type: string }
+        region: { type: string }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string }
+        image_digest: { type: string }
       x-since: "2026-08"
       x-issue: "ADR-096"
 
@@ -30251,6 +30265,13 @@ components:
         error_class: { type: string }
         sample_message: { type: string }
         deployment_id: { type: [string, 'null'], pattern: '^[a-f0-9]{32}$' }
+        instance_id: { type: string }
+        node_id: { type: string }
+        region: { type: string }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string }
+        image_digest: { type: string }
         headers_sample:
           type: object
           additionalProperties: { type: string }
@@ -33413,6 +33434,12 @@ components:
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }
         consumer_id: { type: string, format: uuid, description: "Stable API consumer identity; omitted for anonymous or legacy traffic." }
+        node_id: { type: string, description: "Compute node that served the request." }
+        region: { type: string, description: "Region associated with the deployment target." }
+        commit_sha: { type: string, description: "Source revision associated with the deployment." }
+        deployment_tag: { type: string, description: "Deployment tag associated with the request." }
+        deployment_created_at: { type: string, description: "Deployment creation timestamp supplied by the platform." }
+        image_digest: { type: string, description: "Immutable image/artifact digest associated with the deployment." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
 

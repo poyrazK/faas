@@ -23090,6 +23090,43 @@ func (m *MemStore) DeleteDeadLetterEvents(_ context.Context, accountID, appID st
 	return purged, nil
 }
 
+// PurgeExpiredDeadLetterEvents removes old unified projection rows while
+// leaving the source records in their terminal state. The in-memory source
+// maps are intentionally not rewritten; deadLetterPurged mirrors the
+// projection delete performed by PgStore.
+func (m *MemStore) PurgeExpiredDeadLetterEvents(_ context.Context, before time.Time, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	all := make([]DeadLetterEvent, 0)
+	for appID := range m.apps {
+		all = append(all, m.deadLetterEventsLocked(appID)...)
+	}
+	// Jobs are account-owned and have no app_id.
+	all = append(all, m.deadLetterEventsLocked("")...)
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].LastFailedAt.Equal(all[j].LastFailedAt) {
+			return all[i].ID < all[j].ID
+		}
+		return all[i].LastFailedAt.Before(all[j].LastFailedAt)
+	})
+	purged := 0
+	for _, ev := range all {
+		if purged >= limit || !ev.LastFailedAt.Before(before) {
+			break
+		}
+		if m.deadLetterPurged == nil {
+			m.deadLetterPurged = make(map[string]struct{})
+		}
+		m.deadLetterPurged[ev.ID] = struct{}{}
+		delete(m.deadLetterSnapshots, ev.ID)
+		purged++
+	}
+	return purged, nil
+}
+
 // ListExpiredTriggerRecordsForReaper is intentionally unsupported by
 // MemStore because its trigger_records projection predates the retention
 // column. The reaper is covered against PgStore where the schema exists.
