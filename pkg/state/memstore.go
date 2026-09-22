@@ -135,6 +135,9 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt map[string]time.Time
+	// serviceCallerKeys mirrors service_caller_keys: one published
+	// public key per node (ADR-206).
+	serviceCallerKeys map[string]ServiceCallerKey
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.

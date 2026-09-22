@@ -1,3 +1,5 @@
+// spec: §6.1
+// adr: 078
 package sched
 
 import (

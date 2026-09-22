@@ -79,6 +79,42 @@ func TestCmdDevSetupPrintsNextCommandWithoutRemoteMutation(t *testing.T) {
 	}
 }
 
+func TestCmdDevSetupUsesManifestDevDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"start":"node server.js"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env.dev"), []byte("LOG_LEVEL=debug\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env.services.local"), []byte("REDIS_URL=redis://cache.example.test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`dev:
+  env_file: .env.dev
+  service_override_file: .env.services.local
+  postgres: true
+  postgres_region: eu-central-1
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("FAAS_TOKEN", testAPIKey('c'))
+	stdout, restoreOut := captureStdout(t)
+	defer restoreOut()
+	_, restoreErr := captureStderr(t)
+	defer restoreErr()
+
+	if code := cmdDevSetup([]string{"--postgres-region", "us-east-1"}); code != 0 {
+		t.Fatalf("cmdDevSetup() = %d, want 0; stdout=%q", code, stdout.String())
+	}
+	for _, want := range []string{".env.dev", ".env.services.local", "--service-override-file", "--postgres"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("setup output missing %q: %q", want, stdout.String())
+		}
+	}
+}
+
 func TestDevSetupRejectsStartOnlyFlags(t *testing.T) {
 	if code := cmdDevSetup([]string{"--once"}); code != 1 {
 		t.Fatalf("cmdDevSetup(--once) = %d, want 1", code)
