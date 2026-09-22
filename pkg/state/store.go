@@ -643,29 +643,43 @@ type PaddleOverageDedupeSchemaResult struct {
 // so handlers don't have to thread pgtype values through the
 // wire layer. PgStore converts at the boundary.
 type AppErrorGroup struct {
-	ID            uuid.UUID
-	Fingerprint   string
-	ErrorClass    string
-	Route         string
-	HTTPStatus    int32
-	Count         int64
-	RequestCount  int64
-	FirstSeenAt   time.Time
-	LastSeenAt    time.Time
-	SampleMessage string
+	ID                      uuid.UUID
+	Fingerprint             string
+	ErrorClass              string
+	Route                   string
+	HTTPStatus              int32
+	Count                   int64
+	RequestCount            int64
+	FirstSeenAt             time.Time
+	LastSeenAt              time.Time
+	SampleMessage           string
+	LastInstanceID          string
+	LastNodeID              string
+	LastRegion              string
+	LastCommitSHA           string
+	LastDeploymentTag       string
+	LastDeploymentCreatedAt string
+	LastImageDigest         string
 }
 
 // AppErrorRequestRow is the typed drill-down row for
 // /v1/apps/{slug}/errors/{fingerprint}.
 type AppErrorRequestRow struct {
-	ID            uuid.UUID
-	RequestID     uuid.UUID
-	ReceivedAt    time.Time
-	Route         string
-	HTTPStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	DeploymentID  *uuid.UUID
+	ID                  uuid.UUID
+	RequestID           uuid.UUID
+	ReceivedAt          time.Time
+	Route               string
+	HTTPStatus          int32
+	ErrorClass          string
+	SampleMessage       string
+	DeploymentID        *uuid.UUID
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // AppErrorSampleRow is the typed single-sample row for
@@ -3873,6 +3887,10 @@ type Store interface {
 	ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
 	DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error
 	DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
+	// PurgeExpiredDeadLetterEvents deletes old unified DLQ projection rows
+	// without touching their authoritative source rows or audit events. The
+	// cutoff is exclusive and the store should delete at most limit rows.
+	PurgeExpiredDeadLetterEvents(ctx context.Context, before time.Time, limit int) (int, error)
 	// Account-scoped unified dead-letter projection. These methods include
 	// app-owned events plus account-owned job runs, whose app_id is NULL.
 	ListDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int, before string) ([]DeadLetterEvent, error)

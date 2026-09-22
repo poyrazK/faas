@@ -159,6 +159,10 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 	// ---- 3. Convert received_at ----
 	receivedAtMS := req.GetReceivedAtUnixMs()
 	receivedAt := state.NewPgtypeTime(msToTime(receivedAtMS))
+	requestID := newRowID()
+	if parsed, parseErr := uuid.Parse(req.GetRequestId()); parseErr == nil {
+		requestID = parsed
+	}
 
 	// ---- 4. IncrementAppError (dedupe-merge INSERT) ----
 	//
@@ -174,16 +178,23 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 	// "merged" so the gateway can update its in-process LRU
 	// freshness on the merge path.
 	inserted, incErr := a.store.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{
-		ID:            state.NewPgtypeUUID(newRowID()),
-		AccountID:     state.NewPgtypeUUID(accountID),
-		AppID:         state.NewPgtypeUUID(appID),
-		DeploymentID:  deploymentUUID,
-		Fingerprint:   req.GetFingerprint(),
-		Route:         req.GetRouteTemplate(),
-		HttpStatus:    int32(req.GetHttpStatus()),
-		ErrorClass:    req.GetErrorClass(),
-		SampleMessage: req.GetSampleMessage(),
-		FirstSeenAt:   receivedAt,
+		ID:                      state.NewPgtypeUUID(newRowID()),
+		AccountID:               state.NewPgtypeUUID(accountID),
+		AppID:                   state.NewPgtypeUUID(appID),
+		DeploymentID:            deploymentUUID,
+		Fingerprint:             req.GetFingerprint(),
+		Route:                   req.GetRouteTemplate(),
+		HttpStatus:              int32(req.GetHttpStatus()),
+		ErrorClass:              req.GetErrorClass(),
+		SampleMessage:           req.GetSampleMessage(),
+		FirstSeenAt:             receivedAt,
+		LastInstanceID:          req.GetInstanceId(),
+		LastNodeID:              req.GetNodeId(),
+		LastRegion:              req.GetRegion(),
+		LastCommitSha:           req.GetCommitSha(),
+		LastDeploymentTag:       req.GetDeploymentTag(),
+		LastDeploymentCreatedAt: req.GetDeploymentCreatedAt(),
+		LastImageDigest:         req.GetImageDigest(),
 	})
 	if incErr != nil {
 		if isConstraintViolation(incErr) {
@@ -211,19 +222,26 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 	// route template as `Route` (the SQL column name in
 	// migrations/00222_app_errors.sql is route_template).
 	reqErr := a.store.InsertAppErrorRequest(ctx, sqlc.InsertAppErrorRequestParams{
-		ID:            state.NewPgtypeUUID(newRowID()),
-		AccountID:     state.NewPgtypeUUID(accountID),
-		AppID:         state.NewPgtypeUUID(appID),
-		Fingerprint:   req.GetFingerprint(),
-		RequestID:     state.NewPgtypeUUID(newRowID()),
-		ReceivedAt:    receivedAt,
-		Route:         req.GetRouteTemplate(),
-		HttpStatus:    int32(req.GetHttpStatus()),
-		ErrorClass:    req.GetErrorClass(),
-		SampleMessage: "",
-		DeploymentID:  deploymentUUID,
-		HeadersSample: []byte(req.GetHeadersSampleJson()),
-		Redactions:    req.GetRedactionsApplied(),
+		ID:                  state.NewPgtypeUUID(newRowID()),
+		AccountID:           state.NewPgtypeUUID(accountID),
+		AppID:               state.NewPgtypeUUID(appID),
+		Fingerprint:         req.GetFingerprint(),
+		RequestID:           state.NewPgtypeUUID(requestID),
+		ReceivedAt:          receivedAt,
+		Route:               req.GetRouteTemplate(),
+		HttpStatus:          int32(req.GetHttpStatus()),
+		ErrorClass:          req.GetErrorClass(),
+		SampleMessage:       "",
+		DeploymentID:        deploymentUUID,
+		HeadersSample:       []byte(req.GetHeadersSampleJson()),
+		Redactions:          req.GetRedactionsApplied(),
+		InstanceID:          req.GetInstanceId(),
+		NodeID:              req.GetNodeId(),
+		Region:              req.GetRegion(),
+		CommitSha:           req.GetCommitSha(),
+		DeploymentTag:       req.GetDeploymentTag(),
+		DeploymentCreatedAt: req.GetDeploymentCreatedAt(),
+		ImageDigest:         req.GetImageDigest(),
 	})
 	if reqErr != nil {
 		// app_errors row was committed but the request row

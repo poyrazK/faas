@@ -11,6 +11,7 @@ from ..models.app_error_summary_item_error_class import (
     AppErrorSummaryItemErrorClass,
     check_app_error_summary_item_error_class,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="AppErrorSummaryItem")
 
@@ -36,6 +37,15 @@ class AppErrorSummaryItem:
     last_seen_at: datetime.datetime
     sample_message: str
     """PII-redacted sample message (already-redacted at write time; ≤AppErrorsSampleMessageCapBytes=512 bytes)."""
+    last_instance_id: str | Unset = UNSET
+    """Most recent platform instance that produced this fingerprint."""
+    last_node_id: str | Unset = UNSET
+    """Most recent compute node that produced this fingerprint."""
+    last_region: str | Unset = UNSET
+    last_commit_sha: str | Unset = UNSET
+    last_deployment_tag: str | Unset = UNSET
+    last_deployment_created_at: str | Unset = UNSET
+    last_image_digest: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +67,20 @@ class AppErrorSummaryItem:
 
         sample_message = self.sample_message
 
+        last_instance_id = self.last_instance_id
+
+        last_node_id = self.last_node_id
+
+        last_region = self.last_region
+
+        last_commit_sha = self.last_commit_sha
+
+        last_deployment_tag = self.last_deployment_tag
+
+        last_deployment_created_at = self.last_deployment_created_at
+
+        last_image_digest = self.last_image_digest
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +96,20 @@ class AppErrorSummaryItem:
                 "sample_message": sample_message,
             }
         )
+        if last_instance_id is not UNSET:
+            field_dict["last_instance_id"] = last_instance_id
+        if last_node_id is not UNSET:
+            field_dict["last_node_id"] = last_node_id
+        if last_region is not UNSET:
+            field_dict["last_region"] = last_region
+        if last_commit_sha is not UNSET:
+            field_dict["last_commit_sha"] = last_commit_sha
+        if last_deployment_tag is not UNSET:
+            field_dict["last_deployment_tag"] = last_deployment_tag
+        if last_deployment_created_at is not UNSET:
+            field_dict["last_deployment_created_at"] = last_deployment_created_at
+        if last_image_digest is not UNSET:
+            field_dict["last_image_digest"] = last_image_digest
 
         return field_dict
 
@@ -96,6 +134,20 @@ class AppErrorSummaryItem:
 
         sample_message = d.pop("sample_message")
 
+        last_instance_id = d.pop("last_instance_id", UNSET)
+
+        last_node_id = d.pop("last_node_id", UNSET)
+
+        last_region = d.pop("last_region", UNSET)
+
+        last_commit_sha = d.pop("last_commit_sha", UNSET)
+
+        last_deployment_tag = d.pop("last_deployment_tag", UNSET)
+
+        last_deployment_created_at = d.pop("last_deployment_created_at", UNSET)
+
+        last_image_digest = d.pop("last_image_digest", UNSET)
+
         app_error_summary_item = cls(
             fingerprint=fingerprint,
             error_class=error_class,
@@ -106,6 +158,13 @@ class AppErrorSummaryItem:
             first_seen_at=first_seen_at,
             last_seen_at=last_seen_at,
             sample_message=sample_message,
+            last_instance_id=last_instance_id,
+            last_node_id=last_node_id,
+            last_region=last_region,
+            last_commit_sha=last_commit_sha,
+            last_deployment_tag=last_deployment_tag,
+            last_deployment_created_at=last_deployment_created_at,
+            last_image_digest=last_image_digest,
         )
 
         app_error_summary_item.additional_properties = d

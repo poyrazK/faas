@@ -2534,7 +2534,8 @@ type CanaryAdvanceResponse struct {
 // removing it; 100 mirrors every customer request). IncludeBody
 // defaults to false — sensitive bodies stay off by default per
 // the spec hint; customers who want body comparison pass
-// --include-body at the CLI / set IncludeBody=true here. The
+// --include-body at the CLI / set IncludeBody=true here. Only hashes are
+// retained; raw request and response bodies are never written to the ledger. The
 // RedactHeaders list is the customer's *additive* redact set;
 // the always-stripped headers (Authorization, Cookie, Set-Cookie,
 // X-API-Key, Proxy-Authorization, WWW-Authenticate) are stripped
@@ -2609,14 +2610,53 @@ type MirrorRuleListResponse struct {
 // the parsed window in seconds so the CLI can render "last 1h"
 // without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations  int64 `json:"total_invocations"`
-	StatusDiffCount   int64 `json:"status_diff_count"`
-	SchemaDiffCount   int64 `json:"schema_diff_count"`
-	BodyDiffCount     int64 `json:"body_diff_count"`
-	MeanLatencyDiffMs int64 `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs  int64 `json:"p99_latency_diff_ms"`
-	CrashCount        int64 `json:"crash_count"`
-	WindowSeconds     int   `json:"window_seconds"`
+	TotalInvocations     int64   `json:"total_invocations"`
+	ChangedResponseCount int64   `json:"changed_response_count"`
+	ChangedResponsePct   float64 `json:"changed_response_percent"`
+	StatusDiffCount      int64   `json:"status_diff_count"`
+	SchemaDiffCount      int64   `json:"schema_diff_count"`
+	BodyDiffCount        int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
+	CrashCount           int64   `json:"crash_count"`
+	WindowSeconds        int     `json:"window_seconds"`
+}
+
+// MirrorReplayBatchRequest is an explicitly sanitized historical request
+// corpus submitted for replay against one mirror rule. Gregale does not retain
+// raw production payloads implicitly; callers export and sanitize their corpus
+// before submitting this bounded batch.
+type MirrorReplayBatchRequest struct {
+	Requests           []MirrorReplayRequestItem `json:"requests"`
+	AllowUnsafeMethods bool                      `json:"allow_unsafe_methods,omitempty"`
+}
+
+// MirrorReplayRequestItem is one sanitized request plus optional source-side
+// expectations. Body must be valid JSON because durable invocation payloads
+// are stored as jsonb. ExpectedBodySHA256 compares responses without storing
+// the historical source response.
+type MirrorReplayRequestItem struct {
+	RequestID          string            `json:"request_id,omitempty"`
+	Method             string            `json:"method"`
+	Path               string            `json:"path"`
+	Headers            map[string]string `json:"headers,omitempty"`
+	Body               json.RawMessage   `json:"body,omitempty"`
+	ExpectedStatus     int               `json:"expected_status,omitempty"`
+	ExpectedLatencyMS  int               `json:"expected_latency_ms,omitempty"`
+	ExpectedBodySHA256 string            `json:"expected_body_sha256,omitempty"`
+}
+
+// MirrorReplayBatchResponse returns durable invocation handles. Each handle
+// can be polled through the existing invocation read surface.
+type MirrorReplayBatchResponse struct {
+	Queued      int                      `json:"queued"`
+	Invocations []MirrorReplayInvocation `json:"invocations"`
+}
+
+type MirrorReplayInvocation struct {
+	RequestID          string `json:"request_id"`
+	MirrorInvocationID string `json:"mirror_invocation_id"`
+	Status             string `json:"status"`
 }
 
 // MirrorWindowDuration is the parsed window argument for the
@@ -7014,6 +7054,18 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
+// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
+// supplies retry, deadline, retention, and payload limits from the app and
+// account plan, keeping an async route's behavior aligned with /invoke/async.
+type EdgeRuleAsyncAction struct{}
+
+func (a *EdgeRuleAsyncAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("async action is required")
+	}
+	return nil
+}
+
 func (a *EdgeRuleRespondAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("respond action is required")
@@ -8277,15 +8329,22 @@ type AppErrorsSummaryResponse struct {
 // The two diverge after a dedupe-merge within the dedupe window
 // (AppErrorsDedupeWindowSeconds).
 type AppErrorSummaryItem struct {
-	Fingerprint   string `json:"fingerprint"` // 64-char lowercase hex
-	ErrorClass    string `json:"error_class"` // closed-vocab enum (CHECK constraint)
-	Route         string `json:"route"`       // matched template, NOT expanded URL
-	HTTPStatus    int32  `json:"http_status"`
-	Count         int64  `json:"count"`          // issue count (post-dedupe)
-	RequestCount  int64  `json:"request_count"`  // distinct app_error_requests rows
-	FirstSeenAt   string `json:"first_seen_at"`  // RFC3339Nano UTC
-	LastSeenAt    string `json:"last_seen_at"`   // RFC3339Nano UTC
-	SampleMessage string `json:"sample_message"` // already redacted at write time
+	Fingerprint             string `json:"fingerprint"` // 64-char lowercase hex
+	ErrorClass              string `json:"error_class"` // closed-vocab enum (CHECK constraint)
+	Route                   string `json:"route"`       // matched template, NOT expanded URL
+	HTTPStatus              int32  `json:"http_status"`
+	Count                   int64  `json:"count"`          // issue count (post-dedupe)
+	RequestCount            int64  `json:"request_count"`  // distinct app_error_requests rows
+	FirstSeenAt             string `json:"first_seen_at"`  // RFC3339Nano UTC
+	LastSeenAt              string `json:"last_seen_at"`   // RFC3339Nano UTC
+	SampleMessage           string `json:"sample_message"` // already redacted at write time
+	LastInstanceID          string `json:"last_instance_id,omitempty"`
+	LastNodeID              string `json:"last_node_id,omitempty"`
+	LastRegion              string `json:"last_region,omitempty"`
+	LastCommitSHA           string `json:"last_commit_sha,omitempty"`
+	LastDeploymentTag       string `json:"last_deployment_tag,omitempty"`
+	LastDeploymentCreatedAt string `json:"last_deployment_created_at,omitempty"`
+	LastImageDigest         string `json:"last_image_digest,omitempty"`
 }
 
 // AppErrorRequestsResponse is the body of
@@ -8311,13 +8370,20 @@ type AppErrorRequestsResponse struct {
 // the error originated from; nil when the deployment has been
 // deleted (FK ON DELETE SET NULL).
 type AppErrorRequestItem struct {
-	RequestID     string `json:"request_id"`  // uuid v7 from gateway
-	ReceivedAt    string `json:"received_at"` // RFC3339Nano UTC
-	Route         string `json:"route"`
-	HTTPStatus    int32  `json:"http_status"`
-	ErrorClass    string `json:"error_class"`
-	SampleMessage string `json:"sample_message"`
-	DeploymentID  string `json:"deployment_id,omitempty"` // uuid string, omitted when NULL
+	RequestID           string `json:"request_id"`  // uuid v7 from gateway
+	ReceivedAt          string `json:"received_at"` // RFC3339Nano UTC
+	Route               string `json:"route"`
+	HTTPStatus          int32  `json:"http_status"`
+	ErrorClass          string `json:"error_class"`
+	SampleMessage       string `json:"sample_message"`
+	DeploymentID        string `json:"deployment_id,omitempty"` // uuid string, omitted when NULL
+	InstanceID          string `json:"instance_id,omitempty"`
+	NodeID              string `json:"node_id,omitempty"`
+	Region              string `json:"region,omitempty"`
+	CommitSHA           string `json:"commit_sha,omitempty"`
+	DeploymentTag       string `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string `json:"deployment_created_at,omitempty"`
+	ImageDigest         string `json:"image_digest,omitempty"`
 }
 
 // AppErrorSampleResponse is the body of
@@ -8493,20 +8559,26 @@ type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
 	// older debugger clients. TraceID is the public x-faas-request-id customers
 	// should use for support and lookup when it is available.
-	ID           string                       `json:"id"`
-	DeploymentID string                       `json:"deployment_id"`
-	Route        string                       `json:"route"`
-	Method       string                       `json:"method"`
-	Status       int                          `json:"status"`
-	LatencyMS    int                          `json:"latency_ms"`
-	Count        int                          `json:"count"`
-	ColdBoot     bool                         `json:"cold_boot"`
-	TraceID      *string                      `json:"trace_id"`
-	ReceivedAt   string                       `json:"received_at"`
-	WakeID       string                       `json:"wake_id,omitempty"`
-	InstanceID   string                       `json:"instance_id,omitempty"`
-	ConsumerID   string                       `json:"consumer_id,omitempty"`
-	Guest        *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	ID                  string                       `json:"id"`
+	DeploymentID        string                       `json:"deployment_id"`
+	Route               string                       `json:"route"`
+	Method              string                       `json:"method"`
+	Status              int                          `json:"status"`
+	LatencyMS           int                          `json:"latency_ms"`
+	Count               int                          `json:"count"`
+	ColdBoot            bool                         `json:"cold_boot"`
+	TraceID             *string                      `json:"trace_id"`
+	ReceivedAt          string                       `json:"received_at"`
+	WakeID              string                       `json:"wake_id,omitempty"`
+	InstanceID          string                       `json:"instance_id,omitempty"`
+	ConsumerID          string                       `json:"consumer_id,omitempty"`
+	NodeID              string                       `json:"node_id,omitempty"`
+	Region              string                       `json:"region,omitempty"`
+	CommitSHA           string                       `json:"commit_sha,omitempty"`
+	DeploymentTag       string                       `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
+	ImageDigest         string                       `json:"image_digest,omitempty"`
+	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
 }
 
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a
@@ -9238,12 +9310,14 @@ type DebugReplayRequest struct {
 // excludes credentials and bodies; these platform-owned headers let schedd's
 // gateway dispatch the request through the matching ADR-125 mirror rule.
 const (
-	DebugReplayRequestIDHeader     = "x-faas-debug-replay-request-id"
-	DebugReplayDeploymentIDHeader  = "x-faas-debug-replay-deployment-id"
-	DebugReplayMirrorRuleIDHeader  = "x-faas-debug-replay-mirror-rule-id"
-	DebugReplaySourceStatusHeader  = "x-faas-debug-replay-source-status"
-	DebugReplaySourceLatencyHeader = "x-faas-debug-replay-source-latency-ms"
-	DebugReplayTraceIDHeader       = "x-faas-debug-replay-trace-id"
+	DebugReplayRequestIDHeader        = "x-faas-debug-replay-request-id"
+	DebugReplayDeploymentIDHeader     = "x-faas-debug-replay-deployment-id"
+	DebugReplayMirrorRuleIDHeader     = "x-faas-debug-replay-mirror-rule-id"
+	DebugReplaySourceStatusHeader     = "x-faas-debug-replay-source-status"
+	DebugReplaySourceLatencyHeader    = "x-faas-debug-replay-source-latency-ms"
+	DebugReplayTraceIDHeader          = "x-faas-debug-replay-trace-id"
+	DebugReplaySourceBodyHashHeader   = "x-faas-debug-replay-source-body-sha256"
+	DebugReplaySanitizedPayloadHeader = "x-faas-debug-replay-sanitized-payload"
 )
 
 // DebugReplayResponse is the wire envelope for the debug replay endpoint.
@@ -9267,6 +9341,7 @@ type DebugReplayComparison struct {
 	SourceLatencyMS    int    `json:"source_latency_ms"`
 	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
 	StatusDiff         bool   `json:"status_diff"`
+	BodyDiff           bool   `json:"body_diff"`
 	Crashed            bool   `json:"crashed"`
 }
 
