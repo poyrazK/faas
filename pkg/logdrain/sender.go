@@ -262,7 +262,11 @@ func (s *Sender) runDurable(ctx context.Context) {
 			}
 			continue
 		}
-		s.deliverDurable(ctx, item)
+		if err := s.deliverDurable(ctx, item); err != nil {
+			if !waitForQueueWake(ctx, s.wake, time.Second) {
+				return
+			}
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -290,9 +294,11 @@ func waitForQueueWake(ctx context.Context, wake <-chan struct{}, retry time.Dura
 	}
 }
 
-func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
+// deliverDurable returns storage failures or cancellation so the worker can
+// back off instead of immediately retrying against a broken disk.
+func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
 	if ctx.Err() != nil {
-		return
+		return ctx.Err()
 	}
 	record := item.Record
 	attempts := item.Attempts
@@ -308,7 +314,7 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return
+				return ctx.Err()
 			case <-timer.C:
 			}
 		}
@@ -316,17 +322,17 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 		// attempt only when the request is about to start, preserving retries
 		// across worker restarts and configuration changes.
 		if ctx.Err() != nil {
-			return
+			return ctx.Err()
 		}
 		if err := s.durable.MarkAttempt(item, attempts); err != nil {
 			s.queueStorageError(err)
-			return
+			return err
 		}
 		status, err := s.post(ctx, record)
 		if err == nil && status >= 200 && status < 300 {
 			if err := s.durable.Ack(item); err != nil {
 				s.queueStorageError(err)
-				return
+				return err
 			}
 			if s.cfg.OnDelivered != nil {
 				s.cfg.OnDelivered(record)
@@ -335,7 +341,7 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 				s.cfg.OnDeliveredLatency(record, time.Since(item.EnqueuedAt))
 			}
 			s.observeDurableQueue()
-			return
+			return nil
 		}
 		if err != nil {
 			lastErr = err
@@ -346,7 +352,7 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 			break
 		}
 		if ctx.Err() != nil {
-			return
+			return ctx.Err()
 		}
 	}
 	if lastErr == nil {
@@ -354,7 +360,7 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 	}
 	if err := s.durable.DeadLetter(item, attempts, lastErr); err != nil {
 		s.queueStorageError(err)
-		return
+		return err
 	}
 	if s.cfg.OnFailed != nil {
 		s.cfg.OnFailed(record, lastErr)
@@ -363,6 +369,7 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 		s.cfg.OnDeadLetter(record, lastErr)
 	}
 	s.observeDurableQueue()
+	return nil
 }
 
 func (s *Sender) deliver(ctx context.Context, item queuedRecord) {
