@@ -55,12 +55,25 @@ type ProjectDeletePreviewResponse struct {
 
 // ProjectEnvironmentResponse is one durable environment registry entry.
 type ProjectEnvironmentResponse struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Slug      string `json:"slug"`
-	Protected bool   `json:"protected"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID         string                           `json:"id"`
+	ProjectID  string                           `json:"project_id"`
+	Slug       string                           `json:"slug"`
+	Protected  bool                             `json:"protected"`
+	CreatedAt  string                           `json:"created_at"`
+	UpdatedAt  string                           `json:"updated_at"`
+	ClonedFrom string                           `json:"cloned_from,omitempty"`
+	Clone      *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
+}
+
+// ProjectEnvironmentCloneResponse reports non-secret counts copied by an
+// atomic environment clone. Application-scoped resources are shared, not
+// duplicated.
+type ProjectEnvironmentCloneResponse struct {
+	ConfigurationCopied bool     `json:"configuration_copied"`
+	VariablesCopied     int      `json:"variables_copied"`
+	SecretsCopied       int      `json:"secrets_copied"`
+	WorkloadsCopied     int      `json:"workloads_copied"`
+	SharedResources     []string `json:"shared_resources"`
 }
 
 // ProjectEnvironmentReleaseListResponse is the current non-secret release
@@ -226,8 +239,9 @@ type ProjectEnvironmentDiffResponse struct {
 
 // CreateProjectEnvironmentRequest registers a named project environment.
 type CreateProjectEnvironmentRequest struct {
-	Slug      string `json:"slug"`
-	Protected *bool  `json:"protected,omitempty"`
+	Slug            string `json:"slug"`
+	Protected       *bool  `json:"protected,omitempty"`
+	FromEnvironment string `json:"from_environment,omitempty"`
 }
 
 // UpdateProjectEnvironmentRequest changes only environment protection.

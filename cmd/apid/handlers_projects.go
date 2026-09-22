@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
@@ -10,6 +11,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// projectEnvironmentCloner is optional on the large state.Store interface so
+// narrow test embedders and external adapters remain source-compatible.
+type projectEnvironmentCloner interface {
+	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
+}
 
 func (s *server) listProjects(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	projects, err := s.store.ListProjectsForAccount(r.Context(), acct.ID)
@@ -298,42 +305,89 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	var req api.CreateProjectEnvironmentRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, problem := decodeCreateProjectEnvironmentRequest(r)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	req.Slug = strings.TrimSpace(req.Slug)
-	if !api.ValidProjectEnvironmentSlug(req.Slug) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid environment slug", "slug must contain 1-33 lowercase letters, numbers, or internal hyphens"))
-		return
-	}
-	protected := false
-	if req.Protected != nil {
-		protected = *req.Protected
-	}
-	environment, err := s.store.CreateProjectEnvironment(r.Context(), state.ProjectEnvironment{
-		AccountID: acct.ID, ProjectID: project.ID, Slug: req.Slug, Protected: protected,
-	})
+	environment, clone, err := s.persistProjectEnvironment(r.Context(), acct, project, req)
 	if err != nil {
-		switch {
-		case errors.Is(err, state.ErrNotFound):
-			api.WriteProblem(w, projectNotFound(project.Slug))
-		case errors.Is(err, state.ErrConflict):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"Environment already exists", "the project already has an environment with this slug"))
-		default:
-			api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
-		}
+		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "project.environment.created", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
-		"protected": environment.Protected,
+		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
+		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
 	})
-	writeJSON(w, http.StatusCreated, projectEnvironmentResponse(environment))
+	response := projectEnvironmentResponse(environment)
+	if req.FromEnvironment != "" {
+		response.ClonedFrom = req.FromEnvironment
+		response.Clone = &api.ProjectEnvironmentCloneResponse{
+			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
+			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
+			SharedResources: []string{"domains", "policies", "routes"},
+		}
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func decodeCreateProjectEnvironmentRequest(r *http.Request) (api.CreateProjectEnvironmentRequest, *api.Problem) {
+	var req api.CreateProjectEnvironmentRequest
+	if err := decodeJSON(r, &req); err != nil {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error())
+	}
+	req.Slug, req.FromEnvironment = strings.TrimSpace(req.Slug), strings.TrimSpace(req.FromEnvironment)
+	if !api.ValidProjectEnvironmentSlug(req.Slug) {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid environment slug", "slug must contain 1-33 lowercase letters, numbers, or internal hyphens")
+	}
+	if req.FromEnvironment != "" && (!api.ValidProjectEnvironmentSlug(req.FromEnvironment) || req.FromEnvironment == req.Slug) {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid source environment", "from_environment must name a different project environment")
+	}
+	return req, nil
+}
+
+func (s *server) persistProjectEnvironment(ctx context.Context, acct state.Account, project state.Project, req api.CreateProjectEnvironmentRequest) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error) {
+	protected := req.Protected != nil && *req.Protected
+	if req.FromEnvironment == "" {
+		environment, err := s.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+			AccountID: acct.ID, ProjectID: project.ID, Slug: req.Slug, Protected: protected,
+		})
+		return environment, state.ProjectEnvironmentCloneResult{}, err
+	}
+	cloner, ok := s.store.(projectEnvironmentCloner)
+	if !ok {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, errors.New("project environment cloning is unavailable")
+	}
+	return cloner.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{
+		AccountID: acct.ID, ProjectID: project.ID, SourceSlug: req.FromEnvironment,
+		TargetSlug: req.Slug, TargetProtected: protected,
+	}, api.MustLimitsFor(acct.Plan))
+}
+
+func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug string, req api.CreateProjectEnvironmentRequest, acct state.Account, err error) {
+	var quota *state.ProjectEnvironmentCloneQuotaError
+	switch {
+	case errors.Is(err, state.ErrProjectEnvironmentCloneManagedBindings):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Managed bindings require recreation",
+			"the source environment has provider-managed credentials; recreate those bindings in the target environment"))
+	case errors.As(err, &quota) && quota.Resource == "secrets":
+		api.WriteProblem(w, api.ErrPlanLimitSecrets(api.MustLimitsFor(acct.Plan), quota.Observed))
+	case errors.As(err, &quota):
+		api.WriteProblem(w, api.ErrPlanLimitEnvVars(api.MustLimitsFor(acct.Plan), quota.Observed))
+	case errors.Is(err, state.ErrNotFound) && req.FromEnvironment != "":
+		api.WriteProblem(w, projectEnvironmentNotFound(projectSlug, req.FromEnvironment))
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, projectNotFound(projectSlug))
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Environment already exists", "the project already has an environment with this slug"))
+	default:
+		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+	}
 }
 
 func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {

@@ -679,19 +679,23 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
+	from := fs.String("from", "", "source environment to clone")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--protected]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected]", "projects environments")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
 		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
+	}
+	if *from != "" && (!api.ValidProjectEnvironmentSlug(*from) || *from == positional[1]) {
+		return printErr("Invalid source environment", fmt.Errorf("--from must name a different project environment"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), positional[0], api.CreateProjectEnvironmentRequest{
-		Slug: positional[1], Protected: protected,
+		Slug: positional[1], Protected: protected, FromEnvironment: *from,
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -724,6 +728,11 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 		return jsonOut(writeJSON(environment))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+	if environment.Clone != nil {
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d\n  shared: %s\n",
+			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
+			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, strings.Join(environment.Clone.SharedResources, ", "))
+	}
 	return 0
 }
 

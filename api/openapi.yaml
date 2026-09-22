@@ -11638,6 +11638,13 @@ paths:
       tags: [projects]
       operationId: createProjectEnvironment
       summary: Create a durable project environment.
+      description: |
+        When from_environment is supplied, the create is atomic and copies the
+        latest non-secret configuration, runtime variables, and already-sealed
+        customer secrets. Application-scoped domains, routes, and policies are
+        shared. A source with provider-managed credentials returns 409 because
+        those bindings must issue fresh target credentials; credential bytes
+        are never copied.
       requestBody:
         required: true
         content:
@@ -25428,6 +25435,21 @@ components:
         protected: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        cloned_from: { type: string }
+        clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
+
+    ProjectEnvironmentCloneResponse:
+      description: Non-secret copy counts for an atomic environment clone.
+      type: object
+      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, shared_resources]
+      properties:
+        configuration_copied: { type: boolean }
+        variables_copied: { type: integer, minimum: 0 }
+        secrets_copied: { type: integer, minimum: 0 }
+        workloads_copied: { type: integer, minimum: 0 }
+        shared_resources:
+          type: array
+          items: { type: string, enum: [domains, policies, routes] }
 
     ProjectEnvironmentReleaseListResponse:
       description: Current non-secret release inventory for a project environment.
@@ -25705,12 +25727,16 @@ components:
         promotion_token: { type: string, minLength: 1 }
 
     CreateProjectEnvironmentRequest:
-      description: Request to register a named project environment.
+      description: Request to register or atomically clone a named project environment.
       type: object
       required: [slug]
       properties:
         slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
         protected: { type: boolean, default: false }
+        from_environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: Source environment whose scoped state is copied atomically.
 
     CreateProjectEnvironmentApprovalRequest:
       description: Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token.

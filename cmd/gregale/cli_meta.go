@@ -1052,9 +1052,14 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "env",
 		DocSlug: "env",
-		Short:   "Pull/push .env <-> sealed secrets (--app <slug> or linked context)",
+		Short:   "Create project environments or manage app runtime env/secrets",
 		Flags:   []cliFlag{{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"}},
 		Subcommands: []cliSub{
+			{Name: "create", Short: "Clone a named project environment", Flags: []cliFlag{
+				{Name: "from", Short: "source environment", Value: "ENV", Req: true},
+				{Name: "project", Short: "project slug (defaults to linked project)", Value: "SLUG"},
+				{Name: "protected", Short: "protect the new environment"},
+			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 			}},

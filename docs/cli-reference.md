@@ -38,7 +38,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context) |
+| [`env`](#env) | Create project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
@@ -1299,13 +1299,23 @@ Remove the imported app OpenAPI document
 
 ## env
 
-Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context)
+Create project environments or manage app runtime env/secrets
 
 `gregale env [<subcommand>] [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked context) |  |
+
+### env create
+
+Clone a named project environment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--protected` | protect the new environment |  |
 
 ### env pull
 
