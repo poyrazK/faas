@@ -12,6 +12,7 @@ from ..models.sidecar_type import SidecarType, check_sidecar_type
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_manifest_healthcheck import AppManifestHealthcheck
     from ..models.sidecar_env import SidecarEnv
     from ..models.workload_dependency import WorkloadDependency
 
@@ -59,6 +60,10 @@ class Sidecar:
       (`failure_class=user_error`) and essential long-running
       sidecars restart-loop. If false, the failure is logged
       and the other workloads continue.
+    - `startup_probe` optionally replaces the image's baked OCI
+      `HEALTHCHECK` for this workload. It uses the exec-style
+      `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
+      explicitly disable the image probe.
     - `depends_on` optionally gates this workload on `main` or
       another sidecar. Conditions are `started`, `healthy`, and
       `completed_successfully`; omitted condition means `started`.
@@ -90,6 +95,10 @@ class Sidecar:
     """Per-workload guest cgroup I/O scheduling policy. Omit to inherit the guest default."""
     essential: bool | Unset = UNSET
     """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
+    startup_probe: AppManifestHealthcheck | Unset = UNSET
+    """AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer
+    seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1
+    surfaces the field for the registry-pull path."""
     depends_on: list[WorkloadDependency] | Unset = UNSET
     """Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running
     sidecars."""
@@ -126,6 +135,10 @@ class Sidecar:
 
         essential = self.essential
 
+        startup_probe: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.startup_probe, Unset):
+            startup_probe = self.startup_probe.to_dict()
+
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
             depends_on = []
@@ -158,6 +171,8 @@ class Sidecar:
             field_dict["disk_io_profile"] = disk_io_profile
         if essential is not UNSET:
             field_dict["essential"] = essential
+        if startup_probe is not UNSET:
+            field_dict["startup_probe"] = startup_probe
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
 
@@ -165,6 +180,7 @@ class Sidecar:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_manifest_healthcheck import AppManifestHealthcheck
         from ..models.sidecar_env import SidecarEnv
         from ..models.workload_dependency import WorkloadDependency
 
@@ -206,6 +222,13 @@ class Sidecar:
 
         essential = d.pop("essential", UNSET)
 
+        _startup_probe = d.pop("startup_probe", UNSET)
+        startup_probe: AppManifestHealthcheck | Unset
+        if isinstance(_startup_probe, Unset):
+            startup_probe = UNSET
+        else:
+            startup_probe = AppManifestHealthcheck.from_dict(_startup_probe)
+
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[WorkloadDependency] | Unset = UNSET
         if _depends_on is not UNSET:
@@ -227,6 +250,7 @@ class Sidecar:
             cpu_millicores=cpu_millicores,
             disk_io_profile=disk_io_profile,
             essential=essential,
+            startup_probe=startup_probe,
             depends_on=depends_on,
         )
 

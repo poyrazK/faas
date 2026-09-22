@@ -10,6 +10,24 @@ gregale deploy --dry-run
 
 The dry run reports image, CPU/RAM budget, ports, and plan compatibility before upload. Sidecars share the app's lifecycle and failure domain, so a crash or resource spike can affect the main process. Keep them stateless and safe to restart.
 
+## Startup probes
+
+`startup_probe` is an optional deployment-level override for the image's OCI
+`HEALTHCHECK`. Gregale runs the same exec probe before marking a sidecar
+healthy and while monitoring it; omit it to keep the image probe, or use
+`["NONE"]` to disable a baked probe.
+
+```yaml
+extensions:
+  - name: metrics
+    image: registry.example.com/metrics@sha256:<64-hex-digest>
+    startup_probe:
+      test: [CMD, /usr/local/bin/ready]
+      interval_s: 5
+      timeout_s: 2
+      retries: 3
+```
+
 ## Manifest presets
 
 Telemetry extensions can be declared in either `gregale.yaml` or
