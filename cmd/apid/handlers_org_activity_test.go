@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -96,6 +98,36 @@ func TestSetEnvActivityNeverContainsValue(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].Kind != "env.set" || page.Items[0].Resource.Label != "DATABASE_URL" {
 		t.Fatalf("activity = %#v", page.Items)
+	}
+}
+
+func TestAppActivityUsesOwnerOrgNotCallerOrg(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	personal := seedActivityPersonalOrg(t, e)
+	shared, err := e.store.CreateOrg(ctx, state.Org{Slug: "shared-activity", Name: "Shared", Plan: e.acct.Plan, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatalf("CreateOrg: %v", err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "owner-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	key := &state.APIKey{OrgID: shared.ID, Label: "shared key"}
+	mem := &state.OrgMembership{OrgID: shared.ID, AccountID: e.acct.ID, Role: state.OrgRoleOwner}
+	r := httptest.NewRequest(http.MethodPut, "/v1/apps/owner-app/env/KEY", nil)
+	r = r.WithContext(authmw.WithPrincipal(r.Context(), e.acct, key, mem))
+	e.s.recordAppActivity(ctx, r, e.acct, app, state.OrgActivity{
+		Kind: "env.set", ResourceType: "environment_variable", ResourceLabel: "KEY",
+		SourceType: "test", SourceID: "owner-only",
+	})
+	personalRows, err := e.store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(personal.ID), Limit: 10})
+	if err != nil || len(personalRows) != 1 {
+		t.Fatalf("personal activity = %v, err = %v", personalRows, err)
+	}
+	sharedRows, err := e.store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(shared.ID), Limit: 10})
+	if err != nil || len(sharedRows) != 0 {
+		t.Fatalf("shared activity = %v, err = %v", sharedRows, err)
 	}
 }
 

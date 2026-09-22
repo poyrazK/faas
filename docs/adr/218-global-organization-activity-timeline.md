@@ -1,4 +1,4 @@
-# ADR-214 · Curated global organization activity timeline
+# ADR-218 · Curated global organization activity timeline
 
 - **Status:** accepted
 - **Date:** 2026-09-22
@@ -24,12 +24,13 @@
   and GitHub deployments; environment set/delete; domain attachment; TLS
   issuance; and requested rollbacks. New producer kinds may be added without a
   schema change, but each needs an explicit safe-data mapping and tests.
-- **Organization attribution:** An org-bound API key projects into its bound
-  organization; an authenticated account mutation without an active org
-  principal projects into that account's personal organization. Shared-org
+- **Organization attribution:** Existing apps are account-owned, so their
+  activity projects into the app owner's personal organization regardless of
+  the caller's active org or org-bound API key. Those credentials can authorize
+  a mutation but cannot establish the app's owning organization. Shared-org
   resource ownership is still being rolled out across Gregale's account-owned
-  app APIs, so moving those APIs to authoritative resource `org_id` attribution
-  is a prerequisite for calling the shared-workspace history complete.
+  app APIs; authoritative resource `org_id` attribution is a prerequisite for
+  calling the shared-workspace history complete.
 - **Delivery:** `(org_id, source_type, source_id)` is unique, so retries and
   webhook redelivery return the original row. The initial apid projection is a
   post-commit side effect: failure is logged and never changes a successfully

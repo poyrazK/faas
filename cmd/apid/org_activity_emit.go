@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
-	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,7 +23,7 @@ func (s *server) recordAppActivity(ctx context.Context, r *http.Request, acct st
 	if !ok {
 		return
 	}
-	orgID, err := s.resolveActivityOrg(ctx, r, acct)
+	orgID, err := s.resolveActivityOrg(ctx, app)
 	if err != nil {
 		if s.log != nil {
 			s.log.Warn("activity: resolve organization failed", "app", app.ID, "kind", entry.Kind, "err", err)
@@ -59,16 +58,11 @@ func (s *server) recordAppActivity(ctx context.Context, r *http.Request, acct st
 	}
 }
 
-func (s *server) resolveActivityOrg(ctx context.Context, r *http.Request, acct state.Account) (uuid.UUID, error) {
-	if r != nil {
-		if raw, ok := authz.ActiveOrgID(r); ok {
-			return uuid.Parse(raw)
-		}
-		if _, key, ok := authmw.AccountFromContext(r); ok && key != nil && key.OrgID != "" {
-			return uuid.Parse(key.OrgID)
-		}
-	}
-	org, err := s.store.OrgByPersonalAccount(ctx, acct.ID)
+// Apps are currently owned by an account, not an organization. A caller's
+// active org or org-bound API key cannot determine where app details belong:
+// the same account may be a member of an unrelated shared organization.
+func (s *server) resolveActivityOrg(ctx context.Context, app state.App) (uuid.UUID, error) {
+	org, err := s.store.OrgByPersonalAccount(ctx, app.AccountID)
 	if err != nil {
 		return uuid.Nil, err
 	}
