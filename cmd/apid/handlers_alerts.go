@@ -772,7 +772,7 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 		return api.ErrAlertRuleInvalid("window_spec must be one of 5m, 15m, 1h, 6h, 24h, 7d, 15d")
 	}
 	if req.FailureSource != "" && !api.AllowedAlertRuleFailureSource(req.FailureSource) {
-		return api.ErrAlertRuleInvalid("failure_source must be one of any, cron, queue, delayed_task, async_invoke (or empty)")
+		return api.ErrAlertRuleInvalid("failure_source must be one of any, cron, queue, delayed_task, async_invoke, inbound_webhook (or empty)")
 	}
 	// Issue #976 / ADR-122 / SAFE-RELEASES-B: Action is the
 	// new seam-routing field on alert_rules. nil on the wire
@@ -829,7 +829,7 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return api.ErrAlertRuleInvalid("window_spec must be one of 5m, 15m, 1h, 6h, 24h, 7d, 15d")
 	}
 	if merged.FailureSource != "" && !api.AllowedAlertRuleFailureSource(string(merged.FailureSource)) {
-		return api.ErrAlertRuleInvalid("failure_source must be one of any, cron, queue, delayed_task, async_invoke (or empty)")
+		return api.ErrAlertRuleInvalid("failure_source must be one of any, cron, queue, delayed_task, async_invoke, inbound_webhook (or empty)")
 	}
 	// Issue #976 / ADR-122 / SAFE-RELEASES-B: Action must
 	// round-trip through the merged row check too, so a PATCH

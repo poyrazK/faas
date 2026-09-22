@@ -1195,7 +1195,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "mode"}),
 		concurrencyQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_concurrency_queue_depth",
-			Help: "Requests currently waiting for warm instance capacity, labelled by app and plan.",
+			Help: "Requests currently waiting for warm instance capacity on this gateway replica, labelled by app and plan.",
 		}, []string{"app", "plan"}),
 		concurrencyQueueWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "gateway_concurrency_queue_wait_seconds",
