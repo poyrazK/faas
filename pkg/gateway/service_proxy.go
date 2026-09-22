@@ -36,6 +36,17 @@ const (
 	// bridge address; the HTTP proxy then authorizes the slug before forwarding.
 	ServiceDiscoveryDomain = "svc.gregale"
 
+	// ServiceCallerEnvHeader tells the target guest which environment the
+	// calling workload belongs to. Only set when it is not production, so a
+	// normal call carries nothing new.
+	ServiceCallerEnvHeader = "X-Faas-Caller-Env"
+
+	// ServiceCallerPreviewOfHeader names the production app the calling
+	// preview was created from. A service receiving it is being exercised by
+	// a PR preview, not by production traffic — useful for skipping
+	// side effects, tagging writes, or refusing the call outright.
+	ServiceCallerPreviewOfHeader = "X-Faas-Caller-Preview-Of"
+
 	// ServiceProxyMaxAttempts bounds transport retries. Only idempotent,
 	// bodyless requests may use the second attempt.
 	ServiceProxyMaxAttempts = 2
@@ -77,9 +88,25 @@ type ServiceTarget struct {
 // request deadline for the app/account lookup.
 type ServiceProxyResolver func(ctx context.Context, service string) (target ServiceTarget, ok bool, err error)
 
+// ServiceCaller is what the authorizer learned about the calling workload
+// while checking the tenant boundary. It is returned rather than discarded so
+// the hop does not need a third store read for facts already in hand.
+type ServiceCaller struct {
+	AppID string
+	// PreviewOfSlug is non-empty when the caller is a PR preview app, naming
+	// the production app it previews.
+	//
+	// Service names resolve with no environment scope, and previews are
+	// created one app per PR, so a preview has no sibling copy of its
+	// dependencies: its internal calls reach the production services. That is
+	// the current, documented behaviour — this field exists so the hop can
+	// say so instead of doing it silently.
+	PreviewOfSlug string
+}
+
 // ServiceProxyAuthorizer enforces the tenant boundary between caller and
 // target apps. A nil authorizer is treated as a wiring error and fails closed.
-type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) error
+type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) (ServiceCaller, error)
 
 // ServiceProxyCallerResolver binds the caller header to the network identity
 // observed by the node-local listener. When it is configured, the resolved
@@ -266,7 +293,8 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
 	}
-	if err := p.authorize(r.Context(), caller, target.AppID); err != nil {
+	callerInfo, err := p.authorize(r.Context(), caller, target.AppID)
+	if err != nil {
 		if errors.Is(err, ErrServiceProxyDenied) {
 			p.metrics.IncServiceCall(ServiceCallDenied)
 			serviceProxyProblem(w, http.StatusForbidden, "caller is not allowed to reach this service")
@@ -283,7 +311,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !served {
 		return
 	}
-	p.dispatch(w, r, targetPath, target, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	p.dispatch(w, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
 }
 
 // dispatch picks the guest bridge for the resolved target (ADR-197).
@@ -293,7 +321,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
 			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
@@ -306,11 +334,11 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 			return
 		}
 		p.countForward(woken)
-		p.forwardUpgrade(w, r, targetPath, target, endpoints)
+		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints)
 		return
 	}
 	p.countForward(woken)
-	p.forwardOnce(w, r, targetPath, target, endpoints, serviceProxyRetryable(r))
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints, serviceProxyRetryable(r))
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold
@@ -536,16 +564,30 @@ func validServiceEndpoints(in []ServiceEndpoint) []ServiceEndpoint {
 // is stamped so vmmd selects the H1 or H2C guest bridge (ADR-197).
 //
 // The request id is preserved so an internal hop stays correlated end to end.
-func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target ServiceTarget) *http.Request {
+func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller) *http.Request {
 	request := r.Clone(r.Context())
 	request.URL.Path = targetPath
 	request.URL.RawPath = ""
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
 	request.Header.Del(ServiceProxyCallerAppHeader)
+	// Both caller-environment headers are platform-owned. Strip whatever the
+	// guest sent before deciding: otherwise any workload could label its own
+	// traffic, and a target that trusts the marker would be trusting the
+	// caller's word for it.
+	request.Header.Del(ServiceCallerEnvHeader)
+	request.Header.Del(ServiceCallerPreviewOfHeader)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
+	// A preview app has no sibling copy of its dependencies, so this call is
+	// crossing from a preview into a production service. Say so on the hop and
+	// count it, rather than letting a PR quietly exercise production.
+	if caller.PreviewOfSlug != "" {
+		request.Header.Set(ServiceCallerEnvHeader, "preview")
+		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
+		p.metrics.IncServicePreviewToProduction()
+	}
 	return request
 }
 
@@ -553,13 +595,13 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 // bridge. There is no retry and no response buffering: the response is a
 // hijacked connection, so the first endpoint chosen is the only one, and a
 // stale-target signal cannot be acted on after bytes have flowed.
-func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint) {
+func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
 	endpoint, ok := p.pick(target.AppID, endpoints)
 	if !ok {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 		return
 	}
-	request := p.guestRequest(r, targetPath, target)
+	request := p.guestRequest(r, targetPath, target, caller)
 	api.PlatformIdentity{
 		RequestID:  request.Header.Get(api.RequestIDHeader),
 		AppID:      target.AppID,
@@ -573,9 +615,9 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	p.rawForward(Target{NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, Port: endpoint.Port}).ServeHTTP(w, request)
 }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, endpoints []ServiceEndpoint, retry bool) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, retry bool) {
 	appID := target.AppID
-	request := p.guestRequest(r, targetPath, target)
+	request := p.guestRequest(r, targetPath, target, caller)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	for attempt := 0; attempt < ServiceProxyMaxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)

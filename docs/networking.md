@@ -184,6 +184,32 @@ identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the
 same account. Cross-account calls are refused.
 
+### Preview environments call production services
+
+A pull-request preview is provisioned as **one app**, derived from the app the
+PR touches. It does not get its own copy of that app'"'"'s dependencies, and
+service names resolve without an environment scope — so a preview'"'"'s internal
+calls reach your **production** services.
+
+That is worth designing around. A preview of `public-api` calling `billing`
+reaches production `billing` and any side effects are real.
+
+Gregale marks these calls so a service can react rather than be surprised.
+Every request from a preview app carries:
+
+```text
+X-Faas-Caller-Env: preview
+X-Faas-Caller-Preview-Of: public-api
+```
+
+Both headers are platform-owned: anything a workload sends under those names is
+stripped before the hop, so the marker cannot be forged. Production callers
+carry neither header, so a service that ignores them is unaffected.
+
+Use them to skip irreversible work, tag writes as test data, or refuse the call
+outright. Operators can watch the fleet-wide rate with
+`gateway_service_preview_to_production_total`.
+
 ## Internal-only ingress
 
 Pro and Scale apps can be hidden from the public edge while remaining reachable

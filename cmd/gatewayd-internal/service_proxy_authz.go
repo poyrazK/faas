@@ -24,30 +24,32 @@ import (
 //
 // Extracted from run() so the boundary is unit-testable without the daemon.
 func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer {
-	return func(ctx context.Context, callerAppID, targetAppID string) error {
+	return func(ctx context.Context, callerAppID, targetAppID string) (gateway.ServiceCaller, error) {
 		if !isAppID(callerAppID) || !isAppID(targetAppID) {
-			return gateway.ErrServiceProxyDenied
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		caller, err := store.AppByID(ctx, callerAppID)
 		if errors.Is(err, state.ErrNotFound) {
-			return gateway.ErrServiceProxyDenied
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		if err != nil {
-			return fmt.Errorf("load caller app: %w", err)
+			return gateway.ServiceCaller{}, fmt.Errorf("load caller app: %w", err)
 		}
 		target, err := store.AppByID(ctx, targetAppID)
 		if errors.Is(err, state.ErrNotFound) {
-			return gateway.ErrServiceProxyDenied
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		if err != nil {
-			return fmt.Errorf("load target app: %w", err)
+			return gateway.ServiceCaller{}, fmt.Errorf("load target app: %w", err)
 		}
 		// An empty account on either side is a broken row rather than a
 		// match; fail closed instead of letting "" == "" authorize the call.
 		if caller.AccountID == "" || caller.AccountID != target.AccountID {
-			return gateway.ErrServiceProxyDenied
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
-		return nil
+		// The caller row is already loaded; carrying its preview identity out
+		// saves the hop a third store read for a fact we have in hand.
+		return gateway.ServiceCaller{AppID: caller.ID, PreviewOfSlug: caller.PreviewOfSlug}, nil
 	}
 }
 

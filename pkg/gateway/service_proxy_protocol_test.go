@@ -20,7 +20,7 @@ func newProtocolTestProxy(target ServiceTarget, forward, rawForward func(Target)
 	return NewServiceProxy(ServiceProxyConfig{
 		Provider:   staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}}},
 		Resolve:    func(context.Context, string) (ServiceTarget, bool, error) { return target, true, nil },
-		Authorize:  func(context.Context, string, string) error { return nil },
+		Authorize:  func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		Forward:    forward,
 		RawForward: rawForward,
 		Now:        func() time.Time { return time.Unix(100, 0) },

@@ -19,7 +19,7 @@ func localityProxy(t *testing.T, localNodeID string, endpoints []ServiceEndpoint
 		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
-		Authorize:   func(context.Context, string, string) error { return nil },
+		Authorize:   func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		LocalNodeID: localNodeID,
 		Forward: func(target Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

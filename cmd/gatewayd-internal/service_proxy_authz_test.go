@@ -68,7 +68,7 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 	authorize := newServiceProxyAuthorizer(store)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := authorize(context.Background(), tc.caller, tc.target)
+			_, err := authorize(context.Background(), tc.caller, tc.target)
 			if tc.wantErr == nil {
 				if err != nil {
 					t.Fatalf("authorize = %v, want nil", err)
@@ -89,7 +89,7 @@ func TestServiceProxyAuthorizerSurfacesStoreFailure(t *testing.T) {
 	boom := errors.New("connection refused")
 	authorize := newServiceProxyAuthorizer(failingAppStore{Store: state.NewMemStore(), err: boom})
 
-	err := authorize(context.Background(), "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")
+	_, err := authorize(context.Background(), "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")
 	if errors.Is(err, gateway.ErrServiceProxyDenied) {
 		t.Fatal("store failure was reported as a denial; an outage would look like an authz decision")
 	}
@@ -105,4 +105,52 @@ type failingAppStore struct {
 
 func (f failingAppStore) AppByID(context.Context, string) (state.App, error) {
 	return state.App{}, f.err
+}
+
+// The caller row is already loaded for the tenant check, so its preview
+// identity must come back with it — the hop needs it to mark a
+// preview-to-production call, and a third store read for a fact already in
+// hand would be pure waste on the request path.
+func TestServiceProxyAuthorizerCarriesPreviewIdentity(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "preview-authz@local", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	mk := func(slug, previewOf string) state.App {
+		t.Helper()
+		app, err := store.CreateApp(ctx, state.App{
+			AccountID: acct.ID, Slug: slug, Type: state.AppTypeApp,
+			RAMMB: 128, Status: state.AppActive, PreviewOfSlug: previewOf,
+		})
+		if err != nil {
+			t.Fatalf("CreateApp %q: %v", slug, err)
+		}
+		return app
+	}
+	target := mk("previewtarget", "")
+	prod := mk("prodcaller", "")
+	preview := mk("pr-42-prodcaller", "prodcaller")
+
+	authorize := newServiceProxyAuthorizer(store)
+
+	got, err := authorize(ctx, prod.ID, target.ID)
+	if err != nil {
+		t.Fatalf("authorize production caller: %v", err)
+	}
+	if got.PreviewOfSlug != "" {
+		t.Errorf("production caller PreviewOfSlug = %q, want empty", got.PreviewOfSlug)
+	}
+
+	got, err = authorize(ctx, preview.ID, target.ID)
+	if err != nil {
+		t.Fatalf("authorize preview caller: %v", err)
+	}
+	if got.PreviewOfSlug != "prodcaller" {
+		t.Errorf("preview caller PreviewOfSlug = %q, want prodcaller", got.PreviewOfSlug)
+	}
+	if got.AppID != preview.ID {
+		t.Errorf("caller AppID = %q, want %q", got.AppID, preview.ID)
+	}
 }

@@ -672,6 +672,11 @@ type Metrics struct {
 	// speculative wake-ahead along depends_on edges "until measured evidence";
 	// this histogram is that evidence.
 	serviceWakeLatency prometheus.Histogram
+	// servicePreviewToProduction counts internal calls made by a PR preview
+	// app into a production service. Previews are created one app per PR, so
+	// a preview has no sibling copy of its dependencies and its calls land on
+	// production. This is the only fleet-wide signal that it is happening.
+	servicePreviewToProduction prometheus.Counter
 	// wsActiveSessions (issue #676 / ADR-080 follow-up, PR-B) is
 	// the in-flight raw-bytes Upgrade session gauge, labelled by
 	// plan. Inc/Dec happens via IncWSSessionStart /
@@ -1406,6 +1411,12 @@ func NewMetrics() *Metrics {
 				Name:    "gateway_service_wake_latency_seconds",
 				Help:    "Time an internal service caller was held while a parked target was restored (ADR-196), measured across the wake-and-refresh cycle. Observed only on the cold path; a warm call records nothing.",
 				Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5, 10, 30},
+			},
+		),
+		servicePreviewToProduction: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "gateway_service_preview_to_production_total",
+				Help: "Internal service calls made by a PR preview app into a production service. Service names resolve without environment scope and previews are provisioned one app per PR, so a preview reaches production dependencies; a non-zero rate means PR traffic is exercising production services.",
 			},
 		),
 		wsUpgradeTotal: prometheus.NewCounterVec(
@@ -3111,6 +3122,15 @@ func (m *Metrics) IncWSUpgrade(plan string, outcome WSOutcome) {
 		return
 	}
 	m.wsUpgradeTotal.WithLabelValues(plan, string(outcome)).Inc()
+}
+
+// IncServicePreviewToProduction records one preview-to-production internal
+// call. nil-safe.
+func (m *Metrics) IncServicePreviewToProduction() {
+	if m == nil {
+		return
+	}
+	m.servicePreviewToProduction.Inc()
 }
 
 // ServiceCallOutcome is the closed label set for gateway_service_call_total.
