@@ -113,15 +113,19 @@ func WithStream(parent context.Context) (ctx context.Context, detach func(), can
 	if _, ok := FromContext(parent); !ok {
 		return parent, func() {}, func() {}
 	}
+	if parent.Err() != nil {
+		return parent, func() {}, func() {}
+	}
 
 	base := budgetBaseContext(parent)
 
 	b, _ := FromContext(parent)
 	remaining := b.Remaining(time.Time{})
 	if remaining <= 0 {
-		// Keep the original context so an already-expired request retains
-		// its normal deadline/error semantics.
-		return parent, func() {}, func() {}
+		// NewContext can attach a Budget without installing a parent timer.
+		// An expired value still ends admission and cannot be detached away.
+		ctx, cancel := context.WithDeadline(parent, time.Now())
+		return ctx, func() {}, cancel
 	}
 
 	s := &streamContext{
@@ -150,8 +154,6 @@ type streamContext struct {
 	mu         sync.RWMutex
 	isDetached bool
 	err        error
-	closeOnce  sync.Once
-	detachOnce sync.Once
 }
 
 func (s *streamContext) Deadline() (time.Time, bool) {
@@ -163,14 +165,14 @@ func (s *streamContext) Deadline() (time.Time, bool) {
 	}
 	b, ok := FromContext(s.current)
 	if !ok || b.Total <= 0 {
-		return s.base.Deadline()
+		return s.current.Deadline()
 	}
 	budgetDeadline := b.Started.Add(b.Total)
-	baseDeadline, hasBase := s.base.Deadline()
-	if !hasBase || budgetDeadline.Before(baseDeadline) {
+	parentDeadline, hasParent := s.current.Deadline()
+	if !hasParent || budgetDeadline.Before(parentDeadline) {
 		return budgetDeadline, true
 	}
-	return baseDeadline, true
+	return parentDeadline, true
 }
 
 func (s *streamContext) Done() <-chan struct{} { return s.done }
@@ -201,38 +203,41 @@ func (s *streamContext) watch() {
 	select {
 	case <-s.base.Done():
 		s.finish(s.base.Err())
+		return
+	case <-s.current.Done():
+		if s.finishBudget(s.current.Err()) {
+			return
+		}
 	case <-s.timer.C:
-		s.mu.RLock()
-		detached := s.isDetached
-		s.mu.RUnlock()
-		if !detached {
-			s.finish(context.DeadlineExceeded)
+		if s.finishBudget(context.DeadlineExceeded) {
+			return
 		}
 	case <-s.detached:
-		// The timer is no longer part of the stream after detach, but
-		// the original cancellation root remains load-bearing.
-		select {
-		case <-s.base.Done():
-			s.finish(s.base.Err())
-		case <-s.done:
-		}
+	case <-s.done:
+		return
+	}
+	// A budget signal can win the select concurrently with detach. Even in
+	// that case, keep watching the original client/server cancellation root.
+	select {
+	case <-s.base.Done():
+		s.finish(s.base.Err())
 	case <-s.done:
 	}
 }
 
 func (s *streamContext) detach() {
-	s.detachOnce.Do(func() {
-		s.mu.Lock()
-		s.isDetached = true
-		s.mu.Unlock()
-		if !s.timer.Stop() {
-			select {
-			case <-s.timer.C:
-			default:
-			}
-		}
-		close(s.detached)
-	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isDetached || s.err != nil {
+		return
+	}
+	if err := s.current.Err(); err != nil {
+		s.finishLocked(err)
+		return
+	}
+	s.isDetached = true
+	s.timer.Stop()
+	close(s.detached)
 }
 
 func (s *streamContext) cancel() {
@@ -240,18 +245,30 @@ func (s *streamContext) cancel() {
 }
 
 func (s *streamContext) finish(err error) {
-	s.closeOnce.Do(func() {
-		s.mu.Lock()
-		s.err = err
-		s.mu.Unlock()
-		if !s.timer.Stop() {
-			select {
-			case <-s.timer.C:
-			default:
-			}
-		}
-		close(s.done)
-	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finishLocked(err)
+}
+
+// finishBudget atomically chooses between budget expiry and detach, so a
+// timer selected before detach cannot cancel an already-detached response.
+func (s *streamContext) finishBudget(err error) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isDetached {
+		return false
+	}
+	s.finishLocked(err)
+	return true
+}
+
+func (s *streamContext) finishLocked(err error) {
+	if s.err != nil {
+		return
+	}
+	s.err = err
+	s.timer.Stop()
+	close(s.done)
 }
 
 // Remaining is the wall-clock budget left at time `b.now()`. Negative
