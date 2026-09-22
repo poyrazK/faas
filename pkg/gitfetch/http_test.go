@@ -353,22 +353,17 @@ func TestNewHTTPWithLimits_HobbyCap_Applied(t *testing.T) {
 
 // TestFetch_CapEnforcedWhenContentLengthMissing pins M4:
 // a hostile provider (or any CDN that elides Content-Length)
-// must not bypass the streaming cap. Server sends a lying
-// Content-Length that exceeds the cap; the streaming
-// LimitReader must still trip.
+// must not bypass the streaming cap. Flush the headers before
+// writing to prevent net/http from inferring Content-Length.
 func TestFetch_CapEnforcedWhenContentLengthMissing(t *testing.T) {
-	// 2 KB body, 1 KB cap. Lying Content-Length: 1 MB so the
-	// advisory check passes but the streaming cap trips.
 	body := buildArchive(t, "owner-sha", map[string]string{
 		"big.txt": strings.Repeat("a", 2*1024),
 	})
 	f, _ := withServer(t, func(w http.ResponseWriter, r *http.Request) {
-		// Lie about the Content-Length so the advisory
-		// check is bypassed; the streaming LimitReader is
-		// the load-bearing guard.
-		w.Header().Set("Content-Length", "1048576")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
 		_, _ = w.Write(body)
-	}, 1024, 0)
+	}, int64(len(body)-10), 0)
 	_, err := f.Fetch(context.Background(), "owner/repo", "abcdef1234567", "tok")
 	if !errors.Is(err, ErrArchiveTooLarge) {
 		t.Errorf("err = %v, want ErrArchiveTooLarge", err)

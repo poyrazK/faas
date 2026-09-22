@@ -190,6 +190,7 @@ func (f *httpFetcher) Fetch(ctx context.Context, repoFullName, commitSHA, token 
 	// load-bearing guard against that. The streaming cap is
 	// an early-fail defense for the trivial case.
 	reader := io.Reader(resp.Body)
+	var compressed *io.LimitedReader
 	if f.maxArchiveBytes > 0 {
 		// Advise early — if Content-Length is set AND exceeds
 		// the cap, fail before reading the body. This is
@@ -205,7 +206,8 @@ func (f *httpFetcher) Fetch(ctx context.Context, repoFullName, commitSHA, token 
 		// the bytes-read count (LimitReader returning
 		// io.EOF is indistinguishable from a real EOF,
 		// but if we read N+1 bytes we know we clipped).
-		reader = io.LimitReader(resp.Body, f.maxArchiveBytes+1)
+		compressed = &io.LimitedReader{R: resp.Body, N: f.maxArchiveBytes + 1}
+		reader = compressed
 	}
 
 	// Create the temp dir under WorkDir. The directory name
@@ -236,7 +238,14 @@ func (f *httpFetcher) Fetch(ctx context.Context, repoFullName, commitSHA, token 
 	// paths) and the per-entry + total byte cap. The cap is
 	// the same default the apid path uses (10 000 entries,
 	// 2.5× the compressed cap).
-	if err := extractStream(tempDir, reader, f.maxTotalBytes, defaultExtractLimits()); err != nil {
+	err = extractStream(tempDir, reader, f.maxTotalBytes, defaultExtractLimits())
+	// Consuming the sentinel byte exceeds the cap even if it completes a
+	// valid gzip trailer. A decoder EOF caused by the cap is a size error,
+	// not evidence of a malformed provider archive.
+	if compressed != nil && compressed.N == 0 {
+		return nil, fmt.Errorf("gitfetch: fetch: compressed archive exceeds %d bytes: %w", f.maxArchiveBytes, ErrArchiveTooLarge)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("gitfetch: fetch: %w", err)
 	}
 
@@ -346,6 +355,15 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 		if err != nil {
 			return fmt.Errorf("tar: %w: %w", err, ErrBadArchive)
 		}
+		entries++
+		if entries > lim.MaxEntries {
+			return fmt.Errorf("too many files (>%d): %w", lim.MaxEntries, ErrBadArchive)
+		}
+		// GitHub codeload emits global PAX metadata before the repository
+		// wrapper. It is not a filesystem entry and must not select firstDir.
+		if hdr.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		if hdr.Name == "" {
 			continue
 		}
@@ -372,11 +390,6 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 		default:
 			return fmt.Errorf("entry type %d not allowed: %w", hdr.Typeflag, ErrBadArchive)
 		}
-		entries++
-		if entries > lim.MaxEntries {
-			return fmt.Errorf("too many files (>%d): %w", lim.MaxEntries, ErrBadArchive)
-		}
-
 		// Strip the leading "<root>/" prefix on the first
 		// non-empty-name header. Concatenated strip preserves
 		// the relative path.
@@ -415,7 +428,7 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("mkdir parent %q: %w", filepath.Dir(target), err)
 			}
-			if err := writeOneFile(target, tr, hdr.Size, lim.MaxFileBytes, &total, maxTotalBytes); err != nil {
+			if err := writeOneFile(target, tr, hdr.Size, lim.MaxFileBytes, &total, maxTotalBytes, hdr.FileInfo().Mode()); err != nil {
 				return err
 			}
 		}
@@ -439,10 +452,16 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 // per-entry cap is enforced via io.LimitReader so a hostile
 // archive can't pin memory; the per-archive cap is enforced
 // via the running total.
-func writeOneFile(target string, r io.Reader, size int64, maxFileBytes int64, total *int64, maxTotalBytes int64) error {
+func writeOneFile(target string, r io.Reader, size int64, maxFileBytes int64, total *int64, maxTotalBytes int64, sourceMode fs.FileMode) error {
 	if size > maxFileBytes {
 		return fmt.Errorf("entry %q too large (%d > %d): %w",
 			filepath.Base(target), size, maxFileBytes, ErrArchiveTooLarge)
+	}
+	// tar.Reader validates the declared entry length. Reject an entry that
+	// cannot fit before downloading and writing it, not after it has already
+	// exhausted the disk budget by up to one full per-file allowance.
+	if maxTotalBytes > 0 && size > maxTotalBytes-*total {
+		return fmt.Errorf("archive too large (>%d): %w", maxTotalBytes, ErrArchiveTooLarge)
 	}
 	// Best-effort size limit on the body. The header
 	// size is the load-bearing number; this is a defense
@@ -468,6 +487,11 @@ func writeOneFile(target string, r io.Reader, size int64, maxFileBytes int64, to
 	// on the first byte.
 	if maxTotalBytes > 0 && *total > maxTotalBytes {
 		return fmt.Errorf("archive too large (>%d): %w", maxTotalBytes, ErrArchiveTooLarge)
+	}
+	// Git tracks executable scripts. Retain only their execute bits on top
+	// of our safe file mode; never apply setuid/setgid or extra write bits.
+	if err := f.Chmod(0o644 | sourceMode&0o111); err != nil {
+		return fmt.Errorf("chmod %q: %w", target, err)
 	}
 	return nil
 }
