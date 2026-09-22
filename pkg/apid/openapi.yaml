@@ -11601,6 +11601,23 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironment
+      summary: Delete an unused project environment.
+      description: |
+        Deletes only an unprotected, non-production environment that has no
+        live releases. Configuration and approval history for the registry
+        entry is removed with it. Production, protected environments, and
+        environments still serving a live release return 409.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Project environment deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/config:
     parameters:
