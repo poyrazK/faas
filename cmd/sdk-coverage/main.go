@@ -271,6 +271,7 @@ var methodRouteMap = map[string]string{
 	// First-class queue bindings use a hyphenated path segment. Pin the
 	// noun-oriented Go SDK names instead of the fallback's literal
 	// "Queue-bindings" spelling.
+	"PUT /v1/apps/{slug}/queue-workload":             "ConfigureQueueWorkload",
 	"GET /v1/apps/{slug}/queue-bindings":             "ListQueueBindings",
 	"POST /v1/apps/{slug}/queue-bindings":            "CreateQueueBinding",
 	"GET /v1/apps/{slug}/queue-bindings/{id}":        "GetQueueBinding",
