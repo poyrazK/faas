@@ -18,14 +18,6 @@ WatchdogSec=300s
 Slice=faas-cp.slice
 MemoryMax=4G
 CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
-# CAP_FOWNER is required by the Grype scan path. prepareGrypeSource runs
-# `debugfs rdump` to extract a base ext4, and CAP_CHOWN lets debugfs restore
-# the image's original ownership (root) on the extracted copy. The follow-up
-# `chmod -R a+rX`, which makes that copy readable by this unprivileged
-# daemon, then needs ownership or CAP_FOWNER — and without it every scan
-# failed with "chmod: Operation not permitted", wrote the fail-closed
-# CRITICAL=9999 sidecar, and vmmd refused to boot ANY VM on the node.
-# CAP_FOWNER was already in CapabilityBoundingSet but never granted.
 AmbientCapabilities=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
