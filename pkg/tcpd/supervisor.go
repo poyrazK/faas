@@ -37,7 +37,11 @@ type Supervisor struct {
 	MaxConnectionsPerAccount int
 	Metrics                  *tcpmetrics.Metrics
 	OnError                  func(error)
-	Listen                   func(network, address string) (net.Listener, error)
+	// OnReady runs after the initial listener snapshot has been validated and
+	// every enabled public socket has been bound. Later reconciliation errors
+	// are reported through OnError without revoking initial readiness.
+	OnReady func()
+	Listen  func(network, address string) (net.Listener, error)
 
 	lifecycleMu sync.Mutex
 	drainCh     chan struct{}
@@ -194,6 +198,9 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 
 	if err := refresh(); err != nil {
 		return err
+	}
+	if s.OnReady != nil {
+		s.OnReady()
 	}
 	ticker := time.NewTicker(s.RefreshInterval)
 	defer ticker.Stop()
