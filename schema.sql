@@ -3100,7 +3100,8 @@ CREATE TABLE public.mirror_invocation_results (
     body_diff boolean DEFAULT false NOT NULL,
     crashed boolean DEFAULT false NOT NULL,
     request_id text NOT NULL,
-    completed_at timestamp with time zone DEFAULT now() NOT NULL
+    completed_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollup_counted boolean DEFAULT false NOT NULL
 );
 
 
@@ -6812,6 +6813,13 @@ CREATE INDEX mirror_invocation_results_completed_at_idx ON public.mirror_invocat
 --
 
 CREATE INDEX mirror_invocation_results_rule_time_idx ON public.mirror_invocation_results USING btree (mirror_rule_id, completed_at DESC);
+
+
+--
+-- Name: mirror_invocation_results_uncounted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_invocation_results_uncounted_idx ON public.mirror_invocation_results USING btree (completed_at) WHERE (NOT rollup_counted);
 
 
 --

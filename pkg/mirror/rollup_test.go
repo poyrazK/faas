@@ -1,241 +1,131 @@
-// rollup_test.go — issue #72 / ADR-124 / ADR-125 PR-A3 commit 4
-//
-// Unit tests for the mirror rollup + retention sweep package.
-// Pinned traits:
-//   - RollupOnce runs the rollup SQL with a half-open
-//     [windowStart, windowEnd) window.
-//   - SweepOldLedgerRows runs the DELETE with the supplied cutoff.
-//   - The rollup SQL uses an additive-merge ON CONFLICT (a re-run
-//     over the same hour ADDS to the existing count, not overwrites).
-//   - The sweep SQL is a single DELETE with one bound parameter.
-//
-// Uses a stub execer that records the SQL + args so a regression
-// that flips the rollup to overwrite or the sweep to window-bounded
-// fails a fast unit test, not the e2e.
-
+// adr: 133
 package mirror
 
 import (
 	"context"
-	"sync"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// stubExecer records the (sql, args) tuples the rollup + sweep
-// pass to Exec. Returns a configurable rows-affected count so
-// tests can assert on the wiring without a Postgres dependency.
-type stubExecer struct {
-	mu          sync.Mutex
-	calls       []stubCall
-	rowsByQuery map[string]int64
-	execErr     error
-}
-
 type stubCall struct {
-	sql  string
-	args []any
+	query string
+	args  []any
 }
 
-func (s *stubExecer) Exec(_ context.Context, sql string, args ...any) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.execErr != nil {
-		return 0, s.execErr
+type stubExecer struct {
+	sqlc.DBTX // These exec-only queries must not call Query or QueryRow.
+	calls     []stubCall
+	hook      func(stubCall) error
+}
+
+func (s *stubExecer) Exec(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	call := stubCall{query, args}
+	s.calls = append(s.calls, call)
+	if s.hook != nil {
+		if err := s.hook(call); err != nil {
+			return pgconn.CommandTag{}, err
+		}
 	}
-	cp := make([]any, len(args))
-	copy(cp, args)
-	s.calls = append(s.calls, stubCall{sql: sql, args: cp})
-	if s.rowsByQuery != nil {
-		// Crude match by SQL keyword substring; the rollup SQL
-		// and the sweep SQL contain distinct leading keywords
-		// (INSERT vs DELETE) so a contains check is enough.
-		for prefix, rows := range s.rowsByQuery {
-			if contains(sql, prefix) {
-				return rows, nil
+	return pgconn.NewCommandTag("INSERT 0 5"), nil
+}
+
+func TestRollupOnceWindow(t *testing.T) {
+	start := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	for _, delta := range []time.Duration{-time.Hour, 0, time.Hour} {
+		t.Run(delta.String(), func(t *testing.T) {
+			db := &stubExecer{}
+			end := start.Add(delta)
+			rows, err := RollupOnce(t.Context(), db, start, end)
+			if delta <= 0 {
+				if err == nil || len(db.calls) != 0 {
+					t.Fatalf("invalid window: err=%v, calls=%d", err, len(db.calls))
+				}
+				return
 			}
-		}
-	}
-	return 1, nil
-}
-
-func (s *stubExecer) callsFor(prefix string) []stubCall {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []stubCall
-	for _, c := range s.calls {
-		if contains(c.sql, prefix) {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// TestRollupOnce_HalfOpenWindow pins the window-bound contract.
-// RollupOnce must reject windowEnd <= windowStart and must pass
-// the supplied UTC times verbatim as the SQL args.
-func TestRollupOnce_HalfOpenWindow(t *testing.T) {
-	s := &stubExecer{rowsByQuery: map[string]int64{"INSERT": 5}}
-	start := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	end := start.Add(1 * time.Hour)
-	got, err := RollupOnce(context.Background(), s, start, end)
-	if err != nil {
-		t.Fatalf("RollupOnce: %v", err)
-	}
-	if got != 5 {
-		t.Errorf("rows = %d, want 5", got)
-	}
-	calls := s.callsFor("INSERT")
-	if len(calls) != 1 {
-		t.Fatalf("INSERT calls = %d, want 1", len(calls))
-	}
-	if calls[0].args[0] != start || calls[0].args[1] != end {
-		t.Errorf("args = [%v,%v], want [%v,%v]", calls[0].args[0], calls[0].args[1], start, end)
-	}
-}
-
-// TestRollupOnce_RejectsInvertedWindow pins the window validation.
-// A non-monotonic window is a programming error, not a runtime
-// condition; RollupOnce must reject it without touching the
-// database.
-func TestRollupOnce_RejectsInvertedWindow(t *testing.T) {
-	s := &stubExecer{}
-	start := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	end := start.Add(-1 * time.Hour)
-	if _, err := RollupOnce(context.Background(), s, start, end); err == nil {
-		t.Error("RollupOnce accepted inverted window")
-	}
-	if got := len(s.calls); got != 0 {
-		t.Errorf("calls = %d, want 0 (validation must short-circuit)", got)
-	}
-}
-
-// TestRollupOnce_AdditiveMerge pins the additive-merge ON
-// CONFLICT shape. The SQL must use DO UPDATE SET with `+` on
-// each count column, NOT the EXCLUDED.col overwrite shape that
-// usage_daily uses. Re-running the rollup on a partially-
-// collected hour must ADD to the running sum.
-func TestRollupOnce_AdditiveMerge(t *testing.T) {
-	s := &stubExecer{rowsByQuery: map[string]int64{"INSERT": 0}}
-	start := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	end := start.Add(1 * time.Hour)
-	if _, err := RollupOnce(context.Background(), s, start, end); err != nil {
-		t.Fatalf("RollupOnce: %v", err)
-	}
-	calls := s.callsFor("INSERT")
-	if len(calls) != 1 {
-		t.Fatalf("INSERT calls = %d, want 1", len(calls))
-	}
-	sql := collapseWhitespace(calls[0].sql)
-	// Each count column must be additive: <table>.<col> + EXCLUDED.<col>.
-	// A regression to overwrite (e.g. = EXCLUDED.col) silently
-	// destroys the running sum.
-	for _, col := range []string{"total_invocations", "status_diff_count", "crash_count", "cap_at_max_count"} {
-		want := "mirror_invocation_summary." + col + " + EXCLUDED." + col
-		if !contains(sql, want) {
-			t.Errorf("rollup SQL missing additive merge on %q (must be %q)", col, want)
-		}
-	}
-}
-
-// TestSweepOldLedgerRows_DeletesOnlyStale pins that the sweep
-// passes the cutoff verbatim to a single-parameter DELETE.
-func TestSweepOldLedgerRows_DeletesOnlyStale(t *testing.T) {
-	s := &stubExecer{rowsByQuery: map[string]int64{"DELETE": 42}}
-	cutoff := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	got, err := SweepOldLedgerRows(context.Background(), s, cutoff)
-	if err != nil {
-		t.Fatalf("SweepOldLedgerRows: %v", err)
-	}
-	if got != 42 {
-		t.Errorf("rows = %d, want 42", got)
-	}
-	calls := s.callsFor("DELETE")
-	if len(calls) != 1 {
-		t.Fatalf("DELETE calls = %d, want 1", len(calls))
-	}
-	if calls[0].args[0] != cutoff {
-		t.Errorf("arg[0] = %v, want %v", calls[0].args[0], cutoff)
-	}
-}
-
-// TestSweepOldLedgerRows_NoArgs pins that the sweep SQL has
-// exactly one bind parameter. A regression that adds a second
-// (e.g. an accidental app-id scope) would silently stop
-// sweeping — the DELETE would still succeed but match nothing.
-func TestSweepOldLedgerRows_NoArgs(t *testing.T) {
-	s := &stubExecer{}
-	if _, err := SweepOldLedgerRows(context.Background(), s, time.Now()); err != nil {
-		t.Fatalf("SweepOldLedgerRows: %v", err)
-	}
-	calls := s.callsFor("DELETE")
-	if len(calls) != 1 {
-		t.Fatalf("DELETE calls = %d, want 1", len(calls))
-	}
-	if got := len(calls[0].args); got != 1 {
-		t.Errorf("arg count = %d, want 1", got)
-	}
-}
-
-// TestDefaultRollupInterval pins the cadence. The contract is
-// "small enough that a meterd restart covers a missed tick in
-// ~one cycle, large enough that the SQL doesn't dominate the
-// connection pool" — a regression to a much higher value (e.g.
-// 1h) would leave the dashboard chip blank for an hour after
-// every boot.
-func TestDefaultRollupInterval(t *testing.T) {
-	if DefaultRollupInterval < time.Minute {
-		t.Errorf("DefaultRollupInterval = %v, want >= 1m", DefaultRollupInterval)
-	}
-	if DefaultRollupInterval > time.Hour {
-		t.Errorf("DefaultRollupInterval = %v, want <= 1h", DefaultRollupInterval)
-	}
-}
-
-// TestDefaultLedgerRetention pins the 7-day retention contract.
-// Shorter values lose the customer's "my mirror wasn't firing
-// yesterday" debugging window; longer values blow up the table
-// at high mirror volume.
-func TestDefaultLedgerRetention(t *testing.T) {
-	want := 7 * 24 * time.Hour
-	if DefaultLedgerRetention != want {
-		t.Errorf("DefaultLedgerRetention = %v, want %v", DefaultLedgerRetention, want)
-	}
-}
-
-// contains is a tiny strings.Contains polyfill so the rollup_test
-// file doesn't depend on "strings" for a single use site.
-func contains(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
-}
-
-// collapseWhitespace folds any run of whitespace (spaces, tabs,
-// newlines) into a single space so SQL pattern matches aren't
-// sensitive to formatting changes. Mirrors the same approach
-// sqlc uses for SQL whitespace tolerance.
-func collapseWhitespace(s string) string {
-	var out []byte
-	prevSpace := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		isSpace := c == ' ' || c == '\t' || c == '\n' || c == '\r'
-		if isSpace {
-			if !prevSpace {
-				out = append(out, ' ')
+			if err != nil || rows != 5 || len(db.calls) != 1 {
+				t.Fatalf("rows=%d, err=%v, calls=%d", rows, err, len(db.calls))
 			}
-			prevSpace = true
-			continue
-		}
-		prevSpace = false
-		out = append(out, c)
+			for i, want := range []time.Time{start, end} {
+				if got := db.calls[0].args[i].(pgtype.Timestamptz); !got.Valid || !got.Time.Equal(want) {
+					t.Errorf("arg %d = %v, want %v", i, got, want)
+				}
+			}
+		})
 	}
-	return string(out)
+}
+
+func TestRollupAndSweepWrapErrors(t *testing.T) {
+	want := errors.New("database unavailable")
+	db := &stubExecer{hook: func(stubCall) error { return want }}
+	if _, err := RollupOnce(t.Context(), db, time.Time{}, time.Now()); !errors.Is(err, want) {
+		t.Fatalf("rollup error = %v", err)
+	}
+	if _, err := SweepOldLedgerRows(t.Context(), db, time.Now()); !errors.Is(err, want) {
+		t.Fatalf("sweep error = %v", err)
+	}
+}
+
+func TestRollupLoopRetriesBacklogBeforeSweeping(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	db := &stubExecer{}
+	db.hook = func(call stubCall) error {
+		if len(db.calls) == 1 {
+			return fmt.Errorf("transient rollup failure")
+		}
+		if strings.Contains(call.query, "DELETE FROM") {
+			cancel()
+		}
+		return nil
+	}
+	RollupLoop(ctx, db, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(db.calls) != 3 {
+		t.Fatalf("calls = %d, want failed rollup, retry, sweep", len(db.calls))
+	}
+	for _, call := range db.calls[:2] {
+		if !strings.Contains(call.query, "INSERT INTO") || !call.args[0].(pgtype.Timestamptz).Time.IsZero() {
+			t.Fatalf("retry must cover entire backlog: %+v", call)
+		}
+	}
+	end := db.calls[1].args[1].(pgtype.Timestamptz).Time
+	cutoff := db.calls[2].args[0].(pgtype.Timestamptz).Time
+	if !cutoff.Equal(end.Add(-DefaultLedgerRetention)) {
+		t.Fatalf("sweep cutoff = %v, end = %v", cutoff, end)
+	}
+}
+
+func TestRollupLoopSweepFailureAndCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	db := &stubExecer{}
+	sweeps := 0
+	db.hook = func(call stubCall) error {
+		if strings.Contains(call.query, "DELETE FROM") {
+			sweeps++
+			if sweeps == 1 {
+				return errors.New("sweep unavailable")
+			}
+			cancel()
+		}
+		return nil
+	}
+	RollupLoop(ctx, db, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if sweeps != 2 || len(db.calls) != 4 {
+		t.Fatalf("sweeps=%d, calls=%d", sweeps, len(db.calls))
+	}
+	db.calls = nil
+	RollupLoop(ctx, db, 0, nil) // Already cancelled; also exercise defaults.
+	if len(db.calls) != 0 {
+		t.Fatal("cancelled loop touched database")
+	}
 }

@@ -1351,6 +1351,7 @@ type MirrorInvocationResult struct {
 	Crashed            bool
 	RequestID          string
 	CompletedAt        pgtype.Timestamptz
+	RollupCounted      bool
 }
 
 type MirrorInvocationSummary struct {

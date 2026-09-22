@@ -1,3 +1,47 @@
+-- name: RollupMirrorResults :execrows
+-- ADR-209: claiming and counting share one statement/transaction. SKIP LOCKED
+-- permits concurrent workers without counting the same result twice.
+WITH pending AS MATERIALIZED (
+    SELECT id FROM mirror_invocation_results
+    WHERE NOT rollup_counted
+      AND completed_at >= sqlc.arg(window_start)::timestamptz
+      AND completed_at < sqlc.arg(window_end)::timestamptz
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+), counted AS (
+    UPDATE mirror_invocation_results AS result
+    SET rollup_counted = true
+    FROM pending
+    WHERE result.id = pending.id
+    RETURNING result.*
+)
+INSERT INTO mirror_invocation_summary (
+    rule_id, app_id, hour_bucket, total_invocations,
+    status_diff_count, schema_diff_count, body_diff_count, crash_count,
+    cap_at_max_count, sum_latency_ms, rolled_up_at
+)
+SELECT mirror_rule_id, app_id,
+    date_trunc('hour', completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+    count(*), count(*) FILTER (WHERE status_diff),
+    count(*) FILTER (WHERE schema_diff), count(*) FILTER (WHERE body_diff),
+    count(*) FILTER (WHERE crashed), 0, coalesce(sum(latency_ms), 0), now()
+FROM counted
+GROUP BY 1, 2, 3
+ORDER BY 1, 3
+ON CONFLICT (rule_id, hour_bucket) DO UPDATE SET
+    total_invocations = mirror_invocation_summary.total_invocations + EXCLUDED.total_invocations,
+    status_diff_count = mirror_invocation_summary.status_diff_count + EXCLUDED.status_diff_count,
+    schema_diff_count = mirror_invocation_summary.schema_diff_count + EXCLUDED.schema_diff_count,
+    body_diff_count = mirror_invocation_summary.body_diff_count + EXCLUDED.body_diff_count,
+    crash_count = mirror_invocation_summary.crash_count + EXCLUDED.crash_count,
+    cap_at_max_count = mirror_invocation_summary.cap_at_max_count + EXCLUDED.cap_at_max_count,
+    sum_latency_ms = mirror_invocation_summary.sum_latency_ms + EXCLUDED.sum_latency_ms,
+    rolled_up_at = now();
+
+-- name: SweepCountedMirrorResults :execrows
+DELETE FROM mirror_invocation_results
+WHERE completed_at < sqlc.arg(cutoff)::timestamptz AND rollup_counted;
+
 -- name: CreateAccount :one
 insert into accounts (id, email, plan, status, provider_customer_id)
 values (gen_random_uuid(), $1, $2, $3, null)

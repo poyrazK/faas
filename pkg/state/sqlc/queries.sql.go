@@ -11217,6 +11217,60 @@ func (q *Queries) RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionP
 	return id, err
 }
 
+const rollupMirrorResults = `-- name: RollupMirrorResults :execrows
+WITH pending AS MATERIALIZED (
+    SELECT id FROM mirror_invocation_results
+    WHERE NOT rollup_counted
+      AND completed_at >= $1::timestamptz
+      AND completed_at < $2::timestamptz
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+), counted AS (
+    UPDATE mirror_invocation_results AS result
+    SET rollup_counted = true
+    FROM pending
+    WHERE result.id = pending.id
+    RETURNING result.id, result.mirror_rule_id, result.account_id, result.app_id, result.source_deployment_id, result.mirror_deployment_id, result.instance_id, result.source_instance_id, result.status_code, result.source_status_code, result.latency_ms, result.source_latency_ms, result.body_hash, result.source_body_hash, result.schema_hash, result.source_schema_hash, result.status_diff, result.schema_diff, result.body_diff, result.crashed, result.request_id, result.completed_at, result.rollup_counted
+)
+INSERT INTO mirror_invocation_summary (
+    rule_id, app_id, hour_bucket, total_invocations,
+    status_diff_count, schema_diff_count, body_diff_count, crash_count,
+    cap_at_max_count, sum_latency_ms, rolled_up_at
+)
+SELECT mirror_rule_id, app_id,
+    date_trunc('hour', completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+    count(*), count(*) FILTER (WHERE status_diff),
+    count(*) FILTER (WHERE schema_diff), count(*) FILTER (WHERE body_diff),
+    count(*) FILTER (WHERE crashed), 0, coalesce(sum(latency_ms), 0), now()
+FROM counted
+GROUP BY 1, 2, 3
+ORDER BY 1, 3
+ON CONFLICT (rule_id, hour_bucket) DO UPDATE SET
+    total_invocations = mirror_invocation_summary.total_invocations + EXCLUDED.total_invocations,
+    status_diff_count = mirror_invocation_summary.status_diff_count + EXCLUDED.status_diff_count,
+    schema_diff_count = mirror_invocation_summary.schema_diff_count + EXCLUDED.schema_diff_count,
+    body_diff_count = mirror_invocation_summary.body_diff_count + EXCLUDED.body_diff_count,
+    crash_count = mirror_invocation_summary.crash_count + EXCLUDED.crash_count,
+    cap_at_max_count = mirror_invocation_summary.cap_at_max_count + EXCLUDED.cap_at_max_count,
+    sum_latency_ms = mirror_invocation_summary.sum_latency_ms + EXCLUDED.sum_latency_ms,
+    rolled_up_at = now()
+`
+
+type RollupMirrorResultsParams struct {
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+}
+
+// ADR-209: claiming and counting share one statement/transaction. SKIP LOCKED
+// permits concurrent workers without counting the same result twice.
+func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error) {
+	result, err := db.Exec(ctx, rollupMirrorResults, arg.WindowStart, arg.WindowEnd)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
 SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at FROM runtime_snapshots
 WHERE catalog_key = $1
@@ -11540,6 +11594,19 @@ func (q *Queries) SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBT
 	var bytes int64
 	err := row.Scan(&bytes)
 	return bytes, err
+}
+
+const sweepCountedMirrorResults = `-- name: SweepCountedMirrorResults :execrows
+DELETE FROM mirror_invocation_results
+WHERE completed_at < $1::timestamptz AND rollup_counted
+`
+
+func (q *Queries) SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, sweepCountedMirrorResults, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchKeyLastUsed = `-- name: TouchKeyLastUsed :exec
