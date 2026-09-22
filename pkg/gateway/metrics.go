@@ -3231,6 +3231,8 @@ const (
 	// ServiceCallBindingDenied — a same-account caller selected the declared
 	// policy but did not declare the requested target service.
 	ServiceCallBindingDenied ServiceCallOutcome = "binding_denied"
+	// ServiceCallPreviewDenied — a production target rejects preview callers.
+	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
 	// ServiceCallNotFound — the service name resolves to no app.
 	ServiceCallNotFound ServiceCallOutcome = "not_found"
 	// ServiceCallUpgradeRejected — an Upgrade request the target does not

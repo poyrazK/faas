@@ -8,6 +8,7 @@ import type { AppManifest } from './AppManifest.js';
 import type { AppServiceBinding } from './AppServiceBinding.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
+import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { PublicAuthStatus } from './PublicAuthStatus.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
@@ -99,6 +100,10 @@ export type AppResponse = {
    * Effective internal-service authorization policy. Legacy apps without a stored value return `account`.
    */
   service_binding_policy?: ServiceBindingPolicy;
+  /**
+   * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
+   */
+  preview_service_calls_policy?: PreviewServiceCallsPolicy;
   /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */

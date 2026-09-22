@@ -230,7 +230,24 @@ preview traffic. A preview of `public-api` calling `billing` then reaches
 production `billing`, and any side effects are real.
 
 In `allow_marked` mode, Gregale marks these calls so a service can react rather
-than be surprised. Every request from a preview app carries:
+than be surprised. A production service can also independently refuse preview
+calls with `x-gregale-preview-calls: deny` on its Compose service:
+
+```yaml
+services:
+  billing:
+    build: ./billing
+    x-gregale-preview-calls: deny
+```
+
+The gateway checks the target's policy before waking or forwarding it and
+returns 403 to a preview caller. The target policy defaults to `allow`, so it
+preserves existing behavior; the project-level `preview_service_policy` can
+still deny all preview-to-production calls. The app API and scan plan show the
+effective `preview_service_calls_policy`, and target-policy rejections count
+under `gateway_service_call_total{outcome="preview_denied"}`.
+
+Every forwarded request from a preview app carries:
 
 ```text
 X-Faas-Caller-Env: preview

@@ -53,7 +53,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		commandShell bool
 		dependsOn    []string
 
-		serviceBindingPolicy ServiceBindingPolicy
+		serviceBindingPolicy      ServiceBindingPolicy
+		previewServiceCallsPolicy PreviewServiceCallsPolicy
 
 		schedules []CronSchedule
 		ports     []int
@@ -66,7 +67,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		portsSet bool
 		envSet   bool
 
-		serviceBindingPolicySet bool
+		serviceBindingPolicySet      bool
+		previewServiceCallsPolicySet bool
 
 		dfSet     bool
 		imageSet  bool
@@ -146,6 +148,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.serviceBindingPolicy = s.serviceBindingPolicy
 			b.serviceBindingPolicySet = true
 		}
+		if !b.previewServiceCallsPolicySet && s.previewServiceCallsPolicy != "" {
+			b.previewServiceCallsPolicy = s.previewServiceCallsPolicy
+			b.previewServiceCallsPolicySet = true
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -195,7 +201,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			CommandShell: b.commandShell,
 			DependsOn:    b.dependsOn,
 
-			ServiceBindingPolicy: b.serviceBindingPolicy,
+			ServiceBindingPolicy:      b.serviceBindingPolicy,
+			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
 
 			Class:     cls,
 			Schedule:  primarySchedule,

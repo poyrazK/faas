@@ -932,6 +932,17 @@ func TestReconcile_DraftAppPersistsServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestReconcile_DraftAppPersistsPreviewServiceCallsPolicy(t *testing.T) {
+	_, proj := seedProject(t, newFakeStore(), state.ProjectScanSourceCompose, "main")
+	got := workloadToDraftApp(proj, reposcan.Workload{
+		Name:                      "billing",
+		PreviewServiceCallsPolicy: reposcan.PreviewServiceCallsDeny,
+	}, "", api.PlanFree)
+	if got.Manifest.PreviewServiceCallsPolicy != api.PreviewServiceCallsDeny {
+		t.Fatalf("preview service calls policy = %q, want deny", got.Manifest.PreviewServiceCallsPolicy)
+	}
+}
+
 func TestReconcile_AppliedIDs_IsolatesAddsFromChanged(t *testing.T) {
 	// Regression for #428-style drift: a "changed" must NEVER
 	// also appear in "added". The diff's creates and updates are

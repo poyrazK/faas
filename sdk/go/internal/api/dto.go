@@ -405,6 +405,13 @@ const (
 	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
 )
 
+type PreviewServiceCallsPolicy string
+
+const (
+	PreviewServiceCallsAllow PreviewServiceCallsPolicy = "allow"
+	PreviewServiceCallsDeny  PreviewServiceCallsPolicy = "deny"
+)
+
 // AppResponse is an app as returned by the API.
 // RepoResponse is one repository visible to the account's GitHub App
 // installation. Installation credentials are never returned.
@@ -497,7 +504,8 @@ type AppResponse struct {
 	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
 	// ServiceBindingPolicy is the caller-side internal-service authorization
 	// policy returned by the API.
-	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6

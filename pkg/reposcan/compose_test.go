@@ -188,6 +188,7 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
     x-gregale-service-policy: DECLARED
   billing:
     build: ./billing
+    x-gregale-preview-calls: DENY
 `
 	seeds, _, _, err := detectCompose(fstest.MapFS{
 		"compose.yaml": &fstest.MapFile{Data: []byte(body)},
@@ -205,6 +206,11 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
 	if policies["billing"] != "" {
 		t.Fatalf("billing policy = %q, want empty account default", policies["billing"])
 	}
+	for _, seed := range seeds {
+		if seed.name == "billing" && seed.previewServiceCallsPolicy != PreviewServiceCallsDeny {
+			t.Fatalf("billing preview policy = %q, want deny", seed.previewServiceCallsPolicy)
+		}
+	}
 }
 
 func TestDetectCompose_RejectsUnknownServiceBindingPolicy(t *testing.T) {
@@ -217,6 +223,20 @@ func TestDetectCompose_RejectsUnknownServiceBindingPolicy(t *testing.T) {
 `)},
 	})
 	if err == nil || !strings.Contains(err.Error(), "must be account or declared") {
+		t.Fatalf("detectCompose error = %v, want closed policy validation", err)
+	}
+}
+
+func TestDetectCompose_RejectsUnknownPreviewServiceCallsPolicy(t *testing.T) {
+	t.Parallel()
+	_, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-preview-calls: maybe
+`)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must be allow or deny") {
 		t.Fatalf("detectCompose error = %v, want closed policy validation", err)
 	}
 }
