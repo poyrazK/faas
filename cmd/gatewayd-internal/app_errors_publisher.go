@@ -176,18 +176,25 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 	}
 	for i := range batch {
 		req := &apidpb.IncrementAppErrorRequest{
-			AccountId:         batch[i].AccountID,
-			AppId:             batch[i].AppID,
-			DeploymentId:      batch[i].DeploymentID,
-			RouteTemplate:     batch[i].Route,
-			HttpStatus:        int32(batch[i].HTTPStatus),
-			ErrorClass:        batch[i].ErrorClass,
-			Fingerprint:       batch[i].Fingerprint,
-			SampleMessage:     batch[i].SampleMsg,
-			HeadersSampleJson: batch[i].HeadersJSON,
-			RedactionsApplied: batch[i].Redactions,
-			ReceivedAtUnixMs:  batch[i].ReceivedAt.UnixMilli(),
-			InstanceId:        batch[i].InstanceID,
+			AccountId:           batch[i].AccountID,
+			AppId:               batch[i].AppID,
+			DeploymentId:        batch[i].DeploymentID,
+			RouteTemplate:       batch[i].Route,
+			HttpStatus:          int32(batch[i].HTTPStatus),
+			ErrorClass:          batch[i].ErrorClass,
+			Fingerprint:         batch[i].Fingerprint,
+			SampleMessage:       batch[i].SampleMsg,
+			HeadersSampleJson:   batch[i].HeadersJSON,
+			RedactionsApplied:   batch[i].Redactions,
+			ReceivedAtUnixMs:    batch[i].ReceivedAt.UnixMilli(),
+			InstanceId:          batch[i].InstanceID,
+			NodeId:              batch[i].NodeID,
+			Region:              batch[i].Region,
+			CommitSha:           batch[i].CommitSHA,
+			DeploymentTag:       batch[i].DeploymentTag,
+			DeploymentCreatedAt: batch[i].DeploymentCreatedAt,
+			ImageDigest:         batch[i].ImageDigest,
+			RequestId:           batch[i].RequestID,
 		}
 		if err := stream.Send(req); err != nil {
 			return err

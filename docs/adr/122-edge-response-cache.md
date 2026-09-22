@@ -1,7 +1,6 @@
 # ADR-122 · Edge response cache (`kind=cache`)
 
-- **Status:** **Proposed** (PR pending; branch
-  `worktree-adr-122-edge-response-cache`)
+- **Status:** **Accepted** (distributed follow-on: ADR-214)
 - **Date:** 2026-08-20
 - **Decision:** A new edge-rule kind, `kind=cache`, gives customers
   an opt-in per-route HTTP response cache at the gateway. Rules
@@ -224,13 +223,14 @@ mirroring `PublicAuthCache`. Invalidation on
 `db.NotifyEdgeRuleChanged` (rule edits) and `db.NotifyAppChanged`
 (deploys), plus TTL expiry.
 
-Rejected alternative: a shared store (Postgres or disk) for
+Rejected for the initial release: a shared store (Postgres or disk) for
 cross-node hits and restart survival. It would put customer
 response bodies on platform durable storage — a materially larger
 blast radius for the stateless-contract deviation, plus retention,
 encryption and GDPR-deletion scope that the in-memory design avoids
-entirely. Per-node hit rates are acceptable because
-`gatewayd-public`/`gatewayd-internal` already shard by node.
+entirely. Per-node hit rates were acceptable for the initial release.
+ADR-214 later adds an optional, non-authoritative Redis L2 without
+placing response bodies in Postgres or on gateway disks.
 
 ### D8 — Plan gating follows the `geo`/`throttle` precedent
 
@@ -269,12 +269,14 @@ cache consumes shared node RAM, which is the actual scarce resource.
 
 **Follow-on work (explicitly out of scope)**
 
-Per-principal / authed caching · cross-node shared cache ·
-persistence · purge API (`DELETE /v1/apps/{id}/cache`) ·
-`ETag`/`If-None-Match` revalidation · `stale-while-revalidate` ·
+Per-principal / authed caching · persistence ·
+`ETag`/`If-None-Match` conditional revalidation ·
 surrogate keys / tag-based invalidation · `gregale.yaml` manifest
 support (no `edge_rules:` key exists today; `throttle` and `budget`
 are both CLI-only, so a manifest surface is a separate decision).
+
+Cross-node sharing, the purge API, and stale-while-revalidate are
+delivered by ADR-214.
 
 ## References
 

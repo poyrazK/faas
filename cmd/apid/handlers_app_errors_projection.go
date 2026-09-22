@@ -191,15 +191,22 @@ func projectAppErrorSummaryRows(rows []state.AppErrorGroup) []api.AppErrorSummar
 	out := make([]api.AppErrorSummaryItem, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, api.AppErrorSummaryItem{
-			Fingerprint:   r.Fingerprint,
-			ErrorClass:    r.ErrorClass,
-			Route:         r.Route,
-			HTTPStatus:    r.HTTPStatus,
-			Count:         r.Count,
-			RequestCount:  r.RequestCount,
-			FirstSeenAt:   r.FirstSeenAt.UTC().Format(time.RFC3339Nano),
-			LastSeenAt:    r.LastSeenAt.UTC().Format(time.RFC3339Nano),
-			SampleMessage: r.SampleMessage,
+			Fingerprint:             r.Fingerprint,
+			ErrorClass:              r.ErrorClass,
+			Route:                   r.Route,
+			HTTPStatus:              r.HTTPStatus,
+			Count:                   r.Count,
+			RequestCount:            r.RequestCount,
+			FirstSeenAt:             r.FirstSeenAt.UTC().Format(time.RFC3339Nano),
+			LastSeenAt:              r.LastSeenAt.UTC().Format(time.RFC3339Nano),
+			SampleMessage:           r.SampleMessage,
+			LastInstanceID:          r.LastInstanceID,
+			LastNodeID:              r.LastNodeID,
+			LastRegion:              r.LastRegion,
+			LastCommitSHA:           r.LastCommitSHA,
+			LastDeploymentTag:       r.LastDeploymentTag,
+			LastDeploymentCreatedAt: r.LastDeploymentCreatedAt,
+			LastImageDigest:         r.LastImageDigest,
 		})
 	}
 	return out
@@ -224,6 +231,13 @@ func projectAppErrorRequestRows(rows []state.AppErrorRequestRow) []api.AppErrorR
 		if r.DeploymentID != nil {
 			item.DeploymentID = r.DeploymentID.String()
 		}
+		item.InstanceID = r.InstanceID
+		item.NodeID = r.NodeID
+		item.Region = r.Region
+		item.CommitSHA = r.CommitSHA
+		item.DeploymentTag = r.DeploymentTag
+		item.DeploymentCreatedAt = r.DeploymentCreatedAt
+		item.ImageDigest = r.ImageDigest
 		out = append(out, item)
 	}
 	return out

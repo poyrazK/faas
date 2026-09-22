@@ -537,16 +537,23 @@ func TestEvaluator_FailedDelivery(t *testing.T) {
 // uses the Postgres-backed count path (no PromQL dependency).
 func TestEvaluator_FailedInvocations(t *testing.T) {
 	store := state.NewMemStore()
-	rule, ident, _ := seedRule(t, store, state.AlertMetricFailedInvocs, state.AlertGt, 0)
-	// Seed three terminal-failed invocations inside the window.
+	// The threshold pins that "any" includes inbound_webhook: without the
+	// third source below, 2 > 2 would be false and the rule would not fire.
+	rule, ident, _ := seedRule(t, store, state.AlertMetricFailedInvocs, state.AlertGt, 2)
+	// Seed three terminal-failed invocations inside the window, including a
+	// durable inbound webhook delivery failure.
 	acctID := rule.AccountID
 	appID := rule.AppID
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
+		source := state.InvocationCron
+		if i == 2 {
+			source = state.InvocationInboundWebhook
+		}
 		_, err := store.EnqueueInvocation(context.Background(), state.Invocation{
 			AccountID: acctID,
 			AppID:     appID,
-			Source:    state.InvocationCron,
+			Source:    source,
 			Path:      "/run",
 			State:     state.InvocationFailed,
 			DueAt:     now.Add(-time.Minute),

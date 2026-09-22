@@ -51,18 +51,28 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 	r = withAppAndAccount(r, acct, app)
 
 	h.observe(r, 201, app.String(), string(api.PlanPro), false, Target{
-		NodeID:       "n1",
-		InstanceID:   "i1",
-		DeploymentID: deployment.String(),
+		NodeID:              "n1",
+		InstanceID:          "i1",
+		DeploymentID:        deployment.String(),
+		Region:              "eu-west",
+		CommitSHA:           "sha-orders",
+		DeploymentTag:       "stable",
+		DeploymentCreatedAt: "2026-09-22T12:00:00Z",
+		ImageDigest:         "sha256:orders",
 	})
 
 	// Simulate a request that took 200ms.
 	r = r.WithContext(WithStartTime(r.Context(), now.Add(-200*time.Millisecond)))
 	h.observe(r, 200, app.String(), string(api.PlanPro), true, Target{
-		NodeID:       "n1",
-		InstanceID:   "i2",
-		WakeID:       "wake-2",
-		DeploymentID: deployment.String(),
+		NodeID:              "n1",
+		InstanceID:          "i2",
+		WakeID:              "wake-2",
+		DeploymentID:        deployment.String(),
+		Region:              "eu-west",
+		CommitSHA:           "sha-orders",
+		DeploymentTag:       "stable",
+		DeploymentCreatedAt: "2026-09-22T12:00:00Z",
+		ImageDigest:         "sha256:orders",
 	})
 
 	batch := h.requestTelemetry.DrainBatch(16)
@@ -84,6 +94,11 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 		}
 		if row.DeploymentID != deployment {
 			t.Errorf("DeploymentID mismatch: got %v, want %v", row.DeploymentID, deployment)
+		}
+		if row.NodeID != "n1" || row.Region != "eu-west" || row.CommitSHA != "sha-orders" ||
+			row.DeploymentTag != "stable" || row.DeploymentCreatedAt != "2026-09-22T12:00:00Z" ||
+			row.ImageDigest != "sha256:orders" {
+			t.Errorf("deployment provenance = %+v", row)
 		}
 		if row.Route != otherRouteLabel {
 			t.Errorf("route without opt-in = %q, want bounded fallback", row.Route)

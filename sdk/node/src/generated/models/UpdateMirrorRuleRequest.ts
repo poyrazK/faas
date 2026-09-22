@@ -20,7 +20,7 @@ export type UpdateMirrorRuleRequest = {
    */
   enabled?: boolean;
   /**
-   * Toggle body capture in the comparison ledger.
+   * Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored.
    */
   include_body?: boolean;
   /**
