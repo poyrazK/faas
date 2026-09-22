@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Safe queue lifecycle projection linked to the trace.
+ * Safe durable invocation lifecycle projection linked to the trace.
  */
 export type AccountTraceInvocation = {
   app: string;
