@@ -426,6 +426,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCHEDD_RECONCILE_ENFORCE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDefault, Note: "ADR-191; \"1\" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row"},
 	{Name: "FAAS_SCHEDD_ROLE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SCHEDD_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
+	{Name: "FAAS_SERVICE_CALLER_ASSERTIONS", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-206 opt-in: mint a signed caller assertion on every internal service call. Off is production-correct today because nothing verifies one yet (guest JWKS, runtime helper, and allow_callers policy are follow-ups), so no deploy path sets it and an operator without a verifier loads no key and computes no signature"},
+	{Name: "FAAS_SERVICE_CALLER_KEY_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on"},
 	{Name: "FAAS_SESSION_KEY", Owners: []string{"apid", "gatewayd-internal", "shared"}, Source: EnvSourceUnit, Note: "LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service"},
 	{Name: "FAAS_SIGN_KEY", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SIGN_PUB", Owners: []string{"apid", "schedd"}, Source: EnvSourceUnit},
