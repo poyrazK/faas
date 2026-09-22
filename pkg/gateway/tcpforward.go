@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -28,6 +29,10 @@ type TCPForwarder struct {
 	// MaxBytes bounds each direction of a session. Zero uses the platform
 	// default. A smaller value is useful for plan-specific admission.
 	MaxBytes int64
+	// IdleTimeout is the maximum quiet period for either direction of a TCP
+	// session. Zero uses the platform default; activity in either direction
+	// resets the timer.
+	IdleTimeout time.Duration
 }
 
 // ServeConn forwards conn until either side closes or the stream fails. It
@@ -44,6 +49,18 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 		return status.Error(codes.InvalidArgument, "guest TCP port must be 0 or between 1 and 65535")
 	}
 	defer func() { _ = conn.Close() }()
+
+	idle := f.IdleTimeout
+	if idle <= 0 {
+		idle = api.StreamingIdleTimeoutDefault
+	}
+	idleSession := newIdleSession(ctx, idle)
+	defer idleSession.stop()
+	ctx = idleSession.ctx
+	go func() {
+		<-ctx.Done()
+		_ = conn.Close()
+	}()
 
 	cli, closer, ok := f.Nodes.ClientFor(ctx, target.NodeID)
 	if !ok || cli == nil {
@@ -75,10 +92,10 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 
 	results := make(chan tcpDirectionResult, 2)
 	go func() {
-		results <- tcpDirectionResult{side: tcpDirectionSend, err: tcpConnToStream(ctx, conn, stream, maxBytes)}
+		results <- tcpDirectionResult{side: tcpDirectionSend, err: tcpConnToStream(ctx, conn, stream, maxBytes, idleSession.touch)}
 	}()
 	go func() {
-		results <- tcpDirectionResult{side: tcpDirectionReceive, err: tcpStreamToConn(conn, stream, maxBytes)}
+		results <- tcpDirectionResult{side: tcpDirectionReceive, err: tcpStreamToConn(conn, stream, maxBytes, idleSession.touch)}
 	}()
 
 	first := <-results
@@ -116,12 +133,15 @@ type tcpDirectionResult struct {
 	err  error
 }
 
-func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64) error {
+func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64, touch func()) error {
 	buf := make([]byte, 32*1024)
 	var total int64
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
+			if touch != nil {
+				touch()
+			}
 			total += int64(n)
 			if total > maxBytes {
 				return status.Errorf(codes.ResourceExhausted, "TCP request exceeded %d bytes", maxBytes)
@@ -148,7 +168,7 @@ func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreami
 	}
 }
 
-func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64) error {
+func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64, touch func()) error {
 	first := true
 	var total int64
 	for {
@@ -161,6 +181,9 @@ func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.Forwa
 		}
 		if err != nil {
 			return status.Errorf(codes.Unavailable, "receive TCP response bytes: %v", err)
+		}
+		if touch != nil {
+			touch()
 		}
 		if first {
 			first = false
