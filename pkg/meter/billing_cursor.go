@@ -1,7 +1,9 @@
 package meter
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"math"
 	"time"
 )
@@ -15,13 +17,15 @@ type overageCursor struct {
 	nextHour  time.Time
 }
 
-func (c *overageCursor) advance(hour time.Time, quantity int64, sum func(time.Time, time.Time) (int64, error)) (before, after int64, err error) {
-	if hour.Before(c.nextHour) {
+// start may be inside the first hour when a provider identity was activated
+// mid-hour. Its prefix still consumes the allowance, but is not sent again.
+func (c *overageCursor) advance(start time.Time, quantity int64, sum func(time.Time, time.Time) (int64, error)) (before, after int64, err error) {
+	if start.Before(c.nextHour) {
 		return 0, 0, errors.New("meter: billing windows are not in increasing hour order")
 	}
 	before = c.rawBefore
-	if c.nextHour.Before(hour) {
-		gap, err := sum(c.nextHour, hour)
+	if c.nextHour.Before(start) {
+		gap, err := sum(c.nextHour, start)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -37,8 +41,26 @@ func (c *overageCursor) advance(hour time.Time, quantity int64, sum func(time.Ti
 	// Failed reads/arithmetic must leave the cursor untouched so the next
 	// pending window cannot silently skip the failed window's usage.
 	c.rawBefore = after
-	c.nextHour = hour.Add(time.Hour)
+	c.nextHour = start.UTC().Truncate(time.Hour).Add(time.Hour)
 	return before, after, nil
+}
+
+// startOverageCursor reads the same identity boundary used by the pending
+// window query. Only the first pending hour can contain a filtered prefix;
+// subsequent contiguous hours keep the no-extra-read fast path.
+func (p *Pusher) startOverageCursor(ctx context.Context, accountID string, usageStart, hour time.Time) (overageCursor, time.Time, error) {
+	identity, err := p.store.BillingIdentity(ctx, accountID, providerOpsFor(p.pusher).opLabel)
+	if err != nil {
+		return overageCursor{}, time.Time{}, fmt.Errorf("load billing usage boundary: %w", err)
+	}
+	start := hour
+	if identity.BillingFrom.After(start) {
+		start = identity.BillingFrom.UTC()
+	}
+	if !start.Before(hour.Add(time.Hour)) {
+		return overageCursor{}, time.Time{}, errors.New("meter: pending hour precedes provider activation")
+	}
+	return overageCursor{nextHour: usageStart}, start, nil
 }
 
 func addUsageQuantity(total, quantity int64) (int64, error) {

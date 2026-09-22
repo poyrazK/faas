@@ -228,6 +228,16 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	}
 	acct.ProviderCustomerID = identity.CustomerID
 	acct.StripeSubscriptionItem = identity.SubscriptionID
+	if identity.BillingFrom.After(start) {
+		start = identity.BillingFrom.UTC()
+	}
+	if !start.Before(end) {
+		return nil
+	}
+	// Pending delivery excludes minute rows before BillingFrom, but stamps
+	// the resulting event at the start of its hour. Keep the local boundary
+	// exact while including that first event in the provider-side query.
+	providerStart := start.UTC().Truncate(time.Hour)
 	var local int64
 	if modeProvider, ok := r.Provider.(billing.UsageModeProvider); ok && modeProvider.UsageMode() == billing.UsageModeOverage {
 		local, err = billing.OverageMBSecondsForRange(ctx, r.Store, acct, start, end)
@@ -243,7 +253,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 			local += u.MBSeconds
 		}
 	}
-	pushed, err := r.Provider.ReconcileUsage(ctx, acct, start, end)
+	pushed, err := r.Provider.ReconcileUsage(ctx, acct, providerStart, end)
 	if err != nil {
 		if errors.Is(err, billing.ErrNotImplemented) {
 			r.supported.WithLabelValues(r.ProviderName).Set(0)

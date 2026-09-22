@@ -508,10 +508,14 @@ func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Accou
 	}
 	key := acct.ID + "\x00" + string(window.Meter) + "\x00" + usageStart.Format(time.RFC3339)
 	cursor, ok := cursors[key]
+	start := hour
 	if !ok {
-		cursor.nextHour = usageStart
+		cursor, start, err = p.startOverageCursor(ctx, acct.ID, usageStart, hour)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
-	prior, current, err := cursor.advance(hour, window.Quantity, func(start, end time.Time) (int64, error) {
+	prior, current, err := cursor.advance(start, window.Quantity, func(start, end time.Time) (int64, error) {
 		return sumMeterUsageRows(ctx, p.store, acct.ID, window.Meter, start, end)
 	})
 	if err != nil {
@@ -601,10 +605,15 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 	monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 	key := acct.ID + "\x00" + monthStart.Format("2006-01")
 	cursor, ok := cursors[key]
+	start := hour
 	if !ok {
-		cursor.nextHour = monthStart
+		var err error
+		cursor, start, err = p.startOverageCursor(ctx, acct.ID, monthStart, hour)
+		if err != nil {
+			return 0, false, err
+		}
 	}
-	prior, current, err := cursor.advance(hour, window.MBSeconds, func(start, end time.Time) (int64, error) {
+	prior, current, err := cursor.advance(start, window.MBSeconds, func(start, end time.Time) (int64, error) {
 		return sumUsageRows(ctx, p.store, acct.ID, start, end)
 	})
 	if err != nil {

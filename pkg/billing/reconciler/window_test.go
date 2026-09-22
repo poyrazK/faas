@@ -32,7 +32,7 @@ func TestReconciliationUsesOnlyCompletedBillingHours(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{AccountID: acct.ID, Provider: "stripe", CustomerID: "customer", SubscriptionID: "subscription"}); err != nil {
+			if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{AccountID: acct.ID, Provider: "stripe", CustomerID: "customer", SubscriptionID: "subscription", BillingFrom: time.Unix(0, 0).UTC()}); err != nil {
 				t.Fatal(err)
 			}
 			now := time.Date(2026, 9, 15, 9, 25, 0, 0, time.UTC)

@@ -81,6 +81,7 @@ func seedMemStore(t *testing.T, label string, plan api.Plan, mbSeconds int64) (*
 		if err := store.UpsertBillingIdentity(context.Background(), state.BillingIdentity{
 			AccountID: id, Provider: provider, CustomerID: provider + "-customer-" + id,
 			SubscriptionID: provider + "-subscription-" + id,
+			BillingFrom:    time.Unix(0, 0).UTC(),
 		}); err != nil {
 			t.Fatalf("UpsertBillingIdentity(%s): %v", provider, err)
 		}

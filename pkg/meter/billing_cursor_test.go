@@ -63,3 +63,25 @@ func TestOverageCursorFailureDoesNotAdvance(t *testing.T) {
 		t.Fatal("accepted out-of-order billing window")
 	}
 }
+
+func TestOverageCursorPartialFirstHour(t *testing.T) {
+	month := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	start := month.Add(30 * time.Minute)
+	cursor := overageCursor{nextHour: month}
+	before, after, err := cursor.advance(start, 10, func(from, to time.Time) (int64, error) {
+		if !from.Equal(month) || !to.Equal(start) {
+			t.Fatalf("prefix = [%s,%s), want [%s,%s)", from, to, month, start)
+		}
+		return 50, nil
+	})
+	if err != nil || before != 50 || after != 60 || !cursor.nextHour.Equal(month.Add(time.Hour)) {
+		t.Fatalf("first hour = (%d, %d, %v), cursor=%+v", before, after, err, cursor)
+	}
+	before, after, err = cursor.advance(month.Add(time.Hour), 10, func(time.Time, time.Time) (int64, error) {
+		t.Fatal("contiguous hour re-read usage after a partial first hour")
+		return 0, nil
+	})
+	if err != nil || before != 60 || after != 70 {
+		t.Fatalf("second hour = (%d, %d, %v)", before, after, err)
+	}
+}
