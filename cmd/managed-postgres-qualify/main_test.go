@@ -196,7 +196,7 @@ func TestConfigurationPreflightIsProviderFreeAndReportsWarnings(t *testing.T) {
 	if !result.Readiness.Ready || result.BackendID != "neon-eu" || result.Spec == nil {
 		t.Fatalf("preflight result = %+v", result)
 	}
-	if !containsString(result.Warnings, "usage_policy_disabled") || !containsString(result.Warnings, "restore_usage_not_isolated") {
+	if !containsString(result.Warnings, "usage_policy_disabled") || !containsString(result.Warnings, "restore_usage_not_isolated") || containsString(result.Warnings, "restore_usage_unaccounted") {
 		t.Fatalf("preflight warnings = %v", result.Warnings)
 	}
 }

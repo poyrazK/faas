@@ -69,7 +69,7 @@ WHERE account_id = sqlc.arg(account_id)::uuid
 LIMIT 2;
 
 -- name: RollupMirrorResults :execrows
--- ADR-212: claiming and counting share one statement/transaction. SKIP LOCKED
+-- ADR-215: claiming and counting share one statement/transaction. SKIP LOCKED
 -- permits concurrent workers without counting the same result twice.
 WITH pending AS MATERIALIZED (
     SELECT id FROM mirror_invocation_results
