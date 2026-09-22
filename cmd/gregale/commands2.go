@@ -2589,6 +2589,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "missing --ref (required with --repo)")
 			return 1
 		}
+		if err := validateGitHubRef(*ref); err != nil {
+			return printErr("Invalid --ref", err)
+		}
 		// Phase 3 guard: --repo is the source-ref path; the
 		// one-key provision surface takes --tarball/--path, not
 		// --repo. Mixing them is almost always a mistake.
@@ -2619,6 +2622,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
 			return printErr("Invalid --idempotency-key", keyErr)
+		}
+		// Source-ref deploys resolve framework, entrypoint, and listener only
+		// after apid checks out the requested ref. Render everything the CLI
+		// knows now, and name that remote-resolution boundary instead of
+		// inventing local runtime details. This remains before authentication,
+		// app creation, trigger reconciliation, or the source-ref POST.
+		if !jsonOutput {
+			renderDeployPreflight(osStdout, deployPreflightSummary{
+				Slug:              slug,
+				Source:            deployPreflightRepoSource(*repo, *ref),
+				RuntimeResolution: "detected remotely after checkout",
+				ResourceBehavior:  "preserve existing · plan default for new app",
+				Environment:       *environment,
+				Release: deployPreflightRelease(
+					*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
+				),
+			})
 		}
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:         *reason,
