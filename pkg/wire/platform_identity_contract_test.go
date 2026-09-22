@@ -59,7 +59,6 @@ func TestPlatformIdentityObservabilityEnvelopeAcrossHops(t *testing.T) {
 	gatewayFields.TriggerClass = want.TriggerClass
 	gatewayFields.QueuedCount = want.QueuedCount
 	gatewayFields.ConcurrencyAtAdmit = want.ConcurrencyAtAdmit
-	gatewayCtx = wire.WithContext(gatewayCtx, gatewayFields)
 
 	assertCorrelationFields(t, gatewayFields, want, "gateway")
 	assertLogFields(t, gatewayFields, want)
