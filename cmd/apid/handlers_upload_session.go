@@ -506,13 +506,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			// Commit retry after the row's reaper sweep: surface
-			// the upload_commit_outcomes dedupe row if present.
-			if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
-				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
-				return
-			}
-			api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
+			api.WriteProblem(w, s.uploadCommitRecoveryProblem(r.Context(), acct.ID, uploadID))
 			return
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
@@ -561,6 +555,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// but verify the resolved app is owned by this account.
 	if app.AccountID != acct.ID {
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+		return
+	}
+	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	var opts api.UploadDeployOptions
@@ -658,6 +656,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	}
 
 	if prob := validateTarballShape(row.PartPath); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
