@@ -22,9 +22,12 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 					{App: "alpha", Request: api.DebugTelemetryRequestItem{ID: "row-alpha", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 100}},
 					{App: "beta", Request: api.DebugTelemetryRequestItem{ID: "row-beta", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 40}},
 				},
+				Invocations: []api.AccountTraceInvocation{
+					{App: "alpha", ID: "inv-async", Source: "async_invoke", State: "completed", Attempts: 1, CreatedAt: "2026-09-22T10:00:00.020Z", CompletedAt: "2026-09-22T10:00:00.070Z"},
+				},
 				Spans: []api.DebugTelemetrySpan{
-					{TraceID: traceID, SpanID: "root", Name: "edge.request", Kind: "server", DurationNanos: 100_000_000},
-					{TraceID: traceID, SpanID: "guest", ParentSpanID: "root", Name: "guest.request", Kind: "server", DurationNanos: 40_000_000},
+					{TraceID: traceID, SpanID: "root", Name: "edge.request", Kind: "server", StartTime: "2026-09-22T10:00:00Z", EndTime: "2026-09-22T10:00:00.100Z", DurationNanos: 100_000_000},
+					{TraceID: traceID, SpanID: "guest", ParentSpanID: "root", Name: "guest.request", Kind: "server", StartTime: "2026-09-22T10:00:00.010Z", EndTime: "2026-09-22T10:00:00.050Z", DurationNanos: 40_000_000},
 				},
 			})
 		default:
@@ -46,9 +49,14 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"TRACE " + traceID + " · 2 app match(es) · 0 queue invocation(s) · 2 span(s)",
+		"TRACE " + traceID + " · 2 app match(es) · 1 invocation(s) · 2 span(s)",
 		"alpha · GET /checkout · HTTP 200 · 100 ms",
 		"beta · GET /checkout · HTTP 200 · 40 ms",
+		"INVOCATIONS",
+		"alpha · async_invoke inv-async · state=completed · attempts=1 · created_at=2026-09-22T10:00:00.020Z · duration=50.00ms",
+		"WATERFALL (relative to earliest retained event)",
+		"0.00ms → 100.00ms | edge.request [server]",
+		"20.00ms → 50.00ms  | alpha · async_invoke inv-async · state=completed",
 		"└─ edge.request [server] 100 ms",
 		"└─ guest.request [server] 40.00 ms",
 	} {

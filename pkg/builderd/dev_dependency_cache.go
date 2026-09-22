@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -72,22 +73,7 @@ func validDependencyCacheKey(key string) bool {
 // and with an aggregate byte ceiling. A cache is disposable: malformed or
 // oversized input is a cold-build signal, never a reason to weaken path safety.
 func copyDependencyCache(src, dst string, maxBytes int64) error {
-	index, err := os.Lstat(filepath.Join(src, "index.json"))
-	if err != nil {
-		return err
-	}
-	if !index.Mode().IsRegular() {
-		return errors.New("dependency cache index is not a regular file")
-	}
-	var copied int64
-	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
+	return walkDependencyCache(src, maxBytes, func(path, rel string, entry fs.DirEntry) error {
 		if rel == "." {
 			return os.MkdirAll(dst, 0o700)
 		}
@@ -95,22 +81,11 @@ func copyDependencyCache(src, dst string, maxBytes int64) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o700)
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("dependency cache contains unsupported entry %q", rel)
-		}
-		if maxBytes > 0 && info.Size() > maxBytes-copied {
-			return fmt.Errorf("dependency cache exceeds %d-byte ceiling", maxBytes)
-		}
-		copied += info.Size()
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
 		// path is rooted in the platform-owned cache and non-regular entries
-		// were rejected from the same WalkDir snapshot immediately above.
+		// were rejected by walkDependencyCache immediately before this call.
 		in, err := os.Open(path) //nolint:forbidigo,gosec
 		if err != nil {
 			return err
@@ -133,10 +108,64 @@ func copyDependencyCache(src, dst string, maxBytes int64) error {
 	})
 }
 
+// walkDependencyCache validates a BuildKit local cache and optionally visits
+// each entry after it has passed the path-shape and aggregate-size checks.
+// Keeping validation in the same walk as copying preserves the cold fallback's
+// I/O cost while allowing same-filesystem publication to validate without
+// copying the complete cache tree a second time.
+func walkDependencyCache(src string, maxBytes int64, visit func(string, string, fs.DirEntry) error) error {
+	index, err := os.Lstat(filepath.Join(src, "index.json"))
+	if err != nil {
+		return err
+	}
+	if !index.Mode().IsRegular() {
+		return errors.New("dependency cache index is not a regular file")
+	}
+	var copied int64
+	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			if visit != nil {
+				return visit(path, rel, entry)
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			if visit != nil {
+				return visit(path, rel, entry)
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("dependency cache contains unsupported entry %q", rel)
+		}
+		if maxBytes > 0 && info.Size() > maxBytes-copied {
+			return fmt.Errorf("dependency cache exceeds %d-byte ceiling", maxBytes)
+		}
+		copied += info.Size()
+		if visit != nil {
+			return visit(path, rel, entry)
+		}
+		return nil
+	})
+}
+
 // publishDependencyCache replaces one tenant-scoped cache atomically. The
 // caller serializes staging/publication, so removing the old generation cannot
-// race a drive being prepared from it. Cross-filesystem export directories are
-// supported because bytes are copied into a sibling temp directory first.
+// race a drive being prepared from it. Production keeps the vmmd export and
+// dependency-cache roots below /srv/fc/builder, so a validated rename avoids
+// copying the complete cache tree twice. Cross-filesystem development layouts
+// retain the existing bounded copy path.
 func publishDependencyCache(src, dst string, maxBytes int64) error {
 	parent := filepath.Dir(dst)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
@@ -153,8 +182,8 @@ func publishDependencyCache(src, dst string, maxBytes int64) error {
 		}
 	}()
 	staged := filepath.Join(tmp, "cache")
-	if err := copyDependencyCache(src, staged, maxBytes); err != nil {
-		return fmt.Errorf("dependency cache copy: %w", err)
+	if err := stageDependencyCache(src, staged, maxBytes, os.Rename); err != nil {
+		return err
 	}
 	backup := dst + ".previous"
 	_ = os.RemoveAll(backup)
@@ -170,6 +199,21 @@ func publishDependencyCache(src, dst string, maxBytes int64) error {
 	cleanupTmp = false
 	_ = os.RemoveAll(tmp)
 	_ = os.RemoveAll(backup)
+	return nil
+}
+
+func stageDependencyCache(src, staged string, maxBytes int64, rename func(string, string) error) error {
+	if err := walkDependencyCache(src, maxBytes, nil); err != nil {
+		return fmt.Errorf("dependency cache validate: %w", err)
+	}
+	if err := rename(src, staged); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return fmt.Errorf("dependency cache move: %w", err)
+	}
+	if err := copyDependencyCache(src, staged, maxBytes); err != nil {
+		return fmt.Errorf("dependency cache copy: %w", err)
+	}
 	return nil
 }
 

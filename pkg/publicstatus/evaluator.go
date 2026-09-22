@@ -3,6 +3,9 @@ package publicstatus
 import "time"
 
 type Alert struct {
+	// Severity is the operator-routing severity. Public status deliberately
+	// does not derive customer impact from it; a page can describe urgent
+	// observability debt without meaning that customer traffic is down.
 	Severity string
 	Labels   map[string]string
 }
@@ -38,7 +41,10 @@ func ComponentsForAlert(labels map[string]string) []Component {
 		if mapped, ok := daemonComponents[labels["daemon"]]; ok {
 			return []Component{mapped}
 		}
-		return AllComponents()
+		// A generic platform label is not enough evidence to mark every
+		// customer capability unhealthy. Public alerts must identify either a
+		// public component directly or a daemon that maps to one.
+		return nil
 	}
 	if mapped, ok := daemonComponents[component]; ok {
 		return []Component{mapped}
@@ -55,12 +61,12 @@ func Evaluate(alerts []Alert, overlays []Overlay) map[Component]State {
 		out[component] = StateOperational
 	}
 	for _, alert := range alerts {
-		var state State
-		switch alert.Severity {
-		case "warn":
-			state = StateDegraded
-		case "page":
-			state = StatePartialOutage
+		state := State(alert.Labels["public_status"])
+		switch state {
+		case StateDegraded, StatePartialOutage:
+			// Automated telemetry may report degraded service or a partial
+			// outage. Major outages remain operator-authored incidents so one
+			// noisy metric cannot take the whole public page red.
 		default:
 			continue
 		}
@@ -169,7 +175,10 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 			continue
 		}
 		available++
-		if bucket.State == StateOperational || bucket.State == StateMaintenance {
+		// Degraded means the capability remained available with reduced
+		// quality. Preserve it as the day's visible state, but do not count it
+		// as downtime in the availability percentage.
+		if bucket.State == StateOperational || bucket.State == StateMaintenance || bucket.State == StateDegraded {
 			up++
 		}
 		worst = Worse(worst, bucket.State)

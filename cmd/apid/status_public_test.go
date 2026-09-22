@@ -57,7 +57,7 @@ func TestPublicStatusOverviewCombinesTelemetryHistoryAndPublicEvents(t *testing.
 
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"builderd","severity":"page"},"value":[1700000000,"1"]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"builderd","severity":"page","public_status":"partial_outage"},"value":[1700000000,"1"]}]}}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"99.9"]}]}}`))

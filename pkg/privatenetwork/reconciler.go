@@ -93,6 +93,8 @@ type FabricApplyReport struct {
 type NotifyFunc func(ctx context.Context, attachment state.AppPrivateNetworkAttachment)
 
 type ReconcileObservation struct {
+	AccountID   string
+	NetworkID   string
 	AppID       string
 	Status      string
 	Outcome     string
@@ -116,25 +118,30 @@ type ReconcilerOptions struct {
 	BatchSize int
 	Now       func() time.Time
 	Observe   func(ReconcileObservation)
-	Notify    NotifyFunc
-	Logger    *slog.Logger
-	Fabric    FabricApplier
+	// RecordObservation persists the per-node health projection. It is
+	// intentionally best-effort: a telemetry store outage must not turn a
+	// successful route convergence into a failed attachment reconciliation.
+	RecordObservation func(context.Context, ReconcileObservation) error
+	Notify            NotifyFunc
+	Logger            *slog.Logger
+	Fabric            FabricApplier
 }
 
 // Reconciler is intentionally independent of apid and vmmd. This keeps the
 // provider adapter replaceable while the same lifecycle works in local,
 // DigitalOcean, and future VPC implementations.
 type Reconciler struct {
-	store     state.AppPrivateNetworkAttachmentReconcileStore
-	connector Connector
-	applier   RouteApplier
-	fabric    FabricApplier
-	interval  time.Duration
-	batchSize int
-	now       func() time.Time
-	observe   func(ReconcileObservation)
-	notify    NotifyFunc
-	logger    *slog.Logger
+	store             state.AppPrivateNetworkAttachmentReconcileStore
+	connector         Connector
+	applier           RouteApplier
+	fabric            FabricApplier
+	interval          time.Duration
+	batchSize         int
+	now               func() time.Time
+	observe           func(ReconcileObservation)
+	recordObservation func(context.Context, ReconcileObservation) error
+	notify            NotifyFunc
+	logger            *slog.Logger
 }
 
 func NewReconciler(store state.AppPrivateNetworkAttachmentReconcileStore, connector Connector, applier RouteApplier, options ReconcilerOptions) (*Reconciler, error) {
@@ -159,7 +166,7 @@ func NewReconciler(store state.AppPrivateNetworkAttachmentReconcileStore, connec
 	return &Reconciler{
 		store: store, connector: connector, applier: applier, fabric: options.Fabric,
 		interval: options.Interval, batchSize: options.BatchSize,
-		now: options.Now, observe: options.Observe, notify: options.Notify,
+		now: options.Now, observe: options.Observe, recordObservation: options.RecordObservation, notify: options.Notify,
 		logger: options.Logger,
 	}, nil
 }
@@ -328,12 +335,19 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 				r.notify(ctx, updated)
 			}
 		}
+		observation := ReconcileObservation{
+			AccountID: attachment.AccountID, NetworkID: attachment.NetworkID,
+			AppID: attachment.AppID, Status: attachment.Status, Outcome: outcome,
+			Duration: r.now().Sub(started), Nodes: cloneRouteNodeObservations(routeReport.Nodes),
+			FabricNodes: cloneRouteNodeObservations(fabricReport.Nodes),
+		}
 		if r.observe != nil {
-			r.observe(ReconcileObservation{
-				AppID: attachment.AppID, Status: attachment.Status, Outcome: outcome,
-				Duration: r.now().Sub(started), Nodes: cloneRouteNodeObservations(routeReport.Nodes),
-				FabricNodes: cloneRouteNodeObservations(fabricReport.Nodes),
-			})
+			r.observe(observation)
+		}
+		if r.recordObservation != nil {
+			if err := r.recordObservation(ctx, observation); err != nil && ctx.Err() == nil {
+				r.logger.Warn("private network node health observation failed", "account", observation.AccountID, "network", observation.NetworkID, "app", observation.AppID, "error", err)
+			}
 		}
 	}
 	return summary, errors.Join(sweepErrs...)

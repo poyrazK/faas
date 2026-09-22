@@ -136,6 +136,10 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 	}
 	event, err := s.store.DeadLetterEventByID(r.Context(), app.ID, eventID)
 	if err != nil || event.ReplayedAt != nil {
+		if err == nil {
+			err = state.ErrNotFound
+		}
+		s.observeDashboardDeadLetterAction(app.Slug, action, err)
 		http.Redirect(w, r, failedEventsRedirect(slug, "error"), http.StatusSeeOther)
 		return
 	}
@@ -148,12 +152,23 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		http.NotFound(w, r)
 		return
 	}
+	s.observeDashboardDeadLetterAction(app.Slug, action, err)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		s.log.Warn("dashboard failed event action", "action", action, "account_id", acct.ID, "app_id", app.ID, "event_id", eventID, "err", err)
 	}
 	flash := action + "ed"
 	if err != nil {
 		flash = "error"
+	} else if action == "replay" {
+		s.audit.Emit(r.Context(), "app.dlq.event_replayed", &acct.ID, map[string]any{
+			"app_id": app.ID, "event_id": event.ID, "source": event.Source,
+			"source_id": event.SourceID, "surface": "dashboard",
+		})
+	} else {
+		s.audit.Emit(r.Context(), "app.dlq.purged", &acct.ID, map[string]any{
+			"app_id": app.ID, "event_id": event.ID, "count": 1,
+			"surface": "dashboard",
+		})
 	}
 	http.Redirect(w, r, failedEventsRedirect(slug, flash), http.StatusSeeOther)
 }
@@ -175,6 +190,10 @@ func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *htt
 	}
 	event, err := s.store.DeadLetterEventByAccountID(r.Context(), acct.ID, eventID)
 	if err != nil || event.ReplayedAt != nil {
+		if err == nil {
+			err = state.ErrNotFound
+		}
+		s.observeDashboardDeadLetterAction("account", action, err)
 		http.Redirect(w, r, failedEventsRedirect("", "error"), http.StatusSeeOther)
 		return
 	}
@@ -187,14 +206,41 @@ func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *htt
 		http.NotFound(w, r)
 		return
 	}
+	s.observeDashboardDeadLetterAction("account", action, err)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		s.log.Warn("dashboard account failed event action", "action", action, "account_id", acct.ID, "event_id", eventID, "err", err)
 	}
 	flash := action + "ed"
 	if err != nil {
 		flash = "error"
+	} else if action == "replay" {
+		s.audit.Emit(r.Context(), "account.dlq.event_replayed", &acct.ID, map[string]any{
+			"event_id": event.ID, "source": event.Source, "source_id": event.SourceID,
+			"app_id": event.AppID, "account_scope": true, "surface": "dashboard",
+		})
+	} else {
+		s.audit.Emit(r.Context(), "account.dlq.purged", &acct.ID, map[string]any{
+			"event_id": event.ID, "count": 1, "account_scope": true,
+			"surface": "dashboard",
+		})
 	}
 	http.Redirect(w, r, failedEventsRedirect("", flash), http.StatusSeeOther)
+}
+
+func (s *server) observeDashboardDeadLetterAction(app, action string, err error) {
+	status := "success"
+	if err != nil {
+		status = "error"
+		if errors.Is(err, state.ErrNotFound) {
+			status = "not_found"
+		}
+	}
+	switch action {
+	case "replay":
+		s.ops.ObserveDLQReplay(app, status)
+	case "discard":
+		s.ops.ObserveDLQPurge(app, status)
+	}
 }
 
 func failedEventsRedirect(slug, action string) string {

@@ -3,9 +3,12 @@ package s3gateway
 import (
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec G501 -- S3 test fixture.
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +68,8 @@ type gatewayTestProvider struct {
 	copyRequests     []objectstorage.CopyObjectRequest
 	presignRequests  []objectstorage.SignRequest
 	tags             map[string]string
-	deleted          string
+	deleted          []string
+	deleteErrors     map[string]error
 	multipart        map[string]map[int32]objectstorage.MultipartPart
 	completedUploads []string
 	abortedUploads   []string
@@ -103,8 +107,8 @@ func (p *gatewayTestProvider) CopyObject(_ context.Context, _ string, request ob
 	return objectstorage.CopyObjectResult{ETag: `"copy-etag"`, LastModified: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)}, nil
 }
 func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key string) error {
-	p.deleted = key
-	return nil
+	p.deleted = append(p.deleted, key)
+	return p.deleteErrors[key]
 }
 func (p *gatewayTestProvider) Presign(_ context.Context, bucket string, request objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
 	p.presignRequests = append(p.presignRequests, request)
@@ -305,6 +309,7 @@ func newGatewayTestHandler(t *testing.T, permission string, roundTrip roundTripF
 	}
 	handler, err := New(Config{
 		Registry: registry, Store: store, Host: "s3.gregale.dev", Region: "us-east-1", SpoolDir: t.TempDir(),
+		MinSpoolFreeBytes: 1,
 		OpenSecret: func(sealed []byte) (string, error) {
 			if string(sealed) != "sealed" {
 				t.Fatal("unexpected sealed secret")
@@ -359,6 +364,24 @@ func presignedGatewayRequest(t *testing.T, method, target string, body []byte) *
 		}
 	}
 	return parsed
+}
+
+func awsChunkedGatewayRequest(t *testing.T, target, payloadHash, trailer string, decodedLength int64, encoded []byte) *http.Request {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPut, target, bytes.NewReader(encoded))
+	request.Host = "s3.gregale.dev"
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("Content-Encoding", "aws-chunked")
+	request.Header.Set("X-Amz-Content-Sha256", payloadHash)
+	request.Header.Set("X-Amz-Decoded-Content-Length", strconv.FormatInt(decodedLength, 10))
+	request.Header.Set("X-Amz-Date", "20260907T120000Z")
+	if trailer != "" {
+		request.Header.Set("X-Amz-Trailer", trailer)
+	}
+	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	return request
 }
 
 func TestGatewayPutAndGetHideProvider(t *testing.T) {
@@ -631,8 +654,199 @@ func TestGatewayRejectsTamperedSignatureAndAcceptsPresignedRequests(t *testing.T
 	streaming.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, streaming)
-	if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "SignatureDoesNotMatch") {
 		t.Fatalf("streaming payload = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayAcceptsAWSChunkedChecksumTrailer(t *testing.T) {
+	var uploaded []byte
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		uploaded, _ = io.ReadAll(r.Body)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"ETag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	encoded := []byte("b\r\nhello world\r\n0\r\nx-amz-checksum-crc32:DUoRhQ==\r\n\r\n")
+	request := awsChunkedGatewayRequest(t, "https://s3.gregale.dev/assets/chunked.txt", streamingUnsignedTrailer, "x-amz-checksum-crc32", 11, encoded)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || string(uploaded) != "hello world" {
+		t.Fatalf("aws-chunked PUT = %d body=%s uploaded=%q", recorder.Code, recorder.Body.String(), uploaded)
+	}
+	if got := provider.presignRequests[len(provider.presignRequests)-1]; got.SizeBytes == nil || *got.SizeBytes != 11 || got.ContentEncoding != "" {
+		t.Fatalf("decoded provider request = %#v", got)
+	}
+
+	tampered := []byte("b\r\nhello world\r\n0\r\nx-amz-checksum-crc32:AAAAAA==\r\n\r\n")
+	request = awsChunkedGatewayRequest(t, "https://s3.gregale.dev/assets/tampered.txt", streamingUnsignedTrailer, "x-amz-checksum-crc32", 11, tampered)
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "BadDigest") {
+		t.Fatalf("tampered trailer = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayAcceptsSignedAWSChunkedPayload(t *testing.T) {
+	var uploaded []byte
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		uploaded, _ = io.ReadAll(r.Body)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	body := []byte("hello world")
+	placeholder := []byte("b;chunk-signature=" + strings.Repeat("0", 64) + "\r\nhello world\r\n0;chunk-signature=" + strings.Repeat("0", 64) + "\r\n\r\n")
+	request := awsChunkedGatewayRequest(t, "https://s3.gregale.dev/assets/signed.txt", streamingSignedPayload, "", int64(len(body)), placeholder)
+	seed, err := parseSignatureOnly(request.Header.Get("Authorization"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := deriveSigV4Key(testSecret, "20260907", "us-east-1", "s3")
+	empty := sha256.Sum256(nil)
+	digest := sha256.Sum256(body)
+	scope := "20260907/us-east-1/s3/aws4_request"
+	chunkString := "AWS4-HMAC-SHA256-PAYLOAD\n20260907T120000Z\n" + scope + "\n" + seed + "\n" + hex.EncodeToString(empty[:]) + "\n" + hex.EncodeToString(digest[:])
+	chunkSignature := hex.EncodeToString(hmacSHA256(key, chunkString))
+	zeroString := "AWS4-HMAC-SHA256-PAYLOAD\n20260907T120000Z\n" + scope + "\n" + chunkSignature + "\n" + hex.EncodeToString(empty[:]) + "\n" + hex.EncodeToString(empty[:])
+	zeroSignature := hex.EncodeToString(hmacSHA256(key, zeroString))
+	encoded := []byte("b;chunk-signature=" + chunkSignature + "\r\nhello world\r\n0;chunk-signature=" + zeroSignature + "\r\n\r\n")
+	request.Body = io.NopCloser(bytes.NewReader(encoded))
+	request.ContentLength = int64(len(encoded))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || string(uploaded) != string(body) {
+		t.Fatalf("signed aws-chunked PUT = %d body=%s uploaded=%q", recorder.Code, recorder.Body.String(), uploaded)
+	}
+}
+
+func TestGatewayAcceptsSignedAWSChunkedTrailer(t *testing.T) {
+	var uploaded []byte
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		uploaded, _ = io.ReadAll(r.Body)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	body := []byte("hello world")
+	checksumValue := "DUoRhQ=="
+	placeholder := []byte("b;chunk-signature=" + strings.Repeat("0", 64) + "\r\nhello world\r\n0;chunk-signature=" + strings.Repeat("0", 64) + "\r\nx-amz-checksum-crc32:" + checksumValue + "\r\nx-amz-trailer-signature:" + strings.Repeat("0", 64) + "\r\n\r\n")
+	request := awsChunkedGatewayRequest(t, "https://s3.gregale.dev/assets/signed-trailer.txt", streamingSignedPayloadTrailer, "x-amz-checksum-crc32", int64(len(body)), placeholder)
+	seed, err := parseSignatureOnly(request.Header.Get("Authorization"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := deriveSigV4Key(testSecret, "20260907", "us-east-1", "s3")
+	empty := sha256.Sum256(nil)
+	digest := sha256.Sum256(body)
+	scope := "20260907/us-east-1/s3/aws4_request"
+	chunkString := "AWS4-HMAC-SHA256-PAYLOAD\n20260907T120000Z\n" + scope + "\n" + seed + "\n" + hex.EncodeToString(empty[:]) + "\n" + hex.EncodeToString(digest[:])
+	chunkSignature := hex.EncodeToString(hmacSHA256(key, chunkString))
+	zeroString := "AWS4-HMAC-SHA256-PAYLOAD\n20260907T120000Z\n" + scope + "\n" + chunkSignature + "\n" + hex.EncodeToString(empty[:]) + "\n" + hex.EncodeToString(empty[:])
+	zeroSignature := hex.EncodeToString(hmacSHA256(key, zeroString))
+	canonicalTrailer := "x-amz-checksum-crc32:" + checksumValue + "\n"
+	trailerDigest := sha256.Sum256([]byte(canonicalTrailer))
+	trailerString := "AWS4-HMAC-SHA256-TRAILER\n20260907T120000Z\n" + scope + "\n" + zeroSignature + "\n" + hex.EncodeToString(trailerDigest[:])
+	trailerSignature := hex.EncodeToString(hmacSHA256(key, trailerString))
+	encoded := []byte("b;chunk-signature=" + chunkSignature + "\r\nhello world\r\n0;chunk-signature=" + zeroSignature + "\r\nx-amz-checksum-crc32:" + checksumValue + "\r\nx-amz-trailer-signature:" + trailerSignature + "\r\n\r\n")
+	if len(encoded) != len(placeholder) {
+		t.Fatalf("fixture changed encoded length: %d != %d", len(encoded), len(placeholder))
+	}
+	request.Body = io.NopCloser(bytes.NewReader(encoded))
+	request.ContentLength = int64(len(encoded))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || string(uploaded) != string(body) {
+		t.Fatalf("signed trailer PUT = %d body=%s uploaded=%q", recorder.Code, recorder.Body.String(), uploaded)
+	}
+}
+
+func TestGatewayDeleteObjects(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(*http.Request) (*http.Response, error) {
+		t.Fatal("DeleteObjects must use the provider abstraction")
+		return nil, nil
+	})
+	body := []byte(`<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Object><Key>one.txt</Key></Object><Object><Key>folder/two.txt</Key></Object></Delete>`)
+	sum := sha256.Sum256(body)
+	request := httptest.NewRequest(http.MethodPost, "https://s3.gregale.dev/assets?delete=", bytes.NewReader(body))
+	request.Host = "s3.gregale.dev"
+	request.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
+	request.Header.Set("X-Amz-Date", "20260907T120000Z")
+	checksum := crc32.NewIEEE()
+	_, _ = checksum.Write(body)
+	request.Header.Set("X-Amz-Checksum-Crc32", base64.StdEncoding.EncodeToString(checksum.Sum(nil)))
+	request.Header.Set("X-Amz-Sdk-Checksum-Algorithm", "CRC32")
+	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<DeleteResult") || !strings.Contains(recorder.Body.String(), "<Key>one.txt</Key>") {
+		t.Fatalf("DeleteObjects = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Join(provider.deleted, ",") != "one.txt,folder/two.txt" {
+		t.Fatalf("deleted keys = %v", provider.deleted)
+	}
+
+	quietBody := []byte(`<Delete><Object><Key>quiet.txt</Key></Object><Quiet>true</Quiet></Delete>`)
+	quietSum := sha256.Sum256(quietBody)
+	request = signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets?delete=", quietBody, hex.EncodeToString(quietSum[:]))
+	md5sum := md5.Sum(quietBody) // #nosec G401 -- S3 Content-MD5 fixture.
+	request.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(md5sum[:]))
+	// Content-MD5 was added after signing intentionally: S3 permits integrity
+	// headers that are not part of SignedHeaders and Gregale still verifies it.
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "<Deleted>") {
+		t.Fatalf("quiet DeleteObjects = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	missingBody := []byte(`<Delete><Object><Key>missing-integrity.txt</Key></Object></Delete>`)
+	missingSum := sha256.Sum256(missingBody)
+	request = signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets?delete=", missingBody, hex.EncodeToString(missingSum[:]))
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "MissingContentMD5") {
+		t.Fatalf("missing DeleteObjects integrity = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayConditionalDownloadStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusNotModified, http.StatusPreconditionFailed} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("If-None-Match") != `"etag"` {
+					t.Fatalf("conditional header not forwarded: %v", r.Header)
+				}
+				header := make(http.Header)
+				header.Set("ETag", `"etag"`)
+				header.Set("X-Goog-Generation", "provider-leak")
+				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader("provider error body")), Request: r}, nil
+			})
+			request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/file.txt", nil, "UNSIGNED-PAYLOAD")
+			request.Header.Set("If-None-Match", `"etag"`)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != status || recorder.Body.Len() != 0 || recorder.Header().Get("ETag") != `"etag"` || recorder.Header().Get("X-Goog-Generation") != "" {
+				t.Fatalf("conditional status = %d headers=%v body=%q", recorder.Code, recorder.Header(), recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestGatewayAcceptsBotocoreCanonicalHeaderFixture(t *testing.T) {
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("fixture")), Request: r}, nil
+	})
+	request := httptest.NewRequest(http.MethodGet, "https://s3.gregale.dev/assets/botocore.txt", nil)
+	request.Host = "s3.gregale.dev"
+	request.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	request.Header.Set("X-Amz-Date", "20260907T120000Z")
+	// Fixed independently calculated canonical request with the same signed
+	// header set emitted by botocore/AWS CLI. Keeping the wire value literal
+	// prevents the Go signer used by most tests from validating itself.
+	request.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=GRGAAAAAAAAAAAAAAAAA/20260907/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=652d5e97ae07856d1bba97e6543fcf71a0706cc04ba747f8cc028d10e877de9d")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "fixture" {
+		t.Fatalf("botocore fixture = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -699,6 +913,9 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				return nil, err
+			}
 			part := strings.TrimPrefix(r.URL.Path, "/upload/provider-upload-id/")
 			header := make(http.Header)
 			header.Set("ETag", `"etag-`+part+`"`)
@@ -722,7 +939,14 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	for partNumber, body := range map[int]string{1: strings.Repeat("a", int(api.MinMultipartPartBytes)), 2: "world"} {
 		target := "https://s3.gregale.dev/assets/archive.bin?partNumber=" + strconv.Itoa(partNumber) + "&uploadId=" + initiated.UploadID
 		recorder = httptest.NewRecorder()
-		handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPut, target, []byte(body), "UNSIGNED-PAYLOAD"))
+		request := signedGatewayRequest(t, http.MethodPut, target, []byte(body), "UNSIGNED-PAYLOAD")
+		if partNumber == 2 {
+			checksum := crc32.NewIEEE()
+			_, _ = checksum.Write([]byte(body))
+			encoded := []byte(strconv.FormatInt(int64(len(body)), 16) + "\r\n" + body + "\r\n0\r\nx-amz-checksum-crc32:" + base64.StdEncoding.EncodeToString(checksum.Sum(nil)) + "\r\n\r\n")
+			request = awsChunkedGatewayRequest(t, target, streamingUnsignedTrailer, "x-amz-checksum-crc32", int64(len(body)), encoded)
+		}
+		handler.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusOK || recorder.Header().Get("ETag") != `"etag-`+strconv.Itoa(partNumber)+`"` {
 			t.Fatalf("part %d = %d headers=%v body=%s", partNumber, recorder.Code, recorder.Header(), recorder.Body.String())
 		}

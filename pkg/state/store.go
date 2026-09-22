@@ -3921,9 +3921,10 @@ type Store interface {
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
 	// ListInvocationsByTraceID returns bounded, metadata-only invocation rows
-	// linked to a platform trace. The account predicate is mandatory; the
-	// implementation reads only the canonical platform trace header and never
-	// returns payloads through the account trace API.
+	// linked to a platform trace across all durable invocation sources. The
+	// account predicate is mandatory; the implementation reads only the
+	// canonical platform trace header and never returns payloads through the
+	// account trace API.
 	ListInvocationsByTraceID(ctx context.Context, accountID, traceID string, limit int) ([]Invocation, error)
 	// ListInvocationsForApp is the per-app filtered variant used by
 	// deleteApp's GC sweep (cancel every pending/dispatching row before

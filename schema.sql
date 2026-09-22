@@ -222,6 +222,68 @@ $$;
 
 
 --
+-- Name: apps_streaming_plan_account_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_account_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $function$
+BEGIN
+    IF NEW.plan = 'free'
+       AND OLD.plan IS DISTINCT FROM NEW.plan
+       AND EXISTS (
+           SELECT 1
+             FROM apps
+            WHERE account_id = NEW.id
+              AND streaming_enabled
+       ) THEN
+        RAISE EXCEPTION
+            'account % cannot downgrade to Free while a streaming-enabled app exists',
+            NEW.id
+            USING ERRCODE = '23514',
+                  CONSTRAINT = 'apps_streaming_enabled_plan_check';
+    END IF;
+    RETURN NEW;
+END;
+$function$;
+
+
+--
+-- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $function$
+    SELECT EXISTS (
+        SELECT 1
+          FROM accounts
+         WHERE id = p_account_id
+           AND plan <> 'free'
+    );
+$function$;
+
+
+--
+-- Name: apps_streaming_plan_app_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_app_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $function$
+BEGIN
+    IF NEW.streaming_enabled THEN
+        PERFORM 1
+          FROM accounts
+         WHERE id = NEW.account_id
+         FOR UPDATE;
+    END IF;
+    RETURN NEW;
+END;
+$function$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1551,6 +1613,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
     CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
     CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
+    CONSTRAINT apps_streaming_enabled_plan_check CHECK ((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id)),
     CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
     CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
     CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
@@ -7487,6 +7550,13 @@ CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON public.alert_pr
 
 
 --
+-- Name: accounts apps_streaming_plan_account_guard_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER apps_streaming_plan_account_guard_trg AFTER UPDATE OF plan ON public.accounts DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION public.apps_streaming_plan_account_guard();
+
+
+--
 -- Name: app_openapi_docs app_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7526,6 +7596,13 @@ CREATE TRIGGER apps_declared_routes_policy_notify_trg AFTER UPDATE OF only_decla
 --
 
 CREATE TRIGGER apps_public_auth_ip_allowlist_cidr BEFORE INSERT OR UPDATE OF public_auth_ip_allowlist ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_public_auth_ip_allowlist_cidr_check();
+
+
+--
+-- Name: apps apps_streaming_plan_app_guard_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF account_id, streaming_enabled ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_streaming_plan_app_guard();
 
 
 --

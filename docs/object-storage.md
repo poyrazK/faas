@@ -296,17 +296,22 @@ material or signed URLs. Use a disposable app and do not run it against a
 customer bucket; the cleanup trap removes the temporary object, bindings,
 credential, and bucket even when a check fails.
 
-This first endpoint slice supports ListBuckets for the credential's one bucket,
+This endpoint supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 with delimiter/common-prefix
-listing,
-GetObject/HeadObject/PutObject/DeleteObject, and the standard multipart
+listing, GetObject/HeadObject/PutObject/DeleteObject, multi-object
+`DeleteObjects` (up to 1,000 keys), and the standard multipart
 initiate/list-parts/upload-part/complete/abort operations, plus CopyObject with
 COPY/REPLACE metadata and tagging directives. It validates AWS
 Signature V4 in both the `Authorization` header and presigned query form.
 Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
 remain subject to credential revocation when a request arrives. Uploads
-validate SHA-256 and Content-MD5 before writing upstream. Ordinary PUT accepts
-the standard HTTP metadata fields, `x-amz-meta-*`, and URL-encoded
+validate SHA-256, Content-MD5, and the S3 CRC32, CRC32C, CRC64NVME, SHA-1, and
+SHA-256 checksum headers before writing upstream. SigV4 `aws-chunked` PUT and
+UploadPart bodies support signed payload chunks, signed checksum trailers, and
+the unsigned-payload checksum trailer form used by current AWS SDKs. The
+gateway verifies every frame, decoded length, trailer signature, and checksum
+before allowing a complete object or part to reach the provider. Ordinary PUT
+accepts the standard HTTP metadata fields, `x-amz-meta-*`, and URL-encoded
 `x-amz-tagging`; GET/HEAD returns customer metadata using the branded
 `x-amz-meta-*` names. `?tagging` supports GET, PUT, and DELETE with up to ten
 tags per object. S3 backends use native tags; GCS stores the tag set in a
@@ -320,10 +325,12 @@ provider and are limited by the configured per-part upload ceiling. Use
 `s3api put-object` for simple uploads; the high-level `aws s3 cp` command can
 automatically select multipart uploads.
 
-SigV4 streaming/chunked uploads, bucket lifecycle APIs, versioning, ACLs, and
-bucket create/delete through the S3 protocol are explicit `NotImplemented`
-gaps. Bucket lifecycle remains on the authenticated Gregale API so a customer
-credential cannot escape its assigned logical bucket.
+Conditional GET/HEAD requests forward the standard validators and preserve S3
+`304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
+provider response body. SigV4A/ECDSA authentication, bucket lifecycle APIs,
+versioning, ACLs, and bucket create/delete through the S3 protocol remain
+explicit `NotImplemented` gaps. Bucket lifecycle remains on the authenticated
+Gregale API so a customer credential cannot escape its assigned logical bucket.
 
 ## Recovery and operator attention
 

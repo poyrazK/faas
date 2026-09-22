@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
 
 // debugTelemetryListHandler — GET /v1/apps/{slug}/debug/requests
@@ -2660,6 +2661,10 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 	headerBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return debugReplayEnqueueResult{}, api.ErrCapacity("build debug replay envelope")
+	}
+	headerBytes, err = pkgtrace.MergeHeaders(ctx, headerBytes)
+	if err != nil {
+		return debugReplayEnqueueResult{}, api.ErrCapacity("build debug replay trace envelope")
 	}
 	inv, err := s.store.EnqueueInvocation(ctx, state.Invocation{
 		AppID:     app.ID,

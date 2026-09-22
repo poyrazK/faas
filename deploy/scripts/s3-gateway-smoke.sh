@@ -174,8 +174,10 @@ aws --endpoint-url "$GREGALE_S3_ENDPOINT" --region "$GREGALE_S3_REGION" \
   s3api list-objects-v2 --bucket "$bucket_name" --prefix probe/ \
   | jq -e --arg key "$object_key" '.Contents | any(.Key == $key)' >/dev/null
 
+delete_request="$(jq -cn --arg key "$object_key" '{Objects:[{Key:$key}],Quiet:false}')"
 aws --endpoint-url "$GREGALE_S3_ENDPOINT" --region "$GREGALE_S3_REGION" \
-  s3api delete-object --bucket "$bucket_name" --key "$object_key" >/dev/null
+  s3api delete-objects --bucket "$bucket_name" --delete "$delete_request" \
+  | jq -e --arg key "$object_key" '.Deleted | any(.Key == $key)' >/dev/null
 object_uploaded=false
 api -X DELETE \
   "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/s3-credentials/$credential_id" \

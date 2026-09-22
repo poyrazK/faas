@@ -21,7 +21,9 @@ For `enforce` apps, an image promotion also requires a fresh, complete scan
 whose recorded image reference matches the deployment. Failed, incomplete,
 unmatched, or high/critical/unknown-severity scan results fail the deployment
 before snapshotting. This proves that the scanned artifact is the one being
-promoted; it does not replace dependency patching or application review.
+promoted. Enforce mode also requires a trusted signature for OCI images, so a
+clean image cannot be promoted when its publisher provenance is unknown. This
+does not replace dependency patching or application review.
 
 Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 

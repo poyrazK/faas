@@ -148,6 +148,34 @@ type objectTag struct {
 	Value string `xml:"Value"`
 }
 
+type deleteObjectsRequest struct {
+	XMLName xml.Name             `xml:"Delete"`
+	Objects []deleteObjectTarget `xml:"Object"`
+	Quiet   bool                 `xml:"Quiet"`
+}
+
+type deleteObjectTarget struct {
+	Key       string `xml:"Key"`
+	VersionID string `xml:"VersionId"`
+}
+
+type deleteObjectsResult struct {
+	XMLName xml.Name              `xml:"DeleteResult"`
+	XMLNS   string                `xml:"xmlns,attr"`
+	Deleted []deletedObjectResult `xml:"Deleted,omitempty"`
+	Errors  []deleteObjectError   `xml:"Error,omitempty"`
+}
+
+type deletedObjectResult struct {
+	Key string `xml:"Key"`
+}
+
+type deleteObjectError struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
 func objectTagSet(tags map[string]string) []objectTag {
 	keys := make([]string, 0, len(tags))
 	for key := range tags {

@@ -157,12 +157,15 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
-	privateNetworks           map[string]PrivateNetwork
-	privateNetworkAddresses   map[string]PrivateNetworkAddress
-	privateNetworkPeerings    map[string]PrivateNetworkPeering
-	reservedIPLeases          map[string]ReservedIP
-	reservedIPInventory       map[string]ReservedIPInventory
-	appDeletionClaims         map[string]struct{}
+
+	privateNetworkAttachmentNodeStatuses map[string]PrivateNetworkAttachmentNodeStatus
+
+	privateNetworks         map[string]PrivateNetwork
+	privateNetworkAddresses map[string]PrivateNetworkAddress
+	privateNetworkPeerings  map[string]PrivateNetworkPeering
+	reservedIPLeases        map[string]ReservedIP
+	reservedIPInventory     map[string]ReservedIPInventory
+	appDeletionClaims       map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -893,16 +896,19 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},
 		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
-		privateNetworks:           map[string]PrivateNetwork{},
-		privateNetworkAddresses:   map[string]PrivateNetworkAddress{},
-		privateNetworkPeerings:    map[string]PrivateNetworkPeering{},
-		reservedIPLeases:          map[string]ReservedIP{},
-		reservedIPInventory:       map[string]ReservedIPInventory{},
-		appDeletionClaims:         map[string]struct{}{},
-		githubDeployBranches:      map[string]map[string]string{},
-		githubDeployPolicies:      map[string]GitHubDeployPolicy{},
-		githubBindings:            map[string]GitHubBinding{},
-		githubInstalls:            map[string]GitHubInstall{},
+
+		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
+
+		privateNetworks:         map[string]PrivateNetwork{},
+		privateNetworkAddresses: map[string]PrivateNetworkAddress{},
+		privateNetworkPeerings:  map[string]PrivateNetworkPeering{},
+		reservedIPLeases:        map[string]ReservedIP{},
+		reservedIPInventory:     map[string]ReservedIPInventory{},
+		appDeletionClaims:       map[string]struct{}{},
+		githubDeployBranches:    map[string]map[string]string{},
+		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
+		githubBindings:          map[string]GitHubBinding{},
+		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -1595,6 +1601,16 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if plan == api.PlanFree {
+		// Keep the in-memory backend aligned with PgStore's database
+		// invariant: a Free account cannot retain an opted-in streaming app.
+		for appID, app := range m.apps {
+			if app.AccountID == id && app.StreamingEnabled {
+				app.StreamingEnabled = false
+				m.apps[appID] = app
+			}
+		}
 	}
 	a.Plan = plan
 	m.accounts[id] = a
@@ -3862,9 +3878,6 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	for _, d := range m.deployments {
-		if app, ok := m.apps[d.AppID]; !ok || app.Status == AppDeleted {
-			continue
-		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -11313,9 +11326,9 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
-// ListInvocationsByTraceID mirrors PgStore's account-scoped queue correlation
-// query. MemStore keeps the full invocation envelope for scheduler tests, but
-// this read only inspects the canonical platform trace header.
+// ListInvocationsByTraceID mirrors PgStore's account-scoped invocation
+// correlation query. MemStore keeps the full invocation envelope for scheduler
+// tests, but this read only inspects the canonical platform trace header.
 func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -11327,7 +11340,7 @@ func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceI
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AccountID != accountID || inv.Source != InvocationQueue {
+		if inv.AccountID != accountID {
 			continue
 		}
 		var headers map[string]string
@@ -21785,10 +21798,13 @@ func (m *MemStore) ReplaceProvisionedStaticEgressIPs(_ context.Context, accountI
 // memstore's trigger-stub helpers (commit #6). Real production
 // code never sees this — the apid's MemStore tests do.
 func memNewUUID() [16]byte {
+	// Use the same cryptographically-random UUID source as the rest of the
+	// MemStore. A timestamp byte is not sufficient here: trigger IDs are used
+	// as map keys and as record ownership boundaries, so a collision can make
+	// one trigger claim another trigger's records.
+	id := uuid.New()
 	var b [16]byte
-	b[0] = byte(time.Now().UnixNano() & 0xff)
-	b[6] = (b[6] & 0x0f) | 0x40 // version 7
-	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC4122
+	copy(b[:], id[:])
 	return b
 }
 

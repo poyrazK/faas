@@ -3048,6 +3048,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// pre-ADR-201 behaviour.
 			Breaker: egressBreakerGroup(),
 			Metrics: deps.metrics,
+			// Prefer a replica on this node before crossing the network.
+			// Empty NodeName (legacy single-box) keeps flat round-robin.
+			LocalNodeID: cfg.NodeName,
+			// ADR-206. nil unless FAAS_SERVICE_CALLER_ASSERTIONS is on and a
+			// signing key is available, so the default path is unchanged.
+			MintCallerAssertion: newServiceCallerMinter(cfg.NodeName, log),
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {

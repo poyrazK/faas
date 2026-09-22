@@ -110,6 +110,12 @@ failure keeps the attachment in `error` and is retried by the next sweep;
 successful nodes are still reported so operators can identify the unhealthy
 box without guessing from aggregate status.
 
+The attachment read endpoint also exposes the last durable per-node result in
+`attachment.nodes`. Each row separates `fabric_status` from `route_status`,
+includes bounded failure detail, and carries `observed_at`. A node can have a
+ready bridge while route policy is still failing; this projection is the
+operator view of that partial convergence and is replaced on the next replay.
+
 For multi-node Gregale networks, vmmd can add a provider-neutral VXLAN link
 over an operator-managed encrypted overlay (Tailscale, WireGuard, or another
 routable underlay). This is disabled by default and does not call DigitalOcean:
@@ -210,6 +216,25 @@ carry neither header, so a service that ignores them is unaffected.
 Use them to skip irreversible work, tag writes as test data, or refuse the call
 outright. Operators can watch the fleet-wide rate with
 `gateway_service_preview_to_production_total`.
+
+### Verifying the caller (preview)
+
+By default a service learns who called it from platform-set headers. Operators
+who need the target to verify that claim itself can enable signed caller
+assertions with `FAAS_SERVICE_CALLER_ASSERTIONS=1` on each node.
+
+Every internal call then carries `X-Faas-Caller-Assertion`: a short-lived
+(30 s) EdDSA JWT stating `sub` = calling app id, `aud` = receiving app id,
+plus the account and calling instance. The audience binding is what stops a
+service replaying an assertion it received against a sibling service.
+
+The header is platform-owned and stripped from anything a workload sends, so it
+cannot be forged. It is additive: nothing rejects a call for lacking one, and a
+signing failure forwards the call unsigned rather than dropping it.
+
+Guest-reachable key publication and a runtime verification helper are not
+shipped yet, so this is currently useful for operators wiring their own
+verification. Leave the flag off otherwise.
 
 ## Internal-only ingress
 

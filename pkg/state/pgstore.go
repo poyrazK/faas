@@ -666,6 +666,29 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if plan == api.PlanFree {
+		// The streaming plan invariant rejects a paid -> Free account
+		// transition while any app still opts in. Lock the account before
+		// clearing those flags so a concurrent opt-in cannot race the
+		// downgrade and leave an invalid pair of rows behind.
+		var accountID string
+		if err := tx.QueryRow(ctx,
+			`select id::text from accounts where id = $1 for update`, id,
+		).Scan(&accountID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`update apps
+			    set streaming_enabled = false
+			  where account_id = $1
+			    and streaming_enabled`, id,
+		); err != nil {
+			return err
+		}
+	}
 	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
 	if err != nil {
 		return err
@@ -6666,7 +6689,9 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 // public status page. Successful deployments are live or superseded rows;
 // failed rows backed by a user_error build are explicitly excluded. Failures
 // after a successful build (scan, snapshot, readiness) have no user_error
-// build and therefore remain visible as platform failures.
+// build and therefore remain visible as platform failures. Deleted apps remain
+// in the aggregate because release-acceptance apps are deliberately cleaned up
+// after their terminal result is recorded.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
@@ -6681,9 +6706,7 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 				  )
 			)
 		  from deployments d
-		  join apps a on a.id = d.app_id
-		 where a.status <> 'deleted'
-		   and (
+		 where (
 			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
 			or
 			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
@@ -14339,10 +14362,10 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 	return scanInvocations(rows)
 }
 
-// ListInvocationsByTraceID is the durable account-scoped queue correlation
-// read. The expression index from account_trace_lookup keeps this bounded
-// query index-backed while the projection remains the normal invocation row
-// shape for callers that need lifecycle timestamps.
+// ListInvocationsByTraceID is the durable account-scoped invocation
+// correlation read. The expression index from the trace-all migration keeps
+// this bounded query index-backed while the projection remains the normal
+// invocation row shape for callers that need lifecycle timestamps.
 func (s *PgStore) ListInvocationsByTraceID(ctx context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	if limit <= 0 {
 		limit = 100
@@ -14353,7 +14376,6 @@ func (s *PgStore) ListInvocationsByTraceID(ctx context.Context, accountID, trace
 	rows, err := s.pool.Query(ctx, `select `+invocationSelectCols+`
 		from invocations
 		where account_id = $1
-		  and source = 'queue'
 		  and headers->>'X-Gregale-Trace-Id' = $2
 		order by created_at asc, id asc
 		limit $3`, accountID, traceID, limit)
