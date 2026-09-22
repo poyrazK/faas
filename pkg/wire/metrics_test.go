@@ -1298,6 +1298,24 @@ func TestOpsMetrics_ObserveSidecarRestart(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_ObserveSidecarHealth(t *testing.T) {
+	m := wire.NewOpsMetrics("vmmd")
+	m.ObserveSidecarHealth("app-1", "metrics", "starting")
+	m.ObserveSidecarHealth("app-1", "metrics", "healthy")
+	m.ObserveSidecarHealth("app-1", "metrics", "unhealthy")
+
+	body := render(t, m)
+	for _, want := range []string{
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="starting"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="healthy"} 1`,
+		`vmmd_sidecar_health_transition_total{app="",sidecar="",status="failed"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in:\n%s", want, body)
+		}
+	}
+}
+
 // TestOpsMetrics_WarmSnapshotErrorsNilSafe (issue #470 / PR A /
 // ADR-055) — the accessor must be no-op on a nil receiver so
 // vmmd / schedd unit tests without metrics keep working (same

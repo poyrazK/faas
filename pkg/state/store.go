@@ -4775,7 +4775,8 @@ type Store interface {
 	// sidecar-aware read-side query for the customer-facing
 	// timeline endpoint. Filters on the jsonb expression
 	// data->>'sidecar_name' = $1 and the closed wake.kind IN
-	// ('wake.sidecar_init_exit', 'wake.sidecar_restart') so a
+	// ('wake.sidecar_init_exit', 'wake.sidecar_restart',
+	// 'wake.sidecar_health') so a
 	// query never returns non-sidecar rows even if a future
 	// event reuses the field name. Orders by at ASC and respects
 	// the same since / limit contract as ListEventsByWakeID so

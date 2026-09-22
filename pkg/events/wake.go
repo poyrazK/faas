@@ -205,6 +205,10 @@ const (
 	// {wake_id, app_id, instance_id, sidecar_name, attempt,
 	// previous_exit_code}.
 	WakeSidecarRestart = "wake.sidecar_restart"
+	// WakeSidecarHealth — guest-init's long-running sidecar lifecycle
+	// transition (starting, healthy, unhealthy, restarting, or failed).
+	// Payload: {wake_id, app_id, instance_id, sidecar_name, status, reason}.
+	WakeSidecarHealth = "wake.sidecar_health"
 )
 
 // WakeEvent is the contract pkg/events.Platform.Emit consumes. The
@@ -1152,5 +1156,32 @@ func (e SidecarRestart) Payload() map[string]any {
 		"sidecar_name":       e.SidecarName,
 		"attempt":            e.Attempt,
 		"previous_exit_code": e.PreviousExitCode,
+	}
+}
+
+// SidecarHealth records an observable lifecycle transition for a long-running
+// sidecar. It is emitted independently of a single wake because the signal is
+// produced by guest-init's supervisor over the instance event channel.
+type SidecarHealth struct {
+	EmitAt      time.Time
+	WakeID      string
+	AppID       string
+	InstanceID  string
+	SidecarName string
+	Status      string
+	Reason      string
+}
+
+func (e SidecarHealth) Kind() string     { return WakeSidecarHealth }
+func (e SidecarHealth) At() time.Time    { return e.EmitAt }
+func (e SidecarHealth) Subject() *string { return nil }
+func (e SidecarHealth) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":      e.WakeID,
+		"app_id":       e.AppID,
+		"instance_id":  e.InstanceID,
+		"sidecar_name": e.SidecarName,
+		"status":       e.Status,
+		"reason":       e.Reason,
 	}
 }

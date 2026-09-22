@@ -34,7 +34,7 @@ func TestListenerStoreResolverUsesEnabledDurableRoute(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Resolve = %#v, %v, %v", route, ok, err)
 	}
-	if route.AppID != app.ID || route.ListenerName != "postgres" || route.GuestPort != 5432 || route.Protocol != "tcp" {
+	if route.AppID != app.ID || route.AccountID != account.ID || route.ListenerName != "postgres" || route.GuestPort != 5432 || route.Protocol != "tcp" {
 		t.Fatalf("route = %#v", route)
 	}
 	if _, ok, err := resolver.Resolve(ctx, 40128); err != nil || ok {

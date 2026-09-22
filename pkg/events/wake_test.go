@@ -39,6 +39,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = DeployFailed{EmitAt: now, AppID: "a", DeploymentID: "d", Reason: "scan"}
 	var _ WakeEvent = SidecarInitExit{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", SidecarName: "metrics", Status: "init_ok", ExitCode: 0, DurationMs: 42}
 	var _ WakeEvent = SidecarRestart{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", SidecarName: "metrics", Attempt: 1, PreviousExitCode: 137}
+	var _ WakeEvent = SidecarHealth{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", SidecarName: "metrics", Status: "healthy", Reason: "startup_probe_passed"}
 }
 
 // TestQueueAccepted_Shape — the payload keys are the wire
@@ -260,6 +261,22 @@ func TestSidecarRestart_Shape(t *testing.T) {
 	}
 	if got := ev.Payload()["previous_exit_code"]; got != 137 {
 		t.Errorf("payload.previous_exit_code = %v, want 137", got)
+	}
+}
+
+func TestSidecarHealth_Shape(t *testing.T) {
+	ev := SidecarHealth{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-1", AppID: "a-1",
+		InstanceID: "i-1", SidecarName: "metrics", Status: "unhealthy", Reason: "probe failed",
+	}
+	if got := ev.Kind(); got != WakeSidecarHealth {
+		t.Errorf("Kind = %q, want %q", got, WakeSidecarHealth)
+	}
+	if got := ev.Payload()["status"]; got != "unhealthy" {
+		t.Errorf("payload.status = %v, want unhealthy", got)
+	}
+	if got := ev.Payload()["reason"]; got != "probe failed" {
+		t.Errorf("payload.reason = %v, want probe failed", got)
 	}
 }
 

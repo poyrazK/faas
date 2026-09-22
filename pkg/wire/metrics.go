@@ -1346,6 +1346,10 @@ type OpsMetrics struct {
 	// {__unknown__, <custom name>} admission per the
 	// accountLabelSet precedent at the bottom of this file.
 	sidecarRestartTotal *prometheus.CounterVec
+	// sidecarHealthTransitionsTotal counts guest-init sidecar lifecycle
+	// transitions by status. Status is a closed five-value enum, so the
+	// additional label does not create unbounded cardinality.
+	sidecarHealthTransitionsTotal *prometheus.CounterVec
 	// scaleUpDecisions: per-app scale-up trigger decisions (issue #169 /
 	// #172). Counter labelled by app_id and outcome ∈ {admit,
 	// reject_at_cap, no_signal}. App cardinality is bounded
@@ -3291,6 +3295,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_sidecar_restart_total",
 		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (issue #463 / ADR-069 cap = 2).",
 	}, []string{"app", "sidecar"})
+	sidecarHealthTransitionsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_sidecar_health_transition_total",
+		Help: "Count of sidecar lifecycle health transitions, per (app, sidecar, status), emitted by guest-init over the vmmd event channel.",
+	}, []string{"app", "sidecar", "status"})
 	// Issue #279 (PR-B, CPU-hour visibility): cumulative
 	// CPU-seconds per (app, node), sourced from the vmmd
 	// cpu_seconds wire field. Sum rollup (cumulative work,
@@ -3680,6 +3688,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
+		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
 		egressDeny, egressDenied,
@@ -5004,6 +5013,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// leaks through (should never happen — guest-init always
 	// stamps the sidecar's name).
 	sidecarRestartTotal.WithLabelValues("", "")
+	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed"} {
+		sidecarHealthTransitionsTotal.WithLabelValues("", "", status)
+	}
 	// issue #301 (ADR-043, per-plan CPU fairness observability):
 	// pre-instantiate the ("other", "other") overflow row so the
 	// dashboard panel selector {app_id!="other"} never sees "no
@@ -5185,6 +5197,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceStatsCollectDur:                               instanceStatsCollectDur,
 		instanceStatsPartialErrors:                            instanceStatsPartialErrors,
 		sidecarRestartTotal:                                   sidecarRestartTotal,
+		sidecarHealthTransitionsTotal:                         sidecarHealthTransitionsTotal,
 		cpuStatsCollectDur:                                    cpuStatsCollectDurLocal,
 		scaleUpDecisions:                                      scaleUpDecisions,
 		scaleUpWinningSignal:                                  scaleUpWinningSignal,
@@ -8720,6 +8733,16 @@ func (m *OpsMetrics) ObserveSidecarRestart(app, sidecar string) {
 		return
 	}
 	m.sidecarRestartTotal.WithLabelValues(app, sidecar).Inc()
+}
+
+// ObserveSidecarHealth records one guest-init sidecar lifecycle transition.
+// Status is validated at the vmmd dispatch boundary; keeping the method
+// nil-safe preserves the existing no-metrics local-dev path.
+func (m *OpsMetrics) ObserveSidecarHealth(app, sidecar, status string) {
+	if m == nil {
+		return
+	}
+	m.sidecarHealthTransitionsTotal.WithLabelValues(app, sidecar, status).Inc()
 }
 
 // ObserveScaleUpAdmitRPS records the per-instance RPS at the moment

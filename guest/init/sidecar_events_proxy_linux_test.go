@@ -2,7 +2,7 @@
 
 // Tests for the sidecar events proxy (issue #463 / ADR-069 /
 // ADR-071 / PR-C §3,§4). The proxy is the guest-side emit
-// point for two DGRAM classes:
+// point for three lifecycle DGRAM classes:
 //
 //   - sidecar_init_exit (type=0x02) — sent from
 //     runWorkloads when an init sidecar's supervisor.Run
@@ -131,6 +131,24 @@ func TestSidecarRestartEnvelope_Shape(t *testing.T) {
 	}
 }
 
+func TestSidecarHealthEnvelope_Shape(t *testing.T) {
+	env := sidecarHealthEnvelope{Sidecar: "metrics", Status: "unhealthy", Reason: "probe failed"}
+	blob, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back sidecarHealthEnvelope
+	if err := json.Unmarshal(blob, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back != env {
+		t.Fatalf("round-trip mismatch: %+v vs %+v", back, env)
+	}
+	if VsockSidecarEventsTypeHealth != 0x08 {
+		t.Fatalf("health type = 0x%02x; want 0x08", VsockSidecarEventsTypeHealth)
+	}
+}
+
 // TestSidecarEventsProxy_NilSendDoesNotBlock guards against
 // the regression where the proxy fails to come up (bind
 // error in boot()) and the orchestrator crashes because the
@@ -146,6 +164,9 @@ func TestSidecarEventsProxy_NilSendDoesNotBlock(t *testing.T) {
 	if err := p.SendRestart("metrics", 1); err != nil {
 		t.Errorf("nil SendRestart = %v; want nil", err)
 	}
+	if err := p.SendHealth("metrics", "healthy", "startup_probe_passed"); err != nil {
+		t.Errorf("nil SendHealth = %v; want nil", err)
+	}
 }
 
 // TestSidecarEventsTypeConstants pins the closed enum on the
@@ -159,6 +180,9 @@ func TestSidecarEventsTypeConstants(t *testing.T) {
 	}
 	if VsockSidecarEventsTypeRestart != 0x03 {
 		t.Errorf("TypeRestart = 0x%02x; want 0x03", VsockSidecarEventsTypeRestart)
+	}
+	if VsockSidecarEventsTypeHealth != 0x08 {
+		t.Errorf("TypeHealth = 0x%02x; want 0x08", VsockSidecarEventsTypeHealth)
 	}
 	if VsockSidecarEventsPort != 1027 {
 		t.Errorf("Port = %d; want 1027 (must match host)", VsockSidecarEventsPort)

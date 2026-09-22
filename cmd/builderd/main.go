@@ -266,6 +266,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		MetricsAddr:         cfg.MetricsAddr,
 		BuildTimeoutSeconds: cfg.BuildTimeoutSeconds,
 		FairnessWindow:      cfg.FairnessWindow,
+		CacheAffinityGrace:  cfg.CacheAffinityGrace,
 		WarmIdle:            cfg.WarmIdle,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
@@ -318,7 +319,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"vmmd_target", vmmTarget,
 		"builder_base_path", builderBasePath,
 		"cache_dir", cfg.CacheDir,
-		"poll_interval", cfg.PollInterval)
+		"poll_interval", cfg.PollInterval,
+		"cache_affinity_grace", cfg.CacheAffinityGrace)
 
 	// LISTEN/NOTIFY is the low-latency hint path, not the durable queue. Keep
 	// both build processing and cancellation work bounded so a notification

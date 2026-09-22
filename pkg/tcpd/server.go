@@ -23,6 +23,7 @@ type Server struct {
 	Routes    RouteResolver
 	Targets   TargetResolver
 	Forwarder Forwarder
+	Limiter   *ConnectionLimiter
 
 	// MaxConnections bounds concurrent sessions. Zero means unlimited.
 	MaxConnections int
@@ -131,6 +132,17 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) error {
 	}
 	if err := ValidateRoute(route); err != nil {
 		return err
+	}
+	if s.Limiter != nil {
+		key := route.AccountID
+		if key == "" {
+			key = route.AppID
+		}
+		release, ok := s.Limiter.Acquire(key)
+		if !ok {
+			return fmt.Errorf("%w for %q", ErrConnectionLimit, key)
+		}
+		defer release()
 	}
 	target, err := s.Targets.ResolveTarget(ctx, route)
 	if err != nil {

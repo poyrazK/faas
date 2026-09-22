@@ -336,6 +336,14 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 		rt := rt
 		rt.sup.onStart = func() { close(rt.state.started) }
 		rt.sup.onHealthy = func() { close(rt.state.healthy) }
+		if rt.spec.Type == "sidecar" && sidecarProxy != nil {
+			name := rt.spec.Name
+			rt.sup.onHealth = func(status, reason string) {
+				if err := sidecarProxy.SendHealth(name, status, reason); err != nil {
+					log.Warn("runWorkloads: sidecar health send failed", "name", name, "status", status, "err", err)
+				}
+			}
+		}
 	}
 
 	// The characterization probe observes only the main workload's PID.
@@ -490,6 +498,9 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 				}
 			}
 			if runErr != nil {
+				if rt.spec.Type == "sidecar" && coordCtx.Err() == nil {
+					rt.sup.reportHealth("failed", runErr.Error())
+				}
 				critical := name == "main" || rt.spec.Essential
 				log.Error("runWorkloads: workload exited with error", "name", name, "essential", rt.spec.Essential, "err", runErr)
 				if critical {
@@ -619,6 +630,7 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",
 			spec.Name, attempt, maxRestarts, err)
+		supRef.reportHealth("restarting", fmt.Sprintf("restart_%d", attempt))
 		// PR-C §4: ship the sidecar_restart envelope so vmmd
 		// can increment <daemon>_sidecar_restart_total AND
 		// emit events.SidecarRestart. A send error is
@@ -785,23 +797,32 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	}
 	if sup != nil {
 		sup.markStarted()
+		if spec.Type == "sidecar" {
+			sup.reportHealth("starting", "process_started")
+		}
 		if sup.onHealthy != nil && manifestErr == nil {
 			uid := lookupUID(baked.EffectiveUser())
 			if directRoot != "" {
 				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
 			}
 			if err := runStartupHealthcheck(baked, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+				if spec.Type == "sidecar" {
+					sup.reportHealth("unhealthy", err.Error())
+				}
 				_ = cmd.Process.Kill()
 				_ = cmd.Wait()
 				return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 			}
 		}
 		sup.markHealthy()
+		if spec.Type == "sidecar" {
+			sup.reportHealth("healthy", "startup_probe_passed")
+		}
 	}
 	var healthCancel context.CancelFunc
 	var healthDone <-chan struct{}
 	healthErrCh := make(chan error, 1)
-	if manifestErr == nil {
+	if manifestErr == nil && spec.Type == "sidecar" {
 		healthCtx, cancelHealth := context.WithCancel(context.Background())
 		healthCancel = cancelHealth
 		done := make(chan struct{})
@@ -809,6 +830,9 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		go func() {
 			defer close(done)
 			monitorSidecarHealth(healthCtx, baked, env, cmd.Dir, directRoot, lookupUID(baked.EffectiveUser()), cmd.SysProcAttr, func(err error) {
+				if sup != nil {
+					sup.reportHealth("unhealthy", err.Error())
+				}
 				select {
 				case healthErrCh <- err:
 				default:

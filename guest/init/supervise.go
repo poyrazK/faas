@@ -40,6 +40,10 @@ type Supervisor struct {
 	// has started and after its startup gate respectively.
 	onStart   func() //nolint:unused // invoked by Linux workload supervision.
 	onHealthy func() //nolint:unused // invoked by Linux workload supervision.
+	// onHealth reports sidecar lifecycle transitions to the host event proxy.
+	// It is intentionally best-effort and is only wired for long-running
+	// sidecars by the Linux workload roster.
+	onHealth func(status, reason string) //nolint:unused
 
 	// LastCmd tracks the *exec.Cmd the supervisor most-recently forked,
 	// swapped atomically on every restart. nil until the first fork.
@@ -115,6 +119,12 @@ func (s *Supervisor) markHealthy() { //nolint:unused // called by Linux workload
 				s.onHealthy()
 			}
 		})
+	}
+}
+
+func (s *Supervisor) reportHealth(status, reason string) { //nolint:unused // called by Linux workload supervision.
+	if s != nil && s.onHealth != nil {
+		s.onHealth(status, reason)
 	}
 }
 
