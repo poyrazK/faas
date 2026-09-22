@@ -7,7 +7,7 @@
   bridge), ADR-091 D24 §6 (edge-rule `max_body_bytes_streaming` for the
   request-side cap), ADR-046 (per-instance egress metering)
 - **Successors:** ADR-102-followup (database invariant shipped by
-  `20260922124000000_apps_streaming_plan_check.sql`)
+  `20260922131114370_apps_streaming_plan_check.sql`)
 
 ## Context
 
@@ -179,7 +179,7 @@ SELECT l.sdk_version, count(*) FROM access_log l
 ## Follow-up completed
 
 - **CHECK constraint** (`apps_streaming_enabled_plan_check`) — shipped in
-  `20260922124000000_apps_streaming_plan_check.sql` after the telemetry
+  `20260922131114370_apps_streaming_plan_check.sql` after the telemetry
   window. Because `apps` stores `account_id` rather than a plan snapshot,
   the migration uses a stable helper in the CHECK and a constraint trigger
   to reject paid → Free downgrades while an app is still streaming-enabled.

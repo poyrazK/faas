@@ -417,7 +417,7 @@ the CI-chase risk).
 ### Deferred work (out of scope for this PR)
 
 - **Postgres CHECK constraint** (`apps_streaming_enabled_plan_check`)
-  — shipped in `20260922124000000_apps_streaming_plan_check.sql` after
+  — shipped in `20260922131114370_apps_streaming_plan_check.sql` after
   telemetry confirmed zero Free + flag rows in production. The migration
   uses the NOT VALID + VALIDATE idiom and guards paid → Free downgrades.
 - **Retirement of `accept-json-downgrade` enum variant + advisory
