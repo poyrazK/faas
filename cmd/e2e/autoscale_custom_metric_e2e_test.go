@@ -146,6 +146,10 @@ func TestE2E_Autoscale_NoMetricDoesNotAdmit(t *testing.T) {
 	}
 
 	before := instanceCount(t, f)
+	if before == 0 {
+		t.Fatal("no baseline instance despite a live deployment: this test proves an ABSENT " +
+			"metric does not GROW capacity, which asserts nothing if there was none to grow from")
+	}
 	// A target of 1 is as hot as a target can be, so if an absent metric
 	// were ever read as a confident zero-or-anything this would scale to
 	// the cap almost immediately.
