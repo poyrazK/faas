@@ -35,6 +35,18 @@ type privateNetworkPeeringSweeperFake struct {
 	err       error
 }
 
+type privateNetworkPolicySweeperFake struct {
+	accountID string
+	networkID string
+	err       error
+}
+
+func (f *privateNetworkPolicySweeperFake) SweepNetwork(_ context.Context, accountID, networkID string) (privatenetwork.ReconcileSummary, error) {
+	f.accountID = accountID
+	f.networkID = networkID
+	return privatenetwork.ReconcileSummary{}, f.err
+}
+
 func (f *privateNetworkPeeringSweeperFake) SweepAccountRegion(_ context.Context, accountID, region string) (privatenetwork.PeeringReconcileSummary, error) {
 	f.accountID = accountID
 	f.region = region
@@ -472,6 +484,43 @@ func TestPrivateNetworkPeeringSubscriberSweepsAffectedRegion(t *testing.T) {
 	}
 	if sweeper.accountID != "acct-1" || sweeper.region != "fra1" {
 		t.Fatalf("sweep target = %q/%q, want acct-1/fra1", sweeper.accountID, sweeper.region)
+	}
+}
+
+func TestPrivateNetworkPolicySubscriberSweepsAffectedNetwork(t *testing.T) {
+	sweeper := &privateNetworkPolicySweeperFake{}
+	subscriber := NewPrivateNetworkPolicySubscriber(sweeper, nil)
+	err := subscriber.Handle(context.Background(), db.Notification{
+		Channel: db.NotifyPrivateNetworkChanged,
+		Payload: `{"kind":"private_network","account_id":"acct-1","network_id":"net-1","region":"fra1","status":"policy_updated"}`,
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if sweeper.accountID != "acct-1" || sweeper.networkID != "net-1" {
+		t.Fatalf("sweep target = %q/%q, want acct-1/net-1", sweeper.accountID, sweeper.networkID)
+	}
+}
+
+func TestPrivateNetworkPolicySubscriberRejectsIncompletePayload(t *testing.T) {
+	subscriber := NewPrivateNetworkPolicySubscriber(&privateNetworkPolicySweeperFake{}, nil)
+	if err := subscriber.Handle(context.Background(), db.Notification{
+		Channel: db.NotifyPrivateNetworkChanged,
+		Payload: `{"kind":"private_network","account_id":"acct-1"}`,
+	}); err == nil {
+		t.Fatal("Handle succeeded for payload without network_id")
+	}
+}
+
+func TestPrivateNetworkPolicySubscriberReturnsConvergenceFailureForReplay(t *testing.T) {
+	wantErr := errors.New("node policy update failed")
+	subscriber := NewPrivateNetworkPolicySubscriber(&privateNetworkPolicySweeperFake{err: wantErr}, nil)
+	err := subscriber.Handle(context.Background(), db.Notification{
+		Channel: db.NotifyPrivateNetworkChanged,
+		Payload: `{"kind":"private_network","account_id":"acct-1","network_id":"net-1","status":"policy_updated"}`,
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Handle error = %v, want %v so outbox can retry", err, wantErr)
 	}
 }
 

@@ -10,7 +10,12 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // (pkg/imaged/vmmclient.go → MountOverlayParent on the vmmdgrpc unix
 // socket); vmmd does the mount under cap_sys_admin. imaged now runs
 // with a CapabilityBoundingSet that EXCLUDES cap_sys_admin, and the
-// AmbientCapabilities=cap_sys_admin directive that PR-F added is GONE.
+// AmbientCapabilities=cap_sys_admin directive that PR-F added is GONE. It
+// retains only CAP_CHOWN and CAP_DAC_OVERRIDE as ambient capabilities: OCI
+// layer extraction must materialise customer-declared uid/gid ownership and
+// then keep traversing restrictive directories (for example distroless'
+// root-owned 0700 /home/nonroot) while the daemon itself remains the
+// unprivileged faas-imaged user.
 //
 // Wipe-comments-load-bearing rationale:
 //
@@ -54,6 +59,9 @@ func UnitImaged() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: OCI pull/extract work runs off the runtime loop; the
+		// budget only needs to outlast a stop-the-world pause.
+		WatchdogSec: "300s",
 		// imaged reconciles every runtime base assigned to the node before
 		// sd_notify(READY=1). A new generation can require OCI downloads,
 		// extraction, content validation and vulnerability scans. The
@@ -71,8 +79,17 @@ func UnitImaged() daemonunit.Unit {
 		// for one conversion at a time.
 		MemoryMax: "4G",
 
-		// No AmbientCapabilities — DEPLOY-1 erased cap_sys_admin; the
-		// parent-ref mount is an RPC to vmmd now.
+		// DEPLOY-1 erased cap_sys_admin; the parent-ref mount is an RPC to
+		// vmmd now. CAP_CHOWN preserves OCI uid/gid metadata. CAP_DAC_OVERRIDE
+		// is required after that ownership transfer so the unprivileged daemon
+		// can inspect and package customer-owned 0700 directory trees. The
+		// systemd filesystem sandbox still limits which host paths are writable.
+		// CAP_FOWNER is required by the Grype scan path: debugfs restores
+		// the base ext4's root ownership on the extracted copy via
+		// CAP_CHOWN, so the chmod that makes it readable needs ownership
+		// or CAP_FOWNER. Without it every scan wrote the fail-closed
+		// CRITICAL=9999 sidecar and vmmd refused to boot any VM.
+		AmbientCapabilities: []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"},
 
 		CapabilityBoundingSet: []string{
 			"cap_chown",

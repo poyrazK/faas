@@ -593,9 +593,23 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			"build", build.ID, "deployment", d.ID, "app", p.AppID, "err", err)
 	}
 
-	// Step 7: supersede notify for the prior non-terminal row.
-	// Skipped on first deploy (no prev).
+	// Step 7: notify only when CreateDeployment actually superseded the
+	// predecessor. Stable redeploys deliberately keep a live predecessor
+	// routable until post-readiness promotion; emitting a synthetic
+	// "superseded" event for that still-live row makes schedd drain serving
+	// instances at build enqueue time and creates a customer-visible gap.
+	// Re-read the row after the transactional create instead of inferring its
+	// state from the pre-create snapshot.
+	var predecessorSuperseded bool
 	if prev.ID != "" && !state.IsServiceRollout(d) {
+		if reader, ok := store.(interface {
+			DeploymentByID(context.Context, string) (state.Deployment, error)
+		}); ok {
+			current, readErr := reader.DeploymentByID(ctx, prev.ID)
+			predecessorSuperseded = readErr == nil && current.Status == state.DeploySuperseded
+		}
+	}
+	if predecessorSuperseded {
 		supPayload, _ := json.Marshal(map[string]any{
 			"kind":          source,
 			"status":        "superseded",

@@ -90,7 +90,15 @@ func TestUploadSession_PlanCap(t *testing.T) {
 	}
 }
 
-func TestUploadSession_RollbackOn5xxPlanGate(t *testing.T) {
+// adr: 200
+//
+// ADR-200 opened first-wake 5xx auto-rollback to every plan, so a Free
+// account requesting it on an upload session is no longer refused. This is a
+// SECOND enforcement surface beyond validateDeploymentRollbackOptions — the
+// upload path carries its own deploy options — so it needs its own pin, or
+// the two could drift and a customer would be told yes on one route and no on
+// the other.
+func TestUploadSession_RollbackOn5xxAllowedOnFreePlan(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)
 	e := setup(t, api.PlanFree)
@@ -100,22 +108,11 @@ func TestUploadSession_RollbackOn5xxPlanGate(t *testing.T) {
 		AppSlug: "rollback-gate", TotalSize: 1024,
 		DeployOptions: &api.UploadDeployOptions{RollbackOn5xx: &rollback},
 	}, nil)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("want 403, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("Free upload session refused rollback_on_5xx; ADR-200 opened it to every plan: %s", rec.Body.String())
 	}
-	var prob api.Problem
-	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
-		t.Fatalf("decode problem: %v", err)
-	}
-	if prob.Code != api.CodePlanRollbackOn5xxNotAllowed {
-		t.Fatalf("want code %q, got %q", api.CodePlanRollbackOn5xxNotAllowed, prob.Code)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read spool root: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("gated upload allocated spool entries: %+v", entries)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

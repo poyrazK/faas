@@ -206,6 +206,22 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 			return api.ErrValidation(fmt.Sprintf("respond action: %v", err))
 		}
 		return a.Validate()
+	case state.EdgeRuleKindRetry:
+		var a api.EdgeRuleRetryAction
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return api.ErrValidation(fmt.Sprintf("retry action: %v", err))
+		}
+		// Validate applies the ADR-201 §1 defaults in place. The
+		// per-plan rule count (Free 0 / Hobby 3 / Pro 10 / Scale 25)
+		// is enforced separately in CreateEdgeRuleIfUnderQuota via
+		// Limits.EdgeRulesRetryPerApp, mirroring kind=cache.
+		return a.Validate()
+	case state.EdgeRuleKindCircuitBreaker:
+		var a api.EdgeRuleCircuitBreakerAction
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return api.ErrValidation(fmt.Sprintf("circuit_breaker action: %v", err))
+		}
+		return a.Validate()
 	}
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
 }
@@ -610,6 +626,36 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			out.Respond = &state.EdgeRuleRespondAction{
 				StatusCode: a.StatusCode,
 				Body:       append([]byte(nil), a.Body...),
+			}
+		}
+	case state.EdgeRuleKindRetry:
+		var a api.EdgeRuleRetryAction
+		if err := json.Unmarshal(raw, &a); err == nil {
+			// Re-run Validate so the mirror carries EFFECTIVE values,
+			// not the customer's zeros. validateEdgeRuleAction above
+			// ran on its own decode of the same bytes, and its
+			// in-place defaulting does not reach this one. Storing
+			// zeros here would make the row unreadable without
+			// knowing the defaults, and would hand the gateway
+			// compile step a rule it has to re-default identically.
+			_ = a.Validate()
+			out.Retry = &state.EdgeRuleRetryAction{
+				MaxAttempts:        a.MaxAttempts,
+				AllowNonIdempotent: a.AllowNonIdempotent,
+				MinRemainingMs:     a.MinRemainingMs,
+				BackoffMs:          a.BackoffMs,
+			}
+		}
+	case state.EdgeRuleKindCircuitBreaker:
+		var a api.EdgeRuleCircuitBreakerAction
+		if err := json.Unmarshal(raw, &a); err == nil {
+			_ = a.Validate()
+			out.CircuitBreaker = &state.EdgeRuleCircuitBreakerAction{
+				FailureThreshold: a.FailureThreshold,
+				MinRequests:      a.MinRequests,
+				WindowSeconds:    a.WindowSeconds,
+				OpenSeconds:      a.OpenSeconds,
+				MaxOpenSeconds:   a.MaxOpenSeconds,
 			}
 		}
 	}

@@ -42,6 +42,7 @@ const (
 	Vmmd_Heartbeat_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
 	Vmmd_UpdateStaticEgressIP_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
+	Vmmd_UpdateEgressCircuit_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
 	Vmmd_UpdatePrivateNetwork_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
 	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
 	Vmmd_SeccompStatus_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
@@ -231,6 +232,30 @@ type VmmdClient interface {
 	// re-pushed identical IP is a no-op. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error)
+	// UpdateEgressCircuit (ADR-201 §3) makes the open-circuit set of every
+	// live instance of an app exactly `circuits`. When a declared upstream is
+	// proven unhealthy by the ADR-098 probe, schedd opens a circuit and the
+	// guest's NEW connections to that (address, port) are rejected with a TCP
+	// reset instead of hanging for a full connect timeout — which is what
+	// otherwise burns the kind=budget deadline and then the wake slot, turning
+	// one dependency outage into a per-app capacity outage.
+	//
+	// Whole-set semantics, like UpdateEgressAllowlist: the caller pushes the
+	// complete desired state, never a delta. An empty list closes every
+	// circuit. This is what makes the operation self-healing — after a vmmd
+	// restart the re-rendered netns carries an empty set while schedd still
+	// believes circuits are open, and the next reconcile re-installs them
+	// rather than failing on a delete of an element that was never there.
+	//
+	// Enforcement is an nftables set element, NOT an L7 proxy: vmmd terminates
+	// no tenant TLS and holds no plaintext, so this stays inside §11. The rule
+	// sits after the established/related accept, so an opening circuit refuses
+	// new connections without tearing down calls already in flight.
+	//
+	// Idempotent. Returns OK with no effect when the app has no live instances
+	// (a parked app has no netns to hold a rule; the wake path renders the set
+	// fresh) and when the node's FAAS_EGRESS_CIRCUIT_BREAKER is off.
+	UpdateEgressCircuit(ctx context.Context, in *UpdateEgressCircuitRequest, opts ...grpc.CallOption) (*UpdateEgressCircuitAck, error)
 	// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
 	// live instance of an app without tearing down its network namespace. For a
 	// Gregale-owned attachment, the optional identity fields also add/remove
@@ -647,6 +672,16 @@ func (c *vmmdClient) UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticE
 	return out, nil
 }
 
+func (c *vmmdClient) UpdateEgressCircuit(ctx context.Context, in *UpdateEgressCircuitRequest, opts ...grpc.CallOption) (*UpdateEgressCircuitAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateEgressCircuitAck)
+	err := c.cc.Invoke(ctx, Vmmd_UpdateEgressCircuit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) UpdatePrivateNetwork(ctx context.Context, in *UpdatePrivateNetworkRequest, opts ...grpc.CallOption) (*UpdatePrivateNetworkAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdatePrivateNetworkAck)
@@ -996,6 +1031,30 @@ type VmmdServer interface {
 	// re-pushed identical IP is a no-op. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error)
+	// UpdateEgressCircuit (ADR-201 §3) makes the open-circuit set of every
+	// live instance of an app exactly `circuits`. When a declared upstream is
+	// proven unhealthy by the ADR-098 probe, schedd opens a circuit and the
+	// guest's NEW connections to that (address, port) are rejected with a TCP
+	// reset instead of hanging for a full connect timeout — which is what
+	// otherwise burns the kind=budget deadline and then the wake slot, turning
+	// one dependency outage into a per-app capacity outage.
+	//
+	// Whole-set semantics, like UpdateEgressAllowlist: the caller pushes the
+	// complete desired state, never a delta. An empty list closes every
+	// circuit. This is what makes the operation self-healing — after a vmmd
+	// restart the re-rendered netns carries an empty set while schedd still
+	// believes circuits are open, and the next reconcile re-installs them
+	// rather than failing on a delete of an element that was never there.
+	//
+	// Enforcement is an nftables set element, NOT an L7 proxy: vmmd terminates
+	// no tenant TLS and holds no plaintext, so this stays inside §11. The rule
+	// sits after the established/related accept, so an opening circuit refuses
+	// new connections without tearing down calls already in flight.
+	//
+	// Idempotent. Returns OK with no effect when the app has no live instances
+	// (a parked app has no netns to hold a rule; the wake path renders the set
+	// fresh) and when the node's FAAS_EGRESS_CIRCUIT_BREAKER is off.
+	UpdateEgressCircuit(context.Context, *UpdateEgressCircuitRequest) (*UpdateEgressCircuitAck, error)
 	// UpdatePrivateNetwork applies provider-verified destination CIDRs to every
 	// live instance of an app without tearing down its network namespace. For a
 	// Gregale-owned attachment, the optional identity fields also add/remove
@@ -1262,6 +1321,9 @@ func (UnimplementedVmmdServer) UpdateEgressAllowlist(context.Context, *UpdateEgr
 }
 func (UnimplementedVmmdServer) UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateStaticEgressIP not implemented")
+}
+func (UnimplementedVmmdServer) UpdateEgressCircuit(context.Context, *UpdateEgressCircuitRequest) (*UpdateEgressCircuitAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateEgressCircuit not implemented")
 }
 func (UnimplementedVmmdServer) UpdatePrivateNetwork(context.Context, *UpdatePrivateNetworkRequest) (*UpdatePrivateNetworkAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdatePrivateNetwork not implemented")
@@ -1685,6 +1747,24 @@ func _Vmmd_UpdateStaticEgressIP_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_UpdateEgressCircuit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateEgressCircuitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).UpdateEgressCircuit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_UpdateEgressCircuit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).UpdateEgressCircuit(ctx, req.(*UpdateEgressCircuitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_UpdatePrivateNetwork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UpdatePrivateNetworkRequest)
 	if err := dec(in); err != nil {
@@ -2015,6 +2095,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateStaticEgressIP",
 			Handler:    _Vmmd_UpdateStaticEgressIP_Handler,
+		},
+		{
+			MethodName: "UpdateEgressCircuit",
+			Handler:    _Vmmd_UpdateEgressCircuit_Handler,
 		},
 		{
 			MethodName: "UpdatePrivateNetwork",

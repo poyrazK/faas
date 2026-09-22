@@ -416,13 +416,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Snapshots load only on the Firecracker version that made them (ADR-005);
-	// detect it so the engine restores compatible snapshots and cold boots the
-	// rest.
-	fcVersion, err := deps.detectFC(ctx)
-	if err != nil {
-		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
-	}
+	fcVersion := resolveFCVersion(ctx, os.Getenv(fcVersionPinEnv), deps.detectFC, log)
 
 	// Issue #95 / ADR-025: dial vmmd through the location-transparent
 	// helper. tcp/dns targets require the vmmd_tls_* cluster; nil TLS on
@@ -562,6 +556,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("schedd")
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
 	go heartbeatRetention.Run(ctx)
@@ -663,6 +660,54 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("schedd: runtime config watcher exited", "err", err)
 		}
 	}()
+
+	// ADR-201 §3: egress circuit breaker. Off unless the operator sets
+	// FAAS_EGRESS_CIRCUIT_BREAKER, and additionally inert unless the
+	// ADR-098 probe is running — without probe rows the breaker has no
+	// health signal at all, so enabling one without the other would be a
+	// silent no-op that looks like protection. That combination is a
+	// startup error rather than a warning, per the ADR's rollout section.
+	if os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER") != "" {
+		if os.Getenv("FAAS_UPSTREAM_PROBE") == "" {
+			log.Error("schedd: FAAS_EGRESS_CIRCUIT_BREAKER is set but FAAS_UPSTREAM_PROBE is not; " +
+				"the breaker has no health signal without the ADR-098 probe")
+			return fmt.Errorf("schedd: FAAS_EGRESS_CIRCUIT_BREAKER requires FAAS_UPSTREAM_PROBE")
+		}
+		applier := sched.NewRoutedEgressCircuitApplier(
+			vmmRouter,
+			sched.NewStoreEgressCircuitNodeLister(store),
+		)
+		// The resolver is the node's own DNS. schedd resolves the upstream
+		// locally so the plaintext host never crosses the vmmd wire — the
+		// RPC carries a resolved address, and every label and log line
+		// carries only host_redacted_hash (ADR-098 §11).
+		resolver := func(ctx context.Context, host string) (string, error) {
+			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return "", err
+			}
+			if len(addrs) == 0 {
+				return "", fmt.Errorf("schedd: egress circuit: no address for upstream")
+			}
+			return addrs[0], nil
+		}
+		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log).WithMetrics(ops)
+		egressLoop := sched.NewEgressCircuitLoop(
+			egressBreaker,
+			sched.NewStoreEgressCircuitCandidateReader(store, 10*time.Minute, time.Now),
+			api.UpstreamAffinityTTL, // one probe cadence
+			0,                       // default: four intervals
+			log,
+		)
+		// One pass before the first tick so a schedd restart re-derives
+		// breaker state from the probe history instead of starting blind
+		// with every circuit closed.
+		if err := egressLoop.Tick(ctx); err != nil {
+			log.Warn("schedd: initial egress circuit reconcile failed", "err", err)
+		}
+		go egressLoop.Run(ctx)
+		log.Info("schedd: egress circuit breaker enabled", "interval", egressLoop.Interval())
+	}
 
 	// Issue #555 PR-6 — per-deployment 100% sampling window.
 	//
@@ -1034,6 +1079,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Gregale-owned networks use the durable network store directly, while the
 	// legacy operator registry remains available for external/provider attachments.
 	var privateNetworkSubscriber *sched.PrivateNetworkAttachmentSubscriber
+	var privateNetworkPolicySubscriber *sched.PrivateNetworkPolicySubscriber
 	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
 	if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
@@ -1155,6 +1201,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// keeps both the operator-managed registry and Gregale's own
 				// network fabric on the same provider-neutral path.
 				privateNetworkSubscriber = sched.NewPrivateNetworkAttachmentSubscriber(applier, log).WithNotificationPool(pool)
+				privateNetworkPolicySubscriber = sched.NewPrivateNetworkPolicySubscriber(reconciler, log)
 				log.Info("schedd: private network reconciler enabled", "configured_networks", configuredCount, "gregale_fabric", api.PrivateNetworkFabricEnabled())
 			}
 		}
@@ -1478,6 +1525,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
 		})
+	// The local Reader above deliberately contains only instances physically
+	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
+	// that non-overlapping partition. Scaling policy has a different ownership
+	// boundary. An app-owning schedd must see its instances even when placement
+	// put them on peer nodes, otherwise remote CPU/inflight/request signals are
+	// silently absent. Build a separate owner-scoped reader over VMMRouter's
+	// cached per-node clients; single-box installs keep the local reader.
+	autoscaleReader := reader
+	if ownerNodeID != "" {
+		autoscaleReader = instancestats.NewReader()
+		fleetInterval := cfg.ScaleUpInterval
+		if fleetInterval <= 0 {
+			fleetInterval = time.Duration(api.ScaleUpDecisionIntervalSeconds) * time.Second
+		}
+		fleetStatsPoller := instancestats.NewPoller(
+			store, nil, vmmTLS, autoscaleReader, nil, log,
+		).WithNodeRegistry(nodeRegistry).
+			WithFleetStats(vmmRouter, ownerNodeID)
+		fleetStatsPoller.Interval = fleetInterval
+		go func() {
+			if err := fleetStatsPoller.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("owner fleet instance stats exited", "err", err)
+			}
+		}()
+		log.Info("owner fleet instance stats enabled",
+			"owner_node_id", ownerNodeID,
+			"interval", fleetInterval)
+	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is
@@ -1537,9 +1612,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pool.MaxConns=16 (which leaves the async-invoke drain's
 	// BeginTx into starvation under e2e query bursts).
 	appDeleteSub := sched.NewAppDeleteSubscriber(engine, log)
+	// ADR-190: the loop beats this registry on every iteration; the
+	// systemd watchdog (started next to NotifyReadyWhen below) stops
+	// pinging when the beat is older than sched.MainLoopBudget.
+	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
+		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
+		WithPrivateNetworkPolicySubscriber(privateNetworkPolicySubscriber).
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithTriggerSecretIdentities(hostAgeIdentities).
 		WithJobsDispatched(jobsDispatched).
@@ -1554,6 +1635,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
+		WithInstanceActivity(autoscaleReader).
 		// Issue #171: shared Prometheus registry (same instance the
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.
@@ -1660,6 +1742,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		engine.ReconcileDeadNodeInstances,
 		time.Duration(dnrInterval)*time.Second,
 		log))
+	// ADR-191: the divergence sweep's sibling. The dead-node reconciler
+	// above repairs rows on nodes that went silent; this one repairs
+	// rows on nodes that are reporting but did not mention the VM. It
+	// reads the same instance-stats reader the autoscaler consumes, so
+	// a schedd without that reader wired simply never ticks.
+	//
+	// Ships report-only: FAAS_SCHEDD_RECONCILE_ENFORCE must be "1"
+	// before any row is written.
+	divergence := sched.NewInstanceDivergenceReconciler(engine, autoscaleReader, log)
+	loop.WithInstanceDivergence(sched.NewDeadNodeReconciler(
+		divergence.Reconcile,
+		time.Duration(api.InstanceDivergenceIntervalSeconds)*time.Second,
+		log))
+	log.Info("schedd: instance divergence sweep wired",
+		"interval_s", api.InstanceDivergenceIntervalSeconds,
+		"enforce", sched.DivergenceEnforceEnabled())
 	// Issue #171: share a single HTTPPromScraper between the gateway
 	// scrape path for the RPS scale-up trigger and the aggressive-
 	// reaper signal mirror.
@@ -1680,7 +1778,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// same interface but the scaleup trigger itself does
 		// not read it (the concurrent_requests axis lives in
 		// pkg/sched/targets — see loop.WithTargets below).
-		store, reader, scraper,
+		store, autoscaleReader, scraper,
 		schedScaleUpEngine{engine: engine},
 		engine.Ledger(),
 		scaleup.Options{
@@ -1698,7 +1796,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance stats enabled, but queue-depth autoscaling must still run.
 	// Tick treats a missing reader as no-signal for that metric.
 	targetsTrigger := targets.New(
-		store, reader,
+		store, autoscaleReader,
 		schedTargetsEngine{engine: engine},
 		schedTargetsLedger{ledger: engine.Ledger()},
 		targets.Options{
@@ -1707,6 +1805,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Interval:                cfg.ScaleUpInterval,
 			QueueStatsReader:        store,
 			QueueBindingStatsReader: store,
+			// ADR-202: the store IS the custom-metric reader — pushes
+			// land in app_custom_metrics via apid, and the trigger reads
+			// them back. Without this a declared `custom` target
+			// validates and never scales.
+			CustomMetricReader: store,
 		},
 	)
 	targetsTrigger.WithOwnerNodeID(ownerNodeID)
@@ -1714,7 +1817,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("reactive target trigger enabled",
 		"interval", cfg.ScaleUpInterval,
 		"owner_node_id", ownerNodeID,
-		"concurrent_requests_reader", reader != nil,
+		"concurrent_requests_reader", autoscaleReader != nil,
 		"queue_depth_reader", true)
 	// Issue #557 / ADR-071: proactive min-instances floor
 	// reconciler. Walks every app the schedd owns each tick and
@@ -1780,10 +1883,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// VMMD telemetry reader. Split-box schedulers commonly leave the local
 	// gateway metrics URL empty; the telemetry fallback keeps scale-down
 	// symmetric with the scale-up trigger in that deployment shape.
-	if scraper != nil || reader != nil {
+	if scraper != nil || autoscaleReader != nil {
 		mirror := recentload.New(scraper, api.ScaleUpWindowSeconds, time.Second)
-		if reader != nil {
-			mirror.WithRateReader(reader)
+		if autoscaleReader != nil {
+			mirror.WithRateReader(autoscaleReader)
 		}
 		loop.WithRecentLoad(mirror)
 		signalSource := "vmmd_telemetry"
@@ -1980,15 +2083,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
-	if privateNetworkSubscriber != nil || privateNetworkPeeringSubscriber != nil {
-		// Detach cleanup has its own durable channel because the attachment
-		// row is deleted and peering withdrawal carries the affected region so
-		// it can converge even after the peering row is gone.
+	if privateNetworkSubscriber != nil || privateNetworkPolicySubscriber != nil || privateNetworkPeeringSubscriber != nil {
+		// Private-network mutations have their own durable channel because an
+		// attachment policy update must converge immediately, while a peering
+		// withdrawal carries the affected region after its row is gone.
 		go func() {
 			err := db.RunNotificationOutbox(ctx, pool, "schedd-private-network",
 				[]string{db.NotifyPrivateNetworkAttachmentChanged, db.NotifyPrivateNetworkChanged}, loop.HandleDurableNotification, log)
 			if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
-				log.Warn("schedd: private network detach replay exited", "err", err)
+				log.Warn("schedd: private network mutation replay exited", "err", err)
 			}
 		}()
 	}
@@ -2163,6 +2266,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, scheddProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, liveness, ops, log)()
 
 	select {
 	case <-ctx.Done():

@@ -36,6 +36,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -43,15 +46,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 )
+
+// appPlacementChange is the app_changed payload emitted when the scheduler
+// claims or moves an app. The fields are UUIDs and a closed-set kind, so no
+// value here can be hostile — but it is encoded rather than formatted so the
+// codebase has exactly one way to build a notification payload.
+type appPlacementChange struct {
+	Kind     string `json:"kind"`
+	AppID    string `json:"app_id"`
+	NodeID   string `json:"node_id,omitempty"`
+	FromNode string `json:"from_node,omitempty"`
+	ToNode   string `json:"to_node,omitempty"`
+}
 
 // vmmd RPC deadlines (spec §6.1). Centralised here — not in VMMClient —
 // because the same client serves every RPC and each has a different
@@ -377,6 +391,11 @@ type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
 }
 
+// BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
+type BrokerLagReader interface {
+	BrokerLag(ctx context.Context, appID string) (int64, bool, error)
+}
+
 // Engine drives wakes and parks. It is safe for concurrent use: all mutation of
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
@@ -585,6 +604,8 @@ type Engine struct {
 	// reads race-free without burning atomic shims.
 	pressureSweepMu sync.Mutex
 
+	brokerLag BrokerLagReader
+
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
 	// restartMu/restartInFlight coalesce duplicate restart notifications for
@@ -776,7 +797,20 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 // act on apps assigned to a real compute node, otherwise the central and
 // node-local schedulers race the same park and each keeps an independent
 // admission ledger.
+// Every call is counted (ADR-062 amplification): pg_notify carries no
+// routing, so an app-scoped notification reaches every schedd in the fleet
+// and all but one discard it right here. Counting the discards is what turns
+// "broadcast is wasteful in principle" into a number that can justify — or
+// not justify — per-owner channels.
 func (e *Engine) ownsApp(app state.App) bool {
+	owned := e.ownsAppDecision(app)
+	if e.ops != nil {
+		e.ops.ObserveAppOwnership(owned)
+	}
+	return owned
+}
+
+func (e *Engine) ownsAppDecision(app state.App) bool {
 	if app.NodeID == "" {
 		return true
 	}
@@ -849,6 +883,19 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		}
 	}
 	return e, nil
+}
+
+// SetBrokerLagReader attaches a broker lag reader for worker queue autoscaling.
+func (e *Engine) SetBrokerLagReader(r BrokerLagReader) {
+	if e != nil {
+		e.brokerLag = r
+	}
+}
+
+// WithBrokerLagReader attaches a broker lag reader for builder-style wiring.
+func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
+	e.SetBrokerLagReader(r)
+	return e
 }
 
 // WithOpsMetrics attaches a metrics bag to the engine for the §6.1
@@ -1258,7 +1305,9 @@ func (e *Engine) createInstanceWithWakeRetry(ctx context.Context, appID, deploym
 		// instance UUID.
 		return state.Instance{}, state.ErrWakeAlreadyInflight
 	}
-	return state.Instance{}, err
+	// ADR-193: the durable per-node reservation refused. Surface the same
+	// typed capacity Problem the ledger would have produced.
+	return state.Instance{}, e.nodeCapacityProblem(err)
 }
 
 func hostPortRequestsForManifest(manifest state.AppManifest) []hostport.Request {
@@ -2132,8 +2181,9 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // deploymentID (issue #556 / PR-C): the optional per-deployment
 // wake hint for the wake-fan-out path. Empty falls through to
 // the newest live deployment — the legacy single-deployment
-// behaviour. Non-empty asks the engine to admit on that specific
-// live deployment. Additive per ADR-016.
+// behaviour. Non-empty normally asks the engine to admit on that specific
+// live deployment. The authenticated deployment-smoke trigger is the sole
+// exception: it may target a snapshotting candidate before cutover.
 //
 // scope (PR-B / issue #272): the preview scope ("pr-{N}") the
 // gateway derived from the inbound Host header. Empty = prod
@@ -2366,11 +2416,10 @@ var ErrMirrorSlotAtCapacity = errors.New("sched: mirror slot at capacity")
 // admits a specific deployment (issue #557 closure / ADR-074).
 // The signature differs from AdmitInstance by accepting an explicit
 // deploymentID; the floor trigger's per-deployment sweep threads the
-// deployment it wants woke. The wake path's per-request target is
-// still resolved by admitAndDispatch's `resolveApp` (LiveDeployment),
-// which guarantees the wake and the floor admit land on the same
-// deployment id — passing an out-of-band id here would race the
-// customer's next deploy.
+// deployment it wants woke. Ordinary explicit callers are constrained to a
+// live deployment. The authenticated deployment-smoke trigger may target a
+// snapshotting candidate so it can prove readiness before the live pointer
+// moves; no other trigger receives that exception.
 //
 // The empty-deploymentID case is the legacy AdmitInstance path: the
 // caller falls through to AdmitInstance (which resolves the live
@@ -2399,9 +2448,10 @@ func (e *Engine) AdmitInstanceForDeployment(ctx context.Context, appID, deployme
 // admitAndDispatchForDeployment mirrors admitAndDispatch but threads
 // a specific deploymentID through to the ledger. Resolution of the
 // app + account + limits still happens via resolveApp; only the
-// deployment is overridden. If the override deployment is no longer
-// live (a newer deploy happened mid-tick), the call returns
-// {AtCapacity: true} — the trigger's next sweep re-evaluates.
+// deployment is overridden. If the override deployment is not eligible, the
+// call returns {AtCapacity: true} — the trigger's next sweep re-evaluates.
+// Deployment smoke is allowed to select a snapshotting candidate before its
+// atomic promotion; every other caller still requires a live row.
 //
 // P1A asymmetry note: this path (the floor trigger / fan-out /
 // per-deployment wake) bypasses Engine.admitGate by design. The
@@ -2459,7 +2509,24 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
 	// ── Phase 2: admit window, under appMu ──────────────────
 	release := e.lockApp(appID)
-	app, acct, limits, dep, err := e.resolveApp(ctx, appID)
+	var (
+		app    state.App
+		acct   state.Account
+		limits api.Limits
+		dep    state.Deployment
+		err    error
+	)
+	deploymentSmoke := deploymentID != "" && trigger == TriggerDeploymentSmoke
+	if deploymentSmoke {
+		// The authenticated post-readiness smoke runs before the atomic live
+		// pointer swap. A first deployment therefore has no live row yet, and a
+		// redeploy must continue resolving the old live row for customer traffic.
+		// Load only the app/account envelope here; the explicit candidate below
+		// is the deployment this private verification request may wake.
+		app, acct, limits, err = e.resolveAppForDeploy(ctx, appID)
+	} else {
+		app, acct, limits, dep, err = e.resolveApp(ctx, appID)
+	}
 	if err != nil {
 		release()
 		return WakeResult{}, err
@@ -2474,7 +2541,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			}
 			return WakeResult{}, fmt.Errorf("sched: resolve explicit deployment: %w", depErr)
 		}
-		if explicitDep.AppID != appID || explicitDep.Status != state.DeployLive {
+		smokeCandidate := deploymentSmoke && explicitDep.Status == state.DeploySnapshotting
+		if explicitDep.AppID != appID || (explicitDep.Status != state.DeployLive && !smokeCandidate) {
 			release()
 			e.IncAtCapacity(appID, "admit")
 			return WakeResult{AtCapacity: true}, nil
@@ -2577,14 +2645,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// non-resident state without touching this process's in-memory ledger.
 		// Reconcile only when the local view would reject at the app cap, so
 		// healthy cold wakes keep the existing zero-query fast path.
-		if e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
+		// ADR-199: compare against the rollout-aware ceiling so a canary
+		// overlap does not trigger a reconcile sweep on every wake.
+		if e.ledger.Concurrency(app.ID) >= e.maxConcurrencyForWake(app, limits, dep.ID) {
 			if repaired, reconcileErr := e.reconcileAppAdmission(ctx, app.ID); reconcileErr != nil {
 				e.log.Warn("sched: reconcile stale admission before cap decision", "app", app.ID, "err", reconcileErr)
 			} else if repaired > 0 {
 				e.log.Info("sched: released stale admission before cap decision", "app", app.ID, "instances", repaired)
 			}
 		}
-		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGate(ctx, &app, limits)
+		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGate(ctx, &app, limits, dep.ID)
 	}
 	if outcome != wakeAdmit {
 		release()
@@ -2594,7 +2664,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.IncAtCapacity(appID, "wake")
 				return WakeResult{AtCapacity: true}, nil
 			}
-			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, effectiveMaxConcurrency(app, limits), e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID), e.ledger.Concurrency(app.ID))
 		case wakeCooldownHeld:
 			// PR-D: 503 + Retry-After with the cooldown remaining
 			// seconds. The customer's plan is fine; their
@@ -2611,7 +2681,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			// at the floor). 429 is the right wire shape — the
 			// customer is asking for a wake that the floor already
 			// satisfies. PR-D keeps CodePlanLimitConcur here.
-			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, effectiveMaxConcurrency(app, limits), e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID), e.ledger.Concurrency(app.ID))
 		case wakeOverageCapReached:
 			// Issue #561: customer's spend cap is at/over the
 			// configured monthly ceiling. Lift to
@@ -2785,7 +2855,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID:  warmHint,
 		PreferredNodeIDs: snapshotNodes,
 		PreferredRegion:  preferredRegion,
@@ -2797,6 +2867,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID, mode)
 	if err != nil {
 		release()
+		// ADR-193: a durable per-node refusal is a typed capacity Problem,
+		// not a wake failure — the chosen node is full, another may not be.
+		// The transaction rolled back, so there is no row to unwind.
+		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
+			return WakeResult{}, capErr
+		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
 	// Reserve declared listeners before the ledger and vmmd admission. The
@@ -2816,11 +2892,18 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		// ADR-199 widens this from the deployment verifier to any rollout
+		// overlap: a traffic split or canary stage bringing up a second
+		// revision alongside the one already serving needs the same
+		// max+1 allowance the smoke verifier has always had. The ledger
+		// enforces the +1 bound (admission.go), and per-node RAM/vCPU
+		// ceilings are unaffected either way.
+		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || e.rolloutGrantApplies(appID, dep.ID),
 		NodeID:                  placement.NodeID,
 		NodeCeilingMB:           placement.CeilingMB,
 		VCPUBudget:              placement.VCPUBudget,
+		CPUBudgetMillicores:     placement.CPUBudgetMillicores,
 	}); err != nil {
 		// Admit failed (capacity / concurrency). The two rejection
 		// modes differ in how loudly the engine surfaces them:
@@ -2971,7 +3054,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
+		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -3853,6 +3936,34 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 	return used
 }
 
+// nodeCPUUsageForNodes merges the durable fleet-wide instance aggregate with
+// this schedd's in-flight ledger. The database view is required because each
+// app-owner schedd has its own ledger and may place an instance on a peer
+// node; a local-only sum would miss reservations created by another owner.
+func (e *Engine) nodeCPUUsageForNodes(ctx context.Context, nodes []state.ComputeNode) map[string]int64 {
+	used := make(map[string]int64, len(nodes))
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+		used[node.ID] = int64(e.ledger.UsedCPUMillicoresForNode(node.ID))
+	}
+	batcher, ok := e.store.(state.ComputeNodeCPUUsageBatcher)
+	if !ok || len(ids) == 0 {
+		return used
+	}
+	bulk, err := batcher.ComputeNodeUsedCPUMillicoresByNode(ctx, ids)
+	if err != nil {
+		e.log.Warn("sched: placement: bulk compute node used_cpu_millicores read failed", "err", err)
+		return used
+	}
+	for _, id := range ids {
+		if bulk[id] > used[id] {
+			used[id] = bulk[id]
+		}
+	}
+	return used
+}
+
 // choosePlacement picks a compute_node for the next wake using the
 // pure ChoosePlacement chooser (placement.go). It loads the live
 // fleet from the store and the per-node used_mb aggregate, both
@@ -3867,13 +3978,18 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 // back to the legacy store sum so a silent vmmd degrades to the
 // pre-axis-5 behaviour rather than dropping the node from the
 // fleet view entirely.
+func effectiveAppCPUMillicores(app state.App) int {
+	if app.CPUMillicores > 0 {
+		return app.CPUMillicores
+	}
+	return api.DefaultAppCPUMillicores
+}
+
 func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
-	// Phase 2 / Gate A: pin placement to the schedd's owner
-	// node. The chooser still runs the per-node headroom checks
-	// (usedMB + usedVCPU + ceiling), but every candidate is
-	// either this owner or nothing — the wake can't escape to
-	// another schedd's fleet. An empty ownerNodeID preserves
-	// the legacy behaviour (pick any active node).
+	// Phase 2 / Gate A: authorize the app against this schedd's owner and
+	// prefer that node for locality. Capacity remains fleet-wide: a saturated
+	// owner may spill to a peer through the routed VMM. An empty ownerNodeID
+	// preserves the legacy behavior (pick any active node).
 	if e.ownerNodeID != "" {
 		// Defence-in-depth: refuse to admit if the app's
 		// persisted owner doesn't match. The gRPC handler's
@@ -3903,6 +4019,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 	// ledger's per-node UsedVCPU remains an independent local reservation view.
 	usedMB := e.nodeUsageForNodes(ctx, nodes)
 	usedVCPU := make(map[string]int64, len(nodes))
+	usedCPUMillicores := e.nodeCPUUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
 		// Tier A2: per-node vCPU is ledger-authoritative. The chooser
 		// uses this to enforce compute_nodes.vcpu_budget per node;
@@ -3910,7 +4027,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		// per-node budget is the gate, not the absolute number).
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
-	return ChoosePlacement(nodes, usedMB, usedVCPU, r)
+	return choosePlacementWithCPU(nodes, usedMB, usedVCPU, usedCPUMillicores, r)
 }
 
 // ClaimUnplaced is the schedd-side async placement claim
@@ -3969,6 +4086,7 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 		AppID:          appID,
 		RAMMB:          app.RAMMB,
 		VCPU:           limits.VCPU,
+		CPUMillicores:  effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency,
 	})
 	if err != nil {
@@ -3988,7 +4106,9 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	// transition. The subscriber itself filters out kind=claimed
 	// to avoid re-entry.
 	if e.notif != nil {
-		payload := fmt.Sprintf(`{"kind":"claimed","app_id":%q,"node_id":%q}`, appID, placement.NodeID)
+		payload := string(safetext.JSONObject(appPlacementChange{
+			Kind: "claimed", AppID: appID, NodeID: placement.NodeID,
+		}))
 		if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
 			e.log.Warn("sched: claim unplaced: notify claimed",
 				"app_id", appID, "node_id", placement.NodeID, "err", err)
@@ -4196,9 +4316,9 @@ func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) e
 		// subscriber drops the rebalanced kind so no re-
 		// entry loop happens.
 		if e.notif != nil {
-			payload := fmt.Sprintf(
-				`{"kind":"rebalanced","app_id":%q,"from_node":%q,"to_node":%q}`,
-				app.ID, app.NodeID, e.ownerNodeID)
+			payload := string(safetext.JSONObject(appPlacementChange{
+				Kind: "rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: e.ownerNodeID,
+			}))
 			if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
 				e.log.Warn("sched: rebalance: notify rebalanced",
 					"app_id", app.ID, "from", app.NodeID,
@@ -4399,9 +4519,9 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 	// pkg/sched/placement_claim.go's subscriber drops the
 	// pressure_rebalanced kind so no re-entry loop happens.
 	if e.notif != nil {
-		payload := fmt.Sprintf(
-			`{"kind":"pressure_rebalanced","app_id":%q,"from_node":%q,"to_node":%q}`,
-			app.ID, app.NodeID, peer)
+		payload := string(safetext.JSONObject(appPlacementChange{
+			Kind: "pressure_rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: peer,
+		}))
 		if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
 			e.log.Warn("sched: pressure rebalance: notify rebalanced",
 				"app_id", app.ID, "from", app.NodeID, "to", peer, "err", err)
@@ -4577,6 +4697,20 @@ func (e *Engine) resolveNodeCeiling(ctx context.Context, nodeID string) (int, in
 	return n.AdmissionCeilingMB, n.VCPUBudget, nil
 }
 
+func (e *Engine) resolveNodeCPUBudgetMillicores(ctx context.Context, nodeID string) int {
+	if nodeID == "" {
+		return 0
+	}
+	n, err := e.store.ComputeNodeByID(ctx, nodeID)
+	if err != nil {
+		return 0
+	}
+	// One formula for the whole package: see cpuBudgetMillicores, which
+	// applies spec §1's CPUOvercommit. A second copy here is how the
+	// overcommit factor went missing from the admission path before.
+	return int(cpuBudgetMillicores(n))
+}
+
 // BuildAppSpecForMigration (Tier A5 / ADR-066) rebuilds the
 // AppSpec shape vmmd needs to restore a migrated VM from the
 // local app + deployment view. The lookup walks: instance → app
@@ -4654,7 +4788,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:     int32(limits.VCPU),
 		MemSizeMiB:    int32(app.RAMMB),
-		CPUMillicores: int32(app.CPUMillicores),
+		CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit:    int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
@@ -5286,7 +5420,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// The chooser still enforces liveness and CPU/RAM admission.
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
@@ -5310,17 +5444,24 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	primeWakeID := primeWakeUUID.String()
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID, instanceModeForApp(app))
 	if err != nil {
+		// ADR-193: see the wake path. Prime is cold boot by design, so a
+		// node-full refusal here fails the deployment rather than the wake;
+		// the typed Problem is what carries CodeCapacity to the deploy row.
+		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
+			return capErr
+		}
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-		Kind:          KindSnapshotPrime,
-		NodeID:        placement.NodeID,
-		NodeCeilingMB: placement.CeilingMB,
-		VCPUBudget:    placement.VCPUBudget,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		Kind:                KindSnapshotPrime,
+		NodeID:              placement.NodeID,
+		NodeCeilingMB:       placement.CeilingMB,
+		VCPUBudget:          placement.VCPUBudget,
+		CPUBudgetMillicores: placement.CPUBudgetMillicores,
 	}); err != nil {
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_admit_denied")
 		return err
@@ -5350,7 +5491,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
+		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
@@ -5552,7 +5693,7 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 		// StopInstance owns the mode-aware signal/grace/destroy sequence, but
 		// it must acquire the same app lock, so release this lock first.
 		e.unlockApp(ins.AppID)
-		_, err := e.StopInstance(ctx, instanceID, StopOptions{GraceSeconds: 30})
+		_, err := e.StopInstance(ctx, instanceID, StopOptions{})
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
@@ -5703,7 +5844,8 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				// Worker/job instances are durable workload processes, not
 				// snapshot cache entries. App eviction therefore follows the
 				// signal/grace/destroy path even when the row is RUNNING.
-				if _, stopErr := e.vmm.StopInstanceOnNode(ctx, fresh.NodeID, fresh.ID, int32(syscall.SIGTERM), 30); stopErr != nil {
+				opts := e.workerStopOptions(app)
+				if _, stopErr := e.vmm.StopInstanceOnNode(ctx, fresh.NodeID, fresh.ID, opts.Signal, opts.GraceSeconds); stopErr != nil {
 					e.log.Warn("sched: park app: stop worker/job signal failed; falling through to destroy", "instance", fresh.ID, "err", stopErr)
 				}
 				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
@@ -6027,14 +6169,28 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 	switch mode {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		// Signal-grace-SIGKILL sequence (ADR-138 §Decision 1).
-		// signal=0 → SIGTERM default; graceSeconds comes from
-		// manifest.StopGracePeriodS capped at the per-plan tier
-		// (commit 10).
+		// signal=0 → manifest.StopSignal (defaulting to SIGTERM);
+		// graceSeconds comes from opts.GraceSeconds, or manifest.StopGracePeriodS
+		// (capped at the per-plan tier), defaulting to 30.
 		signal := syscall.Signal(opts.Signal)
+		grace := opts.GraceSeconds
+		if signal == 0 || grace <= 0 {
+			if app, aerr := e.store.AppByID(ctx, ins.AppID); aerr == nil {
+				if signal == 0 {
+					signal = parseStopSignal(app.Manifest.StopSignal)
+				}
+				if grace <= 0 && app.Manifest.StopGracePeriodS > 0 {
+					grace = int32(app.Manifest.StopGracePeriodS)
+				}
+			}
+		}
 		if signal == 0 {
 			signal = syscall.SIGTERM
 		}
-		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), int32(opts.GraceSeconds))
+		if grace <= 0 {
+			grace = 30
+		}
+		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace)
 		if serr != nil {
 			e.log.Warn("sched: stop instance signal-grace failed; falling through to destroy",
 				"op", op, "instance", instanceID, "err", serr)
@@ -6264,6 +6420,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 	// the next time the chooser runs.
 	ceilings := map[string]int{}
 	budgets := map[string]int{}
+	cpuBudgets := map[string]int{}
 	loadCeiling := func(ctx context.Context, nodeID string) int {
 		if c, ok := ceilings[nodeID]; ok {
 			return c
@@ -6292,6 +6449,19 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		}
 		budgets[nodeID] = n.VCPUBudget
 		return n.VCPUBudget
+	}
+	loadCPUBudgetMillicores := func(ctx context.Context, nodeID string) int {
+		if b, ok := cpuBudgets[nodeID]; ok {
+			return b
+		}
+		n, err := e.store.ComputeNodeByID(ctx, nodeID)
+		if err != nil {
+			cpuBudgets[nodeID] = 0
+			return 0
+		}
+		budget := int(cpuBudgetMillicores(n))
+		cpuBudgets[nodeID] = budget
+		return budget
 	}
 	for _, app := range apps {
 		if !e.ownsApp(app) {
@@ -6327,16 +6497,18 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 			if err := e.ledger.Admit(Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
-				RAMMB: ins.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				// Recovery must account for the one candidate/stable overlap
 				// that deployment smoke may have admitted before a restart.
 				// This does not authorize new capacity: the rows are already
 				// resident, and the reconstructed count blocks normal admits.
-				AllowConcurrencyOverlap: true,
-				NodeID:                  nodeID,
-				NodeCeilingMB:           loadCeiling(ctx, nodeID),
-				VCPUBudget:              loadVCPUBudget(ctx, nodeID),
-				Kind:                    kind,
+				AllowConcurrencyOverlap:    true,
+				NodeID:                     nodeID,
+				NodeCeilingMB:              loadCeiling(ctx, nodeID),
+				VCPUBudget:                 loadVCPUBudget(ctx, nodeID),
+				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
+				AllowCPUOvercommitRecovery: true,
+				Kind:                       kind,
 			}); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
 				continue
@@ -7101,7 +7273,7 @@ func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan s
 }
 
 func (e *Engine) snapshotCompatible(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) bool {
-	if snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+	if snap.Stale || snap.FCVersion != e.fcVer || state.SnapshotDriveKey(snap) == "" || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
 		return false
 	}
 	if appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC {
@@ -8382,14 +8554,69 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 	return app.MaxConcurrency
 }
 
-func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits) (wakeOutcome, int64, int64, int, bool) {
+// rolloutGrantApplies reports whether this wake is the overlap window of a
+// traffic split or canary stage — a second deployment coming up alongside
+// the one already serving (ADR-199).
+//
+// The test is two O(1) ledger reads, deliberately: this runs on the wake hot
+// path and must not add a query. The shape it detects is exactly:
+//
+//	the target deployment currently has NO instances   (it is the new revision)
+//	AND the app has at least one instance              (an older revision is serving)
+//
+// which is true only while two revisions overlap. Once the rollout completes
+// and the old deployment's instances are reaped, the target deployment holds
+// the instances itself and the first condition goes false, so the grant
+// retires on its own without anything having to expire it.
+//
+// Returns false for an empty deploymentID: without a target we cannot tell a
+// rollout from ordinary scale-out, and the safe answer is the plan cap.
+func (e *Engine) rolloutGrantApplies(appID, deploymentID string) bool {
+	if deploymentID == "" || e.ledger == nil {
+		return false
+	}
+	if e.ledger.ConcurrencyForDeployment(appID, deploymentID) != 0 {
+		return false
+	}
+	return e.ledger.Concurrency(appID) >= 1
+}
+
+// maxConcurrencyForWake is effectiveMaxConcurrency plus the ADR-199 rollout
+// grant when this wake is a rollout overlap. Every caller that decides
+// "is this app at its concurrency cap" during a wake must use this rather
+// than effectiveMaxConcurrency, or the engine-side gate would reject a
+// canary before NodeLedger.Admit ever gets the chance to allow the overlap
+// it already permits via Request.AllowConcurrencyOverlap.
+//
+// The two must agree. admitGate is the engine's early cap check and the
+// ledger is the authority; this function exists so both read the same
+// ceiling for the same wake.
+//
+// This widens the PLAN gate only. NodeLedger.Admit still enforces the RAM
+// ledger, the per-node ceiling (ADR-193) and vCPU, so the grant can never
+// push a node past its physical budget — under pressure the extra instance
+// is refused and the ladder simply holds at its current stage.
+func (e *Engine) maxConcurrencyForWake(app state.App, limits api.Limits, deploymentID string) int {
+	max := effectiveMaxConcurrency(app, limits)
+	if e.rolloutGrantApplies(app.ID, deploymentID) {
+		max += api.RolloutConcurrencyGrant
+	}
+	return max
+}
+
+func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID string) (wakeOutcome, int64, int64, int, bool) {
 	concurrency := e.ledger.Concurrency(app.ID)
 	// Mirror admission.go:149-152: apps created via store.CreateApp
 	// without a subsequent UpdateApp leave MaxConcurrency at 0.
 	// Clamp against the plan ceiling so legacy / pre-PR-A apps still
 	// admit normally. Without the clamp, an app with MaxConcurrency=0
 	// would always return wakeRejectAtCap and every wake would 429.
-	maxConc := effectiveMaxConcurrency(*app, limits)
+	//
+	// ADR-199: maxConcurrencyForWake adds RolloutConcurrencyGrant while a
+	// second deployment is coming up alongside the one already serving, so
+	// a canary can overlap two revisions on a plan whose cap equals its
+	// steady-state instance count (Free = 1).
+	maxConc := e.maxConcurrencyForWake(*app, limits, deploymentID)
 	if concurrency >= maxConc {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "reject_at_cap")

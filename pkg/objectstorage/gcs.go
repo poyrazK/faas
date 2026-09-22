@@ -20,6 +20,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
@@ -32,6 +33,7 @@ const (
 	gcsManagedLabel    = "gregale-backend"
 	gcsMaxControlBody  = 2 << 20
 	gcsRequestTimeout  = 20 * time.Second
+	gcsCloudScope      = "https://www.googleapis.com/auth/cloud-platform"
 )
 
 // GCS uses the native JSON API for bucket/object management, OAuth 2.0 for
@@ -86,19 +88,33 @@ type googleGCSStore struct {
 
 func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 	ctx := context.Background()
-	creds, err := google.FindDefaultCredentials(ctx, storage.ScopeFullControl)
+	sourceScope := storage.ScopeFullControl
+	if c.GCSImpersonateServiceAccount {
+		sourceScope = gcsCloudScope
+	}
+	creds, err := google.FindDefaultCredentials(ctx, sourceScope)
 	if err != nil {
 		return nil, errors.New("GCS application default credentials are unavailable")
 	}
-	oauthClient := oauth2.NewClient(context.Background(), creds.TokenSource)
-	oauthClient.Timeout = gcsRequestTimeout
-	oauthClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	oauthClient.Transport = dependencytrace.NewDependencyTransport(oauthClient.Transport,
-		attribute.String("gregale.dependency.type", "managed_binding"),
-		attribute.String("gregale.binding.type", "object_storage"),
-		attribute.String("gregale.binding.provider", "gcs"),
-	)
-	clientOptions := []option.ClientOption{option.WithCredentials(creds), option.WithHTTPClient(oauthClient), storage.WithJSONReads(), storage.WithDisabledClientMetrics()}
+	providerTokenSource := creds.TokenSource
+	if c.GCSImpersonateServiceAccount {
+		providerTokenSource, err = impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
+			TargetPrincipal: c.GCSServiceAccount,
+			Scopes:          []string{storage.ScopeFullControl},
+		}, option.WithCredentials(creds))
+		if err != nil {
+			return nil, errors.New("GCS service account impersonation initialization failed")
+		}
+	}
+	oauthClient := newGCSHTTPClient(providerTokenSource)
+	signClient := oauthClient
+	if c.GCSImpersonateServiceAccount {
+		// IAM signBlob authorizes the attached source identity to sign as the
+		// target. An impersonated token cannot bootstrap its own signer unless
+		// the target service account is unnecessarily granted self-access.
+		signClient = newGCSHTTPClient(creds.TokenSource)
+	}
+	clientOptions := []option.ClientOption{option.WithHTTPClient(oauthClient), storage.WithJSONReads(), storage.WithDisabledClientMetrics()}
 	endpoint := c.Endpoint
 	if endpoint == "" {
 		endpoint = gcsDefaultEndpoint
@@ -130,8 +146,20 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 		origins:        append([]string(nil), c.AllowedOrigins...),
 		now:            func() time.Time { return time.Now().UTC() },
 	}
-	p.sign = (&gcsIAMBlobSigner{client: oauthClient, serviceAccount: c.GCSServiceAccount, endpoint: gcsIAMSignEndpoint}).Sign
+	p.sign = (&gcsIAMBlobSigner{client: signClient, serviceAccount: c.GCSServiceAccount, endpoint: gcsIAMSignEndpoint}).Sign
 	return p, nil
+}
+
+func newGCSHTTPClient(tokenSource oauth2.TokenSource) *http.Client {
+	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
+	oauthClient.Timeout = gcsRequestTimeout
+	oauthClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	oauthClient.Transport = dependencytrace.NewDependencyTransport(oauthClient.Transport,
+		attribute.String("gregale.dependency.type", "managed_binding"),
+		attribute.String("gregale.binding.type", "object_storage"),
+		attribute.String("gregale.binding.provider", "gcs"),
+	)
+	return oauthClient
 }
 
 func (s *googleGCSStore) CreateBucket(ctx context.Context, bucket string, spec gcsBucketSpec) error {

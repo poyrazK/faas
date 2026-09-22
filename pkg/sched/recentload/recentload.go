@@ -94,10 +94,12 @@ func New(scraper PromScraper, windowSize int, bucketSize time.Duration) *RecentL
 	}
 }
 
-// WithRateReader attaches the VMMD telemetry fallback. Production wires the
-// scheduler's instance-stats reader even when a gateway scraper is available;
-// fresh gateway samples remain preferred, and telemetry is used only when the
-// cumulative gateway signal has no current observation.
+// WithRateReader attaches the VMMD request-start telemetry. Production wires
+// the scheduler's instance-stats reader even when a gateway scraper is
+// available. Scale-in uses the larger fresh signal because the gateway counter
+// advances only when a request completes, while VMMD observes it at start. A
+// completion-only view can otherwise read zero throughout a saturated,
+// long-running request and tear down capacity that is still serving traffic.
 func (r *RecentLoad) WithRateReader(reader RequestRateReader) *RecentLoad {
 	if r != nil {
 		r.rateReader = reader
@@ -242,8 +244,10 @@ func (r *RecentLoad) RecentRate(appID string, now time.Time) float64 {
 // RecentRateWithSignal returns the current rolling rate and whether a fresh
 // observation exists. A real zero rate is therefore distinct from an absent
 // signal: zero may safely drive scale-in, while absence must defer to the idle
-// reaper. Fresh gateway counter deltas are preferred; VMMD rate samples are
-// averaged over the same rolling window when the gateway signal is absent.
+// reaper. Gateway completion deltas and VMMD request-start rates are evaluated
+// over the same rolling window; when both are fresh, the larger rate wins. This
+// is intentionally conservative for scale-in: starts lead completions while
+// requests are active, and completions can lead starts while a burst drains.
 func (r *RecentLoad) RecentRateWithSignal(appID string, now time.Time) (float64, bool) {
 	if r == nil || appID == "" {
 		return 0, false
@@ -256,17 +260,22 @@ func (r *RecentLoad) RecentRateWithSignal(appID string, now time.Time) (float64,
 	cutoff := currentBucket - int64(r.windowSize) + 1
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var (
+		gatewayRate float64
+		gatewaySeen bool
+		startRate   float64
+		startSeen   bool
+	)
 	if window := r.byApp[appID]; window != nil {
 		var sum int64
-		observed := false
 		for _, b := range window.buckets {
 			if b.bucket >= cutoff {
 				sum += b.count
-				observed = true
+				gatewaySeen = true
 			}
 		}
-		if observed {
-			return float64(sum) / windowSeconds, true
+		if gatewaySeen {
+			gatewayRate = float64(sum) / windowSeconds
 		}
 	}
 	if window := r.rateByApp[appID]; window != nil {
@@ -279,10 +288,20 @@ func (r *RecentLoad) RecentRateWithSignal(appID string, now time.Time) (float64,
 			}
 		}
 		if samples > 0 {
-			return sum / float64(samples), true
+			startRate = sum / float64(samples)
+			startSeen = true
 		}
 	}
-	return 0, false
+	switch {
+	case gatewaySeen && startSeen:
+		return math.Max(gatewayRate, startRate), true
+	case gatewaySeen:
+		return gatewayRate, true
+	case startSeen:
+		return startRate, true
+	default:
+		return 0, false
+	}
 }
 
 // RecentDesiredReplicas returns ceil(recent_rps / targetRPS) for appID.

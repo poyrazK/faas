@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/secretscan"
+	"github.com/onebox-faas/faas/pkg/simpleapp"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -604,7 +605,7 @@ func cmdApp(args []string) int {
 			return jsonOut(writeJSON(a))
 		}
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
-		fmt.Printf("%-30s %s\n", "url:", a.URL)
+		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
 		fmt.Printf("%-30s %d\n", "guest vcpu:", a.VCPU)
@@ -979,10 +980,21 @@ func applyDeployLifecycleToCreateRequest(req *api.CreateAppRequest, executionMod
 	if req == nil {
 		return
 	}
-	req.ExecutionMode = executionMode
-	req.RestartPolicy = restartPolicy
-	req.StartupDeadlineS = startupDeadlineS
-	req.MaxRetries = maxRetries
+	// Empty lifecycle flags mean "use the resolved plan default". Preserve a
+	// simple-app plan's explicit request mode while still letting an explicit
+	// deploy flag override it.
+	if executionMode != "" {
+		req.ExecutionMode = executionMode
+	}
+	if restartPolicy != "" {
+		req.RestartPolicy = restartPolicy
+	}
+	if startupDeadlineS != 0 {
+		req.StartupDeadlineS = startupDeadlineS
+	}
+	if maxRetries != 0 {
+		req.MaxRetries = maxRetries
+	}
 }
 
 // materializeCommittedGitSource builds the HEAD archive selected by the
@@ -1259,6 +1271,13 @@ func serviceReplicasEqual(a, b *api.ServiceReplicas) bool {
 	return a.Min == b.Min && a.Max == b.Max && a.Desired == b.Desired
 }
 
+func workerReplicasEqual(a, b *api.WorkerScaling) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Target == b.Target
+}
+
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
 	manifest := current.Manifest
 	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
@@ -1273,10 +1292,22 @@ func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest)
 	if desired.MaxRetries != nil && manifest.MaxRetries != *desired.MaxRetries {
 		return true
 	}
+	if desired.StopGracePeriodS != nil {
+		currentGraceS := int(manifest.StopGracePeriod / time.Second)
+		if currentGraceS != *desired.StopGracePeriodS {
+			return true
+		}
+	}
+	if desired.StopSignal != nil && manifest.StopSignal != *desired.StopSignal {
+		return true
+	}
 	if desired.RequestTimeoutS != nil && manifest.RequestTimeoutS != *desired.RequestTimeoutS {
 		return true
 	}
 	if desired.ServiceReplicas != nil && !serviceReplicasEqual(manifest.ServiceReplicas, desired.ServiceReplicas) {
+		return true
+	}
+	if desired.WorkerReplicas != nil && !workerReplicasEqual(manifest.WorkerReplicas, desired.WorkerReplicas) {
 		return true
 	}
 	return false
@@ -1293,13 +1324,28 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || m.Lifecycle == nil || m.Lifecycle.Empty() {
+	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	desired := m.Lifecycle.ToAPI()
+	desired := api.UpdateAppRequest{}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		desired = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		desired.ExecutionMode = &workerMode
+		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			desired.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			desired.StopSignal = &sig
+		}
+	}
 	current, err := client.GetApp(ctx, slug)
 	if err != nil {
 		return fmt.Errorf("read app before applying lifecycle policy: %w", err)
@@ -1326,7 +1372,7 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil) {
+	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil && (m.Worker == nil || m.Worker.Scale.Metric == "")) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1338,7 +1384,20 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 	}
 	update := api.UpdateAppRequest{}
 	changed := false
-	if m.Scaling != nil {
+	if m.Worker != nil && m.Worker.Scale.Metric != "" {
+		policy := &api.ScalingPolicy{
+			MinInstances: m.Worker.Scale.Min,
+			MaxInstances: m.Worker.Scale.Max,
+			Target: &api.ScalingTarget{
+				Metric: m.Worker.Scale.Metric,
+				Value:  m.Worker.Scale.Target,
+			},
+		}
+		if !scalingPolicyEqual(current.ScalingPolicy, policy) {
+			update.ScalingPolicy = policy
+			changed = true
+		}
+	} else if m.Scaling != nil {
 		desired := m.Scaling.ToAPI()
 		if !scalingPolicyEqual(current.ScalingPolicy, desired) {
 			update.ScalingPolicy = desired
@@ -2055,6 +2114,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// CreateApp, upload, deployment, or other write is allowed after the
 	// authenticated client is acquired.
 	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	// --plan is the local, no-auth preview for the simple stateless app path.
+	// Unlike --dry-run/--diff it does not compare remote state or call apid; it
+	// only resolves framework, listener, resource, and state defaults.
+	simplePlan := fs.Bool("plan", false, "show the simple stateless app plan without login, upload, or remote changes")
 	diffJSON := fs.Bool("json", false, "emit JSON output (with --diff or --dry-run)")
 	diffStrict := fs.Bool("strict", false, "exit non-zero on schema/quota/env breaks (default with --diff)")
 	diffLenient := fs.Bool("lenient", false, "exit zero even on breaks; --diff still renders them")
@@ -2091,7 +2154,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only|--safe] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2207,6 +2270,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "") {
 		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, or --repo"))
+	}
+	if *simplePlan {
+		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New("--plan cannot be combined with deploy mutation or project preview flags"))
+		}
+		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
+			return printErr("Invalid flags", errors.New("--plan supports the current directory, --path, or --image; use --dry-run for archives and repositories"))
+		}
+		if *secretsFile != "" {
+			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
+		}
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "canary-preset", "canary-stages", "rollback-on-5xx", "require-authn", "no-require-authn", "app-protocol"} {
+			if explicit[name] {
+				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
+			}
+		}
 	}
 	if projectRequested {
 		if *image != "" {
@@ -2596,6 +2675,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// sourceRoot is persisted only for workspace-context deploys. An empty
 	// value means the uploaded archive root and preserves the legacy wire shape.
 	var sourceRoot string
+	// resolvedSimplePlan is resolved once the selected source is authoritative. The
+	// normal deploy and `--plan` paths then share the same app defaults without
+	// affecting functions, projects, or explicit lifecycle modes.
+	var resolvedSimplePlan *simpleapp.Plan
 	var workspaceContextRoot string
 	// Issue #737 / ADR-083: explicit --function / --app on a
 	// --tarball / --template path skips the cwd detector (no cwd
@@ -2680,6 +2763,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
+	if *simplePlan {
+		sourceKind := simpleapp.SourceDirectory
+		if *image != "" {
+			sourceKind = simpleapp.SourceImage
+		}
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		if planErr != nil {
+			return printErr("Could not resolve simple app plan", planErr)
+		}
+		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
 	}
 	// Authenticate before any zero-config source scan or archive extraction. The
 	// zero-config path can inspect the working tree, run doctor checks, and
@@ -3038,6 +3132,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
+	if !projectRequested && resolvedShape == shapeApp && *executionMode == "" && *restartPolicy == "" &&
+		*startupDeadlineS == 0 && *maxRetries == 0 {
+		sourceKind := simpleapp.SourceDirectory
+		if *image != "" {
+			sourceKind = simpleapp.SourceImage
+		}
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, true, false)
+		if planErr != nil {
+			return printErr("Could not resolve simple app plan", planErr)
+		}
+		resolvedSimplePlan = &plan
+	}
+
 	if client == nil {
 		var authErr error
 		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
@@ -3304,8 +3411,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Manifest resource scope resolution failed", err)
 	}
 	resolvedApp := api.AppResponse{}
+	if existingApp {
+		// Developer sessions already own the app and intentionally skip the
+		// create-or-fetch probe. Read its metadata once so receipts still use
+		// the customer-facing canonical URL when a custom domain is configured.
+		if app, readErr := client.GetApp(ctx, slug); readErr == nil {
+			resolvedApp = app
+		}
+	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		if resolvedSimplePlan != nil {
+			applySimpleAppPlanToCreateRequest(&createReq, *resolvedSimplePlan)
+		}
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
@@ -3340,6 +3458,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	appURL := deployedAppURL(slug)
 	if resolvedApp.ID != "" {
 		appURL = canonicalAppURL(resolvedApp)
+	} else if existingApp {
+		appURL = deploymentAppURL(ctx, client, slug)
 	}
 	if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest database bindings failed", err)
@@ -3645,7 +3765,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -3837,7 +3957,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 // than silently PATCHing the wrong row.
 func cmdTrafficSet(args []string) int {
 	fs := newFlagSet("traffic set", flag.ContinueOnError)
-	deployment := fs.String("deployment", "", "deployment id to set the traffic split on")
+	// --app is optional: it is only needed to resolve a `v42` revision
+	// handle (ADR-198), because this endpoint is addressed by deployment
+	// id alone and carries no app context. Passing a uuid keeps working
+	// with no --app, so the pre-ADR-198 invocation is unchanged.
+	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
+	deployment := fs.String("deployment", "", "deployment id or vN revision to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -3846,21 +3971,28 @@ func cmdTrafficSet(args []string) int {
 		return 1
 	}
 	if *deployment == "" || *percent < 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic set --deployment <id> --percent N", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic set [--app <slug>] --deployment <id|vN> --percent N", "traffic")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	dep, err := client.PatchDeploymentsIdTraffic(context.Background(), *deployment, *percent)
+	// ADR-198: use the ambient resolver so `traffic set` behaves like every
+	// other deployment-addressing command — --app when given, else the
+	// linked project.
+	deploymentID, err := resolveDeploymentArg(context.Background(), client, *app, *deployment)
+	if err != nil {
+		return printErr("Traffic set failed", err)
+	}
+	dep, err := client.PatchDeploymentsIdTraffic(context.Background(), deploymentID, *percent)
 	if err != nil {
 		return printErr("Traffic set failed", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(dep))
 	}
-	PrintOK(osStdout, "Set %s → %d%%", dep.ID, dep.TrafficPercent)
+	PrintOK(osStdout, "Set %s → %d%%", deploymentLabel(dep), dep.TrafficPercent)
 	return 0
 }
 
@@ -3901,11 +4033,19 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "DEPLOYMENT\tSTATUS\tTRAFFIC")
+	// ADR-198: lead with the revision, because that is the handle the
+	// operator types back into `traffic set` / `rollback`. The id stays
+	// in the table so a pre-ADR-198 row (revision 0) is still
+	// addressable and so scripts parsing this output keep working.
+	_, _ = fmt.Fprintln(osStdout, "REVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC")
 	for _, deployment := range live {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d%%\n", deployment.ID, deployment.Status, deployment.TrafficPercent)
+		revision := renderRevision(deployment.Revision)
+		if revision == "" {
+			revision = "-"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d%%\n", revision, deployment.ID, deployment.Status, deployment.TrafficPercent)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total\t\t%d%%\n", total)
+	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
 }
 
@@ -5056,7 +5196,7 @@ func cmdLogs(args []string) int {
 	}
 	fs := newFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines")
-	deployment := fs.String("deployment", "", "deployment id (default: latest)")
+	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
@@ -5132,7 +5272,22 @@ func cmdLogs(args []string) int {
 			return 2
 		}
 	}
-	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
+	// ADR-198: --deployment accepts a vN handle. `slug` is already
+	// resolved above (positional, else linked project), so the revision is
+	// unambiguous without a second flag. A uuid short-circuits.
+	deploymentRef := *deployment
+	if deploymentRef != "" {
+		logsClient, clientErr := authedClient()
+		if clientErr != nil {
+			return printErr("Not logged in", clientErr)
+		}
+		resolved, resolveErr := resolveDeploymentRef(context.Background(), logsClient, slug, deploymentRef)
+		if resolveErr != nil {
+			return printErr("Could not resolve deployment", resolveErr)
+		}
+		deploymentRef = resolved
+	}
+	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,
 		Since: *since,
 		Level: *level,
@@ -5151,7 +5306,7 @@ func cmdLogs(args []string) int {
 func cmdLogsTail(args []string) int {
 	fs := newFlagSet("logs tail", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines (alias always follows; flag is redundant)")
-	deployment := fs.String("deployment", "", "deployment id (default: latest)")
+	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
@@ -5827,6 +5982,15 @@ streamLoop:
 				if json.Unmarshal([]byte(e.Data), &status) == nil && isTerminalDeploymentStatus(status.Status) {
 					terminal := dep
 					terminal.Status = status.Status
+					if status.Status == deploymentStatusFailed {
+						// Terminal SSE frames intentionally contain only status. Refresh
+						// the durable row so the customer sees the persisted build/image/
+						// readiness reason instead of the queued response's empty Error.
+						if got, err := c.GetDeployment(waitCtx, dep.ID); err == nil && isCompletedDeployment(got) {
+							return terminalDeploymentWithFailure(got, failedStage, failedReason)
+						}
+						terminal.Error = strings.TrimSpace(failedReason)
+					}
 					if status.Status == statusLive && len(dep.StageState) > 0 {
 						if got, err := c.GetDeployment(waitCtx, dep.ID); err == nil && isCompletedDeployment(got) {
 							return terminalDeploymentWithFailure(got, failedStage, failedReason)
@@ -6144,6 +6308,10 @@ func printDeployColdWakeSentence() {
 // the legacy 4-class copy. Falls back to mapFailureMessage for
 // pre-cluster rows that only have the raw failure_class string.
 func renderDeployFailure(d api.DeploymentResponse) int {
+	if strings.TrimSpace(d.Error) == "" {
+		PrintFail(os.Stderr, "Deployment %s failed without a server reason. Inspect details with: gregale deploys status %s", d.ID, d.ID)
+		return 1
+	}
 	if d.ErrorCode != "" {
 		problem := &api.Problem{
 			Code:   d.ErrorCode,

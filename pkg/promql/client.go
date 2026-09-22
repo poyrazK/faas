@@ -58,6 +58,26 @@ func NewClient(baseURL string, doer HTTPDoer) *Client {
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), doer: doer, timeout: 3 * time.Second}
 }
 
+// WithTimeout returns an independent client that uses d for both the request
+// context and the default net/http transport deadline. Copying avoids a data
+// race when one endpoint needs a larger budget than the shared status client.
+func (c *Client) WithTimeout(d time.Duration) *Client {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	if d <= 0 {
+		return &clone
+	}
+	clone.timeout = d
+	if httpClient, ok := c.doer.(*http.Client); ok {
+		httpClone := *httpClient
+		httpClone.Timeout = d
+		clone.doer = &httpClone
+	}
+	return &clone
+}
+
 // SetTimeout overrides the per-query timeout. Use for slow queries in
 // tests; production uses the 3s default.
 func (c *Client) SetTimeout(d time.Duration) { c.timeout = d }

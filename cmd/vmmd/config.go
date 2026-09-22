@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"strconv"
@@ -411,6 +412,34 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // defaults filled in. A missing file is not an error if defaults suffice;
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
+	// Size the node from the machine it is on, not from the single-box
+	// constants. The old defaults advertised 56,000 MB / 47,600 MB on every
+	// host regardless of hardware, so a 16 GiB compute node told schedd it
+	// had roughly three times the memory it really has and admission
+	// enforced invariant §6.2-2 against a figure the host could not honour.
+	// DeriveNodeSizing reproduces the §13 constants exactly on the 64 GB
+	// reference box, so this is a generalisation rather than a new policy.
+	// Explicit [compute_node] fields and FAAS_* overrides still win below.
+	sizing := api.DeriveNodeSizing(hostMemTotalMB(), hostCPUs())
+	// Sizing decides what schedd will admit onto this host, so it must be
+	// visible without reading the database. "derived" means the host was
+	// probed; "single-box-fallback" means detection failed and the legacy
+	// constants apply, which on small hardware is the overcommitting case
+	// an operator needs to notice.
+	sizingSource := "derived"
+	if hostMemTotalMB() <= 0 {
+		sizingSource = "single-box-fallback"
+	}
+	slog.Default().Info("vmmd: compute node sizing resolved",
+		"source", sizingSource,
+		"host_mem_mb", hostMemTotalMB(),
+		"host_cpus", hostCPUs(),
+		"mem_mb", sizing.MemMB,
+		"tenant_slice_max_mb", sizing.TenantSliceMaxMB,
+		"tenant_budget_mb", sizing.TenantBudgetMB,
+		"admission_ceiling_mb", sizing.AdmissionCeilingMB,
+		"non_tenant_reserve_mb", sizing.NonTenantReserveMB,
+		"vcpu_slots", sizing.VCPUSlots)
 	c := &Config{
 		SocketPath:         "/run/faas/vmmd.sock",
 		RestoreConcurrency: 3,
@@ -435,20 +464,24 @@ func LoadConfig(path string) (*Config, error) {
 			// still has a coherent self-registration on first boot.
 			// Operators scaling beyond one box override every
 			// [compute_node] field explicitly via vmmd.toml.
-			// PR scale-out readiness #4: AdmissionCeilingMB routes
-			// through api.DefaultComputeNodeCeilingMB so the
-			// MemStore seed (pkg/state/memstore.go) and vmmd
-			// share a single source of truth. Resolves to 47_600.
-			// Issue #938 / PR-A: VCPUBudget defaults to api.VCPUSlots
-			// (160) so the upsert satisfies the migration 00123 CHECK
-			// constraint (vcpu_budget > 0) without operator action on
-			// single-box dev. Heterogeneous fleets override per-host
-			// via [compute_node].vcpu_budget or FAAS_VCPU_BUDGET.
-			VPCPUs:             160,
-			MemMB:              56000,
+			// Sizing now comes from DeriveNodeSizing (above): the
+			// 64 GB reference box still resolves to 56_000 / 47_600 /
+			// 160, matching the MemStore seed and migration 00123's
+			// vcpu_budget > 0 CHECK, while smaller hosts register the
+			// capacity they actually have. Heterogeneous fleets can
+			// still pin any field via [compute_node] or FAAS_*.
+			// vpcpus is the PHYSICAL CPU count. pkg/sched's
+			// cpuBudgetMillicores multiplies it by spec §1's
+			// CPUOvercommit, so storing the already-overcommitted
+			// VCPUSlots here would apply the factor twice. When the
+			// host could not be probed, HostCPUs is 0 and the legacy
+			// VCPUSlots constant stands in, matching the fallback the
+			// rest of this block uses.
+			VPCPUs:             vpcpusDefault(sizing),
+			MemMB:              sizing.MemMB,
 			MaxConcurrency:     200,
-			AdmissionCeilingMB: api.DefaultComputeNodeCeilingMB(),
-			VCPUBudget:         api.VCPUSlots,
+			AdmissionCeilingMB: sizing.AdmissionCeilingMB,
+			VCPUBudget:         sizing.VCPUSlots,
 		},
 	}
 	b, err := os.ReadFile(path)
@@ -475,6 +508,28 @@ func LoadConfig(path string) (*Config, error) {
 	// gate at boot calls role.Require to refuse to start under the
 	// wrong box shape.
 	c.Role = role.FromConfig(string(c.Role), "FAAS_VMMD_ROLE")
+	// The reserve subtracted above assumed the single-box shape, which
+	// charges this host the full §13 control-plane slice (Postgres, apid,
+	// meterd, githubd, gatewayd-public). Under RoleComputeOnly none of
+	// those daemons may even start, so re-derive with the compute-only
+	// reserve now that the role is known. Only fields still holding the
+	// single-box default are replaced: an explicit [compute_node] value in
+	// vmmd.toml, and the FAAS_COMPUTE_* overlay applied further down, both
+	// stay authoritative.
+	if c.Role == role.RoleComputeOnly {
+		computeSizing := api.DeriveNodeSizingForRole(hostMemTotalMB(), hostCPUs(), api.NodeShapeComputeOnly)
+		if c.ComputeNode.AdmissionCeilingMB == sizing.AdmissionCeilingMB {
+			c.ComputeNode.AdmissionCeilingMB = computeSizing.AdmissionCeilingMB
+		}
+		slog.Default().Info("vmmd: compute node sizing re-derived for role",
+			"role", string(c.Role),
+			"non_tenant_reserve_mb", computeSizing.NonTenantReserveMB,
+			"tenant_slice_max_mb", computeSizing.TenantSliceMaxMB,
+			"tenant_budget_mb", computeSizing.TenantBudgetMB,
+			"admission_ceiling_mb", computeSizing.AdmissionCeilingMB,
+			"single_box_admission_ceiling_mb", sizing.AdmissionCeilingMB)
+		sizing = computeSizing
+	}
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): env-var overlay for
 	// [compute_node].name so the systemd drop-in (deploy/ansible/
 	// roles/vmmd_service/files/faas-vmmd.service.d/
@@ -867,4 +922,15 @@ func ipLiteralIsWildcard(host string) bool {
 		return false
 	}
 	return !ip.IsValid() || ip.IsUnspecified()
+}
+
+// vpcpusDefault is the physical CPU count vmmd should advertise as
+// compute_nodes.vpcpus. It falls back to the legacy single-box constant only
+// when the host probe failed, so a node never registers vpcpus=0 and trips
+// migration 00123's positive-value CHECK.
+func vpcpusDefault(sizing api.NodeSizing) int {
+	if sizing.HostCPUs > 0 {
+		return sizing.HostCPUs
+	}
+	return api.VCPUSlots
 }

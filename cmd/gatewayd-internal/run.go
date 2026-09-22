@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -207,6 +208,32 @@ func streamingEnabledFromEnv() bool {
 		}
 	}
 	return false
+}
+
+// trafficResilienceEnabled resolves an ADR-201 operator gate. Reuses the
+// streaming flag's truthy vocabulary so every gateway kill switch answers to
+// the same values rather than each inventing its own.
+func trafficResilienceEnabled(name string) bool {
+	v := strings.ToLower(strings.TrimSpace(envOrGateway(name, streamingFlagFalse)))
+	for _, t := range streamingEnabledTruthy {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+// egressBreakerGroup returns the ServiceProxy's health breaker (ADR-201 §2).
+//
+// Nil is NOT returned when the flag is off: NewServiceProxy installs
+// circuit.LegacyQuarantineConfig for a nil breaker, which reproduces the
+// fixed-TTL quarantine exactly. Returning nil here is therefore the
+// flag-off path, and returning a DefaultConfig group is the flag-on one.
+func egressBreakerGroup() *circuit.Group {
+	if !trafficResilienceEnabled("FAAS_GATEWAY_CIRCUIT_BREAKER") {
+		return nil
+	}
+	return circuit.NewGroup(circuit.DefaultConfig(), nil)
 }
 
 // rawStreamEnabledFromEnv (issue #676 / ADR-080 follow-up) resolves the
@@ -971,6 +998,20 @@ type runDeps struct {
 	// is dialed so the consumer goroutine shares the existing
 	// /run/faas/schedd.sock connection (no second dial).
 	warmHints *warmHintConsumer
+	// invalidationsReady is closed by watchInvalidations once its
+	// pg_notify LISTEN is actually established. It backs a /readyz signal
+	// so the daemon does not report ready while route invalidations are
+	// still unsubscribed.
+	//
+	// Without it, /readyz could return 200 between "control port bound" and
+	// "LISTEN registered". A deployment_changed / app_changed notify fired
+	// in that window is delivered to nobody, and the gateway serves 404 for
+	// the new route until some later refresh. In production that is an LB
+	// routing traffic at a gateway with a cold routing cache after a
+	// restart; in CI it is the TestE2E_NormalPath_* flake.
+	//
+	// nil in tests that do not construct the watcher.
+	invalidationsReady <-chan struct{}
 	// egressTLS is the server mTLS config the egress gRPC listener
 	// uses when meterd dials it from a remote compute node (ADR-052).
 	// nil in tests; production wires it in run() from
@@ -1038,6 +1079,25 @@ func defaultServer(addr string, handler http.Handler) *http.Server {
 // placeholder that was previously serving TEMPLATE_OK from this
 // package; the `prod` prefix was the placeholder-era workaround so
 // the two `run` symbols could coexist in `package main`).
+// readyWhenClosed flips signal ready once done closes, and never otherwise.
+//
+// Extracted so the ordering can be tested: the whole point of the
+// invalidation-subscription signal is that readiness is announced AFTER the
+// LISTEN exists, not when the goroutine watching for it starts. A version
+// that set the signal eagerly would reintroduce exactly the window this
+// closes and would still look correct at the call site.
+//
+// A cancelled ctx must NOT flip the signal: shutdown is not readiness.
+func readyWhenClosed(ctx context.Context, signal *gateway.ReadySignal, done <-chan struct{}) {
+	go func() {
+		select {
+		case <-done:
+			signal.Set(true, "")
+		case <-ctx.Done():
+		}
+	}()
+}
+
 func run(ctx context.Context, log *slog.Logger) error {
 	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
@@ -1287,7 +1347,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// stream (spec §4.1): an instance state change evicts the app's cached
 	// target so the next request re-resolves via an idempotent wake; an app or
 	// domain change flushes the host→app routes.
-	go watchInvalidations(ctx, pool, backend, log, osGetenv("FAAS_NODE_NAME"))
+	invalidationsReady := make(chan struct{})
+	go watchInvalidations(ctx, pool, backend, log, invalidationsReady, osGetenv("FAAS_NODE_NAME"))
+	deps.invalidationsReady = invalidationsReady
 
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
@@ -1514,6 +1576,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (certmagic, httpsec, :443/:80 ACME mux). This daemon stays
 	// plain HTTP on :8080; the resolved-TLS branch was removed in PR-A.
 	deps.metrics = gateway.NewMetrics()
+	// ADR-201: surface the closed-vocabulary retry/breaker series from
+	// process start so an operator alerting on `rate(...) == 0` is not
+	// reading a cold-start absence as a healthy zero.
+	deps.metrics.PreInstantiateTrafficResilience()
 	backend.WithMetrics(deps.metrics)
 	apps, err := pgStore.ListAllApps(ctx)
 	if err != nil {
@@ -1617,6 +1683,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	gatewayOps := wire.NewOpsMetrics("gatewayd")
 	wire.BootStamps(ctx, "gatewayd-internal", gatewayOps)
 	wire.RegisterDefaultOps(gatewayOps)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
 	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).WithEvents(eventsPlatform)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
@@ -2055,6 +2124,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// — run()
 	// populates deps.streamingEnabled; tests inject the bit directly.
 	handler.WithStreamingEnabled(deps.streamingEnabled)
+	// ADR-201 §1. Two gates on purpose: FAAS_GATEWAY_RETRY turns the
+	// machinery on, and a kind=retry edge rule still has to permit a replay.
+	// An operator can therefore enable the flag fleet-wide and roll retry out
+	// per app, rather than changing every app's behaviour at once — which is
+	// why the default policy here is inert rather than a 2-attempt default.
+	handler.WithRetryEnabled(trafficResilienceEnabled("FAAS_GATEWAY_RETRY"))
+	handler.WithRetryObserver(deps.metrics)
 	// ADR-093: arm the per-process routeMetricsEnabled kill-switch on
 	// the Handler so routeSetFor can AND the operator flag against the
 	// per-app flag (apps.route_metrics_enabled). Same merge point as
@@ -2847,6 +2923,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		readyProbe.RegisterSignal(signal)
 		deps.warmHints.SetOnTouch(touch)
 	}
+	// Route-invalidation subscription readiness. Starts FALSE and flips true
+	// only once watchInvalidations has established its LISTEN, so /readyz
+	// finally means what the comment above has always claimed: the routing
+	// cache is subscribed, not merely that a port is bound.
+	//
+	// Deliberately fail-closed: if the boot subscribe errors, the channel is
+	// never closed and /readyz stays 503. A gateway that cannot hear route
+	// changes would serve a frozen routing table, which is worse than being
+	// drained out of rotation.
+	if deps.invalidationsReady != nil {
+		readyWhenClosed(ctx, readyProbe.Register(), deps.invalidationsReady)
+	}
 	readyProbe.SetReadyObserver(func(ready bool, reason string) {
 		if deps.opsMetrics != nil {
 			deps.opsMetrics.MarkReady("gatewayd-internal", ready, reason)
@@ -2928,37 +3016,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider: serviceEndpointProvider,
-			Resolve: func(ctx context.Context, service string) (string, bool, error) {
+			Resolve: func(ctx context.Context, service string) (gateway.ServiceTarget, bool, error) {
 				app, err := pgStore.AppBySlug(ctx, service)
 				if errors.Is(err, state.ErrNotFound) {
-					return "", false, nil
+					return gateway.ServiceTarget{}, false, nil
 				}
 				if err != nil {
-					return "", false, fmt.Errorf("resolve service %q: %w", service, err)
+					return gateway.ServiceTarget{}, false, fmt.Errorf("resolve service %q: %w", service, err)
 				}
-				return app.ID, app.ID != "", nil
+				// ADR-197: carry the target's wire-protocol posture with its
+				// identity so the guest hop can pick the H1 or H2C bridge
+				// without a second store read on the request path.
+				return gateway.ServiceTarget{
+					AppID:            app.ID,
+					AppProtocol:      app.AppProtocol,
+					WebSocketEnabled: app.WebSocketEnabled,
+				}, app.ID != "", nil
 			},
-			Authorize: func(ctx context.Context, callerAppID, targetAppID string) error {
-				caller, err := pgStore.AppByID(ctx, callerAppID)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ErrServiceProxyDenied
-				}
-				if err != nil {
-					return fmt.Errorf("load caller app: %w", err)
-				}
-				target, err := pgStore.AppByID(ctx, targetAppID)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ErrServiceProxyDenied
-				}
-				if err != nil {
-					return fmt.Errorf("load target app: %w", err)
-				}
-				if caller.AccountID == "" || caller.AccountID != target.AccountID {
-					return gateway.ErrServiceProxyDenied
-				}
-				return nil
-			},
-			Forward: deps.nodeCache.Forwarding(),
+			Authorize:  newServiceProxyAuthorizer(pgStore),
+			Forward:    deps.nodeCache.Forwarding(),
+			RawForward: deps.nodeCache.RawForwarding(),
+			// ADR-196: a call to a parked internal service must hold and
+			// wake exactly like a public request does. Without this seam a
+			// scale-to-zero internal service 503s on every cold call, which
+			// forces customers to pin min_instances on every dependency and
+			// gives up the platform's central economic claim for precisely
+			// the workloads that are idle most of the time.
+			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
+			// quarantine, so with the flag off this is byte-identical to the
+			// pre-ADR-201 behaviour.
+			Breaker: egressBreakerGroup(),
+			Metrics: deps.metrics,
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
@@ -3141,6 +3230,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		} else {
 			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
 			srv.Addr = serviceProxyAddr
+			// ADR-197: the guest listener must accept H2C prior-knowledge so
+			// a workload's gRPC client can reach a same-account service. The
+			// server factory builds the control listener's HTTP/1.1-only
+			// posture, which silently downgrades every internal gRPC call.
+			srv.Protocols = new(http.Protocols)
+			srv.Protocols.SetHTTP1(true)
+			srv.Protocols.SetUnencryptedHTTP2(true)
+			// Those same control-listener defaults carry a 30 s write
+			// deadline. http.Server starts WriteTimeout before the handler
+			// runs, so it bounds the whole exchange: it would cut a streaming
+			// gRPC response, a long-lived upgrade session, and any call held
+			// through a snapshot restore (ADR-196). Widen both to the
+			// customer request envelope the public listener uses.
+			srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+			srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
 			addSrv(srv)
 			l, lerr := deps.listen("tcp", serviceProxyAddr)
 			if lerr != nil {
@@ -3210,6 +3314,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), deps.opsMetrics, log)()
 
 	select {
 	case err := <-errc:

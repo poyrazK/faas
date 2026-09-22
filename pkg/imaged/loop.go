@@ -740,10 +740,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			}
 		}
 		vmstateKey := state.SnapshotVMStateKey(snap)
+		driveKey := state.SnapshotDriveKey(snap)
 		memErr := be.Delete(ctx, memKey)
 		vmstateErr := be.Delete(ctx, vmstateKey)
+		var driveErr error
+		if driveKey != "" {
+			driveErr = be.Delete(ctx, driveKey)
+		}
 		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
 		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
+		driveQuarantined := errors.Is(driveErr, storage.ErrDeleteQuarantined)
 		if memErr != nil && !memQuarantined {
 			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", memErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", memKey, memErr))
@@ -752,16 +758,20 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", vmstateErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", vmstateKey, vmstateErr))
 		}
+		if driveErr != nil && !driveQuarantined {
+			l.log.Warn("imaged: gc remove snap drive", "deployment", t.DeploymentID, "tier", t.Tier, "err", driveErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", driveKey, driveErr))
+		}
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
 		}
-		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined)
-		terminalDisposition := memQuarantined || vmstateQuarantined
+		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined) && (driveErr == nil || driveQuarantined)
+		terminalDisposition := memQuarantined || vmstateQuarantined || driveQuarantined
 		if terminalDisposition && deletable {
 			payload, marshalErr := json.Marshal(map[string]any{
 				"snapshot_id": t.ID, "deployment_id": t.DeploymentID, "app_id": t.AppID,
 				"tier": t.Tier, "disposition": "remote_quarantine_manual_retention",
-				"mem_quarantined": memQuarantined, "vmstate_quarantined": vmstateQuarantined,
+				"mem_quarantined": memQuarantined, "vmstate_quarantined": vmstateQuarantined, "drive_quarantined": driveQuarantined,
 			})
 			var accountID *string
 			if t.AccountID != "" {

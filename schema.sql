@@ -1171,6 +1171,20 @@ CREATE TABLE public.app_error_requests (
 
 
 --
+-- Name: app_custom_metrics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_custom_metrics (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    value double precision NOT NULL,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_custom_metrics_name_shape CHECK ((name ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT app_custom_metrics_value_finite CHECK (((value >= (0)::double precision) AND (value = value) AND (value < 'Infinity'::double precision)))
+);
+
+
+--
 -- Name: app_errors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2138,6 +2152,13 @@ CREATE TABLE public.data_upstreams (
     last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     deployment_scope text DEFAULT 'default'::text NOT NULL,
+    circuit_breaker_enabled boolean DEFAULT false NOT NULL,
+    circuit_breaker_failure_threshold double precision,
+    circuit_breaker_min_samples integer,
+    circuit_breaker_open_seconds integer,
+    CONSTRAINT data_upstreams_circuit_min_samples_check CHECK (((circuit_breaker_min_samples IS NULL) OR ((circuit_breaker_min_samples >= 1) AND (circuit_breaker_min_samples <= 1000)))),
+    CONSTRAINT data_upstreams_circuit_open_seconds_check CHECK (((circuit_breaker_open_seconds IS NULL) OR ((circuit_breaker_open_seconds >= 1) AND (circuit_breaker_open_seconds <= 3600)))),
+    CONSTRAINT data_upstreams_circuit_threshold_check CHECK (((circuit_breaker_failure_threshold IS NULL) OR ((circuit_breaker_failure_threshold > (0)::double precision) AND (circuit_breaker_failure_threshold <= (1)::double precision)))),
     CONSTRAINT data_upstreams_declared_region_check CHECK (((declared_region IS NULL) OR (declared_region ~ '^[a-z0-9_-]{1,32}$'::text))),
     CONSTRAINT data_upstreams_deployment_scope_shape CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT data_upstreams_host_check CHECK (((host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'::text) AND (host !~ '^[0-9]+(\.[0-9]+)+$'::text) AND ((length(host) >= 1) AND (length(host) <= 253)))),
@@ -2401,6 +2422,7 @@ CREATE TABLE public.deployments (
     snapshot_miss_backoff_until timestamp with time zone,
     api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
     inferred_profile jsonb,
+    revision integer DEFAULT 0 NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -2416,6 +2438,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
     CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
     CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
@@ -3079,7 +3102,7 @@ CREATE TABLE public.node_join_jobs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
     CONSTRAINT node_join_jobs_attempt_check CHECK ((attempt >= 0)),
-    CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
+    CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'prepared'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
 );
 
 
@@ -4306,6 +4329,14 @@ ALTER TABLE ONLY public.app_envs
 
 ALTER TABLE ONLY public.app_error_requests
     ADD CONSTRAINT app_error_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_custom_metrics app_custom_metrics_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metrics
+    ADD CONSTRAINT app_custom_metrics_pkey PRIMARY KEY (app_id, name);
 
 
 --
@@ -6063,6 +6094,13 @@ CREATE UNIQUE INDEX data_upstreams_dedupe_uniq ON public.data_upstreams USING bt
 
 
 --
+-- Name: data_upstreams_circuit_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_upstreams_circuit_enabled_idx ON public.data_upstreams USING btree (app_id, host_redacted_hash) WHERE circuit_breaker_enabled;
+
+
+--
 -- Name: data_upstreams_host_redacted_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6151,6 +6189,20 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployments_app_idx ON public.deployments USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: deployments_app_revision_desc_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_app_revision_desc_idx ON public.deployments USING btree (app_id, revision DESC);
+
+
+--
+-- Name: deployments_app_revision_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_app_revision_uniq ON public.deployments USING btree (app_id, revision) WHERE (revision > 0);
 
 
 --
@@ -7845,6 +7897,14 @@ ALTER TABLE ONLY public.app_error_requests
 
 ALTER TABLE ONLY public.app_error_requests
     ADD CONSTRAINT app_error_requests_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_custom_metrics app_custom_metrics_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metrics
+    ADD CONSTRAINT app_custom_metrics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

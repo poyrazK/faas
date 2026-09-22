@@ -106,10 +106,27 @@
       "id": "rollback-recovery",
       "name": "Rollback recovery",
       "category": "reliability",
-      "description": "A bad deployment can be rolled back without rebuilding and traffic returns healthy inside the recovery budget.",
-      "capabilities": ["github-deploys", "pr-previews", "source-deploy"],
+      "description": "A bad deployment can be rolled back without rebuilding and traffic returns healthy inside the recovery budget. Recovery includes shifting traffic between revisions and holding a canary ladder when health signals degrade, so a bad release can be contained before it reaches every request.",
+      "capabilities": ["github-deploys", "pr-previews", "progressive-rollouts", "source-deploy"],
       "targets": [{"metric": "p95", "operator": "lte", "value": 60, "unit": "seconds"}],
-      "evidence": [{"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"}]
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"},
+        {"kind": "test", "locator": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"}
+      ]
+    },
+    {
+      "id": "service-mesh-readiness",
+      "name": "Internal service reachability and isolation",
+      "category": "reliability",
+      "description": "A same-account service is reachable by name, a parked one is woken by the call rather than refused, its configured wire protocol survives to the guest, and a private app stays off the public edge while cross-account callers are denied.",
+      "capabilities": ["internal-services", "private-apps"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"},
+        {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_StampsTargetProtocol"},
+        {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_AccessBoundaries"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"}
+      ]
     },
     {
       "id": "snapshot-wake",

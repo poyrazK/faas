@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/sync/singleflight"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
@@ -30,11 +33,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"go.opentelemetry.io/otel/attribute"
-	"golang.org/x/sync/singleflight"
 )
 
 // ResolveSlugFn (ADR-093) is the (slug → appID) resolver the
@@ -84,6 +86,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// SecurityQuarantined is set when the live deployment has a durable
+	// security_scan_regressed parking reason. The edge rejects requests before
+	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
+	SecurityQuarantined bool
 	// Visibility controls public edge routing. Internal apps are deliberately
 	// omitted by the public hostname resolver; service-proxy resolution uses
 	// the app store directly and remains available to authenticated callers.
@@ -951,6 +957,20 @@ type Handler struct {
 	// cmd/gatewayd-internal/main.go so production defaults to off and operators
 	// opt in per-cluster after PR-B ships.
 	streamingEnabled bool
+	// retryEnabled is the FAAS_GATEWAY_RETRY operator gate (ADR-201 §1).
+	// Off by default; with it off, proxyAttempt calls the forwarder directly
+	// and the tree is byte-identical to the pre-ADR-201 path.
+	retryEnabled bool
+	// retryDefault is the policy applied when the gate is on and no
+	// kind=retry rule matched. Zero MaxAttempts means no replay, so an
+	// operator can enable the gate and roll the behaviour out per-app via
+	// edge rules rather than fleet-wide in one step.
+	retryDefault RetryPolicy
+	// retryMatch resolves the matched kind=retry rule for a request. Nil
+	// falls back to retryDefault.
+	retryMatch func(app App, r *http.Request) (RetryPolicy, bool)
+	// retryObs counts attempts and exhaustions. Nil disables the metric.
+	retryObs retryObserver
 	// streamingWarned is the once-per-process log dedup for the
 	// buffered-fallback deprecation. Keyed on (appID, content-type) so
 	// the first instance of an SSE-emitting app under the flag-off
@@ -5343,6 +5363,13 @@ haveApp:
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}
+	if app.SecurityQuarantined {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeSecurityPostureBlocked, "App is security quarantined",
+			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before serving traffic"))
+		h.observe(r, rec.status, app.ID, "", false, Target{})
+		return
+	}
 	// Preserve the customer-facing route identity before any edge rewrite.
 	// Declared-route matching is against the public OpenAPI contract, not the
 	// internal path a rewrite rule may later produce.
@@ -5966,7 +5993,7 @@ haveApp:
 			attribute.Int("desired_instances", maxInstances),
 		)
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, concurrencyConfigForApp(app))
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(
 			attribute.Bool("cold", cold),
 			attribute.String("wake_id", wakeID),
@@ -6284,24 +6311,30 @@ haveApp:
 	// bridge on transport/liveness failures; ordinary guest 502/503 responses
 	// are therefore left untouched.
 	staleContext := r.Context()
+	// retireStaleTarget is shared by the plain path's signal below and by the
+	// ADR-201 §1 retry loop, which reports each attempt's own failed target.
+	// Extracted so both report identically — a retry that evicted differently
+	// from a non-retry failure would make the two paths diverge in exactly the
+	// situation an operator is trying to read.
+	retireStaleTarget := func(failed Target) {
+		// Evict synchronously with the transport failure so a
+		// concurrent request cannot pick this known-dead target.
+		// RecoverStaleTarget detaches and bounds lifecycle work in
+		// the production backend; it does not inherit the client
+		// cancellation even though the request context is passed in.
+		if evictor, ok := h.backend.(interface {
+			EvictInstance(appID, instanceID string)
+		}); ok {
+			evictor.EvictInstance(app.ID, failed.InstanceID)
+			h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
+				"instance_id", failed.InstanceID, "node_id", failed.NodeID)
+		}
+		if recovery, ok := h.backend.(staleTargetRecovery); ok {
+			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
+		}
+	}
 	staleSignal := &staleTargetSignal{
-		onStale: func() {
-			// Evict synchronously with the transport failure so a
-			// concurrent request cannot pick this known-dead target.
-			// RecoverStaleTarget detaches and bounds lifecycle work in
-			// the production backend; it does not inherit the client
-			// cancellation even though the request context is passed in.
-			if evictor, ok := h.backend.(interface {
-				EvictInstance(appID, instanceID string)
-			}); ok {
-				evictor.EvictInstance(app.ID, target.InstanceID)
-				h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
-					"instance_id", target.InstanceID, "node_id", target.NodeID)
-			}
-			if recovery, ok := h.backend.(staleTargetRecovery); ok {
-				recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
-			}
-		},
+		onStale: func() { retireStaleTarget(target) },
 	}
 	//nolint:contextcheck // withStaleTargetSignal intentionally inherits r.Context.
 	r = r.WithContext(withStaleTargetSignal(r.Context(), staleSignal))
@@ -6536,7 +6569,15 @@ haveApp:
 		// re-frames to H1+chunked on the guest side per
 		// PR #750).
 		r.Header.Set("x-faas-protocol", decideProtocol(app))
-		h.proxyByNode(target).ServeHTTP(capped, r)
+		// ADR-201 §1. Retry only wraps the BUFFERED path: a streaming
+		// response commits on its first flush, so a replay is impossible by
+		// construction, and wrapping it would put a buffering writer in front
+		// of the very path whose point is not to buffer. Upgrade requests
+		// returned above and never reach here.
+		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
+			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				h.proxyByNode(tgt).ServeHTTP(w, req)
+			}, app)
 	} else {
 		platformWakeTrace.markProxyStarted(time.Now())
 		// Legacy addr-based path. Target.NodeID is treated as a
@@ -6548,7 +6589,10 @@ haveApp:
 		// branch above for the onCap-vs-connection-reset contract.
 		planCap := app.Plan.MaxResponseBodyBytes()
 		capped := h.setupBufferedCapWriter(w, app, planCap)
-		h.proxyFor(target.NodeID, planCap).ServeHTTP(capped, r)
+		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
+			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
+			}, app)
 	}
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
@@ -7605,7 +7649,13 @@ func (s *statusRecorder) finalFlush() {
 // prod app's. Empty = prod (legacy). When the cold-start path calls
 // coldStart and coldStart in turn calls Admit, scope is plumbed
 // through both paths.
-func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, configs ...concurrencyAdmissionConfig) (cold bool, wakeID string, method WakeMethod, err error) {
+//
+// trigger (ADR-123 vocabulary, ADR-196) is the wake-boot trigger stamped on
+// the emitted wake.boot_started / wake.boot_completed rows. Request paths
+// driven by an Internet client pass sched.TriggerGateway; the node-local
+// service proxy passes sched.TriggerServiceMesh so internal fan-out is
+// distinguishable from customer traffic in the wake timeline.
+func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, trigger string, configs ...concurrencyAdmissionConfig) (cold bool, wakeID string, method WakeMethod, err error) {
 	// HealthyCount is intentionally process-local for the hot path, but an
 	// empty process-local cache is not authoritative in a multi-node fleet.
 	// The empty-cache reconciliation now runs inside coldStart's WakeGate
@@ -7619,11 +7669,39 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 	if len(configs) > 0 {
 		config = configs[0]
 	}
-	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS, config)
+	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS, trigger, config)
 	if err != nil {
 		return false, "", WakeMethodUnspecified, err
 	}
 	return cold, wakeID, method, nil
+}
+
+// EnsureServiceCapacity is the node-local service proxy's entry into the same
+// wake machinery the public edge uses (ADR-196). A call to
+// <slug>.svc.gregale for a parked app must hold and wake exactly like a
+// public request does, otherwise an internal service can never scale to zero:
+// its callers would see 503 on every cold call and customers would be forced
+// to pin min_instances on every internal dependency.
+//
+// Reusing Handler.ensureCapacity — rather than giving the proxy its own
+// admission path — is deliberate. The WakeGate is keyed on appID alone, so a
+// public request and an internal service call that arrive for the same parked
+// app coalesce into ONE restore instead of racing to create two instances.
+// That coalescing is also what keeps invariant §6.2-1 (≤ max_concurrency
+// instances in {WAKING, COLD_BOOTING, RUNNING}) intact across both entry
+// points.
+//
+// The returned error is the admission error only. An at-capacity outcome is
+// not an error: the caller re-reads the endpoint registry and surfaces
+// "no healthy replicas" if the wake genuinely produced nothing.
+func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	limits, ok := api.LimitsFor(app.Plan)
+	if !ok {
+		limits = api.Limits{}
+	}
+	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	return err
 }
 
 func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Time) bool {
@@ -7649,7 +7727,10 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 // through the WakeGate's single-flight coalescing. shouldWake is held
 // under the gate lock and re-runs HealthyCount; if a peer's admit has
 // just landed, we skip the redundant cold boot.
-func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, configs ...concurrencyAdmissionConfig) (bool, string, WakeMethod, error) {
+func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, trigger string, configs ...concurrencyAdmissionConfig) (bool, string, WakeMethod, error) {
+	if trigger == "" {
+		trigger = sched.TriggerGateway
+	}
 	var (
 		admittedWakeID string
 		cold           bool
@@ -7701,7 +7782,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			}
 			admit := func(admitCtx context.Context) error {
 				if ensurer, ok := h.backend.(capacityWarmEnsurer); ok && scope == "" {
-					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))
+					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, trigger, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))
 					if e != nil {
 						return e
 					}
@@ -7719,7 +7800,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					return nil
 				}
 				if ensurer, ok := h.backend.(warmEnsurer); ok && scope == "" {
-					id, m, atCapacity, e := ensurer.EnsureWarm(admitCtx, appID, scope, sched.TriggerGateway)
+					id, m, atCapacity, e := ensurer.EnsureWarm(admitCtx, appID, scope, trigger)
 					if e != nil {
 						return e
 					}
@@ -7733,7 +7814,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					h.finishWakePageCycle(admitCtx, appID, id)
 					return nil
 				}
-				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, sched.TriggerGateway, maxConcurrency)
+				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, trigger, maxConcurrency)
 				if e != nil {
 					return e
 				}
@@ -7861,7 +7942,17 @@ func writeWakeInProgress(w http.ResponseWriter, requestID string) {
 		w.Header().Set(api.RequestIDHeader, requestID)
 	}
 	w.WriteHeader(http.StatusAccepted)
-	_, _ = fmt.Fprintf(w, `{"status":202,"code":%q,"title":"App is waking","detail":"retry the request after the Retry-After interval"}`+"\n", api.CodeWakeInProgress)
+	_, _ = w.Write(append(safetext.JSONObject(struct {
+		Status int    `json:"status"`
+		Code   string `json:"code"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}{
+		Status: http.StatusAccepted,
+		Code:   api.CodeWakeInProgress,
+		Title:  "App is waking",
+		Detail: "retry the request after the Retry-After interval",
+	}), '\n'))
 }
 
 func wakeRetryAfterSeconds(err error, fallback int) int {

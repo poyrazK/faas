@@ -118,7 +118,7 @@ func (g *GCSStorageBackend) Put(ctx context.Context, key string, r io.Reader) er
 	}
 
 	metadata := map[string]string{}
-	if (g.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isAppFilesystemKey(key) {
+	if (g.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isSnapshotDriveKey(key) || isAppFilesystemKey(key) {
 		path, _, uncompressedSize, err := compressRemoteArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, r)
 		if err != nil {
 			return err

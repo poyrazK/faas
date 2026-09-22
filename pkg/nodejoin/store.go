@@ -21,6 +21,7 @@ const (
 	PhasePlanned    Phase = "planned"
 	PhasePreflight  Phase = "preflight"
 	PhaseConverging Phase = "converging"
+	PhasePrepared   Phase = "prepared"
 	PhaseVerifying  Phase = "verifying"
 	PhaseActive     Phase = "active"
 	PhaseFailed     Phase = "failed"
@@ -287,7 +288,7 @@ func sameSpec(j Job, s Spec) bool {
 
 func validPhase(p Phase) bool {
 	switch p {
-	case PhasePlanned, PhasePreflight, PhaseConverging, PhaseVerifying, PhaseActive, PhaseFailed, PhaseRolledBack:
+	case PhasePlanned, PhasePreflight, PhaseConverging, PhasePrepared, PhaseVerifying, PhaseActive, PhaseFailed, PhaseRolledBack:
 		return true
 	}
 	return false

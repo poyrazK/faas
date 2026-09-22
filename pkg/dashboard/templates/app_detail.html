@@ -352,10 +352,11 @@
       <h2>Recent deployments</h2>
       {{if .Data.Deployments}}
         <table>
-          <thead><tr><th>Created</th><th>Kind</th><th>Status</th><th>Annotation</th><th>Scan</th><th>Error</th><th>Action</th></tr></thead>
+          <thead><tr><th>Revision</th><th>Created</th><th>Kind</th><th>Status</th><th>Annotation</th><th>Scan</th><th>Error</th><th>Action</th></tr></thead>
           <tbody>
             {{range .Data.Deployments}}
               <tr>
+                <td>{{if .Revision}}<a href="/dashboard/apps/{{$.Data.App.Slug}}/deployments/{{.ID}}"><code>v{{.Revision}}</code></a>{{else}}<span style="color:#888">—</span>{{end}}</td>
                 <td>{{.CreatedAt}}</td>
                 <td>{{.Kind}}</td>
                 <td>{{.Status}}</td>

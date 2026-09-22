@@ -138,6 +138,7 @@
     mode: "0644"
   loop:
     - { src: "faas-apid.service", dest: "/etc/systemd/system/faas-apid.service" }
+    - { src: "faas-apid.socket", dest: "/etc/systemd/system/faas-apid.socket" }
     - { src: "faas-outboundd.service", dest: "/etc/systemd/system/faas-outboundd.service" }
     - { src: "faas-schedd.service", dest: "/etc/systemd/system/faas-schedd.service" }
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
@@ -189,6 +190,22 @@
     or (faas_app_errors_dropin_removed.changed | default(false))
     or (faas_log_archive_dropin.changed | default(false))
     or (faas_log_archive_dropin_removed.changed | default(false))
+
+- name: control_plane_service — inspect existing apid enablement  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: systemctl is-enabled faas-apid.service
+  register: control_plane_apid_enabled
+  changed_when: false
+  failed_when: false
+
+# Do not start the new socket while a pre-socket-activation apid still owns
+# 127.0.0.1:8081. The notified service restart starts the Required socket in
+# the same systemd transaction; enabling it here makes the listener durable
+# across subsequent reboots and operator restarts.
+- name: control_plane_service — keep the durable apid socket enabled with an enabled api
+  ansible.builtin.systemd_service:
+    name: faas-apid.socket
+    enabled: true
+  when: control_plane_apid_enabled.rc == 0
 
 - name: control_plane_service — create systemd drop-in directories
   ansible.builtin.file:

@@ -308,6 +308,22 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	if err := InjectManifest(staging, in.Manifest); err != nil {
 		return BuildResult{}, err
 	}
+	// The optimized two-drive path still has to carry the image's user
+	// database into the guest. guest-init resolves a named OCI USER from this
+	// bounded table after the overlay has been assembled. Without it, names
+	// such as distroless' "nonroot" silently fall back to uid 1000 even when
+	// the image declares uid 65532, which can make its 0700 working directory
+	// inaccessible before exec.
+	passwdEntries, err := parseStagingPasswd(staging)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("rootfs: parse optimized /etc/passwd: %w", err)
+	}
+	if passwdEntries == nil {
+		passwdEntries = make(map[string]PasswdEntry)
+	}
+	if err := writePasswdTable(staging, passwdEntries, api.UserUIDOverrideMax[in.Plan]); err != nil {
+		return BuildResult{}, fmt.Errorf("rootfs: build optimized passwd table: %w", err)
+	}
 	if in.WorkloadManifest != nil {
 		if in.WorkloadName == "" {
 			return BuildResult{}, errors.New("rootfs: workload manifest requires a workload name")

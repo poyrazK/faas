@@ -18,8 +18,8 @@ func cmdDeploymentSummary(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 || *app == "" || !validCLISlug(*app) || !deploymentIDPattern.MatchString(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment summary <id> --app SLUG", "deployment")
+	if len(pos) != 1 || *app == "" || !validCLISlug(*app) || !validDeploymentRef(pos[0]) {
+		PrintUsage(os.Stderr, "usage: gregale deployment summary <id|vN> --app SLUG", "deployment")
 		return 1
 	}
 
@@ -27,7 +27,13 @@ func cmdDeploymentSummary(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	summary, err := client.GetAppDeploymentSummary(context.Background(), *app, pos[0])
+	// ADR-198 — --app is already required here, so a vN handle is
+	// unambiguous without consulting the linked project.
+	deploymentID, err := resolveDeploymentRef(context.Background(), client, *app, pos[0])
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
+	}
+	summary, err := client.GetAppDeploymentSummary(context.Background(), *app, deploymentID)
 	if err != nil {
 		return printErr("Could not fetch deployment summary", err)
 	}

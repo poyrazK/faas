@@ -214,6 +214,31 @@ service Vmmd {
   // pkg/api/limits.go::Plan.StaticEgressIPAllowed.
   rpc UpdateStaticEgressIP(UpdateStaticEgressIPRequest) returns (UpdateStaticEgressIPAck);
 
+  // UpdateEgressCircuit (ADR-201 §3) makes the open-circuit set of every
+  // live instance of an app exactly `circuits`. When a declared upstream is
+  // proven unhealthy by the ADR-098 probe, schedd opens a circuit and the
+  // guest's NEW connections to that (address, port) are rejected with a TCP
+  // reset instead of hanging for a full connect timeout — which is what
+  // otherwise burns the kind=budget deadline and then the wake slot, turning
+  // one dependency outage into a per-app capacity outage.
+  //
+  // Whole-set semantics, like UpdateEgressAllowlist: the caller pushes the
+  // complete desired state, never a delta. An empty list closes every
+  // circuit. This is what makes the operation self-healing — after a vmmd
+  // restart the re-rendered netns carries an empty set while schedd still
+  // believes circuits are open, and the next reconcile re-installs them
+  // rather than failing on a delete of an element that was never there.
+  //
+  // Enforcement is an nftables set element, NOT an L7 proxy: vmmd terminates
+  // no tenant TLS and holds no plaintext, so this stays inside §11. The rule
+  // sits after the established/related accept, so an opening circuit refuses
+  // new connections without tearing down calls already in flight.
+  //
+  // Idempotent. Returns OK with no effect when the app has no live instances
+  // (a parked app has no netns to hold a rule; the wake path renders the set
+  // fresh) and when the node's FAAS_EGRESS_CIRCUIT_BREAKER is off.
+  rpc UpdateEgressCircuit(UpdateEgressCircuitRequest) returns (UpdateEgressCircuitAck);
+
   // UpdatePrivateNetwork applies provider-verified destination CIDRs to every
   // live instance of an app without tearing down its network namespace. For a
   // Gregale-owned attachment, the optional identity fields also add/remove
@@ -1196,6 +1221,46 @@ message UpdateEgressAllowlistRequest {
 // is expected to Park + ColdBoot the affected instances, which
 // the schedd watchdog does on its next tick).
 message UpdateEgressAllowlistAck {}
+
+// UpdateEgressCircuitRequest (ADR-201 §3) is the input to
+// UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need
+// the new circuit set. circuits is the COMPLETE desired set — an empty list
+// closes every circuit for the app.
+//
+// The address is resolved by schedd, not carried as a hostname, because
+// nftables matches packets. A DNS change while a circuit is open is picked
+// up at the next half-open probe, which re-resolves; that staleness window
+// is bounded by the probe interval and is part of why half-open exists.
+//
+// §11: the plaintext upstream host never appears on this wire. schedd
+// resolves it locally from the data_upstreams row it already holds; the
+// customer-facing surface and every metric label carry only
+// host_redacted_hash.
+message UpdateEgressCircuitRequest {
+  string app_id = 1;
+  repeated EgressCircuitTarget circuits = 2;
+}
+
+// EgressCircuitTarget is one open circuit: a resolved upstream address and
+// port whose new connections must fail fast.
+message EgressCircuitTarget {
+  // addr is a resolved IPv4 or IPv6 address in its textual form. vmmd
+  // renders it into an nftables set element; a value that does not parse is
+  // skipped rather than emitted, because one malformed element fails the
+  // whole nft batch and would leave the tenant's firewall in whatever state
+  // the partial batch produced.
+  string addr = 1;
+  // port is the upstream TCP port (1..65535).
+  uint32 port = 2;
+}
+
+// UpdateEgressCircuitAck is the empty success response. On failure vmmd
+// returns a gRPC status: Internal when the nft batch failed for a live
+// instance. Unlike UpdateEgressAllowlist there is no partial-revert path —
+// the operation is a flush plus adds against a set that is re-derived on
+// every reconcile, so a failure is corrected by the next push rather than by
+// unwinding this one.
+message UpdateEgressCircuitAck {}
 
 // UpdateStaticEgressIPRequest (ADR-119) is the input to
 // UpdateStaticEgressIP. app_id is the apps.id UUID whose live

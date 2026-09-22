@@ -263,22 +263,26 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	budget, budgetErrs := compileBudgetRules(storeRules)
 	cache, cacheErrs := compileCacheRules(storeRules)
 	respond, respondErrs := compileRespondRules(storeRules)
+	retry, retryErrs := compileRetryRules(storeRules)
+	circuitBreaker, circuitBreakerErrs := compileCircuitBreakerRules(storeRules)
 	entry := &gateway.HostEntry{
-		Route:       route,
-		Rewrite:     rewrite,
-		Redirect:    redirect,
-		Headers:     headers,
-		CORS:        cors,
-		JWT:         jwt,
-		IP:          ip,
-		Validate:    validate,
-		Limit:       limit,
-		Maintenance: maintenance,
-		Geo:         geo,
-		Throttle:    throttle,
-		Budget:      budget,
-		Cache:       cache,
-		Respond:     respond,
+		Route:          route,
+		Rewrite:        rewrite,
+		Redirect:       redirect,
+		Headers:        headers,
+		CORS:           cors,
+		JWT:            jwt,
+		IP:             ip,
+		Validate:       validate,
+		Limit:          limit,
+		Maintenance:    maintenance,
+		Geo:            geo,
+		Throttle:       throttle,
+		Budget:         budget,
+		Cache:          cache,
+		Respond:        respond,
+		Retry:          retry,
+		CircuitBreaker: circuitBreaker,
 	}
 	parseErrs := append(routeErrs, rewriteErrs...)
 	parseErrs = append(parseErrs, redirectErrs...)
@@ -293,6 +297,8 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, throttleErrs...)
 	parseErrs = append(parseErrs, budgetErrs...)
 	parseErrs = append(parseErrs, cacheErrs...)
+	parseErrs = append(parseErrs, retryErrs...)
+	parseErrs = append(parseErrs, circuitBreakerErrs...)
 	parseErrs = append(parseErrs, respondErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs

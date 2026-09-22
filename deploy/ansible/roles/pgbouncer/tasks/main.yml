@@ -1,0 +1,115 @@
+---
+# Transaction-mode pooler for the compute-node TCP path. See the role README
+# for why control-plane daemons deliberately do NOT go through it.
+# The code-side contract has to be in the binary before the endpoint moves.
+# Without pkg/db's direct-DSN split, LISTEN and session advisory locks would
+# land on pooled connections and misbehave silently.
+- name: pgbouncer — require the direct-DSN split in the deployed binaries
+  ansible.builtin.assert:
+    that:
+      - faas_pgbouncer_direct_dsn_supported | default(true) | bool
+    fail_msg: >-
+      Enabling the pooler requires binaries that honour
+      FAAS_DATABASE_URL_DIRECT (pkg/db/direct.go). Deploy that first, or set
+      faas_pgbouncer_direct_dsn_supported=false only if you have verified the
+      running build has it.
+
+# pgbouncer's server pool is a fixed cost (default_pool_size +
+# reserve_pool_size) that replaces a per-node one. Below the crossover the
+# fixed cost is larger than the saving, so enabling it makes the fleet's
+# connection ceiling worse. 34n = 80 + 10n => n = 3.33.
+- name: pgbouncer — refuse a fleet too small to benefit from pooling
+  ansible.builtin.assert:
+    that:
+      - (groups['compute_nodes'] | default([]) | length | int) >= faas_pgbouncer_min_compute_nodes | int
+    fail_msg: >-
+      faas_pgbouncer_enabled is true with
+      {{ groups['compute_nodes'] | default([]) | length }} compute node(s).
+      Below {{ faas_pgbouncer_min_compute_nodes }} the pooler's fixed server
+      pool costs more connections than it saves — see
+      roles/postgres_capacity/README.md. Leave it disabled until the fleet
+      grows, or lower faas_pgbouncer_min_compute_nodes deliberately.
+
+- name: pgbouncer — install
+  ansible.builtin.apt:
+    name: pgbouncer
+    state: present
+    update_cache: true
+  register: pgbouncer_pkg
+  retries: 3
+  delay: 5
+  until: pgbouncer_pkg is succeeded
+
+- name: pgbouncer — config directory
+  ansible.builtin.file:
+    path: "{{ faas_pgbouncer_config_dir }}"
+    state: directory
+    owner: "{{ faas_pgbouncer_os_user }}"
+    group: "{{ faas_pgbouncer_os_user }}"
+    mode: "0750"
+
+- name: pgbouncer — log directory
+  ansible.builtin.file:
+    path: /var/log/pgbouncer
+    state: directory
+    owner: "{{ faas_pgbouncer_os_user }}"
+    group: "{{ faas_pgbouncer_os_user }}"
+    mode: "0750"
+
+# auth_query reads pg_shadow, so the only credential on disk is the one
+# pgbouncer uses to run that query. It is the same peer-authenticated role the
+# postmaster already trusts over the Unix socket.
+- name: pgbouncer — userlist for the auth_query role
+  ansible.builtin.copy:
+    dest: "{{ faas_pgbouncer_config_dir }}/userlist.txt"
+    content: |
+      "{{ faas_pgbouncer_db_role }}" ""
+    owner: "{{ faas_pgbouncer_os_user }}"
+    group: "{{ faas_pgbouncer_os_user }}"
+    mode: "0600"
+  notify: reload pgbouncer
+
+- name: pgbouncer — configuration
+  ansible.builtin.template:
+    src: pgbouncer.ini.j2
+    dest: "{{ faas_pgbouncer_config_dir }}/pgbouncer.ini"
+    owner: "{{ faas_pgbouncer_os_user }}"
+    group: "{{ faas_pgbouncer_os_user }}"
+    mode: "0640"
+    validate: "/usr/sbin/pgbouncer -V >/dev/null 2>&1 && test -r %s"
+  notify: restart pgbouncer
+
+- name: pgbouncer — enable and start
+  ansible.builtin.systemd:
+    name: pgbouncer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# A pooler that is up but cannot reach the postmaster is worse than one that is
+# down: clients connect, then fail on first query. Prove the full path before
+# the play reports success.
+- name: pgbouncer — verify the pooled path answers a query
+  become: true
+  become_user: "{{ faas_pgbouncer_db_role }}"
+  ansible.builtin.command:
+    argv:
+      - psql
+      - "host={{ faas_pgbouncer_socket_dir }} port={{ faas_pgbouncer_listen_port }} dbname={{ faas_pgbouncer_database }} user={{ faas_pgbouncer_db_role }}"
+      - -At
+      - -c
+      - SELECT 1
+  register: pgbouncer_probe
+  changed_when: false
+  retries: 5
+  delay: 2
+  until: pgbouncer_probe.rc == 0
+
+- name: pgbouncer — refuse a pooler that cannot serve a query
+  ansible.builtin.assert:
+    that:
+      - pgbouncer_probe.stdout | trim == '1'
+    fail_msg: >-
+      pgbouncer is running but SELECT 1 through it did not return 1
+      (got {{ pgbouncer_probe.stdout | default('') | trim }}). Compute nodes
+      would connect and then fail on their first query.

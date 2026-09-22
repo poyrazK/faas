@@ -108,15 +108,23 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.ListenAddr != "" || cfg.TLSCertPath != "" || cfg.TLSKeyPath != "" || cfg.TLSCAPath != "" {
 		t.Errorf("TLS/listen defaults not all empty: %+v", cfg)
 	}
-	// PR scale-out readiness #4: the compute-node default
-	// AdmissionCeilingMB must route through api.DefaultComputeNodeCeilingMB
-	// so the vmmd default and the MemStore seed share a single source
-	// of truth. This is the load-bearing assertion that proves
-	// cmd/vmmd/config.go is wired to the helper (changing fixtures in
-	// other tests wouldn't catch a literal regression here).
-	if got := cfg.ComputeNode.AdmissionCeilingMB; got != api.DefaultComputeNodeCeilingMB() {
-		t.Errorf("ComputeNode.AdmissionCeilingMB = %d, want %d (api.DefaultComputeNodeCeilingMB())",
-			got, api.DefaultComputeNodeCeilingMB())
+	// PR scale-out readiness #4 asserted this against
+	// api.DefaultComputeNodeCeilingMB to prove config.go routed through a
+	// shared helper rather than a literal. That intent still holds, but the
+	// ceiling is now derived from the host: on the 64 GB reference box the
+	// derivation resolves to DefaultComputeNodeCeilingMB, while on a
+	// CI runner it is correctly much smaller. Asserting the constant here
+	// would pass on macOS (where detection is stubbed to 0 and the legacy
+	// fallback applies) and fail on Linux — so assert the derivation, which
+	// is the real wiring under test.
+	want := api.DeriveNodeSizing(hostMemTotalMB(), hostCPUs())
+	if got := cfg.ComputeNode.AdmissionCeilingMB; got != want.AdmissionCeilingMB {
+		t.Errorf("ComputeNode.AdmissionCeilingMB = %d, want %d (derived for this host)",
+			got, want.AdmissionCeilingMB)
+	}
+	if cfg.ComputeNode.AdmissionCeilingMB <= 0 {
+		t.Errorf("ceiling must stay positive for the migration 00123 CHECK, got %d",
+			cfg.ComputeNode.AdmissionCeilingMB)
 	}
 }
 
@@ -280,19 +288,38 @@ func TestLoadConfig_PartialTOMLKeepsDefaults(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_DefaultVCPUBudget pins the issue #938 / PR-A wiring
-// between cmd/vmmd/config.go and pkg/api.VCPUSlots. With no TOML
-// override, the default must match the migration 00123 backfill value
-// so single-box dev never trips the CHECK constraint.
-func TestLoadConfig_DefaultVCPUBudget(t *testing.T) {
+// TestLoadConfig_DefaultNodeSizing pins the issue #938 / PR-A wiring between
+// cmd/vmmd/config.go and pkg/api, now that sizing is derived from the host
+// rather than fixed at the single-box constants. The default must still
+// satisfy migration 00123's vcpu_budget > 0 CHECK on every machine, and must
+// never advertise more memory than the host actually has — that was the bug:
+// a 16 GiB node registering 56,000 MB and a 47,600 MB ceiling.
+//
+// Asserted against DeriveNodeSizing rather than the raw constants so the test
+// is meaningful on a CI runner as well as on the 64 GB reference box, where
+// the derivation resolves to exactly api.VCPUSlots / 47,600.
+func TestLoadConfig_DefaultNodeSizing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
 	cfg, err := LoadConfig(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.ComputeNode.VCPUBudget != api.VCPUSlots {
-		t.Errorf("ComputeNode.VCPUBudget = %d, want %d (api.VCPUSlots)",
-			cfg.ComputeNode.VCPUBudget, api.VCPUSlots)
+	want := api.DeriveNodeSizing(hostMemTotalMB(), hostCPUs())
+	if cfg.ComputeNode.VCPUBudget != want.VCPUSlots {
+		t.Errorf("ComputeNode.VCPUBudget = %d, want %d (derived for this host)",
+			cfg.ComputeNode.VCPUBudget, want.VCPUSlots)
+	}
+	if cfg.ComputeNode.AdmissionCeilingMB != want.AdmissionCeilingMB {
+		t.Errorf("ComputeNode.AdmissionCeilingMB = %d, want %d (derived for this host)",
+			cfg.ComputeNode.AdmissionCeilingMB, want.AdmissionCeilingMB)
+	}
+	if cfg.ComputeNode.VCPUBudget <= 0 || cfg.ComputeNode.AdmissionCeilingMB <= 0 {
+		t.Errorf("sizing must stay positive for the migration 00123 CHECK: %+v", cfg.ComputeNode)
+	}
+	// The overcommit bug, pinned: never advertise more RAM than the host has.
+	if hostMem := hostMemTotalMB(); hostMem > 0 && cfg.ComputeNode.MemMB > hostMem {
+		t.Errorf("ComputeNode.MemMB = %d exceeds the host's real %d MB",
+			cfg.ComputeNode.MemMB, hostMem)
 	}
 }
 

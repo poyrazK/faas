@@ -23,6 +23,7 @@ package daemonunitspec
 // spec: §13
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -148,6 +149,16 @@ func TestUnitVmmd_Shape(t *testing.T) {
 func TestUnitApid_Shape(t *testing.T) {
 	u := UnitApid()
 	assertBasicShape(t, "apid", u)
+	foundSocket := false
+	for _, requirement := range u.Requires {
+		if requirement == "faas-apid.socket" {
+			foundSocket = true
+			break
+		}
+	}
+	if !foundSocket {
+		t.Errorf("apid: Requires = %v, want durable faas-apid.socket", u.Requires)
+	}
 	if u.User != "faas-apid" {
 		t.Errorf("apid: User = %q, want faas-apid", u.User)
 	}
@@ -328,6 +339,17 @@ func TestUnitImaged_Shape(t *testing.T) {
 	}
 	if u.Slice != FaasCPSlice {
 		t.Errorf("imaged: Slice = %q, want %q", u.Slice, FaasCPSlice)
+	}
+	// CAP_FOWNER joined the pair when the Grype scan path was fixed. cap_sys_admin
+	// must never appear here (ADR-075: vmmd is the only mount owner).
+	wantCaps := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"}
+	if !reflect.DeepEqual(u.AmbientCapabilities, wantCaps) {
+		t.Errorf("imaged: AmbientCapabilities = %v, want %v", u.AmbientCapabilities, wantCaps)
+	}
+	for _, c := range u.AmbientCapabilities {
+		if strings.EqualFold(c, "CAP_SYS_ADMIN") {
+			t.Errorf("imaged: AmbientCapabilities must never contain %q (ADR-075)", c)
+		}
 	}
 	// imaged does NOT dial /run/faas sockets — it talks to vmmd
 	// over faas-cp.slice dependency instead. Pin the FAAS_BASE_*

@@ -138,12 +138,13 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	instanceID := uuid.NewString()
 	req := Request{
-		Instance: instanceID,
-		AppID:    "", // jobs have no appID
-		Plan:     plan,
-		RAMMB:    ramMB,
-		VCPU:     1, // jobs are single-vCPU today (M5); future SxS uses more
-		Kind:     KindJob,
+		Instance:      instanceID,
+		AppID:         "", // jobs have no appID
+		Plan:          plan,
+		RAMMB:         ramMB,
+		VCPU:          1, // jobs are single-vCPU today (M5); future SxS uses more
+		CPUMillicores: api.DefaultAppCPUMillicores,
+		Kind:          KindJob,
 	}
 	// Jobs submitted to the control-plane fleet scheduler have no app row
 	// whose owner can drive routing. Select an admitting compute node through
@@ -155,6 +156,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	nodeID := placement.NodeID
 	req.NodeID = nodeID
+	req.NodeCeilingMB = placement.CeilingMB
+	req.VCPUBudget = placement.VCPUBudget
+	req.CPUBudgetMillicores = placement.CPUBudgetMillicores
 	if err := e.ledger.Admit(req); err != nil {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob admit: %w", err)
 	}

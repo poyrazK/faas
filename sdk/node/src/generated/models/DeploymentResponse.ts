@@ -19,6 +19,10 @@ export type DeploymentResponse = {
   stage_state?: Record<string, any>;
   id: string;
   app_id: string;
+  /**
+   * Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id.
+   */
+  revision?: number;
   build_id?: string | null;
   /**
    * Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup.
@@ -111,9 +115,9 @@ export type DeploymentResponse = {
    */
   scan?: (ScanResult | null);
   /**
-   * Per-deployment parking reason (issue #554 / ADR-079 follow-up, migration 00157). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty.
+   * Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty.
    */
-  parked_reason?: 'liveness_exhausted' | 'lifecycle_park' | 'admin_park';
+  parked_reason?: 'liveness_exhausted' | 'lifecycle_park' | 'admin_park' | 'security_scan_regressed';
   /**
    * Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles). nil for never-parked deployments.
    */

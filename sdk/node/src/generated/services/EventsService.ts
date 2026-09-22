@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
 import type { PublishEventResponse } from '../models/PublishEventResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -47,6 +48,39 @@ export class EventsService {
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List event subscriptions reconciled for an app.
+   * Returns the event subscriptions currently installed from the app's
+   * deployment manifest. The response is read-only and account-scoped;
+   * use it to verify the router will receive matching published events.
+   *
+   * @returns EventSubscriptionListResponse Reconciled event subscriptions, in creation order.
+   * @throws ApiError
+   */
+  public static listEventSubscriptions({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EventSubscriptionListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
       },
     });
   }

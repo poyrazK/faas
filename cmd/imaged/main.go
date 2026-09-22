@@ -359,6 +359,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// being live, not empty.)
 	wire.BootStamps(ctx, "imaged", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	// M-1 / ADR-136 §Decision 2: wire pkg/rootfs's per-layer
 	// ownership-clamp + skipped-entry counters onto the daemon's
 	// OpsMetrics so imaged_ownership_clamp_total{reason} and
@@ -742,6 +745,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// All boot-critical storage and runtime bases are staged before this point.
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, imagedProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 
 	// Recover deploy handoffs that were emitted while imaged was restarting or
 	// its LISTEN connection was down. The replay worker shares Loop's handler

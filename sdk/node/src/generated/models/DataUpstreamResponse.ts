@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EgressCircuitBreakerPolicy } from './EgressCircuitBreakerPolicy.js';
 /**
  * A single customer data upstream. The plaintext host is replaced by
  * `host_redacted_hash` (sha256(salt||host) 8-hex prefix); the §11
@@ -46,5 +47,6 @@ export type DataUpstreamResponse = {
   last_probed_at?: string;
   created_at: string;
   last_seen_at: string;
+  circuit_breaker?: EgressCircuitBreakerPolicy;
 };
 

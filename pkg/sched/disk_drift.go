@@ -60,11 +60,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// expectedFile names the canonical files inside a deployment's
-// snapshot directory. The spec layout is exactly two files; any other
-// name is an unexpected entry and counts as drift (plan §PR 3 drift
-// contract).
-var expectedFiles = []string{"mem", "vmstate"}
+var legacySnapshotFiles = []string{"mem", "vmstate"}
+
+func expectedSnapshotFiles(row state.SnapshotForGC) []string {
+	if state.SnapshotDriveKey(state.Snapshot{StorageKey: row.StorageKey}) != "" {
+		return []string{"mem", "vmstate", "drive"}
+	}
+	return legacySnapshotFiles
+}
 
 // snapshotLister is the minimal store surface DiskDrift depends on.
 // Narrowing the dependency to one method keeps the constructor type
@@ -386,7 +389,7 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 			continue
 		}
 		expectedSizes := map[string]int64{"mem": row.MemBytes, "vmstate": row.DiskBytes}
-		for _, part := range expectedFiles {
+		for _, part := range expectedSnapshotFiles(row) {
 			disk, ok := parts[part]
 			if !ok {
 				drift += d.recordDrift("expected-file-missing", filepath.Join(root, objectID, part))
@@ -452,10 +455,14 @@ func parseSnapshotDirectory(directory string) (objectID string, terminal, valid 
 	case len(parts) == 2 && (parts[1] == "warm" || parts[1] == "captures"):
 		return directory, false, true
 	case len(parts) == 3 && parts[1] == "captures" && canonicalSnapshotCaptureID(parts[2]):
-		return directory, true, true
+		return directory, false, true
 	case len(parts) == 3 && parts[1] == "warm" && parts[2] == "captures":
 		return directory, false, true
 	case len(parts) == 4 && parts[1] == "warm" && parts[2] == "captures" && canonicalSnapshotCaptureID(parts[3]):
+		return directory, false, true
+	case len(parts) == 4 && parts[1] == "captures" && canonicalSnapshotCaptureID(parts[2]) && parts[3] == "v2":
+		return directory, true, true
+	case len(parts) == 5 && parts[1] == "warm" && parts[2] == "captures" && canonicalSnapshotCaptureID(parts[3]) && parts[4] == "v2":
 		return directory, true, true
 	default:
 		return "", false, false
@@ -518,7 +525,7 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 	// discarded by design. A future contributor adding a
 	// remote-side size comparison should rebind the range to
 	// `for depID, row := range expected`.
-	for depID := range expected {
+	for depID, row := range expected {
 		if err := ctx.Err(); err != nil {
 			d.log.Warn("disk-drift: tick timed out",
 				"err", err, "drift", drift)
@@ -530,7 +537,7 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 				"snap/"+depID)
 			continue
 		}
-		for _, want := range expectedFiles {
+		for _, want := range expectedSnapshotFiles(row) {
 			if _, ok := presentSet[want]; !ok {
 				drift += d.recordDrift("expected-file-missing",
 					"snap/"+depID+"/"+want)
@@ -563,7 +570,7 @@ func parseSnapKey(key string) (objectID, part string, ok bool) {
 		return "", "", false
 	}
 	part = parts[len(parts)-1]
-	if part != "mem" && part != "vmstate" {
+	if part != "mem" && part != "vmstate" && part != "drive" {
 		return "", "", false
 	}
 	switch {
@@ -575,6 +582,10 @@ func parseSnapKey(key string) (objectID, part string, ok bool) {
 		return strings.Join(parts[1:4], "/"), part, true
 	case len(parts) == 6 && parts[2] == "warm" && parts[3] == "captures" && canonicalSnapshotCaptureID(parts[4]):
 		return strings.Join(parts[1:5], "/"), part, true
+	case len(parts) == 6 && parts[2] == "captures" && canonicalSnapshotCaptureID(parts[3]) && parts[4] == "v2":
+		return strings.Join(parts[1:5], "/"), part, true
+	case len(parts) == 7 && parts[2] == "warm" && parts[3] == "captures" && canonicalSnapshotCaptureID(parts[4]) && parts[5] == "v2":
+		return strings.Join(parts[1:6], "/"), part, true
 	default:
 		return "", "", false
 	}

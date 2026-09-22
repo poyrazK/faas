@@ -213,6 +213,9 @@ type PGBackend struct {
 	metrics *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
+	// stale (ADR-190) is the last-known-good host -> App tier consulted
+	// only when the Router errors. See stale_routes.go.
+	stale *staleRoutes
 
 	appsMu sync.RWMutex
 	apps   map[string]App // app_id -> App (plan)
@@ -663,6 +666,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		sched:           sched,
 		log:             log,
 		routes:          NewRouteCache(RouteCacheCap),
+		stale:           newStaleRoutes(RouteCacheCap, routeStaleTTL()),
 		apps:            map[string]App{},
 		appsPicker:      map[string]*appPicker{},
 		mirrorRules:     map[string][]MirrorRuleRow{},
@@ -680,6 +684,12 @@ func smokeChallengeKey(appID, deploymentID string) string { return appID + "\x00
 // replayed only until expiresAt.
 func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, expiresAt time.Time) {
 	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
+		// An already-expired challenge lands here too, which is worth counting
+		// separately from one that never arrived: it means the publish-to-
+		// receive gap exceeded the token lifetime.
+		if b != nil {
+			b.metrics.ObserveSmokeChallenge("rejected")
+		}
 		return
 	}
 	b.smokeMu.Lock()
@@ -700,12 +710,16 @@ func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, 
 	}
 	key := smokeChallengeKey(appID, deploymentID)
 	b.smokeChallenges[key] = append(b.smokeChallenges[key], deploymentSmokeChallenge{token: token, expiresAt: expiresAt})
+	b.metrics.ObserveSmokeChallenge("stored")
 }
 
 // ValidateDeploymentSmoke authenticates the edge-health bypass. A valid token
 // is bound to both app and deployment, so it cannot authorize another tenant.
 func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) bool {
 	if b == nil || token == "" {
+		if b != nil {
+			b.metrics.ObserveSmokeValidation("missing_token")
+		}
 		return false
 	}
 	b.smokeMu.Lock()
@@ -713,6 +727,11 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 	key := smokeChallengeKey(appID, deploymentID)
 	challenges, ok := b.smokeChallenges[key]
 	if !ok {
+		// No challenge under this (app, deployment). Either the pg_notify
+		// never reached THIS gateway process — the map is process-local, so a
+		// restart or a missed notification looks identical — or the publisher
+		// and this gateway disagree on the app identity.
+		b.metrics.ObserveSmokeValidation("no_challenge")
 		return false
 	}
 	now := time.Now()
@@ -727,10 +746,16 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 	}
 	if len(live) == 0 {
 		delete(b.smokeChallenges, key)
-	} else {
-		b.smokeChallenges[key] = live
+		b.metrics.ObserveSmokeValidation("expired")
+		return false
 	}
-	return matched == 1
+	b.smokeChallenges[key] = live
+	if matched == 1 {
+		b.metrics.ObserveSmokeValidation("match")
+		return true
+	}
+	b.metrics.ObserveSmokeValidation("token_mismatch")
+	return false
 }
 
 // appPicker (PR-B / issue #556) is the per-app picker state the
@@ -830,8 +855,12 @@ const RouteCacheCap = 10_000
 
 // Lookup resolves a hostname to its app, cache-first (spec §4.1). A cache miss
 // is one indexed Postgres lookup through the Router; the result is memoized in
-// both the route (host→app_id) and app (app_id→plan) caches. A Router error or
-// an unknown host both yield ok=false so the handler writes a 404.
+// both the route (host→app_id) and app (app_id→plan) caches. An unknown host
+// yields ok=false so the handler writes a 404. A Router error (ADR-190) is
+// answered from the stale tier when the host resolved successfully within
+// FAAS_GATEWAY_ROUTE_STALE_TTL, so a Postgres outage does not take down
+// routes that were invalidated or evicted; without a stale entry it is a
+// 404 as before.
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
@@ -843,14 +872,31 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	}
 	app, ok, err := b.router.ResolveHost(ctx, host)
 	if err != nil {
-		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
-		return App{}, false
+		return b.lookupStale(host, err)
 	}
 	if !ok {
+		// Positive "no such route": never serve it stale again.
+		b.stale.Delete(host)
 		return App{}, false
 	}
 	b.routes.Put(host, app.ID)
 	b.putApp(app)
+	b.stale.Put(host, app)
+	return app, true
+}
+
+// lookupStale is the Router-error branch of Lookup (ADR-190).
+func (b *PGBackend) lookupStale(host string, err error) (App, bool) {
+	app, ok, shouldLog := b.stale.Get(host)
+	if !ok {
+		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
+		return App{}, false
+	}
+	b.metrics.ObserveRouteLookupStaleServed()
+	if shouldLog {
+		b.log.Warn("gateway: route lookup failed; serving last-known-good route",
+			"host", host, "app_id", app.ID, "err", err)
+	}
 	return app, true
 }
 

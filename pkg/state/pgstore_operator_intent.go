@@ -9,6 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // pgstore_operator_intent.go — CRUD for the operator_intents
@@ -201,9 +204,7 @@ func (s *PgStore) MarkOperatorIntentSucceeded(ctx context.Context, id string, sn
 // path. snapIDs may be nil (race-loser / unknown-kind /
 // deployment-not-found / etc.).
 func (s *PgStore) MarkOperatorIntentFailed(ctx context.Context, id, errMsg string, snapIDs []string) error {
-	if len(errMsg) > 1024 {
-		errMsg = errMsg[:1024]
-	}
+	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	if snapIDs == nil {
 		// pgx encodes a nil []string as NULL on the wire, but
 		// the column is text[] NOT NULL — coerce to an empty

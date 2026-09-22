@@ -971,6 +971,7 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 			directory := strings.TrimSuffix(strings.TrimPrefix(key, "snap/"), "/mem")
 			f.writeFile(t, directory, "mem", make([]byte, 10))
 			f.writeFile(t, directory, "vmstate", make([]byte, 20))
+			f.writeFile(t, directory, "drive", []byte("drive"))
 			if drift, err := f.dd.Tick(context.Background()); err != nil || drift != 0 {
 				t.Fatalf("capture drift=%d err=%v", drift, err)
 			}
@@ -1005,6 +1006,7 @@ func TestDiskDriftCaptureRepositoryIndexRemainsReadOnly(t *testing.T) {
 	lister := &indexedStorageLister{fakeStorageLister: fakeStorageLister{keys: []string{
 		old.StorageKey,
 		state.SnapshotVMStateKey(old),
+		state.SnapshotDriveKey(old),
 	}}}
 	drift, err := NewDiskDrift(store, nil).WithStorage(lister).Tick(ctx)
 	if err != nil || drift != 0 {

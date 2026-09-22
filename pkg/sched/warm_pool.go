@@ -207,7 +207,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)
 	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint,
 	})
 	if err != nil {
@@ -216,6 +216,13 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	wakeID := uuid.NewString()
 	ins, err := e.store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, placement.NodeID, wakeID, instanceModeForApp(app))
 	if err != nil {
+		// ADR-193: a warm-pool fill must never outrank a customer wake for
+		// node RAM. A durable refusal returns the typed capacity Problem so
+		// the caller drops this fill attempt instead of retrying into a
+		// full node.
+		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
+			return capErr
+		}
 		return fmt.Errorf("create row: %w", err)
 	}
 	cleanup := func(reason string) {
@@ -232,9 +239,9 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	e.emitInstanceChanged(ctx, ins.ID, app.ID, state.StateWaking, wakeID)
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
-		VCPUBudget: placement.VCPUBudget, Kind: KindWarmPool,
+		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,
 	}); err != nil {
 		e.releaseHostPortLeases(ctx, placement.NodeID, ins.ID)
 		_ = e.store.DeleteInstance(ctx, ins.ID)

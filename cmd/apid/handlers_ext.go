@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
@@ -42,6 +43,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
+// reason. The value can originate from a hostile DNS server, so it is both
+// capped and normalized before it reaches a stored reason string.
+const dialFailureDetailMaxBytes = 96
 
 // --- apps CRUD --------------------------------------------------------------
 
@@ -702,16 +708,31 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				if app.WorkloadClass == state.WorkloadClassWorker {
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass("concurrent_requests")
 				}
-			case "queue_depth":
+			case "queue_depth", "queue_lag":
 				if app.WorkloadClass != state.WorkloadClassWorker &&
-					app.WorkloadClass != state.WorkloadClassJob {
-					return api.ErrScalingTargetIncompatibleWithWorkloadClass("queue_depth")
+					app.WorkloadClass != state.WorkloadClassJob &&
+					app.Manifest.ExecutionMode != api.ExecutionModeWorker &&
+					app.Manifest.ExecutionMode != api.ExecutionModeJob {
+					return api.ErrScalingTargetIncompatibleWithWorkloadClass(sp.Target.Metric)
 				}
 			}
 		}
+		// ADR-198: schedules are validated BEFORE the plan gates so an
+		// unparseable cron is a 422 about the cron rather than a 403
+		// about a floor the customer cannot reach anyway.
+		if problem := api.ValidateScalingSchedules("schedules", sp.Timezone, sp.Schedules); problem != nil {
+			return problem
+		}
+		// ADR-198: every min_instances gate below reads the MAXIMUM
+		// REACHABLE floor, not the static field. A schedule buys the
+		// same warm capacity min_instances does, so gating only the
+		// static value would let `min_instances: 0` plus a schedule of
+		// `min_instances: 3` walk through the Free rejection and the
+		// per-plan cap alike.
+		reachableMin := sp.MaxReachableMinInstances()
 		// Plan gates first (403 supersedes 422): a Free customer
 		// patching a valid policy still sees the plan error.
-		if sp.MinInstances > 0 && !acct.Plan.MinInstancesAllowed() {
+		if reachableMin > 0 && !acct.Plan.MinInstancesAllowed() {
 			return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
 		}
 		if sp.MaxInstances > 0 && !acct.Plan.MaxInstancesAllowed() {
@@ -721,15 +742,15 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// 0 is the explicit "scale to zero" form below the engine
 		// floor (1) — the engine applies the floor at wake time, so
 		// the apid gate only rejects the negative / over-cap cases.
-		if sp.MinInstances < 0 || sp.MinInstances > limits.MaxConcurrency {
-			return api.ErrInvalidMinInstances(sp.MinInstances, limits.MaxConcurrency)
+		if sp.MinInstances < 0 || reachableMin > limits.MaxConcurrency {
+			return api.ErrInvalidMinInstances(reachableMin, limits.MaxConcurrency)
 		}
 		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
 		// to protect the §6.2-2 RAM ceiling from a single API
 		// call pinning a large fraction of the box.
-		if sp.MinInstances > acct.Plan.MaxMinInstances() {
-			return api.ErrMaxMinInstancesExceeded(sp.MinInstances, acct.Plan.MaxMinInstances())
+		if reachableMin > acct.Plan.MaxMinInstances() {
+			return api.ErrMaxMinInstancesExceeded(reachableMin, acct.Plan.MaxMinInstances())
 		}
 		// Bounds on max_instances: must be in [MinInstances, plan.MaxConcurrency].
 		// 0 means "use plan max_concurrency"; the engine reads the
@@ -743,8 +764,11 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if sp.MaxInstances > 0 && sp.MaxInstances > limits.MaxConcurrency {
 			return api.ErrInvalidMaxInstances(sp.MaxInstances, sp.MinInstances, limits.MaxConcurrency)
 		}
-		if sp.MaxInstances > 0 && sp.MaxInstances < sp.MinInstances {
-			return api.ErrInvalidMaxInstances(sp.MaxInstances, sp.MinInstances, limits.MaxConcurrency)
+		// max_instances must sit above every floor the app can reach,
+		// including a scheduled one — a window that demands 5 under a
+		// max of 2 is a policy that contradicts itself at 08:00.
+		if sp.MaxInstances > 0 && sp.MaxInstances < reachableMin {
+			return api.ErrInvalidMaxInstances(sp.MaxInstances, reachableMin, limits.MaxConcurrency)
 		}
 		// Cooldown floors + ceilings. The plan allows a customer
 		// to opt for a tighter cooldown (e.g. 5 s on Hobby) than
@@ -765,29 +789,20 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// compat). The metric surface is the only field that
 		// triggers the workload-class gate, but the actual reject
 		// runs in updateApp after loadApp — the validator here
-		// only checks the value shape.
-		if sp.Target != nil {
-			switch sp.Target.Metric {
-			case "", "rps", "concurrent_requests", "queue_depth", "p99_latency_ms":
-				// ok
-			default:
-				return api.NewProblem(http.StatusUnprocessableEntity,
-					api.CodeValidation,
-					"Invalid scaling policy",
-					fmt.Sprintf("target.metric=%q is not in the closed set (rps, concurrent_requests, queue_depth, p99_latency_ms).", sp.Target.Metric))
-			}
-			if sp.Target.Value < 0 {
-				return api.NewProblem(http.StatusUnprocessableEntity,
-					api.CodeValidation,
-					"Invalid scaling policy",
-					fmt.Sprintf("target.value must be >= 0; got %v.", sp.Target.Value))
-			}
-			if sp.Target.Metric == "queue_depth" && sp.Target.Value <= 0 {
-				return api.NewProblem(http.StatusUnprocessableEntity,
-					api.CodeValidation,
-					"Invalid scaling policy",
-					fmt.Sprintf("target.value must be > 0 for queue_depth; got %v.", sp.Target.Value))
-			}
+		//
+		// ADR-194: the closed set and the per-metric value rules live in
+		// pkg/api so this handler, the manifest loader and the deploy-diff
+		// quota gate cannot drift apart again — they held three copies of
+		// the set, and all three agreed on metrics the scheduler did not
+		// implement.
+		if sp.Target != nil && len(sp.Targets) > 0 {
+			return api.ErrScalingTargetConflict()
+		}
+		if err := api.ValidateLegacyScalingTarget(sp.Target); err != nil {
+			return err
+		}
+		if err := api.ValidateScalingTargets("targets", sp.Targets); err != nil {
+			return err
 		}
 	}
 	// Issue #472 / ADR-054: per-app cosign signature-enforcement flag
@@ -1980,6 +1995,17 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	mode := "latest_superseded"
 	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
 		mode = "explicit"
+		// ADR-198 — accept the customer-facing `v42` handle (or a bare
+		// `42`) in place of a uuid. Resolved here, inside the app scope,
+		// so a revision can only ever address a deployment of the app
+		// named in the request path; the IDOR posture is unchanged.
+		// Every downstream error message keeps echoing the original
+		// reference so the operator sees the string they typed.
+		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
+		if problem != nil {
+			return state.Deployment{}, problem
+		}
+		req.TargetDeploymentID = &resolved
 		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
 		if err != nil {
 			switch {
@@ -2063,7 +2089,12 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	auditEntry := state.DeploymentAudit{
 		DeploymentID: depUUID, AccountID: acctUUID, Kind: state.DeployRolledBack,
 		Actor: "apid:rollback", At: time.Now().UTC(),
-		Data: json.RawMessage(fmt.Sprintf(`{"from":%q,"to":%q,"mode":%q,"phase":"readiness_requested"}`, current.ID, target.ID, mode)),
+		Data: json.RawMessage(safetext.JSONObject(struct {
+			From  string `json:"from"`
+			To    string `json:"to"`
+			Mode  string `json:"mode"`
+			Phase string `json:"phase"`
+		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested"})),
 	}
 	if alertRuleID != uuid.Nil {
 		auditEntry.AlertRuleID = &alertRuleID
@@ -2166,12 +2197,18 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 }
 
 func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
-	if _, err := s.store.LiveDeployment(ctx, app.ID); err != nil {
+	dep, err := s.store.LiveDeployment(ctx, app.ID)
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
 				"App has no live deployment", "deploy the app before requesting a wake")
 		}
 		return api.ErrCapacity("could not resolve the app's live deployment")
+	}
+	if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+		return api.NewProblem(http.StatusConflict, api.CodeSecurityPostureBlocked,
+			"App is security quarantined",
+			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before requesting a wake")
 	}
 	if app.Status == state.AppEvictedCold {
 		if err := waitForAppInstancesDrained(ctx, s.store, app.ID, 0, 0); err != nil {
@@ -2334,7 +2371,12 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// race-conditions with concurrent deploys that still reference the
 	// old slug in their deployment.app_id-to-slug lookup.
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"renamed","app_id":"%s","from":%q,"to":%q}`, app.ID, oldSlug, req.NewSlug))
+		string(safetext.JSONObject(struct {
+			Kind  string `json:"kind"`
+			AppID string `json:"app_id"`
+			From  string `json:"from"`
+			To    string `json:"to"`
+		}{Kind: "renamed", AppID: app.ID, From: oldSlug, To: req.NewSlug})))
 	// CodeQL go/log-injection (CWE-117): oldSlug came from the
 	// apps.slug column (regex-validated at create) and req.NewSlug
 	// passed the same validSlug check on this request's body. Wrap
@@ -2782,10 +2824,7 @@ func classifyCertError(err error) string {
 		// net.OpError (DNS, connection refused) etc. Fall back to
 		// the wrapped error's message but cap the length so a
 		// hostile DNS server can't blow up the wire.
-		msg := err.Error()
-		if len(msg) > 96 {
-			msg = msg[:96] + "…"
-		}
+		msg := safetext.Ellipsis(err.Error(), dialFailureDetailMaxBytes)
 		return "dial_failed:" + msg
 	}
 }
@@ -2805,11 +2844,7 @@ func dialFailureReason(err error) string {
 	if err == nil || err.Error() == "" {
 		return "unknown"
 	}
-	msg := err.Error()
-	if len(msg) > 96 {
-		msg = msg[:96] + "…"
-	}
-	return msg
+	return safetext.Ellipsis(err.Error(), dialFailureDetailMaxBytes)
 }
 
 // --- domain doctor (ADR-120) --------------------------------------------
@@ -4792,6 +4827,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
 		AppID:             d.AppID,
+		Revision:          d.Revision, // ADR-198 — the `v42` handle.
 		BuildID:           d.BuildID,
 		ImageDigest:       d.ImageDigest,
 		Kind:              string(d.Kind),

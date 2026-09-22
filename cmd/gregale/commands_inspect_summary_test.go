@@ -86,6 +86,9 @@ func TestCmdInspectSummary_JSON(t *testing.T) {
 	if got.App.WorkloadClass != "http" || got.Runtime.Framework != "fastapi" {
 		t.Errorf("application intelligence drift: app=%+v runtime=%+v", got.App, got.Runtime)
 	}
+	if got.App.URL != "https://custom.example.com" {
+		t.Errorf("inspect URL = %q, want canonical app URL", got.App.URL)
+	}
 	if got.API.Endpoints != 3 || got.Data.Upstreams != 2 {
 		t.Errorf("joined signals drift: api=%+v data=%+v", got.API, got.Data)
 	}
@@ -294,7 +297,7 @@ func inspectSummaryFixtures(t *testing.T) (api.AppResponse, api.DeploymentRespon
 		t.Fatalf("encode receipt: %v", err)
 	}
 	app := api.AppResponse{
-		ID: inspectAppID, Slug: inspectSlug, URL: "https://myapp.apps.gregale.dev", Status: "active",
+		ID: inspectAppID, Slug: inspectSlug, URL: "https://myapp.apps.gregale.dev", CanonicalURL: "https://custom.example.com", Status: "active",
 		Type: "app", WorkloadClass: "http", AppProtocol: "http1", RAMMB: 512, CPUMillicores: 1000,
 		ResourceProfile: api.ResourceProfileMedium, MaxConcurrency: 5,
 		ScalingPolicy: &api.ScalingPolicy{MinInstances: 0, MaxInstances: 5, Target: &api.ScalingTarget{Metric: "concurrent_requests", Value: 10}},

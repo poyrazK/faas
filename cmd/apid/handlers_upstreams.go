@@ -402,7 +402,99 @@ func dataUpstreamResponseFromState(r state.DataUpstream) api.DataUpstreamRespons
 		LastProbedAt:    lastProbedAt,
 		CreatedAt:       r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		LastSeenAt:      r.LastSeenAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		CircuitBreaker: api.EgressCircuitBreakerPolicy{
+			Enabled:          r.CircuitBreakerEnabled,
+			FailureThreshold: r.CircuitBreakerFailureThreshold,
+			MinSamples:       r.CircuitBreakerMinSamples,
+			OpenSeconds:      r.CircuitBreakerOpenSeconds,
+		},
 	}
+}
+
+// updateUpstreamCircuitBreaker is PATCH
+// /v1/apps/{slug}/upstreams/{id}/circuit-breaker (ADR-201 §3).
+//
+// Opting in gives the platform permission to REJECT this app's connections to
+// this upstream while its circuit is open. That is the whole point — a
+// blackholed dependency otherwise burns the request budget and then the wake
+// slot on every request — but it is also why the default is off and why this
+// is an explicit, per-upstream, customer-initiated call rather than anything
+// inferred from an env var.
+func (s *server) updateUpstreamCircuitBreaker(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.runtimeBool(runtimeConfigDataPlacement, s.dataPlacementEnabled) {
+		api.WriteProblem(w, api.ErrDataUpstreamsDisabled())
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	id, prob := parseUpstreamID(r)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	var body api.UpdateUpstreamCircuitBreakerRequest
+	if err := decodeJSON(r, &body); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
+		return
+	}
+	if p := body.Validate(); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	// Plan gate before the row read: an account whose plan has no egress
+	// breakers must not be able to probe which upstream IDs exist.
+	limits, lok := api.LimitsFor(acct.Plan)
+	if !lok || limits.EgressCircuitBreakersPerApp == 0 {
+		api.WriteProblem(w, api.ErrPlanDataUpstreamsNotAllowed(acct.Plan))
+		return
+	}
+	row, err := s.store.GetDataUpstreamByID(r.Context(), id)
+	if err != nil || row.AppID.String() != app.ID {
+		// Same not-found shape for "missing" and "belongs to another app":
+		// distinguishing them would confirm the existence of a sibling
+		// app's upstream.
+		api.WriteProblem(w, api.ErrUpstreamNotFound(id.String()))
+		return
+	}
+	// Quota counts only rows that are ON. Toggling an already-enabled
+	// upstream, or turning one off, must never be blocked by the cap.
+	if body.Enabled != nil && *body.Enabled && !row.CircuitBreakerEnabled {
+		rows, listErr := s.store.ListAllAppDataUpstreams(r.Context(), acct.ID, app.ID)
+		if listErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not count egress circuit breakers"))
+			return
+		}
+		enabled := 0
+		for _, u := range rows {
+			if u.CircuitBreakerEnabled {
+				enabled++
+			}
+		}
+		if enabled >= limits.EgressCircuitBreakersPerApp {
+			api.WriteProblem(w, api.ErrPlanLimitDataUpstreams(acct.Plan,
+				limits.EgressCircuitBreakersPerApp, enabled))
+			return
+		}
+	}
+	if err := s.store.UpdateDataUpstreamCircuitBreaker(r.Context(), state.UpdateDataUpstreamCircuitBreakerParams{
+		ID:               id,
+		AppID:            uuid.MustParse(app.ID),
+		Enabled:          body.Enabled,
+		FailureThreshold: body.FailureThreshold,
+		MinSamples:       body.MinSamples,
+		OpenSeconds:      body.OpenSeconds,
+	}); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not update the egress circuit breaker"))
+		return
+	}
+	updated, err := s.store.GetDataUpstreamByID(r.Context(), id)
+	if err != nil {
+		api.WriteProblem(w, api.ErrUpstreamNotFound(id.String()))
+		return
+	}
+	writeJSON(w, http.StatusOK, dataUpstreamResponseFromState(updated))
 }
 
 // deriveLast4FromHash returns the first 8 lowercase hex chars of

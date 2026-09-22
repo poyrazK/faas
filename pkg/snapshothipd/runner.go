@@ -269,8 +269,11 @@ func syncJob(ctx context.Context, backend storage.StorageBackend, job state.Snap
 	if job.StorageKey == "" || job.VMStateStorageKey == "" {
 		return errors.New("snapshothipd: snapshot replica has incomplete storage keys")
 	}
-	keys := make([]string, 0, 2+len(job.LayerStorageKeys))
+	keys := make([]string, 0, 3+len(job.LayerStorageKeys))
 	keys = append(keys, job.StorageKey, job.VMStateStorageKey)
+	if driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: job.StorageKey}); driveKey != "" {
+		keys = append(keys, driveKey)
+	}
 	keys = append(keys, job.LayerStorageKeys...)
 	for _, key := range keys {
 		if key == "" {

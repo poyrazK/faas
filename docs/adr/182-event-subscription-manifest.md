@@ -47,6 +47,11 @@ and schedd delivery are separate follow-ups.
 
 Customers can author the Workstream B subscription shape in either manifest
 format without bypassing the same pattern/filter validation used by the router.
-Source-ref reconciliation can apply YAML and TOML declarations through the same
-authenticated path, while this parser change remains independent of database
-and dispatch migrations.
+Source-ref reconciliation applies YAML and TOML declarations through the same
+authenticated path. The durable subscription rows are reconciled on canonical,
+resumable, and legacy deploys, and the schedd fan-out worker uses the persisted
+rows for account-scoped matching and ordinary async delivery. The app-scoped
+`GET /v1/apps/{slug}/event-subscriptions` endpoint and
+`gregale events subscriptions <app>` command expose the reconciled result so a
+customer can verify the router configuration without opening deployment
+artifacts.

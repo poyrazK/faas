@@ -32,12 +32,14 @@ func TestServiceProxyRetriesStaleGETAndCachesLease(t *testing.T) {
 	var seenInstance atomic.Value
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve:  func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
-		Authorize: func(_ context.Context, caller, target string) error {
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(_ context.Context, caller, target string) (ServiceCaller, error) {
 			if caller != "app-client" || target != "app-orders" {
-				return errors.New("unexpected authorization input")
+				return ServiceCaller{}, errors.New("unexpected authorization input")
 			}
-			return nil
+			return ServiceCaller{AppID: caller}, nil
 		},
 		Forward: func(target Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,9 +88,11 @@ func TestServiceProxyRefreshesExpiredLease(t *testing.T) {
 	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-orders", Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}}}}
 	now := time.Unix(100, 0)
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider:  provider,
-		Resolve:   func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
-		Authorize: func(context.Context, string, string) error { return nil },
+		Provider: provider,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		Forward: func(Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 		},
@@ -113,12 +117,14 @@ func TestServiceProxyAuthorizationAndCallerIdentity(t *testing.T) {
 	var forwarded atomic.Bool
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve:  func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
-		Authorize: func(_ context.Context, caller, target string) error {
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(_ context.Context, caller, target string) (ServiceCaller, error) {
 			if caller == "app-foreign" || target != "app-orders" {
-				return ErrServiceProxyDenied
+				return ServiceCaller{}, ErrServiceProxyDenied
 			}
-			return nil
+			return ServiceCaller{AppID: caller}, nil
 		},
 		ResolveCaller: func(context.Context, string) (string, error) { return "app-client", nil },
 		Forward: func(Target) http.Handler {
@@ -155,9 +161,11 @@ func TestServiceProxyDoesNotRetryPOST(t *testing.T) {
 	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-orders", Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}, {InstanceID: "instance-b", NodeID: "node-b", Port: 8080}}}}
 	var calls atomic.Int32
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider:  provider,
-		Resolve:   func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
-		Authorize: func(context.Context, string, string) error { return nil },
+		Provider: provider,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		Forward: func(target Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
@@ -183,13 +191,13 @@ func TestServiceProxyRoutesDNSHostName(t *testing.T) {
 	var gotPath string
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(_ context.Context, service string) (string, bool, error) {
+		Resolve: func(_ context.Context, service string) (ServiceTarget, bool, error) {
 			if service != "orders" {
 				t.Fatalf("service = %q, want orders", service)
 			}
-			return "app-orders", true, nil
+			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
-		Authorize:     func(context.Context, string, string) error { return nil },
+		Authorize:     func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		ResolveCaller: func(context.Context, string) (string, error) { return "app-client", nil },
 		Forward: func(Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,9 +233,11 @@ func TestParseServiceProxyHostRejectsUnsafeNames(t *testing.T) {
 
 func TestServiceProxyRejectsMalformedPathAndEmptyRegistry(t *testing.T) {
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider:  &serviceProxyProvider{},
-		Resolve:   func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
-		Authorize: func(context.Context, string, string) error { return nil },
+		Provider: &serviceProxyProvider{},
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 	})
 	for _, path := range []string{"/v1/internal/services", "/v1/internal/services/", "/v1/internal/services//health"} {
 		req := httptest.NewRequest(http.MethodGet, "http://gateway"+path, nil)

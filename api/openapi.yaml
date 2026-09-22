@@ -4170,6 +4170,54 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/custom-metrics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listCustomMetrics
+      summary: List the app's pushed custom metrics (ADR-202)
+      description: "Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden \u2014 an operator debugging \"why isn't my custom target scaling\" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's custom metrics.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomMetricListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/custom-metrics/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: "Metric name. Must match [a-z][a-z0-9_]{0,62}."
+        schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' }
+    put:
+      operationId: putCustomMetric
+      summary: Push a custom application metric (ADR-202)
+      description: "Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app \u2014 a cron, a database trigger, or the customer's own infrastructure \u2014 which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomMetricRequest' }
+      responses:
+        '204':
+          description: "The gauge was stored and is now visible to the scheduler on its next tick."
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/CustomMetricInvalid' }
+    delete:
+      operationId: deleteCustomMetric
+      summary: Delete a custom application metric (ADR-202)
+      description: "Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not exist returns 204, not 404: the caller's intent is \"this metric is gone\", which is already true, and a 404 would make a retry of a successful delete look like a failure."
+      tags: [apps]
+      responses:
+        '204':
+          description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -7374,7 +7422,12 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-              example: '{"type":"about:blank","title":"","status":403,"code":"log_archive_retention_exceeded","detail":"?date=2026-07-01 is outside the per-plan window"}'
+              example:
+                type: "about:blank"
+                title: ""
+                status: 403
+                code: "log_archive_retention_exceeded"
+                detail: "?date=2026-07-01 is outside the per-plan window"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -7677,6 +7730,44 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/AppNotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/security/recover:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [security]
+      operationId: recoverAppSecurityQuarantine
+      summary: Recover an app from image-scan quarantine.
+      description: |
+        Restores an app to active only when the selected deployment is live,
+        newer than the recorded security quarantine, uses a different image
+        digest, and carries complete digest-matched scan evidence with zero
+        HIGH, CRITICAL, or UNKNOWN findings. Every live canary deployment is
+        checked before traffic is restored. The transition is idempotent and
+        emits an audited security recovery event.
+        Requires deploy-write scope and MFA.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityQuarantineRecoveryRequest'
+      responses:
+        '200':
+          description: The app was restored to active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityQuarantineRecoveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409':
+          description: The replacement deployment is not yet eligible for recovery.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   # ADR-119: per-app static egress IP (Scale-only, BYOIP, single-node v1).
@@ -8714,6 +8805,60 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: '404 — upstream_not_found.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/upstreams/{id}/circuit-breaker:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Id of the upstream whose egress circuit-breaker policy is being changed.
+    patch:
+      tags: [upstreams]
+      operationId: updateAppDataUpstreamCircuitBreaker
+      summary: Update an upstream's egress circuit-breaker policy.
+      description: |
+        Opts one upstream into (or out of) egress circuit breaking, and
+        optionally tunes its thresholds (ADR-201 §3).
+
+        Enabling this grants the platform permission to REJECT your app's
+        connections to this upstream while its circuit is open. Plaintext
+        hosts never appear in the request or the response; upstreams are
+        addressed by id and identified by `host_redacted_hash`.
+
+        Plan-gated: accounts whose plan allows no egress breakers receive
+        402. The per-app cap counts only ENABLED upstreams, so turning one
+        off, or re-saving one that is already on, is never blocked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUpstreamCircuitBreakerRequest'
+      responses:
+        '200':
+          description: The updated upstream envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataUpstreamResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: '402 — the plan does not allow egress circuit breakers, or the per-app cap is reached.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: '404 — upstream_not_found: no upstream with this id belongs to the app.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: '422 — validation failed on the circuit-breaker body.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -14334,6 +14479,28 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-subscriptions:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptions
+      summary: List event subscriptions reconciled for an app.
+      description: |
+        Returns the event subscriptions currently installed from the app's
+        deployment manifest. The response is read-only and account-scoped;
+        use it to verify the router will receive matching published events.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Reconciled event subscriptions, in creation order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -19886,7 +20053,8 @@ components:
         # most-recently parked deployment for this app, or absent
         # when the app has never been parked. Operators see the
         # closed-set reason (liveness_exhausted | lifecycle_park
-        # | admin_park) + the timestamp without grepping the
+        # | admin_park | security_scan_regressed) + the timestamp
+        # without grepping the
         # audit log. Nested (not flat) so AppResponse conflates
         # app-state with deployment-state only at the explicit
         # ref — mirrors the per-deployment override pattern at
@@ -20245,6 +20413,15 @@ components:
           minimum: 0
           description: "Upper bound on time-to-ready in seconds. 0 uses the plan default."
           example: 30
+        stop_grace_period_s:
+          type: integer
+          minimum: 0
+          description: "Upper bound on worker or service shutdown draining time in seconds before SIGKILL. 0 uses the mode/plan default."
+          example: 30
+        stop_signal:
+          type: string
+          description: "Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omitted defaults to SIGTERM."
+          example: SIGTERM
         max_retries:
           type: integer
           minimum: 0
@@ -20255,6 +20432,8 @@ components:
           description: "Initial app-level invocation retry default; queue binding and per-invocation policies may override it."
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        worker_replicas:
+          $ref: '#/components/schemas/WorkerScaling'
         ports:
           type: array
           maxItems: 16
@@ -20560,6 +20739,15 @@ components:
           minimum: 0
           description: "Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."
           example: 30
+        stop_grace_period_s:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Upper bound on worker or service shutdown draining time in seconds before SIGKILL. Omit for no change; 0 uses the mode/plan default."
+          example: 30
+        stop_signal:
+          type: [string, "null"]
+          description: "Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omit for no change."
+          example: SIGTERM
         max_retries:
           type: [integer, "null"]
           minimum: 0
@@ -20579,6 +20767,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'
           description: "Full replacement of the service replica policy. Omit for no change."
+        worker_replicas:
+          allOf:
+            - $ref: '#/components/schemas/WorkerScaling'
+          description: "Full replacement of the worker replica scaling policy. Omit for no change."
         ports:
           type: [array, "null"]
           maxItems: 16
@@ -20892,10 +21084,20 @@ components:
           minimum: 0
           example: 5
         target:
-          description: "Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps | concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out)."
+          description: "Single-signal form, superseded by `targets` (ADR-194) and still accepted: it is read as a one-element list. Closed metric set: rps | cpu | concurrent_requests | queue_depth. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out). Mutually exclusive with `targets` — setting both is 422."
           oneOf:
             - type: "null"
             - $ref: '#/components/schemas/ScalingTarget'
+        targets:
+          description: "Multi-signal autoscaling (ADR-194). Each entry states how much load ONE instance should carry on that metric; the platform evaluates every entry independently and provisions for the largest resulting instance count. The combination rule, the windowing and the cooldowns are platform policy and are not configurable per metric — declaring the signals is the whole surface. Each metric may appear at most once, every value must be > 0, and cpu is a percentage capped at 100. Mutually exclusive with `target`."
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/ScalingTarget'
+          example:
+            - {metric: concurrent_requests, value: 80}
+            - {metric: cpu, value: 70}
         scale_out_cooldown_s:
           description: "Minimum seconds between two scale-out events. Floor 1 (no 0 traps); ceiling 3600 (1 h). Out-of-range → 422 invalid_cooldown."
           type: integer
@@ -20930,6 +21132,19 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        timezone:
+          description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
+          type: string
+          example: "Europe/Istanbul"
+        schedules:
+          description: "Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor \u2014 they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap."
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            $ref: '#/components/schemas/ScalingSchedule'
+          example:
+            - {cron: "0 8 * * 1-5", duration_s: 43200, min_instances: 3}
 
     PublicAuthBlock:
       description: "Per-app public-URL auth write shape (issue #477 / ADR-077 + ADR-118). Sent on PATCH /v1/apps/{slug}; apid seals the basic_user + basic_pass into a single APP_BASIC_AUTH secretbox blob before persistence. The plaintext is never echoed on read (see PublicAuthStatus). For mode='ip_allowlist' (ADR-118), ip_allowlist carries the per-app CIDR allowlist (Pro 16 max, Scale 64 max — Free/Hobby → 403 plan_public_auth_ip_allowlist_not_allowed)."
@@ -20985,17 +21200,85 @@ components:
           maximum: 64
           example: 3
 
+    ScalingSchedule:
+      description: "One recurring window that raises the warm floor (ADR-195). `cron` is a five-field expression evaluated in the policy's `timezone`; each fire opens a window of `duration_s` seconds during which the app's floor is at least `min_instances`. Cron expresses instants rather than intervals, so the duration is what makes a window \u2014 and it needs no special case for a window that crosses midnight."
+      type: object
+      additionalProperties: false
+      required: [cron, duration_s, min_instances]
+      properties:
+        cron:
+          description: "Five-field cron expression (minute hour day-of-month month day-of-week), evaluated in the policy timezone."
+          type: string
+          example: "0 8 * * 1-5"
+        duration_s:
+          description: "How long the window stays open after each fire, in seconds. Between 60 and 604800 (7 days). The floor of 60 s exists because the scheduler sweep is coarser than that, so a shorter window could close before any tick observed it \u2014 billing a floor that never produced an instance."
+          type: integer
+          minimum: 60
+          maximum: 604800
+          example: 43200
+        min_instances:
+          description: "Warm floor while the window is open. Must be > 0: a schedule raises the floor and cannot lower it."
+          type: integer
+          minimum: 1
+          example: 3
+
+    CustomMetricRequest:
+      description: "ADR-202 push body. The metric name travels in the URL path, so the body carries only the number that varies \u2014 which is what makes the push idempotent by construction."
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          description: "Fleet-total quantity one instance should carry. The scheduler computes ceil(value / target). Must be finite, >= 0, and <= 1e12; a larger reading is a broken producer, and without the bound one bad push would demand the plan cap's worth of instances on the very next tick."
+          type: number
+          minimum: 0
+          example: 1284
+    CustomMetricResponse:
+      description: "One stored ADR-202 gauge."
+      type: object
+      required: [name, value, observed_at, stale]
+      properties:
+        name: { type: string, example: orders_pending }
+        value: { type: number, example: 1284 }
+        observed_at: { type: string, format: date-time }
+        stale:
+          description: "True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-side so the API and the scheduler cannot disagree about which rows count."
+          type: boolean
+      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false }
+    CustomMetricListResponse:
+      description: "The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
+      type: object
+      required: [metrics, freshness_seconds, max_metrics]
+      properties:
+        metrics:
+          type: array
+          items: { $ref: '#/components/schemas/CustomMetricResponse' }
+        freshness_seconds:
+          description: "A metric older than this reports no signal to the scheduler rather than its last value, so a dead pusher cannot pin the fleet at a frozen backlog."
+          type: integer
+          example: 300
+        max_metrics:
+          description: "Maximum distinct metric names this app may hold."
+          type: integer
+          example: 5
+
     ScalingTarget:
-      description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed; the unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
+      description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and since ADR-194 every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
       type: object
       additionalProperties: false
       properties:
         metric:
+          description: "rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-instance in-flight requests. queue_depth = fleet backlog budget per worker."
           type: string
-          enum: [rps, concurrent_requests, queue_depth, p99_latency_ms]
+          enum: [rps, cpu, concurrent_requests, queue_depth]
           example: "rps"
+        name:
+          description: "Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise \u2014 a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove."
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          example: orders_pending
         value:
-          description: "Target value (units depend on Metric). Must be >= 0; queue_depth requires a positive per-worker backlog budget."
+          description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number
           minimum: 0
           example: 1.0
@@ -21086,6 +21369,8 @@ components:
         # other than 'service' is a Validate error.
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        worker_replicas:
+          $ref: '#/components/schemas/WorkerScaling'
         favicon:
           type: [string, "null"]
           format: byte
@@ -21231,17 +21516,42 @@ components:
           description: "Desired replica count. Engine wakes replacement instances to maintain this when one fails or is destroyed."
           example: 2
 
+    WorkerScaling:
+      description: "Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."
+      type: object
+      required: [min, max, metric, target]
+      properties:
+        min:
+          type: integer
+          minimum: 0
+          description: "Minimum worker instances to maintain. 0 enables scale-to-zero."
+          example: 0
+        max:
+          type: integer
+          minimum: 1
+          description: "Maximum worker instances (bounded by plan WorkerReplicasMax and app max_concurrency)."
+          example: 50
+        metric:
+          type: string
+          enum: [queue_lag, queue_depth]
+          description: "Queue metric driving autoscaling."
+          example: queue_lag
+        target:
+          type: number
+          description: "Target backlog per worker instance (e.g. 500 messages per worker)."
+          example: 500
+
     # ─── Deployments ──────────────────────────────────────────────────────
 
     ParkedDeploymentRef:
-      description: "Reference to a deployment that was parked (issue #554 / ADR-079 follow-up). Returned in AppResponse.parked_deployment when the app has at least one parked deployment. The `parked_reason` field is closed-set (liveness_exhausted | lifecycle_park | admin_park) — enforced at the schema layer via the deployments_parked_reason_check constraint from migration 00157."
+      description: "Reference to a deployment that was parked (issue #554 / ADR-079 follow-up). Returned in AppResponse.parked_deployment when the app has at least one parked deployment. The `parked_reason` field is closed-set (liveness_exhausted | lifecycle_park | admin_park | security_scan_regressed) — enforced at the schema layer via the deployments_parked_reason_check constraint."
       type: object
       required: [id, parked_reason, parked_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         parked_reason:
           type: string
-          enum: [liveness_exhausted, lifecycle_park, admin_park]
+          enum: [liveness_exhausted, lifecycle_park, admin_park, security_scan_regressed]
           description: "Closed-set parking reason from the schema-layer CHECK constraint."
         parked_at: { type: string, format: date-time, description: "Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles)." }
 
@@ -21345,6 +21655,11 @@ components:
           description: Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt.
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        revision:
+          type: integer
+          minimum: 1
+          example: 42
+          description: "Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id."
         build_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$' }
         build_cache_status:
           type: string
@@ -21433,8 +21748,8 @@ components:
           description: "Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce, the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN findings; off/warn remain advisory."
         parked_reason:
           type: [string, "null"]
-          enum: [null, liveness_exhausted, lifecycle_park, admin_park]
-          description: "Per-deployment parking reason (issue #554 / ADR-079 follow-up, migration 00157). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty."
+          enum: [null, liveness_exhausted, lifecycle_park, admin_park, security_scan_regressed]
+          description: "Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty."
         parked_at:
           type: [string, "null"]
           format: date-time
@@ -21838,6 +22153,11 @@ components:
           type: [string, "null"]
           format: uuid
           description: "The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists."
+        rollback_target_revision:
+          type: integer
+          minimum: 1
+          example: 41
+          description: "Revision (ADR-198) of `rollback_target_id`, so a client can render the rollback command with the `v41` handle a customer can read and retype. Omitted when the target predates the revision column; fall back to `rollback_target_id` rather than rendering `v0`."
 
     DeploymentChange:
       description: "One non-secret release field that changed from the previous deployment."
@@ -22430,6 +22750,39 @@ components:
         id: { type: string }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
+
+    EventSubscriptionResponse:
+      description: One manifest-declared event subscription reconciled for an app.
+      type: object
+      additionalProperties: false
+      required: [id, app_id, source, type, filter, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        source:
+          type: string
+          description: Event source pattern, including supported wildcard forms.
+        type:
+          type: string
+          description: Event type pattern, including supported wildcard forms.
+        filter:
+          type: object
+          additionalProperties: true
+          description: Normalized JSON filter evaluated by the event matcher.
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    EventSubscriptionListResponse:
+      description: App-scoped event subscriptions reconciled from the manifest.
+      type: object
+      additionalProperties: false
+      required: [app_slug, subscriptions]
+      properties:
+        app_slug: { type: string }
+        subscriptions:
+          type: array
+          items: { $ref: '#/components/schemas/EventSubscriptionResponse' }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."
@@ -26246,6 +26599,135 @@ components:
             An empty / omitted value is coerced to `block` at the
             gateway-side handler.
 
+    EdgeRuleRetryAction:
+      description: |
+        Request replay against a different healthy instance
+        (ADR-201 §1, kind=retry).
+
+        There is deliberately NO "retry on status" field. Only a
+        TRANSPORT failure may arm a replay — a guest that answered 5xx
+        has served the request, and replaying it would run the
+        customer's side effects a second time — so the set of
+        retryable conditions is not configurable.
+
+        A replay additionally requires that the response has not
+        committed, a healthy sibling exists, and the remaining
+        `kind=budget` allowance is at least `min_remaining_ms`. A
+        retry can never extend a request's deadline.
+      type: object
+      properties:
+        max_attempts:
+          type: integer
+          minimum: 2
+          maximum: 3
+          default: 2
+          description: |
+            Total attempts, NOT retries: 2 means the original plus one
+            replay. 0 applies the default (2). 1 is rejected — it is a
+            silent no-op that reads like protection.
+
+            The ceiling is deliberately tight: every replay holds
+            another instance's concurrency slot for the duration of the
+            request, so a high attempt count multiplies load against
+            your own capacity at exactly the moment instances are
+            already failing.
+        allow_non_idempotent:
+          type: boolean
+          default: false
+          description: |
+            Opt POST and PATCH into replay. Off by default.
+
+            This is the only field here that can cost correctness
+            rather than latency: a replayed POST runs your handler's
+            side effect twice unless the handler is idempotent or the
+            caller sends an idempotency key. GET, HEAD, OPTIONS,
+            TRACE, PUT and DELETE are replayed without this flag.
+        min_remaining_ms:
+          type: integer
+          minimum: 0
+          maximum: 30000
+          default: 250
+          description: |
+            Request-budget floor below which a replay is skipped. 0
+            applies the default (250ms). Below this floor a retry
+            mostly converts a 502 into a 504 without improving the
+            outcome.
+        backoff_ms:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          default: 0
+          description: |
+            Delay before a replay. Defaults to 0 because the failure
+            being retried is a dead peer, not a loaded one, and the
+            next instance is a different process — so waiting buys
+            nothing. Raise it only when the sibling may still be
+            waking.
+    EdgeRuleCircuitBreakerAction:
+      description: |
+        Instance health thresholds (ADR-201 §2, kind=circuit_breaker).
+
+        This rule TUNES a breaker that already runs for every app on
+        every plan; it does not enable protection. With no rule your
+        app is still protected from a flapping instance by the
+        platform defaults below.
+
+        States are closed → open → half_open. In half_open exactly one
+        request is admitted as a probe: success closes the circuit and
+        resets the backoff, failure returns it to open with the
+        interval doubled, up to `max_open_seconds`.
+      type: object
+      properties:
+        failure_threshold:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1
+          default: 0.5
+          description: |
+            Failure RATIO (not a count) at or above which a closed
+            breaker opens. Consulted only once `min_requests`
+            observations exist inside the window. 0 applies the
+            default (0.5).
+        min_requests:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 5
+          description: |
+            Minimum observations inside `window_seconds` before the
+            ratio is consulted at all. 0 applies the default (5).
+
+            This is the field most likely to be set badly. At 1 a
+            single transport blip opens the circuit, which on a route
+            serving one request a minute reads as a 100% failure rate.
+        window_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          default: 10
+          description: |
+            Rolling failure window. 0 applies the default (10s).
+        open_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          default: 5
+          description: |
+            First open interval before a half-open probe is offered. 0
+            applies the default (5s). Each failed probe doubles the
+            interval up to `max_open_seconds`.
+        max_open_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          default: 60
+          description: |
+            Ceiling the exponential backoff grows toward. 0 applies the
+            default (60s). Must be at least `open_seconds`. The cap is
+            1 hour: a longer bench outlives most instances, so the
+            breaker would be holding state about a target that no
+            longer exists.
     EdgeRuleCacheAction:
       description: |
         Edge-cache control primitive (ADR-122, kind=cache). Wraps the
@@ -27503,6 +27985,90 @@ components:
           type: string
           description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (3..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp."
 
+    EgressCircuitBreakerPolicy:
+      description: |
+        Per-upstream egress circuit-breaker policy (ADR-201 §3).
+
+        When enabled, your app's NEW connections to this upstream are
+        rejected with a TCP reset while the circuit is open, instead of
+        hanging for a full TCP connect timeout. That is the point of the
+        feature: a blackholed dependency otherwise burns the per-request
+        budget and then holds the wake slot on every request, turning one
+        dependency outage into an app-wide capacity outage. Connections
+        already established are never torn down.
+
+        The circuit is driven by the platform's own 30-second TCP+TLS
+        probe of the upstream, not by your traffic, so the half-open trial
+        that decides recovery costs your app nothing.
+
+        Disabled by default. This rule can cut an app off from its own
+        database, so it is never inferred — you opt in per upstream.
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          default: false
+          description: Whether egress breaking is active for this upstream.
+        failure_threshold:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1
+          description: |
+            Failure RATIO (not a count) at or above which the circuit
+            opens. Omitted tracks the platform default (0.5), so the
+            upstream follows the default as it evolves rather than
+            freezing today's value.
+        min_samples:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: |
+            Probe samples required inside the window before the ratio is
+            consulted. Omitted tracks the platform default (3). The probe
+            samples every 30s, so a high value can take a long time to
+            accumulate — or never will on a short-lived app.
+        open_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          description: |
+            First open interval before a half-open probe is offered.
+            Omitted tracks the platform default (30). Each failed probe
+            doubles the interval, up to the platform ceiling.
+        state:
+          type: string
+          readOnly: true
+          enum: [closed, open, half_open]
+          description: |
+            Observed circuit state. Absent when the breaker is disabled or
+            the scheduler has not yet reported one.
+    UpdateUpstreamCircuitBreakerRequest:
+      description: |
+        Partial update of an upstream's egress circuit-breaker policy
+        (ADR-201 §3). Omitted fields are left unchanged.
+
+        Setting `enabled` to false leaves the threshold fields intact, so
+        toggling protection off does not discard your tuning.
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Turn egress breaking on or off for this upstream.
+        failure_threshold:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1
+        min_samples:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        open_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
     DataUpstreamResponse:
       type: object
       required: [id, source, kind, host_redacted_hash, port, created_at, last_seen_at]
@@ -27548,6 +28114,7 @@ components:
           description: "Timestamp of the most recent probe. Omitted when no probe yet."
         created_at: { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time }
+        circuit_breaker: { $ref: '#/components/schemas/EgressCircuitBreakerPolicy' }
 
     DataUpstreamListResponse:
       type: object
@@ -30723,7 +31290,7 @@ components:
           example: enforce
 
     AppSecurityPostureResponse:
-      description: "Read-only deterministic configuration posture for an app."
+      description: "Read-only deterministic configuration posture for an app, including an active image-scan quarantine when present."
       type: object
       required: [app_id, slug, profile, score, security_policy, findings]
       properties:
@@ -30745,6 +31312,57 @@ components:
         findings:
           type: array
           items: { $ref: '#/components/schemas/AppSecurityFinding' }
+        quarantine:
+          oneOf:
+            - $ref: '#/components/schemas/AppSecurityQuarantine'
+            - type: 'null'
+
+    AppSecurityQuarantine:
+      description: "Active image-scan quarantine details. Vulnerability findings remain on the deployment scan resource."
+      type: object
+      required: [deployment_id, image_digest, reason]
+      properties:
+        deployment_id:
+          type: string
+          description: "Deployment whose scan regression caused the quarantine."
+        image_digest:
+          type: string
+          description: "Immutable image digest that was quarantined."
+        reason:
+          type: string
+          enum: [security_scan_regressed]
+        parked_at:
+          type: [string, "null"]
+          format: date-time
+
+    SecurityQuarantineRecoveryRequest:
+      description: "The clean live deployment to use when recovering an app from image-scan quarantine."
+      type: object
+      required: [deployment_id]
+      properties:
+        deployment_id:
+          type: string
+          description: "Live replacement deployment with complete, digest-matched clean scan evidence."
+
+    SecurityQuarantineRecoveryResponse:
+      description: "The app's post-recovery active state."
+      type: object
+      required: [app_id, slug, deployment_id, image_digest, recovered_at, status]
+      properties:
+        app_id:
+          type: string
+        slug:
+          type: string
+        deployment_id:
+          type: string
+        image_digest:
+          type: string
+        recovered_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active]
 
     AppSecurityFinding:
       description: "One actionable security posture finding."
@@ -33070,6 +33688,12 @@ components:
 
     EnvVarNotFound:
       description: 'code: env_var_not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    CustomMetricInvalid:
+      description: 'code: validation | custom_metric_limit — a malformed name or value, or a push of a NEW metric name by an app already at MaxCustomMetricsPerApp. A push to an EXISTING name never produces the limit error: it is an upsert and cannot grow the count.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

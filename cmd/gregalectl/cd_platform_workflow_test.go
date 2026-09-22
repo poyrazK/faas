@@ -14,15 +14,16 @@ func TestCDPlatformOrchestratesControlComputeAndFleetGate(t *testing.T) {
 	}
 	workflow := string(body)
 	control := strings.Index(workflow, "uses: ./.github/workflows/cd-controlplane.yml")
-	compute := strings.Index(workflow, "uses: ./.github/workflows/cd-compute.yml")
+	prepare := strings.Index(workflow, "rollout_phase: prepare")
+	activate := strings.Index(workflow, "rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}")
 	computeNeedsControl := strings.Index(workflow, "needs: [control, plan]")
 	verify := strings.Index(workflow, "name: Report fleet release convergence")
 	gate := strings.Index(workflow, "compute-nodes release-status --desired-release")
-	if control < 0 || compute < 0 || computeNeedsControl < 0 || verify < 0 || gate < 0 {
-		t.Fatalf("platform workflow is incomplete: control=%d compute=%d needs=%d verify=%d gate=%d", control, compute, computeNeedsControl, verify, gate)
+	if control < 0 || prepare < 0 || activate < 0 || computeNeedsControl < 0 || verify < 0 || gate < 0 {
+		t.Fatalf("platform workflow is incomplete: control=%d prepare=%d activate=%d needs=%d verify=%d gate=%d", control, prepare, activate, computeNeedsControl, verify, gate)
 	}
-	if !(control < computeNeedsControl && computeNeedsControl < compute && compute < verify && verify < gate) {
-		t.Fatalf("platform rollout stages are out of order: control=%d needs=%d compute=%d verify=%d gate=%d", control, computeNeedsControl, compute, verify, gate)
+	if !(control < computeNeedsControl && computeNeedsControl < prepare && prepare < activate && activate < verify && verify < gate) {
+		t.Fatalf("platform rollout stages are out of order: control=%d needs=%d prepare=%d activate=%d verify=%d gate=%d", control, computeNeedsControl, prepare, activate, verify, gate)
 	}
 	if !strings.Contains(workflow, "--timeout '${gate_timeout}'") || !strings.Contains(workflow, "--break-glass-db -json") {
 		t.Fatal("platform workflow must execute the bounded, machine-readable active-node release gate")
@@ -41,12 +42,20 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 	for _, required := range []string{
 		"compute_targets:",
 		"name: Validate compute rollout targets",
+		"batch_prepare:",
+		"name: Prepare compute fleet in parallel",
+		"compute_targets: ${{ needs.plan.outputs.targets }}",
+		"name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})",
 		"target: ${{ fromJSON(needs.plan.outputs.targets) }}",
 		"fail-fast: true",
+		"max-parallel: 2",
 		"max-parallel: 1",
+		"rollout_phase: prepare",
+		"rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}",
+		"needs: [control, compute-prepare, compute-prepare-compat, plan]",
 		"node: ${{ matrix.target.node }}",
 		"ssh_host: ${{ matrix.target.ssh_host }}",
-		"needs: [control, compute, plan]",
+		"needs: [control, compute-prepare, compute-prepare-compat, compute, plan]",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("platform workflow is missing fleet-matrix contract %q", required)
@@ -57,6 +66,26 @@ func TestCDPlatformRollsEveryDeclaredComputeTarget(t *testing.T) {
 	}
 	if strings.Contains(workflow, "node: ${{ inputs.node }}\n      ssh_host: ${{ inputs.ssh_host }}") {
 		t.Fatal("compute stage still rolls only the legacy single-node inputs")
+	}
+}
+
+func TestCDPlatformSupportsSerializedFullRolloutAfterContractChange(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	for _, required := range []string{
+		"compute_rollout_mode:",
+		"default: phased",
+		"inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'",
+		"inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true'",
+		"inputs.compute_rollout_mode == 'full' && 'full' || 'activate'",
+		`"$selected_prepare_result" == "success" || "$COMPUTE_ROLLOUT_MODE" == "full"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("platform workflow is missing full-rollout fallback contract %q", required)
+		}
 	}
 }
 
@@ -85,12 +114,15 @@ func TestCDPlatformControlSuccessThenComputeFailureIsVisible(t *testing.T) {
 	workflow := string(body)
 	for _, required := range []string{
 		"if: always()",
-		"needs: [control, compute, plan]",
+		"needs: [control, compute-prepare, compute-prepare-compat, compute, plan]",
 		"PLAN_RESULT: ${{ needs.plan.result }}",
 		"CONTROL_RESULT: ${{ needs.control.result }}",
+		"COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}",
+		"COMPUTE_PREPARE_COMPAT_RESULT: ${{ needs.compute-prepare-compat.result }}",
 		"COMPUTE_RESULT: ${{ needs.compute.result }}",
-		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then`,
-		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
+		"COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}",
+		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then`,
+		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
 		"active-node-gate=${gate_exit}",
 	} {
 		if !strings.Contains(workflow, required) {
@@ -123,6 +155,14 @@ func TestCDPlatformRequiresPublicReadinessAndProductionDeployments(t *testing.T)
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("production deployment gate missing %q", required)
 		}
+	}
+	publicGateStart := publicReadiness - 500
+	if publicGateStart < 0 {
+		publicGateStart = 0
+	}
+	publicGate := workflow[publicGateStart:metricsGate]
+	if !strings.Contains(publicGate, `ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}"`) {
+		t.Fatal("public rollout gate must run from the GCP control-plane vantage point")
 	}
 }
 

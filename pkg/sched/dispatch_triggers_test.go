@@ -744,3 +744,51 @@ func TestObserveESM_ForwardsToOpsMetrics(t *testing.T) {
 		t.Errorf("records consumed counter = %v, want 2", got)
 	}
 }
+
+type fakePollerWithStats struct {
+	fakePollerForFilter
+	stats BrokerStats
+}
+
+func (f *fakePollerWithStats) BrokerStats(_ context.Context, _ sqlc.Trigger) BrokerStats {
+	return f.stats
+}
+
+func TestLoop_BrokerLag(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "acct", "test-account")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "test-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	limits, _ := api.LimitsFor(api.PlanScale)
+	trig, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "my-kafka", true, []byte(`{}`), "kafka", 10, 10, 3, 1024, "dead_letter", limits)
+	if err != nil {
+		t.Fatalf("CreateTrigger: %v", err)
+	}
+
+	eng := &Engine{store: store}
+	l := NewLoop(nil, eng, slog.Default())
+
+	fakePoller := &fakePollerWithStats{
+		stats: BrokerStats{Lag: 20000, Depth: 20000, Available: true},
+	}
+	l.triggerPollers = map[string]triggerSource{
+		trig.ID.String(): fakePoller,
+	}
+
+	lag, ok, err := l.BrokerLag(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("BrokerLag: %v", err)
+	}
+	if !ok {
+		t.Fatalf("BrokerLag returned ok=false")
+	}
+	if lag != 20000 {
+		t.Errorf("BrokerLag = %d, want 20000", lag)
+	}
+}

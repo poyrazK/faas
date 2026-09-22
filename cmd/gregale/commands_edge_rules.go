@@ -41,7 +41,7 @@ import (
 var edgeRuleKindVocab = []string{
 	"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip",
 	"validate", "limit", "geo", "maintenance", "throttle", "budget",
-	"cache", "respond",
+	"cache", "respond", "retry", "circuit_breaker",
 }
 
 // edgeRuleJWTAlgVocab is the closed `algorithm` set for kind=jwt.
@@ -103,7 +103,7 @@ func cmdEdgeRules(args []string) int {
 func cmdEdgeRulesList(args []string) int {
 	fs := newFlagSet("edge-rules list", flag.ContinueOnError)
 	slug := fs.String("app", "", "filter to a single app slug")
-	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond)")
+	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -164,7 +164,7 @@ func cmdEdgeRulesList(args []string) int {
 func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond (required)")
+	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker (required)")
 	matchHost := fs.String("match-host", "", "host to match (required)")
 	matchPath := fs.String("match-path", "/", "path to match")
 	var matchMethods multiFlag
@@ -273,6 +273,23 @@ func cmdEdgeRulesCreate(args []string) int {
 	budgetMs := fs.Int("budget-ms", 0, "kind=budget: per-request wall-clock budget in ms (>0; max 30000)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
+	// retry (ADR-201 §1). Replay a request that died in transport
+	// against a different healthy instance. Only a TRANSPORT failure
+	// arms a replay — a guest that answered 5xx has served the
+	// request — so there is deliberately no "retry on status" flag.
+	retryMaxAttempts := fs.Int("retry-max-attempts", 0, "kind=retry: total attempts, NOT retries (2 = original + one replay; default 2; max 3)")
+	retryAllowNonIdempotent := fs.Bool("retry-allow-non-idempotent", false, "kind=retry: also replay POST and PATCH — your handler MUST be idempotent or a replay runs its side effect twice")
+	retryMinRemainingMs := fs.Int("retry-min-remaining-ms", 0, "kind=retry: skip the replay below this much remaining request budget (default 250; max 30000)")
+	retryBackoffMs := fs.Int("retry-backoff-ms", 0, "kind=retry: delay before a replay in ms (default 0; max 1000)")
+
+	// circuit_breaker (ADR-201 §2). Tunes a breaker that already runs
+	// for every app on every plan; a rule only moves the thresholds.
+	circuitFailureThreshold := fs.Float64("circuit-failure-threshold", 0, "kind=circuit_breaker: failure RATIO that opens a closed breaker (default 0.5; (0,1])")
+	circuitMinRequests := fs.Int("circuit-min-requests", 0, "kind=circuit_breaker: observations needed before the ratio is consulted (default 5; at 1 a single blip opens the circuit)")
+	circuitWindowSeconds := fs.Int("circuit-window-seconds", 0, "kind=circuit_breaker: rolling failure window in seconds (default 10; max 300)")
+	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
+	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
+
 	// maintenance (ADR-091 D20 / issue #881). Per-route 503 with a
 	// Retry-After. Both fields are optional — a bare maintenance rule
 	// is a valid "hard down, no hint" shape.
@@ -335,6 +352,15 @@ func cmdEdgeRulesCreate(args []string) int {
 		CacheMethods:               cacheMethods,
 		BudgetMs:                   *budgetMs,
 		BudgetOverrideHeader:       *budgetOverrideHeader,
+		RetryMaxAttempts:           *retryMaxAttempts,
+		RetryAllowNonIdempotent:    *retryAllowNonIdempotent,
+		RetryMinRemainingMs:        *retryMinRemainingMs,
+		RetryBackoffMs:             *retryBackoffMs,
+		CircuitFailureThreshold:    *circuitFailureThreshold,
+		CircuitMinRequests:         *circuitMinRequests,
+		CircuitWindowSeconds:       *circuitWindowSeconds,
+		CircuitOpenSeconds:         *circuitOpenSeconds,
+		CircuitMaxOpenSeconds:      *circuitMaxOpenSeconds,
 		MaintenanceRetryAfter:      *maintenanceRetryAfter,
 		MaintenanceMessage:         *maintenanceMessage,
 		RespondStatus:              *respondStatus,
@@ -492,6 +518,24 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// buildEdgeRuleAction for both paths.
 	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new per-request wall-clock budget in ms (>0; max 30000)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
+
+	// retry (ADR-201 §1). Replay a request that died in transport
+	// against a different healthy instance. Only a TRANSPORT failure
+	// arms a replay — a guest that answered 5xx has served the
+	// request — so there is deliberately no "retry on status" flag.
+	retryMaxAttempts := fs.Int("retry-max-attempts", 0, "kind=retry: total attempts, NOT retries (2 = original + one replay; default 2; max 3)")
+	retryAllowNonIdempotent := fs.Bool("retry-allow-non-idempotent", false, "kind=retry: also replay POST and PATCH — your handler MUST be idempotent or a replay runs its side effect twice")
+	retryMinRemainingMs := fs.Int("retry-min-remaining-ms", 0, "kind=retry: skip the replay below this much remaining request budget (default 250; max 30000)")
+	retryBackoffMs := fs.Int("retry-backoff-ms", 0, "kind=retry: delay before a replay in ms (default 0; max 1000)")
+
+	// circuit_breaker (ADR-201 §2). Tunes a breaker that already runs
+	// for every app on every plan; a rule only moves the thresholds.
+	circuitFailureThreshold := fs.Float64("circuit-failure-threshold", 0, "kind=circuit_breaker: failure RATIO that opens a closed breaker (default 0.5; (0,1])")
+	circuitMinRequests := fs.Int("circuit-min-requests", 0, "kind=circuit_breaker: observations needed before the ratio is consulted (default 5; at 1 a single blip opens the circuit)")
+	circuitWindowSeconds := fs.Int("circuit-window-seconds", 0, "kind=circuit_breaker: rolling failure window in seconds (default 10; max 300)")
+	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
+	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
+
 	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: new Retry-After hint in seconds (>=0; max 86400)")
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
 	respondStatus := fs.Int("respond-status", 0, "kind=respond: new response status code (200..599)")
@@ -593,6 +637,15 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CacheMethods:               cacheMethods,
 			BudgetMs:                   *budgetMs,
 			BudgetOverrideHeader:       *budgetOverrideHeader,
+			RetryMaxAttempts:           *retryMaxAttempts,
+			RetryAllowNonIdempotent:    *retryAllowNonIdempotent,
+			RetryMinRemainingMs:        *retryMinRemainingMs,
+			RetryBackoffMs:             *retryBackoffMs,
+			CircuitFailureThreshold:    *circuitFailureThreshold,
+			CircuitMinRequests:         *circuitMinRequests,
+			CircuitWindowSeconds:       *circuitWindowSeconds,
+			CircuitOpenSeconds:         *circuitOpenSeconds,
+			CircuitMaxOpenSeconds:      *circuitMaxOpenSeconds,
 			MaintenanceRetryAfter:      *maintenanceRetryAfter,
 			MaintenanceMessage:         *maintenanceMessage,
 			RespondStatus:              *respondStatus,
@@ -737,6 +790,21 @@ type edgeRuleActionInputs struct {
 	// respond (preview-only fixed JSON response)
 	RespondStatus int
 	RespondBody   string
+	// retry (ADR-201 §1). Replay against a different healthy instance.
+	// Every field is optional — a bare `--kind retry` rule is the valid
+	// "platform defaults" shape — so none is checked for presence.
+	RetryMaxAttempts        int
+	RetryAllowNonIdempotent bool
+	RetryMinRemainingMs     int
+	RetryBackoffMs          int
+	// circuit_breaker (ADR-201 §2). Instance health thresholds. Also all
+	// optional: the breaker runs with platform defaults whether or not a
+	// rule exists, so a bare rule is a no-op rather than an error.
+	CircuitFailureThreshold float64
+	CircuitMinRequests      int
+	CircuitWindowSeconds    int
+	CircuitOpenSeconds      int
+	CircuitMaxOpenSeconds   int
 }
 
 // buildEdgeRuleAction marshals the per-kind inputs into the matching
@@ -973,6 +1041,33 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		a := api.EdgeRuleBudgetAction{
 			BudgetMs:            in.BudgetMs,
 			AllowOverrideHeader: in.BudgetOverrideHeader,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
+	case "retry":
+		// ADR-201 §1. Every field is optional and the server applies
+		// defaults, so unlike kind=budget there is nothing to reject
+		// locally for absence — a bare rule means "platform defaults".
+		a := api.EdgeRuleRetryAction{
+			MaxAttempts:        in.RetryMaxAttempts,
+			AllowNonIdempotent: in.RetryAllowNonIdempotent,
+			MinRemainingMs:     in.RetryMinRemainingMs,
+			BackoffMs:          in.RetryBackoffMs,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
+	case "circuit_breaker":
+		// ADR-201 §2.
+		a := api.EdgeRuleCircuitBreakerAction{
+			FailureThreshold: in.CircuitFailureThreshold,
+			MinRequests:      in.CircuitMinRequests,
+			WindowSeconds:    in.CircuitWindowSeconds,
+			OpenSeconds:      in.CircuitOpenSeconds,
+			MaxOpenSeconds:   in.CircuitMaxOpenSeconds,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)

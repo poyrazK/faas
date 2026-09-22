@@ -330,6 +330,12 @@ const (
 	// can't POST, and a Scale customer with only env:write still
 	// can't POST upstreams).
 	ScopeUpstreamsWrite = "upstreams:write"
+	// ScopeMetricsWrite grants the ADR-202 custom-metric push. It is its
+	// own scope rather than riding deploy:write because the caller is
+	// usually NOT a deploy pipeline — it is a cron, a database trigger,
+	// or the customer's own infrastructure, and that token should not be
+	// able to ship code.
+	ScopeMetricsWrite = "metrics:write"
 	// Object storage separates control-plane management from data-plane
 	// access. Data-plane keys also need an explicit grant for the target
 	// bucket; these scopes alone never expose a bucket.
@@ -359,6 +365,7 @@ var validScopes = map[string]struct{}{
 	ScopeRegistryCredentialsRead:  {},
 	ScopeRegistryCredentialsWrite: {},
 	ScopeUpstreamsWrite:           {},
+	ScopeMetricsWrite:             {},
 	ScopeStorageManage:            {},
 	ScopeStorageRead:              {},
 	ScopeStorageWrite:             {},
@@ -453,6 +460,13 @@ var (
 	// CodePlanDataUpstreamsNotAllowed) is independent of this
 	// scope check.
 	ScopesUpstreamWriteSurface = []string{ScopeAdmin, ScopeUpstreamsWrite}
+
+	// ScopesMetricsWriteSurface: PUT/DELETE on
+	// /v1/apps/{slug}/metrics/{name} (ADR-202). Granted by admin or
+	// metrics:write. NOT MFA-gated: a pushed gauge is non-sensitive
+	// runtime telemetry on the same trust model as env vars, and the
+	// pusher is typically unattended automation that cannot satisfy MFA.
+	ScopesMetricsWriteSurface = []string{ScopeAdmin, ScopeMetricsWrite}
 
 	// ScopesRegistryCredentialsReadSurface: GET on
 	// /v1/apps/{slug}/registry-credentials (issue #461 / ADR-062).

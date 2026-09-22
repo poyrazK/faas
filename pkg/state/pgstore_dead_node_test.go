@@ -43,8 +43,10 @@ import (
 // admission_ceiling_mb is mandatory: schema.sql has
 // compute_nodes_admission_ceiling_mb_check CHECK (admission_ceiling_mb > 0).
 // The MemStore test path doesn't enforce the constraint, so this is
-// a pgstore-only footgun. 256 MB keeps each node well under any
-// per-account RAM admission ceiling a future migration might add.
+// a pgstore-only footgun. Since ADR-193 the value is load-bearing
+// rather than cosmetic: the instances INSERT refuses a row that would
+// push the node past it, so the ceiling must be able to hold whatever
+// the cases below create.
 func pgTestComputeNode(t *testing.T, ctx context.Context, s *state.PgStore, active bool, age time.Duration) string {
 	t.Helper()
 	// Every field below is mandatory against the pgstore schema.
@@ -57,12 +59,17 @@ func pgTestComputeNode(t *testing.T, ctx context.Context, s *state.PgStore, acti
 	// constraints key off. Mirrors
 	// pkg/state/pgstore_coverage2_test.go:94.
 	n, err := s.CreateComputeNode(ctx, state.ComputeNode{
-		Name:               "dnr-" + uuid.NewString(),
-		TargetURL:          "unix:///run/faas/vmmd.sock",
-		Active:             active,
-		MemMB:              8192,
+		Name:      "dnr-" + uuid.NewString(),
+		TargetURL: "unix:///run/faas/vmmd.sock",
+		Active:    active,
+		MemMB:     8192,
+		// The ceiling must be consistent with MemMB: since ADR-193 the
+		// instances INSERT enforces it, and the 256 MB placeholder this
+		// fixture used to carry could not host the 256 MB instance the
+		// dead-node cases create (256 + PerVMOverheadMB = 264 > 256).
+		// These cases are about node liveness, not capacity.
 		MaxConcurrency:     16,
-		AdmissionCeilingMB: 256,
+		AdmissionCeilingMB: 8192,
 		VPCPUs:             4,
 		VCPUBudget:         160,
 	})

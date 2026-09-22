@@ -37,8 +37,9 @@ target reports the same release.
 
 Use the `cd-platform` workflow for production releases and pass every active
 compute node in its `compute_targets` JSON array. It runs the control-plane
-stage, fans the compute stage out across the complete fleet, and always
-publishes the `release-status` report in the workflow summary. A successful
+stage, prepares compute nodes in parallel while they continue serving the old
+release, activates the prepared nodes serially, and always publishes the
+`release-status` report in the workflow summary. A successful preparation or
 stage workflow alone is not a successful platform rollout.
 
 ## Recover

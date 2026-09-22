@@ -15,8 +15,14 @@ probe_url="$1"
 shift 2
 probe_interval_seconds="${ROLLOUT_PROBE_INTERVAL_SECONDS:-0.25}"
 baseline_sample_count="${ROLLOUT_BASELINE_SAMPLE_COUNT:-3}"
+probe_proxy="${ROLLOUT_PROBE_PROXY:-}"
 probe_log="${RUNNER_TEMP:-/tmp}/gregale-rollout-availability-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}.tsv"
 : > "$probe_log"
+
+curl_proxy_args=()
+if [[ -n "$probe_proxy" ]]; then
+  curl_proxy_args=(--proxy "$probe_proxy")
+fi
 
 sample_number=0
 sample() {
@@ -26,7 +32,7 @@ sample() {
   [[ "$probe_url" == *\?* ]] && separator="&"
   request_url="${probe_url}${separator}rollout_probe=${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${sample_number}"
   observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  result="$(curl --silent --show-error --location \
+  result="$(curl "${curl_proxy_args[@]}" --silent --show-error --location \
     --output /dev/null --write-out $'%{http_code}\t%{time_total}' \
     --connect-timeout 1 --max-time 3 \
     --header 'Cache-Control: no-cache' \

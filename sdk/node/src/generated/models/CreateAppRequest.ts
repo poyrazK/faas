@@ -5,6 +5,7 @@
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
@@ -49,6 +50,14 @@ export type CreateAppRequest = {
    */
   startup_deadline_s?: number;
   /**
+   * Upper bound on worker or service shutdown draining time in seconds before SIGKILL. 0 uses the mode/plan default.
+   */
+  stop_grace_period_s?: number;
+  /**
+   * Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omitted defaults to SIGTERM.
+   */
+  stop_signal?: string;
+  /**
    * Maximum consecutive restart attempts. 0 uses the plan default.
    */
   max_retries?: number;
@@ -57,6 +66,7 @@ export type CreateAppRequest = {
    */
   retry_policy?: RetryPolicyDTO;
   service_replicas?: ServiceReplicas;
+  worker_replicas?: WorkerScaling;
   /**
    * App-owned listener declarations. Named TCP listeners are publicly routable at `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only.
    */

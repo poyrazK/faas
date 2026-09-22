@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -40,13 +41,13 @@ func waitForNormalPathBodyPrefix(t *testing.T, f *normalPathFixture, prefix stri
 	return nil
 }
 
-func normalPathCaptureForURI(vmmd *normalPathVMMD, requestURI string) (normalPathRequestCapture, bool) {
+func normalPathCaptureForURI(vmmd *e2etest.FakeVMMD, requestURI string) (e2etest.RequestCapture, bool) {
 	for _, capture := range vmmd.Requests() {
 		if capture.Init.GetRequestUri() == requestURI {
 			return capture, true
 		}
 	}
-	return normalPathRequestCapture{}, false
+	return e2etest.RequestCapture{}, false
 }
 
 // TestE2E_NormalPath_TrafficSpreadsAcrossLiveInstances covers the real
@@ -58,7 +59,7 @@ func TestE2E_NormalPath_TrafficSpreadsAcrossLiveInstances(t *testing.T) {
 	if f == nil {
 		return
 	}
-	deployment, first := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "multi-a")
+	deployment, first := createNormalPathLiveDeployment(t, f, f.app.ID, "multi-a")
 	second := createNormalPathRunningSibling(t, f, deployment.ID)
 	f.vmmd.SetVersion(first.ID, "multi-a")
 	f.vmmd.SetVersion(second.ID, "multi-b")
@@ -103,7 +104,7 @@ func TestE2E_NormalPath_StaleInstanceFailsOverAndReplacementRejoins(t *testing.T
 	if f == nil {
 		return
 	}
-	deployment, stale := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "multi-stale")
+	deployment, stale := createNormalPathLiveDeployment(t, f, f.app.ID, "multi-stale")
 	healthy := createNormalPathRunningSibling(t, f, deployment.ID)
 	replacement := state.Instance{}
 	f.vmmd.SetVersion(stale.ID, "multi-stale")

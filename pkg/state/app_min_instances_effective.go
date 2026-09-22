@@ -1,5 +1,7 @@
 package state
 
+import "time"
+
 // EffectiveMinInstances returns the customer-facing per-app cold-wake
 // floor: max(legacy column, scaling-policy jsonb). ADR-071 (issue #557)
 // §Decision 2 — pre-#557 the two sources could diverge because a bare
@@ -29,21 +31,43 @@ package state
 // A future cleanup migration (ADR-071 §Downstream) will backfill
 // divergent rows so the legacy column and the jsonb agree on every app;
 // it is not in scope for this PR.
+// ADR-195 adds a third source: a scaling schedule whose window is open
+// raises the floor for its duration. It is folded in HERE, rather than at
+// the call sites, for the reason the paragraph above describes — a floor
+// the scheduler honours and the sampler does not is the revenue bug that
+// already happened once. Nine non-test call sites read this helper; adding
+// schedule awareness inside it makes all nine correct at once, and the one
+// a future contributor forgets to update still returns the right number.
 func (a *App) EffectiveMinInstances() int {
-	return effectiveMinInstances(a)
+	return effectiveMinInstances(a, time.Now())
+}
+
+// EffectiveMinInstancesAt evaluates the floor against an explicit clock
+// (ADR-195). Callers that own a time source use it — pkg/meter/sampler.go
+// has an injectable `now func() time.Time` and bills against that, not
+// against the wall clock, so a replayed or back-dated sample computes the
+// floor that actually applied at the sampled instant.
+func (a *App) EffectiveMinInstancesAt(t time.Time) int {
+	return effectiveMinInstances(a, t)
 }
 
 // effectiveMinInstances is the function form so callers holding an App
 // by value (e.g. pkg/sched/engine.go's local `app state.App`) can pass
 // `&app` without copying the whole struct. Nil-safe.
-func effectiveMinInstances(a *App) int {
+func effectiveMinInstances(a *App, t time.Time) int {
 	if a == nil {
 		return 0
 	}
-	col := a.MinInstances
-	pol := ScalingPolicyOrDefault(a.ScalingPolicy).MinInstances
-	if pol > col {
-		return pol
+	policy := ScalingPolicyOrDefault(a.ScalingPolicy)
+	floor := a.MinInstances
+	if policy.MinInstances > floor {
+		floor = policy.MinInstances
 	}
-	return col
+	// Schedules compose by max with the static floor and with each other,
+	// and only ever raise it: an open window cannot park an app that
+	// min_instances would otherwise keep warm.
+	if scheduled := policy.ScheduledMinInstancesAt(t); scheduled > floor {
+		floor = scheduled
+	}
+	return floor
 }

@@ -89,6 +89,15 @@ func cmdDeployClaimValidate(args []string) int {
 			}
 			return 3
 		}
+		if manifestErrs := m.Validate(); manifestErrs != nil {
+			report.LoadError = fmt.Sprintf("invalid production manifest: %v", manifestErrs)
+			if *jsonOut || jsonOutput {
+				jsonEmit(os.Stdout, report)
+			} else {
+				fmt.Fprintf(os.Stderr, "gregalectl deploy claim validate: %s\n", report.LoadError)
+			}
+			return 3
+		}
 		for _, host := range m.Fleet.Hosts {
 			if host.Name == report.Node {
 				report.ManifestNode = true
@@ -99,7 +108,13 @@ func cmdDeployClaimValidate(args []string) int {
 			}
 		}
 		if !report.ManifestNode {
-			errs = append(errs, nodeclaim.Error{Path: "metadata.name", Message: fmt.Sprintf("manifest does not declare compute-only node %q", report.Node)})
+			if _, dynamicErr := m.DynamicComputeHost(report.Node, report.StorageDevice); dynamicErr != nil {
+				errs = append(errs, nodeclaim.Error{Path: "metadata.name", Message: fmt.Sprintf("production manifest does not authorize dynamic node %q: %v", report.Node, dynamicErr)})
+			} else if m.Fleet.ComputeNodeCount()+1 > m.Fleet.DynamicCompute.MaxNodes {
+				errs = append(errs, nodeclaim.Error{Path: "metadata.name", Message: fmt.Sprintf("dynamic compute policy allows at most %d compute nodes", m.Fleet.DynamicCompute.MaxNodes)})
+			} else {
+				report.ManifestNode = true
+			}
 		}
 	}
 	report.Errors = errs

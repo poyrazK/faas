@@ -209,8 +209,16 @@ enrollment path:
 bash scripts/ops/gcp_provision_compute.sh \
   --instance faas-compute-node-3 --node fsn-3
 bash scripts/ops/gcp_provision_compute.sh \
-  --instance faas-compute-node-3 --node fsn-3 --apply
+  --instance faas-compute-node-3 --node fsn-3 \
+  --ssh-user faas-operator \
+  --ssh-public-key-file /secure/private/compute-ssh-key.pub \
+  --apply
 ```
+
+The apply path also converges the node's private Cloud DNS name to its RFC1918
+address. If provisioning is interrupted after the VM exists, rerun the same
+command with `--resume-existing --apply`; it validates the complete managed
+compute shape before resuming DNS, operator SSH bootstrap, and claim emission.
 
 The final line records `provider_ready_seconds`. Record the later release,
 admission, snapshot, and traffic timestamps beside it; VM creation alone is not

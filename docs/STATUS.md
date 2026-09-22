@@ -987,6 +987,67 @@ makes Gregale match that posture for newly-created apps.
 
 ADR-080 / issue #695 / migration 00156.
 
+## M8 — Scheduler divergence and bounded dispatch (ADR-191). 🚧
+
+Follow-on to ADR-190, closing the two scheduler-side causes behind it:
+
+- **Instance divergence.** A sweep every 30 s compares live rows against what
+  the owning vmmd reports through the existing capacity-telemetry stream (no
+  new RPC). Four gates before a row counts: the node must have reported
+  something, the instance must be past a 60 s grace, it must be absent on two
+  consecutive sweeps, and an empty snapshot resets all candidates. Disjoint by
+  construction from the dead-node reconciler, which acts only on silent nodes.
+- **Bounded loop dispatch.** One work pool replaces the four unbounded
+  `go func` arms and the prime slot pool. Prime still overflows to inline
+  (dropping strands a deployment in `snapshotting`); reconcile kinds overflow to
+  drop, since each is idempotent over a durable table with a safety ticker.
+  `MainLoopBudget` 180 s → 60 s, schedd `WatchdogSec` 180 s → 120 s.
+
+**Ships inert.** `FAAS_SCHEDD_RECONCILE_ENFORCE` is unset, so the divergence
+sweep counts and logs but writes no row.
+
+Remaining, in order:
+
+1. Read `schedd_instance_divergence_total{outcome="suppressed"}` against
+   production reality for one week. Every count should be explainable by a vmmd
+   restart, a host OOM, or a failed destroy.
+2. Flip `FAAS_SCHEDD_RECONCILE_ENFORCE=1` in the compute-only drop-in and
+   promote `FaasInstanceDivergence` from warn to page in the same change.
+3. Close the known gap: a node whose only instance dies reports nothing and is
+   skipped. Needs a vmmd-side "up with zero VMs" assertion.
+
+## M8 — Daemon durability primitives (ADR-190). ✅
+
+The "alive but not working" and "control-plane outage leaks into the data
+plane" outage classes (schedd prime wedge 2026-09-03, fsn-1 connection
+exhaustion 2026-09-12, route 404s during Postgres outages) are closed at
+their seams rather than at the last call site that hit them:
+
+- **Default gRPC deadline.** `wire.DialContext` installs a unary client
+  interceptor: calls without a deadline are bounded by
+  `FAAS_GRPC_DEFAULT_DEADLINE` (60 s) and counted on
+  `grpc_client_calls_without_deadline_total{method}`. A forbidigo rule
+  keeps every client on the sanctioned dial path.
+- **Liveness-gated systemd watchdog.** `pkg/wire.Liveness` + `StartWatchdog`
+  beat per named loop (schedd `main`, vmmd `sweep`, `runtime` everywhere)
+  and send `WATCHDOG=1` only while no loop is past budget; every
+  `Type=notify` unit now carries `WatchdogSec=` from the generator.
+  `FaasDaemonLoopStalled` explains the restart.
+- **Last-known-good routes.** `PGBackend.Lookup` serves the stale tier
+  when the Router errors (never on not-found), bounded by
+  `FAAS_GATEWAY_ROUTE_STALE_TTL`; `gateway_route_lookup_stale_served_total`
+  shows the edge coasting.
+- **One LISTEN connection per daemon.** `pkg/db/notify_hub.go` multiplexes
+  every `SubscribeWithReconnect` on a pool onto one connection with the
+  same fail-fast and LISTEN-active-on-return contracts; `FAAS_DB_NOTIFY_HUB=0`
+  is the kill switch. `DaemonMaxConnections` is deliberately unchanged
+  until `pg_stat_activity` confirms the drop in production.
+
+Remaining: lower per-daemon pool budgets after one production cycle;
+add real loop beats to gatewayd-internal and imaged (both run on the
+`runtime` loop only today); run the SIGSTOP watchdog drill on the
+acceptance node and record it under `docs/drills/`.
+
 ## M8 — Deploy configuration contract (ADR-143). ✅
 
 The "read but never set" outage class (PR #1286 function runner paths, PR
@@ -1389,3 +1450,20 @@ expensive in a public deployment:
 Remaining public-release gates are tracked separately: durable event replay,
 M9 two-node and leak-drill acceptance, service-replica convergence, real OTLP
 export, and the remaining state/export scale work.
+
+## M8 — Wake hot path: single pre-boot staging session (ADR-192). 🚧
+
+Production wake timelines (2026-09-20, 10 samples on the GCP SSD nodes) put
+the restore window labelled `stage_snapshot_ms` at a median of 88 ms and up to
+355 ms, versus 26 ms in the rc.98 acceptance run. The cost was not snapshot
+I/O: `stagePreBootFiles` loop-mounted drive1 once per file (`secrets.env`,
+`env.json`, service resolver, workload files). vmmd now writes them in one
+session (`pkg/fcvm/vmm.go::stagePreBootFiles`, `loopMountSession`), and the
+`wake.restore_breakdown` event splits `stage_pre_boot_files_ms` out of
+`stage_snapshot_ms` and carries the Manager.Wake phases
+(`lease_acquire_ms`, `env_prepare_ms`, `pre_network_ms`, `setup_network_ms`)
+that previously reached only slog — the 6.6 s production wake had 5.2 s in
+that unattributed gap. Open evidence: a `make test-metal` +
+`make leakcheck` run on a native KVM host, then a re-run of
+`scripts/ops/wake_performance_gate.py` to record the new
+`stage_pre_boot_files_ms` distribution against the rc.98 baseline.

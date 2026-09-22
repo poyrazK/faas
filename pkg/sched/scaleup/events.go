@@ -19,9 +19,9 @@ type ScaleDecisionEvent struct {
 	Outcome            string  `json:"outcome"`
 	Reason             string  `json:"reason"`
 	ObservedRPS        float64 `json:"observed_rps"`
-	TargetRPS          int     `json:"target_rps"`
+	TargetRPS          float64 `json:"target_rps"`
 	ObservedCPUPercent float64 `json:"observed_cpu_percent"`
-	TargetCPUPercent   int     `json:"target_cpu_percent"`
+	TargetCPUPercent   float64 `json:"target_cpu_percent"`
 	CurrentInstances   int     `json:"current_instances"`
 	DesiredInstances   int     `json:"desired_instances"`
 	CapacityInstances  int     `json:"capacity_instances"`
@@ -42,7 +42,12 @@ func (t *Trigger) emitScaleDecision(ctx context.Context, stats AppStats, dec Dec
 		// resident count in that case.
 		desired = stats.Concurrency
 	}
-	fingerprint := fmt.Sprintf("%s:%s:%d:%d:%d:%d:%d", dec.Outcome, reason,
+	// %g for the targets: they are float64 since ADR-194 let an app declare
+	// them in scaling.targets, and %g renders an integral target as "50"
+	// rather than "50.000000", so an app that never left the legacy columns
+	// keeps the exact fingerprint string it had and its dedupe window is
+	// not reset by this change.
+	fingerprint := fmt.Sprintf("%s:%s:%d:%d:%d:%g:%g", dec.Outcome, reason,
 		stats.Concurrency, desired, stats.MaxConcurrency, stats.TargetRPS, stats.TargetCPU)
 	if !t.allowScaleDecisionEvent(stats.AppID, fingerprint, now) {
 		return
@@ -89,8 +94,8 @@ func scaleDecisionReason(stats AppStats, dec Decision) string {
 	if dec.Outcome == OutcomeRejectAtCap {
 		return "capacity_exhausted"
 	}
-	rpsHot := stats.TargetRPS > 0 && stats.HaveRPS && stats.PerInstanceRPS > float64(stats.TargetRPS)
-	cpuHot := stats.TargetCPU > 0 && stats.HaveCPU && stats.PerInstanceCPU > float64(stats.TargetCPU)
+	rpsHot := stats.TargetRPS > 0 && stats.HaveRPS && stats.PerInstanceRPS > stats.TargetRPS
+	cpuHot := stats.TargetCPU > 0 && stats.HaveCPU && stats.PerInstanceCPU > stats.TargetCPU
 	switch {
 	case rpsHot && cpuHot:
 		return "rps_and_cpu_target_exceeded"

@@ -58,7 +58,11 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 	if manifest.ReleaseID != releaseID {
 		return fmt.Errorf("deploycontroller: release id %q does not match manifest %q", releaseID, manifest.ReleaseID)
 	}
-	if err := releasebundle.Verify(releaseRoot, manifest); err != nil {
+	// The release directory is already installed on the host, so a prior
+	// activation may have written the operator-owned KGV baseline sidecar
+	// beside the signed bundle. Apply the same installed-release policy the
+	// rest of this controller uses; the strict walk would reject a rerun.
+	if err := verifyInstalledRelease(releaseRoot, manifest); err != nil {
 		return fmt.Errorf("deploycontroller: verify release %q: %w", releaseID, err)
 	}
 
@@ -192,28 +196,79 @@ func readCurrentTarget(path string) (string, error) {
 	return filepath.Clean(target), nil
 }
 
+// Rollback activates the newest verified retained release other than the one
+// currently active, and reports which release it activated.
+//
+// Deploy is already transactional across its own steps: activate, publish,
+// restart and health each unwind to the previous release. What it cannot see
+// is the CD pipeline's POST-activation gates — the liveness, public-customer-
+// path and metering probes that run after Deploy has already returned
+// success. Deploy's own comment anticipates one of those gates failing and
+// offers only "rerun CD"; this is the other half of that story, so a gate
+// failure can put the fleet back instead of leaving a bad release serving.
+//
+// The lock is the same one Deploy takes, so a rollback cannot interleave with
+// a deployment. The target is re-verified before activation: a retained
+// directory that has drifted is never activated just because it is the
+// newest.
+func (c *Controller) Rollback(ctx context.Context) (string, error) {
+	lock, err := acquireLock(c.config.LockPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = lock.Close() }()
+
+	current, err := readCurrentTarget(c.config.CurrentPath)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("deploycontroller: rollback: read current release: %w", err)
+	}
+	if current == "" {
+		return "", errors.New("deploycontroller: rollback: no release is active")
+	}
+
+	target, err := newestVerifiedRollback(c.config.ReleasesRoot, current)
+	if err != nil {
+		return "", fmt.Errorf("deploycontroller: rollback: no verified retained release to roll back to: %w", err)
+	}
+	if err := c.activateRelease(ctx, target); err != nil {
+		return "", fmt.Errorf("deploycontroller: rollback to %q: %w", filepath.Base(target), err)
+	}
+	return target, nil
+}
+
+// activateRelease runs the activate → publish → restart → health sequence
+// against an already-retained release directory, verifying it first. Shared by
+// the standalone Rollback verb and Deploy's internal unwind so the two cannot
+// drift in what "activating a release" means.
+func (c *Controller) activateRelease(ctx context.Context, target string) error {
+	manifest, err := releasebundle.Read(target)
+	if err != nil {
+		return fmt.Errorf("read release: %w", err)
+	}
+	if err := verifyInstalledRelease(target, manifest); err != nil {
+		return fmt.Errorf("verify release: %w", err)
+	}
+	if err := c.runtime.Activate(ctx, target); err != nil {
+		return fmt.Errorf("activate: %w", err)
+	}
+	if err := activatePointer(c.config.CurrentPath, target); err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+	if err := c.runtime.Restart(ctx, manifest); err != nil {
+		return fmt.Errorf("restart: %w", err)
+	}
+	if err := c.runtime.Healthy(ctx, manifest); err != nil {
+		return fmt.Errorf("unhealthy: %w", err)
+	}
+	return nil
+}
+
 func (c *Controller) rollback(ctx context.Context, releaseID, previous string, cause error) error {
 	if previous == "" {
 		return fmt.Errorf("deploycontroller: release %q failed without previous release: %w", releaseID, cause)
 	}
-	previousManifest, err := releasebundle.Read(previous)
-	if err != nil {
-		return fmt.Errorf("deploycontroller: release %q failed; read rollback release: %w: %w", releaseID, err, cause)
-	}
-	if err := verifyInstalledRelease(previous, previousManifest); err != nil {
-		return fmt.Errorf("deploycontroller: release %q failed; verify rollback release: %w: %w", releaseID, err, cause)
-	}
-	if err := c.runtime.Activate(ctx, previous); err != nil {
-		return fmt.Errorf("deploycontroller: release %q failed; activate rollback: %w: %w", releaseID, err, cause)
-	}
-	if err := activatePointer(c.config.CurrentPath, previous); err != nil {
-		return fmt.Errorf("deploycontroller: release %q failed; publish rollback: %w: %w", releaseID, err, cause)
-	}
-	if err := c.runtime.Restart(ctx, previousManifest); err != nil {
-		return fmt.Errorf("deploycontroller: release %q failed; restart rollback: %w: %w", releaseID, err, cause)
-	}
-	if err := c.runtime.Healthy(ctx, previousManifest); err != nil {
-		return fmt.Errorf("deploycontroller: release %q failed; rollback unhealthy: %w: %w", releaseID, err, cause)
+	if err := c.activateRelease(ctx, previous); err != nil {
+		return fmt.Errorf("deploycontroller: release %q failed; rollback: %w: %w", releaseID, err, cause)
 	}
 	return fmt.Errorf("deploycontroller: release %q rolled back: %w", releaseID, cause)
 }

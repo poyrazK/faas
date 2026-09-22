@@ -70,7 +70,10 @@ docs/adr/
 
 ## Invariants — enforce with property-based tests, never delete (§6.2)
 
-1. ≤ `max_concurrency(plan)` instances of an app in {WAKING, COLD_BOOTING, RUNNING}.
+1. ≤ `max_concurrency(plan)` + `RolloutConcurrencyGrant` instances of an app in
+   {WAKING, COLD_BOOTING, RUNNING}. The grant (ADR-199) is 1 and applies ONLY
+   while a second deployment is coming up alongside the one already serving —
+   a traffic split or canary overlap. Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).
 3. An app always has a live snapshot OR a cold-bootable rootfs — never neither.
 4. A parked app consumes zero resident RAM (its cgroup must be gone).

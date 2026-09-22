@@ -48,6 +48,10 @@ type RegistryClient struct {
 	// DiskBlobCache to make immutable config/layer blobs reusable across
 	// deployments on the same compute node.
 	blobCache BlobCache
+	// timeout records an explicit WithTimeout request. It is applied once,
+	// after every option has run, so the result no longer depends on the
+	// order WithTimeout and WithHTTPClient were passed in.
+	timeout time.Duration
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -118,23 +122,23 @@ func WithHTTPClient(hc *http.Client) Option {
 // WithTimeout overrides the per-request HTTP timeout. The default is
 // api.OCIPullTimeoutSeconds (60s, ADR-021).
 //
-// Composition with WithHTTPClient is asymmetric on purpose: WithHTTPClient
-// replaces the underlying *http.Client outright (including its Timeout
-// field), and WithTimeout writes back into c.hc.Timeout. The ordering
-// that produces a meaningful timeout+custom-transport result is therefore
+// Composition with WithHTTPClient is order-independent: the timeout is
+// recorded here and applied once, after every option has run, so both of
 //
-//	NewRegistryClient(WithHTTPClient(myHC), WithTimeout(d))   // → myHC.Timeout == d
+//	NewRegistryClient(WithHTTPClient(myHC), WithTimeout(d))
+//	NewRegistryClient(WithTimeout(d), WithHTTPClient(myHC))
 //
-// If you reverse the order (WithTimeout first, then WithHTTPClient) the
-// transport's own zero Timeout wins and the deadline is lost. Pass
-// WithTimeout last whenever you also pass WithHTTPClient. Callers that
-// only need a deadline (no custom transport) can pass WithTimeout alone.
+// yield a client with deadline d. This was previously asymmetric — passing
+// WithTimeout first lost the deadline entirely — and the asymmetry was
+// documented rather than fixed. See resolveHTTPClient.
+//
+// The caller's client is never mutated; the deadline lands on a clone.
 func WithTimeout(d time.Duration) Option {
 	return func(c *RegistryClient) {
 		if d <= 0 {
 			return
 		}
-		c.hc.Timeout = d
+		c.timeout = d
 	}
 }
 
@@ -163,7 +167,6 @@ func WithBlobCache(cache BlobCache) Option {
 // WithHTTPClient(NewEgressHTTPClient()) for the §11 egress guard.
 func NewRegistryClient(opts ...Option) *RegistryClient {
 	c := &RegistryClient{
-		hc:            &http.Client{Timeout: time.Duration(api.OCIPullTimeoutSeconds) * time.Second},
 		scheme:        "https",
 		ua:            "faas-imaged/1 (+https://" + wire.PlatformHost + ")",
 		pullSlots:     make(chan struct{}, DefaultPullConcurrency),
@@ -173,7 +176,39 @@ func NewRegistryClient(opts ...Option) *RegistryClient {
 	for _, o := range opts {
 		o(c)
 	}
+	c.resolveHTTPClient()
 	return c
+}
+
+// resolveHTTPClient settles the HTTP client and its deadline after every
+// option has run.
+//
+// A caller-supplied client is cloned rather than used directly: the deadline
+// is written onto the clone, so passing one shared *http.Client to two
+// RegistryClients with different timeouts no longer has the second silently
+// retune the first.
+//
+// The deadline resolution is deliberately total — every path assigns one.
+// Before this, WithHTTPClient replaced the whole client including the
+// constructor's default Timeout, so NewRegistryClient(WithHTTPClient(hc))
+// with no WithTimeout produced a client with NO deadline at all. oci's own
+// NewEgressHTTPClient returns exactly such a client, and that combination is
+// reachable from the CLI.
+func (c *RegistryClient) resolveHTTPClient() {
+	if c.hc == nil {
+		c.hc = &http.Client{}
+	} else {
+		clone := *c.hc
+		c.hc = &clone
+	}
+	switch {
+	case c.timeout > 0:
+		// An explicit WithTimeout wins regardless of option order.
+		c.hc.Timeout = c.timeout
+	case c.hc.Timeout == 0:
+		// Never leave a registry client without a deadline.
+		c.hc.Timeout = time.Duration(api.OCIPullTimeoutSeconds) * time.Second
+	}
 }
 
 // manifestAccept lists the manifest media types we can resolve a digest from.

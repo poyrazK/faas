@@ -56,7 +56,7 @@ means Gregale has observed a successful RTT within the last 15 minutes; it is
 not a new connectivity test.
 
 Same-account apps can call one another as
-`http://APP_ID.svc.gregale:10080`. For external VPC resources, Pro and Scale
+`http://APP_SLUG.svc.gregale:10080`. For external VPC resources, Pro and Scale
 customers can record a provider-neutral attachment intent with `network attach`.
 The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
 Scale), returns `pending`, and keeps traffic blocked until a provider connector
@@ -98,8 +98,9 @@ and TCP/UDP rules carry ports such as `443` or `8000-8080`. Rule CIDRs are
 sources for ingress and destinations for egress; an omitted list means the
 whole network CIDR. An attachment policy may only narrow the CIDR baseline,
 never broaden it. Updating the network policy is asynchronous: schedd
-replays the effective policy to every live node, and nftables keeps traffic
-blocked until each update succeeds. Empty rule lists preserve the legacy
+replays the effective policy to every live node immediately after the durable
+mutation wakeup, with the periodic sweep as a recovery backstop, and nftables
+keeps traffic blocked until each update succeeds. Empty rule lists preserve the legacy
 CIDR-only behavior; the PUT body replaces both lists, so include a list when
 you intend to retain an existing restriction.
 
@@ -145,6 +146,71 @@ keeps cloud credentials out of the control plane while the provider adapter is
 rolled out; a future connector can replace the registry without changing the
 customer-facing attachment contract.
 
+## Internal services
+
+Apps in the same account reach one another by name, on every plan. There is no
+VPC, subnet, security group, internal load balancer, service registry, or DNS
+record to configure:
+
+```text
+public-api  ──►  auth
+            ├─►  billing
+            └─►  recommendation
+```
+
+Each dependency is an ordinary app. From `public-api`, call them as:
+
+```text
+http://auth.svc.gregale:10080
+http://billing.svc.gregale:10080
+http://recommendation.svc.gregale:10080
+```
+
+The name is the app slug. Declare the edges with `depends_on` and Gregale
+injects the URLs for you, so nothing hard-codes a hostname:
+
+```yaml
+services:
+  public-api:
+    depends_on: [auth, billing, recommendation]
+```
+
+`public-api` then starts with `GREGALE_SERVICE_AUTH_URL`,
+`GREGALE_SERVICE_BILLING_URL`, and `GREGALE_SERVICE_RECOMMENDATION_URL` in its
+environment. The dependency graph is validated before anything deploys —
+unknown names, self-edges, and ambiguous names are rejected.
+
+Calls are authorized by the platform, not by your code. The caller is
+identified from the network identity of the calling VM, so a guest cannot
+claim to be another app, and the proxy only permits calls between apps in the
+same account. Cross-account calls are refused.
+
+### Preview environments call production services
+
+A pull-request preview is provisioned as **one app**, derived from the app the
+PR touches. It does not get its own copy of that app'"'"'s dependencies, and
+service names resolve without an environment scope — so a preview'"'"'s internal
+calls reach your **production** services.
+
+That is worth designing around. A preview of `public-api` calling `billing`
+reaches production `billing` and any side effects are real.
+
+Gregale marks these calls so a service can react rather than be surprised.
+Every request from a preview app carries:
+
+```text
+X-Faas-Caller-Env: preview
+X-Faas-Caller-Preview-Of: public-api
+```
+
+Both headers are platform-owned: anything a workload sends under those names is
+stripped before the hop, so the marker cannot be forged. Production callers
+carry neither header, so a service that ignores them is unaffected.
+
+Use them to skip irreversible work, tag writes as test data, or refuse the call
+outright. Operators can watch the fleet-wide rate with
+`gateway_service_preview_to_production_total`.
+
 ## Internal-only ingress
 
 Pro and Scale apps can be hidden from the public edge while remaining reachable
@@ -158,6 +224,33 @@ gregale app APP_ID --visibility public
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
-`APP_ID.svc.gregale:10080`, where the service proxy enforces caller identity
+`APP_SLUG.svc.gregale:10080`, where the service proxy enforces caller identity
 and same-account authorization. Visibility changes are audited and invalidate
 the gateway route cache.
+
+Internal services scale to zero like any other app. A service call to a parked
+target is held at the node-local proxy while the snapshot is restored, then
+forwarded — the same wake-blocking contract the public edge offers (ADR-196).
+The restore is coalesced with any concurrent public request for that app, so a
+burst of internal callers costs one restore rather than one per caller. Set
+client timeouts above the platform wake budget plus your own handler time, and
+note that a fully cold chain (`public-api` → `auth` → `billing`) pays each
+restore in sequence. `min_instances` remains available to trade resident RAM
+for first-call latency, but it is no longer required for an internal
+dependency to be reachable.
+
+When a wake cannot produce a replica, the proxy answers `503`. A saturated
+wake queue carries `Retry-After`; a target at its plan concurrency ceiling
+reports `service has no healthy replicas`. Internal wakes appear in the wake
+timeline with trigger `service.mesh`, distinct from public `gateway` traffic.
+
+Internal calls honour the target's wire protocol (ADR-197). An app configured
+`app_protocol: grpc` or `http2` is reached over the H2C guest bridge, and the
+node-local listener accepts H2C prior knowledge, so a workload can use an
+ordinary gRPC client against `http://APP_SLUG.svc.gregale:10080`. Response
+trailers — including `grpc-status` — are preserved across the hop.
+`Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
+bridge and are neither buffered nor retried; they require the target app to
+have WebSockets enabled and return `501` otherwise. Non-HTTP raw TCP between
+services is not part of the discovery contract: address those listeners
+through named ports instead.

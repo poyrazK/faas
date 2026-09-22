@@ -38,6 +38,27 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// EventSubscriptionResponse is one manifest-declared subscription currently
+// reconciled for an app. Filter is the normalized JSON object used by the
+// router when matching published events.
+type EventSubscriptionResponse struct {
+	ID        string          `json:"id"`
+	AppID     string          `json:"app_id"`
+	Source    string          `json:"source"`
+	Type      string          `json:"type"`
+	Filter    json.RawMessage `json:"filter"`
+	Enabled   bool            `json:"enabled"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// EventSubscriptionListResponse is the app-scoped, read-only subscription
+// inventory used by the CLI and dashboard integrations.
+type EventSubscriptionListResponse struct {
+	AppSlug       string                      `json:"app_slug"`
+	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
@@ -91,6 +112,8 @@ type CreateAppRequest struct {
 	RestartPolicy    string `json:"restart_policy,omitempty"`
 	StartupDeadlineS int    `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int    `json:"max_retries,omitempty"`
+	StopGracePeriodS int    `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app's request wall-clock budget in
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
@@ -99,6 +122,7 @@ type CreateAppRequest struct {
 	// and per-invocation overrides take precedence over this policy.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
 	// Ports declares additional workload listeners. Named TCP entries may be
 	// selected at the public edge with the `--port-<name>` hostname form;
 	// UDP entries remain guest-only discovery endpoints.
@@ -285,6 +309,8 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string `json:"restart_policy,omitempty"`
 	StartupDeadlineS *int    `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int    `json:"max_retries,omitempty"`
+	StopGracePeriodS *int    `json:"stop_grace_period_s,omitempty"`
+	StopSignal       *string `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app request wall-clock budget in
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
@@ -293,6 +319,7 @@ type UpdateAppRequest struct {
 	// explicit empty object clears the default; nil leaves it unchanged.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
 	// Ports replaces the app-owned listener declaration. An empty slice clears
 	// the declaration; nil leaves it unchanged.
 	Ports *[]WorkloadPort `json:"ports,omitempty"`
@@ -785,10 +812,15 @@ type RenameAppRequest struct {
 //	  [MinInstances, plan.MaxConcurrency]. Hobby+ unlocked at PR-A
 //	  time. 0 = "use plan max_concurrency".
 //	Target: the per-instance signal the engine watches for the
-//	  scale-up trigger. Closed metric set: "rps" |
-//	  "concurrent_requests" | "queue_depth" | "p99_latency_ms". Empty Metric =
+//	  scale-up trigger. Closed metric set: "rps" | "cpu" |
+//	  "concurrent_requests" | "queue_depth". Empty Metric =
 //	  "disabled" (the engine falls back to the legacy
 //	  autoscale_target_rps / autoscale_target_cpu_pct columns).
+//	  Superseded by Targets (ADR-194); still accepted and read as a
+//	  one-element list.
+//	Targets: the multi-signal form. Every entry is evaluated and the
+//	  platform provisions for the maximum desired count. Mutually
+//	  exclusive with Target.
 //	ScaleOutCooldownS: minimum seconds between two scale-out
 //	  events. Floor 1 (no `0` traps); ceiling 3600 (1 h).
 //	ScaleInCooldownS: minimum seconds between two scale-in events.
@@ -800,11 +832,17 @@ type RenameAppRequest struct {
 // semantics. The handler rejects the JSON `null` value via strict
 // UnmarshalJSON.
 type ScalingPolicy struct {
-	MinInstances      int            `json:"min_instances,omitempty"`
-	MaxInstances      int            `json:"max_instances,omitempty"`
-	Target            *ScalingTarget `json:"target,omitempty"`
-	ScaleOutCooldownS int            `json:"scale_out_cooldown_s,omitempty"`
-	ScaleInCooldownS  int            `json:"scale_in_cooldown_s,omitempty"`
+	MinInstances int            `json:"min_instances,omitempty"`
+	MaxInstances int            `json:"max_instances,omitempty"`
+	Target       *ScalingTarget `json:"target,omitempty"`
+	// Targets is the ADR-194 multi-signal form. Each entry states how much
+	// load one instance should carry on that metric; the scheduler
+	// provisions for the maximum desired count across every entry and owns
+	// the combination itself. Mutually exclusive with Target — the handler
+	// rejects a body that sets both rather than guessing a precedence.
+	Targets           []ScalingTarget `json:"targets,omitempty"`
+	ScaleOutCooldownS int             `json:"scale_out_cooldown_s,omitempty"`
+	ScaleInCooldownS  int             `json:"scale_in_cooldown_s,omitempty"`
 	// ConcurrencyOverflow controls what happens when the app's
 	// concurrency boundary is saturated. Empty and "queue" preserve the
 	// legacy bounded-wait behavior; "drop" rejects immediately with 429.
@@ -818,6 +856,15 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
 	// uses the plan default; positive values are capped at 60 seconds.
 	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
+	// Timezone is the IANA zone every schedule's cron is evaluated in
+	// (ADR-195). Empty means UTC.
+	Timezone string `json:"timezone,omitempty"`
+	// Schedules raise the warm floor for recurring windows (ADR-195).
+	// Each entry is a cron fire plus a duration; while the window is open
+	// the app's min_instances is at least the entry's value. Schedules
+	// only ever raise the floor — they cannot lower one or cap
+	// max_instances.
+	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 	// unknownFields is the set of unknown JSON keys encountered
 	// during a strict Unmarshal. Stored as a one-shot value so
 	// the validator can surface a single error without
@@ -833,6 +880,39 @@ type ScalingPolicy struct {
 type ScalingTarget struct {
 	Metric string  `json:"metric,omitempty"`
 	Value  float64 `json:"value,omitempty"`
+	// Name identifies WHICH custom metric this target watches (ADR-202).
+	// Required when Metric is "custom" and rejected otherwise — a name on
+	// a platform-measured metric would be silently ignored, which is the
+	// kind of accepted-but-inert field this codebase keeps having to
+	// remove.
+	Name string `json:"name,omitempty"`
+}
+
+// ScalingSchedule is one recurring window that raises the warm floor
+// (ADR-195). Cron is a five-field expression evaluated in the policy's
+// Timezone; each fire opens a window of DurationS seconds during which the
+// app's floor is at least MinInstances.
+type ScalingSchedule struct {
+	Cron         string `json:"cron,omitempty"`
+	DurationS    int    `json:"duration_s,omitempty"`
+	MinInstances int    `json:"min_instances,omitempty"`
+}
+
+// EffectiveTargets projects the policy onto the ADR-194 multi-signal form:
+// Targets when set, otherwise the singular Target as one element. Mirrors
+// state.ScalingPolicy.EffectiveTargets so the wire and the store agree on
+// what "the app's declared signals" means.
+func (s *ScalingPolicy) EffectiveTargets() []ScalingTarget {
+	if s == nil {
+		return nil
+	}
+	if len(s.Targets) > 0 {
+		return s.Targets
+	}
+	if s.Target != nil && s.Target.Metric != "" {
+		return []ScalingTarget{*s.Target}
+	}
+	return nil
 }
 
 // UnmarshalJSON implements a strict decoder for ScalingPolicy:
@@ -858,12 +938,15 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"min_instances":               {},
 		"max_instances":               {},
 		"target":                      {},
+		"targets":                     {},
 		"scale_out_cooldown_s":        {},
 		"scale_in_cooldown_s":         {},
 		"concurrency_overflow":        {},
 		"max_queue_wait_ms":           {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
+		"timezone":                    {},
+		"schedules":                   {},
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1212,7 +1295,8 @@ type AppResponse struct {
 	// most-recently parked deployment for this app, or nil if the
 	// app has never been parked. Powers the "why is my app
 	// evicted_cold?" UX surface — operators see the closed-set
-	// reason (liveness_exhausted | lifecycle_park | admin_park) +
+	// reason (liveness_exhausted | lifecycle_park | admin_park |
+	// security_scan_regressed) +
 	// the timestamp without grepping the audit log. Nested (not
 	// flat) so AppResponse conflates app-state with
 	// deployment-state only at the explicit ref — mirrors the
@@ -2056,7 +2140,17 @@ type DeploymentResponse struct {
 	StageState json.RawMessage `json:"stage_state,omitempty"`
 	ID         string          `json:"id"`
 	AppID      string          `json:"app_id"`
-	BuildID    string          `json:"build_id,omitempty"`
+	// Revision (ADR-198) is the per-app deployment number rendered as
+	// `v42` by the CLI and dashboard, and accepted anywhere this API
+	// takes a deployment id. It is the same N that appears in the
+	// deploy-{N}-{slug} preview hostname.
+	//
+	// omitempty on purpose: a zero means the row predates the column or
+	// was written by a path that bypassed CreateDeployment, and emitting
+	// `"revision": 0` would render as a misleading `v0`. Consumers must
+	// treat an absent revision as "address this deployment by id".
+	Revision int    `json:"revision,omitempty"`
+	BuildID  string `json:"build_id,omitempty"`
 	// BuildCacheStatus and CacheKeySHA256 mirror the associated build's
 	// durable cache decision. They are populated on deployment detail reads
 	// after builderd reaches the cache lookup.
@@ -3236,6 +3330,15 @@ type DeploymentSummaryResponse struct {
 	Previous         *DeploymentResponse `json:"previous,omitempty"`
 	Changes          []DeploymentChange  `json:"changes"`
 	RollbackTargetID string              `json:"rollback_target_id,omitempty"`
+	// RollbackTargetRevision is the ADR-198 revision of RollbackTargetID, so
+	// a consumer can render the rollback command with the handle a customer
+	// can actually read and retype (`--to v41`) instead of a uuid.
+	//
+	// Carried alongside the id rather than replacing it: the id stays the
+	// unambiguous machine reference, and a row written before the revision
+	// column existed has none. Zero means "no revision", and consumers must
+	// fall back to RollbackTargetID rather than rendering `v0`.
+	RollbackTargetRevision int `json:"rollback_target_revision,omitempty"`
 }
 
 // DeploymentChange describes one release field that changed relative to the
@@ -5630,12 +5733,41 @@ type AppSecurityResponse struct {
 // an app. Findings are deterministic configuration checks; the response never
 // includes credentials, allowlist values, or other secret material.
 type AppSecurityPostureResponse struct {
-	AppID          string               `json:"app_id"`
-	Slug           string               `json:"slug"`
-	Profile        string               `json:"profile"`
-	Score          int                  `json:"score"`
-	SecurityPolicy AppSecurityPolicy    `json:"security_policy"`
-	Findings       []AppSecurityFinding `json:"findings"`
+	AppID          string                 `json:"app_id"`
+	Slug           string                 `json:"slug"`
+	Profile        string                 `json:"profile"`
+	Score          int                    `json:"score"`
+	SecurityPolicy AppSecurityPolicy      `json:"security_policy"`
+	Findings       []AppSecurityFinding   `json:"findings"`
+	Quarantine     *AppSecurityQuarantine `json:"quarantine,omitempty"`
+}
+
+// AppSecurityQuarantine describes the active image-scan quarantine, when
+// one is present. It intentionally carries only the image digest and scan
+// timestamp needed to select a remediation deployment; vulnerability details
+// remain on the deployment scan surface.
+type AppSecurityQuarantine struct {
+	DeploymentID string     `json:"deployment_id"`
+	ImageDigest  string     `json:"image_digest"`
+	Reason       string     `json:"reason"`
+	ParkedAt     *time.Time `json:"parked_at,omitempty"`
+}
+
+// SecurityQuarantineRecoveryRequest identifies the clean live deployment
+// that should restore an app after image-scan quarantine.
+type SecurityQuarantineRecoveryRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// SecurityQuarantineRecoveryResponse is returned after the app's lifecycle
+// status is atomically restored to active.
+type SecurityQuarantineRecoveryResponse struct {
+	AppID        string    `json:"app_id"`
+	Slug         string    `json:"slug"`
+	DeploymentID string    `json:"deployment_id"`
+	ImageDigest  string    `json:"image_digest"`
+	RecoveredAt  time.Time `json:"recovered_at"`
+	Status       string    `json:"status"`
 }
 
 // AppSecurityFinding is one actionable posture finding. Severity is one of
@@ -6646,6 +6778,151 @@ type EdgeRuleValidateAction struct {
 	RejectOnUnknownFields bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes          int             `json:"max_body_bytes,omitempty"`
 	ValidateMode          string          `json:"validate_mode,omitempty"`
+}
+
+// EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
+// (ADR-201 §1). It tunes the replay of a request that died in transport
+// against a different healthy instance.
+//
+// There is deliberately NO "retry on status" field. Only a transport failure
+// may arm a replay — a guest that answered 5xx has served the request, and
+// replaying it would run the customer's side effects a second time — so the
+// set of retryable conditions is not customer-configurable. Requests to widen
+// it belong in an ADR, not a field.
+type EdgeRuleRetryAction struct {
+	// MaxAttempts counts attempts, not retries: 2 is the original plus one
+	// replay. Zero applies EdgeRuleRetryDefaultMaxAttempts.
+	MaxAttempts int `json:"max_attempts,omitempty"`
+	// AllowNonIdempotent opts POST and PATCH into replay.
+	//
+	// This is the only field here that can cost correctness rather than
+	// latency: a replayed POST runs the customer's side effect twice unless
+	// their handler is idempotent or they send an idempotency key. It
+	// defaults false and the CLI/docs state the consequence explicitly.
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
+	// MinRemainingMs is the request-budget floor below which a replay is
+	// skipped. Zero applies EdgeRuleRetryDefaultMinRemainingMs.
+	MinRemainingMs int `json:"min_remaining_ms,omitempty"`
+	// BackoffMs delays a replay. Defaults to 0.
+	BackoffMs int `json:"backoff_ms,omitempty"`
+}
+
+// Validate applies the ADR-201 §1 defaults and bounds. It mutates the
+// receiver so the stored row carries the effective values rather than zeros —
+// an operator reading the row later should not have to know the defaults to
+// know what the rule does.
+func (a *EdgeRuleRetryAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("retry action is required")
+	}
+	if a.MaxAttempts == 0 {
+		a.MaxAttempts = EdgeRuleRetryDefaultMaxAttempts
+	}
+	if a.MaxAttempts < 2 {
+		// A 1-attempt "retry" rule is a silent no-op that reads like
+		// protection — the same footgun class as a 0-rps throttle.
+		return ErrValidation(fmt.Sprintf(
+			"retry action: max_attempts must be at least 2 (got %d) — max_attempts counts attempts, not retries, so 1 means no replay at all",
+			a.MaxAttempts))
+	}
+	if a.MaxAttempts > EdgeRuleRetryMaxAttempts {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: max_attempts %d exceeds the platform ceiling %d — every replay holds another instance's concurrency slot, so a high attempt count multiplies load against your own capacity exactly when instances are already failing",
+			a.MaxAttempts, EdgeRuleRetryMaxAttempts))
+	}
+	if a.MinRemainingMs == 0 {
+		a.MinRemainingMs = EdgeRuleRetryDefaultMinRemainingMs
+	}
+	if a.MinRemainingMs < 0 || a.MinRemainingMs > MaxEdgeRuleRetryMinRemainingMs {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: min_remaining_ms must be in 0..%d (got %d)",
+			MaxEdgeRuleRetryMinRemainingMs, a.MinRemainingMs))
+	}
+	if a.BackoffMs < 0 || a.BackoffMs > MaxEdgeRuleRetryBackoffMs {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: backoff_ms must be in 0..%d (got %d) — the failure being retried is a dead peer, so a delay rarely helps",
+			MaxEdgeRuleRetryBackoffMs, a.BackoffMs))
+	}
+	return nil
+}
+
+// EdgeRuleCircuitBreakerAction is the wire shape for a kind=circuit_breaker
+// edge rule (ADR-201 §2).
+//
+// This rule TUNES a breaker that already runs for every app on every plan; it
+// does not enable protection. A customer with no rule is still protected from
+// a flapping instance by circuit.DefaultConfig.
+type EdgeRuleCircuitBreakerAction struct {
+	// FailureThreshold is the failure ratio at or above which a closed
+	// breaker opens. Zero applies the default.
+	FailureThreshold float64 `json:"failure_threshold,omitempty"`
+	// MinRequests is the minimum number of observations inside
+	// WindowSeconds before the ratio is consulted at all. Zero applies the
+	// default.
+	MinRequests int `json:"min_requests,omitempty"`
+	// WindowSeconds is the rolling failure window. Zero applies the default.
+	WindowSeconds int `json:"window_seconds,omitempty"`
+	// OpenSeconds is the first open interval. Zero applies the default.
+	OpenSeconds int `json:"open_seconds,omitempty"`
+	// MaxOpenSeconds caps the exponential backoff. Zero applies the default.
+	MaxOpenSeconds int `json:"max_open_seconds,omitempty"`
+}
+
+// Validate applies the ADR-201 §2 defaults and bounds, mutating the receiver
+// so the stored row carries effective values.
+func (a *EdgeRuleCircuitBreakerAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("circuit_breaker action is required")
+	}
+	if a.FailureThreshold == 0 {
+		a.FailureThreshold = EdgeRuleCircuitDefaultFailureThreshold
+	}
+	if a.FailureThreshold <= 0 || a.FailureThreshold > 1 {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: failure_threshold must be in (0, 1] (got %g) — it is a ratio, not a count",
+			a.FailureThreshold))
+	}
+	if a.MinRequests == 0 {
+		a.MinRequests = EdgeRuleCircuitDefaultMinRequests
+	}
+	if a.MinRequests < 1 || a.MinRequests > MaxEdgeRuleCircuitMinRequests {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: min_requests must be in 1..%d (got %d) — above that a low-volume route can never accumulate enough observations to trip, which is a silent no-op",
+			MaxEdgeRuleCircuitMinRequests, a.MinRequests))
+	}
+	if a.WindowSeconds == 0 {
+		a.WindowSeconds = EdgeRuleCircuitDefaultWindowSeconds
+	}
+	if a.WindowSeconds < 1 || a.WindowSeconds > MaxEdgeRuleCircuitWindowSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: window_seconds must be in 1..%d (got %d)",
+			MaxEdgeRuleCircuitWindowSeconds, a.WindowSeconds))
+	}
+	if a.OpenSeconds == 0 {
+		a.OpenSeconds = EdgeRuleCircuitDefaultOpenSeconds
+	}
+	if a.OpenSeconds < 1 || a.OpenSeconds > MaxEdgeRuleCircuitOpenSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: open_seconds must be in 1..%d (got %d)",
+			MaxEdgeRuleCircuitOpenSeconds, a.OpenSeconds))
+	}
+	if a.MaxOpenSeconds == 0 {
+		a.MaxOpenSeconds = EdgeRuleCircuitDefaultMaxOpenSeconds
+		if a.MaxOpenSeconds < a.OpenSeconds {
+			a.MaxOpenSeconds = a.OpenSeconds
+		}
+	}
+	if a.MaxOpenSeconds < a.OpenSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: max_open_seconds %d is below open_seconds %d — max_open_seconds is the ceiling the backoff grows toward, so it can never be the smaller of the two",
+			a.MaxOpenSeconds, a.OpenSeconds))
+	}
+	if a.MaxOpenSeconds > MaxEdgeRuleCircuitOpenSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker action: max_open_seconds must be at most %d (got %d) — a longer bench outlives most instances, so the breaker would be holding state about a target that no longer exists",
+			MaxEdgeRuleCircuitOpenSeconds, a.MaxOpenSeconds))
+	}
+	return nil
 }
 
 // EdgeRuleRespondAction is the wire shape for a kind=respond edge rule.
@@ -9334,4 +9611,31 @@ type JobDeletedResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	DeletedAt string `json:"deleted_at"`
+}
+
+// CustomMetricRequest is the ADR-202 push body. The name travels in the URL
+// path, so the body carries only the number that actually varies — which is
+// what makes the push idempotent by construction.
+type CustomMetricRequest struct {
+	Value float64 `json:"value"`
+}
+
+// CustomMetricResponse is one stored gauge on the read path.
+type CustomMetricResponse struct {
+	Name       string    `json:"name"`
+	Value      float64   `json:"value"`
+	ObservedAt time.Time `json:"observed_at"`
+	// Stale reports that this row is older than the freshness bound and is
+	// therefore NOT driving scaling. Computed server-side so the API and
+	// the scheduler cannot disagree about which rows count.
+	Stale bool `json:"stale"`
+}
+
+// CustomMetricListResponse carries the rows plus the two limits an operator
+// needs in order to interpret them, so debugging "why isn't this scaling"
+// does not require reading the docs for the freshness window.
+type CustomMetricListResponse struct {
+	Metrics    []CustomMetricResponse `json:"metrics"`
+	FreshnessS int                    `json:"freshness_seconds"`
+	MaxMetrics int                    `json:"max_metrics"`
 }

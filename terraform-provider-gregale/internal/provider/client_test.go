@@ -71,6 +71,54 @@ func TestClientGetAppUsesSlugLookupContract(t *testing.T) {
 	}
 }
 
+func TestClientProjectEnvironmentConfigLifecycleUsesPublicContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/projects/orders/environments/production/config":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatal("project environment config lookup included an idempotency key")
+			}
+			_, _ = w.Write([]byte(`{"project_slug":"orders","environment":"production","version":2,"config_hash":"hash-2","values":{"region":"eu","replicas":2},"updated_at":"2026-09-19T10:02:00Z"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/projects/orders/environments/production/config":
+			if r.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("project environment config update did not include an idempotency key")
+			}
+			var request projectEnvironmentConfigRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode project environment config request: %v", err)
+			}
+			if string(request.Values) != `{"region":"eu","replicas":3}` {
+				t.Fatalf("project environment config request = %s", request.Values)
+			}
+			_, _ = w.Write([]byte(`{"project_slug":"orders","environment":"production","version":3,"config_hash":"hash-3","values":{"region":"eu","replicas":3},"updated_at":"2026-09-19T10:03:00Z"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	read, err := client.getProjectEnvironmentConfig(context.Background(), "orders", "production")
+	if err != nil {
+		t.Fatalf("getProjectEnvironmentConfig: %v", err)
+	}
+	if read.Version != 2 || read.ConfigHash != "hash-2" || string(read.Values) != `{"region":"eu","replicas":2}` {
+		t.Fatalf("read project environment config = %+v", read)
+	}
+
+	updated, err := client.updateProjectEnvironmentConfig(context.Background(), "orders", "production", projectEnvironmentConfigRequest{Values: json.RawMessage(`{"region":"eu","replicas":3}`)})
+	if err != nil {
+		t.Fatalf("updateProjectEnvironmentConfig: %v", err)
+	}
+	if updated.Version != 3 || updated.ConfigHash != "hash-3" {
+		t.Fatalf("updated project environment config = %+v", updated)
+	}
+}
+
 func TestClientProblemErrorIsActionableWithoutEchoingBearer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")

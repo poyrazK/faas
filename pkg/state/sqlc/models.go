@@ -273,6 +273,13 @@ type App struct {
 	PurgeClaimedAt            pgtype.Timestamptz
 }
 
+type AppCustomMetric struct {
+	AppID      pgtype.UUID
+	Name       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
 type AppEnv struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
@@ -715,21 +722,25 @@ type CustomDomain struct {
 }
 
 type DataUpstream struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	AppID            pgtype.UUID
-	Source           string
-	Scope            string
-	Kind             string
-	Host             string
-	Port             int32
-	HostRedactedHash string
-	DeclaredRegion   pgtype.Text
-	LastRttMs        pgtype.Int4
-	LastProbedAt     pgtype.Timestamptz
-	LastSeenAt       pgtype.Timestamptz
-	CreatedAt        pgtype.Timestamptz
-	DeploymentScope  string
+	ID                             pgtype.UUID
+	AccountID                      pgtype.UUID
+	AppID                          pgtype.UUID
+	Source                         string
+	Scope                          string
+	Kind                           string
+	Host                           string
+	Port                           int32
+	HostRedactedHash               string
+	DeclaredRegion                 pgtype.Text
+	LastRttMs                      pgtype.Int4
+	LastProbedAt                   pgtype.Timestamptz
+	LastSeenAt                     pgtype.Timestamptz
+	CreatedAt                      pgtype.Timestamptz
+	DeploymentScope                string
+	CircuitBreakerEnabled          bool
+	CircuitBreakerFailureThreshold pgtype.Float8
+	CircuitBreakerMinSamples       pgtype.Int4
+	CircuitBreakerOpenSeconds      pgtype.Int4
 }
 
 type DataUpstreamProbe struct {
@@ -854,6 +865,7 @@ type Deployment struct {
 	SnapshotMissBackoffUntil pgtype.Timestamptz
 	ApiHostingReceipt        []byte
 	InferredProfile          []byte
+	Revision                 int32
 }
 
 type DeploymentAudit struct {

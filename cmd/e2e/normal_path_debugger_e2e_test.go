@@ -67,8 +67,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 		return
 	}
 
-	sourceDeployment, sourceInstance := createNormalPathLiveDeployment(
-		t, f.ctx, f.store, f.app.ID, f.nodeID, "debugger-source")
+	sourceDeployment, sourceInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "debugger-source")
 	f.vmmd.SetVersion(sourceInstance.ID, "debugger-source")
 	waitForNormalPathDebuggerResponse(t, f, "normal-path:debugger-source\n", 10*time.Second)
 

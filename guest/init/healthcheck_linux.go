@@ -172,6 +172,70 @@ func runStartupHealthcheck(manifest api.AppManifest, env []string, dir, root str
 	return nil
 }
 
+// monitorSidecarHealth runs an OCI HEALTHCHECK for the lifetime of a
+// sidecar. Startup health is checked separately before the dependency gate is
+// released; this loop handles the steady-state liveness contract. Once the
+// configured retry budget is exhausted, onUnhealthy is called so the caller
+// can terminate the workload and let Supervisor apply its restart policy.
+func monitorSidecarHealth(ctx context.Context, manifest api.AppManifest, env []string, dir, root string, uid int, procAttr *syscall.SysProcAttr, onUnhealthy func(error), log *slog.Logger) {
+	if log == nil {
+		log = slog.Default()
+	}
+	if manifest.Healthcheck == nil {
+		return
+	}
+	argv, _ := parseHealthcheckTest(manifest.Healthcheck.Test)
+	if len(argv) == 0 {
+		return
+	}
+	if root != "" {
+		argv[0] = resolveWorkloadCommandPath(root, argv[0], env)
+	}
+	interval, timeout, startPeriod, retries := healthcheckDefaults(manifest.Healthcheck)
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if retries < 1 {
+		retries = 1
+	}
+	startedAt := time.Now()
+	consecutiveFailures := 0
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		report := execHealthcheckWithOptions(ctx, argv, timeout, uid, env, dir, procAttr, log)
+		if ctx.Err() != nil {
+			return
+		}
+		if report.Status == healthcheckStatusPass {
+			consecutiveFailures = 0
+		} else if time.Since(startedAt) < startPeriod {
+			// Startup failures are tolerated during StartPeriod, but a
+			// passing probe still resets the steady-state failure count.
+			consecutiveFailures = 0
+		} else {
+			consecutiveFailures++
+			log.Warn("sidecar healthcheck failed", "argv0", argv[0], "consecutive_failures", consecutiveFailures, "retries", retries)
+			if consecutiveFailures >= retries {
+				if onUnhealthy != nil {
+					onUnhealthy(fmt.Errorf("sidecar healthcheck failed after %d consecutive probe failures", consecutiveFailures))
+				}
+				return
+			}
+		}
+		timer.Reset(interval)
+	}
+}
+
 // runHealthcheckPoll (M-2 / ADR-139 §Decision 1) is the in-guest
 // HEALTHCHECK executor. It opens an AF_VSOCK DGRAM socket on
 // VsockHealthcheckPort, spawns a poll goroutine, and ships a

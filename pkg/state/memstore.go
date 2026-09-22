@@ -26,8 +26,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+// builderVMCleanupErrorMaxBytes bounds the recorded cleanup failure for a
+// builder VM. Mirrors the PgStore column bound; applied with safetext.Truncate
+// because the message is an err.Error() string and may not be valid UTF-8.
+const builderVMCleanupErrorMaxBytes = 4096
 
 // stripePushKey is the (account, hour) dedupe key the hourly Stripe
 // pusher uses; declared above MemStore so the struct field below can
@@ -127,6 +133,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
+	// the per-app distinct-name cap is a len() on the inner map, matching
+	// what PgStore's count(*) over (app_id) measures.
+	customMetrics             map[string]map[string]CustomMetric
 	objectBuckets             map[string]ObjectBucket
 	objectUsage               map[string]ObjectBucketUsage
 	objectGrants              map[string]map[string]int64
@@ -929,10 +939,15 @@ func NewMemStore() *MemStore {
 		crons:                 map[string]Cron{},
 		prewarmIntents:        map[string]PrewarmIntent{},
 		triggerConsumerHealth: map[string]TriggerConsumerHealth{},
-		eventSubscriptions:    map[string]EventSubscription{},
-		triggerDeadLetters:    []sqlc.TriggerDeadLetter{},
-		deadLetterSnapshots:   map[string]DeadLetterEvent{},
-		deadLetterPurged:      map[string]struct{}{},
+		// records was the one map field on MemStore that was written by a
+		// Store method but never initialized here or guarded lazily, so
+		// InsertTriggerRecord panicked with "assignment to entry in nil map"
+		// on any fresh store. No MemStore test had ever called it.
+		records:             map[string]sqlc.TriggerRecord{},
+		eventSubscriptions:  map[string]EventSubscription{},
+		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
+		deadLetterSnapshots: map[string]DeadLetterEvent{},
+		deadLetterPurged:    map[string]struct{}{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
@@ -4521,6 +4536,14 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	if ins.State != "migrating" || ins.NodeID != fromNodeID || ins.LeaseToken != leaseToken {
 		return ErrConflict
 	}
+	// ADR-193 parity with PgStore: the destination gains this instance's full
+	// RAM at commit ('migrating' does not count toward a node's sum,
+	// 'running' does), so the ceiling applies to the transfer exactly as it
+	// does to an admission. m.mu is held, which is what makes the
+	// check-then-move atomic here.
+	if err := m.checkNodeReservationLocked(toNodeID, string(StateRunning), ins.RAMMB); err != nil {
+		return err
+	}
 	now := time.Now()
 	migFrom := fromNodeID
 	ins.NodeID = toNodeID
@@ -5404,6 +5427,7 @@ func (m *MemStore) ListAppDeletionArtifacts(_ context.Context, appID string) ([]
 		if d, ok := m.deployments[snap.DeploymentID]; ok {
 			add(d.AppID, snap.StorageKey, snap.StoredBytes)
 			add(d.AppID, SnapshotVMStateKey(snap), 0)
+			add(d.AppID, SnapshotDriveKey(snap), 0)
 		}
 	}
 	for buildID, provenance := range m.buildProvenance {
@@ -6057,8 +6081,48 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
+	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
+	// derives this in SQL under the apps FOR UPDATE lock; here m.mu
+	// serves the same role. A caller-supplied positive Revision is
+	// honoured so fixtures can pin a specific ladder.
+	if d.Revision <= 0 {
+		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
+	}
 	m.deployments[d.ID] = d
 	return d, nil
+}
+
+// nextDeploymentRevisionLocked returns the next per-app revision. Caller
+// must hold m.mu. Not partitioned by scope — this is the same N that
+// DeploymentOrdinal stamps into preview hostnames. O(N) over the
+// deployments map matches the scan style of the supersede search above;
+// rows-per-app stay bounded by the build cadence (spec §6).
+func (m *MemStore) nextDeploymentRevisionLocked(appID string) int {
+	max := 0
+	for _, existing := range m.deployments {
+		if existing.AppID != appID {
+			continue
+		}
+		if existing.Revision > max {
+			max = existing.Revision
+		}
+	}
+	return max + 1
+}
+
+// DeploymentByRevision mirrors PgStore.DeploymentByRevision (ADR-198).
+func (m *MemStore) DeploymentByRevision(_ context.Context, appID string, revision int) (Deployment, error) {
+	if revision <= 0 {
+		return Deployment{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range m.deployments {
+		if d.AppID == appID && d.Revision == revision {
+			return d, nil
+		}
+	}
+	return Deployment{}, ErrNotFound
 }
 
 func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, error) {
@@ -6086,7 +6150,14 @@ func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentI
 func (m *MemStore) DeploymentOrdinal(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Mirror the pg-side query: row_number() over (partition by
+	// ADR-198 — prefer the stored revision, matching PgStore. The
+	// legacy rank computation below stays as the 0-sentinel fallback
+	// for rows a fixture wrote directly into m.deployments without
+	// going through CreateDeployment.
+	if d, ok := m.deployments[deploymentID]; ok && d.AppID == appID && d.Revision > 0 {
+		return d.Revision, nil
+	}
+	// Mirror the pg-side fallback: row_number() over (partition by
 	// app_id order by created_at, id). MemStore keeps no
 	// monotonic key, so we sort a slice of (CreatedAt, ID, AppID)
 	// for this app and find the row's rank.
@@ -6361,6 +6432,11 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	default:
 		return Deployment{}, 0, ErrInvalidRecoverAction
 	}
+	// Mirror PgStore.RecoverRollout exactly. MemStore has no encoding to
+	// violate, so the normalization is not load-bearing here — but if the two
+	// stores disagree, a MemStore test observes a reason the SQL store would
+	// have rewritten, and the divergence goes unnoticed until production.
+	reason = normalizeRolloutReason(reason)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -6463,7 +6539,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(fmt.Sprintf(`{"action":"advance","reason":%q}`, reason)),
+			Data:         json.RawMessage(rolloutAuditData("advance", reason)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -6497,7 +6573,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(fmt.Sprintf(`{"action":"promote","reason":%q}`, reason)),
+			Data:         json.RawMessage(rolloutAuditData("promote", reason)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -6535,7 +6611,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			Kind:         DeployRolledBack,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(fmt.Sprintf(`{"action":"abort","reason":%q}`, reason)),
+			Data:         json.RawMessage(rolloutAuditData("abort", reason)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -7645,6 +7721,11 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	}
 	newDep.StageState = seed
 	newDep.CreatedAt = now
+	// ADR-198 — a retry is a new immutable row and takes the next
+	// revision rather than reusing the failed row's. retryDeploymentInput
+	// builds a fresh struct and never copies Revision, so this is always
+	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
+	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
 	m.deployments[newDep.ID] = newDep
 	return newDep, nil
 }
@@ -9137,9 +9218,7 @@ func (m *MemStore) CompleteBuildVMCleanup(_ context.Context, buildID, claimToken
 	row.claimToken = ""
 	row.nextAttemptAt = time.Now().UTC()
 	row.lastError = cleanupErr.Error()
-	if len(row.lastError) > 4096 {
-		row.lastError = row.lastError[:4096]
-	}
+	row.lastError = safetext.Truncate(row.lastError, builderVMCleanupErrorMaxBytes)
 	m.builderVMCleanup[buildID] = row
 	return nil
 }
@@ -10003,9 +10082,7 @@ func (m *MemStore) MarkFireNowRequestFailed(_ context.Context, requestID, errMsg
 		return ErrFireNowRequestNotFound
 	}
 	r.Status = FireNowStatusFailed
-	if len(errMsg) > 1024 {
-		errMsg = errMsg[:1024]
-	}
+	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	r.Error = &errMsg
 	now := time.Now().UTC()
 	r.FinishedAt = &now
@@ -10128,9 +10205,7 @@ func (m *MemStore) MarkOperatorIntentFailed(_ context.Context, id, errMsg string
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
 	}
-	if len(errMsg) > 1024 {
-		errMsg = errMsg[:1024]
-	}
+	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	r.Status = OperatorIntentFailed
 	r.Error = errMsg
 	// P2d R4 review fix: persist snapIDs on the failure path so
@@ -11462,6 +11537,14 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	// ad-hoc test fixtures that don't thread wake_id through still get
 	// a non-empty value. Production callers (schedd's Wake) supply a
 	// UUIDv7 minted Go-side for time-ordered values.
+	//
+	// ADR-193: mirror of the PgStore per-node reservation. Consistent with
+	// the FK divergence noted above, an un-seeded nodeID is still a pass —
+	// the guard only fires for a node whose compute_nodes row exists and
+	// carries a positive ceiling.
+	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+		return Instance{}, err
+	}
 	ins := Instance{
 		ID:           newID(),
 		AppID:        appID,
@@ -11502,6 +11585,11 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// ADR-193: mirror of the PgStore per-node reservation. m.mu is held
+	// across check and insert, which is what the advisory lock buys PgStore.
+	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+		return Instance{}, err
+	}
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		mode = string(InstanceModeNormal)
@@ -11542,6 +11630,10 @@ func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID
 	}
 	if _, exists := m.instances[instanceID]; exists {
 		return Instance{}, ErrConflict
+	}
+	// ADR-193: job tasks take the same per-node reservation as app wakes.
+	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+		return Instance{}, err
 	}
 	ins := Instance{
 		ID:           instanceID,
@@ -13014,6 +13106,37 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 			return nil, err
 		}
 		used[nodeID] = value
+	}
+	return used, nil
+}
+
+// ComputeNodeUsedCPUMillicoresByNode mirrors PgStore's fleet-wide CPU
+// reservation aggregate for local tests and in-memory deployments.
+func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	wanted := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		wanted[nodeID] = struct{}{}
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := wanted[ins.NodeID]; !ok {
+			continue
+		}
+		switch ins.State {
+		case "waking", "cold_booting", "running", "warm":
+			app, ok := m.apps[ins.AppID]
+			if !ok {
+				continue
+			}
+			cpu := app.CPUMillicores
+			if cpu <= 0 {
+				cpu = api.DefaultAppCPUMillicores
+			}
+			used[ins.NodeID] += int64(cpu)
+		}
 	}
 	return used, nil
 }
@@ -18606,6 +18729,25 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 				PerAppOnly: true,
 				PerKind:    true,
 			}
+		}
+	}
+	// ADR-201 §1/§2 per-kind quotas. Shares its decision helpers with
+	// PgStore (pkg/state/edge_rule_kind_quota.go) so the two stores cannot
+	// drift — the failure mode behind the always-zero uppercase-state
+	// queries, where MemStore was right, PgStore's SQL was wrong, and no
+	// test ran both. A zero quota DENIES here, unlike the branches above.
+	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {
+		return EdgeRule{}, denied
+	}
+	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
+		perApp := 0
+		for _, r := range m.edgeRules {
+			if r.AppID == in.AppID && r.Kind == in.Kind {
+				perApp++
+			}
+		}
+		if exceeded := edgeRuleKindQuotaExceeded(in.Kind, limits, perApp); exceeded != nil {
+			return EdgeRule{}, exceeded
 		}
 	}
 	if in.MatchMethods == nil {

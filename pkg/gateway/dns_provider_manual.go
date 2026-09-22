@@ -50,6 +50,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // errManualDNSRequiresOperator is the sentinel the manual
@@ -111,19 +113,33 @@ func (m *ManualDNSProvider) UpsertRecord(_ context.Context, name, value string) 
 	if name == "" || value == "" {
 		return fmt.Errorf("manual dns: name and value required (got name=%q value=%q)", name, value)
 	}
-	body := fmt.Sprintf(`{"type":"A","name":%q,"content":%q,"ttl":60,"proxied":false}`,
-		name, value)
+	body := string(safetext.JSONObject(struct {
+		Type    string `json:"type"`
+		Name    string `json:"name"`
+		Content string `json:"content"`
+		TTL     int    `json:"ttl"`
+		Proxied bool   `json:"proxied"`
+	}{Type: "A", Name: name, Content: value, TTL: 60, Proxied: false}))
+	// Every interpolation below lands inside a shell-quoted word, so each is
+	// quoted with safetext.ShellSingleQuote rather than wrapped in literal
+	// quotes in the format string. A value carrying a single quote would
+	// otherwise terminate the argument and hand the remainder to the shell of
+	// whichever operator pastes this in. JSON encoding does not cover it: '
+	// needs no escaping in JSON and passes through json.Marshal untouched.
 	curl := fmt.Sprintf(
 		"# FAAS_DNS_PROVIDER=manual: UpsertRecord\n"+
 			"# ProviderURL: %s\n"+
 			"# Find zone id:\n"+
-			"#   curl -H 'Authorization: Bearer $CF_API_TOKEN' '%s/zones?name=%s'\n"+
+			"#   curl -H 'Authorization: Bearer $CF_API_TOKEN' %s\n"+
 			"# Then create the A record (replace <ZONE_ID>):\n"+
-			"curl -X POST '%s/zones/<ZONE_ID>/dns_records' \\\n"+
+			"curl -X POST %s \\\n"+
 			"  -H 'Authorization: Bearer $CF_API_TOKEN' \\\n"+
 			"  -H 'Content-Type: application/json' \\\n"+
-			"  -d '%s'\n",
-		m.providerURL, m.providerURL, m.zone, m.providerURL, body)
+			"  -d %s\n",
+		m.providerURL,
+		safetext.ShellSingleQuote(m.providerURL+"/zones?name="+m.zone),
+		safetext.ShellSingleQuote(m.providerURL+"/zones/<ZONE_ID>/dns_records"),
+		safetext.ShellSingleQuote(body))
 	m.write(curl)
 	return errManualDNSRequiresOperator
 }
@@ -137,17 +153,22 @@ func (m *ManualDNSProvider) DeleteRecord(_ context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("manual dns: name required")
 	}
+	// Shell-quoted for the same reason as UpsertRecord above.
 	curl := fmt.Sprintf(
 		"# FAAS_DNS_PROVIDER=manual: DeleteRecord\n"+
 			"# ProviderURL: %s\n"+
 			"# Find zone id and record id:\n"+
-			"#   curl -H 'Authorization: Bearer $CF_API_TOKEN' '%s/zones?name=%s'\n"+
-			"#   curl -H 'Authorization: Bearer $CF_API_TOKEN' '%s/zones/<ZONE_ID>/dns_records?type=A&name=%s'\n"+
+			"#   curl -H 'Authorization: Bearer $CF_API_TOKEN' %s\n"+
+			"#   curl -H 'Authorization: Bearer $CF_API_TOKEN' %s\n"+
 			"# Then delete (replace <ZONE_ID> and <RECORD_ID>):\n"+
-			"curl -X DELETE '%s/zones/<ZONE_ID>/dns_records/<RECORD_ID>' \\\n"+
+			"curl -X DELETE %s \\\n"+
 			"  -H 'Authorization: Bearer $CF_API_TOKEN'\n"+
 			"# (deleting record for name=%q, zone=%s)\n",
-		m.providerURL, m.providerURL, m.zone, m.providerURL, name, m.providerURL, name, m.zone)
+		m.providerURL,
+		safetext.ShellSingleQuote(m.providerURL+"/zones?name="+m.zone),
+		safetext.ShellSingleQuote(m.providerURL+"/zones/<ZONE_ID>/dns_records?type=A&name="+name),
+		safetext.ShellSingleQuote(m.providerURL+"/zones/<ZONE_ID>/dns_records/<RECORD_ID>"),
+		name, m.zone)
 	m.write(curl)
 	return errManualDNSRequiresOperator
 }

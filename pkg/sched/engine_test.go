@@ -657,7 +657,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 		ops := wire.NewOpsMetrics("schedd")
 		e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits)
+		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits, "")
 		if got != wakeAdmit {
 			t.Errorf("admitGate = %v, want wakeAdmit", got)
 		}
@@ -682,7 +682,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 		e.ledger.Admit(Request{Instance: uuid.NewString(), AppID: app.ID, RAMMB: 128, Plan: api.PlanPro})
 		e.ledger.Admit(Request{Instance: uuid.NewString(), AppID: app.ID, RAMMB: 128, Plan: api.PlanPro})
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits)
+		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits, "")
 		if got != wakeRejectAtCap {
 			t.Errorf("admitGate = %v, want wakeRejectAtCap", got)
 		}
@@ -709,7 +709,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			t.Fatalf("GetApp: %v", err)
 		}
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits)
+		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "")
 		if got != wakeCooldownHeld {
 			t.Errorf("admitGate = %v, want wakeCooldownHeld", got)
 		}
@@ -734,7 +734,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			t.Fatalf("GetApp: %v", err)
 		}
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits)
+		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "")
 		if got != wakeMinFloorAlready {
 			t.Errorf("admitGate = %v, want wakeMinFloorAlready", got)
 		}
@@ -759,7 +759,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			t.Fatalf("GetApp: %v", err)
 		}
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits)
+		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "")
 		if got != wakeAdmit {
 			t.Errorf("admitGate = %v, want wakeAdmit (cold-start bypass)", got)
 		}
@@ -796,7 +796,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			WithOpsMetrics(ops).
 			WithOverageChecker(checker)
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, obs, cap, _, _ := e.admitGate(context.Background(), &app, limits)
+		got, obs, cap, _, _ := e.admitGate(context.Background(), &app, limits, "")
 		if got != wakeOverageCapReached {
 			t.Errorf("admitGate = %v, want wakeOverageCapReached", got)
 		}
@@ -1032,6 +1032,54 @@ func TestAdmitInstanceForDeployment_DispatchesBoot(t *testing.T) {
 	}
 	if got := e.Ledger().Concurrency(app.ID); got != 1 {
 		t.Fatalf("ledger concurrency = %d, want 1", got)
+	}
+}
+
+func TestAdmitInstanceForDeployment_SmokeCanWakeSnapshottingCandidate(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	stableWake, err := e.Wake(context.Background(), app.ID, "", "", TriggerGateway)
+	if err != nil {
+		t.Fatalf("Wake stable deployment: %v", err)
+	}
+	if stableWake.DeploymentID != stable.ID {
+		t.Fatalf("stable wake deployment = %q, want %q", stableWake.DeploymentID, stable.ID)
+	}
+	candidate, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:candidate", Status: state.DeploySnapshotting,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(candidate): %v", err)
+	}
+
+	rejected, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, candidate.ID, "", TriggerFloorDep)
+	if err != nil {
+		t.Fatalf("ordinary candidate admission: %v", err)
+	}
+	if !rejected.AtCapacity {
+		t.Fatal("ordinary trigger admitted a non-live candidate")
+	}
+
+	verified, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, candidate.ID, "", TriggerDeploymentSmoke)
+	if err != nil {
+		t.Fatalf("deployment smoke admission: %v", err)
+	}
+	if verified.AtCapacity || verified.InstanceID == "" || verified.DeploymentID != candidate.ID {
+		t.Fatalf("deployment smoke result = %+v, want running candidate", verified)
+	}
+	if got := e.Ledger().Concurrency(app.ID); got != 2 {
+		t.Fatalf("ledger concurrency = %d, want stable plus candidate overlap", got)
+	}
+	live, err := store.LiveDeployment(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("LiveDeployment: %v", err)
+	}
+	if live.ID != stable.ID {
+		t.Fatalf("live deployment moved during smoke: got %q want %q", live.ID, stable.ID)
 	}
 }
 
@@ -1817,7 +1865,7 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	// A fresh, version-matched snapshot makes wake a restore.
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
-		StorageKey: SnapshotMemKey(dep.ID),
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "restore"),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
@@ -1876,7 +1924,7 @@ func TestEngineWake_StorageKey_ForwardedFromRow(t *testing.T) {
 	// Use a non-default storage_key so a regression that hardcodes
 	// "snap/<dep>/mem" can't pass — the row's value is what vmmd
 	// must see.
-	customKey := "snap/" + dep.ID + "/mem" // canonical today
+	customKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "custom")
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
 		StorageKey: customKey,
@@ -2064,7 +2112,7 @@ func TestEngineWake_ForwardsOverridePort(t *testing.T) {
 			DeploymentID: liveDep.ID,
 			FCVersion:    "1.10.0",
 			MemBytes:     512 << 20,
-			StorageKey:   SnapshotMemKey(liveDep.ID),
+			StorageKey:   state.SnapshotCaptureMemKey(liveDep.ID, state.SnapshotTierInit, "port"),
 		}); err != nil {
 			t.Fatalf("CreateSnapshot: %v", err)
 		}
@@ -2155,7 +2203,7 @@ func TestEngineWake_StaleFcVersionColdBoots(t *testing.T) {
 	// Snapshot made by an older FC; must not be restored (ADR-005 pinning).
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.7.0", MemBytes: 512 << 20,
-		StorageKey: SnapshotMemKey(dep.ID),
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "fallback"),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
@@ -2175,7 +2223,7 @@ func TestEngineWake_RestoreFallbackMarksSnapshotStale(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
-		StorageKey: SnapshotMemKey(dep.ID),
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "fallback"),
 	})
 	vmm := &fakeVMM{forceColdFallback: true}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
@@ -4476,17 +4524,19 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	// Seed both tiers directly. The StorageKey is the only field
 	// the engine reads at the wake site; FCVersion matches.
 	now := time.Now()
+	initKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "plan-init")
 	_, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 256 << 20, StorageKey: state.SnapMemKey(dep.ID),
+		MemBytes: 256 << 20, StorageKey: initKey,
 		Tier: state.SnapshotTierInit, Stale: false,
 	})
 	if err != nil {
 		t.Fatalf("CreateSnapshot init: %v", err)
 	}
+	warmKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "plan-warm")
 	_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 256 << 20, StorageKey: state.WarmSnapMemKey(dep.ID),
+		MemBytes: 256 << 20, StorageKey: warmKey,
 		Tier: state.SnapshotTierWarm, Stale: false,
 	})
 	if err != nil {
@@ -4505,8 +4555,8 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	if snap.Tier != state.SnapshotTierInit {
 		t.Errorf("Free plan: tier = %q, want init (warm skipped on sticky-downgrade)", snap.Tier)
 	}
-	if snap.StorageKey != state.SnapMemKey(dep.ID) {
-		t.Errorf("Free plan: storage_key = %q, want %q", snap.StorageKey, state.SnapMemKey(dep.ID))
+	if snap.StorageKey != initKey {
+		t.Errorf("Free plan: storage_key = %q, want %q", snap.StorageKey, initKey)
 	}
 	if tier != "init" {
 		t.Errorf("Free plan: chosen tier = %q, want init", tier)
@@ -4520,8 +4570,8 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	if snap.Tier != state.SnapshotTierWarm {
 		t.Errorf("Pro plan: tier = %q, want warm", snap.Tier)
 	}
-	if snap.StorageKey != state.WarmSnapMemKey(dep.ID) {
-		t.Errorf("Pro plan: storage_key = %q, want %q", snap.StorageKey, state.WarmSnapMemKey(dep.ID))
+	if snap.StorageKey != warmKey {
+		t.Errorf("Pro plan: storage_key = %q, want %q", snap.StorageKey, warmKey)
 	}
 	if tier != "warm" {
 		t.Errorf("Pro plan: chosen tier = %q, want warm", tier)
@@ -4533,7 +4583,7 @@ func TestUsableSnapshotForWake_RAMMismatchFallsBackAndRetires(t *testing.T) {
 	_, _, dep := seedApp(t, store, api.PlanPro, 256, 5)
 	warm, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 128 << 20, StorageKey: state.WarmSnapMemKey(dep.ID),
+		MemBytes: 128 << 20, StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "ram-warm"),
 		Tier: state.SnapshotTierWarm,
 	})
 	if err != nil {
@@ -4541,7 +4591,7 @@ func TestUsableSnapshotForWake_RAMMismatchFallsBackAndRetires(t *testing.T) {
 	}
 	_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 256 << 20, StorageKey: state.SnapMemKey(dep.ID),
+		MemBytes: 256 << 20, StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "ram-init"),
 		Tier: state.SnapshotTierInit,
 	})
 	if err != nil {
@@ -4566,8 +4616,8 @@ func TestUsableSnapshotForWake_AllRAMMismatchesColdBoot(t *testing.T) {
 		memBytes int64
 		key      string
 	}{
-		{state.SnapshotTierWarm, 128 << 20, state.WarmSnapMemKey(dep.ID)},
-		{state.SnapshotTierInit, 512 << 20, state.SnapMemKey(dep.ID)},
+		{state.SnapshotTierWarm, 128 << 20, state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "all-warm")},
+		{state.SnapshotTierInit, 512 << 20, state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "all-init")},
 	} {
 		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: fixture.memBytes,
@@ -4608,7 +4658,7 @@ func TestUsableSnapshotForWake_H2CBaseImageCompatibility(t *testing.T) {
 				DeploymentID: dep.ID, FCVersion: "1.10.0",
 				BaseImageVersion: tc.baseImageVersion,
 				MemBytes:         256 << 20,
-				StorageKey:       state.SnapMemKey(dep.ID),
+				StorageKey:       state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "h2c"),
 				Tier:             state.SnapshotTierInit,
 			}); err != nil {
 				t.Fatalf("CreateSnapshot: %v", err)

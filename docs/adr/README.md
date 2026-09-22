@@ -6,6 +6,37 @@ separate files here. This directory holds ADRs made *after* the spec.
 
 Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
+## Picking a number
+
+ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one
+and whichever merges second keeps it. The renumber trail through the table
+below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
+
+`make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
+any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
+the gate holds that set and stops it growing. Never add a line to that file.
+
+Before claiming a number, check both the directory **and** open PRs — a PR can
+claim a number between your check and your merge:
+
+```bash
+ls docs/adr/
+gh pr list --state open --limit 80 --json title \
+  --jq '.[] | select(.title|test("ADR-")) | .title'
+```
+
+Re-check after any rebase. If you do have to renumber, scope the rename to the
+references *your branch* introduced: shared files (`api/openapi.yaml`,
+`pkg/api/dto.go`, `pkg/api/limits.go`) document many ADRs at once, so a blanket
+`sed` silently rewrites other people's.
+
+Retro-fixing the existing duplicates is deliberately out of scope for the gate.
+The number is embedded in `// adr: NNN` citation lines that
+`scripts/ci/check_spec_cited_tests.sh` reads, plus metric help strings and
+runbooks — ADR-190 alone had 67 references. Renumber one ADR per PR, and delete
+its baseline line in the same change (the gate fails on a stale entry).
+
 ## Format
 
 ```
@@ -23,6 +54,11 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 200 | [First-wake 5xx auto-rollback on every plan](200-auto-rollback-on-every-plan.md) | accepted | Health-driven rollback for the first wake of a new deployment, on every plan |
+| 201 | [Traffic resilience as a platform primitive](201-traffic-as-a-platform-primitive.md) | accepted | `kind=retry` + `kind=circuit_breaker` over instance health, and an nftables egress breaker driven by ADR-098 probe outcomes |
+| 193 | [Transactional per-node RAM reservation](193-transactional-node-reservation.md) | accepted | Invariant §6.2-2 enforced at the instances INSERT; ADR-062 retired NodeLedger's single-process premise |
+| 192 | [Wake hot path: single pre-boot staging session and full attribution](192-wake-hot-path-staging-and-attribution.md) | accepted | One loop-mount per wake for drive1 files; Manager.Wake phases and `stage_pre_boot_files_ms` on `wake.restore_breakdown` |
+| 190 | [Production BuildKit dependency cache](190-production-buildkit-cache.md) | accepted | Reuse app-scoped Railpack and Dockerfile records across production source edits |
 | 186 | [Reusable private-network firewall policy](186-private-network-firewall-policy.md) | accepted | Network-level CIDR baseline layered over provider-neutral private-network reconciliation |
 | 187 | [Protocol-aware private-network firewall rules](187-private-network-firewall-rules.md) | accepted | Provider-neutral TCP/UDP/ICMP allow rules with fail-closed private-network enforcement |
 | 188 | [Provider-neutral private-network peering](188-private-network-peering.md) | accepted foundation | Canonical two-way route planning for non-overlapping Gregale networks |
@@ -201,6 +237,16 @@ note instead of the banner.
 ## Fleet security decisions
 
 - [ADR-178: dedicated fleet sealed-secret domain](178-fleet-sealed-secret-domain.md)
+
+## Daemon durability decisions
+
+- [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
+- [ADR-191: scheduler divergence reconciliation and bounded loop dispatch](191-scheduler-divergence-and-bounded-dispatch.md) — repair rows the owning vmmd is not reporting (report-only first), and move every long-running notification handler onto one bounded pool
+
+Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
+first; `190-daemon-durability-primitives.md` picked the same number
+concurrently). The log above already contains several such pairs (157, 158, 167,
+168). A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Snapshot restore optimization decisions
 

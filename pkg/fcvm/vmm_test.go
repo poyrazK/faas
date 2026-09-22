@@ -1982,12 +1982,9 @@ func TestRestoreMemSource_OCIUsesStorageKey(t *testing.T) {
 
 	v := NewJailerVMM(t.TempDir(), 30*time.Second).WithStorage(backend)
 	legacyPath := filepath.Join(root, "snap", "dep-1", "vmstate")
-	gotPath, err := v.restoreMemSource(ctx, "i-oci", RestoreSpec{
-		StorageKey:  memKey,
-		VMStatePath: legacyPath,
-	})
+	gotPath, timing, err := v.resolveRestoreBlob(ctx, "i-oci", "mem", memKey, legacyPath)
 	if err != nil {
-		t.Fatalf("restoreMemSource: %v", err)
+		t.Fatalf("resolveRestoreBlob(mem): %v", err)
 	}
 	got, err := os.ReadFile(gotPath)
 	if err != nil {
@@ -1997,7 +1994,20 @@ func TestRestoreMemSource_OCIUsesStorageKey(t *testing.T) {
 		t.Fatalf("resolved memory = %q, want %q", got, mem)
 	}
 	if gotPath == legacyPath {
-		t.Fatal("restoreMemSource used the legacy vmstate path instead of StorageKey")
+		t.Fatal("resolveRestoreBlob used the legacy vmstate path instead of StorageKey")
+	}
+	// Attribution: this backend resolves a local path, so the bytes were NOT
+	// streamed. Pinning the local branch here is what makes the materialized
+	// branch below meaningful — a source label that reported the same value
+	// either way would be worse than no label.
+	if timing.Artifact != "mem" {
+		t.Errorf("artifact = %q, want \"mem\"", timing.Artifact)
+	}
+	if timing.Source != "backend_local" {
+		t.Errorf("source = %q, want \"backend_local\" — this backend resolves a local path", timing.Source)
+	}
+	if timing.Bytes != int64(len(mem)) {
+		t.Errorf("bytes = %d, want %d", timing.Bytes, len(mem))
 	}
 	v.sweepMaterialised("i-oci")
 }

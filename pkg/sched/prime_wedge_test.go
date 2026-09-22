@@ -1,5 +1,7 @@
 package sched
 
+// adr: 191
+
 import (
 	"context"
 	"testing"
@@ -102,14 +104,16 @@ func TestDispatchPrime_RunsInlineWhenSaturated(t *testing.T) {
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 	loop := NewLoop(nil, engine, testLog())
 
-	// Occupy every slot so dispatchPrime takes the default branch.
-	loop.primeSlotsOnce.Do(func() { loop.primeSlots = make(chan struct{}, maxConcurrentPrimes) })
-	for i := 0; i < maxConcurrentPrimes; i++ {
-		loop.primeSlots <- struct{}{}
+	// Occupy every prime slot so submit takes the overflow branch
+	// (ADR-191 moved the slot pool into workPool; the policy that
+	// prime overflows to inline rather than dropping is unchanged).
+	slots := loop.workPool().slots[workPrime]
+	for range maxConcurrentPrimes {
+		slots <- struct{}{}
 	}
 	defer func() {
-		for i := 0; i < maxConcurrentPrimes; i++ {
-			<-loop.primeSlots
+		for range maxConcurrentPrimes {
+			<-slots
 		}
 	}()
 

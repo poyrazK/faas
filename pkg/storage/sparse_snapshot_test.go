@@ -48,6 +48,7 @@ func TestSparseArtifactScopeIncludesAppFilesystems(t *testing.T) {
 	for _, key := range []string{
 		"snap/deployment/mem",
 		"snap/deployment/warm/mem",
+		"snap/deployment/captures/id/v2/drive",
 		"apps/example/deployment.ext4",
 	} {
 		if !isSparseArtifactKey(key) {

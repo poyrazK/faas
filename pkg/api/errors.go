@@ -781,6 +781,10 @@ const (
 	// app's admin-enabled security policy is "enforce" and its current
 	// posture still contains one or more high-severity findings.
 	CodeSecurityPostureBlocked = "security_posture_blocked"
+	// CodeSecurityQuarantineRecoveryBlocked is returned when a recovery
+	// request cannot prove that a newer live deployment has clean,
+	// digest-matched scan evidence across the serving set.
+	CodeSecurityQuarantineRecoveryBlocked = "security_quarantine_recovery_blocked"
 	// CodeSecurityScanBlocked is persisted when an enforce-policy deployment
 	// cannot be promoted because its image scan is missing, unverifiable, or
 	// reports high-severity risk.
@@ -1090,11 +1094,18 @@ const (
 	// table treats them as 403/422/402; surfacing the codes separately
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
-	CodePlanQueueDepth     = "plan_queue_depth"
-	CodePlanSourceBytes    = "plan_source_bytes"
-	CodePlanFeatureGated   = "plan_feature_gated"
-	CodePlanDelayedCap     = "plan_delayed_tasks_cap"
-	CodeInvocationNotFound = "invocation_not_found"
+	CodePlanQueueDepth = "plan_queue_depth"
+	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
+	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
+	// produces this — it is an upsert and cannot grow the count.
+	CodeCustomMetricLimit = "custom_metric_limit"
+	// CodePlanCustomMetricsNotAllowed: the account's plan does not include
+	// custom application metrics.
+	CodePlanCustomMetricsNotAllowed = "plan_custom_metrics_not_allowed"
+	CodePlanSourceBytes             = "plan_source_bytes"
+	CodePlanFeatureGated            = "plan_feature_gated"
+	CodePlanDelayedCap              = "plan_delayed_tasks_cap"
+	CodeInvocationNotFound          = "invocation_not_found"
 	// CodeInvocationNotReplayable (issue #315 / tier-2 DX) is the
 	// 409 surfaced by POST /v1/invocations/{id}/replay when the
 	// original invocation is in a state that cannot be re-issued
@@ -1825,7 +1836,8 @@ func StatusForCode(code string) int {
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
-		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale:
+		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
+		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
@@ -4241,6 +4253,14 @@ func ErrSecurityPostureBlocked(codes string) *Problem {
 		WithDocs(docsBase + "/security#deploy-enforcement")
 }
 
+// ErrSecurityQuarantineRecoveryBlocked is returned when a quarantined app
+// does not yet have a verified replacement deployment ready to serve.
+func ErrSecurityQuarantineRecoveryBlocked(detail string) *Problem {
+	return NewProblem(http.StatusConflict, CodeSecurityQuarantineRecoveryBlocked,
+		"Security quarantine recovery is blocked", detail).
+		WithDocs(docsBase + "/security#quarantine-recovery")
+}
+
 // ErrTrustedSignerInvalid is the 400 mirror of ErrSecretInvalidKey
 // for the PUT /v1/apps/{slug}/trusted_signers/{name} body. Detail
 // carries the shape failure ("public_key_pem must be 64..1024 bytes
@@ -6024,4 +6044,16 @@ func ErrNodeLifecycleInvalid(from, to string) *Problem {
 		"Compute node lifecycle transition invalid",
 		fmt.Sprintf("cannot transition lifecycle from %q to %q.", from, to)).
 		WithDocs(docsBase + "/admin/compute-nodes#lifecycle")
+}
+
+// ErrPlanCustomMetricsNotAllowed is the 402 for an ADR-202 push on a plan
+// without the feature. Pushing a metric buys the same scaling capability the
+// other targets do, and an unbounded free-tier write endpoint is an abuse
+// surface.
+func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanCustomMetricsNotAllowed,
+		"Custom metrics not available on this plan",
+		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
+			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
+			"queue_depth, queue_lag) or upgrade.", plan))
 }

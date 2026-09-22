@@ -164,7 +164,20 @@ func previewScalingPolicyFromManifest(cwd string) *api.ScalingPolicy {
 		return nil
 	}
 	m, ok, err := gregalemanifest.Load(cwd)
-	if err != nil || !ok || m == nil || m.Scaling == nil {
+	if err != nil || !ok || m == nil {
+		return nil
+	}
+	if m.Worker != nil && m.Worker.Scale.Metric != "" {
+		return &api.ScalingPolicy{
+			MinInstances: m.Worker.Scale.Min,
+			MaxInstances: m.Worker.Scale.Max,
+			Target: &api.ScalingTarget{
+				Metric: m.Worker.Scale.Metric,
+				Value:  m.Worker.Scale.Target,
+			},
+		}
+	}
+	if m.Scaling == nil {
 		return nil
 	}
 	return m.Scaling.ToAPI()
@@ -402,25 +415,36 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 		p.AppConfig.ScalingPolicy = policy
 	}
 	if opts.Cwd != "" {
-		if m, ok, err := gregalemanifest.Load(opts.Cwd); err == nil && ok && m != nil && m.Lifecycle != nil && !m.Lifecycle.Empty() {
-			desired := m.Lifecycle.ToAPI()
-			if p.AppConfig.ExecutionMode == nil {
-				p.AppConfig.ExecutionMode = desired.ExecutionMode
+		if m, ok, err := gregalemanifest.Load(opts.Cwd); err == nil && ok && m != nil {
+			if m.Worker != nil {
+				workerMode := api.ExecutionModeWorker
+				if p.AppConfig.ExecutionMode == nil {
+					p.AppConfig.ExecutionMode = &workerMode
+				}
+				if p.AppConfig.WorkerReplicas == nil {
+					p.AppConfig.WorkerReplicas = m.Worker.Scale.ToAPI()
+				}
 			}
-			if p.AppConfig.RestartPolicy == nil {
-				p.AppConfig.RestartPolicy = desired.RestartPolicy
-			}
-			if p.AppConfig.StartupDeadlineS == nil {
-				p.AppConfig.StartupDeadlineS = desired.StartupDeadlineS
-			}
-			if p.AppConfig.MaxRetries == nil {
-				p.AppConfig.MaxRetries = desired.MaxRetries
-			}
-			if p.AppConfig.RequestTimeoutS == nil {
-				p.AppConfig.RequestTimeoutS = desired.RequestTimeoutS
-			}
-			if p.AppConfig.ServiceReplicas == nil {
-				p.AppConfig.ServiceReplicas = desired.ServiceReplicas
+			if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+				desired := m.Lifecycle.ToAPI()
+				if p.AppConfig.ExecutionMode == nil {
+					p.AppConfig.ExecutionMode = desired.ExecutionMode
+				}
+				if p.AppConfig.RestartPolicy == nil {
+					p.AppConfig.RestartPolicy = desired.RestartPolicy
+				}
+				if p.AppConfig.StartupDeadlineS == nil {
+					p.AppConfig.StartupDeadlineS = desired.StartupDeadlineS
+				}
+				if p.AppConfig.MaxRetries == nil {
+					p.AppConfig.MaxRetries = desired.MaxRetries
+				}
+				if p.AppConfig.RequestTimeoutS == nil {
+					p.AppConfig.RequestTimeoutS = desired.RequestTimeoutS
+				}
+				if p.AppConfig.ServiceReplicas == nil {
+					p.AppConfig.ServiceReplicas = desired.ServiceReplicas
+				}
 			}
 		}
 	}

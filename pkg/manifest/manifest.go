@@ -238,7 +238,22 @@ func (e *Egress) validate() Errors {
 // unique name and a role from `pkg/role.AllRoles`. Single-box installs
 // declare exactly one host with role `single-box`.
 type Fleet struct {
-	Hosts []Host `yaml:"hosts"`
+	Hosts          []Host                `yaml:"hosts"`
+	DynamicCompute *DynamicComputePolicy `yaml:"dynamic_compute,omitempty"`
+}
+
+// DynamicComputePolicy is the signed authorization boundary for adding
+// compute-only hosts without publishing a new release manifest for every
+// machine. The release manifest still owns daemon, PKI, storage, and network
+// policy; a short-lived signed FleetEnrollmentBundle owns the provider SSH
+// facts for one node. Runtime endpoints are derived from NamePrefix,
+// private_dns.zone, and daemons.vmmd.bind rather than accepted from the
+// provider claim.
+type DynamicComputePolicy struct {
+	Enabled    bool     `yaml:"enabled"`
+	MaxNodes   int      `yaml:"max_nodes"`
+	NamePrefix string   `yaml:"name_prefix"`
+	Tags       []string `yaml:"tags,omitempty"`
 }
 
 // ComputeNodeCount returns the number of compute-only hosts in the fleet.
@@ -688,6 +703,7 @@ func (m *Manifest) Validate() Errors {
 		})
 	}
 	errs = append(errs, m.Fleet.validate()...)
+	errs = append(errs, m.validateDynamicCompute()...)
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
@@ -808,6 +824,92 @@ func (m *Manifest) validateFleetEndpoints() Errors {
 					fmt.Sprintf("IP %q is outside overlay.cidr %q", host, m.Overlay.CIDR)})
 			}
 		}
+	}
+	return errs
+}
+
+// DynamicComputeHost derives the runtime topology entry for a signed dynamic
+// compute enrollment. Provider claims intentionally cannot choose daemon
+// endpoints: the node name is constrained by the release policy and the
+// endpoint is derived from the manifest's private DNS zone and vmmd port.
+func (m *Manifest) DynamicComputeHost(name, storageDevice string) (Host, error) {
+	policy := m.Fleet.DynamicCompute
+	if policy == nil || !policy.Enabled {
+		return Host{}, errors.New("fleet.dynamic_compute is not enabled")
+	}
+	if !dynamicComputeNodeNameRe.MatchString(name) || !strings.HasPrefix(name, policy.NamePrefix) {
+		return Host{}, fmt.Errorf("node %q is outside dynamic compute name prefix %q", name, policy.NamePrefix)
+	}
+	if storageDevice != "" && !filepath.IsAbs(storageDevice) {
+		return Host{}, fmt.Errorf("storage device %q must be an absolute path", storageDevice)
+	}
+	if m.PrivateDNS.Mode != "managed_hosts" || m.PrivateDNS.Zone == "" {
+		return Host{}, errors.New("dynamic compute requires private_dns.mode=managed_hosts and a private_dns.zone")
+	}
+	bind := strings.TrimPrefix(m.Daemons.Vmmd.Bind, "tcp://")
+	if bind == m.Daemons.Vmmd.Bind {
+		return Host{}, errors.New("daemons.vmmd.bind must be a tcp endpoint for dynamic compute")
+	}
+	_, portText, err := net.SplitHostPort(bind)
+	if err != nil {
+		return Host{}, fmt.Errorf("derive dynamic compute endpoint: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return Host{}, fmt.Errorf("derive dynamic compute endpoint: invalid vmmd port %q", portText)
+	}
+	zone := strings.TrimSuffix(strings.ToLower(m.PrivateDNS.Zone), ".")
+	address := net.JoinHostPort(name+"."+zone, strconv.Itoa(port))
+	return Host{
+		Name:          name,
+		Role:          "compute-only",
+		Address:       address,
+		StorageDevice: storageDevice,
+		Tags:          append([]string(nil), policy.Tags...),
+	}, nil
+}
+
+func (m *Manifest) validateDynamicCompute() Errors {
+	policy := m.Fleet.DynamicCompute
+	if policy == nil {
+		return nil
+	}
+	var errs Errors
+	if !policy.Enabled {
+		if policy.MaxNodes != 0 || policy.NamePrefix != "" || len(policy.Tags) != 0 {
+			errs = append(errs, Error{"fleet.dynamic_compute", "disabled policy must not set max_nodes, name_prefix, or tags"})
+		}
+		return errs
+	}
+	if policy.MaxNodes <= 0 {
+		errs = append(errs, Error{"fleet.dynamic_compute.max_nodes", "must be positive when dynamic compute is enabled"})
+	} else if policy.MaxNodes < m.Fleet.ComputeNodeCount() {
+		errs = append(errs, Error{"fleet.dynamic_compute.max_nodes",
+			fmt.Sprintf("must be at least the %d declared compute nodes", m.Fleet.ComputeNodeCount())})
+	} else if policy.MaxNodes > MaxComputeNodes {
+		errs = append(errs, Error{"fleet.dynamic_compute.max_nodes",
+			fmt.Sprintf("must not exceed the supported ceiling of %d", MaxComputeNodes)})
+	}
+	if policy.NamePrefix == "" {
+		errs = append(errs, Error{"fleet.dynamic_compute.name_prefix", "is required when dynamic compute is enabled"})
+	} else if !dynamicComputePrefixRe.MatchString(policy.NamePrefix) {
+		errs = append(errs, Error{"fleet.dynamic_compute.name_prefix", "must be a lowercase DNS-label prefix using only letters, digits, or dashes"})
+	}
+	if m.PrivateDNS.Mode != "managed_hosts" || m.PrivateDNS.Zone == "" {
+		errs = append(errs, Error{"fleet.dynamic_compute", "requires private_dns.mode=managed_hosts and a private_dns.zone"})
+	}
+	if _, err := m.DynamicComputeHost(policy.NamePrefix+"0", ""); err != nil {
+		errs = append(errs, Error{"fleet.dynamic_compute", err.Error()})
+	}
+	seenTags := make(map[string]struct{}, len(policy.Tags))
+	for i, tag := range policy.Tags {
+		path := fmt.Sprintf("fleet.dynamic_compute.tags[%d]", i)
+		if strings.TrimSpace(tag) == "" {
+			errs = append(errs, Error{path, "must not be empty"})
+		} else if _, exists := seenTags[tag]; exists {
+			errs = append(errs, Error{path, fmt.Sprintf("duplicate tag %q", tag)})
+		}
+		seenTags[tag] = struct{}{}
 	}
 	return errs
 }
@@ -1257,6 +1359,8 @@ func roleKnown(r string) bool {
 
 var hostnameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 var nodeNameRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$`)
+var dynamicComputeNodeNameRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var dynamicComputePrefixRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,61}$`)
 
 func looksLikeHostname(s string) bool {
 	return hostnameRe.MatchString(s)

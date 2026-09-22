@@ -156,6 +156,19 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 	}
 
 	_ = original.Close()
+	// GetBody makes the admitted body replayable (ADR-201 §1). Both backing
+	// stores are already rewindable, so retry costs no extra buffering and no
+	// extra memory ceiling: these bytes are resident either way and were
+	// already counted against MaxRequestBodyBytes above.
+	//
+	// Ownership: GetBody deliberately hands out NON-owning readers. The spool
+	// file is deleted by admittedFileBody.Close(), and a proxy attempt closes
+	// whatever it is given — so if a replay handed out an owning body, the
+	// first attempt's Close would delete the file out from under the second.
+	// The retry loop (retryingProxy) therefore keeps the owning body and
+	// closes it exactly once; every attempt, including the first, proxies a
+	// NopCloser. When retry is disabled nothing calls GetBody and r.Body stays
+	// the owning body, which is byte-identical to the pre-ADR-201 path.
 	if spool != nil {
 		if _, err := spool.Seek(0, io.SeekStart); err != nil {
 			cleanupSpool()
@@ -163,12 +176,20 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 			return true
 		}
 		r.Body = &admittedFileBody{File: spool, path: spool.Name()}
+		r.GetBody = func() (io.ReadCloser, error) {
+			if _, err := spool.Seek(0, io.SeekStart); err != nil {
+				return nil, err
+			}
+			return io.NopCloser(spool), nil
+		}
 	} else {
 		body := append([]byte(nil), memory.Bytes()...)
 		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(body)), nil
+		}
 	}
 	r.ContentLength = total
 	r.TransferEncoding = nil
-	r.GetBody = nil
 	return false
 }

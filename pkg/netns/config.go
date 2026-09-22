@@ -158,6 +158,17 @@ type Config struct {
 	// single-host dev keeps the legacy "deny wins on RFC1918"
 	// posture.
 	OperatorExceptions []netip.Prefix
+	// EgressCircuitEnabled emits the ADR-201 §3 egress-circuit set, counter
+	// and reject rule into the per-netns ruleset. False (the default) emits
+	// nothing, so a node with FAAS_EGRESS_CIRCUIT_BREAKER off renders
+	// byte-identical output to the pre-ADR-201 renderer — asserted by
+	// TestNftCommandsUnchangedWhenEgressCircuitDisabled.
+	//
+	// Declaring the set at wake rather than on first use matters: schedd can
+	// then open a circuit with a single `nft add element` against a set that
+	// is already there, instead of having to create the set, the counter and
+	// the rule inside a latency-sensitive transition.
+	EgressCircuitEnabled bool
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -460,6 +471,12 @@ func (c Config) NftCommands() [][]string {
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
+	// ADR-201 §3: reject NEW connections to an upstream whose circuit is
+	// open. Deliberately placed AFTER the established/related accept — an
+	// open circuit must refuse new connections, never tear down calls the
+	// guest already has in flight, which would convert a recoverable blip
+	// into a guaranteed failure for every in-flight request.
+	cmds = append(cmds, c.egressCircuitRules(nft, "ip")...)
 	// ADR-169: admit only the reserved service-proxy port on this host's
 	// bridge address. The listener binds HostBridgeIP, so this rule gives
 	// guests a cross-VM path without opening the rest of the host namespace;

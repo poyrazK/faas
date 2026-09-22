@@ -363,13 +363,18 @@ func preserveOwnershipWithResolver(target string, hdr *tar.Header, res Resolver)
 		// parseOwnership already incremented under the right reason.
 		return nil
 	}
-	// Some filesystems (notably tmpfs / overlayfs mounted with noacl)
-	// refuse chown as a non-root operation. imaged runs as root, but
-	// a downstream mount policy could still trip this. We
-	// log-and-continue rather than fail the build — a file landed
-	// under the daemon uid is still correct, just not the
-	// customer-declared uid.
-	_ = os.Lchown(target, uid, gid)
+	return preserveOwnershipUsing(target, uid, gid, os.Lchown)
+}
+
+// preserveOwnershipUsing keeps the chown operation injectable for the error
+// regression test. Ownership is part of the executable image contract: if the
+// imaged service loses CAP_CHOWN, continuing would publish every entry under
+// the daemon uid and turn a valid USER image into a runtime-only permission
+// failure. Fail the build at the point where the contract is lost.
+func preserveOwnershipUsing(target string, uid, gid int, lchown func(string, int, int) error) error {
+	if err := lchown(target, uid, gid); err != nil {
+		return fmt.Errorf("rootfs: preserve ownership %s as %d:%d: %w", target, uid, gid, err)
+	}
 	return nil
 }
 

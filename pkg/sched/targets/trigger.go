@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched/scalesignal"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -143,6 +144,22 @@ type QueueBindingStatsReader interface {
 	QueueStateForQueue(ctx context.Context, appID, queueName string) (state.QueueStats, error)
 }
 
+// BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
+type BrokerLagReader interface {
+	BrokerLag(ctx context.Context, appID string) (int64, bool, error)
+}
+
+// CustomMetricReader supplies an app's pushed ADR-202 gauges. Optional: a
+// deployment whose apps declare no custom targets wires nil and the axis
+// reports no signal.
+//
+// state.Store already satisfies this. Freshness is applied by the TRIGGER,
+// not the store, so the trigger's own tick time drives it — a store that
+// filtered by wall clock would make a back-dated evaluation silently wrong.
+type CustomMetricReader interface {
+	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
+}
+
 // queueDepthSignal keeps the aggregate queue projection used by the generic
 // scaler together with the binding-level samples needed to size a worker
 // fleet fairly. A single app-level depth is not enough when two bindings have
@@ -151,6 +168,16 @@ type QueueBindingStatsReader interface {
 type queueDepthSignal struct {
 	queue    state.QueueStats
 	bindings []queueBindingDepth
+	// brokerLag is the consumer lag the broker itself reports, and
+	// haveBrokerLag distinguishes "the broker says zero" from "no broker
+	// reader answered". It is kept SEPARATE from queue.Depth because the
+	// two are different quantities: depth is what Gregale has already
+	// pulled into its own queue, lag is what is still sitting on the
+	// broker. Overloading one field with the other made queue_depth
+	// report lag whenever a broker answered, and made queue_lag report
+	// depth whenever none did.
+	brokerLag     int64
+	haveBrokerLag bool
 }
 
 type queueBindingDepth struct {
@@ -162,12 +189,29 @@ type queueBindingDepth struct {
 // bindings, each active backlog earns at least one worker and is capped by its
 // binding max-concurrency before the app/account cap is applied by the caller.
 // The legacy app-wide queue path preserves its original aggregate formula.
-func (s queueDepthSignal) desiredWorkers(target float64, maxInstances int) int {
+func (s queueDepthSignal) desiredWorkers(target float64, maxInstances int, minWorkers ...int) int {
+	minAllowed := 1
+	if len(minWorkers) > 0 {
+		minAllowed = minWorkers[0]
+	}
 	if target <= 0 {
-		return 1
+		return minAllowed
 	}
 	desired := 0
-	if len(s.bindings) == 0 {
+	// A broker-reported lag is the authoritative backlog for a
+	// broker-backed worker: it counts what is still on the broker, while
+	// queue.Depth counts only what the poller has already pulled into
+	// Gregale's own queue (at most one batch per tick). Sizing the pool
+	// off depth would size it off the batch size.
+	//
+	// This branch is why the lag has to be carried as its own field. It
+	// used to be written into queue.Depth, which made it reach this
+	// calculation correctly but also made queue_depth report lag.
+	if s.haveBrokerLag {
+		if s.brokerLag > 0 {
+			desired = int(math.Ceil(float64(s.brokerLag) / target))
+		}
+	} else if len(s.bindings) == 0 {
 		if s.queue.Depth > 0 {
 			desired = int(math.Ceil(float64(s.queue.Depth) / target))
 		}
@@ -176,8 +220,8 @@ func (s queueDepthSignal) desiredWorkers(target float64, maxInstances int) int {
 			desired += perBinding
 		}
 	}
-	if desired < 1 {
-		desired = 1
+	if desired < minAllowed {
+		desired = minAllowed
 	}
 	if maxInstances > 0 && desired > maxInstances {
 		desired = maxInstances
@@ -254,6 +298,11 @@ type Decision struct {
 	// decision should request, before the per-tick burst bound.
 	Desired    int
 	Admissions int
+	// Winner is the metric that produced Desired when more than one was
+	// declared (ADR-194). Carried into the decision log so an operator can
+	// see WHICH signal drove an admission, not merely that one did — with
+	// a list of targets, "it scaled" is no longer a complete answer.
+	Winner string
 }
 
 // decide is the pure decision function (PR-C, issue #462). Total —
@@ -290,43 +339,93 @@ type Decision struct {
 // is mapped to a no-op in the trigger-side caller
 // (Tick at trigger.go:279) rather than to ObserveScaleUp, so the
 // closed-set metric never sees it.
-func decide(s Stats) Decision {
-	if s.TargetValue == 0 {
+// limits is the per-app envelope every arbitrated decision is clamped to.
+// Shared by the single-metric wrappers and the multi-signal Tick path so the
+// cap, the cooldown and the outcome ladder have exactly one implementation.
+type limits struct {
+	MaxConcurrency    int
+	Concurrency       int
+	LastScaleOutAt    time.Time
+	ScaleOutCooldownS int
+	Now               time.Time
+}
+
+// decideTargets is the one decision function for this trigger (ADR-194).
+//
+// It arbitrates over every observation — the max desired count wins — and
+// then applies the platform's own policy in a fixed order: cooldown, then
+// cap, then burst. The ordering is the contract, and the developer configures
+// none of it; they declare signals and the platform decides.
+//
+// Cooldown is evaluated before hotness, matching what the single-metric
+// decide() has always done. The queue-depth path used to short-circuit on an
+// empty backlog first, so a parked queue inside a cooldown window reported
+// no_signal where an idle request path reported cooldown_held. Unifying them
+// here makes the outcome depend on the app's state rather than on which
+// metric it happens to have declared; no test pinned the old asymmetry.
+func decideTargets(l limits, obs []scalesignal.Observation) Decision {
+	declared := false
+	for _, o := range obs {
+		if o.Target > 0 {
+			declared = true
+			break
+		}
+	}
+	if !declared {
 		return Decision{Outcome: OutcomeNoSignal}
 	}
-	if s.Concurrency > 0 && !s.LastScaleOutAt.IsZero() {
-		cooldown := time.Duration(s.ScaleOutCooldownS) * time.Second
-		if s.Now.Sub(s.LastScaleOutAt) < cooldown {
+	// Cold starts bypass cooldown: concurrency 0 means there is nothing
+	// running to protect from oscillation, and holding here would turn the
+	// customer's rate limit into a wake latency floor.
+	if l.Concurrency > 0 && !l.LastScaleOutAt.IsZero() {
+		cooldown := time.Duration(l.ScaleOutCooldownS) * time.Second
+		if l.Now.Sub(l.LastScaleOutAt) < cooldown {
 			return Decision{Outcome: OutcomeCooldownHeld}
 		}
 	}
-	hot := s.HaveInflight && float64(s.PerInstanceInflight) > s.TargetValue
-	if !hot {
-		return Decision{Outcome: OutcomeNoSignal, ObservedInflight: s.PerInstanceInflight}
+	res := scalesignal.Arbitrate(l.Concurrency, obs)
+	if !res.Hot {
+		return Decision{Outcome: OutcomeNoSignal}
 	}
-	headroom := s.MaxConcurrency - s.Concurrency
+	headroom := l.MaxConcurrency - l.Concurrency
 	if headroom <= 0 {
-		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0, ObservedInflight: s.PerInstanceInflight}
+		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0}
 	}
-	// The reader exposes the maximum per-instance in-flight count. When
-	// every current instance is similarly loaded, multiplying by the
-	// current fleet size estimates total demand; ceil keeps the target
-	// invariant true for fractional capacity.
-	desired := int(math.Ceil(float64(s.PerInstanceInflight) * float64(s.Concurrency) / s.TargetValue))
-	if desired <= s.Concurrency {
-		desired = s.Concurrency + 1
-	}
-	if desired > s.MaxConcurrency {
-		desired = s.MaxConcurrency
+	desired := res.Desired
+	if desired > l.MaxConcurrency {
+		desired = l.MaxConcurrency
 	}
 	return Decision{
-		ShouldAdmit:      true,
-		Outcome:          OutcomeAdmit,
-		Headroom:         headroom,
-		ObservedInflight: s.PerInstanceInflight,
-		Desired:          desired,
-		Admissions:       desired - s.Concurrency,
+		ShouldAdmit: true,
+		Outcome:     OutcomeAdmit,
+		Headroom:    headroom,
+		Desired:     desired,
+		Admissions:  desired - l.Concurrency,
+		Winner:      res.Winner,
 	}
+}
+
+// decide is the single-metric concurrent_requests entry point, retained as
+// the narrow surface its own table-driven tests drive. The arithmetic lives
+// in scalesignal; this only shapes the inputs and restores the
+// ObservedInflight field the metrics path reads.
+func decide(s Stats) Decision {
+	dec := decideTargets(limits{
+		MaxConcurrency:    s.MaxConcurrency,
+		Concurrency:       s.Concurrency,
+		LastScaleOutAt:    s.LastScaleOutAt,
+		ScaleOutCooldownS: s.ScaleOutCooldownS,
+		Now:               s.Now,
+	}, []scalesignal.Observation{{
+		Metric:   api.ScalingMetricConcurrentRequests,
+		Target:   s.TargetValue,
+		Measured: float64(s.PerInstanceInflight),
+		Have:     s.HaveInflight,
+	}})
+	if dec.Outcome != OutcomeCooldownHeld {
+		dec.ObservedInflight = s.PerInstanceInflight
+	}
+	return dec
 }
 
 // decideQueueDepth is the pure queue backlog decision function. A target is
@@ -334,42 +433,25 @@ func decide(s Stats) Decision {
 // target*N requests another worker. A positive queue with zero workers
 // always admits one (the cold-start path). The same cooldown and cap rules
 // as the concurrent_requests trigger apply.
+// decideQueueDepth is the single-metric queue_depth entry point. Like
+// decide() it delegates the arithmetic to scalesignal — which is where the
+// "backlog is already fleet-total, do NOT multiply by concurrency" rule
+// lives — and only restores the observed field the metrics path reads.
 func decideQueueDepth(s QueueDepthStats) Decision {
-	if s.TargetValue <= 0 || s.QueueDepth <= 0 {
-		return Decision{Outcome: OutcomeNoSignal, ObservedQueueDepth: s.QueueDepth}
-	}
-	if s.Concurrency > 0 && !s.LastScaleOutAt.IsZero() {
-		cooldown := time.Duration(s.ScaleOutCooldownS) * time.Second
-		if s.Now.Sub(s.LastScaleOutAt) < cooldown {
-			return Decision{Outcome: OutcomeCooldownHeld, ObservedQueueDepth: s.QueueDepth}
-		}
-	}
-	workers := s.Concurrency
-	if workers < 1 {
-		workers = 1
-	}
-	if float64(s.QueueDepth) <= s.TargetValue*float64(workers) {
-		return Decision{Outcome: OutcomeNoSignal, ObservedQueueDepth: s.QueueDepth}
-	}
-	headroom := s.MaxConcurrency - s.Concurrency
-	if headroom <= 0 {
-		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0, ObservedQueueDepth: s.QueueDepth}
-	}
-	desired := int(math.Ceil(float64(s.QueueDepth) / s.TargetValue))
-	if desired <= s.Concurrency {
-		desired = s.Concurrency + 1
-	}
-	if desired > s.MaxConcurrency {
-		desired = s.MaxConcurrency
-	}
-	return Decision{
-		ShouldAdmit:        true,
-		Outcome:            OutcomeAdmit,
-		Headroom:           headroom,
-		ObservedQueueDepth: s.QueueDepth,
-		Desired:            desired,
-		Admissions:         desired - s.Concurrency,
-	}
+	dec := decideTargets(limits{
+		MaxConcurrency:    s.MaxConcurrency,
+		Concurrency:       s.Concurrency,
+		LastScaleOutAt:    s.LastScaleOutAt,
+		ScaleOutCooldownS: s.ScaleOutCooldownS,
+		Now:               s.Now,
+	}, []scalesignal.Observation{{
+		Metric:   api.ScalingMetricQueueDepth,
+		Target:   s.TargetValue,
+		Measured: float64(s.QueueDepth),
+		Have:     true,
+	}})
+	dec.ObservedQueueDepth = s.QueueDepth
+	return dec
 }
 
 // Trigger is the per-app concurrent_requests scale-up trigger
@@ -382,6 +464,8 @@ type Trigger struct {
 	instats       InstatsReader
 	queueStats    QueueStatsReader
 	queueBindings QueueBindingStatsReader
+	brokerLag     BrokerLagReader
+	customMetrics CustomMetricReader
 	engine        Engine
 	ledger        Ledger
 	metrics       *wire.OpsMetrics
@@ -425,6 +509,10 @@ type Options struct {
 	// enabled binding backlogs for queue_depth targets. It is optional so
 	// legacy app-wide queues continue to use QueueStatsReader.
 	QueueBindingStatsReader QueueBindingStatsReader
+	// BrokerLagReader supplies broker-reported consumer lag for queue_lag / queue_depth targets.
+	BrokerLagReader BrokerLagReader
+	// CustomMetricReader supplies pushed ADR-202 gauges. Optional.
+	CustomMetricReader CustomMetricReader
 }
 
 // New constructs the trigger. instats is REQUIRED (unlike the
@@ -444,6 +532,8 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 		instats:          instats,
 		queueStats:       opts.QueueStatsReader,
 		queueBindings:    opts.QueueBindingStatsReader,
+		customMetrics:    opts.CustomMetricReader,
+		brokerLag:        opts.BrokerLagReader,
 		engine:           engine,
 		ledger:           ledger,
 		metrics:          opts.Metrics,
@@ -454,12 +544,46 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 	}
 }
 
+// WithBrokerLagReader attaches a broker lag reader to the trigger.
+func (t *Trigger) WithBrokerLagReader(r BrokerLagReader) *Trigger {
+	if t != nil {
+		t.brokerLag = r
+	}
+	return t
+}
+
 // readQueueState returns the queue signal used by the existing scaler. When
 // bindings exist, only enabled binding queues contribute to the aggregate;
 // the individual samples are retained so worker pools can scale fairly across
 // bindings. An app with no bindings falls back to the legacy app-wide queue
 // projection.
 func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time) (queueDepthSignal, bool, error) {
+	// Broker lag is an ADDITIONAL reading, not a replacement for the queue
+	// state. Returning here — as this did — threw away the binding
+	// breakdown, zeroed InFlight/DeadLetter/OldestPendingAt for the
+	// SetQueueState gauges, and handed queue_depth a number that was
+	// actually lag.
+	var brokerLag int64
+	var haveBrokerLag bool
+	if t.brokerLag != nil {
+		lag, ok, err := t.brokerLag.BrokerLag(ctx, app.ID)
+		if err != nil {
+			return queueDepthSignal{}, false, err
+		}
+		if ok {
+			brokerLag, haveBrokerLag = lag, true
+		}
+	}
+	// withBroker stamps the lag onto whichever queue projection the paths
+	// below produce, so every return carries it.
+	withBroker := func(sig queueDepthSignal, ok bool, err error) (queueDepthSignal, bool, error) {
+		sig.brokerLag = brokerLag
+		sig.haveBrokerLag = haveBrokerLag
+		// A broker reading alone is enough to have a signal, even when no
+		// queue reader is configured — that is the whole point of a
+		// broker-backed trigger.
+		return sig, ok || haveBrokerLag, err
+	}
 	if t.queueBindings != nil {
 		bindings, err := t.queueBindings.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
 		if err != nil {
@@ -486,14 +610,14 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 					t.metrics.SetQueueBindingState(app.ID, binding.QueueName, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
 			}
-			return signal, true, nil
+			return withBroker(signal, true, nil)
 		}
 	}
 	if t.queueStats == nil {
-		return queueDepthSignal{}, false, nil
+		return withBroker(queueDepthSignal{}, false, nil)
 	}
 	queue, err := t.queueStats.QueueState(ctx, app.ID)
-	return queueDepthSignal{queue: queue}, true, err
+	return withBroker(queueDepthSignal{queue: queue}, true, err)
 }
 
 // Interval returns the tick rate. schedd's loop uses this when
@@ -546,7 +670,7 @@ func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitRe
 // effects are the admission/reconciliation call on the scale branch and the
 // metric observations.
 func (t *Trigger) Tick(ctx context.Context) error {
-	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil) {
+	if t == nil || t.appStore == nil || (t.instats == nil && t.queueStats == nil && t.queueBindings == nil && t.brokerLag == nil && t.customMetrics == nil) {
 		return nil
 	}
 	now := time.Now()
@@ -562,13 +686,26 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	}
 	for _, app := range apps {
 		policy := app.ScalingPolicy
-		if policy == nil || policy.Target == nil {
+		// ADR-194: an app declares a LIST of signals. EffectiveTargets is
+		// the only correct reader — it promotes the pre-ADR-194 singular
+		// `target` to a one-element list, so reading either field directly
+		// misses half the fleet.
+		declared := policy.EffectiveTargets()
+		if len(declared) == 0 {
 			continue
 		}
-		metric := policy.Target.Metric
-		if metric != "concurrent_requests" && metric != "queue_depth" {
-			// Other metric axes (rps / cpu) are handled by
-			// pkg/sched/scaleup.
+		// This trigger owns the two axes it can observe. rps and cpu are
+		// read by pkg/sched/scaleup against the same policy; the two run as
+		// separate arms of one select in the schedd loop, so they serialize
+		// and the second arbitrates against the concurrency the first
+		// raised. Across a tick pair that is the max over all signals.
+		inflightTarget, haveInflightTarget := policy.TargetFor(api.ScalingMetricConcurrentRequests)
+		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
+		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
+		// ADR-202: custom targets are keyed by NAME, so they cannot be
+		// resolved with TargetFor — an app may declare several.
+		customTargets := customTargetsOf(policy)
+		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
 			continue
 		}
 		conc := 0
@@ -579,98 +716,193 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if app.LastScaleOutAt != nil {
 			lastScaleOut = *app.LastScaleOutAt
 		}
+		// Collect one observation per declared axis this trigger can read,
+		// then arbitrate over all of them at once. A signal whose reader is
+		// missing or whose read failed contributes Have=false rather than
+		// aborting the app: with a list of targets, one unavailable source
+		// must not suppress a different one that is hot. When it is the
+		// only declared axis, arbitration returns not-hot and the app still
+		// reports no_signal exactly as it did before ADR-194.
+		obs := make([]scalesignal.Observation, 0, 2)
 		var dec Decision
+		var observedInflight int64
+		var observedQueueDepth int
+		var observedBrokerLag int64
+		var haveBrokerLag bool
 		workerQueuePath := false
 		workerDesired := 0
 		workerMaxInstances := 0
-		switch metric {
-		case "concurrent_requests":
-			if t.instats == nil {
-				continue
+		maxInstances := app.MaxConcurrency
+		if policy.MaxInstances > 0 && policy.MaxInstances < maxInstances {
+			maxInstances = policy.MaxInstances
+		}
+
+		if haveInflightTarget {
+			perInst, haveInflight := int64(0), false
+			if t.instats != nil {
+				// Pull a fresh max-inflight reading into the ring buffer,
+				// then read the windowed value. The ring buffer keeps the
+				// most recent sample so a single-tick spike does not
+				// immediately scale.
+				if n, ok := t.instats.MaxInflightForApp(app.ID); ok {
+					t.ring.Observe(now, app.ID, n)
+				}
+				perInst, haveInflight = t.ring.AppMaxInflight(app.ID, now)
 			}
-			// Pull a fresh max-inflight reading into the ring buffer,
-			// then read the windowed value. The ring buffer keeps the
-			// most recent sample so a single-tick spike does not
-			// immediately scale.
-			if n, ok := t.instats.MaxInflightForApp(app.ID); ok {
-				t.ring.Observe(now, app.ID, n)
-			}
-			perInst, haveInflight := t.ring.AppMaxInflight(app.ID, now)
-			dec = decide(Stats{
-				AppID:               app.ID,
-				TargetValue:         policy.Target.Value,
-				MaxConcurrency:      app.MaxConcurrency,
-				Concurrency:         conc,
-				PerInstanceInflight: perInst,
-				HaveInflight:        haveInflight,
-				LastScaleOutAt:      lastScaleOut,
-				ScaleOutCooldownS:   policy.ScaleOutCooldownS,
-				Now:                 now,
+			observedInflight = perInst
+			obs = append(obs, scalesignal.Observation{
+				Metric:   api.ScalingMetricConcurrentRequests,
+				Target:   inflightTarget,
+				Measured: float64(perInst),
+				Have:     haveInflight,
 			})
-		case "queue_depth":
-			if t.queueStats == nil && t.queueBindings == nil {
-				// The target is valid but the local schedd has no queue
-				// reader yet. Treat it as no-signal until the dependency
-				// is wired; never admit blindly on a missing backlog.
-				if t.metrics != nil {
-					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
+		}
+
+		if haveQueueTarget || haveQueueLagTarget {
+			// A missing reader is not an empty queue. Never admit blindly
+			// on an unknown backlog — contribute no reading instead.
+			haveQueue := false
+			var queueSignal queueDepthSignal
+			if t.queueStats != nil || t.queueBindings != nil || t.brokerLag != nil {
+				sig, ok, err := t.readQueueState(ctx, app, now)
+				switch {
+				case err != nil:
+					t.log.Warn("targets: queue state failed", "app_id", app.ID, "err", err)
+				case ok:
+					queueSignal, haveQueue = sig, true
 				}
-				continue
 			}
-			queueSignal, ok, err := t.readQueueState(ctx, app, now)
-			if err != nil {
-				t.log.Warn("targets: queue state failed", "app_id", app.ID, "err", err)
+			if haveQueue {
+				queue := queueSignal.queue
+				observedQueueDepth = queue.Depth
+				observedBrokerLag = queueSignal.brokerLag
+				haveBrokerLag = queueSignal.haveBrokerLag
 				if t.metrics != nil {
-					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
+					// Queue gauges are sampled alongside the queue-depth decision;
+					// OpsMetrics bounds app labels before they reach Prometheus.
+					t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
-				continue
-			}
-			if !ok {
-				if t.metrics != nil {
-					t.metrics.ObserveScaleUp(app.ID, string(OutcomeNoSignal))
-				}
-				continue
-			}
-			queue := queueSignal.queue
-			if t.metrics != nil {
-				// Queue gauges are sampled alongside the queue-depth decision;
-				// OpsMetrics bounds app labels before they reach Prometheus.
-				t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
-			}
-			maxInstances := app.MaxConcurrency
-			if policy.MaxInstances > 0 && policy.MaxInstances < maxInstances {
-				maxInstances = policy.MaxInstances
-			}
-			workerMaxInstances = maxInstances
-			dec = decideQueueDepth(QueueDepthStats{
-				TargetValue:       policy.Target.Value,
-				MaxConcurrency:    maxInstances,
-				Concurrency:       conc,
-				QueueDepth:        queue.Depth,
-				LastScaleOutAt:    lastScaleOut,
-				ScaleOutCooldownS: policy.ScaleOutCooldownS,
-				Now:               now,
-			})
-			workerQueuePath = app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
-			if workerQueuePath {
-				if t.metrics != nil {
-					for binding, demand := range queueSignal.bindingWorkerDemand(policy.Target.Value) {
-						t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
+				workerMaxInstances = maxInstances
+				workerQueuePath = app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
+				if workerQueuePath {
+					activeTarget := queueTarget
+					if !haveQueueTarget || (haveQueueLagTarget && queueLagTarget < queueTarget) {
+						activeTarget = queueLagTarget
+					}
+					if t.metrics != nil {
+						for binding, demand := range queueSignal.bindingWorkerDemand(activeTarget) {
+							t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
+						}
+					}
+					minAllowed := 1
+					if app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Min == 0 {
+						minAllowed = 0
+					}
+					workerDesired = queueSignal.desiredWorkers(activeTarget, maxInstances, minAllowed)
+					if policy.MinInstances > workerDesired {
+						workerDesired = policy.MinInstances
+					}
+					if workerDesired < minAllowed {
+						workerDesired = minAllowed
+					}
+					if workerDesired > maxInstances && maxInstances > 0 {
+						workerDesired = maxInstances
 					}
 				}
-				workerDesired = queueSignal.desiredWorkers(policy.Target.Value, maxInstances)
-				if policy.MinInstances > workerDesired {
-					workerDesired = policy.MinInstances
-				}
-				if workerDesired > maxInstances && maxInstances > 0 {
-					workerDesired = maxInstances
-				}
+			}
+			if haveQueueTarget {
+				obs = append(obs, scalesignal.Observation{
+					Metric:   api.ScalingMetricQueueDepth,
+					Target:   queueTarget,
+					Measured: float64(observedQueueDepth),
+					Have:     haveQueue,
+				})
+			}
+			if haveQueueLagTarget {
+				// queue_lag measures the BROKER's reported consumer lag,
+				// not the local queue depth. Falling back to depth here
+				// would make a metric named "lag" silently report a
+				// different quantity whenever no broker answered — and
+				// report it as a confident reading rather than as no
+				// signal.
+				obs = append(obs, scalesignal.Observation{
+					Metric:   api.ScalingMetricQueueLag,
+					Target:   queueLagTarget,
+					Measured: float64(observedBrokerLag),
+					Have:     haveBrokerLag,
+				})
 			}
 		}
+
+		if len(customTargets) > 0 {
+			// One observation per declared name. A name with no stored
+			// row, or one whose push has gone stale, contributes
+			// Have=false: it never scales the app and never suppresses a
+			// sibling signal that does have a reading.
+			//
+			// Failing to "no signal" rather than holding the last value
+			// is the deliberate choice (ADR-202). If the pusher dies —
+			// the cron stops, the customer's infrastructure has an
+			// outage — a frozen backlog would pin the fleet at whatever
+			// it was when the pusher stopped, indefinitely, and bill for
+			// it.
+			stored := map[string]state.CustomMetric{}
+			if t.customMetrics != nil {
+				rows, err := t.customMetrics.ListCustomMetrics(ctx, app.ID)
+				if err != nil {
+					t.log.Warn("targets: custom metrics failed", "app_id", app.ID, "err", err)
+				}
+				for _, row := range rows {
+					stored[row.Name] = row
+				}
+			}
+			freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+			for _, ct := range customTargets {
+				row, ok := stored[ct.Name]
+				fresh := ok && now.Sub(row.ObservedAt) <= freshness
+				obs = append(obs, scalesignal.Observation{
+					Metric:   api.ScalingMetricCustom,
+					Target:   ct.Value,
+					Measured: row.Value,
+					Have:     fresh,
+				})
+			}
+		}
+
+		// MaxInstances bounds the arbitrated result for every axis. Before
+		// ADR-194 only the queue path applied it, because it was the only
+		// path that had loaded it; a concurrent_requests app's
+		// max_instances was silently ignored by this trigger.
+		dec = decideTargets(limits{
+			MaxConcurrency:    maxInstances,
+			Concurrency:       conc,
+			LastScaleOutAt:    lastScaleOut,
+			ScaleOutCooldownS: policy.ScaleOutCooldownS,
+			Now:               now,
+		}, obs)
+		dec.ObservedInflight = observedInflight
+		dec.ObservedQueueDepth = observedQueueDepth
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {
 			t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+			// Attribute the admission to the signal that actually drove
+			// it. Decision.Winner was carried from the arbiter and read
+			// by nothing until now, so its doc comment's promise — that
+			// an operator can see WHICH signal scaled an app — was not
+			// true. With a list of declared targets, "it scaled" is not
+			// a complete answer.
+			//
+			// The outcome check is belt-and-braces: decideTargets only
+			// sets Winner on the admit return, and the accessor ignores
+			// an empty metric, so either guard alone would do. Keeping
+			// both states the invariant at the call site, where a future
+			// branch that sets Winner without admitting would otherwise
+			// silently break the identity
+			// sum(winning_signal) == decisions{outcome="admit"}.
+			if dec.Outcome == OutcomeAdmit {
+				t.metrics.ObserveScaleUpWinningSignal(app.ID, dec.Winner)
+			}
 		}
 		if workerQueuePath {
 			pool, ok := t.engine.(WorkerPoolEngine)
@@ -681,8 +913,12 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				if dec.Outcome == OutcomeRejectAtCap && workerMaxInstances > 0 {
 					workerDesired = workerMaxInstances
 				}
-				if workerDesired <= 0 {
-					workerDesired = 1
+				minAllowed := 1
+				if app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Min == 0 {
+					minAllowed = 0
+				}
+				if workerDesired < minAllowed {
+					workerDesired = minAllowed
 				}
 				if t.admissionBackoffActive(app.ID, now) {
 					continue
@@ -735,4 +971,17 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// customTargetsOf returns the app's ADR-202 targets. Separate from
+// ScalingPolicy.TargetFor because custom targets are keyed by name and an app
+// may declare more than one, which a metric-keyed lookup cannot express.
+func customTargetsOf(policy *state.ScalingPolicy) []state.ScalingTarget {
+	var out []state.ScalingTarget
+	for _, t := range policy.EffectiveTargets() {
+		if t.Metric == api.ScalingMetricCustom && t.Name != "" && t.Value > 0 {
+			out = append(out, t)
+		}
+	}
+	return out
 }

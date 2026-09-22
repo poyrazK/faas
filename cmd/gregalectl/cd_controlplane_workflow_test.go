@@ -36,7 +36,12 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 	workflow := string(body)
 	observer := strings.Index(workflow, "scripts/ci/observe_rollout_availability.sh")
-	publicPath := strings.Index(workflow, "https://api.gregale.dev/v1/status")
+	publicPath := -1
+	if observer >= 0 {
+		if offset := strings.Index(workflow[observer:], "https://api.gregale.dev/v1/status"); offset >= 0 {
+			publicPath = observer + offset
+		}
+	}
 	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
 	if observer < 0 || publicPath < 0 || activate < 0 || !(observer <= publicPath && publicPath < activate) {
 		t.Fatalf("customer-path observer must wrap activation: observer=%d public=%d activate=%d", observer, publicPath, activate)
@@ -53,6 +58,8 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 		"Rollout attribution is **inconclusive**",
 		"HTTP status counts:",
 		"customer path lost after a healthy pre-rollout baseline",
+		"ROLLOUT_PROBE_PROXY",
+		`--proxy "$probe_proxy"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("customer-path observer is missing baseline diagnostic %q", required)
@@ -60,6 +67,15 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 	if strings.Contains(script, `--user-agent "gregale-rollout-observer/`) {
 		t.Fatal("customer-path observer must use the same edge identity as the final public gate")
+	}
+	for _, required := range []string{
+		`ssh -N -D "127.0.0.1:${probe_port}"`,
+		`probe_proxy="socks5h://127.0.0.1:${probe_port}"`,
+		`ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane rollout must observe from the GCP vantage point; missing %q", required)
+		}
 	}
 }
 
@@ -213,6 +229,9 @@ func TestCDControlPlaneBundlesEveryCanonicalControlPlaneDaemon(t *testing.T) {
 			t.Errorf("control-plane workflow does not bundle canonical unit %s", unit)
 		}
 	}
+	if !strings.Contains(unitList, "faas-apid.socket") {
+		t.Error("control-plane workflow does not bundle the durable APID socket")
+	}
 }
 
 func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
@@ -337,5 +356,47 @@ func TestCDControlPlanePromotesDPAArtifactWithRelease(t *testing.T) {
 	}
 	if !(bundle < deploy && deploy < install) {
 		t.Fatalf("DPA must be bundled before activation and installed after it: bundle=%d deploy=%d install=%d", bundle, deploy, install)
+	}
+}
+
+// TestCDControlPlaneActivationToleratesKGVSidecarOnRetry pins the retry
+// contract for an already-installed release directory.
+//
+// KGV rotation writes the operator-owned sbom-baseline.json sidecar beside
+// the immutable bundle *after* a successful activation. The sidecar is
+// deliberately absent from the signed manifest, so the strict
+// `deployctl bundle-check` rejects it as an unexpected file. That made the
+// first rollout of a release pass and every retry of the same release fail.
+// Activation must therefore use the installed-release policy, exactly as the
+// earlier reuse probe already does.
+//
+// adr: 005
+// spec: §14
+func TestCDControlPlaneActivationToleratesKGVSidecarOnRetry(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+
+	activationCheck := strings.Index(workflow, "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&")
+	rotate := strings.Index(workflow, "gregalectl release kgv rotate --git-sha")
+	activate := strings.Index(workflow, "${release_dir}/bin/deployctl deploy ${RELEASE_ID}")
+	if activationCheck < 0 || rotate < 0 || activate < 0 {
+		t.Fatalf("activation must verify the installed bundle before KGV rotation and deploy: check=%d rotate=%d activate=%d", activationCheck, rotate, activate)
+	}
+	if !(activationCheck < rotate && rotate < activate) {
+		t.Fatalf("activation order is wrong: check=%d rotate=%d activate=%d", activationCheck, rotate, activate)
+	}
+
+	// The strict variant must never run against a release directory that a
+	// prior activation may already have written the KGV sidecar into.
+	for _, banned := range []string{
+		"deployctl bundle-check ${release_dir}",
+		"deployctl' bundle-check '${release_dir}'",
+	} {
+		if strings.Contains(workflow, banned) {
+			t.Errorf("control-plane workflow runs the strict bundle check against an installed release: %q", banned)
+		}
 	}
 }

@@ -25,14 +25,16 @@ const (
 	devDependencyCacheMaxBytes       = 16 << 30
 )
 
-// dependencyCacheKeyForApp enables the warm dependency path only for
-// developer sessions. The outer key isolates accounts, developer workspaces,
+// dependencyCacheKeyForApp enables the reusable dependency path for production
+// and developer-session builds. The outer key isolates accounts, applications,
 // selected monorepo members, frameworks, and runtime bases. BuildKit still
 // validates every imported layer against its exact inputs, including lockfile
 // bytes and Dockerfile instructions, so changed build inputs become selective
-// cache misses.
+// cache misses. Pull-request previews remain cold for now because their
+// short-lived app rows would consume the node-local cache budget without
+// improving the normal deploy loop.
 func dependencyCacheKeyForApp(app state.App, framework Framework, sourceRoot, runtimeBaseRef string) string {
-	if app.ID == "" || app.AccountID == "" || app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
+	if app.ID == "" || app.AccountID == "" || app.PreviewPrNumber != 0 {
 		return ""
 	}
 	effectiveRoot, err := sourcecontext.EffectiveRoot(sourceRoot)

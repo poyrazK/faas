@@ -120,6 +120,7 @@ const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 // `gregale deploys show <id> --status`.
 func cmdDeploysShow(args []string) int {
 	fs := newFlagSet("deploys show", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	withStatus := fs.Bool("status", false, "include terminal-status footer (live since / failed at)")
 	urlOnly := fs.Bool("url", false, "print only the per-deployment preview URL (shell-friendly)")
 	reordered := splitFlagArgs(args)
@@ -131,13 +132,19 @@ func cmdDeploysShow(args []string) int {
 		return 1
 	}
 	id := fs.Arg(0)
-	if !deploymentIDPattern.MatchString(id) {
+	if !validDeploymentRef(id) {
 		PrintUsage(os.Stderr, deploysShowUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// ADR-198: a vN handle resolves against --app, else the linked project.
+	// A uuid short-circuits without a lookup.
+	id, err = resolveDeploymentArg(context.Background(), client, *appFlag, id)
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	ctx := context.Background()
 
@@ -238,6 +245,7 @@ func cmdDeploysShow(args []string) int {
 // wiring in one place.
 func cmdDeploysStatus(args []string) int {
 	fs := newFlagSet("deploys status", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -246,13 +254,19 @@ func cmdDeploysStatus(args []string) int {
 		return 1
 	}
 	id := fs.Arg(0)
-	if !deploymentIDPattern.MatchString(id) {
+	if !validDeploymentRef(id) {
 		PrintUsage(os.Stderr, deploysStatusUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// ADR-198: a vN handle resolves against --app, else the linked project.
+	// A uuid short-circuits without a lookup.
+	id, err = resolveDeploymentArg(context.Background(), client, *appFlag, id)
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	ctx := context.Background()
 	raw, dep, err := fetchDeploySummaryInputs(ctx, client, id, wantDeploySummaryFooter)

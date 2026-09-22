@@ -99,6 +99,19 @@ type projectEnvironmentResponse struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
+type projectEnvironmentConfigRequest struct {
+	Values json.RawMessage `json:"values"`
+}
+
+type projectEnvironmentConfigResponse struct {
+	ProjectSlug string          `json:"project_slug"`
+	Environment string          `json:"environment"`
+	Version     int64           `json:"version"`
+	ConfigHash  string          `json:"config_hash"`
+	Values      json.RawMessage `json:"values"`
+	UpdatedAt   string          `json:"updated_at,omitempty"`
+}
+
 type domainRequest struct {
 	Domain string `json:"domain"`
 	AppID  string `json:"app_id"`
@@ -488,6 +501,20 @@ func (c *client) getProjectEnvironment(ctx context.Context, project, environment
 	var out projectEnvironmentResponse
 	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment)
 	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) getProjectEnvironmentConfig(ctx context.Context, project, environment string) (projectEnvironmentConfigResponse, error) {
+	var out projectEnvironmentConfigResponse
+	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment) + "/config"
+	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
+	return out, err
+}
+
+func (c *client) updateProjectEnvironmentConfig(ctx context.Context, project, environment string, req projectEnvironmentConfigRequest) (projectEnvironmentConfigResponse, error) {
+	var out projectEnvironmentConfigResponse
+	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment) + "/config"
+	err := c.request(ctx, http.MethodPut, path, req, &out, true)
 	return out, err
 }
 

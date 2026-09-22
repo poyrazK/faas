@@ -74,6 +74,34 @@ func TestRenderSuccessfulDeploymentIncludesReleaseSummary(t *testing.T) {
 	}
 }
 
+func TestRenderSuccessfulDeploymentUsesCanonicalAppURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive})
+		case "/v1/apps/my-app":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{
+				Slug: "my-app", URL: "https://my-app.gregale.dev", CanonicalURL: "https://custom.example.com",
+			})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+
+	if code := renderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive}, "my-app"); code != 0 {
+		t.Fatalf("renderSuccessfulDeployment exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "Deployed. https://custom.example.com") {
+		t.Errorf("deploy output missing canonical URL\nfull output:\n%s", out.String())
+	}
+}
+
 func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -120,5 +148,59 @@ func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	}
 	if len(receipt.ReleaseSummary.Changes) != 1 || receipt.ReleaseSummary.Changes[0].Field != "image_digest" {
 		t.Fatalf("release changes = %+v", receipt.ReleaseSummary.Changes)
+	}
+}
+
+// TestRenderDeploymentReleaseSummary_UsesRevisionHandle pins the ADR-198
+// surface on the one line of deploy output that is meant to be copy-pasted.
+// A uuid is the single thing here a human cannot retype or recognise later,
+// so when the rollback target has a revision the command must name it.
+//
+// adr: 198
+func TestRenderDeploymentReleaseSummary_UsesRevisionHandle(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Previous: &api.DeploymentResponse{ID: "8f14e45fceea467a9c8e9b0e21c6d5a1", Revision: 41},
+		Changes: []api.DeploymentChange{{
+			Field: "image_digest", Before: "sha256:old", After: "sha256:new",
+		}},
+		RollbackTargetID:       "8f14e45fceea467a9c8e9b0e21c6d5a1",
+		RollbackTargetRevision: 41,
+	}, "my-app")
+
+	got := out.String()
+	if !strings.Contains(got, "Rollback: gregale rollback my-app --to v41") {
+		t.Errorf("rollback command does not use the v41 handle\nfull output:\n%s", got)
+	}
+	if !strings.Contains(got, "Changes since v41:") {
+		t.Errorf("change header does not use the v41 handle\nfull output:\n%s", got)
+	}
+	// The uuid must not leak into output that already names the revision —
+	// printing both is what made the original line unreadable.
+	if strings.Contains(got, "8f14e45fceea467a9c8e9b0e21c6d5a1") {
+		t.Errorf("uuid still rendered alongside the revision\nfull output:\n%s", got)
+	}
+}
+
+// TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision pins that a
+// row predating the revision column still prints a WORKING command. The
+// fallback is the reason RollbackTargetID stays on the wire next to the
+// revision; rendering `v0` here would print a handle that cannot resolve.
+//
+// adr: 198
+func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Previous:         &api.DeploymentResponse{ID: "legacy-release"},
+		Changes:          []api.DeploymentChange{},
+		RollbackTargetID: "legacy-release",
+	}, "my-app")
+
+	got := out.String()
+	if !strings.Contains(got, "Rollback: gregale rollback my-app --to legacy-release") {
+		t.Errorf("revision-less target did not fall back to the id\nfull output:\n%s", got)
+	}
+	if strings.Contains(got, "v0") {
+		t.Errorf("revision-less target rendered as v0\nfull output:\n%s", got)
 	}
 }

@@ -67,6 +67,9 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: hot-path daemon; a stalled runtime must be replaced
+		// quickly since every request on the node routes through it.
+		WatchdogSec: "60s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",

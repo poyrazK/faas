@@ -622,6 +622,32 @@ type Querier interface {
 	ListDeploymentsForCompare(ctx context.Context, db DBTX, arg ListDeploymentsForCompareParams) ([]ListDeploymentsForCompareRow, error)
 	ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error)
 	ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error)
+	// schedd's egress circuit-breaker feed (ADR-201 §3). Returns every
+	// opted-in upstream joined to its NEWEST probe verdict, which is the
+	// complete input the breaker loop needs for one reconcile pass.
+	//
+	// Only circuit_breaker_enabled rows are considered, so the scan is
+	// served by data_upstreams_circuit_enabled_idx (a partial index) and
+	// stays proportional to the opt-in count rather than to the whole
+	// data_upstreams table, which grows with every captured env var on
+	// every app.
+	//
+	// LEFT JOIN, not INNER: an opted-in upstream that has never been
+	// probed must still appear, carrying a NULL sampled_at. Dropping it
+	// here would make "never probed" indistinguishable from "row gone",
+	// and the loop needs the difference — it skips unprobed upstreams but
+	// must still count them as live candidates so their dedupe state is
+	// not retired out from under them.
+	//
+	// DISTINCT ON picks one row per upstream: the probe table holds one
+	// sample per 30s per (host, region), so without it a single upstream
+	// would fan out to every sample in the retention window.
+	//
+	// host is projected because schedd resolves it locally to write the
+	// nftables element. It never reaches a metric label, a log line, or
+	// the customer-facing API — those carry host_redacted_hash only
+	// (ADR-098 §11).
+	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
 	ListEnabledEventSubscriptionsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]EventSubscription, error)
 	// Pulled by schedd's runTriggerTick on each 1-second cadence. The
@@ -1138,6 +1164,15 @@ type Querier interface {
 	UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (UpdateAppRow, error)
 	UpdateBuildStatus(ctx context.Context, db DBTX, arg UpdateBuildStatusParams) error
 	UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams) (UpdateCronRow, error)
+	// ADR-201 §3 per-upstream egress-breaker policy. Each field uses the
+	// COALESCE(sqlc.narg, existing) shape so a PATCH that omits a field
+	// leaves it untouched — the same partial-update convention the app
+	// PATCH paths use.
+	//
+	// The threshold fields are deliberately NOT cleared when enabled flips
+	// to false: a customer toggling protection off should not silently lose
+	// their tuning, and re-enabling should restore what they configured.
+	UpdateDataUpstreamCircuitBreaker(ctx context.Context, db DBTX, arg UpdateDataUpstreamCircuitBreakerParams) error
 	UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error

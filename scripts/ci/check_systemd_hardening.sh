@@ -41,6 +41,24 @@ for socket_unit in "${socket_units[@]}"; do
   done
 done
 
+apid_socket_units=(
+  "${root}/deploy/ansible/roles/control_plane_service/files/faas-apid.socket"
+  "${root}/deploy/systemd/faas-apid.socket"
+)
+for socket_unit in "${apid_socket_units[@]}"; do
+  if [[ ! -f "$socket_unit" ]]; then
+    echo "systemd-hardening-check: missing ${socket_unit}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  for directive in 'ListenStream=127.0.0.1:8081' 'FileDescriptorName=api' 'Backlog=4096'; do
+    if ! grep -Fqx "$directive" "$socket_unit"; then
+      echo "systemd-hardening-check: ${socket_unit}: missing ${directive}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+done
+
 caddy_dropin="${unit_root}/host_hardening/templates/90-gregale-caddy-hardening.conf.j2"
 if [[ ! -f "$caddy_dropin" ]]; then
   echo "systemd-hardening-check: missing ${caddy_dropin}" >&2
@@ -108,6 +126,21 @@ for rel in "${units[@]}"; do
         errors=$((errors + 1))
       fi
     done
+    # ADR-190: every Type=notify daemon must run under a systemd
+    # watchdog so a stalled main loop is restarted, not just a dead
+    # process. The daemon gates WATCHDOG=1 on pkg/wire.Liveness; the
+    # abort is a failure exit, so Restart=on-failure is what turns it
+    # into a restart.
+    if grep -Fqx 'Type=notify' "$file"; then
+      if ! grep -Eq '^WatchdogSec=[0-9]+(s|min)$' "$file"; then
+        echo "systemd-hardening-check: ${rel}: Type=notify unit must set WatchdogSec=" >&2
+        errors=$((errors + 1))
+      fi
+      if ! grep -Fqx 'Restart=on-failure' "$file"; then
+        echo "systemd-hardening-check: ${rel}: watchdog units must set Restart=on-failure" >&2
+        errors=$((errors + 1))
+      fi
+    fi
   fi
   # Every daemon must bound its own memory. The value is per-daemon (256M
   # for the small control-plane services, 4G for imaged's layer work), so
@@ -153,6 +186,25 @@ for rel in \
   if [[ -f "$file" ]] && ! grep -Fqx 'TimeoutStartSec=20min' "$file"; then
     echo "systemd-hardening-check: ${rel}: imaged startup timeout must match the 20-minute readiness ceiling" >&2
     errors=$((errors + 1))
+  fi
+  # The assertion is a FLOOR, not an exact line. imaged must retain these
+  # capabilities, and it legitimately needs more: CAP_FOWNER was added so the
+  # Grype scan path can chmod a base ext4 that debugfs re-owned to root via
+  # CAP_CHOWN. Matching the whole line pinned a ceiling too, so adding a
+  # required capability failed this gate. cap_sys_admin stays denied below so
+  # relaxing the match cannot weaken the ADR-075 tripwire.
+  if [[ -f "$file" ]]; then
+    ambient="$(grep -m1 '^AmbientCapabilities=' "$file" || true)"
+    for cap in CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER; do
+      if [[ "$ambient" != *"$cap"* ]]; then
+        echo "systemd-hardening-check: ${rel}: imaged must retain ${cap} for customer-owned OCI trees and base scanning" >&2
+        errors=$((errors + 1))
+      fi
+    done
+    if printf '%s' "$ambient" | tr 'A-Z' 'a-z' | grep -q 'cap_sys_admin'; then
+      echo "systemd-hardening-check: ${rel}: imaged must NOT hold cap_sys_admin (ADR-075; vmmd is the only mount owner)" >&2
+      errors=$((errors + 1))
+    fi
   fi
 done
 

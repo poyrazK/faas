@@ -2,13 +2,14 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.2.0
+  version: 1.3.0
   description: |
     Gregale delivers selected app lifecycle and billing events to an app's
-    configured webhook subscriptions, accepts external events for durable
-    workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
-    messages use CloudEvents 1.0 structured JSON over HTTP POST and are signed
-    with the webhook secret; workflow and queue operations use the public API's
+    configured webhook subscriptions, accepts tenant-scoped events for the
+    internal content-based router, accepts external events for durable workflow
+    runs, and exposes per-app FIFO queue operations. Outbound webhook messages
+    use CloudEvents 1.0 structured JSON over HTTP POST and are signed with the
+    webhook secret; ingress, workflow, and queue operations use the public API's
     authenticated JSON endpoints.
   license:
     name: Apache-2.0
@@ -56,6 +57,14 @@ channels:
     messages:
       usageStatementFinalized:
         $ref: '#/components/messages/UsageStatementFinalized'
+  internalEventPublish:
+    address: /v1/events:publish
+    description: Publish one tenant-scoped event for asynchronous content-based fanout.
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      internalEventPublish:
+        $ref: '#/components/messages/InternalEventPublish'
   workflowExternalEvent:
     address: /v1/workflows/runs/{id}/events
     description: Accept an external event for a non-terminal durable workflow run.
@@ -142,6 +151,23 @@ operations:
     summary: Deliver a usage_statement.finalized event to a subscribed webhook.
     messages:
       - $ref: '#/channels/usageStatementFinalized/messages/usageStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  receiveInternalEventPublish:
+    action: receive
+    channel:
+      $ref: '#/channels/internalEventPublish'
+    summary: Accept a tenant-scoped event for internal routing.
+    description: |
+      Gregale stamps the CloudEvents specversion, occurrence time when omitted,
+      and account ownership before persisting the event for asynchronous
+      matching and delivery. The endpoint returns after durable acceptance.
+    messages:
+      - $ref: '#/channels/internalEventPublish/messages/internalEventPublish'
+    security:
+      - bearerAuth: []
     bindings:
       http:
         method: POST
@@ -253,6 +279,16 @@ components:
           headers:
             $ref: '#/components/schemas/WebhookHeaders'
           bindingVersion: '0.3.0'
+    InternalEventPublish:
+      name: event.published
+      title: Internal event publish
+      summary: A tenant-scoped event accepted for asynchronous router fanout.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/InternalEventPublishPayload'
+      bindings:
+        http:
+          bindingVersion: '0.3.0'
     WorkflowExternalEvent:
       name: workflow.external_event
       title: Workflow external event
@@ -299,6 +335,48 @@ components:
             $ref: '#/components/schemas/QueueRequestHeaders'
           bindingVersion: '0.3.0'
   schemas:
+    InternalEventPublishPayload:
+      type: object
+      description: |
+        Caller-authored body for the internal event router. Gregale normalizes
+        this request into a CloudEvents-shaped envelope and stamps the
+        authenticated account as the tenancy extension.
+      additionalProperties: false
+      required:
+        - id
+        - source
+        - type
+        - data
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Caller-chosen idempotent event identifier.
+        source:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Logical producer or service that emitted the event.
+        type:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Event type used by subscription matching.
+        time:
+          type: string
+          format: date-time
+          description: Event occurrence time; Gregale stamps it when omitted.
+        data_content_type:
+          type: string
+          enum: [application/json]
+          default: application/json
+        data:
+          description: JSON event payload.
+        account_id:
+          type: string
+          format: uuid
+          description: Optional tenancy assertion; must match the bearer account.
     WorkflowEventHeaders:
       type: object
       description: Optional request headers for workflow event delivery.

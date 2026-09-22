@@ -43,13 +43,27 @@ func TestStart_WaitsForImagedToSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	imaged := regexp.MustCompile(`(?s)if which&Imaged != 0 \{.*?\n\t}\n`).Find(src)
-	if imaged == nil {
-		t.Fatal("cannot locate the imaged block in Start")
+	// The wait lives in startImaged now, which Start and StartWithEnv share.
+	// Asserting on the helper rather than on Start's if-block covers BOTH
+	// entry points: StartWithEnv used to ignore the Imaged bit entirely, so a
+	// test could ask for imaged, get none, and see its deployment sit in
+	// `pending` with nothing reported.
+	helper := regexp.MustCompile(`(?s)func startImaged\(.*?\n}\n`).Find(src)
+	if helper == nil {
+		t.Fatal("cannot locate func startImaged in harness.go")
 	}
-	if !regexp.MustCompile(`waitImagedListens\(`).Match(imaged) {
-		t.Error("Start returns as soon as imaged's process is up; imaged stages bases for ~70s " +
+	if !regexp.MustCompile(`waitImagedListens\(`).Match(helper) {
+		t.Error("startImaged returns as soon as imaged's process is up; imaged stages bases for ~70s " +
 			"before subscribing, and a deployment POSTed before that is lost until the 2h stale sweep")
+	}
+	for _, fn := range []string{`func Start\(`, `func StartWithEnv\(`} {
+		body := regexp.MustCompile(`(?s)` + fn + `.*?\n}\n`).Find(src)
+		if body == nil {
+			t.Fatalf("cannot locate %s in harness.go", fn)
+		}
+		if !regexp.MustCompile(`startImaged\(`).Match(body) {
+			t.Errorf("%s does not delegate to startImaged; a caller asking for imaged would silently get none", fn)
+		}
 	}
 }
 

@@ -84,17 +84,23 @@ func NewNATSBroker(rawURL string) (*natsBroker, error) {
 	if err != nil || (parsed.Scheme != "nats" && parsed.Scheme != "tls") || parsed.Host == "" {
 		return nil, fmt.Errorf("nats_broker: invalid server URL")
 	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, fmt.Errorf("nats_broker: credentials, query parameters, and fragments are forbidden in server URL")
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("nats_broker: query parameters and fragments are forbidden in server URL")
 	}
-	conn, err := nats.Connect(rawURL,
+	opts := []nats.Option{
 		nats.Name("gregale-schedd"),
-		nats.SetCustomDialer(newNATSEgressDialer(5*time.Second)),
+		nats.SetCustomDialer(newNATSEgressDialer(5 * time.Second)),
 		nats.MaxReconnects(-1),
-		nats.ReconnectWait(2*time.Second),
-		nats.Timeout(5*time.Second),
-		nats.PingInterval(20*time.Second),
-	)
+		nats.ReconnectWait(2 * time.Second),
+		nats.Timeout(5 * time.Second),
+		nats.PingInterval(20 * time.Second),
+	}
+	if parsed.User != nil {
+		user := parsed.User.Username()
+		pass, _ := parsed.User.Password()
+		opts = append(opts, nats.UserInfo(user, pass))
+	}
+	conn, err := nats.Connect(rawURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("nats_broker: connect %s: %w", parsed.Redacted(), err)
 	}
@@ -371,6 +377,22 @@ func (n *natsPoller) Close() error {
 		delete(n.inFlight, k)
 	}
 	return nil
+}
+
+// BrokerStats queries NATS JetStream ConsumerInfo for pending message counts.
+func (n *natsPoller) BrokerStats(ctx context.Context, _ sqlc.Trigger) BrokerStats {
+	if n == nil || n.consumer == nil {
+		return BrokerStats{Available: false}
+	}
+	info, err := n.consumer.Info(ctx)
+	if err != nil {
+		return BrokerStats{Available: false}
+	}
+	return BrokerStats{
+		Lag:       int64(info.NumPending),
+		Depth:     int64(info.NumPending + uint64(info.NumAckPending)),
+		Available: true,
+	}
 }
 
 // jsonStdUnmarshal is a package-local alias for encoding/json's

@@ -100,6 +100,13 @@ func parseStopSignal(s string) syscall.Signal {
 	}
 }
 
+func stopGraceForManifest(grace time.Duration) time.Duration {
+	if grace <= 0 {
+		return MaxAppManifestStopGracePeriodFallback
+	}
+	return grace
+}
+
 // StopSignalFromManifest is the test-visible wrapper around
 // parseStopSignal. guest/init is a package-main so unit tests in
 // the same package can call parseStopSignal directly, but tests
@@ -128,10 +135,7 @@ func runSignalHandlers(ctx context.Context, manifest api.AppManifest, sup *Super
 	}
 
 	stopSignal := parseStopSignal(manifest.StopSignal)
-	grace := manifest.StopGracePeriod
-	if grace <= 0 {
-		grace = MaxAppManifestStopGracePeriodFallback
-	}
+	grace := stopGraceForManifest(manifest.StopGracePeriod)
 
 	// supStopOnce guarantees sup.Stop runs exactly once even if
 	// the customer declares two signals in the manifest (rare,

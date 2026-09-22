@@ -3,8 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppSecurityFinding } from './AppSecurityFinding.js';
+import type { AppSecurityQuarantine } from './AppSecurityQuarantine.js';
 /**
- * Read-only deterministic configuration posture for an app.
+ * Read-only deterministic configuration posture for an app, including an active image-scan quarantine when present.
  */
 export type AppSecurityPostureResponse = {
   app_id: string;
@@ -16,5 +17,6 @@ export type AppSecurityPostureResponse = {
    */
   security_policy: 'off' | 'warn' | 'enforce';
   findings: Array<AppSecurityFinding>;
+  quarantine?: (AppSecurityQuarantine | null);
 };
 

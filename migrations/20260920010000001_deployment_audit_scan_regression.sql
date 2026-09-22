@@ -5,8 +5,7 @@
 -- Continuous image security re-evaluation (scan freshness follow-up).
 -- imaged records a durable transition when a live enforce-mode deployment
 -- changes from clean scan evidence to blocking findings or unavailable scan
--- evidence. The row is a signal for a future traffic/quarantine controller;
--- the scanner itself deliberately does not tear down customer instances.
+-- evidence. The row is the durable trigger for the runtime quarantine path.
 ALTER TABLE deployment_audit
     DROP CONSTRAINT IF EXISTS deployment_audit_kind_chk;
 ALTER TABLE deployment_audit

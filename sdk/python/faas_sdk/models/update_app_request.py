@@ -100,6 +100,7 @@ if TYPE_CHECKING:
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_replicas import ServiceReplicas
+    from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
 
@@ -150,6 +151,12 @@ class UpdateAppRequest:
     """Restart behavior for the workload. Omit for no change."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
+    stop_grace_period_s: int | None | Unset = UNSET
+    """Upper bound on worker or service shutdown draining time in seconds before SIGKILL. Omit for no change; 0
+    uses the mode/plan default."""
+    stop_signal: None | str | Unset = UNSET
+    """Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omit for no
+    change."""
     max_retries: int | None | Unset = UNSET
     """Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."""
     retry_policy: None | RetryPolicyDTO | Unset = UNSET
@@ -161,6 +168,8 @@ class UpdateAppRequest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    worker_replicas: WorkerScaling | Unset = UNSET
+    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
     ports: list[WorkloadPort] | None | Unset = UNSET
     """Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP
     listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only."""
@@ -356,6 +365,18 @@ class UpdateAppRequest:
         else:
             startup_deadline_s = self.startup_deadline_s
 
+        stop_grace_period_s: int | None | Unset
+        if isinstance(self.stop_grace_period_s, Unset):
+            stop_grace_period_s = UNSET
+        else:
+            stop_grace_period_s = self.stop_grace_period_s
+
+        stop_signal: None | str | Unset
+        if isinstance(self.stop_signal, Unset):
+            stop_signal = UNSET
+        else:
+            stop_signal = self.stop_signal
+
         max_retries: int | None | Unset
         if isinstance(self.max_retries, Unset):
             max_retries = UNSET
@@ -379,6 +400,10 @@ class UpdateAppRequest:
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
+
+        worker_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_replicas, Unset):
+            worker_replicas = self.worker_replicas.to_dict()
 
         ports: list[dict[str, Any]] | None | Unset
         if isinstance(self.ports, Unset):
@@ -616,6 +641,10 @@ class UpdateAppRequest:
             field_dict["restart_policy"] = restart_policy
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
+        if stop_grace_period_s is not UNSET:
+            field_dict["stop_grace_period_s"] = stop_grace_period_s
+        if stop_signal is not UNSET:
+            field_dict["stop_signal"] = stop_signal
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
         if retry_policy is not UNSET:
@@ -624,6 +653,8 @@ class UpdateAppRequest:
             field_dict["request_timeout_s"] = request_timeout_s
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if worker_replicas is not UNSET:
+            field_dict["worker_replicas"] = worker_replicas
         if ports is not UNSET:
             field_dict["ports"] = ports
         if favicon is not UNSET:
@@ -698,6 +729,7 @@ class UpdateAppRequest:
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_replicas import ServiceReplicas
+        from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
@@ -947,6 +979,24 @@ class UpdateAppRequest:
 
         startup_deadline_s = _parse_startup_deadline_s(d.pop("startup_deadline_s", UNSET))
 
+        def _parse_stop_grace_period_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        stop_grace_period_s = _parse_stop_grace_period_s(d.pop("stop_grace_period_s", UNSET))
+
+        def _parse_stop_signal(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        stop_signal = _parse_stop_signal(d.pop("stop_signal", UNSET))
+
         def _parse_max_retries(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -988,6 +1038,13 @@ class UpdateAppRequest:
             service_replicas = UNSET
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
+        _worker_replicas = d.pop("worker_replicas", UNSET)
+        worker_replicas: WorkerScaling | Unset
+        if isinstance(_worker_replicas, Unset):
+            worker_replicas = UNSET
+        else:
+            worker_replicas = WorkerScaling.from_dict(_worker_replicas)
 
         def _parse_ports(data: object) -> list[WorkloadPort] | None | Unset:
             if data is None:
@@ -1417,10 +1474,13 @@ class UpdateAppRequest:
             execution_mode=execution_mode,
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,
+            stop_grace_period_s=stop_grace_period_s,
+            stop_signal=stop_signal,
             max_retries=max_retries,
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
             service_replicas=service_replicas,
+            worker_replicas=worker_replicas,
             ports=ports,
             favicon=favicon,
             robots_txt=robots_txt,

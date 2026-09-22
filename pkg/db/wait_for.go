@@ -64,7 +64,8 @@ func WaitForNotification(
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	conn, err := pool.Acquire(waitCtx)
+	// Session-scoped: see direct.go.
+	conn, err := DirectPool(pool).Acquire(waitCtx)
 	if err != nil {
 		return "", fmt.Errorf("db: acquire listener: %w", err)
 	}

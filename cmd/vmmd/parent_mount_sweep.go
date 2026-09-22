@@ -38,13 +38,26 @@ import (
 // Extracted as a top-level function (not a closure in main)
 // so it can be tested directly with a sub-second interval and
 // a counted logger.
-func runParentMountSweep(ctx context.Context, reg *vmmdmount.Registry, interval time.Duration, log *slog.Logger) {
+// sweepLoopName is the Liveness loop the parent-mount sweep beats
+// (ADR-190). Its budget is three intervals: one sweep that takes
+// longer than two more ticks is a wedged mount table, and vmmd
+// should be restarted rather than left to accumulate stale parents.
+const sweepLoopName = "sweep"
+
+// runParentMountSweep is the orphan-sweep goroutine main.go starts.
+// beat is called once per iteration (nil is allowed) so the sweep
+// doubles as vmmd's liveness signal.
+func runParentMountSweep(ctx context.Context, reg *vmmdmount.Registry, interval time.Duration, log *slog.Logger, beat func()) {
 	if interval <= 0 {
 		interval = 30 * time.Second
+	}
+	if beat == nil {
+		beat = func() {}
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
+		beat()
 		select {
 		case <-ctx.Done():
 			return

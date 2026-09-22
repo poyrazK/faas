@@ -13,6 +13,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -25,7 +26,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "concurrent")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "concurrent")
 	f.vmmd.SetVersion(instance.ID, "concurrent")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:concurrent\n", 10*time.Second)
 
@@ -34,10 +35,10 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	defer gate.Release()
 	for i := 0; i < requestCount; i++ {
 		path := fmt.Sprintf("/concurrent/%d?case=%d", i, i)
-		f.vmmd.SetResponseForPath(instance.ID, path, normalPathResponse{
-			status:  http.StatusOK,
-			headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-			body:    []byte(fmt.Sprintf("response-%d\n", i)),
+		f.vmmd.SetResponseForPath(instance.ID, path, e2etest.FakeResponse{
+			Status:  http.StatusOK,
+			Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+			Body:    []byte(fmt.Sprintf("response-%d\n", i)),
 		})
 	}
 
@@ -58,7 +59,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 			payload := []byte(fmt.Sprintf(`{"request":%d,"body":"%s"}`, i, strings.Repeat("x", i+1)))
 			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.h.GatewayURL+path, bytes.NewReader(payload))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.h.EdgeURL()+path, bytes.NewReader(payload))
 			if err != nil {
 				results <- result{index: i, err: err}
 				return
@@ -82,7 +83,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	}
 
 	captures := f.vmmd.Requests()
-	seen := make(map[string]normalPathRequestCapture, requestCount)
+	seen := make(map[string]e2etest.RequestCapture, requestCount)
 	for _, capture := range captures {
 		if strings.HasPrefix(capture.Init.GetRequestUri(), "/concurrent/") {
 			seen[capture.Init.GetRequestUri()] = capture
@@ -135,7 +136,7 @@ func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "backpressure")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "backpressure")
 	f.vmmd.SetVersion(instance.ID, "backpressure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:backpressure\n", 10*time.Second)
 
@@ -148,7 +149,7 @@ func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 		go func() {
 			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.GatewayURL+path, nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.EdgeURL()+path, nil)
 			if err != nil {
 				result <- normalPathHTTPResult{err: err}
 				return
@@ -231,24 +232,24 @@ func TestE2E_NormalPath_AppProtocolMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			protocol := tc.protocol
 			app := createNormalPathApp(t, f, "normal-protocol-"+tc.name, &protocol)
-			_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, app.ID, f.nodeID, tc.name)
+			_, instance := createNormalPathLiveDeployment(t, f, app.ID, tc.name)
 			f.vmmd.SetVersion(instance.ID, tc.name)
 			host := app.Slug + ".apps.test.example"
 			waitForNormalPathResponse(t, f.h, host, "normal-path:"+tc.name+"\n", 10*time.Second)
 			path := "/protocol/" + tc.name
-			f.vmmd.SetResponseForPath(instance.ID, path, normalPathResponse{
-				status:  http.StatusOK,
-				headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/grpc+proto"}, {Name: "X-Protocol-Response", Value: tc.protocol}},
-				trailers: func() []*vmmdpb.Header {
+			f.vmmd.SetResponseForPath(instance.ID, path, e2etest.FakeResponse{
+				Status:  http.StatusOK,
+				Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/grpc+proto"}, {Name: "X-Protocol-Response", Value: tc.protocol}},
+				Trailers: func() []*vmmdpb.Header {
 					if tc.protocol == api.AppProtocolGRPC {
 						return []*vmmdpb.Header{{Name: "grpc-status", Value: "0"}}
 					}
 					return nil
 				}(),
-				body: []byte("protocol-ok\n"),
+				Body: []byte("protocol-ok\n"),
 			})
 
-			req, err := http.NewRequestWithContext(f.ctx, http.MethodPost, f.h.GatewayURL+path, strings.NewReader("request-body"))
+			req, err := http.NewRequestWithContext(f.ctx, http.MethodPost, f.h.EdgeURL()+path, strings.NewReader("request-body"))
 			if err != nil {
 				t.Fatalf("new %s request: %v", tc.protocol, err)
 			}
@@ -271,7 +272,7 @@ func TestE2E_NormalPath_AppProtocolMatrix(t *testing.T) {
 				t.Fatalf("grpc-status trailer=%q, want 0", resp.Trailer.Get("grpc-status"))
 			}
 
-			var capture *normalPathRequestCapture
+			var capture *e2etest.RequestCapture
 			for _, candidate := range f.vmmd.Requests() {
 				if candidate.Init.GetInstance() == instance.ID && candidate.Init.GetRequestUri() == path {
 					candidateCopy := candidate
@@ -299,12 +300,12 @@ func TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "response-headers")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "response-headers")
 	f.vmmd.SetVersion(instance.ID, "response-headers")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:response-headers\n", 10*time.Second)
-	f.vmmd.SetResponseForPath(instance.ID, "/response-headers", normalPathResponse{
-		status: http.StatusOK,
-		headers: []*vmmdpb.Header{
+	f.vmmd.SetResponseForPath(instance.ID, "/response-headers", e2etest.FakeResponse{
+		Status: http.StatusOK,
+		Headers: []*vmmdpb.Header{
 			{Name: "Connection", Value: "keep-alive"},
 			{Name: "Keep-Alive", Value: "timeout=5"},
 			{Name: "Proxy-Authenticate", Value: "Basic realm=guest"},
@@ -314,10 +315,10 @@ func TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed(t *testing.T) {
 			{Name: "Upgrade", Value: "h2c"},
 			{Name: "X-Guest-Visible", Value: "yes"},
 		},
-		body: []byte("safe-response\n"),
+		Body: []byte("safe-response\n"),
 	})
 
-	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.GatewayURL+"/response-headers", nil)
+	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.EdgeURL()+"/response-headers", nil)
 	if err != nil {
 		t.Fatalf("new response-header request: %v", err)
 	}

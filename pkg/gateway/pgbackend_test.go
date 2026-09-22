@@ -64,11 +64,72 @@ func TestPGBackend_LookupUnknownHost(t *testing.T) {
 	}
 }
 
-func TestPGBackend_LookupRouterErrorIsNotFound(t *testing.T) {
+// adr: 190
+// A Router error with no last-known-good route is still a 404.
+func TestPGBackend_LookupRouterErrorWithoutStaleIsNotFound(t *testing.T) {
 	router := &fakeRouter{err: errors.New("pg down")}
 	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
 	if _, ok := b.Lookup(context.Background(), "a.apps.gregale.dev"); ok {
-		t.Fatal("router error should surface as not-found, not a route")
+		t.Fatal("router error with no stale entry should surface as not-found")
+	}
+}
+
+// ADR-190: once a host has resolved, a Router error (Postgres down)
+// is answered from the stale tier even after the route cache was
+// invalidated, and the served counter records it.
+func TestPGBackend_LookupRouterErrorServesStaleAfterInvalidate(t *testing.T) {
+	router := &fakeRouter{byID: map[string]gateway.App{
+		"a.apps.gregale.dev": {ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+	m := gateway.NewMetrics()
+	b.WithMetrics(m)
+	if _, ok := b.Lookup(context.Background(), "a.apps.gregale.dev"); !ok {
+		t.Fatal("warm-up lookup failed")
+	}
+	b.FlushRoutes() // app_changed / domain_changed notify path
+
+	router.mu.Lock()
+	router.err = errors.New("pg down")
+	router.mu.Unlock()
+
+	app, ok := b.Lookup(context.Background(), "a.apps.gregale.dev")
+	if !ok || app.ID != "app-1" || app.Plan != api.PlanPro {
+		t.Fatalf("stale lookup = %+v ok=%v, want app-1 served", app, ok)
+	}
+	if got := gateway.RouteLookupStaleServedForTest(m); got != 1 {
+		t.Fatalf("stale served counter = %v want 1", got)
+	}
+	// A host that never resolved is still a 404 during the outage.
+	if _, ok := b.Lookup(context.Background(), "never.apps.gregale.dev"); ok {
+		t.Fatal("unknown host must not be invented from the stale tier")
+	}
+}
+
+// ADR-190: a positive "no such route" clears the stale entry, so a
+// deleted domain is not served during a later outage.
+func TestPGBackend_LookupNotFoundClearsStale(t *testing.T) {
+	router := &fakeRouter{byID: map[string]gateway.App{
+		"a.apps.gregale.dev": {ID: "app-1", Plan: api.PlanPro},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+	if _, ok := b.Lookup(context.Background(), "a.apps.gregale.dev"); !ok {
+		t.Fatal("warm-up lookup failed")
+	}
+	b.FlushRoutes() // app_changed / domain_changed notify path
+
+	router.mu.Lock()
+	delete(router.byID, "a.apps.gregale.dev") // route removed while PG is up
+	router.mu.Unlock()
+	if _, ok := b.Lookup(context.Background(), "a.apps.gregale.dev"); ok {
+		t.Fatal("removed route resolved")
+	}
+
+	router.mu.Lock()
+	router.err = errors.New("pg down")
+	router.mu.Unlock()
+	if _, ok := b.Lookup(context.Background(), "a.apps.gregale.dev"); ok {
+		t.Fatal("removed route must not come back from the stale tier")
 	}
 }
 

@@ -23,6 +23,11 @@ func TestOCISnapshotCaptureRoundTripAndIsolation(t *testing.T) {
 				keys = append(keys, "snap/"+dep+"/"+tier+"captures/"+capture+"/"+part)
 			}
 		}
+		for _, part := range []string{"mem", "vmstate", "drive"} {
+			for _, capture := range captures {
+				keys = append(keys, "snap/"+dep+"/"+tier+"captures/"+capture+"/v2/"+part)
+			}
+		}
 	}
 	for _, key := range keys {
 		if err := be.Put(ctx, key, strings.NewReader("content:"+key)); err != nil {
@@ -90,12 +95,12 @@ func TestOCISnapshotCaptureRejectsInvalidKeys(t *testing.T) {
 	be := &OCIRegistryStorageBackend{}
 	dep := "550e8400-e29b-41d4-a716-446655440000"
 	cap := "660e8400-e29b-41d4-a716-446655440001"
-	for _, suffix := range []string{"captures/not-a-uuid/mem", "captures/" + cap + "/bogus", "warm/captures/" + cap + "/mem/extra", "cold/captures/" + cap + "/mem", "captures//mem", "warm/../mem"} {
+	for _, suffix := range []string{"captures/not-a-uuid/mem", "captures/" + cap + "/bogus", "captures/" + cap + "/v2/bogus", "captures/" + cap + "/v3/drive", "warm/captures/" + cap + "/mem/extra", "cold/captures/" + cap + "/mem", "captures//mem", "warm/../mem"} {
 		if _, _, err := be.plan("snap/" + dep + "/" + suffix); !IsInvalidKey(err) {
 			t.Fatalf("accepted %q: %v", suffix, err)
 		}
 	}
-	for _, tag := range []string{"warm-bogus", "captures-invalid-mem", "captures-" + cap + "-bogus", "warm-captures-" + cap + "-mem-extra"} {
+	for _, tag := range []string{"warm-bogus", "captures-invalid-mem", "captures-" + cap + "-bogus", "captures-" + cap + "-v3-drive", "warm-captures-" + cap + "-mem-extra"} {
 		if key, ok := be.unplan("snap-"+dep, tag); ok {
 			t.Fatalf("accepted invalid tag %q as %q", tag, key)
 		}

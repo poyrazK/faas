@@ -2732,7 +2732,7 @@ func TestMem_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Fatalf("CreateAccount: %v", err)
 	}
 	app, err := m.CreateApp(ctx, App{
-		AccountID: acct.ID, Slug: "node-mb", RAMMB: 256, MaxConcurrency: 4, IdleTimeoutS: 60,
+		AccountID: acct.ID, Slug: "node-mb", RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 4, IdleTimeoutS: 60,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
@@ -2794,6 +2794,14 @@ func TestMem_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 	}
 	if gotU != 0 {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
+	}
+
+	cpu, err := m.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeA, nodeB, "no-such-node"})
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode: %v", err)
+	}
+	if cpu[nodeA] != 2000 || cpu[nodeB] != 500 || cpu["no-such-node"] != 0 {
+		t.Errorf("used CPU = %#v, want nodeA=2000 nodeB=500 unknown=0", cpu)
 	}
 }
 

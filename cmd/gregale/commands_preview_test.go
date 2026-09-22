@@ -140,7 +140,7 @@ func TestPreviewWaitReturnsReadyReceipt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps/pr-42-web":
-			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", PreviewExpiresAt: &expires, Status: "active", URL: "https://pr-42-web.gregale.dev"})
+			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", PreviewExpiresAt: &expires, Status: "active", URL: "https://pr-42-web.gregale.dev", CanonicalURL: "https://preview.example.com"})
 		case "/v1/apps/pr-42-web/deployments/latest":
 			status := "pending"
 			if latestReads.Add(1) > 1 {
@@ -168,7 +168,7 @@ func TestPreviewWaitReturnsReadyReceipt(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
-	if !got.Ready || got.Preview.URL != "https://pr-42-web.gregale.dev" {
+	if !got.Ready || got.Preview.URL != "https://preview.example.com" {
 		t.Fatalf("receipt = %+v, want ready preview URL", got)
 	}
 	if got.Deployment == nil || got.Deployment.ID != "deploy-42" || got.Deployment.Status != statusLive {

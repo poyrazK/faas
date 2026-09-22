@@ -82,6 +82,11 @@ class DeploymentResponse:
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
     rebuilt."""
+    revision: int | Unset = UNSET
+    """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
+    API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
+    `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id.
+   """
     build_id: None | str | Unset = UNSET
     build_cache_status: DeploymentResponseBuildCacheStatus | Unset = UNSET
     """Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup."""
@@ -150,8 +155,8 @@ class DeploymentResponse:
         | None
         | Unset
     ) = UNSET
-    """Per-deployment parking reason (issue #554 / ADR-079 follow-up, migration 00157). Closed-set vocabulary
-    enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
+    """Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set
+    vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
     deployments — surfaced as no field on the wire via omitempty."""
     parked_at: datetime.datetime | None | Unset = UNSET
     """Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles). nil for
@@ -264,6 +269,8 @@ class DeploymentResponse:
         stage_state: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stage_state, Unset):
             stage_state = self.stage_state.to_dict()
+
+        revision = self.revision
 
         build_id: None | str | Unset
         if isinstance(self.build_id, Unset):
@@ -541,6 +548,8 @@ class DeploymentResponse:
         )
         if stage_state is not UNSET:
             field_dict["stage_state"] = stage_state
+        if revision is not UNSET:
+            field_dict["revision"] = revision
         if build_id is not UNSET:
             field_dict["build_id"] = build_id
         if build_cache_status is not UNSET:
@@ -674,6 +683,8 @@ class DeploymentResponse:
             stage_state = UNSET
         else:
             stage_state = DeploymentResponseStageState.from_dict(_stage_state)
+
+        revision = d.pop("revision", UNSET)
 
         def _parse_build_id(data: object) -> None | str | Unset:
             if data is None:
@@ -1169,6 +1180,7 @@ class DeploymentResponse:
             status=status,
             created_at=created_at,
             stage_state=stage_state,
+            revision=revision,
             build_id=build_id,
             build_cache_status=build_cache_status,
             cache_key_sha256=cache_key_sha256,

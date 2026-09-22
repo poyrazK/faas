@@ -23,6 +23,15 @@
 schema_version: "1.0.0"
 
 fleet:
+  # A release enables this boundary once; subsequent compute additions are
+  # authorized by short-lived, signed FleetEnrollmentBundles. Runtime
+  # endpoints remain deterministic (<node>.gregale.dev on vmmd's port), and
+  # the control plane refuses additions beyond this beta ceiling.
+  dynamic_compute:
+    enabled: true
+    max_nodes: 16
+    name_prefix: fsn-
+    tags: ["gcp-vpc", "dynamic"]
   hosts:
     - name: fsn-1
       role: control-plane

@@ -445,6 +445,13 @@ func (f *fakeVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	panic("UpdateEgressAllowlist: not stubbed")
 }
 
+// UpdateEgressCircuit (ADR-201 §3) — same posture as the sibling above: the
+// gateway hot path never pushes circuits, schedd's egress-circuit loop does,
+// so reaching this from a gateway test is a wiring bug worth failing loudly.
+func (f *fakeVmmdClient) UpdateEgressCircuit(context.Context, *vmmdpb.UpdateEgressCircuitRequest, ...grpc.CallOption) (*vmmdpb.UpdateEgressCircuitAck, error) {
+	panic("UpdateEgressCircuit: not stubbed")
+}
+
 // UpdateStaticEgressIP (ADR-119) — the gateway hot path
 // doesn't drive the in-place patch. Panics so a future test
 // that actually exercises this RPC from the gateway side fails

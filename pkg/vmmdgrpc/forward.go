@@ -61,15 +61,24 @@ import (
 	"syscall"
 	"time"
 
-	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/extension"
-	"github.com/onebox-faas/faas/pkg/netns"
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
+
+// invocationMetadataMaxBytes bounds the HTTP method, request URI and header
+// values copied into invocation extension metadata. This runs on every
+// forwarded request, and the values are attacker-influenced, so the cut uses
+// safetext.Truncate: a byte slice would hand downstream consumers invalid
+// UTF-8 whenever a long header carried multi-byte text.
+const invocationMetadataMaxBytes = 1024
 
 // ForwardStreamMaxBodyBytes is the per-request body cap on the
 // streaming path (ADR-047 PR-B + PR-C, PR-D). Mirrors the
@@ -94,10 +103,7 @@ func invocationExtensionMetadata(req *vmmdpb.ForwardHTTPRequestInit) map[string]
 		if header == nil {
 			continue
 		}
-		value := header.GetValue()
-		if len(value) > 1024 {
-			value = value[:1024]
-		}
+		value := safetext.Truncate(header.GetValue(), invocationMetadataMaxBytes)
 		switch strings.ToLower(header.GetName()) {
 		case "x-faas-invocation-id":
 			if value != "" {
@@ -118,14 +124,8 @@ func invocationExtensionMetadata(req *vmmdpb.ForwardHTTPRequestInit) map[string]
 			return nil
 		}
 	}
-	method := req.GetMethod()
-	if len(method) > 1024 {
-		method = method[:1024]
-	}
-	uri := req.GetRequestUri()
-	if len(uri) > 1024 {
-		uri = uri[:1024]
-	}
+	method := safetext.Truncate(req.GetMethod(), invocationMetadataMaxBytes)
+	uri := safetext.Truncate(req.GetRequestUri(), invocationMetadataMaxBytes)
 	if method != "" {
 		metadata["method"] = method
 	}

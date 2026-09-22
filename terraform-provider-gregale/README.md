@@ -18,9 +18,11 @@ The initial surface is intentionally small:
 - `gregale_private_network` manages a Gregale-owned provider-neutral private network, including reusable CIDR and protocol/port firewall policy.
 - `gregale_private_network_attachment` manages an app's provider-neutral private-network attachment and reconciliation state.
 - `gregale_private_network_peering` manages a provider-neutral peering between two Gregale private networks.
+- `gregale_project_environment_config` manages versioned non-secret configuration for an existing project environment.
 - `data.gregale_app` reads an existing app for adoption and resource composition.
 - `data.gregale_deployment` reads an existing deployment for status and preview composition.
 - `data.gregale_latest_deployment` reads the newest deployment for an app without requiring its ID.
+- `data.gregale_private_network` reads an existing private network for attachment and peering composition.
 - `gregale_project_environment` reads a durable project environment without
   copying secrets into Terraform state.
 
@@ -211,6 +213,26 @@ resource "gregale_private_network" "prod" {
 TCP and UDP rules require at least one port or inclusive range. ICMP rules
 omit `ports`; an empty `cidrs` list means the whole private network CIDR.
 
+## Existing private-network lookup
+
+Use the private-network data source when a network is owned by another
+Terraform stack, the CLI, or the dashboard. It exposes the canonical network
+ID, region, CIDR, status, and complete network policy for composing attachments
+and peerings without duplicating lifecycle ownership.
+
+```hcl
+data "gregale_private_network" "shared" {
+  network_id = var.network_id
+}
+
+resource "gregale_private_network_attachment" "api" {
+  app_slug   = "orders-api"
+  network_id = data.gregale_private_network.shared.id
+  region     = data.gregale_private_network.shared.region
+  cidrs      = [data.gregale_private_network.shared.cidr]
+}
+```
+
 ## Private-network peering
 
 Connect two Gregale-owned private networks in the same account and region.
@@ -348,3 +370,26 @@ The provider uses the same public REST contract as the CLI and sends
 idempotency keys for app, domain, alert, cron, environment variable, secret, and deployment writes. Application
 environment values, secret values, alert webhook secrets, managed secret values, and bearer tokens
 are not returned by the managed resources or recorded in state.
+
+## Project environment configuration
+
+Manage a durable environment's non-secret JSON configuration. The environment
+must already exist, and Gregale rejects secret-shaped keys; use
+`gregale_secret` for credentials. Configuration is canonicalized by Gregale,
+so `jsonencode` keeps Terraform plans stable. Destroying this resource resets
+the environment configuration to `{}`; it does not delete the environment.
+
+```hcl
+resource "gregale_project_environment_config" "production" {
+  project_slug = "orders"
+  environment  = "production"
+  values = jsonencode({
+    region   = "eu"
+    replicas = 2
+  })
+}
+
+output "config_version" {
+  value = gregale_project_environment_config.production.version
+}
+```

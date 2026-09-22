@@ -10,6 +10,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
 // TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge proves that incomplete
@@ -20,7 +21,7 @@ func TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-upload")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cancel-upload")
 	f.vmmd.SetVersion(instance.ID, "cancel-upload")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-upload\n", 10*time.Second)
 	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, false)
@@ -29,7 +30,7 @@ func TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge(t *testing.T) {
 	defer cancel()
 	bodyReader, bodyWriter := io.Pipe()
 	defer func() { _ = bodyWriter.Close() }()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, f.h.GatewayURL+"/cancel-upload", bodyReader)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, f.h.EdgeURL()+"/cancel-upload", bodyReader)
 	if err != nil {
 		t.Fatalf("new cancel upload request: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge(t *testing.T) {
 		t.Fatal("cancelled upload did not terminate the client request")
 	}
 	select {
-	case <-probe.initSeen:
+	case <-probe.InitSeen():
 		t.Fatal("cancelled incomplete upload opened the VMMD bridge")
 	case <-time.After(250 * time.Millisecond):
 	}
@@ -90,19 +91,19 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-response")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cancel-response")
 	f.vmmd.SetVersion(instance.ID, "cancel-response")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-response\n", 10*time.Second)
 	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-		body:    []byte(strings.Repeat("y", 512*1024)),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		Body:    []byte(strings.Repeat("y", 512*1024)),
 	})
 
 	requestCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.GatewayURL+"/cancel-response", nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.EdgeURL()+"/cancel-response", nil)
 	if err != nil {
 		t.Fatalf("new cancel response request: %v", err)
 	}
@@ -126,8 +127,8 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 		}
 	}()
 
-	waitNormalPathProbe(t, probe.headersSent, "bridge response headers")
-	waitNormalPathProbe(t, probe.firstResponseBody, "first response body chunk")
+	waitNormalPathProbe(t, probe.HeadersSent(), "bridge response headers")
+	waitNormalPathProbe(t, probe.FirstResponseBody(), "first response body chunk")
 	var result responseResult
 	select {
 	case result = <-responseDone:
@@ -143,7 +144,7 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 
 	cancel()
 	releaseResponse()
-	waitNormalPathProbe(t, probe.canceled, "bridge cancellation")
+	waitNormalPathProbe(t, probe.Canceled(), "bridge cancellation")
 }
 
 func waitNormalPathProbe(t *testing.T, event <-chan struct{}, name string) {

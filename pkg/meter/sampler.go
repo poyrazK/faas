@@ -583,7 +583,12 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		// (already populated in pgstore.CreateInstance); legacy rows
 		// with empty deployment_id (test seams only) fall through to
 		// the per-app floor alone.
-		floor := app.EffectiveMinInstances()
+		// ADR-195: bill against the sampler's own clock, not the wall
+		// clock. A scheduled floor is time-dependent, so a replayed or
+		// back-dated sample must compute the floor that applied at the
+		// instant it is billing for — otherwise a window that has since
+		// closed would be billed as if it were still open, or vice versa.
+		floor := app.EffectiveMinInstancesAt(s.now())
 		for _, ins := range ins {
 			if !state.State(ins.State).CountsForRAM() {
 				continue

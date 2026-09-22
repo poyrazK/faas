@@ -799,6 +799,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// below; same single-registry pattern as every other daemon.
 	wire.BootStamps(ctx, "vmmd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR-190 follow-up: export this pool's live statistics so the
+	// DaemonMaxConnections cap above is measurable rather than arithmetic.
+	wire.RegisterPoolMetrics(ops, pool)
 	// ADR-054 acceptance: wire the LocalCacheBackend observer so
 	// stale-fallback serves on the cold-boot Restore path emit
 	// `vmmd_storage_cache_stale_fallback_total`. vmmd is the
@@ -871,6 +874,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer stopArchive()
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
+		// Same registry the Manager gets below, so per-artifact
+		// materialization lands next to the wake phases in one scrape.
+		WithWakePhaseMetrics(wpm).
 		WithStorage(storageBackend).
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		// Issue #309 / tier-2 DX: install the per-VMM
@@ -1077,7 +1083,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// partially-drained map.
 	sweepCtx, sweepCancel := context.WithCancel(ctx)
 	defer sweepCancel()
-	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log)
+	// ADR-190: the sweep is vmmd's one periodic loop, so it carries
+	// the liveness beat. Budget = three intervals (default 90 s).
+	liveness := wire.NewLiveness()
+	sweepInterval := cfg.ParentSweepInterval
+	if sweepInterval <= 0 {
+		sweepInterval = 30 * time.Second
+	}
+	liveness.Register(sweepLoopName, 3*sweepInterval)
+	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) })
 	// Shutdown sweep — registered as a defer BEFORE the gRPC
 	// GracefulStop so a late RPC still gets serviced and the
 	// registry is empty when vmmd exits. Defers run LIFO, so
@@ -1515,6 +1529,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go runNetworkEgressPoll(ctx, mgr, netCache, ops, nil, nil, nil, 0, log)
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, vmmdProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, liveness, ops, log)()
 
 	// Tier A5 (ADR-066) live-migration lease sweeper. Drops
 	// tracker entries whose lease has expired so a dead vmmd's

@@ -36,6 +36,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_replicas import ServiceReplicas
+    from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
 
@@ -75,6 +76,12 @@ class CreateAppRequest:
     """Restart behavior for the workload. Omitted uses the execution-mode default."""
     startup_deadline_s: int | Unset = UNSET
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
+    stop_grace_period_s: int | Unset = UNSET
+    """Upper bound on worker or service shutdown draining time in seconds before SIGKILL. 0 uses the mode/plan
+    default."""
+    stop_signal: str | Unset = UNSET
+    """Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omitted
+    defaults to SIGTERM."""
     max_retries: int | Unset = UNSET
     """Maximum consecutive restart attempts. 0 uses the plan default."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
@@ -88,6 +95,8 @@ class CreateAppRequest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    worker_replicas: WorkerScaling | Unset = UNSET
+    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
     ports: list[WorkloadPort] | Unset = UNSET
     """App-owned listener declarations. Named TCP listeners are publicly routable at
     `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only."""
@@ -189,6 +198,10 @@ class CreateAppRequest:
 
         startup_deadline_s = self.startup_deadline_s
 
+        stop_grace_period_s = self.stop_grace_period_s
+
+        stop_signal = self.stop_signal
+
         max_retries = self.max_retries
 
         retry_policy: dict[str, Any] | Unset = UNSET
@@ -198,6 +211,10 @@ class CreateAppRequest:
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
+
+        worker_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_replicas, Unset):
+            worker_replicas = self.worker_replicas.to_dict()
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):
@@ -291,12 +308,18 @@ class CreateAppRequest:
             field_dict["restart_policy"] = restart_policy
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
+        if stop_grace_period_s is not UNSET:
+            field_dict["stop_grace_period_s"] = stop_grace_period_s
+        if stop_signal is not UNSET:
+            field_dict["stop_signal"] = stop_signal
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if worker_replicas is not UNSET:
+            field_dict["worker_replicas"] = worker_replicas
         if ports is not UNSET:
             field_dict["ports"] = ports
         if favicon is not UNSET:
@@ -344,6 +367,7 @@ class CreateAppRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_replicas import ServiceReplicas
+        from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
@@ -410,6 +434,10 @@ class CreateAppRequest:
 
         startup_deadline_s = d.pop("startup_deadline_s", UNSET)
 
+        stop_grace_period_s = d.pop("stop_grace_period_s", UNSET)
+
+        stop_signal = d.pop("stop_signal", UNSET)
+
         max_retries = d.pop("max_retries", UNSET)
 
         _retry_policy = d.pop("retry_policy", UNSET)
@@ -425,6 +453,13 @@ class CreateAppRequest:
             service_replicas = UNSET
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
+        _worker_replicas = d.pop("worker_replicas", UNSET)
+        worker_replicas: WorkerScaling | Unset
+        if isinstance(_worker_replicas, Unset):
+            worker_replicas = UNSET
+        else:
+            worker_replicas = WorkerScaling.from_dict(_worker_replicas)
 
         _ports = d.pop("ports", UNSET)
         ports: list[WorkloadPort] | Unset = UNSET
@@ -517,9 +552,12 @@ class CreateAppRequest:
             execution_mode=execution_mode,
             restart_policy=restart_policy,
             startup_deadline_s=startup_deadline_s,
+            stop_grace_period_s=stop_grace_period_s,
+            stop_signal=stop_signal,
             max_retries=max_retries,
             retry_policy=retry_policy,
             service_replicas=service_replicas,
+            worker_replicas=worker_replicas,
             ports=ports,
             favicon=favicon,
             robots_txt=robots_txt,

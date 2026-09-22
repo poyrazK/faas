@@ -1,3 +1,4 @@
+// spec: §4.1
 package gateway
 
 import (
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 type partialWakeBackend struct {
@@ -115,7 +117,7 @@ func TestPartialWakeDoesNotOverrideRequestCancellation(t *testing.T) {
 	defer close(b.release)
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := h.coldStart(ctx, b.app.ID, "", "", 2, api.PlanScale, 0)
+		_, _, _, err := h.coldStart(ctx, b.app.ID, "", "", 2, api.PlanScale, 0, sched.TriggerGateway)
 		done <- err
 	}()
 	select {

@@ -191,13 +191,40 @@ func MarshalAppChangedPayload(payload AppChangedPayload) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
+// NotifyPayloadMaxBytes is the largest NOTIFY payload PostgreSQL accepts.
+//
+// The server's buffer is 8000 bytes including the NUL terminator, so the
+// usable maximum is 7999: a 7999-byte payload is accepted and an 8000-byte
+// one is rejected with "payload string too long". Both boundaries are
+// asserted against a real server in notify_payload_limit_test.go rather than
+// taken from the documentation, which says only "8000 bytes".
+const NotifyPayloadMaxBytes = 7999
+
+// ErrNotifyPayloadTooLarge reports a payload that cannot fit in a NOTIFY.
+//
+// This used to surface as a raw pgx error from deep inside a callsite that
+// had already discarded its context, on a Notify whose error most producers
+// deliberately ignore. Callers can now match it with errors.Is and decide,
+// and the message names the channel and the two sizes.
+var ErrNotifyPayloadTooLarge = errors.New("db: notify payload exceeds the PostgreSQL limit")
+
 // Notify publishes a payload on the given channel. Deploy handoff channels
 // first persist a replay row and publish an envelope in the same transaction;
-// all other channels retain the direct pg_notify path. Payloads are limited
-// to ~8 KB by Postgres — caller's responsibility.
+// all other channels retain the direct pg_notify path.
+//
+// Payloads over NotifyPayloadMaxBytes are rejected before the round trip.
+// The previous contract — "limited to ~8 KB by Postgres — caller's
+// responsibility" — was enforced by nothing: one channel capped its content
+// at 3 KiB, another switched to a pipe-delimited encoding to stay under the
+// limit, and the rest simply hoped. Each new channel re-litigated the
+// question, and an oversize payload failed as an opaque SQLSTATE at runtime.
 func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) error {
 	if IsDurableNotificationChannel(channel) {
 		return enqueueAndNotify(ctx, pool, channel, payload)
+	}
+	if len(payload) > NotifyPayloadMaxBytes {
+		return fmt.Errorf("%w: channel %s, %d bytes > %d",
+			ErrNotifyPayloadTooLarge, channel, len(payload), NotifyPayloadMaxBytes)
 	}
 	_, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	if err != nil {
@@ -229,9 +256,20 @@ func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload 
 	if err != nil {
 		return fmt.Errorf("db: enqueue notification %s: %w", channel, err)
 	}
+	// The envelope adds ~50 bytes, so a payload that fitted on its own can
+	// overflow once wrapped. Skip only the wakeup in that case and still
+	// commit the row: RunNotificationOutbox polls on a ticker independently
+	// of NOTIFY, so the handoff is recovered on the next sweep with added
+	// latency rather than lost.
+	//
+	// Failing the Exec instead would roll back the whole transaction — the
+	// outbox row included — so the one mechanism built to survive a missed
+	// notification would be defeated by the notification being too large.
 	wire := wrapNotificationPayload(id, payload)
-	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, wire); err != nil {
-		return fmt.Errorf("db: notify %s: %w", channel, err)
+	if len(wire) <= NotifyPayloadMaxBytes {
+		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, wire); err != nil {
+			return fmt.Errorf("db: notify %s: %w", channel, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("db: notify %s commit: %w", channel, err)
@@ -455,9 +493,9 @@ const (
 	// app_changed stream, this channel is replayed so a schedd restart or
 	// LISTEN gap cannot leave stale private routes on a live VM.
 	NotifyPrivateNetworkAttachmentChanged = "private_network_attachment_changed"
-	// NotifyPrivateNetworkChanged wakes schedd after a Gregale-owned peering
-	// mutation. The payload carries account/region identity so a deleted
-	// peering can withdraw routes even though its row is gone.
+	// NotifyPrivateNetworkChanged wakes schedd after a Gregale-owned network
+	// policy or peering mutation. The payload carries account/region identity so
+	// policy changes and deleted peerings converge without waiting for a sweep.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
@@ -803,7 +841,8 @@ func Subscribe(ctx context.Context, pool *pgxpool.Pool, channels []string) (<-ch
 	if len(channels) == 0 {
 		return nil, func() {}, fmt.Errorf("db: Subscribe requires at least one channel")
 	}
-	conn, err := pool.Acquire(ctx)
+	// Session-scoped: see direct.go.
+	conn, err := DirectPool(pool).Acquire(ctx)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("db: acquire listener: %w", err)
 	}
@@ -870,8 +909,36 @@ func SubscribeWithReconnect(
 	if len(channels) == 0 {
 		return nil, fmt.Errorf("db: SubscribeWithReconnect: no channels")
 	}
-	inner, cancel, err := Subscribe(ctx, pool, channels)
+	// ADR-190: one LISTEN connection per pool. The hub keeps this
+	// function's contract (fail-fast initial acquire, LISTEN active on
+	// return, channel closes only on ctx cancel); FAAS_DB_NOTIFY_HUB=0
+	// falls through to the legacy connection-per-subscriber path.
+	if notifyHubEnabled() {
+		return hubFor(pool, log).subscribe(ctx, channels)
+	}
+	// Bound the INITIAL acquire only. On this path every subscriber parks
+	// its own connection, so a daemon whose pool is sized for the hub runs
+	// out partway through its subscriptions — and pgxpool.Acquire waits for
+	// a release that is never coming, because the connections are held by
+	// this daemon's own earlier subscribers. Unbounded, that is a hang
+	// before sd_notify(READY=1) with no error anywhere: the unit sits in
+	// `activating` until systemd's TimeoutStartSec kills it.
+	//
+	// The reconnect loop below deliberately keeps its unbounded ctx; a
+	// transient drop must retry forever. This deadline only converts an
+	// unsatisfiable boot into a named failure.
+	subCtx, subCancel := context.WithTimeout(ctx, legacySubscribeAcquireTimeout)
+	inner, cancel, err := Subscribe(subCtx, pool, channels)
+	subCancel()
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, fmt.Errorf(
+				"db: SubscribeWithReconnect(%v): could not acquire a LISTEN connection within %s. "+
+					"%s=0 is set, so every subscriber parks its own connection; this pool is almost "+
+					"certainly sized for the notify hub (see db.DaemonMaxConnectionsNotifyHubDisabled). "+
+					"Unset %s or raise the daemon's pool budget: %w",
+				channels, legacySubscribeAcquireTimeout, NotifyHubEnv, NotifyHubEnv, err)
+		}
 		return nil, fmt.Errorf("db: SubscribeWithReconnect initial Subscribe: %w", err)
 	}
 	const (

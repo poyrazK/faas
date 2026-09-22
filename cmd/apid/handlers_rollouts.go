@@ -44,6 +44,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -91,12 +92,12 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
-	// (5) Reason trim (allow empty). Length cap matches the
-	// other audit-reason fields (1024 chars); the CLI / API
-	// caller is trusted.
-	if len(req.Reason) > 1024 {
-		req.Reason = req.Reason[:1024]
-	}
+	// (5) Reason trim (allow empty). The cap is in BYTES, not characters —
+	// it stands in for a Postgres column width. Cutting with a byte slice
+	// would split a multi-byte rune and produce invalid UTF-8, which the
+	// text and jsonb writes downstream both reject (SQLSTATE 22021 / 22P02),
+	// rolling back the recovery this endpoint exists to perform.
+	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
 	// (6) Atomic-tx recovery.
 	updated, auditID, err := s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
 	if err != nil {

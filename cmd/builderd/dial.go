@@ -28,7 +28,7 @@ import (
 //
 //nolint:staticcheck // SA1019: see doc above
 func dialGRPC(ctx context.Context, target string) error {
-	conn, err := grpc.DialContext(
+	conn, err := grpc.DialContext( //nolint:forbidigo // ADR-190: dial-only readiness probe; no RPC is ever issued on this conn
 		ctx,
 		target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

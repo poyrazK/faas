@@ -101,6 +101,64 @@ func TestParseHostPortAndTCPURL(t *testing.T) {
 	}
 }
 
+func TestDynamicComputePolicyDerivesHostFromSignedTopology(t *testing.T) {
+	body := strings.Replace(validManifest, "fleet:\n", `fleet:
+  dynamic_compute:
+    enabled: true
+    max_nodes: 4
+    name_prefix: fsn-
+    tags: [dynamic]
+`, 1)
+	m, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("Validate: %v", errs)
+	}
+	host, err := m.DynamicComputeHost("fsn-4", "/dev/disk/by-id/data")
+	if err != nil {
+		t.Fatalf("DynamicComputeHost: %v", err)
+	}
+	if host.Role != "compute-only" || host.Address != "fsn-4.apps.gregale.dev:50051" || host.StorageDevice != "/dev/disk/by-id/data" {
+		t.Fatalf("dynamic host = %#v", host)
+	}
+	if _, err := m.DynamicComputeHost("other-4", ""); err == nil || !strings.Contains(err.Error(), "name prefix") {
+		t.Fatalf("outside-prefix error = %v", err)
+	}
+}
+
+func TestDynamicComputePolicyValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "capacity must exceed static fleet",
+			body: "  dynamic_compute:\n    enabled: true\n    max_nodes: 0\n    name_prefix: fsn-\n",
+			want: "must be positive",
+		},
+		{
+			name: "prefix is constrained",
+			body: "  dynamic_compute:\n    enabled: true\n    max_nodes: 4\n    name_prefix: FSN_\n",
+			want: "lowercase DNS-label prefix",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(validManifest, "fleet:\n", "fleet:\n"+tt.body, 1)
+			m, err := Parse([]byte(body))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if errs := m.Validate(); errs == nil || !strings.Contains(errs.Error(), tt.want) {
+				t.Fatalf("Validate = %v, want %q", errs, tt.want)
+			}
+		})
+	}
+}
+
 func TestServiceTCPURLUsesPrivatePKIIdentity(t *testing.T) {
 	got, err := ServiceTCPURL("compute-only", "10.42.0.2:50051")
 	if err != nil {

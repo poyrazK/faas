@@ -189,3 +189,14 @@ be managed by the connected GitHub integration.
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
 - `cmd/apid/preview_janitor.go` — the teardown cron.
+
+## Internal service calls from a preview
+
+A preview is one app, not a copy of your whole project, so it has no preview
+copy of the services it depends on. Internal calls from a preview reach your
+**production** services, and their side effects are real.
+
+Gregale marks every such call with `X-Faas-Caller-Env: preview` and
+`X-Faas-Caller-Preview-Of: <production app slug>`. Both are platform-owned and
+cannot be set by a workload. See [networking](networking.md) for how to use
+them to skip side effects or refuse the call.

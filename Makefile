@@ -255,6 +255,14 @@ spec-cited-tests-check: ## Require changed core-path tests to cite a spec sectio
 spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synthetic pull request events
 	bash scripts/ci/check_spec_cited_tests_test.sh
 
+.PHONY: adr-number-uniqueness-check
+adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet over docs/adr/DUPLICATE_NUMBERS_BASELINE.txt)
+	bash scripts/ci/check_adr_number_uniqueness.sh
+
+.PHONY: adr-number-uniqueness-check-test
+adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
+	bash scripts/ci/check_adr_number_uniqueness_test.sh
+
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
 	bash scripts/ci/check_migration_version_hygiene.sh
@@ -262,6 +270,18 @@ migration-version-hygiene-check: ## Reject hand-typed migration versions and ver
 .PHONY: migration-version-hygiene-check-test
 migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
 	bash scripts/ci/check_migration_version_hygiene_test.sh
+
+.PHONY: text-encoding-check-test
+text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
+	bash scripts/ci/check_text_encoding_test.sh
+
+.PHONY: shell-quoting-check-test
+shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture trees in both directions
+	python3 scripts/ci/check_shell_quoting_test.py
+
+.PHONY: canary-alert-test
+canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against a fixture receiver
+	bash scripts/ops/canary_alert_test.sh
 
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
@@ -617,7 +637,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
 	@$(GO) tool golangci-lint run
 
 .PHONY: runbook-sql-check
@@ -689,7 +709,7 @@ gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM
 	python3 scripts/ops/gcp_public_beta_iam_test.py
 	python3 deploy/scripts/faas-rclone-backup-identity_test.py
 	bash -n scripts/ops/gcp_public_beta_converge.sh
-	bash -n scripts/ops/gcp_provision_compute.sh
+	bash scripts/ops/gcp_provision_compute_test.sh
 	bash -n scripts/ops/gcp_retire_compute.sh
 
 .PHONY: otlp-unit-check
@@ -699,6 +719,14 @@ otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OT
 .PHONY: sealed-env-scope-check
 sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by faas-apid.service (issue #585, ADR-127)
 	@bash scripts/ci/check_sealed_env_scope.sh $(CURDIR)
+
+.PHONY: text-encoding-check
+text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice
+	@bash scripts/ci/check_text_encoding.sh $(CURDIR)
+
+.PHONY: shell-quoting-check
+shell-quoting-check: ## Static gate: no value interpolated into hand-written shell quotes (CodeQL go/unsafe-quoting)
+	@python3 scripts/ci/check_shell_quoting.py $(CURDIR)
 
 .PHONY: manifest-ansible
 manifest-ansible: ## Generate a manifest-owned Ansible inventory and host_vars tree (MANIFEST + ANSIBLE_GENERATED_DIR required)

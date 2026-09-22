@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // grype.go — Grype subprocess runner (issue #299).
@@ -84,9 +85,52 @@ type grypeDescriptor struct {
 }
 
 type grypeDatabase struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
-	Built   string `json:"built"`
+	Status  json.RawMessage `json:"status"`
+	Version string          `json:"version"`
+	Built   string          `json:"built"`
+}
+
+// metadata accepts both Grype descriptor shapes that are deployed in the
+// fleet. Older Grype releases emitted db.status as the string "valid" with
+// version/built beside it. Grype 0.116 emits a ProviderStatus object under
+// db.status instead:
+//
+//	{"status":{"schemaVersion":"v6.0.2","built":"...","valid":true}}
+//
+// Keeping the compatibility conversion at the parser boundary prevents a
+// scanner upgrade from turning every otherwise-valid result into the
+// fail-closed CRITICAL=9999 sentinel.
+func (d grypeDatabase) metadata() (status, version, built string, err error) {
+	version, built = d.Version, d.Built
+	if len(d.Status) == 0 || bytes.Equal(d.Status, []byte("null")) {
+		return "", version, built, nil
+	}
+
+	var legacy string
+	if d.Status[0] == '"' {
+		if err := json.Unmarshal(d.Status, &legacy); err != nil {
+			return "", "", "", fmt.Errorf("decode legacy database status: %w", err)
+		}
+		return legacy, version, built, nil
+	}
+
+	var current struct {
+		SchemaVersion string `json:"schemaVersion"`
+		Built         string `json:"built"`
+		Valid         *bool  `json:"valid"`
+		Error         string `json:"error"`
+	}
+	if err := json.Unmarshal(d.Status, &current); err != nil {
+		return "", "", "", fmt.Errorf("decode database status object: %w", err)
+	}
+	if current.Valid == nil {
+		return "", "", "", fmt.Errorf("database status object is missing valid")
+	}
+	status = "invalid"
+	if *current.Valid && current.Error == "" {
+		status = "valid"
+	}
+	return status, current.SchemaVersion, current.Built, nil
 }
 
 // defaultGrypeRun shells out to the grype CLI and parses the JSON
@@ -212,8 +256,20 @@ func prepareGrypeSource(ctx context.Context, source string) (string, func(), err
 	// debugfs preserves image ownership and modes. The scan runs as the
 	// unprivileged imaged user in the canonical unit, so make the temporary
 	// copy readable/traversable without changing the source image.
+	//
+	// This needs CAP_FOWNER. debugfs restores the image's ownership using the
+	// daemon's CAP_CHOWN, so the extracted tree ends up owned by root while
+	// the daemon runs unprivileged, and chmod then requires ownership or
+	// CAP_FOWNER. Without it every scan failed here, wrote the fail-closed
+	// CRITICAL=9999 sidecar, and vmmd refused to boot any VM on the node —
+	// so say so in the error rather than leaving a bare EPERM.
 	if output, err := exec.CommandContext(ctx, "chmod", "-R", "a+rX", stageDir).CombinedOutput(); err != nil {
 		cleanup()
+		if strings.Contains(string(output), "Operation not permitted") {
+			return "", func() {}, fmt.Errorf(
+				"chmod extraction: %w (output=%q); the daemon likely lacks CAP_FOWNER — debugfs restored root ownership via CAP_CHOWN and chmod needs ownership or CAP_FOWNER (see AmbientCapabilities in faas-imaged.service)",
+				err, string(output))
+		}
 		return "", func() {}, fmt.Errorf("chmod extraction: %w (output=%q)", err, string(output))
 	}
 	return stageDir, cleanup, nil
@@ -230,11 +286,15 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("imaged: grype scan dir %q: parse json: %w", dir, err)
 	}
+	dbStatus, dbVersion, dbBuiltAt, err := out.Descriptor.DB.metadata()
+	if err != nil {
+		return nil, fmt.Errorf("imaged: grype scan dir %q: parse database metadata: %w", dir, err)
+	}
 	res := &ScanResult{
 		ScannerVersion:   out.Descriptor.Version,
-		ScannerDBStatus:  out.Descriptor.DB.Status,
-		ScannerDBVersion: out.Descriptor.DB.Version,
-		ScannerDBBuiltAt: out.Descriptor.DB.Built,
+		ScannerDBStatus:  dbStatus,
+		ScannerDBVersion: dbVersion,
+		ScannerDBBuiltAt: dbBuiltAt,
 	}
 	if len(out.Matches) == 0 {
 		// Zero-finding scan: return *ScanResult with an

@@ -92,7 +92,14 @@ type Unit struct {
 	Restart         string
 	RestartSec      string
 	TimeoutStartSec string // bounded allowance for Type=notify startup work
-	Slice           string
+	// WatchdogSec (ADR-190) is the systemd watchdog interval. A
+	// Type=notify daemon that stops sending WATCHDOG=1 for this long
+	// is killed and restarted under Restart=on-failure. The daemon
+	// gates its pings on pkg/wire.Liveness, so a stalled main loop —
+	// not just a dead process — triggers the restart. Empty omits
+	// the directive (Type=simple units, and units that opt out).
+	WatchdogSec string
+	Slice       string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
 	// below MemoryMax so a slow leak degrades the daemon rather than
@@ -145,7 +152,7 @@ func BoolPtr(b bool) *bool { return &b }
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
 // ExecStartPre → ExecStart → Restart → RestartSec →
-// TimeoutStartSec → Slice → MemoryHigh → MemoryMax → Delegate →
+// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -195,6 +202,7 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
+	writeStringKV(&buf, "WatchdogSec", u.WatchdogSec)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
@@ -492,6 +500,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.RestartSec = val
 	case "[Service]/TimeoutStartSec":
 		u.TimeoutStartSec = val
+	case "[Service]/WatchdogSec":
+		u.WatchdogSec = val
 	case "[Service]/Slice":
 		u.Slice = val
 	case "[Service]/MemoryHigh":

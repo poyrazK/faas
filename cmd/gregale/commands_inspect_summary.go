@@ -201,7 +201,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 	summary := inspectSummary{
 		SchemaVersion: inspectSummarySchemaVersion,
 		App: inspectAppSummary{
-			ID: app.ID, Slug: app.Slug, URL: app.URL, Status: app.Status,
+			ID: app.ID, Slug: app.Slug, URL: canonicalAppURL(app), Status: app.Status,
 			Type: app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
 		},
 		Resources:   inspectResources(app),

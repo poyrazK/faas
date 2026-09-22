@@ -268,6 +268,28 @@ func TestTrigger_UsesInstanceStatsRPSWhenPrometheusUnavailable(t *testing.T) {
 	}
 }
 
+func TestTrigger_UsesFleetRPSWhenLocalGatewayShardIsLower(t *testing.T) {
+	store := &fakeStore{apps: []state.App{
+		{ID: "app1", AutoscaleTargetRPS: 5, MaxConcurrency: 5},
+	}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
+	engine := &fakeEngine{}
+	instats := &fakeInstats{byRPS: map[string]float64{"app1": 12}}
+	scraper := &fakeScraper{byApp: map[string]int64{"app1": 20}}
+	tr := New(store, instats, scraper, engine, ledger, Options{})
+	// The local gateway saw only 20 requests in five seconds = 4 total RPS,
+	// or 2 RPS/instance. Fleet VMMD telemetry saw 12 total RPS, or 6 per
+	// instance, which exceeds the target and must drive admission.
+	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
+
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "app1" {
+		t.Fatalf("engine.admitCalls = %v, want [app1]", engine.admitCalls)
+	}
+}
+
 // TestTrigger_RejectAtCap verifies the cap-rejection path: an app
 // at concurrency == max_concurrency is NOT admitted, even though
 // the RPS target is hot. The trigger emits OutcomeRejectAtCap.

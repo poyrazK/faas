@@ -1,0 +1,62 @@
+# MANAGED BY ANSIBLE — roles/pgbouncer. Local edits are overwritten.
+#
+# Transaction-mode pooler in front of the control-plane PostgreSQL. It exists
+# because per-daemon pool budgets multiply across the fleet: the
+# postgres_capacity role derives 610 backends at 12 compute nodes and 4,600 at
+# 100, which PostgreSQL cannot serve. Pooling decouples "connections clients
+# may open" (max_client_conn) from "backends PostgreSQL must run"
+# (default_pool_size).
+#
+# Only the compute-node TCP path goes through here. Control-plane daemons keep
+# the peer-authenticated Unix socket to the postmaster: they are ~40
+# connections in total, peer auth does not survive a pooler cleanly, and
+# routing them would gain nothing.
+[databases]
+{{ faas_pgbouncer_database }} = host={{ faas_pgbouncer_server_host }} dbname={{ faas_pgbouncer_database }}
+
+[pgbouncer]
+listen_addr = {{ faas_pgbouncer_listen_address }}
+listen_port = {{ faas_pgbouncer_listen_port }}
+unix_socket_dir = {{ faas_pgbouncer_socket_dir }}
+
+pool_mode = {{ faas_pgbouncer_pool_mode }}
+max_client_conn = {{ faas_pgbouncer_max_client_conn }}
+default_pool_size = {{ faas_pgbouncer_default_pool_size }}
+reserve_pool_size = {{ faas_pgbouncer_reserve_pool_size }}
+reserve_pool_timeout = {{ faas_pgbouncer_reserve_pool_timeout }}
+
+# Clients authenticate with the same scram credential pg_hba already requires
+# of compute nodes; auth_query lets pgbouncer verify against pg_shadow instead
+# of a second copy of the secret on disk.
+auth_type = scram-sha-256
+auth_file = {{ faas_pgbouncer_config_dir }}/userlist.txt
+auth_query = SELECT usename, passwd FROM pg_shadow WHERE usename = $1
+
+# The server leg uses the peer-authenticated Unix socket, so the pooler holds
+# no database password of its own.
+auth_user = {{ faas_pgbouncer_db_role }}
+
+# Prepared statements: pkg/db switches the pooled path to QueryExecModeExec
+# when FAAS_DATABASE_URL_DIRECT is set, so no named statements cross a pooled
+# transaction. This stays 0 deliberately — relying on pgbouncer to track them
+# would make correctness depend on the pooler's version, and the client-side
+# guarantee is stronger.
+max_prepared_statements = 0
+
+# Never hold a client while the pool is exhausted longer than the platform's
+# own request budget; a queued forever connection surfaces as an unexplained
+# timeout rather than a capacity refusal.
+query_wait_timeout = 10
+
+# LISTEN would break under transaction pooling. Nothing should reach this
+# pooler with a LISTEN — pkg/db routes it to FAAS_DATABASE_URL_DIRECT and
+# TestSessionScopedAcquires enforces that at build time — so leave the
+# cancellation and session knobs at their safe defaults rather than making
+# session behaviour look supported.
+server_reset_query = DISCARD ALL
+
+logfile = /var/log/pgbouncer/pgbouncer.log
+pidfile = /run/pgbouncer/pgbouncer.pid
+admin_users = {{ faas_pgbouncer_db_role }}
+stats_users = {{ faas_pgbouncer_db_role }}
+ignore_startup_parameters = extra_float_digits,application_name

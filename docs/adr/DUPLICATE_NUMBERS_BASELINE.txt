@@ -1,0 +1,94 @@
+# Frozen baseline of ADR numbers that are already duplicated on main.
+#
+# docs/adr/ carries 289 files under 180 distinct numbers because concurrent
+# PRs each pick "the next number" and whichever merges second keeps it.
+# scripts/ci/check_adr_number_uniqueness.sh fails on any number duplicated
+# here that is NOT listed below, so a NEW collision is caught at PR time.
+#
+# This is a RATCHET, not an amnesty. Two rules:
+#
+#   1. Never add a line. A new duplicate is a bug the gate exists to stop.
+#      Pick the next free number instead — check `ls docs/adr/` AND open PR
+#      titles, because a PR can claim a number between your check and your
+#      merge.
+#   2. When a number here is renumbered so it is no longer duplicated, the
+#      gate FAILS until its line is deleted. The ratchet only tightens.
+#      (Same contract as pkg/state/conformance/uncovered.txt.)
+#
+# Retro-fixing these is deliberately out of scope for the gate: the number is
+# embedded in `// adr: NNN` citation lines that check_spec_cited_tests.sh
+# reads, plus metric help strings and runbooks — ADR-190 alone had 67
+# references. Renumbering is its own PR, one ADR at a time.
+#
+# Generated 2026-09-21 from main @ 41e0b0d7e.
+021
+022
+031
+032
+034
+038
+039
+040
+041
+042
+045
+046
+047
+052
+053
+056
+057
+058
+062
+064
+068
+070
+071
+072
+075
+076
+078
+079
+080
+081
+083
+087
+088
+089
+090
+091
+092
+093
+098
+099
+100
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+126
+127
+128
+129
+136
+137
+140
+143
+147
+155
+156
+157
+158
+159
+160
+165
+167
+168
+171
+190

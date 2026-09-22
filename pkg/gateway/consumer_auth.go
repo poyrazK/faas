@@ -6,11 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/lruutil"
 )
 
 // ConsumerAuthStore is the small state.Store slice needed by the public edge.
@@ -65,32 +65,50 @@ func (c ConsumerAuthConsumer) Active() bool {
 // customer-facing 401 so a foreign prefix cannot be used as an existence oracle.
 var ErrConsumerAuthNotFound = errors.New("gateway: consumer authentication record not found")
 
+// consumerKeyDebounce is the window within which a repeat request for the
+// same consumer key skips the last_used_at write.
+const consumerKeyDebounce = time.Minute
+
+// consumerKeyTouchCacheEntries caps the debouncer's memory.
+//
+// The map is keyed by consumer key ID and previously had no eviction of any
+// kind: one entry was added per distinct key that ever authenticated, and
+// nothing ever removed it. On a long-lived gateway process the set of keys
+// seen only grows — including keys that have since been revoked or whose app
+// was deleted — so the map was an unbounded, unreclaimable allocation on a
+// daemon designed to run for weeks.
+//
+// 16k entries is far above any realistic working set of keys active inside a
+// one-minute window, and bounds the structure at a few MB. The only cost of
+// an eviction is one extra TouchConsumerKeyLastUsed write, which is
+// observational and already tolerated to fail.
+const consumerKeyTouchCacheEntries = 16384
+
 // consumerKeyToucher is a process-local 60-second debouncer for last_used_at.
 // Touching is observational only and never participates in the authorization
 // decision, so a failed asynchronous write must not fail an otherwise valid
 // request.
+//
+// Backed by a capped LRU rather than a bare map: see
+// consumerKeyTouchCacheEntries. Eviction degrades the debounce, never
+// correctness.
 type consumerKeyToucher struct {
-	mu   sync.Mutex
-	last map[string]time.Time
+	last *lruutil.LRU[string, time.Time]
 }
 
 func newConsumerKeyToucher() *consumerKeyToucher {
-	return &consumerKeyToucher{last: make(map[string]time.Time)}
+	return &consumerKeyToucher{last: lruutil.New[string, time.Time](consumerKeyTouchCacheEntries)}
 }
 
 func (t *consumerKeyToucher) touch(store ConsumerAuthStore, keyID string) {
-	if t == nil || store == nil || keyID == "" {
+	if t == nil || t.last == nil || store == nil || keyID == "" {
 		return
 	}
 	now := time.Now()
-	t.mu.Lock()
-	last, seen := t.last[keyID]
-	if seen && now.Sub(last) < time.Minute {
-		t.mu.Unlock()
+	if last, seen := t.last.Get(keyID); seen && now.Sub(last) < consumerKeyDebounce {
 		return
 	}
-	t.last[keyID] = now
-	t.mu.Unlock()
+	t.last.Put(keyID, now)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

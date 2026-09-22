@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -11,6 +11,10 @@ from attrs import field as _attrs_field
 from ..models.data_upstream_response_kind import DataUpstreamResponseKind, check_data_upstream_response_kind
 from ..models.data_upstream_response_source import DataUpstreamResponseSource, check_data_upstream_response_source
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
+
 
 T = TypeVar("T", bound="DataUpstreamResponse")
 
@@ -48,6 +52,24 @@ class DataUpstreamResponse:
     """Most recent probe RTT (ms). Omitted when no probe yet."""
     last_probed_at: datetime.datetime | Unset = UNSET
     """Timestamp of the most recent probe. Omitted when no probe yet."""
+    circuit_breaker: EgressCircuitBreakerPolicy | Unset = UNSET
+    """Per-upstream egress circuit-breaker policy (ADR-201 §3).
+
+    When enabled, your app's NEW connections to this upstream are
+    rejected with a TCP reset while the circuit is open, instead of
+    hanging for a full TCP connect timeout. That is the point of the
+    feature: a blackholed dependency otherwise burns the per-request
+    budget and then holds the wake slot on every request, turning one
+    dependency outage into an app-wide capacity outage. Connections
+    already established are never torn down.
+
+    The circuit is driven by the platform's own 30-second TCP+TLS
+    probe of the upstream, not by your traffic, so the half-open trial
+    that decides recovery costs your app nothing.
+
+    Disabled by default. This rule can cut an app off from its own
+    database, so it is never inferred — you opt in per upstream.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +101,10 @@ class DataUpstreamResponse:
         if not isinstance(self.last_probed_at, Unset):
             last_probed_at = self.last_probed_at.isoformat()
 
+        circuit_breaker: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.circuit_breaker, Unset):
+            circuit_breaker = self.circuit_breaker.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -104,11 +130,15 @@ class DataUpstreamResponse:
             field_dict["last_rtt_ms"] = last_rtt_ms
         if last_probed_at is not UNSET:
             field_dict["last_probed_at"] = last_probed_at
+        if circuit_breaker is not UNSET:
+            field_dict["circuit_breaker"] = circuit_breaker
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -141,6 +171,13 @@ class DataUpstreamResponse:
         else:
             last_probed_at = datetime.datetime.fromisoformat(_last_probed_at)
 
+        _circuit_breaker = d.pop("circuit_breaker", UNSET)
+        circuit_breaker: EgressCircuitBreakerPolicy | Unset
+        if isinstance(_circuit_breaker, Unset):
+            circuit_breaker = UNSET
+        else:
+            circuit_breaker = EgressCircuitBreakerPolicy.from_dict(_circuit_breaker)
+
         data_upstream_response = cls(
             id=id,
             source=source,
@@ -155,6 +192,7 @@ class DataUpstreamResponse:
             declared_region=declared_region,
             last_rtt_ms=last_rtt_ms,
             last_probed_at=last_probed_at,
+            circuit_breaker=circuit_breaker,
         )
 
         data_upstream_response.additional_properties = d

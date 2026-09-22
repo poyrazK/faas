@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 type initialCapacityScheduler struct {
@@ -174,7 +175,7 @@ func TestColdStartSkipsRedundantReconcileForAuthoritativeEnsureWarm(t *testing.T
 	}}
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	cold, wakeID, method, err := h.coldStart(context.Background(), "app", "acct", "", 3, api.PlanScale, 15)
+	cold, wakeID, method, err := h.coldStart(context.Background(), "app", "acct", "", 3, api.PlanScale, 15, sched.TriggerGateway)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestColdStartKeepsReconcileForPreviewScope(t *testing.T) {
 	}}
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	_, _, _, err := h.coldStart(context.Background(), "app", "acct", "pr-17", 3, api.PlanScale, 15)
+	_, _, _, err := h.coldStart(context.Background(), "app", "acct", "pr-17", 3, api.PlanScale, 15, sched.TriggerGateway)
 	if err != nil {
 		t.Fatal(err)
 	}

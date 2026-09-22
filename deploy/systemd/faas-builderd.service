@@ -13,6 +13,7 @@ Group=faas
 ExecStart=/opt/faas/current/bin/builderd
 Restart=on-failure
 RestartSec=2s
+WatchdogSec=300s
 Slice=faas-cp.slice
 MemoryMax=512M
 EnvironmentFile=-/etc/faas/compute-db.env

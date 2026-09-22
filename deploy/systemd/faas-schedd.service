@@ -14,6 +14,7 @@ ExecStartPre=/opt/faas/current/bin/schedd-brokerq-apply
 ExecStart=/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml
 Restart=on-failure
 RestartSec=2s
+WatchdogSec=120s
 Slice=faas-cp.slice
 MemoryHigh=256M
 MemoryMax=1G

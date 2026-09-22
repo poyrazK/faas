@@ -120,6 +120,19 @@
              if faas_join_bootstrap_contract_current
              else 'Managed-host bootstrap contract is absent or stale; running full convergence.' }}
 
+    # The parallel preparation lane is intentionally narrower than node
+    # adoption. A host whose OS/role contract changed must use the existing
+    # serialized full convergence path rather than mutating serving daemons in
+    # parallel with its peers.
+    - name: Require an existing managed host for non-disruptive rollout preparation
+      ansible.builtin.assert:
+        that:
+          - faas_join_bootstrap_contract_current | bool
+        fail_msg: >-
+          Parallel rollout preparation requires a current managed-host
+          bootstrap contract; run the full serialized join path for this node.
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
     - name: Create bootstrap directories
       ansible.builtin.file:
         path: "{{ item.path }}"
@@ -321,6 +334,11 @@
     # fingerprint. The captured value is the CAS guard used immediately after
     # staging so pre-stage never depends on a vmmd that is deadlocked behind
     # stale attestation state.
+    - name: Inspect the existing compute-node operator binary
+      ansible.builtin.stat:
+        path: /usr/local/bin/gregalectl
+      register: faas_join_existing_operator
+
     - name: Inspect existing compute-node certificate attestation before trust refresh
       ansible.builtin.command:
         argv:
@@ -333,6 +351,7 @@
       register: faas_join_existing_compute_node
       changed_when: false
       failed_when: faas_join_existing_compute_node.rc not in [0, 3]
+      when: faas_join_existing_operator.stat.exists
 
     - name: Remember the pre-refresh certificate fingerprint
       ansible.builtin.set_fact:
@@ -344,9 +363,52 @@
               | first
               | default('', true)
             )
-            if faas_join_existing_compute_node.rc == 0
+            if (faas_join_existing_compute_node.rc | default(3)) == 0
             else ''
           }}
+
+    # Preparation must preserve the live trust identity. The shared operator
+    # bundle can contain issuance material, and producing a leaf from it is
+    # intentionally nondeterministic; comparing that newly issued leaf with
+    # the active node would make every later phased rollout fail. Validate the
+    # installed leaf against the database attestation and only require the
+    # candidate bundle to retain the same CA. The serialized full path remains
+    # the only path allowed to install and attest replacement leaves.
+    - name: Inspect the active compute certificate during parallel rollout preparation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - pki
+          - fingerprint
+          - --cert
+          - /etc/faas/tls/vmmd/server.crt
+      register: faas_join_active_cert_fingerprint
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    - name: Inspect the active compute CA during parallel rollout preparation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - pki
+          - fingerprint
+          - --cert
+          - /etc/faas/tls/ca/ca.crt
+      register: faas_join_active_ca_fingerprint
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    - name: Require stable active trust during parallel rollout preparation
+      ansible.builtin.assert:
+        that:
+          - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
+          - (faas_join_active_cert_fingerprint.stdout | trim) == faas_join_expected_cert_fingerprint
+          - (faas_join_active_ca_fingerprint.stdout | trim) == faas_join_candidate_ca_fingerprint
+        fail_msg: >-
+          Parallel rollout preparation requires the active certificate to
+          match its database attestation and the candidate CA; run the full
+          serialized join path for trust rotation or repair.
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Stage the compute trust bundle (the source never includes the CA private key)
       ansible.builtin.copy:
@@ -356,6 +418,7 @@
         group: root
         mode: preserve
       no_log: true
+      when: (faas_join_rollout_phase | default('full')) != 'prepare'
 
     # The operator-side PKI archive deliberately stores private keys as
     # root-only. The full bootstrap roles grant access only to the leaves
@@ -384,6 +447,7 @@
         - { path: /etc/faas/tls/imaged/vmmd-client.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.crt, mode: "0444" }
+      when: (faas_join_rollout_phase | default('full')) != 'prepare'
 
     - name: CAS-stamp the staged vmmd certificate before runtime pre-stage
       ansible.builtin.command:
@@ -395,7 +459,9 @@
           - "{{ faas_join_database_node }}"
           - --expected-fingerprint
           - "{{ faas_join_expected_cert_fingerprint }}"
-      when: (faas_join_expected_cert_fingerprint | default('') | trim) != ''
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'prepare'
+        - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
       changed_when: true
 
     - name: Stage the image-signing private key
@@ -708,6 +774,87 @@
           # /usr/local/bin/faas-guest-init override to survive node adoption.
           Environment=FAAS_GUEST_INIT=/opt/faas/current/bin/init
 
+    - name: Derive this host's capacity from one source of truth
+      # pkg/api.DeriveNodeSizingForRole is the only place the reserve
+      # arithmetic lives. Ansible used to carry its own
+      # `MemTotal * 85 / 100`, while the tenant cgroup fence was a
+      # hand-written drop-in no role owned. On the 15,985 MB production
+      # nodes that left schedd admitting to 13,587 MB against a kernel
+      # fence of 8,192 MB, and the gap surfaced as CONSTRAINT_MEMCG OOM
+      # kills of tenant firecracker processes. Both numbers now come from
+      # this one call.
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - sizing
+          - --role
+          - "{{ faas_box_role | default('compute-only', true) }}"
+          - --json
+      changed_when: false
+      register: faas_node_sizing_raw
+
+    - name: Require machine-readable capacity output before parsing it
+      # A non-JSON stdout here used to surface as ansible's opaque
+      # "the field 'args' has an invalid value ... Expecting value: line 1
+      # column 1", which says nothing about the actual cause. Assert the
+      # shape first so the failure names the command and shows what it
+      # printed.
+      ansible.builtin.assert:
+        that:
+          - faas_node_sizing_raw.stdout | default('') | trim is match('^\{')
+        fail_msg: >-
+          gregalectl compute-nodes sizing --json did not emit JSON
+          (stdout={{ faas_node_sizing_raw.stdout | default('') | trim }});
+          the installed operator binary may predate the sizing subcommand.
+
+    - name: Parse the derived capacity
+      ansible.builtin.set_fact:
+        faas_node_sizing: "{{ faas_node_sizing_raw.stdout | from_json }}"
+
+    - name: Refuse to size a node the probe could not measure
+      # detected=false means /proc/meminfo was unreadable, so the report
+      # carries the single-box constants. Registering those on a small host
+      # is exactly the ~3x overcommit this contract exists to prevent.
+      ansible.builtin.assert:
+        that:
+          - faas_node_sizing.detected | bool
+          - (faas_node_sizing.admission_ceiling_mb | int) > 0
+          - (faas_node_sizing.tenant_slice_max_mb | int) > 0
+        fail_msg: >-
+          gregalectl compute-nodes sizing could not measure this host
+          (detected={{ faas_node_sizing.detected }}); refusing to register
+          single-box capacity constants on it.
+
+    - name: Ensure the tenant slice drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-tenant.slice.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Fence the tenant slice at the derived tenant slice maximum
+      # The kernel fence and the admission ceiling are two views of the same
+      # calculation. This drop-in was previously hand-written and unmanaged.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-tenant.slice.d/90-host-capacity.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Slice]
+          MemoryMax={{ faas_node_sizing.tenant_slice_max_mb }}M
+
+    - name: Reload systemd so the re-fenced tenant slice takes effect
+      # Unconditional rather than a handler: handlers flush at the end of
+      # the play, and the tenant fence must already be live before this play
+      # starts vmmd and lets tenants land on the node. daemon-reload is
+      # idempotent, so changed_when: false keeps the run honest.
+      ansible.builtin.systemd:
+        daemon_reload: true
+      changed_when: false
+
     - name: Install the hardware-derived vmmd capacity contract
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-capacity.conf
@@ -719,12 +866,56 @@
           Environment=FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}
           Environment=FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}
           Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}
-          Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}
+          Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
+
+    # A fresh host has no /opt/faas/current yet, but release-bound base
+    # preparation needs vmmd. Register the row as unavailable before the
+    # temporary candidate vmmd starts so self-registration cannot make the
+    # unfinished host schedulable. UpsertComputeNodeFromVmmd preserves this
+    # operator-owned lifecycle on conflict.
+    - name: Pre-register the newly adopted node as unavailable before runtime pre-stage
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - add
+          - --name
+          - "{{ faas_join_database_node }}"
+          - --target-url
+          - "{{ faas_vmmd_target_url }}"
+          - --schedd-target-url
+          - "{{ faas_vmmd_schedd_target }}"
+          - --gateway-target-url
+          - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
+          - --vpcpus
+          - "{{ ansible_processor_vcpus }}"
+          - --mem-mb
+          - "{{ ansible_memtotal_mb }}"
+          - --max-concurrency
+          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
+          - --admission-ceiling-mb
+          - "{{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}"
+          - --defer-activation
+          # A newly adopted host deliberately has no interactive operator MFA
+          # session. The trusted join already stages its root-only database
+          # credential, so acknowledge this bootstrap-only direct write
+          # explicitly instead of silently falling back from the API path.
+          - --reason
+          - node_join_preregister
+          - --break-glass-db
+          - --yes
+      register: faas_compute_node_preregister
+      changed_when: true
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - (faas_join_existing_compute_node.rc | default(3)) == 3
 
     # Changed runtime bases used to be built by faas-imaged after this play
     # drained the node. Extract the signed candidate and run its normal base
-    # staging path while the serving release and vmmd are still available.
+    # staging path while the serving release and vmmd are still available. A
+    # new host receives a short-lived candidate vmmd override below; an
+    # existing host keeps serving with its currently active release.
     - name: Create the release-bound runtime-base pre-stage directory
       ansible.builtin.file:
         path: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
@@ -740,6 +931,44 @@
         remote_src: true
         owner: root
         group: root
+
+    - name: Inspect the active vmmd binary before runtime pre-stage
+      ansible.builtin.stat:
+        path: /opt/faas/current/bin/vmmd
+        follow: true
+      register: faas_join_active_vmmd
+
+    # A fresh host has the daemon units installed by bootstrap.yml, but the
+    # production TOML files are intentionally owned by the manifest renderer.
+    # Render before starting the candidate vmmd so its TCP listener loads the
+    # staged mTLS leaves instead of falling back to the defaults-only config.
+    # Existing nodes keep their serving configuration untouched until the
+    # normal post-drain release installation and render below.
+    - name: Render fresh-host runtime configuration before pre-stage
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - manifest
+          - render
+          - --manifest-file
+          - /etc/faas/manifest.yaml
+          - --host
+          - "{{ faas_join_inventory_name }}"
+          - --pki-trust-only
+      changed_when: true
+      when: not faas_join_active_vmmd.stat.exists
+
+    - name: Bootstrap fresh-host vmmd from the verified release candidate
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-bootstrap-release.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd --config /etc/faas/vmmd.toml
+      when: not faas_join_active_vmmd.stat.exists
 
     - name: Install the runtime-base pre-stage one-shot
       ansible.builtin.copy:
@@ -758,6 +987,11 @@
           User=faas-imaged
           Group=faas
           ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/imaged --config /etc/faas/imaged.toml
+          # Keep the candidate one-shot on the same capability boundary as
+          # the canonical imaged unit. imaged fail-closes at boot when its
+          # bounding set still contains the vmmd-only CAP_SYS_ADMIN bit.
+          CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
+          AmbientCapabilities=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
           EnvironmentFile=-/etc/faas/compute-db.env
           EnvironmentFile=-/etc/faas/storage.env
           EnvironmentFile=-/etc/faas/imaged-storage.env
@@ -802,80 +1036,173 @@
         daemon_reload: true
 
     - name: Pre-stage release-bound runtime bases before draining the node
-      ansible.builtin.systemd:
-        name: faas-imaged-prestage.service
-        state: started
+      block:
+        - name: Start the release-bound runtime-base pre-stage
+          ansible.builtin.systemd:
+            name: faas-imaged-prestage.service
+            state: started
+      always:
+        # Existing nodes keep their serving vmmd. A fresh node used the
+        # candidate solely to prepare immutable bases and stays unavailable
+        # until the signed release and all readiness checks finish.
+        - name: Stop the fresh-host bootstrap vmmd after runtime pre-stage
+          ansible.builtin.systemd:
+            name: faas-vmmd.service
+            state: stopped
+          when: not faas_join_active_vmmd.stat.exists
 
-    - name: Begin graceful drain of the existing node before release installation
+        - name: Remove the fresh-host vmmd release override
+          ansible.builtin.file:
+            path: /etc/systemd/system/faas-vmmd.service.d/zz-bootstrap-release.conf
+            state: absent
+
+        - name: Reload systemd after fresh-host vmmd bootstrap cleanup
+          ansible.builtin.systemd:
+            daemon_reload: true
+
+    - name: Record completed non-disruptive rollout preparation
+      ansible.builtin.copy:
+        dest: /var/lib/faas/bootstrap/prepared-release.sha
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ faas_join_release_git_sha }}\n"
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    - name: End the node play after non-disruptive rollout preparation
+      ansible.builtin.meta: end_play
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
+    # --activate-prepared starts at this exact task. The release-bound marker
+    # is written only after signature verification and runtime-base pre-stage
+    # complete, so the serialized lane cannot drain a partially prepared node.
+    - name: Verify the prepared rollout marker
       ansible.builtin.command:
         argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - drain
-          - --node
-          - "{{ faas_join_database_node }}"
-          - --reason
-          - node_join_preregister
-          - --break-glass-db
-          - --yes
-      when: faas_join_existing_compute_node.rc == 0
-      register: faas_compute_node_drain
-      changed_when: true
-
-    - name: Pre-register the newly adopted node as unavailable before release installation
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - add
-          - --name
-          - "{{ faas_join_database_node }}"
-          - --target-url
-          - "{{ faas_vmmd_target_url }}"
-          - --schedd-target-url
-          - "{{ faas_vmmd_schedd_target }}"
-          - --gateway-target-url
-          - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
-          - --vpcpus
-          - "{{ ansible_processor_vcpus }}"
-          - --mem-mb
-          - "{{ ansible_memtotal_mb }}"
-          - --max-concurrency
-          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
-          - --admission-ceiling-mb
-          - "{{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}"
-          - --defer-activation
-          # A newly adopted host deliberately has no interactive operator MFA
-          # session. The trusted join already stages its root-only database
-          # credential, so acknowledge this bootstrap-only direct write
-          # explicitly instead of silently falling back from the API path.
-          - --reason
-          - node_join_preregister
-          - --break-glass-db
-          - --yes
-      register: faas_compute_node_preregister
-      changed_when: true
-      when: faas_join_existing_compute_node.rc == 3
+          - grep
+          - -Fqx
+          - "{{ faas_join_release_git_sha }}"
+          - /var/lib/faas/bootstrap/prepared-release.sha
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'activate'
 
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until
     # the recovery controller migrates them. Maintenance plus zero live rows is
-    # the deterministic cache/traffic barrier before listener shutdown.
-    - name: Wait for the existing node to reach an empty maintenance hold
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - drain-status
-          - --node
-          - "{{ faas_join_database_node }}"
-          - --break-glass-db
-      when: faas_join_existing_compute_node.rc == 0
-      register: faas_compute_node_drain_status
+    # the deterministic cache/traffic barrier before listener shutdown. If
+    # that barrier times out, no service or release has been touched yet, so
+    # restore a node that entered the rollout active instead of silently
+    # leaving healthy capacity excluded from new placement.
+    - name: Delegate cgroup controllers to the per-plan tenant slices before draining
+      # ADR-205: a per-VM cgroup only gets memory.max when its parent lists
+      # `memory` in cgroup.subtree_control, and nothing enables it. systemd
+      # will not: Delegate= is not honoured for .slice units, and systemd only
+      # propagates a controller when a child *unit* needs it — the per-VM
+      # scopes come from jailer. vmmd does it at runtime, but that does not
+      # help here: draining a node requires migrating its instances, which
+      # requires the OUTGOING node's vmmd to widen memory.max, and that vmmd
+      # is still the pre-ADR-205 build until this very play replaces it.
+      #
+      # Without this the rollout deadlocks: the drain needs the new binary and
+      # the new binary needs the drain. Repair the host first, then drain.
+      #
+      # Run it here, after the last daemon-reload in this play, because
+      # systemd resets subtree_control on reload. One controller per write:
+      # the kernel applies a multi-token body atomically, so an unsupported
+      # token would reject the whole write.
+      ansible.builtin.shell: |
+        set -euo pipefail
+        base=/sys/fs/cgroup/faas.slice/faas-tenant.slice
+        for plan in free hobby pro scale; do
+          dir="$base/faas-tenant-$plan.slice"
+          [ -d "$dir" ] || continue
+          available=$(cat "$dir/cgroup.controllers" 2>/dev/null || true)
+          enabled=$(cat "$dir/cgroup.subtree_control" 2>/dev/null || true)
+          for c in memory cpu pids; do
+            case " $available " in *" $c "*) ;; *) continue ;; esac
+            case " $enabled " in *" $c "*) continue ;; esac
+            echo "+$c" > "$dir/cgroup.subtree_control"
+          done
+        done
+      args:
+        # `set -o pipefail` is a bashism and ansible.builtin.shell defaults to
+        # /bin/sh, which is dash here. Every other shell task in this play
+        # names bash explicitly for the same reason.
+        executable: /bin/bash
       changed_when: false
-      retries: 48
-      delay: 2
-      until: faas_compute_node_drain_status.rc == 0
+
+    - name: Gracefully drain the existing node before release installation
+      when: >-
+        (faas_join_rollout_phase | default('full')) == 'activate' or
+        (faas_join_existing_compute_node.rc | default(3)) == 0
+      block:
+        - name: Begin graceful drain of the existing node before release installation
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - drain
+              - --node
+              - "{{ faas_join_database_node }}"
+              - --reason
+              - node_join_preregister
+              - --break-glass-db
+              - --yes
+          register: faas_compute_node_drain
+          changed_when: true
+
+        - name: Wait for the existing node to reach an empty maintenance hold
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - drain-status
+              - --node
+              - "{{ faas_join_database_node }}"
+              - --break-glass-db
+          register: faas_compute_node_drain_status
+          changed_when: false
+          # 48 x 2s = 96 seconds, which a graceful drain cannot meet. Draining
+          # migrates every instance off the node, and each migration is a
+          # snapshot capture on the source plus a restore on the destination.
+          # Capture alone runs ~15 s for a 256 MB guest, and production apps
+          # here are 1024 MB, so even a handful of instances needs minutes.
+          #
+          # Observed repeatedly: the drain reached "instances still on
+          # <node>: 1", the play gave up and rolled the lifecycle back, and
+          # the drain then completed on its own moments later. The rollout was
+          # failing a migration that was working.
+          #
+          # 150 x 4s = 10 minutes, matching the per-instance cost with room
+          # for a node holding its full admission ceiling. A node that is
+          # genuinely stuck still fails, just not one that is merely slow.
+          retries: 150
+          delay: 4
+          until: faas_compute_node_drain_status.rc == 0
+      rescue:
+        - name: Restore an originally active node after graceful drain failure
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - activate
+              - --node
+              - "{{ faas_join_database_node }}"
+              - --reason
+              - node_join_drain_rollback
+              - --break-glass-db
+              - --yes
+          when: >-
+            'lifecycle=active' in
+            (faas_join_existing_compute_node.stdout_lines | default([]))
+          changed_when: true
+
+        - name: Abort after restoring the pre-rollout lifecycle
+          ansible.builtin.fail:
+            msg: >-
+              graceful drain did not reach an empty maintenance hold; the
+              existing node's pre-rollout active lifecycle was restored when
+              applicable, and no service or release was replaced
 
     - name: Stop stale compute-only services before replacing the active release
       ansible.builtin.systemd:

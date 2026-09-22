@@ -1467,6 +1467,10 @@ func (s *server) handler() http.Handler {
 	// GET is the customer-scoped, read-only security posture report;
 	// it never exposes secrets or raw policy payloads.
 	mux.HandleFunc("GET /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppSecurity))))
+	// Recovery is deploy-scoped but fail-closed: the handler requires a
+	// newer live deployment with clean, digest-matched scan evidence across
+	// every live canary row before restoring the app to active.
+	mux.HandleFunc("POST /v1/apps/{slug}/security/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverAppSecurityQuarantine)))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAppSecurity))))
 	// Issue #472 / ADR-054 — per-app cosign trusted-publisher list
 	// (admin + MFA). GET requires admin (read), PUT/DELETE require
@@ -1645,6 +1649,13 @@ func (s *server) handler() http.Handler {
 	// createAlertRule). The microVM captures the doc during
 	// cold boot on every plan; the apid only SERVES the doc
 	// on paid plans.
+	// ADR-202 custom application metrics. The PUT is the one scaling-path
+	// write a customer's own infrastructure calls directly — a cron, a
+	// database trigger — so it takes the ordinary app-write scope rather
+	// than a deploy scope.
+	mux.HandleFunc("PUT /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.putCustomMetric)))
+	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listCustomMetrics)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.deleteCustomMetric)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.openAPIDocDelete))))
@@ -1878,6 +1889,7 @@ func (s *server) handler() http.Handler {
 	// tenant-scoped CloudEvents envelope and wakes schedd's content matcher;
 	// the durable events row remains the recovery source.
 	mux.HandleFunc("POST /v1/events:publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishEvent)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSubscriptions))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createWorkflowRun)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))
@@ -2553,6 +2565,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getUpstream)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/upstreams", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.createUpstream)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.deleteUpstream)))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.updateUpstreamCircuitBreaker)))
 
 	// Usage.
 	// Usage endpoints are narrower than the read surface — a deploy-write

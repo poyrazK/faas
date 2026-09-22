@@ -480,7 +480,7 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	var layerAnnotations map[string]string
 	var tmpPath, digestHex string
 	var ownsTmp bool
-	if (o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isAppFilesystemKey(key) {
+	if (o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isSnapshotDriveKey(key) || isAppFilesystemKey(key) {
 		var uncompressedSize int64
 		tmpPath, digestHex, uncompressedSize, err = o.compressArtifact(ctx, key, r)
 		ownsTmp = true
@@ -1207,6 +1207,10 @@ func buildImageManifest(
 // this helper.
 func isSnapshotMemoryKey(key string) bool {
 	return strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/mem")
+}
+
+func isSnapshotDriveKey(key string) bool {
+	return strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/v2/drive")
 }
 
 func isAppFilesystemKey(key string) bool {

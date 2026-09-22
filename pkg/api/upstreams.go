@@ -289,6 +289,77 @@ type DataUpstreamResponse struct {
 	LastProbedAt     string             `json:"last_probed_at,omitempty"`
 	CreatedAt        string             `json:"created_at"`
 	LastSeenAt       string             `json:"last_seen_at"`
+	// CircuitBreaker is the ADR-201 §3 egress-breaker policy for this
+	// upstream. Always present so a client can tell "not opted in" from
+	// "field not supported by this API version".
+	CircuitBreaker EgressCircuitBreakerPolicy `json:"circuit_breaker"`
+}
+
+// EgressCircuitBreakerPolicy is the per-upstream egress-breaker policy
+// (ADR-201 §3).
+//
+// When Enabled, connections from the app to this upstream are REJECTED with
+// a TCP reset while the circuit is open, instead of hanging for a full
+// connect timeout. That is the point: a blackholed dependency otherwise burns
+// the request budget and then the wake slot on every request, turning one
+// dependency outage into a per-app capacity outage.
+//
+// Disabled by default, and that default is deliberate: this rule can cut an
+// app off from its own database, so it is never inferred.
+type EgressCircuitBreakerPolicy struct {
+	Enabled bool `json:"enabled"`
+	// FailureThreshold / MinSamples / OpenSeconds are optional overrides of
+	// the platform defaults. Omitted (nil) means "track the platform
+	// default", so an upstream that only sets enabled follows the defaults
+	// as they evolve rather than freezing today's values.
+	FailureThreshold *float64 `json:"failure_threshold,omitempty"`
+	MinSamples       *int     `json:"min_samples,omitempty"`
+	OpenSeconds      *int     `json:"open_seconds,omitempty"`
+	// State is the observed circuit state, read-only. Empty when the
+	// breaker is not enabled or schedd has not yet reported one.
+	State string `json:"state,omitempty"`
+}
+
+// UpdateUpstreamCircuitBreakerRequest is the PATCH body for
+// /v1/apps/{slug}/upstreams/{id}/circuit-breaker.
+//
+// Every field is a pointer so "don't touch" is distinguishable from
+// "explicitly clear" — the same convention PatchAppRequest uses. Setting
+// Enabled to false leaves the thresholds intact so a customer can toggle
+// protection without losing their tuning.
+type UpdateUpstreamCircuitBreakerRequest struct {
+	Enabled          *bool    `json:"enabled,omitempty"`
+	FailureThreshold *float64 `json:"failure_threshold,omitempty"`
+	MinSamples       *int     `json:"min_samples,omitempty"`
+	OpenSeconds      *int     `json:"open_seconds,omitempty"`
+}
+
+// Validate bounds the override fields. The bounds mirror
+// EdgeRuleCircuitBreakerAction so the two breaker surfaces cannot be tuned
+// into different regimes.
+func (r *UpdateUpstreamCircuitBreakerRequest) Validate() *Problem {
+	if r == nil {
+		return ErrValidation("circuit_breaker body is required")
+	}
+	if r.Enabled == nil && r.FailureThreshold == nil && r.MinSamples == nil && r.OpenSeconds == nil {
+		return ErrValidation("circuit_breaker: at least one field must be set")
+	}
+	if r.FailureThreshold != nil && (*r.FailureThreshold <= 0 || *r.FailureThreshold > 1) {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker: failure_threshold must be in (0, 1] (got %g) — it is a ratio, not a count",
+			*r.FailureThreshold))
+	}
+	if r.MinSamples != nil && (*r.MinSamples < 1 || *r.MinSamples > MaxEdgeRuleCircuitMinRequests) {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker: min_samples must be in 1..%d (got %d) — the probe samples every 30s, so a high value can never accumulate",
+			MaxEdgeRuleCircuitMinRequests, *r.MinSamples))
+	}
+	if r.OpenSeconds != nil && (*r.OpenSeconds < 1 || *r.OpenSeconds > MaxEdgeRuleCircuitOpenSeconds) {
+		return ErrValidation(fmt.Sprintf(
+			"circuit_breaker: open_seconds must be in 1..%d (got %d)",
+			MaxEdgeRuleCircuitOpenSeconds, *r.OpenSeconds))
+	}
+	return nil
 }
 
 // DataUpstreamListResponse is the wrapped GET response: the

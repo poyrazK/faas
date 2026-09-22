@@ -40,8 +40,20 @@ func TestValidateFleetBundleManifestRequiresDeclaredComputeNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validateFleetBundleManifest: %v", err)
 	}
-	if len(errs) != 2 || !containsFleetBundleError(errs, "requires compute-only") || !containsFleetBundleError(errs, "does not declare node") {
+	if len(errs) != 2 || !containsFleetBundleError(errs, "requires compute-only") || !containsFleetBundleError(errs, "does not authorize dynamic node") {
 		t.Fatalf("manifest membership errors = %v", errs)
+	}
+}
+
+func TestValidateFleetBundleManifestAllowsPolicyAuthorizedDynamicNode(t *testing.T) {
+	manifestPath := dynamicSplitboxJoinManifest(t)
+	bundle := &fleetbundle.Bundle{Spec: fleetbundle.Spec{Claims: []nodeclaim.Claim{signedTestClaim("fsn-4")}}}
+	if errs, err := validateFleetBundleManifest(bundle, manifestPath); err != nil || errs != nil {
+		t.Fatalf("dynamic compute claim rejected: errs=%v err=%v", errs, err)
+	}
+	bundle.Spec.Claims = []nodeclaim.Claim{signedTestClaim("other-4")}
+	if errs, err := validateFleetBundleManifest(bundle, manifestPath); err != nil || !containsFleetBundleError(errs, "name prefix") {
+		t.Fatalf("outside-policy claim errors=%v err=%v", errs, err)
 	}
 }
 
@@ -72,6 +84,9 @@ func TestResolveFleetBundleInputsUsesSignedClaimAndRequiresReplayState(t *testin
 	}
 	if opts.Node != "fsn-4" || opts.SSHHost != "203.0.113.27" || opts.SSHUser != "root" || opts.SSHPort != 22 || opts.SSHHostKeySHA256 == "" {
 		t.Fatalf("signed claim was not copied: %#v", opts)
+	}
+	if !opts.FleetBundleVerified {
+		t.Fatal("verified bundle was not retained as the dynamic enrollment authorization")
 	}
 
 	opts.DryRun = false

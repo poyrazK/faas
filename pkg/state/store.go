@@ -684,6 +684,15 @@ type ComputeNodeUsageBatcher interface {
 	ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ComputeNodeCPUUsageBatcher is the optional fleet-wide sustained CPU
+// reservation view used by placement. Values are the sum of each live app
+// instance's configured cpu_millicores, grouped by destination node. Keeping
+// this optional avoids widening the core Store contract for narrow adapters;
+// PgStore and MemStore both implement it.
+type ComputeNodeCPUUsageBatcher interface {
+	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
+}
+
 // ManagedRealtimeEndpointStore is the optional persistence surface for
 // managed realtime endpoint resources. It is intentionally separate from
 // Store so narrow test doubles and older integrations remain source-
@@ -2381,7 +2390,21 @@ type Store interface {
 	// Returns ErrNotFound when no row exists for deploymentID
 	// (handled by the apid handler with the standard 404 +
 	// IDOR posture).
+	//
+	// ADR-198: this now reads the stored deployments.revision column
+	// rather than recomputing row_number() on every call. The
+	// migration backfilled that column with the identical window, so
+	// the stability contract above is unchanged — and strengthened,
+	// because a stored value cannot shift when an earlier row is
+	// removed.
 	DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error)
+	// DeploymentByRevision resolves an app's deployment by its per-app
+	// revision (ADR-198) — the customer-facing `v42` handle accepted
+	// anywhere a deployment id is taken (`gregale rollback --to v42`,
+	// `gregale traffic set --deployment v42`). Returns ErrNotFound for
+	// an unknown or non-positive revision, preserving the 404 + IDOR
+	// posture of DeploymentByID.
+	DeploymentByRevision(ctx context.Context, appID string, revision int) (Deployment, error)
 	// LiveDeployment returns the app's current live deployment (status='live').
 	// schedd's wake path boots from this; ErrNotFound if the app has never had a
 	// successful deploy (an app always has a live snapshot OR a cold-bootable
@@ -3939,6 +3962,26 @@ type Store interface {
 	// Used by the queueStats handler. OldestPendingAt is the zero-time
 	// when the app has no pending rows; callers translate to nil.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)
+
+	// --- ADR-202 custom application metrics -------------------------
+	//
+	// PutCustomMetric upserts one customer-pushed gauge. Keyed
+	// (app_id, name), so a push to an existing name replaces the value
+	// and the timestamp rather than adding a row — that upsert is what
+	// bounds the table. distinctLimit caps how many DISTINCT names an
+	// app may hold; the store enforces it in the same transaction as the
+	// insert, because a check-then-insert would let concurrent pushes of
+	// two new names both pass a limit of one.
+	PutCustomMetric(ctx context.Context, appID, name string, value float64, observedAt time.Time, distinctLimit int) error
+	// ListCustomMetrics returns every stored gauge for an app. The
+	// scaling trigger calls this per owned app per tick, which is why
+	// MaxCustomMetricsPerApp is a latency bound and not only a storage
+	// one. Freshness is NOT applied here: the caller owns the clock, so
+	// a replayed or back-dated evaluation sees what actually applied.
+	ListCustomMetrics(ctx context.Context, appID string) ([]CustomMetric, error)
+	// DeleteCustomMetric removes one gauge by name so a customer can
+	// retire a metric without waiting for the app to be deleted.
+	DeleteCustomMetric(ctx context.Context, appID, name string) error
 	// QueueStateForQueue returns the same live counters scoped to one named
 	// queue binding. Queue names are exact matches; the empty queue name is
 	// reserved for the legacy app-wide queue returned by QueueState.
@@ -6149,6 +6192,22 @@ type Store interface {
 	// Partition pruning on sampled_at drops everything outside
 	// the window.
 	ListDataUpstreamProbesByHostRegion(ctx context.Context, arg sqlc.ListDataUpstreamProbesByHostRegionParams) ([]DataUpstreamProbe, error)
+
+	// ListEgressCircuitCandidates (ADR-201 §3) backs schedd's egress
+	// circuit-breaker loop. Returns every opted-in upstream joined to its
+	// newest probe verdict no older than `since`; an opted-in upstream with
+	// no probe in the window comes back with a zero Sampled rather than
+	// being dropped, because "never measured" and "row gone" must stay
+	// distinguishable to the loop. Postgres-only — MemStore returns the
+	// ADR-098 sentinel.
+	ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error)
+
+	// UpdateDataUpstreamCircuitBreaker (ADR-201 §3) applies a partial
+	// per-upstream egress-breaker policy update. Scoped by (id, app_id) so
+	// a forged ID from a sibling app cannot enable a breaker on an upstream
+	// the caller cannot see — this rule can cut an app off from its own
+	// database. Postgres-only; MemStore returns the ADR-098 sentinel.
+	UpdateDataUpstreamCircuitBreaker(ctx context.Context, in UpdateDataUpstreamCircuitBreakerParams) error
 
 	// ListDataUpstreamProbeHistory backs
 	// GET /v1/apps/{slug}/upstreams/history. It aggregates the raw probe

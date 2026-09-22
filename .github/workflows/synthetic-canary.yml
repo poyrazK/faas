@@ -1,0 +1,138 @@
+name: synthetic-canary
+
+# Synthetic prober for the one question ~170 Prometheus rules cannot answer:
+# can a customer deploy and invoke right now?
+#
+# The four SLO alerts that would cover it are structurally silent when idle.
+# Each ends with a zero-volume guard, for example FaasBuildSuccessLow:
+#
+#   and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
+#
+# The guard is correct — it stops a divide-by-zero from paging on a quiet
+# night — but the consequence is that if the deploy pipeline breaks and nobody
+# deploys, the ratio has no denominator and nothing fires. The platform can be
+# fully broken with every alert green. FaasApiAvailabilityLow,
+# FaasBuildSuccessBurnRateHigh and FaasApiAvailabilityBurnRateHigh share the
+# shape.
+#
+# This is not hypothetical here. PR #1286: FAAS_FUNCTION_RUNNER_* was unset on
+# imaged, so every function deploy failed platform-wide, and it was masked by
+# warm instances still serving. Passive metrics cannot see that class; a
+# customer discovering it is the current detection mechanism.
+#
+# The prober reuses deploy/scripts/production-release-acceptance.sh verbatim —
+# the same script cd-platform already runs as its final release gate. Reusing
+# rather than forking means the canary cannot drift from what a real release
+# is held to, and the script is already proven in production. It mints its own
+# 2h token, revokes it, and deletes the apps it created on every exit path
+# including cancellation.
+
+on:
+  schedule:
+    # Every six hours. The prober deploys 2 x active_node_count apps plus a
+    # redeploy, so this is real build and microVM work, not a cheap HTTP ping —
+    # the cadence is a deliberate trade against that cost. A broken deploy
+    # pipeline is not a serving outage (existing apps keep running), so a
+    # detection window of hours is the right order of magnitude.
+    - cron: "37 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      page_on_failure:
+        description: >-
+          Push a severity=page alert into Alertmanager when the canary fails.
+          Leave off for a manual investigation run you do not want to page for.
+        type: boolean
+        default: true
+
+concurrency:
+  # Canaries must not overlap each other: two runs would race on fleet
+  # capacity and produce failures that are about contention rather than about
+  # the platform. Not cancel-in-progress — a run partway through owns apps and
+  # a minted token, and its cleanup trap needs to finish.
+  group: synthetic-canary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: Production deploy canary
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up control-plane SSH
+        run: |
+          set -euo pipefail
+          [[ -n "$CP_HOST" && -n "$CP_SSH_KEY" ]] || {
+            echo "::error::CP_HOST and CP_SSH_KEY are required to reach the control plane" >&2
+            exit 1
+          }
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 0600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$CP_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 0600 ~/.ssh/known_hosts
+
+      - name: Resolve the live release and fleet size
+        run: |
+          set -euo pipefail
+          # The canary asks about the release that is SERVING, not about a
+          # candidate. Read it off the host's current pointer rather than from
+          # this checkout, which is only here to carry the script.
+          active_release="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            'basename "$(readlink -f /opt/faas/current)"')"
+          [[ "$active_release" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::/opt/faas/current does not resolve to a release SHA (got '${active_release}')" >&2
+            exit 1
+          }
+          echo "ACTIVE_RELEASE=$active_release" >> "$GITHUB_ENV"
+
+          status_file="$RUNNER_TEMP/fleet-status.json"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            "/usr/local/bin/gregalectl compute-nodes release-status --desired-release '${active_release}' --timeout 0 --break-glass-db -json" \
+            > "$status_file"
+          active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"
+          echo "ACTIVE_NODE_COUNT=$active_node_count" >> "$GITHUB_ENV"
+          echo "canary target: release ${active_release} across ${active_node_count} node(s)"
+
+      - name: Deploy and invoke through production
+        id: probe
+        run: |
+          set -euo pipefail
+          # Originates from the control plane for the same reason cd-platform
+          # does: Cloudflare blocks GitHub-hosted egress to the public host.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            "env RELEASE_SHA='${ACTIVE_RELEASE}' RUN_ID='${GITHUB_RUN_ID}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
+            < deploy/scripts/production-release-acceptance.sh \
+            2>&1 | tee "$RUNNER_TEMP/canary.log"
+
+      - name: Page on canary failure
+        if: failure() && (github.event_name == 'schedule' || inputs.page_on_failure)
+        run: |
+          set -euo pipefail
+          # A red GitHub badge is not a notification. Route through the
+          # Alertmanager the platform already uses so this reaches the same
+          # receivers, silences and grouping as every other page.
+          tail="$(tail -c 2000 "$RUNNER_TEMP/canary.log" 2>/dev/null || echo 'no output captured')"
+          summary="a customer could not deploy and invoke on release ${ACTIVE_RELEASE:-unknown}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # ssh joins its command words with spaces and the REMOTE shell
+          # re-parses the result, so these must be quoted for that second
+          # parse or a summary with spaces arrives as several arguments and a
+          # log tail containing a quote breaks the command outright. printf %q
+          # emits one shell-safe token each. This is the same defect class the
+          # check_shell_quoting gate enforces in Go; the gate does not read
+          # YAML, so it did not catch it here.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            "env CANARY_RUN_URL=$(printf %q "$run_url") bash -s -- $(printf %q "$summary") $(printf %q "$tail")" \
+            < scripts/ops/canary_alert.sh
+          echo "::error::synthetic canary failed; a severity=page alert was pushed to Alertmanager"

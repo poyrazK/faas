@@ -9,6 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 func (s *PgStore) ListRuntimeConfigs(ctx context.Context, scope RuntimeConfigScope, scopeID string) ([]RuntimeConfig, error) {
@@ -168,9 +171,7 @@ func (s *PgStore) MarkRuntimeConfigApplied(ctx context.Context, key string, scop
 	if applyErr != "" {
 		status = string(RuntimeConfigFailed)
 		appliedAt = nil
-		if len(applyErr) > 1024 {
-			applyErr = applyErr[:1024]
-		}
+		applyErr = safetext.Truncate(applyErr, api.AuditReasonMaxBytes)
 	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE runtime_config_entries

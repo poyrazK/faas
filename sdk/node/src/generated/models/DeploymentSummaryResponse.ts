@@ -18,5 +18,9 @@ export type DeploymentSummaryResponse = {
    * The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists.
    */
   rollback_target_id?: string | null;
+  /**
+   * Revision (ADR-198) of `rollback_target_id`, so a client can render the rollback command with the `v41` handle a customer can read and retype. Omitted when the target predates the revision column; fall back to `rollback_target_id` rather than rendering `v0`.
+   */
+  rollback_target_revision?: number;
 };
 

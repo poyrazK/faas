@@ -8,6 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 const prewarmSelect = `id, app_id, account_id, count, wake_at, expires_at,
@@ -127,9 +130,7 @@ func (s *PgStore) CompletePrewarmIntent(ctx context.Context, id string, firedAt 
 }
 
 func (s *PgStore) FailPrewarmIntent(ctx context.Context, id string, firedAt time.Time, cause string) error {
-	if len(cause) > 2048 {
-		cause = cause[:2048]
-	}
+	cause = safetext.Truncate(cause, api.AuditMessageMaxBytes)
 	tag, err := s.pool.Exec(ctx, `update prewarm_intents
 		set status = 'failed', fired_at = $2, last_error = $3
 		where id = $1 and status = 'running'`, id, firedAt.UTC(), cause)

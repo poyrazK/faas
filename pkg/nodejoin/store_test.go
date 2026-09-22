@@ -23,6 +23,12 @@ func TestMemStoreLeaseAndResume(t *testing.T) {
 	if err := s.UpdatePhase(ctx, "fsn-2", "worker-a", PhaseConverging, ""); err != nil {
 		t.Fatalf("UpdatePhase: %v", err)
 	}
+	if err := s.UpdatePhase(ctx, "fsn-2", "worker-a", PhasePrepared, ""); err != nil {
+		t.Fatalf("UpdatePhase prepared: %v", err)
+	}
+	if prepared, err := s.Get(ctx, "fsn-2"); err != nil || prepared.Phase != PhasePrepared {
+		t.Fatalf("prepared job = %#v, err=%v", prepared, err)
+	}
 	if err := s.MarkFailed(ctx, "fsn-2", "worker-a", errors.New("connection reset")); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}

@@ -47,9 +47,9 @@ func UnitApid() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas apid — public control-plane API (spec §4.1)",
 		Documentation:         "https://gregale.dev/docs/ops/apid",
-		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice"},
+		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-apid.socket"},
 		Wants:                 []string{"faas-cp.slice"},
-		Requires:              []string{"postgresql.service"},
+		Requires:              []string{"postgresql.service", "faas-apid.socket"},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
@@ -59,6 +59,9 @@ func UnitApid() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: restart when the daemon stops pinging the systemd
+		// watchdog (gated on pkg/wire.Liveness).
+		WatchdogSec: "90s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",

@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -44,6 +45,7 @@ type deployJoinOptions struct {
 	SSHKnownHostsSource     string
 	FleetBundleFile         string
 	FleetBundleSignature    string
+	FleetBundleVerified     bool
 	FleetReplayState        string
 	SSHKnownHostsFile       string
 	ReleaseTarball          string
@@ -68,6 +70,7 @@ type deployJoinOptions struct {
 	AnsibleVarsFile         string
 	RepoRoot                string
 	PostgresOverlapNodes    int
+	RolloutPhase            string
 	SkipFleetPreflight      bool
 	Resume                  bool
 	Timeout                 time.Duration
@@ -84,6 +87,8 @@ type deployJoinReport struct {
 	ManifestFile   string       `json:"manifest_file"`
 	ReleaseGitSHA  string       `json:"release_git_sha"`
 	FleetPreflight bool         `json:"fleet_preflight"`
+	Prepared       bool         `json:"prepared"`
+	DynamicScale   bool         `json:"dynamic_scale"`
 	Applied        bool         `json:"applied"`
 	Steps          []string     `json:"steps"`
 	Timings        []joinTiming `json:"timings,omitempty"`
@@ -93,6 +98,12 @@ type joinTiming struct {
 	Phase      string `json:"phase"`
 	DurationMS int64  `json:"duration_ms"`
 }
+
+const (
+	joinRolloutFull     = "full"
+	joinRolloutPrepare  = "prepare"
+	joinRolloutActivate = "activate"
+)
 
 var nodeJoinStoreOpener = openNodeJoinStore
 
@@ -132,8 +143,8 @@ func defaultAnsiblePlaybookRunner(ctx context.Context, workingDir string, args [
 func cmdDeployJoinNode(args []string) int {
 	fs := flag.NewFlagSet("deploy join-node", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	manifestFile := fs.String("manifest-file", "", "split-box manifest containing the new compute-only node (required)")
-	node := fs.String("node", "", "manifest host name to adopt (required)")
+	manifestFile := fs.String("manifest-file", "", "signed split-box manifest declaring the host or dynamic-compute policy (required)")
+	node := fs.String("node", "", "static or policy-authorized compute host name to adopt (required)")
 	sshHost := fs.String("ssh-host", "", "SSH address of the already-created machine (required; provider boundary)")
 	sshUser := fs.String("ssh-user", "", "SSH user for the adopted machine (default: root without --fleet-bundle-file)")
 	sshPort := fs.Int("ssh-port", 0, "SSH port for the adopted machine (default: 22 without --fleet-bundle-file)")
@@ -165,6 +176,8 @@ func cmdDeployJoinNode(args []string) int {
 	ansibleVars := fs.String("ansible-vars-file", "", "optional provider/overlay Ansible vars file")
 	repoRoot := fs.String("repo-root", "", "path to the faas repository (default: inferred from gregalectl)")
 	skipPreflight := fs.Bool("skip-fleet-preflight", false, "skip the complete-fleet preflight (only for a previously validated fleet)")
+	prepareOnly := fs.Bool("prepare-only", false, "stage and verify an existing managed node without draining it")
+	activatePrepared := fs.Bool("activate-prepared", false, "activate a release previously completed by --prepare-only")
 	resume := fs.Bool("resume", false, "resume a failed or interrupted join job for this exact desired state")
 	timeout := fs.Duration("timeout", 20*time.Minute, "maximum time allowed for the remote adoption")
 	leaseTTL := fs.Duration("lease-ttl", 30*time.Minute, "database lease held by this join worker")
@@ -177,6 +190,16 @@ func cmdDeployJoinNode(args []string) int {
 	if fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: unexpected positional argument")
 		return 2
+	}
+	if *prepareOnly && *activatePrepared {
+		fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: --prepare-only and --activate-prepared are mutually exclusive")
+		return 2
+	}
+	rolloutPhase := joinRolloutFull
+	if *prepareOnly {
+		rolloutPhase = joinRolloutPrepare
+	} else if *activatePrepared {
+		rolloutPhase = joinRolloutActivate
 	}
 
 	opts := deployJoinOptions{
@@ -213,6 +236,7 @@ func cmdDeployJoinNode(args []string) int {
 		AnsibleVarsFile:         *ansibleVars,
 		RepoRoot:                *repoRoot,
 		PostgresOverlapNodes:    1,
+		RolloutPhase:            rolloutPhase,
 		SkipFleetPreflight:      *skipPreflight,
 		Resume:                  *resume,
 		Timeout:                 *timeout,
@@ -252,7 +276,11 @@ func cmdDeployJoinNode(args []string) int {
 		return emitDeployJoinReport(report, false, opts.JSON)
 	}
 	if !opts.Yes {
-		fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: this will bootstrap and start services on the remote host")
+		if opts.RolloutPhase == joinRolloutPrepare {
+			fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: this will stage and verify the release without draining the remote host")
+		} else {
+			fmt.Fprintln(os.Stderr, "gregalectl deploy join-node: this will bootstrap and start services on the remote host")
+		}
 		fmt.Fprintln(os.Stderr, "Re-run with --yes to proceed.")
 		return 2
 	}
@@ -262,11 +290,13 @@ func cmdDeployJoinNode(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy join-node: %v\n", err)
 		return code
 	}
-	if err := markFleetBundleConsumed(opts); err != nil {
-		fmt.Fprintf(os.Stderr, "gregalectl deploy join-node: %v\n", err)
-		return 3
+	if report.Applied {
+		if err := markFleetBundleConsumed(opts); err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl deploy join-node: %v\n", err)
+			return 3
+		}
 	}
-	return emitDeployJoinReport(report, true, opts.JSON)
+	return emitDeployJoinReport(report, report.Applied, opts.JSON)
 }
 
 // cmdDeployRollbackNode is the operator-safe rollback boundary for a join.
@@ -349,6 +379,11 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 	if opts.LeaseTTL <= 0 {
 		return 2, errors.New("--lease-ttl must be positive")
 	}
+	phase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
+	if err != nil {
+		return 2, err
+	}
+	opts.RolloutPhase = phase
 	manifestHash, err := joinManifestHash(opts.ManifestFile)
 	if err != nil {
 		return 1, err
@@ -359,8 +394,12 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 	}
 	defer closeJobStore()
 	spec := nodejoin.Spec{NodeName: opts.Node, DatabaseNode: report.DatabaseNode, SSHHost: opts.SSHHost, ManifestHash: manifestHash, ReleaseGitSHA: report.ReleaseGitSHA}
-	if _, err := jobStore.CreateOrResume(context.Background(), spec, opts.Resume); err != nil {
+	job, err := jobStore.CreateOrResume(context.Background(), spec, opts.Resume)
+	if err != nil {
 		return 1, fmt.Errorf("prepare durable join job: %w", err)
+	}
+	if phase == joinRolloutActivate && job.Phase != nodejoin.PhasePrepared {
+		return 3, fmt.Errorf("activate prepared rollout: node %s is in phase %s, want %s; rerun --prepare-only first", opts.Node, job.Phase, nodejoin.PhasePrepared)
 	}
 	owner := fmt.Sprintf("gregalectl-%d-%d", os.Getpid(), time.Now().UnixNano())
 	if _, err := jobStore.AcquireLease(context.Background(), opts.Node, owner, opts.LeaseTTL); err != nil {
@@ -379,13 +418,41 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 		_ = jobStore.MarkFailed(context.Background(), opts.Node, owner, err)
 		return code, err
 	}
+	if phase == joinRolloutPrepare {
+		if err := jobStore.UpdatePhase(context.Background(), opts.Node, owner, nodejoin.PhasePrepared, ""); err != nil {
+			return 3, fmt.Errorf("mark prepared: %w", err)
+		}
+		if err := jobStore.ReleaseLease(context.Background(), opts.Node, owner); err != nil {
+			return 3, fmt.Errorf("release prepared join lease: %w", err)
+		}
+		report.Prepared = true
+		return 0, nil
+	}
 	if err := jobStore.MarkComplete(context.Background(), opts.Node, owner); err != nil {
 		return 3, fmt.Errorf("mark active: %w", err)
 	}
 	return 0, nil
 }
 
+func normalizedJoinRolloutPhase(phase string) (string, error) {
+	phase = strings.TrimSpace(phase)
+	if phase == "" {
+		return joinRolloutFull, nil
+	}
+	switch phase {
+	case joinRolloutFull, joinRolloutPrepare, joinRolloutActivate:
+		return phase, nil
+	default:
+		return "", fmt.Errorf("invalid rollout phase %q", phase)
+	}
+}
+
 func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
+	rolloutPhase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
+	if err != nil {
+		return deployJoinReport{}, err
+	}
+	opts.RolloutPhase = rolloutPhase
 	rolloutOverlapNodes := postgresRolloutOverlapNodes(opts.PostgresOverlapNodes)
 	report := deployJoinReport{
 		Node:           opts.Node,
@@ -462,7 +529,19 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 		}
 	}
 	if !hostFound {
-		return report, fmt.Errorf("manifest does not declare host %q", opts.Node)
+		if !opts.FleetBundleVerified {
+			return report, fmt.Errorf("manifest does not declare host %q; dynamic scale-out requires a verified signed FleetEnrollmentBundle", opts.Node)
+		}
+		dynamicHost, err := m.DynamicComputeHost(opts.Node, opts.StorageDevice)
+		if err != nil {
+			return report, fmt.Errorf("dynamic compute node %q is not authorized: %w", opts.Node, err)
+		}
+		if m.Fleet.ComputeNodeCount()+1 > m.Fleet.DynamicCompute.MaxNodes {
+			return report, fmt.Errorf("dynamic compute policy allows at most %d compute nodes", m.Fleet.DynamicCompute.MaxNodes)
+		}
+		report.DynamicScale = true
+		report.Steps[0] = "validate the signed dynamic-compute policy and one-time enrollment bundle"
+		m.Fleet.Hosts = append(m.Fleet.Hosts, dynamicHost)
 	}
 	if opts.StorageDevice != "" && !filepath.IsAbs(opts.StorageDevice) {
 		return report, fmt.Errorf("storage device %q must be an absolute device path", opts.StorageDevice)
@@ -627,6 +706,11 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if opts.RepoRoot == "" {
 		opts.RepoRoot = defaultRepoRoot()
 	}
+	rolloutPhase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
+	if err != nil {
+		return 2, err
+	}
+	opts.RolloutPhase = rolloutPhase
 	ansibleDir := filepath.Join(opts.RepoRoot, "deploy/ansible")
 	bootstrapContractSHA256, err := joinBootstrapContractHash(ansibleDir)
 	if err != nil {
@@ -657,25 +741,34 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		opts.SSHKnownHostsFile = knownHostsPath
 	}
 
-	m, err := manifest.Load(opts.ManifestFile)
+	baseManifest, err := manifest.Load(opts.ManifestFile)
 	if err != nil {
 		return 1, err
+	}
+	expectedManifestHash, err := joinManifestHash(opts.ManifestFile)
+	if err != nil {
+		return 3, err
+	}
+	m, topologyManifestFile, err := effectiveJoinManifest(ctx, baseManifest, *opts, tempRoot)
+	if err != nil {
+		return 3, err
 	}
 	peerContractSHA256, err := joinPeerContractHash(ansibleDir, m, opts.AnsibleVarsFile, opts.StorageEnvSource, opts.ImagedStorageEnvSource, opts.FleetAgeKeySource, opts.FleetAgeRecipientSource)
 	if err != nil {
 		return 3, err
 	}
 	if opts.SSHKnownHostsSource != "" {
-		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m); err != nil {
+		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m, opts.Node, opts.SSHHost, opts.SSHPort); err != nil {
 			return 3, err
 		}
 	}
-	expectedManifestHash, err := joinManifestHash(opts.ManifestFile)
-	if err != nil {
-		return 3, err
-	}
-	if err := joinReleaseBundleRegistrar(ctx, opts.ReleaseTarball, report.ReleaseGitSHA, expectedManifestHash); err != nil {
-		return 3, fmt.Errorf("register release bundle: %w", err)
+	// Preparation is deliberately non-disruptive and may run concurrently on
+	// every node. Defer the shared release_bundles write to the serialized
+	// activation lane so parallel prepare jobs cannot race the unique git SHA.
+	if rolloutPhase != joinRolloutPrepare {
+		if err := joinReleaseBundleRegistrar(ctx, opts.ReleaseTarball, report.ReleaseGitSHA, expectedManifestHash); err != nil {
+			return 3, fmt.Errorf("register release bundle: %w", err)
+		}
 	}
 	builderBaseRef := ""
 	if digest := strings.TrimSpace(m.Release.BuilderBaseDigest); digest != "" {
@@ -692,6 +785,10 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	trustRoot := filepath.Join(tempRoot, "pki-trust")
 	if err := copyTrustBundle(opts.PKISource, trustRoot, roleComputeOnly, manifestSANs, report.DatabaseNode); err != nil {
 		return 3, fmt.Errorf("prepare compute trust bundle: %w", err)
+	}
+	candidateCAFingerprint, err := pki.LoadCertificateFingerprint(filepath.Join(trustRoot, "ca", "ca.crt"))
+	if err != nil {
+		return 3, fmt.Errorf("fingerprint candidate compute CA: %w", err)
 	}
 	files, err := renderManifestAnsibleFiles(m, tempRoot)
 	if err != nil {
@@ -743,7 +840,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_inventory_name":             opts.Node,
 		"faas_join_database_node":              report.DatabaseNode,
 		"faas_join_release_git_sha":            report.ReleaseGitSHA,
-		"faas_join_manifest_source":            opts.ManifestFile,
+		"faas_join_manifest_source":            topologyManifestFile,
 		"faas_join_bootstrap_binary_source":    opts.BootstrapBinary,
 		"faas_join_cosign_binary_source":       opts.CosignBinary,
 		"faas_join_pki_source":                 trustRoot,
@@ -768,6 +865,8 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_builder_base_ref":           builderBaseRef,
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
 		"faas_join_peer_contract_sha256":       peerContractSHA256,
+		"faas_join_rollout_phase":              rolloutPhase,
+		"faas_join_candidate_ca_fingerprint":   candidateCAFingerprint,
 		"faas_postgres_rollout_overlap_nodes":  postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
@@ -794,7 +893,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		common = append(common, "-e", "@"+opts.AnsibleVarsFile)
 	}
 	common = append(common, "-e", "@"+varsPath)
-	if !opts.SkipFleetPreflight {
+	if rolloutPhase != joinRolloutActivate && !opts.SkipFleetPreflight {
 		if progress != nil {
 			if err := progress(nodejoin.PhasePreflight); err != nil {
 				return 3, fmt.Errorf("record preflight phase: %w", err)
@@ -813,22 +912,39 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 			return 3, fmt.Errorf("record converging phase: %w", err)
 		}
 	}
-	// A node join changes the control-plane's peer allowlists as well as the
-	// adopted host. Keep this as a separate, narrowly limited play so the
-	// existing compute fleet is never rebooted or reconfigured by --limit.
-	controlPlaneArgs := append(append([]string{}, common...), "--limit", "control_plane", filepath.Join(ansibleDir, "node_join_control_plane.yml"))
-	phaseStarted := time.Now()
-	controlPlaneErr := ansiblePlaybookRunner(ctx, ansibleDir, controlPlaneArgs)
-	report.Timings = append(report.Timings, joinTiming{Phase: "control_plane_convergence", DurationMS: time.Since(phaseStarted).Milliseconds()})
-	if controlPlaneErr != nil {
-		return 3, fmt.Errorf("control-plane topology convergence: %w", controlPlaneErr)
+	// Preparation runs concurrently across nodes, so it must not mutate the
+	// shared control plane. Activation is serialized by cd-platform and keeps
+	// this topology convergence immediately ahead of the node drain.
+	if rolloutPhase != joinRolloutPrepare {
+		controlPlaneArgs := append(append([]string{}, common...), "--limit", "control_plane", filepath.Join(ansibleDir, "node_join_control_plane.yml"))
+		phaseStarted := time.Now()
+		controlPlaneErr := ansiblePlaybookRunner(ctx, ansibleDir, controlPlaneArgs)
+		report.Timings = append(report.Timings, joinTiming{Phase: "control_plane_convergence", DurationMS: time.Since(phaseStarted).Milliseconds()})
+		if controlPlaneErr != nil {
+			return 3, fmt.Errorf("control-plane topology convergence: %w", controlPlaneErr)
+		}
 	}
-	joinArgs := append(append([]string{}, common...), "--limit", opts.Node, filepath.Join(ansibleDir, "node_join.yml"))
-	phaseStarted = time.Now()
+	joinArgs := append(append([]string{}, common...), "--limit", opts.Node)
+	if rolloutPhase == joinRolloutActivate {
+		joinArgs = append(joinArgs, "--start-at-task", "Verify the prepared rollout marker")
+	}
+	joinArgs = append(joinArgs, filepath.Join(ansibleDir, "node_join.yml"))
+	phaseStarted := time.Now()
 	joinErr := ansiblePlaybookRunner(ctx, ansibleDir, joinArgs)
-	report.Timings = append(report.Timings, joinTiming{Phase: "node_convergence", DurationMS: time.Since(phaseStarted).Milliseconds()})
+	nodePhaseName := "node_convergence"
+	switch rolloutPhase {
+	case joinRolloutPrepare:
+		nodePhaseName = "node_preparation"
+	case joinRolloutActivate:
+		nodePhaseName = "node_activation"
+	}
+	report.Timings = append(report.Timings, joinTiming{Phase: nodePhaseName, DurationMS: time.Since(phaseStarted).Milliseconds()})
 	if joinErr != nil {
 		return 3, fmt.Errorf("node adoption: %w", joinErr)
+	}
+	if rolloutPhase == joinRolloutPrepare {
+		report.Prepared = true
+		return 0, nil
 	}
 	if progress != nil {
 		if err := progress(nodejoin.PhaseVerifying); err != nil {
@@ -855,6 +971,129 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	report.Applied = true
 	return 0, nil
+}
+
+// effectiveJoinManifest overlays durable dynamic membership onto the signed
+// release manifest for topology rendering. The signed file remains the
+// release/configuration identity (and therefore the manifest_hash stored in
+// release_bundles); only fleet.hosts is expanded for Ansible, SAN issuance,
+// and the joining node's runtime view.
+func effectiveJoinManifest(ctx context.Context, base *manifest.Manifest, opts deployJoinOptions, tempRoot string) (*manifest.Manifest, string, error) {
+	policy := base.Fleet.DynamicCompute
+	if policy == nil || !policy.Enabled {
+		return base, opts.ManifestFile, nil
+	}
+	declared := make(map[string]manifest.Host, len(base.Fleet.Hosts))
+	for _, host := range base.Fleet.Hosts {
+		declared[host.Name] = host
+	}
+	_, targetDeclared := declared[opts.Node]
+	if !targetDeclared && !opts.FleetBundleVerified {
+		return nil, "", fmt.Errorf("dynamic compute node %q requires a verified signed FleetEnrollmentBundle", opts.Node)
+	}
+
+	store, closeStore, err := computeNodesStoreOpener()
+	if err != nil {
+		return nil, "", fmt.Errorf("load dynamic compute topology: %w", err)
+	}
+	defer closeStore()
+	rows, err := store.ListComputeNodes(ctx, true)
+	if err != nil {
+		return nil, "", fmt.Errorf("list dynamic compute topology: %w", err)
+	}
+
+	dynamicHosts := make(map[string]manifest.Host)
+	for _, row := range rows {
+		name, ok := dynamicManifestNodeName(row.Name)
+		if !ok {
+			continue
+		}
+		if _, isStatic := declared[name]; isStatic {
+			continue
+		}
+		// The registry can also contain legacy service-discovery aliases such
+		// as vmmd.faas. They are compute-only rows, but they are not fleet
+		// members admitted by this dynamic policy. Only reconstruct names in
+		// the policy namespace; a matching name still passes the full policy
+		// and target checks below.
+		if !strings.HasPrefix(name, policy.NamePrefix) {
+			continue
+		}
+		if row.Lifecycle == state.NodeLifecycleRetired {
+			if name == opts.Node {
+				return nil, "", fmt.Errorf("dynamic compute node %q is retired and cannot be re-enrolled", name)
+			}
+			continue
+		}
+		if row.Role == nil || *row.Role != roleComputeOnly {
+			continue
+		}
+		host, hostErr := base.DynamicComputeHost(name, "")
+		if hostErr != nil {
+			return nil, "", fmt.Errorf("registered dynamic compute node %q violates the signed policy: %w", name, hostErr)
+		}
+		expectedTarget, targetErr := manifest.TCPURL(host.Address)
+		if targetErr != nil {
+			return nil, "", fmt.Errorf("derive target for registered dynamic compute node %q: %w", name, targetErr)
+		}
+		if row.TargetURL != expectedTarget {
+			return nil, "", fmt.Errorf("registered dynamic compute node %q target_url is %q, want policy-derived %q", name, row.TargetURL, expectedTarget)
+		}
+		dynamicHosts[name] = host
+	}
+
+	if !targetDeclared {
+		host, hostErr := base.DynamicComputeHost(opts.Node, opts.StorageDevice)
+		if hostErr != nil {
+			return nil, "", fmt.Errorf("authorize dynamic compute node %q: %w", opts.Node, hostErr)
+		}
+		// A retry may already have registered the row. Preserve the signed
+		// claim's storage contract while requiring the DB endpoint to match.
+		dynamicHosts[opts.Node] = host
+	}
+	if len(dynamicHosts) == 0 {
+		return base, opts.ManifestFile, nil
+	}
+	if base.Fleet.ComputeNodeCount()+len(dynamicHosts) > policy.MaxNodes {
+		return nil, "", fmt.Errorf("dynamic compute topology would contain %d nodes; signed policy allows %d",
+			base.Fleet.ComputeNodeCount()+len(dynamicHosts), policy.MaxNodes)
+	}
+
+	effective := *base
+	effective.Fleet = base.Fleet
+	effective.Fleet.Hosts = append([]manifest.Host(nil), base.Fleet.Hosts...)
+	names := make([]string, 0, len(dynamicHosts))
+	for name := range dynamicHosts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		effective.Fleet.Hosts = append(effective.Fleet.Hosts, dynamicHosts[name])
+	}
+	if errs := effective.Validate(); errs != nil {
+		return nil, "", fmt.Errorf("effective dynamic compute topology is invalid: %w", errs)
+	}
+	body, err := yaml.Marshal(&effective)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode effective dynamic compute topology: %w", err)
+	}
+	path := filepath.Join(tempRoot, "effective-manifest.yaml")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return nil, "", fmt.Errorf("write effective dynamic compute topology: %w", err)
+	}
+	return &effective, path, nil
+}
+
+func dynamicManifestNodeName(databaseName string) (string, bool) {
+	const suffix = ".faas"
+	if !strings.HasSuffix(databaseName, suffix) {
+		return "", false
+	}
+	name := strings.TrimSuffix(databaseName, suffix)
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 func joinPeerContractHash(ansibleDir string, m *manifest.Manifest, inputFiles ...string) (string, error) {
@@ -1248,15 +1487,32 @@ func verifySSHHostKey(ctx context.Context, opts deployJoinOptions, knownHostsPat
 // contacts peers. Every stable manifest address must appear in the
 // operator-verified file. The selected provider address is appended only
 // after its observed key matches the separately authorized fingerprint.
-func requireFleetKnownHosts(path string, m *manifest.Manifest) error {
+func requireFleetKnownHosts(path string, m *manifest.Manifest, targetNode, targetSSHHost string, targetSSHPort int) error {
 	for _, host := range m.Fleet.Hosts {
-		address := strings.TrimSpace(host.Address)
-		if address == "" {
-			address = strings.TrimSpace(host.Name)
+		address := ""
+		port := 22
+		if host.Name == targetNode && strings.TrimSpace(targetSSHHost) != "" {
+			address = strings.TrimSpace(targetSSHHost)
+			if targetSSHPort != 0 {
+				port = targetSSHPort
+			}
+		} else {
+			runtimeAddress := strings.TrimSpace(host.Address)
+			if parsed, _, err := manifest.ParseHostPort(runtimeAddress); err == nil {
+				address = parsed
+			} else if runtimeAddress != "" && !strings.Contains(runtimeAddress, ":") {
+				address = runtimeAddress
+			} else {
+				address = strings.TrimSpace(host.Name)
+			}
 		}
-		lookup := exec.Command("ssh-keygen", "-F", address, "-f", path)
+		lookupName := address
+		if port != 22 {
+			lookupName = net.JoinHostPort(address, strconv.Itoa(port))
+		}
+		lookup := exec.Command("ssh-keygen", "-F", lookupName, "-f", path)
 		if err := lookup.Run(); err != nil {
-			return fmt.Errorf("fleet known_hosts has no verified key for manifest host %s (%s)", host.Name, address)
+			return fmt.Errorf("fleet known_hosts has no verified key for manifest host %s (%s)", host.Name, lookupName)
 		}
 	}
 	return nil
@@ -1706,6 +1962,8 @@ func emitDeployJoinReport(report deployJoinReport, applied bool, jsonOut bool) i
 	state := "plan"
 	if applied {
 		state = "active"
+	} else if report.Prepared {
+		state = "prepared"
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "deploy join-node: %s node=%s release=%s ssh=%s\n", state, report.DatabaseNode, report.ReleaseGitSHA, report.SSHHost)
 	for i, step := range report.Steps {

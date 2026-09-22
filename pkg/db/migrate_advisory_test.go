@@ -23,7 +23,19 @@ import (
 func TestAcquireMigrationLock_BlocksSecondHolder(t *testing.T) {
 	pool := pgtest.Open(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// MigrationLockKey is intentionally global across schemas and package
+	// shards. Other Postgres-backed tests may briefly own it while running
+	// MigrateUp, so allow the same contention budget as the release test below.
+	//
+	// This budget applies to BOTH acquires. The first one used to get 10s
+	// while the second got 30s, which made the test flake from the front:
+	// on a loaded runner (cmd/apid alone takes ~7 min in this shard) the
+	// first acquire timed out waiting for an unrelated holder and reported
+	// "first acquire: pg_advisory_lock: context deadline exceeded" — a
+	// contention symptom dressed up as a lock-correctness failure.
+	const acquireDeadline = 30 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), acquireDeadline)
 	defer cancel()
 
 	first, err := AcquireMigrationLock(ctx, pool)
@@ -32,10 +44,6 @@ func TestAcquireMigrationLock_BlocksSecondHolder(t *testing.T) {
 	}
 
 	const holdFor = 600 * time.Millisecond
-	// MigrationLockKey is intentionally global across schemas and package
-	// shards. Other Postgres-backed tests may briefly own it while running
-	// MigrateUp, so allow the same contention budget as the release test below.
-	const acquireDeadline = 30 * time.Second
 
 	type result struct {
 		release func(context.Context) error

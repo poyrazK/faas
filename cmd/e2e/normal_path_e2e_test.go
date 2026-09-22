@@ -76,33 +76,29 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 type normalPathFixture struct {
 	h         *e2etest.Harness
-	vmmd      *normalPathVMMD
+	vmmd      *e2etest.FakeVMMD
 	store     *state.PgStore
 	app       api.AppResponse
 	key       string
@@ -122,6 +118,14 @@ func newNormalPathFixtureWithPlan(t *testing.T, slug string, plan api.Plan) *nor
 
 func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan, extraEnv ...string) *normalPathFixture {
 	t.Helper()
+	return newNormalPathFixtureWith(t, slug, plan, 0, extraEnv...)
+}
+
+// newNormalPathFixtureWith is the constructor above plus `extra`, additional
+// daemons to boot. Callers that need imaged in the loop pass e2etest.Imaged;
+// everyone else gets the same fixture as before.
+func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, extraEnv ...string) *normalPathFixture {
+	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return nil
@@ -136,9 +140,58 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(vmmdSockDir) })
 	vmmdSock := filepath.Join(vmmdSockDir, "vmmd.sock")
-	vmmd := startNormalPathVMMD(t, vmmdSock)
+	vmmd := e2etest.StartFakeVMMD(t, vmmdSock)
 	t.Setenv("FAAS_E2E_VMMD_SOCKET", vmmdSock)
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd, extraEnv)
+	// Every normal-path fixture gets a real artifact store, because every live
+	// deployment needs a readable, signed rootfs layer.
+	//
+	// This used to be optional, and the tests passed only because the fake
+	// vmmd left Destroy/StopInstance/PauseAndSnapshot Unimplemented: the
+	// reaper could never actually tear an instance down, so a seeded RUNNING
+	// instance lived forever and no request ever had to wake. Once those RPCs
+	// worked, the reaper did too, the next request became a real wake, and the
+	// wake failed its layer check — surfacing as a 404 "no live deployment to
+	// wake" several steps removed from the cause.
+	//
+	// A deployment with neither a live snapshot nor a cold-bootable rootfs
+	// violates invariant §6.2-3 and is a state production never reaches, so
+	// the fixture was asserting against an impossible app. Callers may still
+	// override the root via extraEnv (the debugger fixture does); extraEnv is
+	// appended last so their value wins.
+	artifactDir, err := os.MkdirTemp("", "faas-e2e-normal-artifacts-*")
+	if err != nil {
+		t.Fatalf("create artifact dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(artifactDir) })
+	artifacts, err := storage.NewLocalStorageBackend(artifactDir)
+	if err != nil {
+		t.Fatalf("create artifact store: %v", err)
+	}
+	// Pin the Firecracker version for every normal-path test, not just the
+	// snapshot ones. An unpinned schedd runs with fcVer="" — a state a
+	// production node never has — and silently routes every wake down the
+	// cold-boot edge, which is exactly how the restore path escaped e2e
+	// coverage in the first place.
+	extraEnv = append([]string{
+		"FAAS_SCHEDD_FC_VERSION=" + e2etest.FakeFCVersion,
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT=" + artifactDir,
+	}, extraEnv...)
+	// Boot the real public edge in front of gatewayd-internal (ADR-070).
+	//
+	// Production has no path that reaches gatewayd-internal from outside: every
+	// customer request lands on gatewayd-public and is handed over a unix
+	// socket. Testing against gatewayd-internal directly cannot observe
+	// anything in that handover, and that is exactly where two-hop bugs live —
+	// PR #1284 shipped because gatewayd-public's own 3s parent budget silently
+	// capped every `kind=budget` rule, with unit tests on both sides passing.
+	//
+	// gatewayd-public was previously booted by exactly one e2e test, which is
+	// metal-tagged and therefore never runs; this is its first coverage on a
+	// gate that executes. Requests go through h.EdgeURL(), which resolves to
+	// the public listener whenever it is booted.
+	h := e2etest.StartWithEnv(t, pool,
+		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic|extra, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
 	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
@@ -152,14 +205,15 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 	}
 	store := state.NewPgStore(pool)
 	return &normalPathFixture{
-		h:      h,
-		vmmd:   vmmd,
-		store:  store,
-		app:    app,
-		key:    key,
-		nodeID: defaultLocalComputeNodeID(t, ctx, store),
-		host:   slug + ".apps.test.example",
-		ctx:    ctx,
+		artifacts: artifacts,
+		h:         h,
+		vmmd:      vmmd,
+		store:     store,
+		app:       app,
+		key:       key,
+		nodeID:    defaultLocalComputeNodeID(t, ctx, store),
+		host:      slug + ".apps.test.example",
+		ctx:       ctx,
 	}
 }
 
@@ -168,7 +222,7 @@ func TestE2E_NormalPath_RealGatewayBridgeAndRedeployRefresh(t *testing.T) {
 	if f == nil {
 		return
 	}
-	firstDep, firstInstance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	firstDep, firstInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(firstInstance.ID, "v1")
 
 	firstBody := waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
@@ -190,7 +244,7 @@ func TestE2E_NormalPath_RealGatewayBridgeAndRedeployRefresh(t *testing.T) {
 	// transitions used by the deploy pipeline. The gateway must observe the
 	// deployment_changed/instance_changed notifications and stop routing to
 	// the old live deployment.
-	secondDep, secondInstance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v2")
+	secondDep, secondInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "v2")
 	f.vmmd.SetVersion(secondInstance.ID, "v2")
 	notifyNormalPathDeploymentChanged(t, f, secondDep.ID)
 	notifyNormalPathInstanceChanged(t, f, secondInstance.ID, string(state.StateRunning))
@@ -232,7 +286,7 @@ func TestE2E_NormalPath_ForwardsHTTPContract(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
@@ -285,7 +339,7 @@ func TestE2E_NormalPath_UnknownHostDoesNotReachBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 	before := f.vmmd.ForwardCount()
@@ -307,7 +361,7 @@ func TestE2E_NormalPath_HostNormalizationPreservesRoute(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
@@ -341,7 +395,7 @@ func TestE2E_NormalPath_RequireAuthnBlocksUnauthenticatedTraffic(t *testing.T) {
 	if err := json.Unmarshal(body, &app); err != nil {
 		t.Fatalf("decode gated app: %v body=%s", err, body)
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, app.ID, f.nodeID, "authn")
+	_, instance := createNormalPathLiveDeployment(t, f, app.ID, "authn")
 	f.vmmd.SetVersion(instance.ID, "authn")
 
 	before := f.vmmd.ForwardCount()
@@ -387,13 +441,13 @@ func TestE2E_NormalPath_ReassemblesResponseChunks(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "chunks")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "chunks")
 	f.vmmd.SetVersion(instance.ID, "chunks")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:chunks\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-		chunks:  [][]byte{[]byte("chunk-1|"), []byte("chunk-2|"), []byte("chunk-3\n")},
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		Chunks:  [][]byte{[]byte("chunk-1|"), []byte("chunk-2|"), []byte("chunk-3\n")},
 	})
 
 	_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, "/chunks", nil)
@@ -410,17 +464,17 @@ func TestE2E_NormalPath_NoContentResponsePreservesEmptyBody(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "no-content")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "no-content")
 	f.vmmd.SetVersion(instance.ID, "no-content")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:no-content\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status: http.StatusNoContent,
-		headers: []*vmmdpb.Header{
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status: http.StatusNoContent,
+		Headers: []*vmmdpb.Header{
 			{Name: "X-Guest-Empty", Value: "true"},
 		},
 		// An explicit empty frame list distinguishes a deliberate empty body
 		// from the fake's default response body.
-		chunks: [][]byte{{}},
+		Chunks: [][]byte{{}},
 	})
 
 	headers, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, "/empty", nil)
@@ -443,16 +497,16 @@ func TestE2E_NormalPath_HEADSuppressesResponseBody(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "head")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "head")
 	f.vmmd.SetVersion(instance.ID, "head")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:head\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status: http.StatusOK,
-		headers: []*vmmdpb.Header{
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status: http.StatusOK,
+		Headers: []*vmmdpb.Header{
 			{Name: "Content-Type", Value: "text/plain"},
 			{Name: "X-Guest-Head", Value: "present"},
 		},
-		body: []byte("must-not-be-visible-on-head\n"),
+		Body: []byte("must-not-be-visible-on-head\n"),
 	})
 
 	headers, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodHead, "/head", nil)
@@ -478,17 +532,17 @@ func TestE2E_NormalPath_PreservesResponseTrailers(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "trailers")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "trailers")
 	f.vmmd.SetVersion(instance.ID, "trailers")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:trailers\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:   http.StatusOK,
-		headers:  []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-		trailers: []*vmmdpb.Header{{Name: "X-Guest-Trailer", Value: "done"}},
-		body:     []byte("trailer-body\n"),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:   http.StatusOK,
+		Headers:  []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		Trailers: []*vmmdpb.Header{{Name: "X-Guest-Trailer", Value: "done"}},
+		Body:     []byte("trailer-body\n"),
 	})
 
-	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.GatewayURL+"/trailers", nil)
+	req, err := http.NewRequestWithContext(f.ctx, http.MethodGet, f.h.EdgeURL()+"/trailers", nil)
 	if err != nil {
 		t.Fatalf("new trailer request: %v", err)
 	}
@@ -520,13 +574,13 @@ func TestE2E_NormalPath_AsyncInvokeUsesRealGatewayBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "async")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:async\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"ok":true,"bridge":"vmmd"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"ok":true,"bridge":"vmmd"}`),
 	})
 
 	payload := json.RawMessage(`{"job":"42"}`)
@@ -586,13 +640,13 @@ func TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "async-failure")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "async-failure")
 	f.vmmd.SetVersion(instance.ID, "async-failure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:async-failure\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusUnprocessableEntity,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"error":"invalid input"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusUnprocessableEntity,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"error":"invalid input"}`),
 	})
 
 	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
@@ -626,13 +680,13 @@ func TestE2E_NormalPath_AsyncIdempotencyDoesNotDuplicateWork(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "idempotency")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "idempotency")
 	f.vmmd.SetVersion(instance.ID, "idempotency")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:idempotency\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"idempotent":true}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"idempotent":true}`),
 	})
 
 	request := api.InvokeRequest{Payload: json.RawMessage(`{"once":true}`)}
@@ -670,13 +724,13 @@ func TestE2E_NormalPath_SyncInvokeReturnsRealBridgeResult(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "sync")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:sync\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"ok":true,"mode":"sync"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"ok":true,"mode":"sync"}`),
 	})
 
 	payload := json.RawMessage(`{"sync":true}`)
@@ -719,13 +773,13 @@ func TestE2E_NormalPath_QueueUsesRealGatewayBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue")
 	f.vmmd.SetVersion(instance.ID, "queue")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"queue":"ok"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"queue":"ok"}`),
 	})
 
 	payload := json.RawMessage(`{"queued":true}`)
@@ -785,16 +839,16 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-push")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-push")
 	f.vmmd.SetVersion(instance.ID, "queue-push")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-push\n", 10*time.Second)
 	// A valid JSON scalar without a batchItemFailures member is a successful
 	// delivery. This is the function response the fake guest returns for the
 	// synthetic /_triggers/esm/<trigger-id> request.
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`"ok"`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`"ok"`),
 	})
 
 	createdBody, statusCode := doReq(t, f.h, f.key, http.MethodPost,
@@ -877,13 +931,13 @@ func TestE2E_NormalPath_QueueDeliversMultipleMessages(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-batch")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-batch")
 	f.vmmd.SetVersion(instance.ID, "queue-batch")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-batch\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"queue":"batch-ok"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"queue":"batch-ok"}`),
 	})
 
 	payloads := []json.RawMessage{
@@ -964,13 +1018,13 @@ func TestE2E_NormalPath_QueueFailureExhaustsIntoDeadLetter(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "queue-dead-letter")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-dead-letter")
 	f.vmmd.SetVersion(instance.ID, "queue-dead-letter")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-dead-letter\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusServiceUnavailable,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"error":"queue_guest_down"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusServiceUnavailable,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"error":"queue_guest_down"}`),
 	})
 
 	payload := json.RawMessage(`{"dead_letter":true}`)
@@ -1029,13 +1083,13 @@ func TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge(t *testing.T) 
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "delayed")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "delayed")
 	f.vmmd.SetVersion(instance.ID, "delayed")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:delayed\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"delayed":"ok"}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"delayed":"ok"}`),
 	})
 
 	scheduledAt := time.Now().UTC().Add(5 * time.Second)
@@ -1127,7 +1181,7 @@ func TestE2E_NormalPath_CancelledDelayedTaskNeverReachesBridge(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cancel")
 	f.vmmd.SetVersion(instance.ID, "cancel")
 
 	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
@@ -1183,7 +1237,7 @@ func TestE2E_NormalPath_ProxyActivityBecomesDurable(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "activity")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "activity")
 	f.vmmd.SetVersion(instance.ID, "activity")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:activity\n", 10*time.Second)
 	before, err := f.store.InstanceByID(f.ctx, instance.ID)
@@ -1225,7 +1279,7 @@ func TestE2E_NormalPath_GuestFailureDoesNotRefreshActivity(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "activity-failure")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "activity-failure")
 	f.vmmd.SetVersion(instance.ID, "activity-failure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:activity-failure\n", 10*time.Second)
 
@@ -1246,10 +1300,10 @@ func TestE2E_NormalPath_GuestFailureDoesNotRefreshActivity(t *testing.T) {
 		t.Fatalf("baseline activity did not flush: request_count=%d last_request_at=%v", before.RequestCount, before.LastRequestAt)
 	}
 
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusTooManyRequests,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-		body:    []byte("guest-throttled\n"),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusTooManyRequests,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		Body:    []byte("guest-throttled\n"),
 	})
 	_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, "/throttled", nil)
 	if statusCode != http.StatusTooManyRequests || string(body) != "guest-throttled\n" {
@@ -1277,7 +1331,7 @@ func TestE2E_NormalPath_AsyncInvokeRetriesTransientBridgeFailure(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "retry")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:retry\n", 10*time.Second)
 	f.vmmd.FailNext(instance.ID, status.Error(codes.Unavailable, "simulated async bridge outage"))
@@ -1315,19 +1369,19 @@ func TestE2E_NormalPath_AsyncInvokeRetriesGuestServerError(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "guest-retry")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "guest-retry")
 	f.vmmd.SetVersion(instance.ID, "guest-retry")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:guest-retry\n", 10*time.Second)
-	f.vmmd.SetResponseSequence(instance.ID, []normalPathResponse{
+	f.vmmd.SetResponseSequence(instance.ID, []e2etest.FakeResponse{
 		{
-			status:  http.StatusServiceUnavailable,
-			headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-			body:    []byte(`{"error":"guest temporarily unavailable"}`),
+			Status:  http.StatusServiceUnavailable,
+			Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+			Body:    []byte(`{"error":"guest temporarily unavailable"}`),
 		},
 		{
-			status:  http.StatusOK,
-			headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-			body:    []byte(`{"recovered":true}`),
+			Status:  http.StatusOK,
+			Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+			Body:    []byte(`{"recovered":true}`),
 		},
 	})
 
@@ -1364,17 +1418,17 @@ func TestE2E_NormalPath_GuestStatusAndHeadersPassThrough(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "status")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:status\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status: http.StatusTooManyRequests,
-		headers: []*vmmdpb.Header{
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status: http.StatusTooManyRequests,
+		Headers: []*vmmdpb.Header{
 			{Name: "Content-Type", Value: "text/plain"},
 			{Name: "Retry-After", Value: "7"},
 			{Name: "X-Guest-Response", Value: "throttled"},
 		},
-		body: []byte("guest-throttled\n"),
+		Body: []byte("guest-throttled\n"),
 	})
 
 	headers, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil)
@@ -1400,16 +1454,16 @@ func TestE2E_NormalPath_GuestServerErrorPassesThrough(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "guest-500")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "guest-500")
 	f.vmmd.SetVersion(instance.ID, "guest-500")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:guest-500\n", 10*time.Second)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status: http.StatusInternalServerError,
-		headers: []*vmmdpb.Header{
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status: http.StatusInternalServerError,
+		Headers: []*vmmdpb.Header{
 			{Name: "Content-Type", Value: "application/json"},
 			{Name: "X-Guest-Error", Value: "panic"},
 		},
-		body: []byte(`{"error":"guest_failure"}`),
+		Body: []byte(`{"error":"guest_failure"}`),
 	})
 
 	headers, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil)
@@ -1432,7 +1486,7 @@ func TestE2E_NormalPath_BridgeUnavailableSurfaces503(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 	f.vmmd.FailNext(instance.ID, status.Error(codes.Unavailable, "simulated vmmd outage"))
@@ -1457,7 +1511,7 @@ func TestE2E_NormalPath_StoppedInstanceInvalidatesRoute(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 	if err := f.store.UpdateInstanceState(f.ctx, instance.ID, string(state.StateStopped)); err != nil {
@@ -1487,7 +1541,7 @@ func TestE2E_NormalPath_GatewayRestartReloadsDurableRoute(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "v1")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
@@ -1511,58 +1565,78 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "restart-stream")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "restart-stream")
 	f.vmmd.SetVersion(instance.ID, "restart-stream")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:restart-stream\n", 10*time.Second)
 
 	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
-		chunks:  [][]byte{[]byte("partial-response\n"), []byte("must-not-arrive\n")},
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		Chunks:  [][]byte{[]byte("partial-response\n"), []byte("must-not-arrive\n")},
 	})
 
 	requestCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.GatewayURL+"/restart-stream", nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.EdgeURL()+"/restart-stream", nil)
 	if err != nil {
 		t.Fatalf("new restart stream request: %v", err)
 	}
 	req.Host = f.host
 	client := *f.h.HTTPClient()
-	requestDone := make(chan error, 1)
+	type streamOutcome struct {
+		err    error
+		status int
+		body   string
+	}
+	requestDone := make(chan streamOutcome, 1)
 	go func() {
 		resp, err := client.Do(req)
 		if err != nil {
-			requestDone <- err
+			requestDone <- streamOutcome{err: err}
 			return
 		}
-		_, bodyErr := io.ReadAll(resp.Body)
+		body, bodyErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		requestDone <- bodyErr
+		requestDone <- streamOutcome{err: bodyErr, status: resp.StatusCode, body: string(body)}
 	}()
 
-	waitNormalPathProbe(t, probe.firstResponseBody, "restart first response body")
+	waitNormalPathProbe(t, probe.FirstResponseBody(), "restart first response body")
 
 	// Stop every real daemon while the response is blocked. The fake VMMD
 	// remains alive so the test can distinguish a gateway lifecycle failure
 	// from a bridge outage.
 	f.h.Stop()
-	waitNormalPathProbe(t, probe.canceled, "restart bridge cancellation")
+	waitNormalPathProbe(t, probe.Canceled(), "restart bridge cancellation")
 	select {
-	case requestErr := <-requestDone:
-		// The old response must terminate once its owning gateway exits.
-		if requestErr == nil {
-			t.Fatal("in-flight response completed successfully after gateway restart")
+	case outcome := <-requestDone:
+		// The old response must not terminate as a SUCCESS once its owning
+		// gateway exits. What "terminate" looks like depends on the topology,
+		// and both shapes are correct:
+		//
+		//   - direct to gatewayd-internal: the listener dies under the open
+		//     connection, so the client gets a transport error;
+		//   - through gatewayd-public: the public hop outlives the internal
+		//     one and turns the failed round-trip into a 502, which is
+		//     strictly better — the customer gets a status instead of a
+		//     severed socket.
+		//
+		// The failure that actually matters is neither of those: a 2xx whose
+		// body is the partial one the fake sent before blocking. That is a
+		// truncated response presented as a complete one, which no client can
+		// detect. Assert on that, not on the transport artifact.
+		if outcome.err == nil && outcome.status/100 == 2 {
+			t.Fatalf("in-flight response completed as a SUCCESS after gateway restart: status=%d body=%q (a truncated body under a 2xx is indistinguishable from a complete response)",
+				outcome.status, outcome.body)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight response remained blocked after gateway restart")
 	}
 
 	f.vmmd.ReleaseProbe(probe)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status: http.StatusOK,
-		body:   []byte("restart-recovered\n"),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status: http.StatusOK,
+		Body:   []byte("restart-recovered\n"),
 	})
 	h2 := e2etest.Start(t, f.h.Pool, e2etest.Schedd|e2etest.Gatewayd)
 	_, body, statusCode := doReqHeaders(t, h2, f.host, http.MethodGet, "/after-restart", nil)
@@ -1584,15 +1658,15 @@ func TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch(t *testing.T) {
 	if f == nil {
 		return
 	}
-	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "schedd-recovery")
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "schedd-recovery")
 	f.vmmd.SetVersion(instance.ID, "schedd-recovery")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:schedd-recovery\n", 10*time.Second)
 
 	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"recovered":true}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"recovered":true}`),
 	})
 
 	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
@@ -1607,14 +1681,14 @@ func TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch(t *testing.T) {
 		t.Fatalf("decode async response: %v body=%s", err, body)
 	}
 
-	waitNormalPathProbe(t, probe.firstResponseBody, "abandoned dispatch response")
+	waitNormalPathProbe(t, probe.FirstResponseBody(), "abandoned dispatch response")
 	dispatching := waitForNormalPathInvocationState(t, f.store, accepted.ID, state.InvocationDispatching, 5*time.Second)
 	if dispatching.Attempts != 1 || dispatching.LeaseExpiresAt == nil {
 		t.Fatalf("in-flight invocation=(attempts=%d,lease=%v), want first leased dispatch", dispatching.Attempts, dispatching.LeaseExpiresAt)
 	}
 
 	f.h.Stop()
-	waitNormalPathProbe(t, probe.canceled, "abandoned dispatch cancellation")
+	waitNormalPathProbe(t, probe.Canceled(), "abandoned dispatch cancellation")
 	if _, err := f.h.Pool.Exec(f.ctx, `
 		update invocations
 		   set lease_expires_at = now() - interval '1 second'
@@ -1622,10 +1696,10 @@ func TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch(t *testing.T) {
 		t.Fatalf("expire abandoned invocation lease: %v", err)
 	}
 	f.vmmd.ReleaseProbe(probe)
-	f.vmmd.SetResponse(instance.ID, normalPathResponse{
-		status:  http.StatusOK,
-		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
-		body:    []byte(`{"recovered":true}`),
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"recovered":true}`),
 	})
 
 	h2 := e2etest.Start(t, f.h.Pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
@@ -1674,13 +1748,41 @@ func notifyNormalPathInstanceChanged(t *testing.T, f *normalPathFixture, instanc
 	}
 }
 
-func createNormalPathLiveDeployment(t *testing.T, ctx context.Context, store *state.PgStore, appID, nodeID, version string) (state.Deployment, state.Instance) {
+// publishNormalPathLayer gives a deployment the readable, signed rootfs layer
+// that every wake verifies before it boots. Without it a wake fails the layer
+// check, the deployment is marked unavailable, and later requests 404 with
+// "no live deployment to wake" — a symptom well removed from the cause.
+func publishNormalPathLayer(t *testing.T, f *normalPathFixture, deploymentID string) {
+	t.Helper()
+	if f.artifacts == nil {
+		t.Fatal("normal-path fixture has no artifact store")
+	}
+	layerKey := "layers/" + deploymentID + ".ext4"
+	layer := []byte("gregale normal-path fixture rootfs layer\n")
+	if err := f.artifacts.Put(f.ctx, layerKey, bytes.NewReader(layer)); err != nil {
+		t.Fatalf("publish layer: %v", err)
+	}
+	// schedd verifies the signature too, so an unsigned layer fails the same
+	// way a missing one does.
+	signer, err := cosign.NewLocalSigner(f.h.SignKeyPath, f.artifacts, nil)
+	if err != nil {
+		t.Fatalf("create artifact signer: %v", err)
+	}
+	if err := signer.Sign(f.ctx, layerKey, cosign.SigKeyFor(layerKey)); err != nil {
+		t.Fatalf("sign layer: %v", err)
+	}
+	if err := f.store.SetDeploymentRootfs(f.ctx, deploymentID, layerKey, layerKey, int64(len(layer))); err != nil {
+		t.Fatalf("publish rootfs metadata: %v", err)
+	}
+}
+
+func createNormalPathLiveDeployment(t *testing.T, f *normalPathFixture, appID, version string) (state.Deployment, state.Instance) {
 	t.Helper()
 	digestByte := "1"
 	if version == "v2" {
 		digestByte = "2"
 	}
-	dep, err := store.CreateDeployment(ctx, state.Deployment{
+	dep, err := f.store.CreateDeployment(f.ctx, state.Deployment{
 		AppID:       appID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: "sha256:" + strings.Repeat(digestByte, 64),
@@ -1688,10 +1790,12 @@ func createNormalPathLiveDeployment(t *testing.T, ctx context.Context, store *st
 	if err != nil {
 		t.Fatalf("create %s deployment: %v", version, err)
 	}
-	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+	if err := f.store.MarkDeploymentLive(f.ctx, dep.ID); err != nil {
 		t.Fatalf("mark %s deployment live: %v", version, err)
 	}
-	instance, err := store.CreateInstance(ctx, appID, dep.ID, string(state.StateRunning), 256, nodeID, "")
+	publishNormalPathLayer(t, f, dep.ID)
+	instance, err := f.store.CreateInstance(f.ctx, appID, dep.ID, string(state.StateRunning),
+		e2etest.FakeSnapshotRAMMB, f.nodeID, "")
 	if err != nil {
 		t.Fatalf("create %s instance: %v", version, err)
 	}
@@ -1726,289 +1830,6 @@ func waitForNormalPathResponse(t *testing.T, h *e2etest.Harness, host, want stri
 	return nil
 }
 
-type normalPathCancellationProbe struct {
-	blockRequestBody  bool
-	blockResponseBody bool
-	initSeen          chan struct{}
-	firstBodySeen     chan struct{}
-	headersSent       chan struct{}
-	firstResponseBody chan struct{}
-	canceled          chan struct{}
-	release           chan struct{}
-	initOnce          sync.Once
-	firstBodyOnce     sync.Once
-	headersOnce       sync.Once
-	firstResponseOnce sync.Once
-	canceledOnce      sync.Once
-	releaseOnce       sync.Once
-}
-
-func newNormalPathCancellationProbe(blockRequestBody, blockResponseBody bool) *normalPathCancellationProbe {
-	return &normalPathCancellationProbe{
-		blockRequestBody:  blockRequestBody,
-		blockResponseBody: blockResponseBody,
-		initSeen:          make(chan struct{}),
-		firstBodySeen:     make(chan struct{}),
-		headersSent:       make(chan struct{}),
-		firstResponseBody: make(chan struct{}),
-		canceled:          make(chan struct{}),
-		release:           make(chan struct{}),
-	}
-}
-
-func (p *normalPathCancellationProbe) markInit() {
-	p.initOnce.Do(func() { close(p.initSeen) })
-}
-
-func (p *normalPathCancellationProbe) markFirstBody() {
-	p.firstBodyOnce.Do(func() { close(p.firstBodySeen) })
-}
-
-func (p *normalPathCancellationProbe) markHeadersSent() {
-	p.headersOnce.Do(func() { close(p.headersSent) })
-}
-
-func (p *normalPathCancellationProbe) markFirstResponseBody() {
-	p.firstResponseOnce.Do(func() { close(p.firstResponseBody) })
-}
-
-func (p *normalPathCancellationProbe) markCanceled() {
-	p.canceledOnce.Do(func() { close(p.canceled) })
-}
-
-func (p *normalPathCancellationProbe) Release() {
-	p.releaseOnce.Do(func() { close(p.release) })
-}
-
-type normalPathVMMD struct {
-	vmmdpb.UnimplementedVmmdServer
-	mu               sync.Mutex
-	versions         map[string]string
-	responses        map[string]normalPathResponse
-	responsesByPath  map[string]map[string]normalPathResponse
-	responseSequence map[string][]normalPathResponse
-	failNext         map[string]error
-	failures         map[string]error
-	probes           map[string]*normalPathCancellationProbe
-	gates            map[string]*normalPathRequestGate
-	requests         []normalPathRequestCapture
-	last             *vmmdpb.ForwardHTTPRequestInit
-	lastBody         []byte
-	lastBodyChunks   int
-	forwardCount     int
-	defaultVersion   string
-}
-
-type normalPathResponse struct {
-	status   int
-	headers  []*vmmdpb.Header
-	trailers []*vmmdpb.Header
-	body     []byte
-	chunks   [][]byte
-}
-
-type normalPathRequestCapture struct {
-	Init *vmmdpb.ForwardHTTPRequestInit
-	Body []byte
-}
-
-// normalPathRequestGate deliberately blocks the fake VMMD after it has
-// received a complete request. It lets the E2E tests prove that several
-// customer requests are genuinely in flight together, or that a saturated
-// instance keeps the next request outside the bridge until the first one
-// releases its gateway slot.
-type normalPathRequestGate struct {
-	want        int
-	arrived     chan struct{}
-	release     chan struct{}
-	mu          sync.Mutex
-	count       int
-	arrivedOnce sync.Once
-	releaseOnce sync.Once
-}
-
-func newNormalPathRequestGate(want int) *normalPathRequestGate {
-	return &normalPathRequestGate{
-		want:    want,
-		arrived: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-}
-
-func (g *normalPathRequestGate) Block(ctx context.Context) error {
-	g.mu.Lock()
-	g.count++
-	if g.count >= g.want {
-		g.arrivedOnce.Do(func() { close(g.arrived) })
-	}
-	g.mu.Unlock()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-g.release:
-		return nil
-	}
-}
-
-func (g *normalPathRequestGate) WaitArrived(timeout time.Duration) bool {
-	select {
-	case <-g.arrived:
-		return true
-	case <-time.After(timeout):
-		return false
-	}
-}
-
-func (g *normalPathRequestGate) Release() {
-	g.releaseOnce.Do(func() { close(g.release) })
-}
-
-func startNormalPathVMMD(t *testing.T, socketPath string) *normalPathVMMD {
-	t.Helper()
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen fake vmmd: %v", err)
-	}
-	server := grpc.NewServer()
-	vmmd := &normalPathVMMD{
-		versions:         make(map[string]string),
-		responses:        make(map[string]normalPathResponse),
-		responsesByPath:  make(map[string]map[string]normalPathResponse),
-		responseSequence: make(map[string][]normalPathResponse),
-		failNext:         make(map[string]error),
-		failures:         make(map[string]error),
-		probes:           make(map[string]*normalPathCancellationProbe),
-		gates:            make(map[string]*normalPathRequestGate),
-	}
-	vmmdpb.RegisterVmmdServer(server, vmmd)
-	go func() {
-		if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			t.Logf("fake vmmd stopped: %v", err)
-		}
-	}()
-	t.Cleanup(func() {
-		server.Stop()
-		_ = listener.Close()
-	})
-	return vmmd
-}
-
-func (s *normalPathVMMD) SetVersion(instanceID, version string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.versions[instanceID] = version
-}
-
-func (s *normalPathVMMD) SetDefaultVersion(version string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.defaultVersion = version
-}
-
-func (s *normalPathVMMD) FailNext(instanceID string, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.failNext[instanceID] = err
-}
-
-// FailAll keeps returning err for this instance until the gateway evicts it.
-// It models a dead VMMD/netns rather than a single transient bridge failure.
-func (s *normalPathVMMD) FailAll(instanceID string, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.failures[instanceID] = err
-}
-
-func (s *normalPathVMMD) SetResponse(instanceID string, response normalPathResponse) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.responses[instanceID] = cloneNormalPathResponse(response)
-	delete(s.responseSequence, instanceID)
-}
-
-func (s *normalPathVMMD) SetResponseForPath(instanceID, requestURI string, response normalPathResponse) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	byPath := s.responsesByPath[instanceID]
-	if byPath == nil {
-		byPath = make(map[string]normalPathResponse)
-		s.responsesByPath[instanceID] = byPath
-	}
-	byPath[requestURI] = cloneNormalPathResponse(response)
-}
-
-func (s *normalPathVMMD) SetResponseSequence(instanceID string, responses []normalPathResponse) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sequence := make([]normalPathResponse, len(responses))
-	for i, response := range responses {
-		sequence[i] = cloneNormalPathResponse(response)
-	}
-	s.responseSequence[instanceID] = sequence
-}
-
-func (s *normalPathVMMD) LastRequest() *vmmdpb.ForwardHTTPRequestInit {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.last == nil {
-		return nil
-	}
-	return proto.Clone(s.last).(*vmmdpb.ForwardHTTPRequestInit)
-}
-
-func (s *normalPathVMMD) LastBody() []byte {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]byte(nil), s.lastBody...)
-}
-
-func (s *normalPathVMMD) LastBodyChunkCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lastBodyChunks
-}
-
-func (s *normalPathVMMD) ForwardCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.forwardCount
-}
-
-func (s *normalPathVMMD) Requests() []normalPathRequestCapture {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	captures := make([]normalPathRequestCapture, len(s.requests))
-	for i, capture := range s.requests {
-		captures[i] = normalPathRequestCapture{
-			Init: proto.Clone(capture.Init).(*vmmdpb.ForwardHTTPRequestInit),
-			Body: append([]byte(nil), capture.Body...),
-		}
-	}
-	return captures
-}
-
-func (s *normalPathVMMD) InstallCancellationProbe(instanceID string, blockRequestBody, blockResponseBody bool) *normalPathCancellationProbe {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	probe := newNormalPathCancellationProbe(blockRequestBody, blockResponseBody)
-	s.probes[instanceID] = probe
-	return probe
-}
-
-func (s *normalPathVMMD) ReleaseProbe(probe *normalPathCancellationProbe) {
-	if probe != nil {
-		probe.Release()
-	}
-}
-
-func (s *normalPathVMMD) InstallRequestGate(instanceID string, want int) *normalPathRequestGate {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	gate := newNormalPathRequestGate(want)
-	s.gates[instanceID] = gate
-	return gate
-}
-
 func waitForNormalPathInvocationState(t *testing.T, store *state.PgStore, id string, want state.InvocationState, timeout time.Duration) state.Invocation {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -2026,187 +1847,6 @@ func waitForNormalPathInvocationState(t *testing.T, store *state.PgStore, id str
 	}
 	t.Fatalf("invocation %s state=%q, want %q within %s", id, last.State, want, timeout)
 	return last
-}
-
-func (s *normalPathVMMD) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest) (*vmmdpb.HeartbeatResponse, error) {
-	return &vmmdpb.HeartbeatResponse{}, nil
-}
-
-func (s *normalPathVMMD) Ping(context.Context, *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
-	return &vmmdpb.PingResponse{}, nil
-}
-
-func (s *normalPathVMMD) CreateColdBoot(_ context.Context, request *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {
-	return &vmmdpb.WakeResponse{
-		Instance: request.GetInstance(),
-		LeaseUid: 20000,
-		HostIp:   "127.0.0.1",
-		Netns:    "fake-" + request.GetInstance(),
-		Method:   vmmdpb.WakeMethod_WAKE_COLD_BOOT,
-	}, nil
-}
-
-func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer) error {
-	request, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-	init := request.GetInit()
-	if init == nil {
-		return errors.New("fake vmmd: first frame was not init")
-	}
-	s.mu.Lock()
-	probe := s.probes[init.Instance]
-	s.mu.Unlock()
-	if probe != nil {
-		defer func() {
-			if stream.Context().Err() != nil {
-				probe.markCanceled()
-			}
-		}()
-		probe.markInit()
-	}
-	var body []byte
-	bodyChunkCount := 0
-	for {
-		frame, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if chunk := frame.GetBodyChunk(); chunk != nil {
-			bodyChunkCount++
-			body = append(body, chunk...)
-			if probe != nil {
-				probe.markFirstBody()
-				if probe.blockRequestBody && bodyChunkCount == 1 {
-					select {
-					case <-stream.Context().Done():
-						return stream.Context().Err()
-					case <-probe.release:
-					}
-				}
-			}
-		}
-	}
-
-	s.mu.Lock()
-	s.last = init
-	s.lastBody = append([]byte(nil), body...)
-	s.lastBodyChunks = bodyChunkCount
-	s.forwardCount++
-	s.requests = append(s.requests, normalPathRequestCapture{
-		Init: proto.Clone(init).(*vmmdpb.ForwardHTTPRequestInit),
-		Body: append([]byte(nil), body...),
-	})
-	version := s.versions[init.Instance]
-	if version == "" {
-		version = s.defaultVersion
-	}
-	response := s.responses[init.Instance]
-	if byPath := s.responsesByPath[init.Instance]; byPath != nil {
-		if pathResponse, ok := byPath[init.RequestUri]; ok {
-			response = pathResponse
-		}
-	}
-	if sequence := s.responseSequence[init.Instance]; len(sequence) > 0 {
-		response = sequence[0]
-		s.responseSequence[init.Instance] = sequence[1:]
-	}
-	failure := s.failures[init.Instance]
-	if nextFailure := s.failNext[init.Instance]; nextFailure != nil {
-		failure = nextFailure
-	}
-	gate := s.gates[init.Instance]
-	delete(s.failNext, init.Instance)
-	s.mu.Unlock()
-	if gate != nil {
-		if err := gate.Block(stream.Context()); err != nil {
-			return err
-		}
-	}
-	if failure != nil {
-		return failure
-	}
-	if version == "" {
-		return errors.New("fake vmmd: unknown instance " + init.Instance)
-	}
-	if response.status == 0 {
-		response.status = http.StatusOK
-	}
-	if len(response.headers) == 0 {
-		response.headers = []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}}
-	}
-	chunks := response.chunks
-	if len(chunks) == 0 {
-		if response.body == nil {
-			response.body = []byte("normal-path:" + version + "\n")
-		}
-		if len(response.body) > 0 {
-			chunks = [][]byte{response.body}
-		}
-	}
-	if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-		Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{
-			Status:   int32(response.status),
-			Headers:  response.headers,
-			Trailers: response.trailers,
-		}},
-	}); err != nil {
-		return err
-	}
-	if probe != nil {
-		probe.markHeadersSent()
-	}
-	for _, chunk := range chunks {
-		if len(chunk) == 0 {
-			continue
-		}
-		if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-			Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: chunk},
-		}); err != nil {
-			return err
-		}
-		if probe != nil && probe.blockResponseBody {
-			probe.markFirstResponseBody()
-			select {
-			case <-stream.Context().Done():
-				return stream.Context().Err()
-			case <-probe.release:
-			}
-		}
-	}
-	if len(response.trailers) > 0 {
-		if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-			Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{
-				Trailers: response.trailers,
-			}},
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func cloneNormalPathChunks(chunks [][]byte) [][]byte {
-	if len(chunks) == 0 {
-		return nil
-	}
-	out := make([][]byte, len(chunks))
-	for i, chunk := range chunks {
-		out[i] = append([]byte(nil), chunk...)
-	}
-	return out
-}
-
-func cloneNormalPathResponse(response normalPathResponse) normalPathResponse {
-	response.headers = append([]*vmmdpb.Header(nil), response.headers...)
-	response.trailers = append([]*vmmdpb.Header(nil), response.trailers...)
-	response.body = append([]byte(nil), response.body...)
-	response.chunks = cloneNormalPathChunks(response.chunks)
-	return response
 }
 
 func hasNormalPathHeader(request *vmmdpb.ForwardHTTPRequestInit, name, value string) bool {

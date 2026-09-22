@@ -34,7 +34,7 @@ func cmdDeploysClear(args []string) int {
 		return 1
 	}
 	id := fs.Arg(0)
-	if !deploymentIDPattern.MatchString(id) {
+	if !validDeploymentRef(id) {
 		PrintUsage(os.Stderr, deploysClearUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
@@ -49,6 +49,12 @@ func cmdDeploysClear(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// ADR-198: a vN handle resolves against --app, else the linked project.
+	// A uuid short-circuits without a lookup.
+	id, err = resolveDeploymentArg(context.Background(), client, *appSlug, id)
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	if err := client.ClearDeployment(context.Background(), id); err != nil {
 		return printErr("Clear failed", err)

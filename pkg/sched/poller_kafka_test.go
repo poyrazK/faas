@@ -1,3 +1,4 @@
+// adr: 100
 // poller_kafka_test.go — Kafka poller unit tests.
 //
 // The kafka poller's broker side (segmentio/kafka-go Reader) is
@@ -98,6 +99,10 @@ func (r *poisonStrategyReader) SetOffset(offset int64) error {
 // construction compiles.
 func (r *poisonStrategyReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
 	return kafka.Message{}, nil
+}
+
+func (r *poisonStrategyReader) Stats() kafka.ReaderStats {
+	return kafka.ReaderStats{Lag: 10, QueueLength: 5}
 }
 
 func (r *poisonStrategyReader) Close() error {
@@ -615,8 +620,9 @@ func (r *flakyCommitReader) FetchMessage(context.Context) (kafka.Message, error)
 func (r *flakyCommitReader) CommitMessages(_ context.Context, _ ...kafka.Message) error {
 	return r.commitErr
 }
-func (r *flakyCommitReader) SetOffset(_ int64) error { return nil }
-func (r *flakyCommitReader) Close() error            { return nil }
+func (r *flakyCommitReader) SetOffset(_ int64) error  { return nil }
+func (r *flakyCommitReader) Stats() kafka.ReaderStats { return kafka.ReaderStats{} }
+func (r *flakyCommitReader) Close() error             { return nil }
 
 // TestKafka_AckCommitBrokerError reports a non-nil error from
 // the underlying CommitMessages. The poller's contract is
@@ -668,5 +674,20 @@ func TestKafka_NackBrokerErrorAlwaysSeeks(t *testing.T) {
 			}
 			rdr.mu.Unlock()
 		})
+	}
+}
+
+func TestKafka_BrokerStats(t *testing.T) {
+	rdr := &poisonStrategyReader{}
+	k := &kafkaPoller{reader: rdr}
+	stats := k.BrokerStats(context.Background(), sqlc.Trigger{})
+	if !stats.Available {
+		t.Fatal("stats.Available = false, want true")
+	}
+	if stats.Lag != 10 {
+		t.Fatalf("stats.Lag = %d, want 10", stats.Lag)
+	}
+	if stats.Depth != 5 {
+		t.Fatalf("stats.Depth = %d, want 5", stats.Depth)
 	}
 }

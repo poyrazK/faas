@@ -13,7 +13,11 @@ func (v *JailerVMM) cleanupFailedSnapshotCapture(ctx context.Context, spec Snaps
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	for _, key := range []string{spec.StorageKey, state.SnapshotVMStateKey(state.Snapshot{StorageKey: spec.StorageKey})} {
+	snap := state.Snapshot{StorageKey: spec.StorageKey}
+	for _, key := range []string{spec.StorageKey, state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap)} {
+		if key == "" {
+			continue
+		}
 		if err := v.storage.Delete(cleanup, key); err != nil {
 			slog.Default().Warn("vmm: remove failed snapshot capture", "key", key, "err", err)
 		}

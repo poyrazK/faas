@@ -6,6 +6,7 @@ package conformance
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -46,6 +47,20 @@ func Run(t *testing.T, open Open) {
 		fn   func(*testing.T, *Fixture)
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
+		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
+		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
+		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
+		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
+		{"build_claim_fairness_prefers_the_quiet_account", testBuildClaimFairnessPrefersTheQuietAccount},
+		{"alert_fire_claim_is_idempotent_by_key", testAlertFireClaimIsIdempotentByKey},
+		{"app_deletion_claim_is_concurrently_idempotent", testAppDeletionClaimIsConcurrentlyIdempotent},
+		{"webhook_delivery_claim_fences_replays", testWebhookDeliveryClaimFencesReplays},
+		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
+		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
+		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
+		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
+		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
+		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
@@ -65,6 +80,7 @@ func Run(t *testing.T, open Open) {
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
@@ -89,6 +105,8 @@ func Run(t *testing.T, open Open) {
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
+		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1643,6 +1661,180 @@ func Seed(t *testing.T, store state.Store) *Fixture {
 	return &Fixture{Store: store, Ctx: ctx, Account: acct, App: app, Deployment: dep, Node: node}
 }
 
+// testNodeAdmissionCeiling pins ADR-193: the per-node RAM ceiling
+// (invariant §6.2-2) is enforced by the instances INSERT itself, not only by
+// schedd's in-memory ledger.
+//
+// The arithmetic is spelled out rather than derived from the store, because
+// the failure this guards against is precisely the two tiers disagreeing
+// about what "used" means. Every figure below is absolute:
+//
+//	ceiling                    1024 MB
+//	three 256 MB admits   3 × (256 + 8) =  792 MB used, 232 MB free
+//	a fourth 256 MB admit      256 + 8  =  264 MB > 232 MB free  → refused
+//	a 224 MB admit             224 + 8  =  232 MB = 232 MB free  → admitted
+//	                                       total 1024 MB = ceiling exactly
+//
+// The boundary case matters: the ledger admits when used+requested <=
+// ceiling, so a store that refused an exact fit would strand the last slot
+// on every node in the fleet.
+func testNodeAdmissionCeiling(t *testing.T, fx *Fixture) {
+	const (
+		ceilingMB = 1024
+		admitMB   = 256
+	)
+	node, err := fx.Store.CreateComputeNode(fx.Ctx, state.ComputeNode{
+		Name:               "ceiling-" + uuid.NewString(),
+		TargetURL:          "unix:///tmp/conformance-ceiling.sock",
+		VPCPUs:             2,
+		MemMB:              2048,
+		MaxConcurrency:     20,
+		AdmissionCeilingMB: ceilingMB,
+		VCPUBudget:         2,
+		Lifecycle:          state.NodeLifecycleActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+			string(state.StateRunning), admitMB, node.ID, uuid.NewString()); err != nil {
+			t.Fatalf("CreateInstance(fill %d): %v", i, err)
+		}
+	}
+	const wantUsedAfterFill = 3 * (admitMB + api.PerVMOverheadMB) // 792
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB: %v", err)
+	} else if got != wantUsedAfterFill {
+		t.Fatalf("used after fill = %d MB, want %d MB", got, wantUsedAfterFill)
+	}
+
+	// 792 + 264 = 1056 > 1024. This is the admission a second schedd would
+	// have made against a stale cached headroom read.
+	_, err = fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateWaking), admitMB, node.ID, uuid.NewString())
+	if !errors.Is(err, state.ErrNodeCapacity) {
+		t.Fatalf("over-ceiling CreateInstance err = %v, want state.ErrNodeCapacity", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB after refusal: %v", err)
+	} else if got != wantUsedAfterFill {
+		t.Fatalf("refused admit left %d MB used, want %d MB — the row was not rolled back", got, wantUsedAfterFill)
+	}
+
+	// A parked row holds no resident RAM, so the ceiling must not apply to
+	// it however large it is. Guarding it would break park/restore.
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateParked), 4096, node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance(parked, over ceiling): %v", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB after park: %v", err)
+	} else if got != wantUsedAfterFill {
+		t.Fatalf("parked row counted as %d MB used, want %d MB", got, wantUsedAfterFill)
+	}
+
+	// Exact fit: 792 + 232 = 1024 = ceiling.
+	const exactFitMB = ceilingMB - wantUsedAfterFill - api.PerVMOverheadMB // 224
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateWaking), exactFitMB, node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("exact-fit CreateInstance(%d MB): %v", exactFitMB, err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, node.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB after exact fit: %v", err)
+	} else if got != ceilingMB {
+		t.Fatalf("used after exact fit = %d MB, want %d MB", got, ceilingMB)
+	}
+
+	// The fixture's own node is untouched by any of the above, so a
+	// full node never blocks admission elsewhere in the fleet.
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateWaking), admitMB, fx.Node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance on a different node: %v", err)
+	}
+}
+
+// testNodeAdmissionCeilingOnMigration pins the ownership-transfer half of
+// ADR-193.
+//
+// The INSERT guard covers the door instances come in through. Live migration
+// uses a different one: MigrateInstanceOwner moves an existing row by changing
+// node_id, so it bypassed the guard entirely and could push a destination past
+// its ceiling — the same §6.2-2 violation, through the path the original fix
+// did not cover.
+//
+// The transfer is a real gain for the destination, not a no-op: the row sits in
+// 'migrating' while the handoff runs, which the per-node sum excludes, and lands
+// in 'running', which it includes.
+func testNodeAdmissionCeilingOnMigration(t *testing.T, fx *Fixture) {
+	const (
+		ceilingMB = 1024
+		admitMB   = 248
+	)
+	mkNode := func(name string) state.ComputeNode {
+		t.Helper()
+		n, err := fx.Store.CreateComputeNode(fx.Ctx, state.ComputeNode{
+			Name: name + "-" + uuid.NewString(), TargetURL: "unix:///tmp/mig.sock",
+			VPCPUs: 4, MemMB: 2048, MaxConcurrency: 20,
+			AdmissionCeilingMB: ceilingMB, VCPUBudget: 4,
+			Lifecycle: state.NodeLifecycleActive,
+		})
+		if err != nil {
+			t.Fatalf("CreateComputeNode(%s): %v", name, err)
+		}
+		return n
+	}
+	src, dst := mkNode("mig-src"), mkNode("mig-dst")
+
+	// Fill the destination to exactly its ceiling: 4 x (248 + 8) = 1024.
+	for i := 0; i < 4; i++ {
+		if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+			string(state.StateRunning), admitMB, dst.ID, uuid.NewString()); err != nil {
+			t.Fatalf("fill destination[%d]: %v", i, err)
+		}
+	}
+
+	// One instance on the source, put into the handoff state.
+	moving, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), admitMB, src.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(source): %v", err)
+	}
+	if err := fx.Store.MarkInstanceMigrating(fx.Ctx, moving.ID, src.ID, "mig-lease-token"); err != nil {
+		t.Fatalf("MarkInstanceMigrating: %v", err)
+	}
+
+	// Migrating to a full destination must be refused.
+	err = fx.Store.MigrateInstanceOwner(fx.Ctx, moving.ID, src.ID, dst.ID, "mig-lease-token")
+	if !errors.Is(err, state.ErrNodeCapacity) {
+		t.Fatalf("migration into a full node err = %v, want state.ErrNodeCapacity", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, dst.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB(dst): %v", err)
+	} else if got != ceilingMB {
+		t.Errorf("refused migration left destination at %d MB, want %d — the move was not rolled back", got, ceilingMB)
+	}
+	// The instance must still belong to the source, still mid-handoff, so the
+	// orchestrator can roll it back rather than losing track of it.
+	if ins, err := fx.Store.InstanceByID(fx.Ctx, moving.ID); err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	} else if ins.NodeID != src.ID {
+		t.Errorf("refused migration moved the row anyway: node=%s want %s", ins.NodeID, src.ID)
+	}
+
+	// A destination with room accepts the same transfer.
+	roomy := mkNode("mig-roomy")
+	if err := fx.Store.MigrateInstanceOwner(fx.Ctx, moving.ID, src.ID, roomy.ID, "mig-lease-token"); err != nil {
+		t.Fatalf("migration into a node with headroom: %v", err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, roomy.ID); err != nil {
+		t.Fatalf("ComputeNodeUsedMB(roomy): %v", err)
+	} else if want := int64(admitMB + api.PerVMOverheadMB); got != want {
+		t.Errorf("destination used = %d MB, want %d — the transfer must count on arrival", got, want)
+	}
+}
+
 func testAppLimits(t *testing.T, fx *Fixture) {
 	for _, plan := range api.Plans {
 		limits := api.MustLimitsFor(plan)
@@ -2093,5 +2285,314 @@ func testCronQuota(t *testing.T, fx *Fixture) {
 	}
 	if qe.Observed != limits.CronLimitPerApp {
 		t.Errorf("Observed = %d, want %d", qe.Observed, limits.CronLimitPerApp)
+	}
+}
+
+// testDeploymentRevisions pins the ADR-198 revision contract across both
+// stores. Assertions are absolute (1, 2, 3 …), not "the two stores agree" —
+// per this file's header, an agreement check would have passed while both
+// implementations were identically wrong.
+//
+// The case deliberately covers the three properties that make `v42` a safe
+// customer-facing handle:
+//
+//  1. revisions start at 1 and increment by 1 per deploy of the same app;
+//  2. they are NOT partitioned by scope, so a preview deploy consumes a
+//     number and DeploymentOrdinal keeps returning the same N that already
+//     went into an issued deploy-{N}-{slug} hostname;
+//  3. a second app has its own independent ladder, so revision is only ever
+//     meaningful relative to one app.
+func testDeploymentRevisions(t *testing.T, fx *Fixture) {
+	// Seed already created one deployment for fx.App, so it holds v1.
+	if fx.Deployment.Revision != 1 {
+		t.Fatalf("seed deployment Revision = %d, want 1 (revisions are 1-based)", fx.Deployment.Revision)
+	}
+
+	// Two further deploys on the default scope take v2 and v3.
+	second, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:rev-second", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(second): %v", err)
+	}
+	if second.Revision != 2 {
+		t.Errorf("second deployment Revision = %d, want 2", second.Revision)
+	}
+
+	// A preview-scope deploy shares the app's single ladder (ADR-198: the
+	// counter is per-app, never per-scope, so it cannot fork away from the
+	// ordinal baked into preview hostnames).
+	preview, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:rev-preview", Status: state.DeployPending,
+		Scope: "pr-42",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(preview): %v", err)
+	}
+	if preview.Revision != 3 {
+		t.Errorf("preview-scope deployment Revision = %d, want 3 (the ladder is per-app, not per-scope)", preview.Revision)
+	}
+
+	// DeploymentOrdinal must agree with the stored revision — they are one
+	// number. A divergence here means an issued preview hostname no longer
+	// resolves to the row it was minted for.
+	for _, want := range []struct {
+		id  string
+		rev int
+	}{{fx.Deployment.ID, 1}, {second.ID, 2}, {preview.ID, 3}} {
+		ord, err := fx.Store.DeploymentOrdinal(fx.Ctx, fx.App.ID, want.id)
+		if err != nil {
+			t.Fatalf("DeploymentOrdinal(%s): %v", want.id, err)
+		}
+		if ord != want.rev {
+			t.Errorf("DeploymentOrdinal(%s) = %d, want %d (must equal the stored revision)", want.id, ord, want.rev)
+		}
+	}
+
+	// DeploymentByRevision is the resolver behind `gregale rollback --to v2`.
+	got, err := fx.Store.DeploymentByRevision(fx.Ctx, fx.App.ID, 2)
+	if err != nil {
+		t.Fatalf("DeploymentByRevision(2): %v", err)
+	}
+	if got.ID != second.ID {
+		t.Errorf("DeploymentByRevision(2).ID = %s, want %s", got.ID, second.ID)
+	}
+
+	// Unknown and non-positive revisions are ErrNotFound, never a silent
+	// fallback to some other row — a wrong row here would roll a customer
+	// back to code they did not name.
+	for _, rev := range []int{0, -1, 999} {
+		if _, err := fx.Store.DeploymentByRevision(fx.Ctx, fx.App.ID, rev); !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("DeploymentByRevision(%d) error = %v, want ErrNotFound", rev, err)
+		}
+	}
+
+	// A different app has its own ladder starting at 1: revision is only
+	// ever meaningful relative to one app, so cross-app lookups must not
+	// leak (same IDOR posture as DeploymentByID).
+	limits := api.MustLimitsFor(api.PlanPro)
+	otherApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "rev-other-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(other): %v", err)
+	}
+	otherDep, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: otherApp.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:rev-other", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(other): %v", err)
+	}
+	if otherDep.Revision != 1 {
+		t.Errorf("second app's first deployment Revision = %d, want 1 (per-app ladder)", otherDep.Revision)
+	}
+	if _, err := fx.Store.DeploymentByRevision(fx.Ctx, otherApp.ID, 2); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("DeploymentByRevision(otherApp, 2) error = %v, want ErrNotFound (fx.App's v2 must not leak)", err)
+	}
+}
+
+// testCustomMetricsContract pins the ADR-202 store contract on both
+// implementations.
+//
+// The load-bearing case is the distinct-name cap. PgStore enforces it inside
+// the INSERT's WHERE clause and MemStore with a len() check, which are
+// different mechanisms for the same rule — exactly the shape that diverged
+// when PgStore's SQL used uppercase state literals and MemStore did not.
+// Absolute expected values throughout, never "the two agree".
+func testCustomMetricsContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	at := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+
+	// A fresh app holds nothing.
+	got, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("ListCustomMetrics on a fresh app: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("fresh app has %d custom metrics, want 0", len(got))
+	}
+
+	// Two distinct names under a cap of 2.
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "orders_pending", 120, at, 2); err != nil {
+		t.Fatalf("put orders_pending: %v", err)
+	}
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "docs_queued", 7.5, at, 2); err != nil {
+		t.Fatalf("put docs_queued: %v", err)
+	}
+
+	// A THIRD distinct name must be rejected at the cap.
+	err = fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "third_name", 1, at, 2)
+	if !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third distinct name at cap 2 = %v, want ErrCustomMetricLimit", err)
+	}
+
+	// An EXISTING name must still be accepted at the cap: it is an upsert
+	// and cannot grow the row count. Rejecting it would break an app that
+	// is merely at its limit and pushing a fresh value.
+	later := at.Add(time.Minute)
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "orders_pending", 999, later, 2); err != nil {
+		t.Fatalf("re-push of an existing name at the cap: %v, want nil", err)
+	}
+
+	// Name-ordered, and the upsert replaced BOTH value and timestamp.
+	got, err = fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("ListCustomMetrics: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("stored metrics = %d, want 2 (the capped push must not have been stored)", len(got))
+	}
+	if got[0].Name != "docs_queued" || got[1].Name != "orders_pending" {
+		t.Fatalf("names = [%s %s], want [docs_queued orders_pending] (name-ordered)", got[0].Name, got[1].Name)
+	}
+	if got[0].Value != 7.5 {
+		t.Errorf("docs_queued value = %v, want 7.5 (a non-integral metric must survive)", got[0].Value)
+	}
+	if got[1].Value != 999 {
+		t.Errorf("orders_pending value = %v, want 999 (the upsert must replace the value)", got[1].Value)
+	}
+	if !got[1].ObservedAt.UTC().Equal(later) {
+		t.Errorf("orders_pending observed_at = %v, want %v: a stale timestamp would keep a "+
+			"refreshed metric looking expired and silently drop the signal", got[1].ObservedAt.UTC(), later)
+	}
+
+	// Delete frees a slot, so a new name fits again.
+	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "docs_queued"); err != nil {
+		t.Fatalf("delete docs_queued: %v", err)
+	}
+	if err := fx.Store.PutCustomMetric(fx.Ctx, fx.App.ID, "third_name", 1, at, 2); err != nil {
+		t.Fatalf("put after delete freed a slot: %v, want nil", err)
+	}
+
+	// Deleting a name that does not exist is not an error: the caller's
+	// intent is "this metric is gone", which is already true.
+	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
+		t.Errorf("delete of a missing name = %v, want nil", err)
+	}
+}
+
+// testScalingPolicyRoundTrip pins that a scaling policy written through the
+// production PATCH path survives a read on BOTH stores, field for field.
+//
+// This is the gap that let ADR-194 ship inert. `targets` — the entire
+// multi-signal surface — was marshalled into apps.scaling_policy and thrown
+// away on every read, because UnmarshalJSON copied the decoded shape field
+// by field from a hand-maintained list that nobody extended. The whole
+// scaling suite stayed green through it: every trigger test builds
+// state.App in memory and hands it straight to the trigger, so no test in
+// the tree crossed the persistence boundary at all. UpdateApp was on
+// uncovered.txt, which is precisely the condition that file's header warns
+// about.
+//
+// Every field is set to a DISTINCTIVE non-zero value. A zero would pass
+// against a store that silently dropped it, which is the failure being
+// tested — and the values are absolute, not "both stores agree", because
+// both stores were wrong together in #1666.
+//
+// The two stores prove DIFFERENT halves here, and it is worth being precise
+// about which:
+//
+//   - MemStore holds the *ScalingPolicy pointer directly and never
+//     serialises, so this case pins the STRUCT contract there: that
+//     UpdateApp stores what it was given and AppByID hands it back.
+//     Re-introducing the ADR-194 decoder bug does NOT fail the MemStore
+//     run, which was confirmed by doing exactly that.
+//   - PgStore marshals to the scaling_policy jsonb column and decodes on
+//     read, so the same case pins the SERIALISATION contract there. That
+//     run is where a dropped field actually surfaces, and it executes in
+//     CI's `pg shard 2a` job via TestPgStoreConformance.
+//
+// The codec itself is separately pinned, without needing a database, by
+// TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip in pkg/state.
+func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
+	t.Helper()
+	want := state.ScalingPolicy{
+		MinInstances: 2,
+		MaxInstances: 9,
+		// Every metric class: per-instance rate, saturation, backlog,
+		// broker-reported, and a named custom metric. A store that
+		// mishandles the name on the custom entry, or drops the list,
+		// fails here rather than in production.
+		Targets: []state.ScalingTarget{
+			{Metric: api.ScalingMetricRPS, Value: 50},
+			{Metric: api.ScalingMetricCPU, Value: 70},
+			{Metric: api.ScalingMetricConcurrentRequests, Value: 80},
+			{Metric: api.ScalingMetricQueueDepth, Value: 5},
+			{Metric: api.ScalingMetricQueueLag, Value: 500},
+			{Metric: api.ScalingMetricCustom, Name: "orders_pending", Value: 100},
+		},
+		ScaleOutCooldownS:       7,
+		ScaleInCooldownS:        77,
+		ConcurrencyOverflow:     api.ConcurrencyOverflowDrop,
+		MaxQueueWaitMS:          1234,
+		WakeMaxQueueDepth:       31,
+		WakeMaxQueueWaitSeconds: 41,
+		Timezone:                "Europe/Istanbul",
+		Schedules: []state.ScalingSchedule{
+			{Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3},
+			{Cron: "0 2 * * *", DurationS: 5400, MinInstances: 1},
+		},
+	}
+
+	if _, err := fx.Store.UpdateApp(fx.Ctx, fx.App.ID, state.UpdateAppParams{
+		ScalingPolicy:    &want,
+		SetScalingPolicy: true,
+	}); err != nil {
+		t.Fatalf("UpdateApp with a scaling policy: %v", err)
+	}
+
+	// Read through AppByID, the same call the schedd triggers reach the
+	// policy by, rather than trusting UpdateApp's return value — a store
+	// could echo the input while persisting something else.
+	got, err := fx.Store.AppByID(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("AppByID after writing a scaling policy: %v", err)
+	}
+	if got.ScalingPolicy == nil {
+		t.Fatal("scaling policy is nil after a write: the whole jsonb column was dropped")
+	}
+	if !reflect.DeepEqual(want, *got.ScalingPolicy) {
+		t.Fatalf("scaling policy did not survive the round trip.\n want: %+v\n got:  %+v\n\n"+
+			"Every field of state.ScalingPolicy must be carried by BOTH policyShape structs in "+
+			"types.go AND by the store's write/read path. This is how ADR-194's `targets` "+
+			"shipped inert.", want, *got.ScalingPolicy)
+	}
+
+	// The effective-floor helper is what the reaper, the engine and the
+	// billing sampler all read, so the schedule has to be live after the
+	// round trip and not merely present in the struct. Inside the Monday
+	// window: 08:00 Istanbul = 05:00Z, so 11:00Z is open and demands 3.
+	inWindow := time.Date(2026, 9, 21, 11, 0, 0, 0, time.UTC)
+	if floor := got.EffectiveMinInstancesAt(inWindow); floor != 3 {
+		t.Errorf("EffectiveMinInstancesAt(in-window) = %d, want 3: the schedule survived the "+
+			"round trip as data but does not drive the floor", floor)
+	}
+	// Outside every window the static min_instances applies.
+	outOfWindow := time.Date(2026, 9, 21, 22, 0, 0, 0, time.UTC)
+	if floor := got.EffectiveMinInstancesAt(outOfWindow); floor != 2 {
+		t.Errorf("EffectiveMinInstancesAt(out-of-window) = %d, want 2 (the static floor)", floor)
+	}
+
+	// A named custom target must keep its name: the name is what selects
+	// WHICH pushed metric the trigger reads, so losing it silently
+	// disconnects the app from its own signal.
+	value, ok := got.ScalingPolicy.TargetFor(api.ScalingMetricCustom)
+	if !ok || value != 100 {
+		t.Errorf("TargetFor(custom) = (%v, %v), want (100, true)", value, ok)
+	}
+	var customName string
+	for _, target := range got.ScalingPolicy.EffectiveTargets() {
+		if target.Metric == api.ScalingMetricCustom {
+			customName = target.Name
+		}
+	}
+	if customName != "orders_pending" {
+		t.Errorf("custom target name = %q, want \"orders_pending\": the trigger looks the "+
+			"pushed metric up by name, so an empty one reads as no signal", customName)
 	}
 }

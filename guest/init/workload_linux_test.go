@@ -29,8 +29,10 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -121,6 +123,12 @@ func TestNewSupervisorFor_NonEssentialZeroRestarts(t *testing.T) {
 	if sup.OnCrash == nil {
 		t.Error("OnCrash hook not wired")
 	}
+	if sup.stopSignal != defaultStopSignal {
+		t.Errorf("non-essential stop signal = %v, want %v", sup.stopSignal, defaultStopSignal)
+	}
+	if sup.stopGrace != MaxAppManifestStopGracePeriodFallback {
+		t.Errorf("non-essential stop grace = %s, want %s", sup.stopGrace, MaxAppManifestStopGracePeriodFallback)
+	}
 }
 
 // TestNewSupervisorFor_EssentialUsesMaxRestarts pins the essential
@@ -146,7 +154,7 @@ func TestNewSupervisorFor_EssentialUsesMaxRestarts(t *testing.T) {
 // nothing on the boot path.
 func TestNewSupervisorForMain_HooksWired(t *testing.T) {
 	spec := workloadSpec{Name: "main", Type: "main", Essential: true, RamMB: 256, Port: 8080}
-	manifest := api.AppManifest{Entrypoint: []string{"/bin/sleep", "1"}}
+	manifest := api.AppManifest{Entrypoint: []string{"/bin/sleep", "1"}, StopSignal: "SIGUSR1", StopGracePeriod: 7 * time.Second}
 	sup := newSupervisorForMain(spec, manifest, nil, nil, nil)
 	if sup == nil {
 		t.Fatal("newSupervisorForMain returned nil")
@@ -159,6 +167,12 @@ func TestNewSupervisorForMain_HooksWired(t *testing.T) {
 	}
 	if sup.OnCrash == nil {
 		t.Error("OnCrash hook not wired")
+	}
+	if sup.stopSignal != syscall.SIGUSR1 {
+		t.Errorf("main stop signal = %v, want %v", sup.stopSignal, syscall.SIGUSR1)
+	}
+	if sup.stopGrace != 7*time.Second {
+		t.Errorf("main stop grace = %s, want 7s", sup.stopGrace)
 	}
 }
 
@@ -278,6 +292,46 @@ func TestLoadSidecarManifestAt_DirectRoot(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("manifest = %#v, want %#v", got, want)
+	}
+}
+
+func TestSidecarManifestForRuntime_ProjectsStopContract(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "etc", "faas", "workloads", "metrics", "workload.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := api.AppManifest{
+		Entrypoint:      []string{"/bin/metrics"},
+		StopSignal:      "SIGUSR2",
+		StopGracePeriod: 11 * time.Second,
+	}
+	var buf bytes.Buffer
+	if err := api.WriteManifest(&buf, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := sidecarManifestForRuntimeAt(root, "metrics")
+	if err != nil {
+		t.Fatalf("sidecarManifestForRuntimeAt: %v", err)
+	}
+	if !found {
+		t.Fatal("sidecarManifestForRuntimeAt found=false, want true")
+	}
+	if got.StopSignal != want.StopSignal || got.StopGracePeriod != want.StopGracePeriod {
+		t.Fatalf("stop contract = signal %q grace %s, want signal %q grace %s", got.StopSignal, got.StopGracePeriod, want.StopSignal, want.StopGracePeriod)
+	}
+}
+
+func TestSidecarManifestForRuntime_LegacyLayer(t *testing.T) {
+	manifest, found, err := sidecarManifestForRuntimeAt(t.TempDir(), "metrics")
+	if err != nil {
+		t.Fatalf("sidecarManifestForRuntimeAt: %v", err)
+	}
+	if found {
+		t.Fatalf("legacy sidecar manifest found = %#v, want absent", manifest)
 	}
 }
 

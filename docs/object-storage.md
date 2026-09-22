@@ -17,8 +17,11 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    upstream account/project, not one containing unrelated infrastructure buckets.
 3. For `s3`, supply the named access/secret environment variables only to
    **apid, gatewayd-public, and s3-gatewayd** through the deployment's secret
-   mechanism. For `gcs`, give those daemons Application Default Credentials
-   (ADC) for the configured service account; do not create a downloaded key. Never put
+   mechanism. For `gcs`, prefer a dedicated storage service account and set
+   `gcs_impersonate_service_account: true`. Give each daemon's ADC identity
+   `roles/iam.serviceAccountTokenCreator` on that account and give only the
+   storage account the required GCS roles. Direct attached-service-account ADC
+   remains supported by leaving the setting false. Do not create a downloaded key. Never put
    credentials in JSON, app envs, source control, URLs, or logs. Optional S3
    `session_token_env` supports temporary credentials; restart/rotate before
    their expiration.
@@ -56,10 +59,15 @@ database-aware readiness endpoint on `127.0.0.1:9096` to pass. Prometheus
 scrapes `/metrics` only when this role is enabled. Normal releases restart and
 health-gate an enabled gateway after switching `/opt/faas/current`.
 
-Before running the role, create a **DNS-only** Cloudflare A/AAAA record for
-`s3.gregale.dev` pointing at the public Caddy edge. Do not enable the orange-
-cloud proxy for this hostname: Cloudflare request-size and duration ceilings
-must not become undocumented Gregale storage limits.
+Before running the role, create a **proxied** Cloudflare record for
+`s3.gregale.dev` pointing at the public Caddy edge. The beta profile deliberately
+caps `max_upload_bytes` and multipart part size at 64 MiB, below Cloudflare's
+Free/Pro request-body ceiling. Configure a dedicated cache-bypass rule for this
+hostname and disable URL normalization, redirects, response transforms, and
+interactive bot challenges on the S3 API path. Treat Cloudflare's write/read
+timeouts as part of the beta endpoint contract. A future large-object profile
+must use a separate direct-upload origin or a provider-native signed-upload path
+instead of silently raising this proxied limit.
 
 The daemon being healthy does not enable customer storage. Keep the global
 `s3_enabled` runtime configuration false until provider qualification passes,
@@ -171,10 +179,9 @@ a future Gregale-owned storage cluster:
 
 Path-style is intentional. The available `*.gregale.dev` certificate covers
 `s3.gregale.dev`, but it does not cover bucket hosts such as
-`assets.s3.gregale.dev`. Create a DNS-only Cloudflare record for
-`s3.gregale.dev` during the initial rollout so Cloudflare's proxy upload-size
-and request-duration limits are not accidentally presented as Gregale storage
-limits. Caddy terminates TLS and forwards this hostname to s3-gatewayd on
+`assets.s3.gregale.dev`. The beta endpoint is intentionally Cloudflare-proxied
+and therefore advertises a 64 MiB single-request/part limit. Caddy terminates
+origin TLS and forwards this hostname to s3-gatewayd on
 `127.0.0.1:8084`; preserve the original Host header. Do not share the
 `api.gregale.dev` reverse-proxy route, request-body limits, or auth middleware.
 

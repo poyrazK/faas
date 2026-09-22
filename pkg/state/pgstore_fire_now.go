@@ -8,6 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // pgstore_fire_now.go — CRUD for the cron_fire_now_requests table
@@ -138,9 +141,7 @@ func (s *PgStore) MarkFireNowRequestSucceeded(ctx context.Context, requestID, in
 // `GET /v1/crons/{id}/runs` (joined with the audit event). Cap to 1 KB
 // to match the audit payload convention (pkg/sched/loop.go:1840-1864).
 func (s *PgStore) MarkFireNowRequestFailed(ctx context.Context, requestID, errMsg string) error {
-	if len(errMsg) > 1024 {
-		errMsg = errMsg[:1024]
-	}
+	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE cron_fire_now_requests
 		SET status = 'failed',

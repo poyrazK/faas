@@ -64,7 +64,7 @@ func gatewayReq(t *testing.T, h *e2etest.Harness, method, path string, body any,
 		}
 		r = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(context.Background(), method, h.GatewayURL+path, r)
+	req, err := http.NewRequestWithContext(context.Background(), method, h.EdgeURL()+path, r)
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
@@ -104,7 +104,7 @@ func gatewayReq(t *testing.T, h *e2etest.Harness, method, path string, body any,
 //
 // host is the Host header the gateway router keys on. method is
 // GET/POST/OPTIONS/PUT/DELETE. path is the request path (no leading
-// host; h.GatewayURL supplies the scheme + IP). body is JSON-marshalled
+// host; h.EdgeURL() supplies the scheme + IP). body is JSON-marshalled
 // if non-nil; pass nil for GET/OPTIONS. extraHeaders are set last so
 // they can override the default Content-Type (rare; needed for
 // application/x-www-form-urlencoded preflight, etc.).

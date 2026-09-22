@@ -1,3 +1,6 @@
+// spec: §6.2
+// adr: 199
+
 package sched
 
 // Property tests pinning the §6.2 invariants that schedd enforces in-process.
@@ -660,5 +663,114 @@ func TestProperty_EnsureWake_BurstCoalescesToOneBoot(t *testing.T) {
 	// The wake-coord entry must be gone — no leaked map rows.
 	if _, ok := engine.wakeCoord.inflight[app.ID]; ok {
 		t.Errorf("wake-coord entry for %q still present after final release", app.ID)
+	}
+}
+
+// TestProperty_RolloutGrant_AllowsExactlyOneOverlap pins the ADR-199
+// amendment to invariant §6.2-1.
+//
+// The invariant used to read "≤ max_concurrency(plan) instances in {WAKING,
+// COLD_BOOTING, RUNNING}". It now reads "≤ max_concurrency(plan) +
+// RolloutConcurrencyGrant, and the grant applies only while a second
+// deployment is coming up alongside the one already serving".
+//
+// Both halves matter and both are asserted here. The first half is what makes
+// traffic splitting work on a plan whose cap equals its steady-state instance
+// count (Free = 1) — without it the canary's wake is refused and that slice
+// of traffic 429s instead of reaching the new revision. The second half is
+// what keeps the grant from becoming a general concurrency increase: it is
+// exactly one instance, it is scoped to the overlap, and it retires on its
+// own when the old revision's instances go away.
+//
+// maxConc is deliberately 1 (the Free shape) because that is the only value
+// where the grant is load-bearing; at maxConc >= 2 a two-revision overlap
+// already fits under the plan cap and the property would pass vacuously.
+func TestProperty_RolloutGrant_AllowsExactlyOneOverlap(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	const maxConc = 1
+	_, app, oldDep := seedApp(t, store, api.PlanFree, 128, maxConc)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	// The currently-serving revision takes the app to its plan cap.
+	first, err := e.AdmitInstanceForDeployment(ctx, app.ID, oldDep.ID, "", "")
+	if err != nil {
+		t.Fatalf("admit old revision: %v", err)
+	}
+	if first.AtCapacity || first.InstanceID == "" {
+		t.Fatalf("old revision admit = %+v, want an admitted instance", first)
+	}
+	if got := e.ledger.Concurrency(app.ID); got != maxConc {
+		t.Fatalf("concurrency after first admit = %d, want %d", got, maxConc)
+	}
+
+	// A SECOND instance of the SAME revision is ordinary scale-out, not a
+	// rollout, so the grant must not apply — this is the assertion that
+	// stops the grant being a free +1 for everyone.
+	sameRevision, err := e.AdmitInstanceForDeployment(ctx, app.ID, oldDep.ID, "", "")
+	if err != nil {
+		t.Fatalf("admit same revision again: %v", err)
+	}
+	if !sameRevision.AtCapacity {
+		t.Fatalf("second instance of the same revision was admitted (%+v); the rollout grant must not widen ordinary scale-out", sameRevision)
+	}
+
+	// Now the canary: a DIFFERENT revision coming up alongside the one
+	// already serving. This is the overlap the grant exists for.
+	newDep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:canary", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(canary): %v", err)
+	}
+	canary, err := e.AdmitInstanceForDeployment(ctx, app.ID, newDep.ID, "", "")
+	if err != nil {
+		t.Fatalf("admit canary revision: %v", err)
+	}
+	if canary.AtCapacity || canary.InstanceID == "" {
+		t.Fatalf("canary admit = %+v, want an admitted instance (ADR-199 grant did not apply)", canary)
+	}
+	if got := e.ledger.Concurrency(app.ID); got != maxConc+api.RolloutConcurrencyGrant {
+		t.Fatalf("concurrency during overlap = %d, want %d (cap + grant)", got, maxConc+api.RolloutConcurrencyGrant)
+	}
+
+	// The grant is +1 and only +1: a THIRD revision must be refused even
+	// though a rollout is in flight. Otherwise an app could walk past its
+	// plan cap one deployment at a time.
+	thirdDep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:third", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(third): %v", err)
+	}
+	third, err := e.AdmitInstanceForDeployment(ctx, app.ID, thirdDep.ID, "", "")
+	if err != nil {
+		t.Fatalf("admit third revision: %v", err)
+	}
+	if !third.AtCapacity {
+		t.Fatalf("third revision was admitted (%+v); the grant must be exactly %d", third, api.RolloutConcurrencyGrant)
+	}
+	if got := e.ledger.Concurrency(app.ID); got != maxConc+api.RolloutConcurrencyGrant {
+		t.Fatalf("concurrency after refused third = %d, want %d", got, maxConc+api.RolloutConcurrencyGrant)
+	}
+
+	// Rollout completes: the old revision's instance goes away. The app is
+	// back under its plain plan cap with no lingering entitlement, and a
+	// further admit for the surviving revision is refused again.
+	if err := e.Park(ctx, first.InstanceID); err != nil {
+		t.Fatalf("park old revision instance: %v", err)
+	}
+	if got := e.ledger.Concurrency(app.ID); got != maxConc {
+		t.Fatalf("concurrency after rollout completes = %d, want %d", got, maxConc)
+	}
+	after, err := e.AdmitInstanceForDeployment(ctx, app.ID, newDep.ID, "", "")
+	if err != nil {
+		t.Fatalf("admit after rollout: %v", err)
+	}
+	if !after.AtCapacity {
+		t.Fatalf("admit after rollout = %+v, want AtCapacity (the grant must retire with the overlap)", after)
 	}
 }

@@ -52,9 +52,10 @@ host.
 ### Step 4: Deploy the Signed Release to the Fleet
 
 Use the canonical platform workflow for production installation. It verifies
-and activates the control plane, rolls every declared compute target, then
-requires full-fleet release convergence and production acceptance. Pass the
-complete active fleet as one JSON array:
+and activates the control plane, prepares release artifacts and runtime bases
+on compute targets in parallel without draining them, then drains and activates
+one prepared node at a time. It finally requires full-fleet release convergence
+and production acceptance. Pass the complete active fleet as one JSON array:
 
 ```bash
 RELEASE_TAG=v0.1.18-rc.1
@@ -68,6 +69,18 @@ COMPUTE_TARGETS="$(jq -cn \
 gh workflow run cd-platform.yml --ref main \
   --field release_tag="$RELEASE_TAG" \
   --field compute_targets="$COMPUTE_TARGETS"
+```
+
+The default `compute_rollout_mode=phased` prepares managed nodes before their
+serialized activation. When a release changes the managed-host bootstrap
+contract, select `compute_rollout_mode=full`; preparation is skipped and each
+node runs the full convergence path serially before the same fleet gates run:
+
+```bash
+gh workflow run cd-platform.yml --ref main \
+  --field release_tag="$RELEASE_TAG" \
+  --field compute_targets="$COMPUTE_TARGETS" \
+  --field compute_rollout_mode=full
 ```
 
 Each target may instead provide a checked-in `claim_file` or signed fleet

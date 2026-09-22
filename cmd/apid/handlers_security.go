@@ -33,12 +33,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -146,6 +150,160 @@ func (s *server) getAppSecurity(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	writeJSON(w, http.StatusOK, posture)
+}
+
+// recoverAppSecurityQuarantine restores an app only after the caller has
+// supplied a newer live deployment whose scan is complete, digest-matched,
+// and free of HIGH, CRITICAL, and UNKNOWN findings. Every other live canary
+// row must satisfy the same evidence gate so recovery cannot expose an unsafe
+// sibling through weighted traffic.
+func (s *server) recoverAppSecurityQuarantine(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var req api.SecurityQuarantineRecoveryRequest
+	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.DeploymentID) == "" {
+		api.WriteProblem(w, api.ErrValidation("deployment_id is required"))
+		return
+	}
+	target, err := s.store.DeploymentByID(r.Context(), req.DeploymentID)
+	if err != nil || target.AppID != app.ID {
+		s.notFound(w, "no such deployment")
+		return
+	}
+	parked, err := s.store.LatestParkedDeploymentForApp(r.Context(), app.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("the app has no recorded security quarantine; deploy a clean image before retrying"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not load security quarantine"))
+		return
+	}
+	if parked.ParkedReason != string(state.ParkReasonSecurityScanRegressed) {
+		api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("the latest parked deployment was not quarantined for a security scan regression"))
+		return
+	}
+	if app.Status != state.AppEvictedCold && app.Status != state.AppActive {
+		api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("the app is not in a recoverable security-quarantine state"))
+		return
+	}
+	if target.Status != state.DeployLive {
+		api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("recovery requires a live replacement deployment"))
+		return
+	}
+	if parked.ImageDigest == "" || target.ImageDigest == "" || target.ImageDigest == parked.ImageDigest {
+		api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("the replacement deployment must use a different image digest from the quarantined deployment"))
+		return
+	}
+	if parked.ParkedAt == nil || target.CreatedAt.IsZero() || !target.CreatedAt.After(*parked.ParkedAt) {
+		api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("the replacement deployment must have been created after the quarantine"))
+		return
+	}
+	live, err := s.store.LiveDeployments(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load live security deployments"))
+		return
+	}
+	if len(live) == 0 {
+		api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("recovery requires at least one live replacement deployment"))
+		return
+	}
+	for _, dep := range live {
+		if !s.securityScanEvidenceClean(dep) {
+			api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked(fmt.Sprintf("deployment %s does not have complete, digest-matched clean scan evidence", dep.ID)))
+			return
+		}
+	}
+	if app.Status != state.AppActive {
+		claimed, casErr := transitionSecurityRecovery(r.Context(), s.store, app.ID, app.Status)
+		if casErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not restore quarantined app"))
+			return
+		}
+		if !claimed {
+			current, readErr := s.store.AppByID(r.Context(), app.ID)
+			if readErr != nil || current.Status != state.AppActive {
+				api.WriteProblem(w, api.ErrSecurityQuarantineRecoveryBlocked("the app lifecycle changed while recovery was being validated; retry"))
+				return
+			}
+		}
+		if claimed && s.audit != nil {
+			s.audit.Emit(r.Context(), "app.security_quarantine_recovered", &acct.ID, map[string]any{
+				"app_id": app.ID, "slug": app.Slug,
+				"quarantined_deployment_id": parked.ID,
+				"quarantined_image_digest":  parked.ImageDigest,
+				"deployment_id":             target.ID,
+				"image_digest":              target.ImageDigest,
+			})
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"kind": "security_recovered", "app_id": app.ID, "slug": app.Slug,
+		"status": string(state.AppActive), "deployment_id": target.ID,
+		"lifecycle_changed": true,
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not encode security recovery notification"))
+		return
+	}
+	if err := s.notif.Notify(r.Context(), db.NotifyAppChanged, string(payload)); err != nil {
+		s.log.Warn("apid: notify security recovery", "app", app.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not publish security recovery"))
+		return
+	}
+	recoveredAt := time.Now().UTC()
+	writeJSON(w, http.StatusOK, api.SecurityQuarantineRecoveryResponse{
+		AppID: app.ID, Slug: app.Slug, DeploymentID: target.ID,
+		ImageDigest: target.ImageDigest, RecoveredAt: recoveredAt,
+		Status: string(state.AppActive),
+	})
+}
+
+func (s *server) securityScanEvidenceClean(dep state.Deployment) bool {
+	if dep.ScanStatus != "complete" || dep.ScannedAt.IsZero() || dep.ImageDigest == "" {
+		return false
+	}
+	if len(dep.ScanResult) == 0 {
+		return false
+	}
+	var raw api.ScanResult
+	if err := json.Unmarshal(dep.ScanResult, &raw); err != nil || raw.Status != "complete" ||
+		strings.TrimSpace(raw.ImageDigest) != strings.TrimSpace(dep.ImageDigest) ||
+		raw.ArtifactDigest == "" || raw.ScannerVersion == "" || raw.ScannerDBVersion == "" ||
+		raw.ScannerDBBuiltAt == "" || !strings.EqualFold(raw.ScannerDBStatus, "valid") ||
+		raw.Vulnerabilities == nil || raw.Error != "" {
+		return false
+	}
+	now := time.Now().UTC()
+	scannedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw.ScannedAt))
+	if err != nil || scannedAt.After(now) || now.Sub(scannedAt) > 5*time.Minute {
+		return false
+	}
+	dbBuiltAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw.ScannerDBBuiltAt))
+	if err != nil || dbBuiltAt.After(now) || now.Sub(dbBuiltAt) > 30*24*time.Hour {
+		return false
+	}
+	scan := s.scanResponse(dep)
+	if scan == nil || scan.Status != "complete" || scan.ImageDigest != dep.ImageDigest || scan.Error != "" {
+		return false
+	}
+	counts := scan.SeverityCounts
+	return counts.Critical == 0 && counts.High == 0 && counts.Unknown == 0
+}
+
+type securityRecoveryStatusStore interface {
+	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
+}
+
+func transitionSecurityRecovery(ctx context.Context, store state.Store, appID string, current state.AppStatus) (bool, error) {
+	if cas, ok := store.(securityRecoveryStatusStore); ok {
+		return cas.CompareAndSetAppStatus(ctx, appID, current, state.AppActive)
+	}
+	active := state.AppActive
+	_, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active})
+	return err == nil, err
 }
 
 func normalizedAppSecurityPolicy(policy api.AppSecurityPolicy) api.AppSecurityPolicy {
@@ -263,9 +421,34 @@ func (s *server) appSecurityPosture(ctx context.Context, app state.App) (api.App
 	if score < 0 {
 		score = 0
 	}
+	quarantine, err := s.securityQuarantineForApp(ctx, app)
+	if err != nil {
+		return api.AppSecurityPostureResponse{}, err
+	}
 	return api.AppSecurityPostureResponse{
 		AppID: app.ID, Slug: app.Slug, Profile: profile, Score: score,
 		SecurityPolicy: normalizedAppSecurityPolicy(app.SecurityPolicy), Findings: findings,
+		Quarantine: quarantine,
+	}, nil
+}
+
+func (s *server) securityQuarantineForApp(ctx context.Context, app state.App) (*api.AppSecurityQuarantine, error) {
+	if app.Status != state.AppEvictedCold {
+		return nil, nil
+	}
+	dep, err := s.store.LatestParkedDeploymentForApp(ctx, app.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if dep.ParkedReason != string(state.ParkReasonSecurityScanRegressed) {
+		return nil, nil
+	}
+	return &api.AppSecurityQuarantine{
+		DeploymentID: dep.ID, ImageDigest: dep.ImageDigest,
+		Reason: dep.ParkedReason, ParkedAt: dep.ParkedAt,
 	}, nil
 }
 

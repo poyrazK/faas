@@ -1573,6 +1573,12 @@ func buildArgv(m api.BuildManifest) []string {
 		if m.DockerfilePath != "" {
 			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
 		}
+		if m.DependencyCacheImport {
+			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
+		}
+		if m.DependencyCache {
+			argv = append(argv, "--export-cache", "type=local,dest=/build/out/cache,mode=max")
+		}
 		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar")
 	}
 	// Railpack plans local COPY paths relative to the directory passed to

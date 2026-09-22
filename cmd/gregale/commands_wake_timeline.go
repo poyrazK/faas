@@ -372,12 +372,20 @@ func renderRestoreBreakdown(ev api.WakeTimelineEvent) string {
 		key   string
 	}{
 		{label: "total", key: "total_ms"},
+		// ADR-192: Manager.Wake phases that precede the vmmd restore
+		// window. Not part of total; they explain the gap after
+		// wake.boot_started.
+		{label: "lease_acquire", key: "lease_acquire_ms"},
+		{label: "env_prepare", key: "env_prepare_ms"},
+		{label: "pre_network", key: "pre_network_ms"},
+		{label: "setup_network", key: "setup_network_ms"},
 		{label: "restore_gate_wait", key: "restore_gate_wait_ms"},
 		{label: "chroot", key: "chroot_ms"},
 		{label: "materialize_mem", key: "materialize_mem_ms"},
 		{label: "materialize_vmstate", key: "materialize_vmstate_ms"},
 		{label: "resolve_images", key: "resolve_images_ms"},
 		{label: "stage_drives", key: "stage_drives_ms"},
+		{label: "stage_pre_boot_files", key: "stage_pre_boot_files_ms"},
 		{label: "stage_snapshot", key: "stage_snapshot_ms"},
 		{label: "helper", key: "helper_ms"},
 		{label: "start_jailer", key: "start_jailer_ms"},
@@ -417,10 +425,19 @@ func renderRestoreArtifacts(value any) string {
 		name, _ := artifact["artifact"].(string)
 		source, _ := artifact["source"].(string)
 		ms, durationOK := timelineMillis(artifact["duration_ms"])
+		bytes, bytesOK := timelineMillis(artifact["bytes"])
 		if name == "" || source == "" || !durationOK {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s/%s=%dms", name, source, ms))
+		// Bytes alongside the source, matching renderColdBootArtifacts: on the
+		// restore side this is what distinguishes a slow fetch from a large
+		// one, and mem is the artifact where that difference is measured in
+		// hundreds of megabytes.
+		part := fmt.Sprintf("%s/%s=%dms", name, source, ms)
+		if bytesOK {
+			part += fmt.Sprintf("/%dB", bytes)
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ",")
 }

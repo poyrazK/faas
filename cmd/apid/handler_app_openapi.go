@@ -51,8 +51,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/openapiimport"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// appOpenAPIDocChange is the app_openapi_doc_changed notification payload.
+type appOpenAPIDocChange struct {
+	AppID string `json:"app_id"`
+	Op    string `json:"op"`
+}
 
 // getAppOpenAPI handles GET /v1/apps/{slug}/openapi.
 //
@@ -795,7 +802,7 @@ func (s *server) postAppOpenAPIImport(w http.ResponseWriter, r *http.Request, ac
 	})
 	if s.notif != nil {
 		_ = s.notif.Notify(r.Context(), db.NotifyAppOpenAPIDocChanged,
-			fmt.Sprintf(`{"app_id":%q,"op":"replaced"}`, app.ID))
+			string(safetext.JSONObject(appOpenAPIDocChange{AppID: app.ID, Op: "replaced"})))
 	}
 	_, gotMeta, err := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, acct.ID)
 	if err != nil {
@@ -921,7 +928,7 @@ func (s *server) deleteAppOpenAPIImport(w http.ResponseWriter, r *http.Request, 
 	})
 	if s.notif != nil {
 		_ = s.notif.Notify(r.Context(), db.NotifyAppOpenAPIDocChanged,
-			fmt.Sprintf(`{"app_id":%q,"op":"deleted"}`, app.ID))
+			string(safetext.JSONObject(appOpenAPIDocChange{AppID: app.ID, Op: "deleted"})))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -1,3 +1,4 @@
+// spec: §4.6
 package rootfs
 
 import (
@@ -482,13 +483,23 @@ func TestBuildInjectsManifestAndInit(t *testing.T) {
 		if err != nil || string(init) != "INIT" {
 			t.Errorf("guest-init not injected as /sbin/init: %v", err)
 		}
+		passwdTable, err := os.ReadFile(filepath.Join(staging, "upper", "etc", "faas", "app_passwd"))
+		if err != nil {
+			t.Errorf("optimized app_passwd not injected: %v", err)
+		} else if !bytes.Contains(passwdTable, []byte("nonroot")) {
+			t.Errorf("optimized app_passwd missing nonroot entry: %x", passwdTable)
+		}
 		return nil
 	})
 
 	b := NewBuilder(capture)
 	_, err := b.Build(context.Background(), BuildInput{
-		Layers:        []io.Reader{gzLayer(t, []entry{{name: "x", body: "y"}})},
-		Manifest:      api.AppManifest{Entrypoint: []string{"node", "x"}},
+		Layers: []io.Reader{gzLayer(t, []entry{
+			{name: "etc/", typeflag: tar.TypeDir},
+			{name: "etc/passwd", body: "root:x:0:0:root:/root:/sbin/nologin\nnonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin\n"},
+			{name: "x", body: "y"},
+		})},
+		Manifest:      api.AppManifest{Entrypoint: []string{"node", "x"}, User: "nonroot", WorkingDir: "/home/nonroot"},
 		GuestInitPath: gi,
 		Plan:          api.PlanHobby,
 		Storage:       newTestStorage(t),

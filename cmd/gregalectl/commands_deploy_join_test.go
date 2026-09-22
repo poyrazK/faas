@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func TestResolveJoinPrivateAddressesSeedsSkippedPreflightFacts(t *testing.T) {
@@ -277,11 +278,11 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	}
 	playbook := string(body)
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
-	preregister := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before release installation")
-	if prestage < 0 || preregister < 0 || prestage >= preregister {
-		t.Fatal("runtime bases must be staged with the candidate release before node preregistration and drain")
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	if prestage < 0 || drain < 0 || prestage >= drain {
+		t.Fatal("runtime bases must be staged with the candidate release before an existing node is drained")
 	}
-	block := playbook[strings.Index(playbook, "Install the runtime-base pre-stage one-shot"):preregister]
+	block := playbook[strings.Index(playbook, "Install the runtime-base pre-stage one-shot"):drain]
 	for _, token := range []string{
 		"FAAS_IMAGED_PRESTAGE_ONLY=1",
 		"FAAS_GUEST_INIT=/opt/faas/prestage/",
@@ -291,6 +292,121 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 		if !strings.Contains(block, token) {
 			t.Errorf("pre-stage unit missing %q", token)
 		}
+	}
+	canonicalUnit, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "compute_only_service", "files", "faas-imaged.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"CapabilityBoundingSet=", "AmbientCapabilities="} {
+		var directive string
+		for _, line := range strings.Split(string(canonicalUnit), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				directive = line
+				break
+			}
+		}
+		if directive == "" {
+			t.Fatalf("canonical imaged unit is missing %s", prefix)
+		}
+		if !strings.Contains(block, directive) {
+			t.Errorf("pre-stage unit capability contract drifted from canonical imaged unit; missing %q", directive)
+		}
+	}
+}
+
+func TestNodeJoinFreshHostBootstrapsVMMDWithoutEarlyActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	preregister := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before runtime pre-stage")
+	inspect := strings.Index(playbook, "Inspect the active vmmd binary before runtime pre-stage")
+	render := strings.Index(playbook, "Render fresh-host runtime configuration before pre-stage")
+	override := strings.Index(playbook, "Bootstrap fresh-host vmmd from the verified release candidate")
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	if preregister < 0 || inspect < 0 || render < 0 || override < 0 || prestage < 0 || drain < 0 ||
+		!(preregister < inspect && inspect < render && render < override && override < prestage && prestage < drain) {
+		t.Fatalf("fresh-host bootstrap order invalid: preregister=%d inspect=%d render=%d override=%d prestage=%d drain=%d", preregister, inspect, render, override, prestage, drain)
+	}
+
+	bootstrapBlock := playbook[preregister:drain]
+	for _, token := range []string{
+		"--defer-activation",
+		"(faas_join_existing_compute_node.rc | default(3)) == 3",
+		"/opt/faas/current/bin/vmmd",
+		"Render fresh-host runtime configuration before pre-stage",
+		"/usr/local/bin/gregalectl",
+		"- manifest",
+		"- render",
+		"- --pki-trust-only",
+		"ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd",
+		"when: not faas_join_active_vmmd.stat.exists",
+		"Stop the fresh-host bootstrap vmmd after runtime pre-stage",
+		"Remove the fresh-host vmmd release override",
+		"state: absent",
+	} {
+		if !strings.Contains(bootstrapBlock, token) {
+			t.Errorf("fresh-host vmmd bootstrap is missing %q", token)
+		}
+	}
+}
+
+func TestNodeJoinPreparationStopsBeforeDrainAndActivationRequiresMarker(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	trustGuard := strings.Index(playbook, "Require stable active trust during parallel rollout preparation")
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	record := strings.Index(playbook, "Record completed non-disruptive rollout preparation")
+	endPlay := strings.Index(playbook, "End the node play after non-disruptive rollout preparation")
+	verify := strings.Index(playbook, "Verify the prepared rollout marker")
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	if trustGuard < 0 || prestage < 0 || record < 0 || endPlay < 0 || verify < 0 || drain < 0 ||
+		!(trustGuard < prestage && prestage < record && record < endPlay && endPlay < verify && verify < drain) {
+		t.Fatalf("phased rollout order invalid: trust=%d prestage=%d record=%d end=%d verify=%d drain=%d", trustGuard, prestage, record, endPlay, verify, drain)
+	}
+	trustBlock := playbook[trustGuard:prestage]
+	for _, token := range []string{
+		"faas_join_active_cert_fingerprint.stdout | trim) == faas_join_expected_cert_fingerprint",
+		"faas_join_active_ca_fingerprint.stdout | trim) == faas_join_candidate_ca_fingerprint",
+		"(faas_join_rollout_phase | default('full')) != 'prepare'",
+	} {
+		if !strings.Contains(trustBlock, token) {
+			t.Errorf("parallel preparation trust guard is missing %q", token)
+		}
+	}
+	prepareBlock := playbook[record:verify]
+	for _, token := range []string{
+		"prepared-release.sha",
+		"faas_join_release_git_sha",
+		"ansible.builtin.meta: end_play",
+		"faas_join_rollout_phase | default('full')) == 'prepare'",
+	} {
+		if !strings.Contains(prepareBlock, token) {
+			t.Errorf("preparation handoff is missing %q", token)
+		}
+	}
+	activationBlock := playbook[verify:drain]
+	for _, token := range []string{"grep", "- -Fqx", "prepared-release.sha", "faas_join_rollout_phase | default('full')) == 'activate'"} {
+		if !strings.Contains(activationBlock, token) {
+			t.Errorf("activation marker gate is missing %q", token)
+		}
+	}
+}
+
+func TestNormalizedJoinRolloutPhase(t *testing.T) {
+	for input, want := range map[string]string{"": joinRolloutFull, "full": joinRolloutFull, " prepare ": joinRolloutPrepare, "activate": joinRolloutActivate} {
+		got, err := normalizedJoinRolloutPhase(input)
+		if err != nil || got != want {
+			t.Errorf("normalizedJoinRolloutPhase(%q) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	if _, err := normalizedJoinRolloutPhase("unsafe"); err == nil {
+		t.Fatal("normalizedJoinRolloutPhase accepted an unknown phase")
 	}
 }
 
@@ -340,15 +456,25 @@ func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 		t.Fatal(err)
 	}
 	playbook := string(body)
+	inspectOperator := strings.Index(playbook, "Inspect the existing compute-node operator binary")
 	inspect := strings.Index(playbook, "Inspect existing compute-node certificate attestation before trust refresh")
 	stage := strings.Index(playbook, "Stage the compute trust bundle (the source never includes the CA private key)")
 	stamp := strings.Index(playbook, "CAS-stamp the staged vmmd certificate before runtime pre-stage")
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
-	if inspect < 0 || stage < 0 || stamp < 0 || prestage < 0 || !(inspect < stage && stage < stamp && stamp < prestage) {
-		t.Fatalf("certificate convergence order invalid: inspect=%d stage=%d stamp=%d prestage=%d", inspect, stage, stamp, prestage)
+	if inspectOperator < 0 || inspect < 0 || stage < 0 || stamp < 0 || prestage < 0 || !(inspectOperator < inspect && inspect < stage && stage < stamp && stamp < prestage) {
+		t.Fatalf("certificate convergence order invalid: operator=%d inspect=%d stage=%d stamp=%d prestage=%d", inspectOperator, inspect, stage, stamp, prestage)
 	}
-	block := playbook[inspect:prestage]
-	for _, token := range []string{"compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint"} {
+	// The legacy-binary hazard ends once the play installs the current
+	// release's CLI. Bound the block there rather than at prestage: every
+	// certificate convergence task runs before that staging, and tasks after
+	// it are entitled to use subcommands and --json that an old
+	// already-installed gregalectl would not have understood.
+	stageOperator := strings.Index(playbook, "Stage the bootstrap operator binary")
+	if stageOperator < stamp {
+		t.Fatalf("the bootstrap operator binary must be staged after certificate convergence: stamp=%d stageOperator=%d", stamp, stageOperator)
+	}
+	block := playbook[inspectOperator:stageOperator]
+	for _, token := range []string{"Inspect the existing compute-node operator binary", "ansible.builtin.stat", "path: /usr/local/bin/gregalectl", "faas_join_existing_operator.stat.exists", "default(3)", "compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint", "(faas_join_rollout_phase | default('full')) != 'prepare'"} {
 		if !strings.Contains(block, token) {
 			t.Errorf("certificate convergence block missing %q", token)
 		}
@@ -406,8 +532,8 @@ func TestNodeJoinPreregistrationAcknowledgesBootstrapDatabaseWrite(t *testing.T)
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	start := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before release installation")
-	end := strings.Index(playbook, "Stop stale compute-only services before replacing the active release")
+	start := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before runtime pre-stage")
+	end := strings.Index(playbook, "Create the release-bound runtime-base pre-stage directory")
 	if start < 0 || end < 0 || start >= end {
 		t.Fatal("node_join.yml is missing the compute-node preregistration block")
 	}
@@ -437,7 +563,22 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 		t.Fatalf("graceful drain order invalid: drain=%d wait=%d stop=%d", drain, wait, stop)
 	}
 	waitBlock := playbook[wait:stop]
-	for _, token := range []string{"drain-status", "--break-glass-db", "retries: 48", "until: faas_compute_node_drain_status.rc == 0"} {
+	for _, token := range []string{
+		"drain-status",
+		"--break-glass-db",
+		// The barrier must RETRY; the specific count is pinned by
+		// TestNodeJoinDrainWindowCoversMigrationCost, which asserts the
+		// window is long enough for a migration-based drain. Pinning the
+		// literal 48 here made a correct widening look like a regression.
+		"retries:",
+		"until: faas_compute_node_drain_status.rc == 0",
+		"rescue:",
+		"Restore an originally active node after graceful drain failure",
+		"- activate",
+		"- node_join_drain_rollback",
+		"'lifecycle=active' in",
+		"Abort after restoring the pre-rollout lifecycle",
+	} {
 		if !strings.Contains(waitBlock, token) {
 			t.Errorf("drain barrier missing %q", token)
 		}
@@ -455,12 +596,135 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 	}
 }
 
+func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	install := strings.Index(playbook, "Install the verified release while keeping the row drained")
+	secrets := strings.Index(playbook, "Initialize host-local runtime identity and backup stubs")
+	doctor := strings.Index(playbook, "Run the node-scoped doctor before starting services")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if install < 0 || secrets < 0 || doctor < 0 || restart < 0 ||
+		!(install < secrets && secrets < doctor && doctor < restart) {
+		t.Fatalf("fresh-host activation order invalid: install=%d secrets=%d doctor=%d restart=%d", install, secrets, doctor, restart)
+	}
+	installEnd := strings.Index(playbook[install:], "Verify the requested release is the active on-host release")
+	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], "- --defer-activation") {
+		t.Fatal("node_join release install must defer first-boot daemon start and database activation")
+	}
+	credentialBlock := playbook[secrets:restart]
+	for _, token := range []string{"secrets", "init", "--preserve-existing", "doctor", "--fail-on"} {
+		if !strings.Contains(credentialBlock, token) {
+			t.Errorf("pre-start credential/readiness block missing %q", token)
+		}
+	}
+}
+
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
 	body := strings.Replace(validManifestYAML,
 		"    - name: fsn-1\n      role: control-plane\n",
 		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:9091\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
 	return writeSplitboxManifest(t, body)
+}
+
+func dynamicSplitboxJoinManifest(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(splitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic := strings.Replace(string(body), "fleet:\n", `fleet:
+  dynamic_compute:
+    enabled: true
+    max_nodes: 4
+    name_prefix: fsn-
+    tags: [dynamic]
+`, 1)
+	dynamic = strings.Replace(dynamic, "daemons:\n", "daemons:\n  vmmd:\n    bind: tcp://0.0.0.0:50051\n", 1)
+	return writeSplitboxManifest(t, dynamic)
+}
+
+func TestDeployJoinValidateDynamicNodeRequiresVerifiedBundle(t *testing.T) {
+	manifestPath := dynamicSplitboxJoinManifest(t)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "deploy/ansible"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "deploy/ansible/node_join.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := deployJoinOptions{
+		ManifestFile: manifestPath,
+		Node:         "fsn-4",
+		SSHHost:      "10.42.0.4",
+		RepoRoot:     repo,
+		DryRun:       true,
+	}
+	if _, err := deployJoinValidate(opts); err == nil || !strings.Contains(err.Error(), "verified signed FleetEnrollmentBundle") {
+		t.Fatalf("unsigned dynamic join error = %v", err)
+	}
+	opts.FleetBundleVerified = true
+	report, err := deployJoinValidate(opts)
+	if err != nil {
+		t.Fatalf("verified dynamic join rejected: %v", err)
+	}
+	if !report.DynamicScale || report.DatabaseNode != "fsn-4.faas" {
+		t.Fatalf("dynamic join report = %#v", report)
+	}
+}
+
+func TestEffectiveJoinManifestMergesRegisteredDynamicNodes(t *testing.T) {
+	base, err := manifest.Load(dynamicSplitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := state.NewMemStore()
+	role := roleComputeOnly
+	if _, err := st.UpsertComputeNodeFromOperator(t.Context(), state.ComputeNode{
+		Name: "fsn-4.faas", TargetURL: "tcp://fsn-4.gregale.dev:50051", Role: &role,
+		Lifecycle: state.NodeLifecycleActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertComputeNodeFromOperator(t.Context(), state.ComputeNode{
+		Name: "vmmd.faas", TargetURL: "tcp://vmmd.faas:50051", Role: &role,
+		Lifecycle: state.NodeLifecycleActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := computeNodesStoreOpener
+	t.Cleanup(func() { computeNodesStoreOpener = old })
+	computeNodesStoreOpener = func() (state.Store, func(), error) { return st, func() {}, nil }
+	effective, path, err := effectiveJoinManifest(t.Context(), base, deployJoinOptions{
+		ManifestFile: basePathForTest(t, base),
+		Node:         "fsn-2",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("effectiveJoinManifest: %v", err)
+	}
+	if path == "" || len(effective.Fleet.Hosts) != 3 {
+		t.Fatalf("effective topology path=%q hosts=%#v", path, effective.Fleet.Hosts)
+	}
+	got := effective.Fleet.Hosts[2]
+	if got.Name != "fsn-4" || got.Address != "fsn-4.gregale.dev:50051" {
+		t.Fatalf("dynamic host = %#v", got)
+	}
+}
+
+func basePathForTest(t *testing.T, m *manifest.Manifest) string {
+	t.Helper()
+	body, err := yaml.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "manifest.yaml")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestDeployJoinValidate_DryRunNeedsOnlyManifestAndSSH(t *testing.T) {
@@ -755,11 +1019,11 @@ func TestRequireFleetKnownHostsCoversEveryManifestAddress(t *testing.T) {
 		{Name: "control", Address: "fsn-1.gregale.dev"},
 		{Name: "compute-a", Address: "fsn-2.gregale.dev"},
 	}}}
-	if err := requireFleetKnownHosts(path, m); err != nil {
+	if err := requireFleetKnownHosts(path, m, "", "", 22); err != nil {
 		t.Fatal(err)
 	}
 	m.Fleet.Hosts = append(m.Fleet.Hosts, manifest.Host{Name: "compute-b", Address: "fsn-3.gregale.dev"})
-	if err := requireFleetKnownHosts(path, m); err == nil || !strings.Contains(err.Error(), "compute-b") {
+	if err := requireFleetKnownHosts(path, m, "", "", 22); err == nil || !strings.Contains(err.Error(), "compute-b") {
 		t.Fatalf("missing peer error = %v", err)
 	}
 }
@@ -1144,7 +1408,11 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		joinPrivateAddressLookup = oldLookup
 	})
 	joinControlPlaneVerifier = func(context.Context, *deployJoinReport, string) error { return nil }
-	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error { return nil }
+	registrations := 0
+	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error {
+		registrations++
+		return nil
+	}
 	joinPrivateAddressLookup = func(_ context.Context, _, host string) ([]net.IP, error) {
 		switch host {
 		case "fsn-1.gregale.dev":
@@ -1216,7 +1484,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployJoinValidate: %v", err)
 	}
-	if code, err := deployJoinApply(&deployJoinOptions{
+	applyOpts := deployJoinOptions{
 		ManifestFile:            manifestPath,
 		Node:                    "fsn-2",
 		SSHHost:                 "203.0.113.27",
@@ -1237,7 +1505,8 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		RepoRoot:                repo,
 		PostgresOverlapNodes:    4,
 		SkipFleetPreflight:      true,
-	}, &report); err != nil || code != 0 {
+	}
+	if code, err := deployJoinApply(&applyOpts, &report); err != nil || code != 0 {
 		t.Fatalf("deployJoinApply: code=%d err=%v", code, err)
 	}
 	if len(calls) != 3 {
@@ -1260,5 +1529,54 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if !report.Applied {
 		t.Fatal("apply report was not marked applied")
+	}
+	if registrations != 1 {
+		t.Fatalf("full rollout release registrations = %d, want 1", registrations)
+	}
+
+	calls = nil
+	prepareOpts := applyOpts
+	prepareOpts.RolloutPhase = joinRolloutPrepare
+	prepareReport := report
+	prepareReport.Applied = false
+	prepareReport.Prepared = false
+	if code, err := deployJoinApply(&prepareOpts, &prepareReport); err != nil || code != 0 {
+		t.Fatalf("prepare deployJoinApply: code=%d err=%v", code, err)
+	}
+	if len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "node_join.yml") {
+		t.Fatalf("prepare Ansible calls = %v, want only node preparation", calls)
+	}
+	if !prepareReport.Prepared || prepareReport.Applied {
+		t.Fatalf("prepare report = %#v, want prepared but not applied", prepareReport)
+	}
+	if registrations != 1 {
+		t.Fatalf("preparation registered the shared release bundle; registrations=%d", registrations)
+	}
+
+	calls = nil
+	activateOpts := applyOpts
+	activateOpts.RolloutPhase = joinRolloutActivate
+	activateReport := report
+	activateReport.Applied = false
+	activateReport.Prepared = false
+	if code, err := deployJoinApply(&activateOpts, &activateReport); err != nil || code != 0 {
+		t.Fatalf("activate deployJoinApply: code=%d err=%v", code, err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("activation Ansible calls = %d, want control-plane, node activation, and baseline acceptance", len(calls))
+	}
+	activationArgs := calls[1]
+	joinedActivation := strings.Join(activationArgs, " ")
+	if !strings.Contains(joinedActivation, "--start-at-task Verify the prepared rollout marker") {
+		t.Fatalf("activation does not start from the prepared marker: %v", activationArgs)
+	}
+	if activationArgs[len(activationArgs)-1] != filepath.Join(ansibleDir, "node_join.yml") {
+		t.Fatalf("activation playbook must follow Ansible options: %v", activationArgs)
+	}
+	if !activateReport.Applied {
+		t.Fatal("activation report was not marked applied")
+	}
+	if registrations != 2 {
+		t.Fatalf("activation release registrations = %d, want one additional registration", registrations)
 	}
 }

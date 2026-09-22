@@ -30,7 +30,7 @@ func TestPg_ListAppDeletionArtifactsExcludesKeysSharedByAnotherApp(t *testing.T)
 	if err := s.SetDeploymentRootfs(ctx, secondDeploymentID, "/second/rootfs.ext4", sharedRootfs, 4096); err != nil {
 		t.Fatal(err)
 	}
-	snapshotKey := state.SnapMemKey(firstDeploymentID)
+	snapshotKey := state.SnapshotCaptureMemKey(firstDeploymentID, state.SnapshotTierInit, "00000000-0000-0000-0000-000000002467")
 	if _, err := s.CreateSnapshot(ctx, state.Snapshot{
 		ID: "00000000-0000-0000-0000-000000002466", DeploymentID: firstDeploymentID,
 		FCVersion: "1.10.0", StorageKey: snapshotKey, StoredBytes: 8192,
@@ -48,8 +48,9 @@ func TestPg_ListAppDeletionArtifactsExcludesKeysSharedByAnotherApp(t *testing.T)
 	if slices.Contains(keys, sharedRootfs) {
 		t.Fatalf("shared rootfs was returned as exclusively deletable: %v", keys)
 	}
-	if !slices.Contains(keys, snapshotKey) || !slices.Contains(keys, state.SnapshotVMStateKey(state.Snapshot{DeploymentID: firstDeploymentID, StorageKey: snapshotKey})) {
-		t.Fatalf("snapshot pair missing from deletion artifacts: %v", keys)
+	snapshot := state.Snapshot{DeploymentID: firstDeploymentID, StorageKey: snapshotKey}
+	if !slices.Contains(keys, snapshotKey) || !slices.Contains(keys, state.SnapshotVMStateKey(snapshot)) || !slices.Contains(keys, state.SnapshotDriveKey(snapshot)) {
+		t.Fatalf("snapshot artifacts missing from deletion inventory: %v", keys)
 	}
 }
 

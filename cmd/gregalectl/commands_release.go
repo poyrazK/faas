@@ -121,7 +121,8 @@ Flags (install):
                         FAAS_NODE_NAME, then hostname; compute-only
                         installs use NAME.faas).
   --role ROLE            control-plane or compute-only role template.
-  --defer-activation     keep a compute row drained until readiness passes.
+  --defer-activation     keep a compute row drained until readiness passes;
+                         on first boot, defer daemon start to the join pipeline.
 
 Flags (reconcile):
   --releases-root PATH  Releases root (default: /opt/faas/releases).
@@ -320,7 +321,7 @@ func cmdReleaseInstall(args []string) int {
 	// applies roleTemplating.ApplyFilesystem(role) after the
 	// symlink flip.
 	roleFlag := fs.String("role", "", "box role: control-plane|compute-only (ADR-112). Empty = no role templating.")
-	deferActivation := fs.Bool("defer-activation", false, "keep the compute_nodes row drained after install; the deployment pipeline activates it only after readiness gates")
+	deferActivation := fs.Bool("defer-activation", false, "keep the compute_nodes row drained after install; on first boot, defer daemon start until the deployment pipeline finishes readiness gates")
 	// ADR-113: --legacy-bundle-dir is the sunset path for the old
 	// `copyBinIntoRelease` flow. Empty (default) means use the new
 	// tarball + cosign + SBoM-gated path. When set, the install
@@ -597,21 +598,31 @@ func cmdReleaseInstall(args []string) int {
 				_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: apply role %s: %v\n", target, err)
 				return 4
 			}
-			// Run the Mutate contract: stop the (from \ to) subset
-			// in reverse dependency order with gatewayd-public last,
-			// start the (to \ from) subset in forward dependency order.
-			// Empty from (blank-box first-boot) or from == target
-			// (idempotent) means no systemctl calls.
-			stopped, started, err := roleTemplating.Mutate(current, target, systemctlExec)
-			if err != nil {
+			// A provider-neutral node join deliberately initializes host-local
+			// credentials and runs doctor after release installation, then starts
+			// the daemon set exactly once. Starting the blank-box subset here used
+			// to race that sequence: systemd rejected gatewayd-internal with
+			// status=243/CREDENTIALS because session.key did not exist yet. An
+			// inactive first-boot compute row is therefore templated but left
+			// stopped for the join pipeline's explicit readiness-gated start.
+			if deferFirstBootServiceStart(current, target, *deferActivation) {
 				_, _ = fmt.Fprintf(os.Stderr,
-					"gregalectl release install: mutate role %s -> %s: %v\n",
-					current, target, err)
-				return 4
+					"gregalectl release install: staged role %s; first-boot daemon start deferred to readiness pipeline\n",
+					target)
+			} else {
+				// Run the Mutate contract: stop the (from \ to) subset in reverse
+				// dependency order and start the (to \ from) subset in forward order.
+				stopped, started, err := roleTemplating.Mutate(current, target, systemctlExec)
+				if err != nil {
+					_, _ = fmt.Fprintf(os.Stderr,
+						"gregalectl release install: mutate role %s -> %s: %v\n",
+						current, target, err)
+					return 4
+				}
+				_, _ = fmt.Fprintf(os.Stderr,
+					"gregalectl release install: re-rolled %s -> %s (stopped %v, started %v)\n",
+					current, target, stopped, started)
 			}
-			_, _ = fmt.Fprintf(os.Stderr,
-				"gregalectl release install: re-rolled %s -> %s (stopped %v, started %v)\n",
-				current, target, stopped, started)
 			// PR-B (issue #935): stamp the post-mutation role on
 			// compute_nodes.role keyed by id. Done HERE (inside the
 			// else branch) so idempotent re-runs (current == target
@@ -703,6 +714,14 @@ func cmdReleaseInstall(args []string) int {
 			*gitSHA, first, node, cnID)
 	}
 	return 0
+}
+
+// deferFirstBootServiceStart is intentionally narrow. Existing nodes still
+// use the role mutation stop/start contract, while a blank compute node whose
+// database activation is deferred remains stopped until node_join has
+// provisioned credentials and passed its pre-start doctor gate.
+func deferFirstBootServiceStart(current, target roleTemplating.Role, deferActivation bool) bool {
+	return deferActivation && current == "" && target == roleTemplating.RoleComputeOnly
 }
 
 // canonicalComputeNodeName returns the database identity used by vmmd for a

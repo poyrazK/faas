@@ -63,9 +63,9 @@ type BuildManifest struct {
 	// deterministic copy-only plan for handler-only Node/Python sources that
 	// intentionally have no package manifest for Railpack to detect.
 	Function bool `json:"function,omitempty"`
-	// DependencyCache enables the developer-session BuildKit cache exporter.
-	// Import is set only when builderd successfully staged a prior cache into
-	// this otherwise-ephemeral builder VM. Production builds leave both false.
+	// DependencyCache enables the app-scoped BuildKit cache exporter. Import is
+	// set only when builderd successfully staged a prior cache into this
+	// otherwise-ephemeral builder VM.
 	DependencyCache       bool `json:"dependency_cache,omitempty"`
 	DependencyCacheImport bool `json:"dependency_cache_import,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled

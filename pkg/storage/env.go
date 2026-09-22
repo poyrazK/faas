@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -60,8 +61,11 @@ import (
 //	                                defaults to on at /var/lib/faas/cache
 //	                                when the env var is unset; set to ""
 //	                                to explicitly disable.
-//	FAAS_STORAGE_CACHE_MAX_BYTES  local+remote — optional cache byte budget
-//	                                (default 1 GiB).
+//	FAAS_STORAGE_CACHE_MAX_BYTES  local+remote — optional cache byte budget.
+//	                                Unset, it is derived from the host's
+//	                                MemTotal (see ResolveCacheMaxBytes);
+//	                                the old comment here claimed 1 GiB long
+//	                                after the constant became 8 GiB.
 //	FAAS_OCI_REGISTRY             oci-only — full URL incl. scheme (e.g. https://ghcr.io/org)
 //	FAAS_OCI_REPO_PREFIX          oci-only — repo namespace (default "faas")
 //	FAAS_OCI_USERNAME             oci-only — optional Basic-Auth user for token endpoint
@@ -168,14 +172,22 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	if !ok {
 		return parent, nil
 	}
-	maxBytes := DefaultCacheMaxBytes
+	maxBytes := ResolveCacheMaxBytes(hostMemTotalBytes())
+	source := "node-ram"
 	if raw := os.Getenv("FAAS_STORAGE_CACHE_MAX_BYTES"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n <= 0 {
 			return nil, fmt.Errorf("storage: FAAS_STORAGE_CACHE_MAX_BYTES=%q: must be a positive integer", raw)
 		}
 		maxBytes = n
+		source = "env"
 	}
+	// The resolved budget decides how much of the artifact set stays
+	// resident, which is the difference between a warm restore and a
+	// remote fetch. An operator diagnosing wake latency should not have to
+	// infer it from the machine shape.
+	slog.Default().Info("storage: artifact cache budget resolved",
+		"dir", dir, "max_bytes", maxBytes, "source", source)
 	cache, err := NewLocalCacheBackend(parent, dir, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache backend: %w", err)

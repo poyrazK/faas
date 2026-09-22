@@ -72,7 +72,7 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 }
 
 func isSparseArtifactKey(key string) bool {
-	return (strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/mem")) ||
+	return (strings.HasPrefix(key, "snap/") && (strings.HasSuffix(key, "/mem") || strings.HasSuffix(key, "/drive"))) ||
 		(strings.HasPrefix(key, "apps/") && strings.HasSuffix(key, ".ext4"))
 }
 

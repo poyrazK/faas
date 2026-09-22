@@ -163,6 +163,23 @@ internal to the gateway's wake path.
   Within the 85% RAM ceiling budget but worth watching in
   benchmark (out of scope for this PR; spec §14 acceptance gate).
 
+## Split-node signal correction (2026-09-20)
+
+Per-node schedd ownership made the original local signal assumptions
+incomplete. An app remains owned by one schedd, but its instances may be
+placed on any compute node. The local ReportCapacity stream therefore cannot
+be the app owner's complete CPU/inflight/request-rate view, and the local
+gateway counter is only one ingress shard.
+
+The app owner now maintains a separate autoscaling reader. Once per scale-up
+interval it selects instances through `ListInstancesByNodeID` (app ownership),
+fans `Stats` reads out only to physical nodes hosting those instances, and
+reuses `VMMRouter`'s cached mTLS clients. The original local reader remains
+unchanged for metering and node diagnostics, preserving its non-overlapping
+physical-node partition. RPS decisions use the larger fresh value from the
+owner fleet reader and the local gateway ring, so a partial ingress shard
+cannot suppress a valid fleet signal.
+
 ## Reconciliation note (2026-07-28, issue #172)
 
 Closing #172 against the shipped implementation requires recording three

@@ -8,8 +8,8 @@
       "category": "api-contract",
       "surface": "event, queue, and workflow contracts",
       "status": "partial",
-      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for the currently emitted app.parked, app.woken, and usage_statement.finalized events, the authenticated workflow external-event injection channel at POST /v1/workflows/runs/{id}/events, and per-app FIFO queue send/receive/ack channels.",
-      "limitations": "Queue introspection/dead-letter/replay endpoints, trigger broker contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
+      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for the currently emitted app.parked, app.woken, and usage_statement.finalized events, the authenticated internal event publish ingress at POST /v1/events:publish, the workflow external-event injection channel at POST /v1/workflows/runs/{id}/events, and per-app FIFO queue send/receive/ack channels.",
+      "limitations": "Queue introspection/dead-letter/replay endpoints, the scheduler-internal subscription delivery path, trigger broker contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
       "docs_url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
       "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go",
       "conformance": [
@@ -25,13 +25,18 @@
       "name": "CloudEvents",
       "version": "1.0",
       "category": "eventing",
-      "surface": "outbound webhooks, triggers, and queued events",
+      "surface": "internal event router and outbound webhooks",
       "status": "partial",
-      "scope": "App webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with the standard context attributes and an account_id extension.",
-      "limitations": "CloudEvents is currently outbound app-webhook delivery only; the internal event router, trigger ingestion, and binary-mode bindings remain future work. Legacy JSON delivery remains the default.",
+      "scope": "The internal event publish API normalizes a CloudEvents-shaped envelope for durable tenant-scoped routing, and app webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with the standard context attributes and an account_id extension.",
+      "limitations": "The public ingress retains Gregale's snake_case data_content_type spelling and does not expose CloudEvents binary-mode headers; subscription delivery is an internal async invocation rather than an externally addressed HTTP binding. Legacy JSON webhook delivery remains the default.",
       "docs_url": "https://cloudevents.io/",
-      "evidence": "pkg/webhookout/webhookout.go; pkg/webhook/dispatcher.go; api/openapi.yaml delivery_format",
+      "evidence": "pkg/events/cloud.go; pkg/events/cloud_test.go; pkg/webhookout/webhookout.go; pkg/webhook/dispatcher.go; api/openapi.yaml delivery_format",
       "conformance": [
+        {
+          "fixture": "cloudevents-internal-envelope",
+          "tier": "unit",
+          "target": "pkg/events/cloud_test.go::TestEnvelopeNormalizeProducesCanonicalTenantScopedJSON"
+        },
         {
           "fixture": "cloudevents-structured-webhook",
           "tier": "unit",

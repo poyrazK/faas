@@ -11,7 +11,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
+
+// notificationFailureMessageMaxBytes bounds the recorded delivery failure
+// written to notification_outbox.last_error. The message is an err.Error()
+// string carrying arbitrary upstream bytes, so it is truncated with
+// safetext.Truncate: a byte slice could split a rune and the resulting
+// invalid UTF-8 is rejected by the text column (SQLSTATE 22021).
+const notificationFailureMessageMaxBytes = 2048
 
 const (
 	NotificationOutboxMaxAttempts = 12
@@ -190,9 +199,7 @@ func FailNotification(ctx context.Context, pool *pgxpool.Pool, id int64, claimTo
 	if cause != nil && strings.TrimSpace(cause.Error()) != "" {
 		message = strings.TrimSpace(cause.Error())
 	}
-	if len(message) > 2048 {
-		message = message[:2048]
-	}
+	message = safetext.Truncate(message, notificationFailureMessageMaxBytes)
 	var attempts int
 	if err := pool.QueryRow(ctx, `SELECT attempts FROM notification_outbox WHERE id = $1 AND state = 'processing' AND claimed_by = $2`, id, claimToken).Scan(&attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

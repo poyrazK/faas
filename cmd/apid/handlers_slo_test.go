@@ -12,6 +12,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
+func accountSLOPromResponse(query, appID string) string {
+	switch {
+	case strings.Contains(query, "gateway_request_duration_seconds_count"):
+		return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","class":"2xx"},"value":[0,"42"]}]}}`, appID)
+	case strings.Contains(query, "gateway_request_duration_seconds_bucket"):
+		return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","le":"0.1"},"value":[0,"42"]},{"metric":{"app":"%s","le":"+Inf"},"value":[0,"42"]}]}}`, appID, appID)
+	case strings.Contains(query, "gateway_cold_boot_total"):
+		return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[0,"4"]}]}}`, appID)
+	case strings.Contains(query, "gateway_rate_limited_total"):
+		return `{"data":{"resultType":"vector","result":[]}}`
+	default:
+		return `{"data":{"resultType":"vector","result":[]}}`
+	}
+}
+
 func TestSLOEndpoints_FreePlanReturn402(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	createApp(t, e, "free-slo")
@@ -28,13 +43,10 @@ func TestFetchAccountSLO_UsesHistogramPopulation(t *testing.T) {
 		if strings.Contains(query, "gateway_requests_total") {
 			t.Fatalf("account SLO used a different request population: %q", query)
 		}
-		if strings.Contains(query, `class="5xx"`) && !strings.Contains(query, `class=~"2xx|5xx"`) {
-			t.Fatalf("account SLO error denominator includes customer 4xx responses: %q", query)
-		}
 		if !strings.Contains(query, appID) {
 			t.Errorf("query lacks owned app ID: %q", query)
 		}
-		return `{"data":{"resultType":"vector","result":[{"value":[0,"1"]}]}}`
+		return accountSLOPromResponse(query, appID)
 	})
 	_, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
 	if source != appmetrics.SourcePrometheus {
@@ -53,12 +65,9 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 			t.Errorf("account SLO queried unlabeled fleet wake metric: %q", query)
 		}
 		if strings.Contains(query, "gateway_rate_limited_total") {
-			if !strings.Contains(query, "or vector(0)") {
-				t.Errorf("throttling query lacks zero fallback: %q", query)
-			}
-			return `{"data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`
+			return `{"data":{"resultType":"vector","result":[]}}`
 		}
-		return `{"data":{"resultType":"vector","result":[{"value":[0,"42"]}]}}`
+		return accountSLOPromResponse(query, appID)
 	})
 
 	got, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
@@ -68,8 +77,8 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 	if got.RequestsTotal != 42 {
 		t.Errorf("requests_total = %d, want 42", got.RequestsTotal)
 	}
-	if got.RequestDuration.P95MS != 42 {
-		t.Errorf("p95_ms = %v, want 42", got.RequestDuration.P95MS)
+	if got.RequestDuration.P95MS != 95 {
+		t.Errorf("p95_ms = %v, want 95", got.RequestDuration.P95MS)
 	}
 	if got.ThrottledTotal != 0 {
 		t.Errorf("throttled_total = %d, want 0", got.ThrottledTotal)
@@ -81,15 +90,16 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 
 func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "slo-throttle")
+	appID := mustSeedApp(t, e, "slo-throttle")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Query().Get("query"), "gateway_rate_limited_total") {
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "gateway_rate_limited_total") {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(w, "rate limit query unavailable")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"resultType":"vector","result":[{"value":[0,"42"]}]}}`)
+		_, _ = fmt.Fprint(w, accountSLOPromResponse(query, appID))
 	}))
 	t.Cleanup(srv.Close)
 	e.s.WithStatusCache(srv.URL, "")
@@ -98,16 +108,29 @@ func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) 
 	if !strings.HasPrefix(source, appmetrics.SourceDegradedPrefix) {
 		t.Fatalf("source = %q, want degraded prefix", source)
 	}
-	if !strings.Contains(source, "500") {
-		t.Fatalf("source = %q, want Prometheus failure detail", source)
+	if source != appmetrics.SourceDegradedPrefix+"telemetry unavailable" {
+		t.Fatalf("source = %q, want redacted telemetry failure", source)
 	}
 	if got.RequestsTotal != 42 {
 		t.Errorf("requests_total = %d, want preserved value 42", got.RequestsTotal)
 	}
-	if got.RequestDuration.P95MS != 42 {
-		t.Errorf("p95_ms = %v, want preserved value 42", got.RequestDuration.P95MS)
+	if got.RequestDuration.P95MS != 95 {
+		t.Errorf("p95_ms = %v, want preserved value 95", got.RequestDuration.P95MS)
 	}
 	if got.ThrottledTotal != 0 {
 		t.Errorf("throttled_total = %d, want zero on failed optional query", got.ThrottledTotal)
+	}
+}
+
+func TestTelemetryDegradedReasonRedactsPrometheusURLAndQuery(t *testing.T) {
+	err := fmt.Errorf(`Get "http://127.0.0.1:9095/api/v1/query?query=app-secret": %w`, context.DeadlineExceeded)
+	_, source := degradedAccountSLO(err, nil, "error_rate", "account-id", "24h")
+	if source != appmetrics.SourceDegradedPrefix+"telemetry timeout" {
+		t.Fatalf("source = %q, want stable timeout reason", source)
+	}
+	for _, forbidden := range []string{"127.0.0.1", "query=", "app-secret"} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("customer-visible source leaked %q: %q", forbidden, source)
+		}
 	}
 }

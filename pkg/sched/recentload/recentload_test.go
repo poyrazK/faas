@@ -1,3 +1,4 @@
+// adr: 038
 package recentload
 
 import (
@@ -156,7 +157,7 @@ func TestRecentLoad_TelemetryFallbackPreservesZeroObservation(t *testing.T) {
 	}
 }
 
-func TestRecentLoad_GatewaySignalPreferredOverTelemetry(t *testing.T) {
+func TestRecentLoad_UsesStrongerFreshSignal(t *testing.T) {
 	cumulative := int64(0)
 	scraper := &fakeScraper{fn: func(context.Context) (map[string]int64, error) {
 		return map[string]int64{"app1": cumulative}, nil
@@ -167,8 +168,31 @@ func TestRecentLoad_GatewaySignalPreferredOverTelemetry(t *testing.T) {
 	r.Touch(context.Background(), base)
 	cumulative = 50
 	r.Touch(context.Background(), base.Add(time.Second))
-	if got, observed := r.RecentRateWithSignal("app1", base.Add(time.Second)); got != 10 || !observed {
-		t.Fatalf("rate = (%v, %v), want gateway-derived (10, true)", got, observed)
+	if got, observed := r.RecentRateWithSignal("app1", base.Add(time.Second)); got != 100 || !observed {
+		t.Fatalf("rate = (%v, %v), want stronger request-start rate (100, true)", got, observed)
+	}
+}
+
+func TestRecentLoad_RequestStartsProtectSaturatedScaleIn(t *testing.T) {
+	cumulative := int64(10)
+	scraper := &fakeScraper{fn: func(context.Context) (map[string]int64, error) {
+		return map[string]int64{"app1": cumulative}, nil
+	}}
+	reader := &fakeRateReader{rates: map[string]float64{"app1": 16}}
+	r := New(scraper, 5, time.Second).WithRateReader(reader)
+	base := time.Unix(1_000_000, 0)
+
+	// The public gateway's completion counter does not move while all
+	// requests are still running. VMMD sees those same requests at start.
+	for i := 0; i < 5; i++ {
+		r.Touch(context.Background(), base.Add(time.Duration(i)*time.Second))
+	}
+
+	if got, observed := r.RecentRateWithSignal("app1", base.Add(4*time.Second)); got != 16 || !observed {
+		t.Fatalf("rate = (%v, %v), want request-start rate (16, true)", got, observed)
+	}
+	if got, observed := r.RecentDesiredReplicasWithSignal("app1", base.Add(4*time.Second), 2); got != 8 || !observed {
+		t.Fatalf("desired = (%d, %v), want saturated cap demand (8, true)", got, observed)
 	}
 }
 

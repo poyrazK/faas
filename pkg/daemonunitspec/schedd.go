@@ -63,6 +63,12 @@ func UnitSchedd() daemonunit.Unit {
 		ExecStart:  `/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190 / ADR-191: the main loop's stall budget is 60 s now
+		// that Prime and the reconcile arms run on the bounded work
+		// pool; the watchdog waits a further 120 s without pings
+		// before restarting. The 2x relationship is pinned by
+		// TestScheddWatchdogOutlastsMainLoopBudget.
+		WatchdogSec: "120s",
 
 		Slice: "faas-cp.slice",
 		// Layer verification streams remote OCI blobs through the shared

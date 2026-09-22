@@ -4662,6 +4662,15 @@ func (c *Client) GetAppSecurity(ctx context.Context, slug string) (AppSecurityPo
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/security", nil, &out)
 }
 
+// RecoverAppSecurityQuarantine restores a quarantined app only after the
+// selected newer live deployment and every live canary have fresh,
+// digest-matched clean scan evidence. The server performs the atomic
+// lifecycle transition and emits the corresponding audit/notification event.
+func (c *Client) RecoverAppSecurityQuarantine(ctx context.Context, slug string, req SecurityQuarantineRecoveryRequest) (SecurityQuarantineRecoveryResponse, error) {
+	var out SecurityQuarantineRecoveryResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/security/recover", req, &out)
+}
+
 // GetAppStaticEgressIP reads the per-app static egress IP pin
 // (ADR-119). Plan-agnostic — returns the current pin status even
 // when the plan doesn't allow static egress IPs (plan_allowed=false,
@@ -5380,6 +5389,18 @@ func (c *Client) GetAppDataUpstream(ctx context.Context, slug, id string) (DataU
 	var out DataUpstreamResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/upstreams/"+id, nil, &out)
 }
+
+// UpdateAppDataUpstreamCircuitBreaker opts one upstream into (or out of)
+// egress circuit breaking and optionally tunes its thresholds (ADR-201 §3).
+//
+// Enabling this grants the platform permission to reject the app's
+// connections to that upstream while its circuit is open — which is the
+// point, but also why it is an explicit per-upstream call rather than
+// anything inferred.
+func (c *Client) UpdateAppDataUpstreamCircuitBreaker(ctx context.Context, slug, id string, req UpdateUpstreamCircuitBreakerRequest) (DataUpstreamResponse, error) {
+	var out DataUpstreamResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/upstreams/"+id+"/circuit-breaker", req, &out)
+}
 func (c *Client) CreateAppDataUpstream(ctx context.Context, slug string, req PutDataUpstreamRequest) (DataUpstreamResponse, error) {
 	var out DataUpstreamResponse
 	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/upstreams", req, &out)
@@ -6053,9 +6074,56 @@ func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (Pub
 	return resp, err
 }
 
+// ListEventSubscriptions returns the manifest declarations currently
+// reconciled for one app, in stable creation order.
+func (c *Client) ListEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
+	var out EventSubscriptionListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/event-subscriptions", nil, &out)
+}
+
+// ListAppsSlugEventSubscriptions is the route-shaped alias used by generated
+// SDK coverage and callers that prefer method names matching the REST path.
+func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
+	return c.ListEventSubscriptions(ctx, slug)
+}
+
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
 func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse
 	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/cancel", nil, &resp)
 	return resp, err
+}
+
+// --- ADR-202 custom application metrics ---------------------------------
+//
+// Method names come from cmd/sdk-coverage's explicit alias map rather than
+// its auto-derivation: the `custom-metrics` path segment contains a hyphen,
+// which is not a Go identifier. Same treatment as GetAppEnvDiff.
+
+// GetAppCustomMetrics lists the app's pushed metrics, including rows whose
+// last push has gone stale. Stale rows carry Stale=true rather than being
+// hidden — an operator debugging "why isn't my custom target scaling" needs
+// to see that the value is old, because a hidden expired row is
+// indistinguishable from one that was never pushed.
+func (c *Client) GetAppCustomMetrics(ctx context.Context, slug string) (CustomMetricListResponse, error) {
+	var out CustomMetricListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/custom-metrics", nil, &out)
+}
+
+// PutAppCustomMetric pushes one gauge. The value is FLEET-TOTAL: a
+// `metric: custom` scaling target divides it by the per-instance target.
+//
+// Safe to call from anywhere with a metrics:write token — the app itself, a
+// cron, or a database trigger. That is the point of the push: a parked app
+// has no process, so a signal only a running instance could produce could
+// never scale the app up from zero.
+func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, value float64) error {
+	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/custom-metrics/"+name,
+		CustomMetricRequest{Value: value}, nil)
+}
+
+// DeleteAppCustomMetric removes one gauge, freeing a slot against the
+// per-app name cap. Deleting a name that does not exist succeeds.
+func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
 }

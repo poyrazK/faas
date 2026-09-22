@@ -292,6 +292,37 @@
       FAAS_VMMD_DBURL entries. VMMD uses its explicit split-box override;
       the other compute daemons use DATABASE_URL.
 
+# With the pooler enabled, DATABASE_URL points at pgbouncer and everything
+# session-scoped (LISTEN, session pg_advisory_lock) must reach the postmaster
+# instead. A compute node missing FAAS_DATABASE_URL_DIRECT would run its
+# notify subscriptions on pooled connections, which fails silently: the
+# subscription appears healthy and simply stops delivering.
+- name: compute_only_service — validate the direct DSN when pooling is enabled
+  ansible.builtin.shell: |
+    grep -Eq "^(export[[:space:]]+)?FAAS_DATABASE_URL_DIRECT=.+$" /etc/faas/compute-db.env
+  args:
+    executable: /bin/sh
+  register: faas_compute_direct_dsn
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - faas_pgbouncer_enabled | default(false) | bool
+
+- name: compute_only_service — refuse a pooled DSN without a direct sibling
+  ansible.builtin.assert:
+    that:
+      - faas_compute_direct_dsn.rc == 0
+    fail_msg: >-
+      faas_pgbouncer_enabled is true, so /etc/faas/compute-db.env must also
+      define FAAS_DATABASE_URL_DIRECT pointing at the postmaster
+      (port 5432), not at pgbouncer. LISTEN and session advisory locks
+      cannot survive transaction pooling; see pkg/db/direct.go.
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - faas_pgbouncer_enabled | default(false) | bool
+
 # Split-node restore safety gate. The storage package deliberately keeps the
 # historical local-prefix defaults for single-box development, so merely
 # setting FAAS_STORAGE_BACKEND=oci is not enough: the default still leaves

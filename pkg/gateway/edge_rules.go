@@ -445,9 +445,14 @@ type HostEntry struct {
 	// surrounding fields; the cache primitive is kind-agnostic and
 	// the cmd-side loader threads one slice per kind into the
 	// HostEntry.
-	Cache        []EdgeRuleCacheResolved
-	Respond      []EdgeRuleRespondResolved
-	PathGlobErrs []PathGlobError
+	Cache   []EdgeRuleCacheResolved
+	Respond []EdgeRuleRespondResolved
+	// Retry and CircuitBreaker carry the ADR-201 subsets. Same
+	// kind-agnostic slot shape as every kind above; the cmd-side loader
+	// threads one slice per kind into the HostEntry.
+	Retry          []EdgeRuleRetryResolved
+	CircuitBreaker []EdgeRuleCircuitBreakerResolved
+	PathGlobErrs   []PathGlobError
 }
 
 // NewEdgeRuleCache returns a cache holding up to `capacity` host
@@ -482,6 +487,8 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	out.Budget = slices.Clone(entry.Budget)
 	out.Cache = slices.Clone(entry.Cache)
 	out.Respond = slices.Clone(entry.Respond)
+	out.Retry = slices.Clone(entry.Retry)
+	out.CircuitBreaker = slices.Clone(entry.CircuitBreaker)
 	for i := range out.Respond {
 		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
@@ -747,6 +754,37 @@ func (c *EdgeRuleCache) GetBudget(host string) ([]EdgeRuleBudgetResolved, bool) 
 	return out, true
 }
 
+// GetRetry returns the per-host kind=retry slice (ADR-201 §1). Mirrors
+// GetBudget: a cached host with no retry rules returns (nil, true) so the
+// caller can tell "no rules" from "not loaded".
+func (c *EdgeRuleCache) GetRetry(host string) ([]EdgeRuleRetryResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.Retry == nil {
+		return nil, true
+	}
+	out := make([]EdgeRuleRetryResolved, len(entry.Retry))
+	copy(out, entry.Retry)
+	return out, true
+}
+
+// GetCircuitBreaker returns the per-host kind=circuit_breaker slice
+// (ADR-201 §2).
+func (c *EdgeRuleCache) GetCircuitBreaker(host string) ([]EdgeRuleCircuitBreakerResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.CircuitBreaker == nil {
+		return nil, true
+	}
+	out := make([]EdgeRuleCircuitBreakerResolved, len(entry.CircuitBreaker))
+	copy(out, entry.CircuitBreaker)
+	return out, true
+}
+
 // GetCache returns the per-host cache-rule slice (ADR-122).
 // nil, false = no entry for host (cmd-side loader needs to
 // populate it via PutEntry); nil, true = entry exists but has
@@ -965,6 +1003,13 @@ type EdgeRuleMatcher interface {
 	// wake-gate interaction stays in one place).
 	MatchCache(ctx context.Context, host, path, method string) *EdgeRuleCacheResolved
 	MatchRespond(ctx context.Context, host, path, method string) *EdgeRuleRespondResolved
+	// MatchRetry and MatchCircuitBreaker are the ADR-201 matchers. Like
+	// every matcher here they only resolve the highest-priority matching
+	// rule; the replay loop lives in pkg/gateway/retry.go and the breaker
+	// state machine in pkg/circuit, so the matching and the mechanism stay
+	// separable.
+	MatchRetry(ctx context.Context, host, path, method string) *EdgeRuleRetryResolved
+	MatchCircuitBreaker(ctx context.Context, host, path, method string) *EdgeRuleCircuitBreakerResolved
 	Reset()
 }
 
@@ -1129,6 +1174,12 @@ type noOpEdgeRuleMatcher struct{}
 
 func (noOpEdgeRuleMatcher) Converging(string) bool { return false }
 
+func (noOpEdgeRuleMatcher) MatchRetry(context.Context, string, string, string) *EdgeRuleRetryResolved {
+	return nil
+}
+func (noOpEdgeRuleMatcher) MatchCircuitBreaker(context.Context, string, string, string) *EdgeRuleCircuitBreakerResolved {
+	return nil
+}
 func (noOpEdgeRuleMatcher) MatchRoute(context.Context, string, string, string) *EdgeRuleResolved {
 	return nil
 }

@@ -9,6 +9,15 @@ name: cd-platform
 on:
   workflow_dispatch:
     inputs:
+      rollback_on_gate_failure:
+        description: >-
+          Roll the control plane back to the previous release when a
+          post-activation gate fails. DEFAULT OFF: the acceptance gate has
+          never had a green run (0 successes in cd-platform's history), so
+          enabling this today rolls back every deploy. Turn it on once
+          cd-platform has passed once.
+        type: boolean
+        default: false
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -18,6 +27,14 @@ on:
         required: false
         default: "[]"
         type: string
+      compute_rollout_mode:
+        description: "Compute rollout path: phased for managed hosts, full after bootstrap-contract changes"
+        required: false
+        default: phased
+        type: choice
+        options:
+          - phased
+          - full
       claim_file:
         description: "Path to the active node's ComputeNodeClaim (preferred)"
         required: false
@@ -39,7 +56,7 @@ on:
         default: ""
         type: string
       node:
-        description: "Active manifest compute node name"
+        description: "Active static or dynamic-policy compute node name"
         required: false
         default: ""
         type: string
@@ -88,9 +105,11 @@ concurrency:
 permissions:
   # Called workflows can only reduce the caller's token permissions. The
   # compute stage reads the dispatch run while resolving a reused preflight,
-  # so the orchestrator must make actions:read available up front.
+  # and GCS enrollment readers mint per-job credentials after runner queues,
+  # so the orchestrator must make both capabilities available up front.
   actions: read
   contents: read
+  id-token: write
 
 jobs:
   plan:
@@ -98,6 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.matrix.outputs.targets }}
+      batch_prepare: ${{ steps.matrix.outputs.batch_prepare }}
     env:
       COMPUTE_TARGETS: ${{ inputs.compute_targets }}
       CLAIM_FILE: ${{ inputs.claim_file }}
@@ -162,6 +182,12 @@ jobs:
                   else . end
               )' "$targets_file")"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          batch_prepare="$(jq -r 'all(.[];
+            .claim_file == "" and
+            .fleet_bundle_url == "" and
+            .skip_fleet_preflight == false
+          )' <<<"$targets")"
+          echo "batch_prepare=$batch_prepare" >> "$GITHUB_OUTPUT"
 
   control:
     name: Control-plane stage
@@ -170,13 +196,53 @@ jobs:
       release_tag: ${{ inputs.release_tag }}
     secrets: inherit
 
-  compute:
-    name: Compute stage (${{ matrix.target.node || matrix.target.claim_file }})
+  compute-prepare:
+    name: Prepare compute fleet in parallel
     needs: [control, plan]
+    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'
+    uses: ./.github/workflows/cd-compute.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      compute_targets: ${{ needs.plan.outputs.targets }}
+      rollout_phase: prepare
+    secrets: inherit
+
+  compute-prepare-compat:
+    name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})
+    needs: [control, plan]
+    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare != 'true'
     strategy:
-      # max-parallel keeps the fleet serialized; fail-fast prevents the next
-      # queued node from starting after the current node fails its post-rollout
-      # gates. Continuing would risk mutating the last healthy fallback.
+      # Claims, signed enrollment bundles, and explicit preflight skips retain
+      # the single-target path until the fleet command supports those inputs.
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    uses: ./.github/workflows/cd-compute.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      claim_file: ${{ matrix.target.claim_file }}
+      fleet_bundle_url: ${{ matrix.target.fleet_bundle_url }}
+      fleet_bundle_signature_url: ${{ matrix.target.fleet_bundle_signature_url }}
+      fleet_bundle_sha256: ${{ matrix.target.fleet_bundle_sha256 }}
+      node: ${{ matrix.target.node }}
+      ssh_host: ${{ matrix.target.ssh_host }}
+      ssh_user: ${{ matrix.target.ssh_user }}
+      ssh_port: ${{ matrix.target.ssh_port }}
+      ssh_host_key_sha256: ${{ matrix.target.ssh_host_key_sha256 }}
+      storage_device: ${{ matrix.target.storage_device }}
+      format_storage: ${{ matrix.target.format_storage }}
+      skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
+      rollout_phase: prepare
+    secrets: inherit
+
+  compute:
+    name: Roll out compute (${{ matrix.target.node || matrix.target.claim_file }})
+    needs: [control, compute-prepare, compute-prepare-compat, plan]
+    if: ${{ always() && needs.control.result == 'success' && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true' && needs.compute-prepare.result == 'success') || (needs.plan.outputs.batch_prepare != 'true' && needs.compute-prepare-compat.result == 'success')) }}
+    strategy:
+      # Activation drains and restarts one node at a time. Fail fast preserves
+      # the remaining old-version nodes as the healthy fallback.
       fail-fast: true
       max-parallel: 1
       matrix:
@@ -196,12 +262,13 @@ jobs:
       storage_device: ${{ matrix.target.storage_device }}
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
+      rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}
     secrets: inherit
 
   verify:
     name: Report fleet release convergence
     if: always()
-    needs: [control, compute, plan]
+    needs: [control, compute-prepare, compute-prepare-compat, compute, plan]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -209,7 +276,11 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       CONTROL_RESULT: ${{ needs.control.result }}
+      BATCH_PREPARE: ${{ needs.plan.outputs.batch_prepare }}
+      COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
+      COMPUTE_PREPARE_COMPAT_RESULT: ${{ needs.compute-prepare-compat.result }}
       COMPUTE_RESULT: ${{ needs.compute.result }}
+      COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}
       PLAN_RESULT: ${{ needs.plan.result }}
       RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
@@ -246,8 +317,16 @@ jobs:
           # summary captures desired/observed state without hiding the failure
           # behind another wait. A successful stage gets two heartbeat periods
           # to publish its final release and liveness state.
+          prepare_ok=false
+          selected_prepare_result="$COMPUTE_PREPARE_COMPAT_RESULT"
+          if [[ "$BATCH_PREPARE" == "true" ]]; then
+            selected_prepare_result="$COMPUTE_PREPARE_RESULT"
+          fi
+          if [[ "$selected_prepare_result" == "success" || "$COMPUTE_ROLLOUT_MODE" == "full" ]]; then
+            prepare_ok=true
+          fi
           gate_timeout=2m
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
@@ -262,7 +341,8 @@ jobs:
             echo "| --- | --- |"
             echo "| Control plane | ${CONTROL_RESULT} |"
             echo "| Compute target plan | ${PLAN_RESULT} |"
-            echo "| Compute fleet matrix | ${COMPUTE_RESULT} |"
+            echo "| Compute fleet preparation | ${selected_prepare_result} |"
+            echo "| Compute fleet activation | ${COMPUTE_RESULT} |"
             echo "| Active-node release gate | exit ${gate_exit} |"
             echo
             echo '```json'
@@ -283,8 +363,8 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
-            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
+          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+            echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${selected_prepare_result} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"
@@ -307,11 +387,14 @@ jobs:
         run: |
           set -euo pipefail
           status_file="$RUNNER_TEMP/public-platform-status.json"
-          curl --fail --silent --show-error --location \
-            --retry 12 --retry-delay 5 --retry-all-errors \
-            --connect-timeout 3 --max-time 10 \
-            --header 'Cache-Control: no-cache' \
-            "https://api.gregale.dev/v1/status?rollout_probe=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+          # Preserve the public edge path, but originate the request from the
+          # GCP control plane because Cloudflare blocks GitHub-hosted egress.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            "curl --fail --silent --show-error --location \
+              --retry 12 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 3 --max-time 10 \
+              --header 'Cache-Control: no-cache' \
+              'https://api.gregale.dev/v1/status?rollout_probe=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'" \
             > "$status_file"
           jq -e '
             .data_status == "fresh" and
@@ -381,3 +464,48 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
             "env RELEASE_SHA='${DESIRED_RELEASE}' RUN_ID='${GITHUB_RUN_ID_VALUE}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh
+
+      # OFF BY DEFAULT — see the rollback_on_gate_failure input. The acceptance
+      # gate below it has never had a green run (0 successes across
+      # cd-platform's entire history), so an unconditional `if: failure()`
+      # would roll back every single deploy. That was not the intent when the
+      # step was added in #3177; it assumed a failing gate was exceptional
+      # rather than the steady state.
+      #
+      # Every gate above runs AFTER deployctl has already activated the release
+      # and returned success, so until now a failure left the bad release
+      # serving and the documented remedy was "rerun CD".
+      #
+      # deployctl rollback activates the newest verified retained release under
+      # the same lock a deploy takes. It re-verifies the target first, so a
+      # drifted retained directory is refused rather than shipped as a
+      # recovery. The step keeps the job red either way: a successful rollback
+      # means the fleet is safe, not that the release was good.
+      #
+      # The binary comes from the release that just failed, which is the same
+      # path cd-controlplane already uses. That is sound because the gates
+      # above fail on daemon health — apid, the gateway, metering — while
+      # deployctl only reads release directories, verifies manifests and drives
+      # systemd. If the release is broken badly enough that its controller will
+      # not run, the else branch below says so rather than reporting recovery.
+      - name: Roll back the platform release on gate failure
+        if: failure() && inputs.rollback_on_gate_failure
+        run: |
+          set -euo pipefail
+          # `if: failure()` fires for ANY earlier step in this job, including
+          # the SSH setup that runs before the release is even identified.
+          # Rolling back on one of those would undo a release that is serving
+          # fine, so require the marker that the verification phase was
+          # actually reached.
+          if [[ -z "${DESIRED_RELEASE:-}" ]]; then
+            echo "::error::this job failed before the release was identified; nothing was rolled back"
+            exit 1
+          fi
+          echo "::warning::a post-activation gate failed; rolling the control plane back"
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+              '/opt/faas/current/bin/deployctl rollback'; then
+            echo "::error::release ${DESIRED_RELEASE} failed its post-activation gates and was rolled back"
+          else
+            echo "::error::release ${DESIRED_RELEASE} failed its post-activation gates AND the rollback did not complete — the control plane needs an operator now"
+          fi
+          exit 1

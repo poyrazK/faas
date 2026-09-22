@@ -104,6 +104,7 @@ func (p *gregaleProvider) Resources(_ context.Context) []func() resource.Resourc
 		newPrivateNetworkAttachmentResource,
 		newPrivateNetworkResource,
 		newPrivateNetworkPeeringResource,
+		newProjectEnvironmentConfigResource,
 	}
 }
 
@@ -112,6 +113,7 @@ func (p *gregaleProvider) DataSources(_ context.Context) []func() datasource.Dat
 		newAppDataSource,
 		newDeploymentDataSource,
 		newLatestDeploymentDataSource,
+		newPrivateNetworkDataSource,
 		newProjectEnvironmentDataSource,
 	}
 }

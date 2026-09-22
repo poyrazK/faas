@@ -138,6 +138,28 @@ func TestNewClientEmptyBaseURL(t *testing.T) {
 	}
 }
 
+func TestWithTimeoutClonesDefaultHTTPClient(t *testing.T) {
+	original := NewClient("http://example.invalid", nil)
+	clone := original.WithTimeout(5 * time.Second)
+	if clone == original {
+		t.Fatal("WithTimeout returned the shared client")
+	}
+	if original.timeout != 3*time.Second || clone.timeout != 5*time.Second {
+		t.Fatalf("timeouts: original=%s clone=%s", original.timeout, clone.timeout)
+	}
+	originalHTTP, ok := original.doer.(*http.Client)
+	if !ok {
+		t.Fatalf("original doer type = %T, want *http.Client", original.doer)
+	}
+	cloneHTTP, ok := clone.doer.(*http.Client)
+	if !ok {
+		t.Fatalf("clone doer type = %T, want *http.Client", clone.doer)
+	}
+	if originalHTTP == cloneHTTP || originalHTTP.Timeout != 3*time.Second || cloneHTTP.Timeout != 5*time.Second {
+		t.Fatalf("HTTP clients were not independently cloned: original=%p/%s clone=%p/%s", originalHTTP, originalHTTP.Timeout, cloneHTTP, cloneHTTP.Timeout)
+	}
+}
+
 // TestQueryScalarContextTimeout asserts the per-query timeout fires.
 // The test upstream sleeps 5s; the client times out at 50ms. After
 // the test body returns, httptest.Server.Close() interrupts the

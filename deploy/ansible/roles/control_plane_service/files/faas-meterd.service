@@ -13,6 +13,7 @@ Group=faas
 ExecStart=/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml
 Restart=on-failure
 RestartSec=2s
+WatchdogSec=120s
 Slice=faas-cp.slice
 MemoryMax=256M
 CapabilityBoundingSet=

@@ -87,13 +87,16 @@ func WarmSnapVMStateKey(deploymentID string) string {
 }
 
 // SnapshotCaptureMemKey gives a capture its own immutable object namespace.
-// The row is published only after both objects have been written successfully.
+// v2 couples Firecracker memory and vmstate to the exact private writable
+// drive present at snapshot creation. The versioned path lets wake selection
+// reject legacy two-part captures instead of loading them against a freshly
+// cloned app layer, which can corrupt the restored guest filesystem.
 func SnapshotCaptureMemKey(deploymentID, tier, captureID string) string {
 	prefix := "snap/" + deploymentID + "/"
 	if tier == SnapshotTierWarm {
 		prefix += "warm/"
 	}
-	return prefix + "captures/" + captureID + "/mem"
+	return prefix + "captures/" + captureID + "/v2/mem"
 }
 
 // SnapshotVMStateKey derives the paired device state from the memory key.
@@ -108,12 +111,35 @@ func SnapshotVMStateKey(s Snapshot) string {
 	return SnapVMStateKey(s.DeploymentID)
 }
 
+// SnapshotDriveKey derives the immutable private ext4 paired with a v2
+// capture. An empty result identifies a legacy two-part capture; callers must
+// cold boot rather than restore it with the deployment's pristine layer.
+func SnapshotDriveKey(s Snapshot) string {
+	parts := snapshotCaptureParts(s.StorageKey)
+	if len(parts) == 6 && parts[4] == "v2" && parts[5] == "mem" {
+		return strings.TrimSuffix(s.StorageKey, "/mem") + "/drive"
+	}
+	return ""
+}
+
 // IsSnapshotCaptureKey distinguishes immutable capture objects from legacy
 // mutable deployment keys. Cleanup must never remove a legacy shared pair.
 func IsSnapshotCaptureKey(key string) bool {
+	parts := snapshotCaptureParts(key)
+	return (len(parts) == 5 && parts[4] == "mem") ||
+		(len(parts) == 6 && parts[4] == "v2" && parts[5] == "mem")
+}
+
+func snapshotCaptureParts(key string) []string {
 	parts := strings.Split(key, "/")
 	if len(parts) == 6 && parts[2] == "warm" {
 		parts = append(parts[:2:2], parts[3:]...)
 	}
-	return len(parts) == 5 && parts[0] == "snap" && parts[1] != "" && parts[2] == "captures" && parts[3] != "" && parts[4] == "mem"
+	if len(parts) == 7 && parts[2] == "warm" {
+		parts = append(parts[:2:2], parts[3:]...)
+	}
+	if len(parts) < 5 || parts[0] != "snap" || parts[1] == "" || parts[2] != "captures" || parts[3] == "" {
+		return nil
+	}
+	return parts
 }

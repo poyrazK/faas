@@ -161,6 +161,8 @@ from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
 from .app_security_posture_response_profile import AppSecurityPostureResponseProfile
 from .app_security_posture_response_security_policy import AppSecurityPostureResponseSecurityPolicy
+from .app_security_quarantine import AppSecurityQuarantine
+from .app_security_quarantine_reason import AppSecurityQuarantineReason
 from .app_security_request import AppSecurityRequest
 from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
@@ -363,6 +365,9 @@ from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
 from .custom_domain_response import CustomDomainResponse
+from .custom_metric_list_response import CustomMetricListResponse
+from .custom_metric_request import CustomMetricRequest
+from .custom_metric_response import CustomMetricResponse
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -537,6 +542,7 @@ from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
 from .edge_rule_cache_action_vary_on_item import EdgeRuleCacheActionVaryOnItem
+from .edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
 from .edge_rule_cors_action import EdgeRuleCORSAction
 from .edge_rule_geo_action import EdgeRuleGeoAction
 from .edge_rule_header_op import EdgeRuleHeaderOp
@@ -555,6 +561,7 @@ from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
+from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
 from .edge_rule_route_action import EdgeRuleRouteAction
 from .edge_rule_suggestion import EdgeRuleSuggestion
@@ -566,6 +573,8 @@ from .edge_rule_throttle_action_key_by import EdgeRuleThrottleActionKeyBy
 from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
+from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
+from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .env_diff_cell import EnvDiffCell
@@ -574,6 +583,9 @@ from .env_diff_response import EnvDiffResponse
 from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_subscription_list_response import EventSubscriptionListResponse
+from .event_subscription_response import EventSubscriptionResponse
+from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -1118,6 +1130,7 @@ from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
+from .scaling_schedule import ScalingSchedule
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
@@ -1129,6 +1142,9 @@ from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_scan_result import SecretScanResult
+from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
+from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
+from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
 from .service_replicas import ServiceReplicas
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
@@ -1273,6 +1289,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
@@ -1295,6 +1312,8 @@ from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_response import WakeTimelineResponse
+from .worker_scaling import WorkerScaling
+from .worker_scaling_metric import WorkerScalingMetric
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_response import WorkflowRunResponse
@@ -1478,6 +1497,8 @@ __all__ = (
     "AppSecurityPostureResponse",
     "AppSecurityPostureResponseProfile",
     "AppSecurityPostureResponseSecurityPolicy",
+    "AppSecurityQuarantine",
+    "AppSecurityQuarantineReason",
     "AppSecurityRequest",
     "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
@@ -1668,6 +1689,9 @@ __all__ = (
     "CronRunOutcome",
     "CSRFTokenResponse",
     "CustomDomainResponse",
+    "CustomMetricListResponse",
+    "CustomMetricRequest",
+    "CustomMetricResponse",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -1842,6 +1866,7 @@ __all__ = (
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
     "EdgeRuleCacheActionVaryOnItem",
+    "EdgeRuleCircuitBreakerAction",
     "EdgeRuleCORSAction",
     "EdgeRuleGeoAction",
     "EdgeRuleHeaderOp",
@@ -1860,6 +1885,7 @@ __all__ = (
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
     "EdgeRuleResponseValidateMode",
+    "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
     "EdgeRuleRouteAction",
     "EdgeRuleSuggestion",
@@ -1871,6 +1897,8 @@ __all__ = (
     "EdgeRuleValidateAction",
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",
+    "EgressCircuitBreakerPolicy",
+    "EgressCircuitBreakerPolicyState",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnvDiffCell",
@@ -1879,6 +1907,9 @@ __all__ = (
     "EnvDiffRow",
     "EnvDiffRowCells",
     "ErrorNewWebhookPayload",
+    "EventSubscriptionListResponse",
+    "EventSubscriptionResponse",
+    "EventSubscriptionResponseFilter",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",
@@ -2399,6 +2430,7 @@ __all__ = (
     "RouteRow",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
+    "ScalingSchedule",
     "ScalingTarget",
     "ScalingTargetMetric",
     "ScanResult",
@@ -2410,6 +2442,9 @@ __all__ = (
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretScanResult",
+    "SecurityQuarantineRecoveryRequest",
+    "SecurityQuarantineRecoveryResponse",
+    "SecurityQuarantineRecoveryResponseStatus",
     "ServiceReplicas",
     "SessionInfo",
     "SessionListResponse",
@@ -2546,6 +2581,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",
@@ -2568,6 +2604,8 @@ __all__ = (
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelineResponse",
+    "WorkerScaling",
+    "WorkerScalingMetric",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
     "WorkflowRunResponse",

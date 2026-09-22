@@ -342,6 +342,11 @@ func TestGCSRegistryValidationAndFingerprint(t *testing.T) {
 	if fingerprint(rotated) != originalFingerprint {
 		t.Fatal("credential rotation changed placement")
 	}
+	impersonated := backend
+	impersonated.GCSImpersonateServiceAccount = true
+	if fingerprint(impersonated) != originalFingerprint {
+		t.Fatal("credential acquisition mode changed placement")
+	}
 	explicitEndpoint := backend
 	explicitEndpoint.Endpoint = gcsDefaultEndpoint
 	if fingerprint(explicitEndpoint) != originalFingerprint {
@@ -357,5 +362,10 @@ func TestGCSRegistryValidationAndFingerprint(t *testing.T) {
 	want := sha256.Sum256([]byte(s3.Endpoint + "\x00" + s3.S3Region + "\x00" + s3.Namespace + "\x00" + s3.Driver + "\x00" + s3.Region))
 	if fingerprint(s3) != hex.EncodeToString(want[:]) {
 		t.Fatal("existing S3 placement fingerprint changed")
+	}
+	s3.GCSImpersonateServiceAccount = true
+	config = Config{DefaultRegion: s3.Region, Defaults: map[string]string{s3.Region: s3.ID}, Backends: []BackendConfig{s3}}
+	if _, err := NewRegistry(config, func(string) string { return "" }, map[string]Factory{"s3": factory}); err == nil {
+		t.Fatal("accepted GCS impersonation on an S3 backend")
 	}
 }

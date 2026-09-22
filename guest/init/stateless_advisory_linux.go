@@ -490,17 +490,19 @@ func advisoryShipper(sock int, appID string, pipe *advisoryPipe, log *slog.Logge
 		if len(batch) == 0 {
 			continue
 		}
-		body, err := json.Marshal(advisoryBatch{
-			AppID:  appID,
-			Events: batch,
-		})
+		body, sent, err := marshalAdvisoryBatchWithinLimit(appID, batch, advisoryMaxBody)
 		if err != nil {
 			log.Warn("stateless advisory marshal failed", "err", err)
 			continue
 		}
-		if len(body) > advisoryMaxBody {
-			log.Warn("stateless advisory batch too large; dropping tail", "bytes", len(body))
-			body = body[:advisoryMaxBody]
+		if len(body) == 0 {
+			log.Warn("stateless advisory event exceeds the frame limit; dropping batch",
+				"events", len(batch), "limit", advisoryMaxBody)
+			continue
+		}
+		if sent < len(batch) {
+			log.Warn("stateless advisory batch too large; dropped trailing events",
+				"sent", sent, "dropped", len(batch)-sent, "limit", advisoryMaxBody)
 		}
 
 		// Frame: msg_type (4 BE) + body_len (4 BE) + body.
@@ -522,4 +524,42 @@ func advisoryShipper(sock int, appID string, pipe *advisoryPipe, log *slog.Logge
 			log.Warn("stateless advisory vsock send failed", "err", err, "events", len(batch))
 		}
 	}
+}
+
+// marshalAdvisoryBatchWithinLimit encodes the largest prefix of events whose
+// JSON document fits inside limit bytes, returning the document and the
+// number of events it carries.
+//
+// The previous form marshalled the whole batch and then byte-sliced the
+// result down to the limit. That yields a truncated JSON document: the host
+// receiver cannot unmarshal it, so the "dropping tail" the log claimed was in
+// fact dropping the entire batch, silently, every time an app was noisy
+// enough to exceed 8 KiB in one de-dup window. Dropping whole events instead
+// keeps the document parseable and makes the loss honest in the log line.
+//
+// A zero-length result means even a single event exceeds the limit; the
+// caller drops the batch rather than emitting an unparseable frame.
+func marshalAdvisoryBatchWithinLimit(appID string, events []advisoryEvent, limit int) ([]byte, int, error) {
+	if len(events) == 0 {
+		return nil, 0, nil
+	}
+	// Binary search the largest prefix that fits. Encoded size is monotonic
+	// in the prefix length, so the predicate is well-behaved.
+	var best []byte
+	bestN := 0
+	lo, hi := 1, len(events)
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		body, err := json.Marshal(advisoryBatch{AppID: appID, Events: events[:mid]})
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(body) <= limit {
+			best, bestN = body, mid
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return best, bestN, nil
 }

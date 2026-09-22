@@ -100,8 +100,94 @@ func writeAppCgroup(instance string, plan api.Plan, planMB, cpuMillicores int) e
 	}
 	return writeAppCgroupAt(ParentCgroupFor(plan), instance, plan, planMB, cpuMillicores)
 }
+
+// perInstanceControllers are the cgroup v2 controllers a per-VM scope needs.
+//
+// memory is the §11 ship-blocking fence (memory.max = plan + 8 MB), cpu
+// carries the per-plan quota (ADR-044), and pids bounds fork storms.
+var perInstanceControllers = []string{"memory", "cpu", "pids"}
+
+// ensureSubtreeControllers enables the controllers a per-VM scope needs in the
+// PARENT slice's cgroup.subtree_control.
+//
+// In cgroup v2 a child cgroup only gets a controller's interface files when
+// its parent lists that controller in cgroup.subtree_control. jailer creates
+// the per-instance cgroup directory, but nothing enabled the controllers on
+// the per-plan tenant slices: `systemd_slices` deliberately sets only
+// CPUWeight on faas-tenant-<plan>.slice, and systemd only propagates a
+// controller when a child *unit* needs it — the per-VM scopes are created by
+// jailer, not by systemd, so it never does.
+//
+// Observed on the production fleet:
+//
+//	faas-tenant-scale.slice  controllers=[cpu memory pids] subtree_control=[]
+//
+// Every per-instance cgroup therefore contained only cgroup.* and *.pressure
+// files. No memory.max existed at all, so the §11 per-VM fence was silently
+// absent, and vmmd's write failed with a misleading "permission denied"
+// (open(2) on a nonexistent cgroupfs file cannot create it). That broke
+// migration's snapshot widen, so a graceful drain never emptied a node and no
+// rolling compute rollout could complete.
+//
+// Enabling a controller is idempotent and only legal for controllers the
+// parent itself has available, so intersect with cgroup.controllers first. A
+// newly enabled controller immediately materialises its files in existing
+// children, so this also repairs scopes that jailer already created.
+func ensureSubtreeControllers(parentAbs string, want []string) error {
+	available, err := readCgroupSet(filepath.Join(parentAbs, "cgroup.controllers"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Not a cgroup2 hierarchy: the pure-Go test tier and the Lima
+			// shim point cgroupRoot at a plain directory. Enabling nothing is
+			// correct there. Do NOT soften the caller's own write — if a real
+			// host is missing memory.max, that write still fails loudly and
+			// names the exact path.
+			return nil
+		}
+		return fmt.Errorf("fcvm: cgroup: read controllers for %s: %w", parentAbs, err)
+	}
+	enabled, err := readCgroupSet(filepath.Join(parentAbs, "cgroup.subtree_control"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("fcvm: cgroup: read subtree_control for %s: %w", parentAbs, err)
+	}
+	path := filepath.Join(parentAbs, "cgroup.subtree_control")
+	for _, c := range want {
+		if enabled[c] || !available[c] {
+			continue
+		}
+		// One controller per write: the kernel applies a multi-token body
+		// atomically, so a single unsupported token would reject the whole
+		// batch and leave the usable ones disabled.
+		if err := os.WriteFile(path, []byte("+"+c+"\n"), 0o644); err != nil {
+			return fmt.Errorf("fcvm: cgroup: enable %s in %s: %w", c, path, err)
+		}
+	}
+	return nil
+}
+
+// readCgroupSet reads a whitespace-separated cgroup pseudo-file into a set.
+// A missing file is reported as an error by the callers above, which is the
+// honest outcome: the parent slice must exist before a VM lands under it.
+func readCgroupSet(path string) (map[string]bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, 4)
+	for _, f := range strings.Fields(string(raw)) {
+		out[f] = true
+	}
+	return out, nil
+}
+
 func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillicores int) error {
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
+	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers); err != nil {
+		return err
+	}
 	if err := writeMemoryMaxTo(scope, planMB); err != nil {
 		return err
 	}
@@ -117,6 +203,9 @@ func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillico
 func writeBuildCgroup(instance string, planMB int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: builder planMB %d < 1", planMB)
+	}
+	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, BuilderCgroupParent), perInstanceControllers); err != nil {
+		return err
 	}
 	scope := filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(instance))
 	if err := writeMemoryMaxAt(scope, api.BuilderMemoryMaxMB(planMB)); err != nil {
@@ -176,6 +265,12 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 		scope = filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance))
 		original = api.BuilderMemoryMaxMB(l.MemoryMaxMiB)
 		snapshotLimit = api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
+	}
+	// An instance created before the controllers were enabled has no
+	// memory.max at all. Repair the parent first so a pre-existing VM can
+	// still be migrated rather than pinning its node forever.
+	if err := ensureSubtreeControllers(filepath.Dir(scope), perInstanceControllers); err != nil {
+		return nil, fmt.Errorf("fcvm: widen snapshot memory.max for %s: %w", l.Instance, err)
 	}
 	if err := writeMemoryMaxAt(scope, snapshotLimit); err != nil {
 		return nil, fmt.Errorf("fcvm: widen snapshot memory.max for %s: %w", l.Instance, err)

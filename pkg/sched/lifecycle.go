@@ -6,7 +6,9 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -908,6 +910,15 @@ func workerStatePreference(ins state.Instance) int {
 // reconciler means an instance transition cannot accidentally collapse a
 // queue-sized worker fleet back to the singleton target.
 func (e *Engine) workerQueueDepth(ctx context.Context, app state.App) (int, error) {
+	if e.brokerLag != nil {
+		lag, ok, err := e.brokerLag.BrokerLag(ctx, app.ID)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			return int(lag), nil
+		}
+	}
 	bindings, err := e.store.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
 	if err != nil {
 		return 0, err
@@ -964,22 +975,28 @@ func (e *Engine) workerReplicaTarget(ctx context.Context, app state.App, overrid
 		return 0
 	}
 
-	desired := 1
+	minAllowed := 1
+	if app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Min == 0 {
+		minAllowed = 0
+	}
+	desired := minAllowed
 	if override != nil {
 		desired = *override
-	} else if policy := app.ScalingPolicy; policy != nil && policy.Target != nil && policy.Target.Metric == "queue_depth" && policy.Target.Value > 0 {
+	} else if policy := app.ScalingPolicy; policy != nil && policy.Target != nil && (policy.Target.Metric == "queue_depth" || policy.Target.Metric == "queue_lag") && policy.Target.Value > 0 {
 		depth, depthErr := e.workerQueueDepth(ctx, app)
 		if depthErr != nil {
 			e.log.Warn("sched: read worker queue depth", "app", app.ID, "err", depthErr)
 		} else if depth > 0 {
 			desired = int(math.Ceil(float64(depth) / policy.Target.Value))
+		} else {
+			desired = 0
 		}
 		if policy.MinInstances > desired {
 			desired = policy.MinInstances
 		}
 	}
-	if desired < 1 {
-		desired = 1
+	if desired < minAllowed {
+		desired = minAllowed
 	}
 	if desired > max {
 		desired = max
@@ -1053,6 +1070,44 @@ func (e *Engine) ReconcileWorkerPool(ctx context.Context, appID string, desired 
 	return nil
 }
 
+// parseStopSignal parses a string signal representation (e.g. "SIGTERM", "TERM", "15",
+// "SIGINT", "INT", "2", "SIGQUIT", "SIGKILL", etc.) into a syscall.Signal.
+// Empty or unrecognised values fall back to SIGTERM.
+func parseStopSignal(s string) syscall.Signal {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	switch s {
+	case "":
+		return syscall.SIGTERM
+	case "SIGTERM", "TERM", "15":
+		return syscall.SIGTERM
+	case "SIGINT", "INT", "2":
+		return syscall.SIGINT
+	case "SIGQUIT", "QUIT", "3":
+		return syscall.SIGQUIT
+	case "SIGHUP", "HUP", "1":
+		return syscall.SIGHUP
+	case "SIGUSR1", "USR1", "10":
+		return syscall.SIGUSR1
+	case "SIGUSR2", "USR2", "12":
+		return syscall.SIGUSR2
+	default:
+		return syscall.SIGTERM
+	}
+}
+
+// workerStopOptions returns StopOptions for a worker instance based on the app manifest.
+func (e *Engine) workerStopOptions(app state.App) StopOptions {
+	grace := app.Manifest.StopGracePeriodS
+	if grace <= 0 {
+		grace = 30
+	}
+	sig := parseStopSignal(app.Manifest.StopSignal)
+	return StopOptions{
+		Signal:       int32(sig),
+		GraceSeconds: int32(grace),
+	}
+}
+
 func (e *Engine) reconcileWorkerApp(ctx context.Context, appID string, desiredOverride *int) {
 	e.reconcileWorkerAppWithTrigger(ctx, appID, desiredOverride, TriggerWorkerSingleton)
 }
@@ -1109,6 +1164,7 @@ func (e *Engine) reconcileWorkerAppWithTrigger(ctx context.Context, appID string
 		return workers[i].StartedAt.Before(workers[j].StartedAt)
 	})
 
+	stopOpts := e.workerStopOptions(app)
 	kept := make(map[string]int, len(targets))
 	for _, ins := range workers {
 		_, wanted := targets[ins.DeploymentID]
@@ -1116,7 +1172,7 @@ func (e *Engine) reconcileWorkerAppWithTrigger(ctx context.Context, appID string
 			kept[ins.DeploymentID]++
 			continue
 		}
-		if err := e.stopManagedWorker(ctx, ins.ID); err != nil {
+		if err := e.stopManagedWorker(ctx, ins.ID, stopOpts); err != nil {
 			e.log.Warn("sched: drain surplus worker", "app", appID, "deployment", ins.DeploymentID, "instance", ins.ID, "err", err)
 		}
 	}
@@ -1148,7 +1204,7 @@ func (e *Engine) reconcileWorkerAppWithTrigger(ctx context.Context, appID string
 // stopManagedWorker removes one reconciler-owned worker without snapshots.
 // RUNNING rows take the graceful OCI stop path. In-flight rows are destroyed
 // under appMu so a concurrent boot cannot commit after the cleanup decision.
-func (e *Engine) stopManagedWorker(ctx context.Context, instanceID string) error {
+func (e *Engine) stopManagedWorker(ctx context.Context, instanceID string, opts ...StopOptions) error {
 	for attempt := 0; attempt < 2; attempt++ {
 		ins, err := e.store.InstanceByID(ctx, instanceID)
 		if err != nil {
@@ -1158,7 +1214,11 @@ func (e *Engine) stopManagedWorker(ctx context.Context, instanceID string) error
 			return err
 		}
 		if state.State(ins.State) == state.StateRunning {
-			_, err = e.StopInstance(ctx, instanceID, StopOptions{GraceSeconds: 30})
+			var stopOpts StopOptions
+			if len(opts) > 0 {
+				stopOpts = opts[0]
+			}
+			_, err = e.StopInstance(ctx, instanceID, stopOpts)
 			return err
 		}
 		if !state.State(ins.State).CountsForRAM() {

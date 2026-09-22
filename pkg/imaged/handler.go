@@ -2838,10 +2838,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
-	// The public smoke needs the deployment to be routable, so mark it live
-	// before invoking the verifier. A live row without evidence is still not a
-	// successful deployment: smoke or receipt failures immediately transition
-	// it to failed and retain the failed receipt when possible.
+	// Snapshot candidates are verified through the gateway's authenticated,
+	// deployment-pinned smoke path before the live pointer moves. Keeping the
+	// predecessor live during this phase is the zero-downtime boundary: a slow
+	// candidate restore or failed smoke cannot remove the serving revision.
 	var hostingApp state.App
 	verificationStarted := time.Now()
 	hostingReceiptEnabled := ready == nil && (h.hostingSmoke != nil || h.hostingSmokeRequired)
@@ -2880,9 +2880,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
 
-	// Public hosting smoke needs the candidate to be routable. Remember the
-	// current same-scope deployment so a failed smoke can restore service
-	// instead of leaving the app with no live target.
+	// Remember the current same-scope deployment. After the candidate passes
+	// smoke, MarkDeploymentLive atomically supersedes this row; only then may
+	// schedd drain its serving instances.
 	var previousLiveID string
 	if previous, liveErr := h.store.LiveDeploymentForScope(ctx, dep.AppID, dep.Scope); liveErr == nil {
 		if previous.ID != dep.ID {
@@ -2891,25 +2891,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	} else if !errors.Is(liveErr, state.ErrNotFound) {
 		return fmt.Errorf("imaged: load current live deployment: %w", liveErr)
 	}
-	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
-		return fmt.Errorf("imaged: mark live: %w", err)
-	}
-	// The public gateway keeps deployment weights in memory. Publish the
-	// candidate route before the smoke request; waiting until the end of this
-	// function leaves first deployments invisible and makes the gateway return
-	// its own 404 even though the workload is ready.
-	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
-	restorePrevious := func(reason string) {
-		if previousLiveID == "" {
-			return
-		}
-		if restoreErr := h.store.MarkDeploymentLive(ctx, previousLiveID); restoreErr != nil {
-			h.log.Error("imaged: restore previous deployment after verification failure",
-				"deployment_id", dep.ID, "previous_deployment_id", previousLiveID,
-				"reason", reason, "err", restoreErr)
-		}
-	}
-
 	if hostingReceiptEnabled {
 		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(hostingApp, dep), ErrorCode: apihostingreceipt.SmokeErrorNotConfigured}
 		if smoke.Path == "" {
@@ -2940,7 +2921,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 				}
 				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
-				restorePrevious("post-readiness smoke failed")
 				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
 				h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
@@ -2951,7 +2931,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 			}
 			_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
-			restorePrevious("post-readiness smoke verifier not configured")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, smoke.Error)
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return fmt.Errorf("imaged: post-readiness smoke: %s", smoke.Error)
@@ -2960,13 +2939,31 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			if h.ops != nil {
 				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 			}
-			restorePrevious("hosting receipt persistence failed")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return fmt.Errorf("imaged: hosting receipt: %w", err)
 		}
 		if h.ops != nil {
 			h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeComplete, time.Since(verificationStarted))
+		}
+	}
+
+	// The candidate is now hot and externally verified. Swap the live pointer
+	// atomically, refresh gateway weights, and only then tell schedd that an
+	// actually-superseded predecessor may be drained. Manual traffic splits and
+	// canaries can keep the predecessor live, so confirm its durable state
+	// instead of inferring it from the attempted promotion.
+	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		return fmt.Errorf("imaged: mark live: %w", err)
+	}
+	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
+	if previousLiveID != "" {
+		previous, previousErr := h.store.DeploymentByID(ctx, previousLiveID)
+		if previousErr != nil {
+			h.log.Warn("mark live: reload predecessor failed",
+				"deployment_id", dep.ID, "previous_deployment_id", previousLiveID, "err", previousErr)
+		} else if previous.Status == state.DeploySuperseded {
+			h.notifyDeploymentState(ctx, dep.AppID, previous.ID, state.DeploySuperseded)
 		}
 	}
 	// ADR-117: close the readiness stage. Reload the row after MarkDeploymentLive

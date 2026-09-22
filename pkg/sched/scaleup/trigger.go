@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched/scalesignal"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -170,9 +170,15 @@ type RequestRateReader interface {
 // mocks, no goroutines, no engine. The trigger's Tick assembles an
 // AppStats per app and dispatches to decide.
 type AppStats struct {
-	AppID          string
-	TargetRPS      int     // 0 = no RPS target
-	TargetCPU      int     // 0 = no CPU target
+	AppID string
+	// TargetRPS / TargetCPU are the resolved per-instance targets, 0 when
+	// the axis is not configured. float64 rather than int because ADR-194
+	// lets an app declare them in `scaling.targets`, where a value is a
+	// float; truncating a declared 70.5% CPU target to 70 in the decision
+	// AND in the emitted scale event would misreport what the app asked
+	// for. The legacy integer columns widen into these losslessly.
+	TargetRPS      float64 // 0 = no RPS target
+	TargetCPU      float64 // 0 = no CPU target
 	MaxConcurrency int     // plan cap
 	Concurrency    int     // live instances counting toward the cap
 	PerInstanceRPS float64 // measured, 0 when no RPS signal
@@ -199,6 +205,11 @@ type Decision struct {
 	// decision should request, before the per-tick burst bound.
 	Desired    int
 	Admissions int
+	// Winner is the metric that produced Desired (ADR-194 arbitration),
+	// carried so the admission can be attributed. Without it an operator
+	// tuning an app with both an rps and a cpu target cannot tell which
+	// one is binding.
+	Winner string
 }
 
 // decide is the pure decision function. Extracted so tests can drive
@@ -223,41 +234,31 @@ func decide(s AppStats) Decision {
 	if s.TargetRPS == 0 && s.TargetCPU == 0 {
 		return Decision{Outcome: OutcomeNoSignal}
 	}
-	rpsHot := s.TargetRPS > 0 && s.HaveRPS && s.PerInstanceRPS > float64(s.TargetRPS)
-	cpuHot := s.TargetCPU > 0 && s.HaveCPU && s.PerInstanceCPU > float64(s.TargetCPU)
-	if !rpsHot && !cpuHot {
+	// ADR-194: the per-class arithmetic — rate metrics divide, saturation
+	// metrics step — lives in scalesignal, so this trigger and
+	// pkg/sched/targets share one implementation of it rather than two
+	// that drift. Arbitrate takes the max across the declared axes, which
+	// is exactly what the old inline "retain the larger estimate" branch
+	// did for these two.
+	res := scalesignal.Arbitrate(s.Concurrency, []scalesignal.Observation{
+		{Metric: api.ScalingMetricRPS, Target: s.TargetRPS, Measured: s.PerInstanceRPS, Have: s.HaveRPS},
+		{Metric: api.ScalingMetricCPU, Target: s.TargetCPU, Measured: s.PerInstanceCPU, Have: s.HaveCPU},
+	})
+	if !res.Hot {
 		return Decision{Outcome: OutcomeNoSignal}
 	}
 	headroom := s.MaxConcurrency - s.Concurrency
 	if headroom <= 0 {
 		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0}
 	}
-	desired := s.Concurrency + 1
-	if rpsHot && s.Concurrency > 0 {
-		// The ring stores total app RPS while the decision compares
-		// per-instance RPS. Reconstruct total demand and ceil so a
-		// fractional remainder gets capacity.
-		desired = int(math.Ceil((s.PerInstanceRPS * float64(s.Concurrency)) / float64(s.TargetRPS)))
-	}
-	// CPU is a saturation signal rather than a capacity measurement,
-	// so it safely contributes one additional instance when no
-	// stronger RPS estimate is available. When both signals are hot,
-	// retain the larger estimate.
-	if cpuHot && desired < s.Concurrency+1 {
-		desired = s.Concurrency + 1
-	}
+	desired := res.Desired
 	if desired > s.MaxConcurrency {
 		desired = s.MaxConcurrency
-	}
-	if desired <= s.Concurrency {
-		desired = s.Concurrency + 1
-		if desired > s.MaxConcurrency {
-			desired = s.MaxConcurrency
-		}
 	}
 	return Decision{
 		ShouldAdmit: true,
 		Outcome:     OutcomeAdmit,
+		Winner:      res.Winner,
 		Headroom:    headroom,
 		ObservedRPS: s.PerInstanceRPS,
 		Desired:     desired,
@@ -453,17 +454,38 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return fmt.Errorf("scaleup: list apps: %w", err)
 	}
 	for _, app := range apps {
+		// Resolve this trigger's two axes (ADR-194). A target declared in
+		// scaling.targets wins; the legacy integer column is the fallback
+		// for that axis alone, so an app that declares only `cpu` keeps
+		// whatever autoscale_target_rps it already had.
+		//
+		// Reading the policy here is what makes `target: {metric: rps}`
+		// work at all. It validated, persisted and round-tripped for
+		// releases while this trigger read only the column, so an app that
+		// configured RPS scaling through the documented field never scaled.
+		targetRPS := float64(app.AutoscaleTargetRPS)
+		if v, ok := app.ScalingPolicy.TargetFor(api.ScalingMetricRPS); ok {
+			targetRPS = v
+		}
+		targetCPU := float64(app.AutoscaleTargetCPUPct)
+		if v, ok := app.ScalingPolicy.TargetFor(api.ScalingMetricCPU); ok {
+			targetCPU = v
+		}
 		// Autoscale is "enabled" iff at least one target is set.
 		// No target → skip. Spec is explicit: no separate boolean
 		// (per user direction).
-		if app.AutoscaleTargetRPS == 0 && app.AutoscaleTargetCPUPct == 0 {
+		if targetRPS == 0 && targetCPU == 0 {
 			continue
 		}
 		conc := 0
 		if t.ledger != nil {
 			conc = t.ledger.Concurrency(app.ID)
 		}
-		// Per-instance RPS = windowed requests/second / conc.
+		// Per-instance RPS = best available total requests/second / conc.
+		// In a split ingress fleet, the local gateway counter is only one
+		// shard of app traffic while VMMD request-start telemetry covers every
+		// instance owned by this scheduler. Use the larger fresh total rather
+		// than allowing a partial local scrape to suppress the fleet signal.
 		// When conc=0 (cold path: no instances yet), the rollup
 		// is undefined; we treat HaveRPS=false so the trigger
 		// fires no_signal. The first instant wake that lands an
@@ -473,15 +495,17 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if conc > 0 {
 			_, promAvailable := promApps[app.ID]
 			if promAvailable && t.ring.HasObservation(app.ID) {
-				rps := t.ring.AppRate(app.ID, time.Now())
-				perInstRPS = rps / float64(conc)
+				perInstRPS = t.ring.AppRate(app.ID, time.Now()) / float64(conc)
 				haveRPS = true
 			}
 		}
-		if conc > 0 && !haveRPS {
+		if conc > 0 {
 			if reader, ok := t.instats.(RequestRateReader); ok {
 				if rps, ok := reader.RequestsPerSecond(app.ID); ok {
-					perInstRPS = rps / float64(conc)
+					fleetPerInstance := rps / float64(conc)
+					if !haveRPS || fleetPerInstance > perInstRPS {
+						perInstRPS = fleetPerInstance
+					}
 					haveRPS = true
 				}
 			}
@@ -496,8 +520,8 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		}
 		stats := AppStats{
 			AppID:          app.ID,
-			TargetRPS:      app.AutoscaleTargetRPS,
-			TargetCPU:      app.AutoscaleTargetCPUPct,
+			TargetRPS:      targetRPS,
+			TargetCPU:      targetCPU,
 			MaxConcurrency: app.MaxConcurrency,
 			Concurrency:    conc,
 			PerInstanceRPS: perInstRPS,
@@ -509,6 +533,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit is observable.
 		t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+		// Attribute the admission to the signal that drove it, so an app
+		// declaring both rps and cpu shows which one is binding.
+		if dec.Outcome == OutcomeAdmit {
+			t.metrics.ObserveScaleUpWinningSignal(app.ID, dec.Winner)
+		}
 		t.emitScaleDecision(ctx, stats, dec, time.Now())
 		if !dec.ShouldAdmit {
 			continue

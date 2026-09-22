@@ -1,3 +1,4 @@
+// adr: 038
 package instancestats
 
 import (
@@ -315,6 +316,25 @@ func TestReader_SignalFreshness(t *testing.T) {
 			t.Fatalf("MaxCPU(mixed) = (%v, %v), want (12, true)", got, ok)
 		}
 	})
+}
+
+func TestReader_SnapshotActivity(t *testing.T) {
+	r := NewReader()
+	base := time.Unix(1_000_000, 0)
+	lastRequest := base.Add(-time.Second)
+	r.Replace([]InstanceStat{{
+		AppID: "app1", InstanceID: "i-1", SampledAt: base,
+		InflightRequests: 3, LastRequestAt: lastRequest,
+	}})
+
+	activity := r.SnapshotActivity(base.Add(time.Second))
+	got, ok := activity["i-1"]
+	if !ok || got.Inflight != 3 || !got.LastRequest.Equal(lastRequest) {
+		t.Fatalf("SnapshotActivity(fresh) = (%+v, %v), want inflight=3 last_request=%v", got, ok, lastRequest)
+	}
+	if stale := r.SnapshotActivity(base.Add(DefaultFreshness + time.Nanosecond)); len(stale) != 0 {
+		t.Fatalf("SnapshotActivity(stale) = %+v, want empty", stale)
+	}
 }
 
 func TestReader_RequestRatesPerSecondAt(t *testing.T) {

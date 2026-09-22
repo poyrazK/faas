@@ -72,6 +72,12 @@ type InstanceInfo struct {
 	// pressure is a separate axis and tearing down connections is fine
 	// there.
 	OpenConns int64
+	// InflightRequests is the number of active ForwardHTTP calls reported by
+	// VMMD for this instance. Unlike the gateway request counter, this signal
+	// advances when handling starts rather than when a response completes.
+	// Both normal and aggressive scale-in treat a positive value as activity;
+	// RAM-pressure eviction remains intentionally unchanged.
+	InflightRequests int64
 	// FlowSummaries is the bounded endpoint detail captured alongside
 	// OpenConns for the running-state debugger. It is observational only and
 	// never changes reaping decisions.
@@ -147,11 +153,15 @@ type InstanceInfo struct {
 	// (PR-C, issue #462). Carrier semantics: every row of the same
 	// app carries the SAME value (sourced from app.LastScaleInAt in
 	// runReaper; nil if the customer has never had a scale-in event).
-	// ReapIdle and ReapAggressive consult it: when now - *LastScaleInAt
-	// < ScaleInCooldownS, the entire app is skipped (cooldown_held).
-	// Selecting the FIRST row's stamp and consulting once per app is
-	// the loop-side contract.
+	// ReapIdle and ReapAggressive combine it with LastScaleOutAt and use
+	// the later timestamp as the cooldown anchor. Selecting the FIRST
+	// row's stamps and consulting once per app is the loop-side contract.
 	LastScaleInAt *time.Time
+	// LastScaleOutAt is the apps-row last_scale_out_at stamp. Scale-in uses the
+	// later of LastScaleInAt and LastScaleOutAt as its cooldown anchor so a
+	// freshly admitted burst replica cannot be parked again before the
+	// scale-in stabilization window elapses.
+	LastScaleOutAt *time.Time
 	// ScaleInCooldownS is the per-app scale-in cooldown in seconds
 	// (PR-C, issue #462). Same carrier semantics as MinInstances —
 	// sourced from app.ScalingPolicy.ScaleInCooldownS via
@@ -205,6 +215,18 @@ func idleReference(in InstanceInfo) time.Time {
 		return in.LastRequest
 	}
 	return in.Started
+}
+
+// scaleInCooldownAnchor returns the latest capacity-changing event. A
+// scale-out must start the same stabilization window as a prior scale-in;
+// otherwise the aggressive reaper can undo a successful admit on its next
+// tick while request completions still lag request starts.
+func scaleInCooldownAnchor(in InstanceInfo) *time.Time {
+	anchor := in.LastScaleInAt
+	if in.LastScaleOutAt != nil && (anchor == nil || in.LastScaleOutAt.After(*anchor)) {
+		anchor = in.LastScaleOutAt
+	}
+	return anchor
 }
 
 // ReapIdle returns the instances to park for idleness: RUNNING instances and
@@ -264,7 +286,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		warmPoolSize    int            // desired resident warm rows
 		cands           []InstanceInfo // idle-eligible RUNNING rows
 		warmCands       []InstanceInfo // idle-eligible paused warm-pool rows
-		lastScaleInAt   *time.Time     // carrier (PR-C): from first row seen
+		cooldownAnchor  *time.Time     // latest scale-in or scale-out stamp
 		scaleInCooldown time.Duration  // carrier (PR-C): zero disables
 		// P1D: per-app emitted-once flags. The cooldown consult runs
 		// for every row of the app; emitting from inside the per-row
@@ -287,7 +309,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			g = &appGroup{
 				floor:           in.MinInstances,
 				warmPoolSize:    in.WarmPoolSize,
-				lastScaleInAt:   in.LastScaleInAt,
+				cooldownAnchor:  scaleInCooldownAnchor(in),
 				scaleInCooldown: time.Duration(in.ScaleInCooldownS) * time.Second,
 				appID:           in.AppID,
 			}
@@ -297,9 +319,9 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			g.warm++
 		}
 		// PR-C (issue #462): per-app scale-in cooldown consult. When
-		// now - *LastScaleInAt < ScaleInCooldownS, the entire app is
-		// skipped. The "stamp missed" direction is safe: nil
-		// LastScaleInAt → bypass → normal reaping. Carrier semantics:
+		// now - cooldownAnchor < ScaleInCooldownS, the entire app is
+		// skipped. The "stamp missed" direction is safe: both stamps nil
+		// means bypass → normal reaping. Carrier semantics:
 		// the first row's values are read once per app, so callers
 		// MUST stamp the same value across all rows of one app.
 		//
@@ -315,7 +337,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// `metrics != nil` is load-bearing — a naive "always
 		// record" approach would let ReapIdle poison the set
 		// without emitting, silently dropping the observation.
-		if g.lastScaleInAt != nil && g.scaleInCooldown > 0 && now.Sub(*g.lastScaleInAt) < g.scaleInCooldown {
+		if g.cooldownAnchor != nil && g.scaleInCooldown > 0 && now.Sub(*g.cooldownAnchor) < g.scaleInCooldown {
 			if metrics != nil && !g.cooldownEmitted {
 				metrics.ObserveScaleDown(g.appID, "cooldown_held")
 				g.cooldownEmitted = true
@@ -372,6 +394,12 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		}
 		if in.State == state.StateRunning {
 			g.running++
+		}
+		// Active guest work wins over stale durable request timestamps. The
+		// VMMD activity tracker increments this counter at ForwardHTTP start,
+		// so long-running requests remain protected until their handler exits.
+		if in.InflightRequests > 0 {
+			continue
 		}
 		// G7: an app with open TCP flows is active. Wins over stale
 		// LastRequest so a parked app mid-WebSocket isn't reaped.
@@ -533,7 +561,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		floor           int
 		desired         int
 		candidates      []InstanceInfo // RUNNING, !young, !busy
-		lastScaleInAt   *time.Time
+		cooldownAnchor  *time.Time
 		scaleInCooldown time.Duration
 		cooldownEmitted bool // P1C: at most one cooldown_held observation per app
 	}
@@ -575,7 +603,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 			g = &appGroup{
 				floor:           in.MinInstances,
 				desired:         desired,
-				lastScaleInAt:   in.LastScaleInAt,
+				cooldownAnchor:  scaleInCooldownAnchor(in),
 				scaleInCooldown: time.Duration(in.ScaleInCooldownS) * time.Second,
 			}
 			byApp[in.AppID] = g
@@ -593,7 +621,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// suppressed (avoids double-count). The set is still
 		// populated here as a safety net so the loop wrapper can
 		// inspect it after both branches have run.
-		if g.lastScaleInAt != nil && g.scaleInCooldown > 0 && now.Sub(*g.lastScaleInAt) < g.scaleInCooldown {
+		if g.cooldownAnchor != nil && g.scaleInCooldown > 0 && now.Sub(*g.cooldownAnchor) < g.scaleInCooldown {
 			_, alreadySeen := cooldownHeldByApp[in.AppID]
 			if metrics != nil && !g.cooldownEmitted && !alreadySeen {
 				metrics.ObserveScaleDown(in.AppID, "cooldown_held")
@@ -605,6 +633,12 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 			continue
 		}
 		g.running++
+		// The gateway completion counter can remain flat for the entire
+		// lifetime of a slow request. Per-instance VMMD telemetry closes that
+		// blind spot and keeps active work out of the scale-in candidate set.
+		if in.InflightRequests > 0 {
+			continue
+		}
 		// G7: open TCP flows count as activity regardless of
 		// LastRequest staleness. We still count this instance
 		// toward running (it's live) but it never enters the

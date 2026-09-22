@@ -55,6 +55,9 @@ func UnitBuilderd() daemonunit.Unit {
 		ExecStart:  "/opt/faas/current/bin/builderd",
 		Restart:    "on-failure",
 		RestartSec: "2s",
+		// ADR-190: generous because builds hold the claim loop for
+		// minutes; the liveness beat comes from the runtime loop.
+		WatchdogSec: "300s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",

@@ -75,6 +75,9 @@ type bridgeStubStore struct {
 	prev    state.Deployment
 	prevErr error
 
+	deploymentByID    state.Deployment
+	deploymentByIDErr error
+
 	createDeploymentReturned state.Deployment
 	createDeploymentErr      error
 
@@ -110,6 +113,10 @@ func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, 
 
 func (s *bridgeStubStore) LatestDeployment(_ context.Context, _ string) (state.Deployment, error) {
 	return s.prev, s.prevErr
+}
+
+func (s *bridgeStubStore) DeploymentByID(_ context.Context, _ string) (state.Deployment, error) {
+	return s.deploymentByID, s.deploymentByIDErr
 }
 
 func (s *bridgeStubStore) CreateDeployment(_ context.Context, d state.Deployment) (state.Deployment, error) {
@@ -713,17 +720,18 @@ func TestEnqueueBuild_CreateDeploymentMappedError(t *testing.T) {
 	}
 }
 
-func TestEnqueueBuild_PrevDeploymentSuperseded(t *testing.T) {
-	// When a prior non-terminal deployment exists, the
-	// receiver emits a NotifyDeploymentChanged with
-	// status=superseded. First deploy: no supersede notify.
+func TestEnqueueBuild_PrevPendingDeploymentSuperseded(t *testing.T) {
+	// When CreateDeployment actually supersedes a prior pending deployment,
+	// the receiver emits a NotifyDeploymentChanged with status=superseded.
+	// A still-live predecessor deliberately does not take this path.
 	accountID := "a"
 	appID := "app-1"
 	stagingRoot := t.TempDir()
 	spoolRoot := t.TempDir()
 	store := &bridgeStubStore{
-		app:  state.App{ID: appID, AccountID: accountID, Status: state.AppActive},
-		prev: state.Deployment{ID: "dep-prev", AppID: appID},
+		app:            state.App{ID: appID, AccountID: accountID, Status: state.AppActive},
+		prev:           state.Deployment{ID: "dep-prev", AppID: appID, Status: state.DeployPending},
+		deploymentByID: state.Deployment{ID: "dep-prev", AppID: appID, Status: state.DeploySuperseded},
 	}
 	notif := &bridgeStubNotifier{}
 	g := &githubdBridge{

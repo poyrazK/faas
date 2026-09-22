@@ -1121,18 +1121,20 @@ func cmdDashboard(args []string) int {
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
 //	ack          release a leased row
+//	setup        configure a simple push workload with queue-depth scaling
 //	bindings     manage first-class queue bindings
 func cmdQueueDispatch(args []string) int {
 	parent, _ := lookupCliCommand("queue")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
 			"  tail <slug>            long-poll the unified event stream (queue drain signals)\n"+
-			"  send <slug> --payload J enqueue one row\n"+
+			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
 			"  receive <slug>         drain the next row (blocks)\n"+
 			"  state <slug>            depth + cap (no lease)\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
 			"  ack <slug> <row-id>    release a leased row\n"+
+			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		return 1
@@ -1152,18 +1154,21 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueDeadLetter(args[1:])
 	case "ack":
 		return cmdQueueAck(args[1:])
+	case "setup":
+		return cmdQueueSetup(args[1:])
 	case "bindings":
 		return cmdQueueBindings(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
 			"  tail <slug>            long-poll the unified event stream\n"+
-			"  send <slug> --payload J enqueue one row\n"+
+			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
 			"  receive <slug>         drain the next row\n"+
 			"  state <slug>            depth + cap\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
 			"  ack <slug> <row-id>    release a leased row\n"+
+			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		maybeSuggestSub(sug)
@@ -1289,12 +1294,13 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
+	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|->", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE]", "queue")
 		return 1
 	}
 	slug := pos[0]
@@ -1306,7 +1312,7 @@ func cmdQueueSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}

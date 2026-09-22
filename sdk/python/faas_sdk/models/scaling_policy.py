@@ -12,6 +12,7 @@ from ..models.scaling_policy_concurrency_overflow import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.scaling_schedule import ScalingSchedule
     from ..models.scaling_target import ScalingTarget
 
 
@@ -33,11 +34,18 @@ class ScalingPolicy:
     """Per-app ceiling on live instances. Must be in [min_instances, plan.MaxConcurrency]. Hobby+ unlocked at PR-A.
     Free → 403 plan_max_instances_not_allowed. 0 = use plan max_concurrency."""
     target: None | ScalingTarget | Unset = UNSET
-    """Per-instance signal the engine watches for the scale-up trigger. Closed metric set: rps |
-    concurrent_requests | queue_depth | p99_latency_ms. queue_depth is a per-worker backlog budget and is valid for
-    job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct
-    columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class
-    (PR-D carve-out)."""
+    """Single-signal form, superseded by `targets` (ADR-194) and still accepted: it is read as a one-element list.
+    Closed metric set: rps | cpu | concurrent_requests | queue_depth. queue_depth is a per-worker backlog budget and
+    is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps /
+    autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422
+    scaling_target_incompatible_with_workload_class (PR-D carve-out). Mutually exclusive with `targets` — setting
+    both is 422."""
+    targets: list[ScalingTarget] | Unset = UNSET
+    """Multi-signal autoscaling (ADR-194). Each entry states how much load ONE instance should carry on that
+    metric; the platform evaluates every entry independently and provisions for the largest resulting instance
+    count. The combination rule, the windowing and the cooldowns are platform policy and are not configurable per
+    metric — declaring the signals is the whole surface. Each metric may appear at most once, every value must be >
+    0, and cpu is a percentage capped at 100. Mutually exclusive with `target`."""
     scale_out_cooldown_s: int | Unset = UNSET
     """Minimum seconds between two scale-out events. Floor 1 (no 0 traps); ceiling 3600 (1 h). Out-of-range → 422
     invalid_cooldown."""
@@ -53,6 +61,16 @@ class ScalingPolicy:
     """Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default."""
     wake_max_queue_wait_seconds: int | Unset = UNSET
     """Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds."""
+    timezone: str | Unset = UNSET
+    """IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app
+    rather than one per schedule: a business has a working day, not a working day per rule."""
+    schedules: list[ScalingSchedule] | Unset = UNSET
+    """Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the
+    window is open the app's min_instances is at least the entry's value, and outside every window the app falls
+    back to min_instances and parks. Schedules only ever RAISE the floor — they cannot lower one and cannot cap
+    max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the
+    maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the
+    per-plan min_instances cap."""
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.scaling_target import ScalingTarget
@@ -69,6 +87,13 @@ class ScalingPolicy:
         else:
             target = self.target
 
+        targets: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.targets, Unset):
+            targets = []
+            for targets_item_data in self.targets:
+                targets_item = targets_item_data.to_dict()
+                targets.append(targets_item)
+
         scale_out_cooldown_s = self.scale_out_cooldown_s
 
         scale_in_cooldown_s = self.scale_in_cooldown_s
@@ -83,6 +108,15 @@ class ScalingPolicy:
 
         wake_max_queue_wait_seconds = self.wake_max_queue_wait_seconds
 
+        timezone = self.timezone
+
+        schedules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.schedules, Unset):
+            schedules = []
+            for schedules_item_data in self.schedules:
+                schedules_item = schedules_item_data.to_dict()
+                schedules.append(schedules_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -92,6 +126,8 @@ class ScalingPolicy:
             field_dict["max_instances"] = max_instances
         if target is not UNSET:
             field_dict["target"] = target
+        if targets is not UNSET:
+            field_dict["targets"] = targets
         if scale_out_cooldown_s is not UNSET:
             field_dict["scale_out_cooldown_s"] = scale_out_cooldown_s
         if scale_in_cooldown_s is not UNSET:
@@ -104,11 +140,16 @@ class ScalingPolicy:
             field_dict["wake_max_queue_depth"] = wake_max_queue_depth
         if wake_max_queue_wait_seconds is not UNSET:
             field_dict["wake_max_queue_wait_seconds"] = wake_max_queue_wait_seconds
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
+        if schedules is not UNSET:
+            field_dict["schedules"] = schedules
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.scaling_schedule import ScalingSchedule
         from ..models.scaling_target import ScalingTarget
 
         d = dict(src_dict)
@@ -133,6 +174,15 @@ class ScalingPolicy:
 
         target = _parse_target(d.pop("target", UNSET))
 
+        _targets = d.pop("targets", UNSET)
+        targets: list[ScalingTarget] | Unset = UNSET
+        if _targets is not UNSET:
+            targets = []
+            for targets_item_data in _targets:
+                targets_item = ScalingTarget.from_dict(targets_item_data)
+
+                targets.append(targets_item)
+
         scale_out_cooldown_s = d.pop("scale_out_cooldown_s", UNSET)
 
         scale_in_cooldown_s = d.pop("scale_in_cooldown_s", UNSET)
@@ -150,16 +200,30 @@ class ScalingPolicy:
 
         wake_max_queue_wait_seconds = d.pop("wake_max_queue_wait_seconds", UNSET)
 
+        timezone = d.pop("timezone", UNSET)
+
+        _schedules = d.pop("schedules", UNSET)
+        schedules: list[ScalingSchedule] | Unset = UNSET
+        if _schedules is not UNSET:
+            schedules = []
+            for schedules_item_data in _schedules:
+                schedules_item = ScalingSchedule.from_dict(schedules_item_data)
+
+                schedules.append(schedules_item)
+
         scaling_policy = cls(
             min_instances=min_instances,
             max_instances=max_instances,
             target=target,
+            targets=targets,
             scale_out_cooldown_s=scale_out_cooldown_s,
             scale_in_cooldown_s=scale_in_cooldown_s,
             concurrency_overflow=concurrency_overflow,
             max_queue_wait_ms=max_queue_wait_ms,
             wake_max_queue_depth=wake_max_queue_depth,
             wake_max_queue_wait_seconds=wake_max_queue_wait_seconds,
+            timezone=timezone,
+            schedules=schedules,
         )
 
         return scaling_policy

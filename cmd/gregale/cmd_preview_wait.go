@@ -166,8 +166,5 @@ func newPreviewWaitReceipt(state api.PreviewStatusResponse, ready bool) previewW
 }
 
 func previewURLFromApp(app api.AppResponse) string {
-	if app.URL != "" {
-		return app.URL
-	}
-	return deployedAppURL(app.Slug)
+	return canonicalAppURL(app)
 }

@@ -19,13 +19,19 @@ func planSnapshotKey(key string, parts []string) (string, string, error) {
 	if len(suffix) == 3 {
 		valid = suffix[0] == "captures" && depIDCharset.MatchString(suffix[1]) && snapshotPart(suffix[2])
 	}
+	if len(suffix) == 4 {
+		valid = suffix[0] == "captures" && depIDCharset.MatchString(suffix[1]) && suffix[2] == "v2" && snapshotV2Part(suffix[3])
+	}
 	if !valid {
-		return "", "", fmt.Errorf("%w: %q does not match snap/<dep>/[warm/][captures/<uuid>/]{mem|vmstate}", ErrInvalidKey, key)
+		return "", "", fmt.Errorf("%w: %q does not match a supported snapshot artifact key", ErrInvalidKey, key)
 	}
 	return "snap-" + parts[1], strings.Join(parts[2:], "-"), nil
 }
 
 func snapshotPart(part string) bool { return part == "mem" || part == "vmstate" }
+func snapshotV2Part(part string) bool {
+	return snapshotPart(part) || part == "drive"
+}
 
 func unplanSnapshotKey(dep, tag string) (string, bool) {
 	if !depIDCharset.MatchString(dep) {
@@ -48,8 +54,13 @@ func unplanSnapshotKey(dep, tag string) (string, bool) {
 		return "", false
 	}
 	capture, part := captureAndPart[:index], captureAndPart[index+1:]
-	if !depIDCharset.MatchString(capture) || !snapshotPart(part) {
+	version := ""
+	if strings.HasSuffix(capture, "-v2") {
+		capture = strings.TrimSuffix(capture, "-v2")
+		version = "v2/"
+	}
+	if !depIDCharset.MatchString(capture) || (version == "" && !snapshotPart(part)) || (version != "" && !snapshotV2Part(part)) {
 		return "", false
 	}
-	return prefix + "captures/" + capture + "/" + part, true
+	return prefix + "captures/" + capture + "/" + version + part, true
 }
