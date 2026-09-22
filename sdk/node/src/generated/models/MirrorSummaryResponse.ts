@@ -11,6 +11,14 @@
  */
 export type MirrorSummaryResponse = {
   total_invocations: number;
+  /**
+   * Requests with any status, schema, or body difference; each request is counted once.
+   */
+  changed_response_count: number;
+  /**
+   * 100 × changed_response_count / total_invocations; zero when the window is empty.
+   */
+  changed_response_percent: number;
   status_diff_count: number;
   schema_diff_count: number;
   body_diff_count: number;

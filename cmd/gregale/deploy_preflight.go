@@ -15,15 +15,17 @@ import (
 // uploads source. It deliberately contains no environment values, credentials,
 // source contents, or local absolute paths.
 type deployPreflightSummary struct {
-	Slug            string
-	Source          string
-	LocalChanges    string
-	Environment     string
-	BuildPlan       *api.BuildPlan
-	SimpleAppPlan   *simpleapp.Plan
-	ResourceProfile string
-	ExecutionMode   string
-	Release         string
+	Slug              string
+	Source            string
+	LocalChanges      string
+	Environment       string
+	BuildPlan         *api.BuildPlan
+	RuntimeResolution string
+	SimpleAppPlan     *simpleapp.Plan
+	ResourceProfile   string
+	ResourceBehavior  string
+	ExecutionMode     string
+	Release           string
 }
 
 // deployPreflightSource describes the exact local source selection without
@@ -86,6 +88,10 @@ func pluralizeDeployChange(n int) string {
 	return "changes"
 }
 
+func deployPreflightRepoSource(repo, ref string) string {
+	return "GitHub " + repo + " · ref " + ref
+}
+
 func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, rollbackOn5xx *bool) string {
 	var release string
 	switch {
@@ -112,7 +118,11 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "local changes:", summary.LocalChanges)
 	}
 
-	if runtime := deployPreflightRuntime(summary.BuildPlan); runtime != "" {
+	runtime := deployPreflightRuntime(summary.BuildPlan)
+	if runtime == "" {
+		runtime = strings.TrimSpace(summary.RuntimeResolution)
+	}
+	if runtime != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "runtime:", runtime)
 	}
 	if summary.BuildPlan != nil && summary.BuildPlan.Entrypoint != "" {
@@ -185,6 +195,9 @@ func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) strin
 }
 
 func deployPreflightResources(summary deployPreflightSummary) string {
+	if resources := strings.TrimSpace(summary.ResourceBehavior); resources != "" {
+		return resources
+	}
 	profile := strings.TrimSpace(summary.ResourceProfile)
 	execution := strings.TrimSpace(summary.ExecutionMode)
 	if summary.SimpleAppPlan != nil {

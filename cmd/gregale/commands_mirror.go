@@ -1,11 +1,7 @@
-// gregale mirror <list|create|info|update|rm|summary> --app <slug>
-// (issue #72 / ADR-125 traffic mirroring PR-A2). PR-A2 ships the
-// customer-facing CLI surface; the runtime mirror goroutine lands
-// in PR-A3. After PR-A2 lands, a customer can `gregale mirror
-// create` and see the rule via `gregale mirror list`, but no
-// traffic is mirrored yet — the gateway integration is A3.
+// gregale mirror <list|create|info|update|rm|summary|replay> --app <slug>
+// (issue #72 / ADR-125 traffic mirroring).
 //
-// Six leaves, dispatched via cmdMirror. The pattern mirrors
+// Seven leaves, dispatched via cmdMirror. The pattern mirrors
 // commands_edge_rules.go (cmdEdgeRules + 5 leaves) exactly: each
 // leaf is its own function with its own flag set, --json
 // round-trips through jsonOut(writeJSON(...)) so the SDK DTOs
@@ -19,7 +15,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -104,7 +102,7 @@ func cmdMirrorCreate(args []string) int {
 	source := fs.String("source", "", "source deployment id or vN revision (required)")
 	mirror := fs.String("mirror", "", "mirror deployment id or vN revision (required)")
 	percent := fs.Int("percent", 100, "fan-out percent in [0, 100]; 100 = every request")
-	includeBody := fs.Bool("include-body", false, "include request/response bodies in the comparison ledger")
+	includeBody := fs.Bool("include-body", false, "include request/response body hashes in the comparison ledger")
 	var redactHeaders multiFlag
 	fs.Var(&redactHeaders, "redact-header", "extra header name to redact (repeatable); always-stripped list applies regardless")
 	if err := fs.Parse(args); err != nil {
@@ -214,8 +212,8 @@ func cmdMirrorUpdate(args []string) int {
 	percent := fs.Int("percent", -1, "new percent in [0, 100]; -1 = unset (keep existing)")
 	enable := fs.Bool("enable", false, "enable the rule")
 	disable := fs.Bool("disable", false, "disable the rule")
-	includeBody := fs.Bool("include-body", false, "enable body capture")
-	noIncludeBody := fs.Bool("no-include-body", false, "disable body capture")
+	includeBody := fs.Bool("include-body", false, "enable body-hash comparison")
+	noIncludeBody := fs.Bool("no-include-body", false, "disable body-hash comparison")
 	var redactHeaders multiFlag
 	fs.Var(&redactHeaders, "redact-header", "extra header name to redact (repeatable)")
 	var clearRedact bool
@@ -363,6 +361,7 @@ func cmdMirrorSummary(args []string) int {
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "Window:         %d s\n", resp.WindowSeconds)
 	_, _ = fmt.Fprintf(os.Stdout, "Invocations:    %d\n", resp.TotalInvocations)
+	_, _ = fmt.Fprintf(os.Stdout, "Changed:        %d (%.2f%%)\n", resp.ChangedResponseCount, resp.ChangedResponsePct)
 	_, _ = fmt.Fprintf(os.Stdout, "Status diff:    %d\n", resp.StatusDiffCount)
 	_, _ = fmt.Fprintf(os.Stdout, "Schema diff:    %d\n", resp.SchemaDiffCount)
 	_, _ = fmt.Fprintf(os.Stdout, "Body diff:      %d\n", resp.BodyDiffCount)
@@ -372,13 +371,97 @@ func cmdMirrorSummary(args []string) int {
 	return 0
 }
 
+// cmdMirrorReplay queues a customer-sanitized JSON corpus. Mutating methods
+// require an explicit CLI flag even if the input file contains the API field,
+// preventing a copied corpus from acquiring side effects accidentally.
+func cmdMirrorReplay(args []string) int {
+	fs := newFlagSet("mirror replay", flag.ContinueOnError)
+	slug := fs.String("app", "", "app slug (required)")
+	id := fs.String("id", "", "mirror rule id (required)")
+	path := fs.String("file", "", "sanitized replay corpus JSON file, or - for stdin (required)")
+	allowUnsafe := fs.Bool("allow-unsafe-methods", false, "allow POST, PUT, PATCH, and DELETE requests")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	if *slug == "" || *id == "" || *path == "" {
+		PrintUsage(os.Stderr, "usage: gregale mirror replay --app <slug> --id <mirror-rule-id> --file <corpus.json|-> [--allow-unsafe-methods]", "mirror")
+		return 1
+	}
+	req, err := readMirrorReplayCorpus(*path)
+	if err != nil {
+		return printErr("Invalid replay corpus", err)
+	}
+	// The CLI flag is the deliberate acknowledgement. Ignore an unsafe opt-in
+	// copied into a file so opening that file alone cannot enable mutations.
+	req.AllowUnsafeMethods = *allowUnsafe
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.PostAppsSlugMirrorsIdReplay(context.Background(), *slug, *id, req)
+	if err != nil {
+		return printErr("Replay failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Queued %d sanitized request(s) for mirror replay\n", resp.Queued)
+	for _, inv := range resp.Invocations {
+		_, _ = fmt.Fprintf(osStdout, "%s  %s\n", inv.RequestID, inv.MirrorInvocationID)
+	}
+	return 0
+}
+
+func readMirrorReplayCorpus(path string) (api.MirrorReplayBatchRequest, error) {
+	var (
+		reader  io.Reader
+		closeFn func() error
+	)
+	if path == "-" {
+		reader = osStdin
+	} else {
+		f, err := openCustomerFile(path)
+		if err != nil {
+			return api.MirrorReplayBatchRequest{}, err
+		}
+		reader = f
+		closeFn = f.Close
+	}
+	if closeFn != nil {
+		defer func() { _ = closeFn() }()
+	}
+	raw, err := io.ReadAll(io.LimitReader(reader, int64(api.MirrorReplayMaxBatchBytes)+1))
+	if err != nil {
+		return api.MirrorReplayBatchRequest{}, err
+	}
+	if len(raw) > api.MirrorReplayMaxBatchBytes {
+		return api.MirrorReplayBatchRequest{}, fmt.Errorf("corpus exceeds %d bytes", api.MirrorReplayMaxBatchBytes)
+	}
+	var req api.MirrorReplayBatchRequest
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		return api.MirrorReplayBatchRequest{}, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return api.MirrorReplayBatchRequest{}, fmt.Errorf("corpus must contain one JSON document")
+		}
+		return api.MirrorReplayBatchRequest{}, err
+	}
+	return req, nil
+}
+
 // cmdMirror dispatches the `gregale mirror` sub-command. The
 // pattern matches cmdEdgeRules (commands_edge_rules.go:74) and
 // cmdTraffic (commands2.go:1606) exactly: leaf-dispatch on the
 // first positional arg.
 func cmdMirror(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mirror <list|create|info|update|rm|summary> --app <slug> [flags]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale mirror <list|create|info|update|rm|summary|replay> --app <slug> [flags]", "mirror")
 		return 1
 	}
 	switch args[0] {
@@ -394,8 +477,10 @@ func cmdMirror(args []string) int {
 		return cmdMirrorRm(args[1:])
 	case "summary":
 		return cmdMirrorSummary(args[1:])
+	case "replay":
+		return cmdMirrorReplay(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale mirror <list|create|info|update|rm|summary> --app <slug> [flags]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale mirror <list|create|info|update|rm|summary|replay> --app <slug> [flags]", "mirror")
 		return 1
 	}
 }

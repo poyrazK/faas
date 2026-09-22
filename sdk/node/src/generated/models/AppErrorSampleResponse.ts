@@ -18,6 +18,13 @@ export type AppErrorSampleResponse = {
   error_class: string;
   sample_message: string;
   deployment_id?: string | null;
+  instance_id?: string;
+  node_id?: string;
+  region?: string;
+  commit_sha?: string;
+  deployment_tag?: string;
+  deployment_created_at?: string;
+  image_digest?: string;
   /**
    * PII-redacted request headers (≤8 keys).
    */
