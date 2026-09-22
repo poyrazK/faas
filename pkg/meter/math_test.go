@@ -1,3 +1,4 @@
+// spec: §10 — billing month boundaries use UTC even for offset timestamps.
 package meter
 
 import (
