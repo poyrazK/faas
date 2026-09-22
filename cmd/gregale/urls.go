@@ -20,18 +20,27 @@ const (
 
 // docsPageSlugs are the stable, publicly routed pages in faas-web. Command
 // topics that do not have their own page use the consolidated CLI reference.
+// docsPageSlugs lists the pages the docs site actually serves. Every other
+// topic falls back to the CLI reference: 76 of 78 per-command help links
+// pointed at pages that do not exist (issue #3362).
 var docsPageSlugs = map[string]struct{}{
 	"cli":                    {},
 	"compliance":             {},
+	"custom-domains":         {},
+	"deploy-from-github":     {},
 	"deploy-from-source":     {},
 	"dpa":                    {},
 	"egress-denylist":        {},
+	"executions":             {},
+	"object-storage":         {},
+	"plans":                  {},
 	"preview-environments":   {},
 	"responsible-disclosure": {},
 	"runtime-go":             {},
 	"runtime-node":           {},
 	"runtime-python":         {},
 	"scale-to-zero":          {},
+	"security":               {},
 	"storage":                {},
 	"subprocessors":          {},
 	"tracing":                {},
