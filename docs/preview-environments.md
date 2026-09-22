@@ -1,9 +1,10 @@
 # PR preview environments (issue #272 / ADR-095)
 
-Every pull request against a connected GitHub repo gets its own
-ephemeral app, deployed on push, routed at a per-PR subdomain,
-and torn down on PR close (or after the TTL — whichever comes
-first). No CI configuration required; the integration is
+Every pull request against a connected GitHub repo gets an
+ephemeral app for the bound workload and its declared transitive
+`depends_on` workload dependencies, deployed on push and routed at
+per-PR subdomains. They are torn down on PR close (or after the TTL —
+whichever comes first). No CI configuration required; the integration is
 triggered by the GitHub App the customer installed via
 `gregale connect`.
 
@@ -54,7 +55,7 @@ A reopened PR during the grace period bumps the row back to
 
 ## Quota
 
-Each preview consumes **one slot** of the customer's
+Each preview workload consumes **one slot** of the customer's
 `DeployedAppMax`:
 
 - **Free** — 1 slot total (production + preview). Preview
@@ -64,7 +65,8 @@ Each preview consumes **one slot** of the customer's
 - **Scale** — 100 slots.
 
 This is the same ceiling production apps use; there is no
-separate preview cap. The 7-day default TTL plus the 24h
+separate preview cap. A preview with two app dependencies consumes three
+slots. The 7-day default TTL plus the 24h
 closed-grace window plus the janitor's per-tick sweep keep
 the steady-state preview count bounded — a customer who
 opens 20 PRs today will not have 20 previews live a week
@@ -200,9 +202,15 @@ A project PR preview first resolves a service name inside its own account,
 project, and PR. If that workload preview exists, the call stays isolated; a
 preview in another PR, project, or account is never eligible.
 
-Provisioning still creates one app rather than copying the whole project, so a
-dependency preview may not exist yet. The gateway then considers the
-**production** service and its side effects are real if policy permits it.
+On each PR head update, githubd scans the source and provisions only the bound
+workload's transitive `depends_on` app closure, in dependency order. Enqueue
+order does not itself guarantee that a dependency is live before its caller
+starts. Unrelated project workloads are not copied. Retries reuse the same
+preview rows; closing the PR closes the sibling rows together. Managed services
+are external to this app fan-out, and a newly declared workload that has no
+active production app cannot yet be provisioned as a preview. When a dependency
+preview is absent, the gateway considers the **production** service and its
+side effects are real if policy permits it.
 
 For new projects, Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code

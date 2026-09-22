@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -1200,8 +1201,8 @@ func (s *Service) writePreviewComment(ctx context.Context, installationID int64,
 //
 // Differences from HandlePushRequest:
 //
-//   - No reconcile / scan / build-fan-out: PR previews deploy
-//     exactly one app (the preview itself) per event.
+//   - No production reconcile: PR previews scan the head commit and
+//     build the bound workload plus its transitive app dependencies.
 //   - D3 fork refusal short-circuits BEFORE any app creation —
 //     the policy is uniform-refuse and the neutral Check Run is
 //     the only outbound signal.
@@ -1310,10 +1311,10 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		}
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve parent app: %w", err)
 	}
-	if parentApp.Status != state.AppActive {
+	if parentApp.Status != state.AppActive && ev.Action != PullRequestActionClosed {
 		// The parent isn't active (soft-deleted, suspended, etc.).
 		// Provisioning a preview on top of an inactive parent is
-		// nonsensical — refuse silently so GitHub doesn't retry.
+		// nonsensical. A close event still needs to retire existing siblings.
 		return reconcile.Result{}, ErrNoBinding
 	}
 	previewProject := state.Project{ID: parentApp.ProjectID, AccountID: parentApp.AccountID, RepoFullName: ev.Repository.FullName}
@@ -1336,6 +1337,9 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, fmt.Errorf("githubd: derive preview slug: %w", err)
 	}
 	if ev.Action == PullRequestActionClosed {
+		if closeErr := s.closePRDependencies(ctx, parentApp, ev.Number); closeErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: close PR preview siblings: %w", closeErr)
+		}
 		if _, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal); lookupErr != nil {
 			if errors.Is(lookupErr, state.ErrNotFound) {
 				// GitHub can deliver a close after retention already removed the
@@ -1404,6 +1408,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			// idempotent path before reporting the account as full.
 			existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
 			if lookupErr == nil && existing.AccountID == parentApp.AccountID &&
+				existing.ProjectID == parentApp.ProjectID && existing.PreviewPrNumber == ev.Number &&
 				existing.PreviewOfSlug == parentApp.Slug {
 				created = existing
 				err = nil
@@ -1457,6 +1462,16 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, nil
 		}
 		created = existing
+	}
+	if created.AccountID != parentApp.AccountID || created.ProjectID != parentApp.ProjectID ||
+		created.PreviewOfSlug != parentApp.Slug || created.PreviewPrNumber != ev.Number {
+		return reconcile.Result{}, fmt.Errorf("githubd: preview slug %q belongs to another app or PR: %w", previewSlugVal, state.ErrConflict)
+	}
+	if ev.Action != PullRequestActionClosed {
+		created, err = s.Reconcile.Store.RefreshPRPreview(ctx, created.ID, expiresAt)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: refresh PR preview lease: %w", err)
+		}
 	}
 
 	// 5b. Stamp preview_pr_state on the existing row. This covers
@@ -1539,7 +1554,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		}
 	}
 
-	// Fetch, stage, and enqueue the preview's head revision. Older unit rigs
+	// Fetch, scan, stage, and enqueue the preview's head revision. Older unit rigs
 	// intentionally omit these production dependencies; production always wires
 	// all three and therefore turns every open/synchronize/reopen event into a
 	// real DeploymentKindPreview build.
@@ -1550,35 +1565,81 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			return result, fmt.Errorf("githubd: fetch preview source: %w", fetchErr)
 		}
 		defer func() { _ = tree.Close() }()
+		scan, scanErr := s.Reconcile.Scan(tree.FS())
+		if scanErr != nil {
+			return result, fmt.Errorf("githubd: scan PR source: %w", scanErr)
+		}
+		dependencies, depsErr := s.previewDependencyParents(ctx, parentApp, scan)
+		if depsErr != nil {
+			return result, depsErr
+		}
+		workloads := make(map[string]reposcan.Workload, len(scan.Workloads))
+		available := make(map[string]struct{}, len(scan.Workloads))
+		for _, workload := range scan.Workloads {
+			key := strings.ToLower(workload.Name)
+			workloads[key] = workload
+			available[key] = struct{}{}
+		}
+		if parentApp.ProjectID != "" {
+			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy)
+			if err != nil {
+				return result, fmt.Errorf("githubd: apply PR head workload %q: %w", parentApp.WorkloadName, err)
+			}
+			result.Added[0] = created
+		}
+		toBuild := make([]state.App, 0, len(dependencies)+1)
+		for _, dependency := range dependencies {
+			preview, provisionErr := s.provisionPRDependency(ctx, dependency, ev.Number, expiresAt, policy, previewLimits)
+			if provisionErr != nil {
+				var quota *state.QuotaError
+				if errors.As(provisionErr, &quota) {
+					_ = s.writePreviewCheck(ctx, install.InstallationID, ev.Repository.FullName,
+						ev.PullRequest.HeadSHA, githubdgrpc.CheckPhaseFailed, previewURL,
+						fmt.Sprintf("Preview skipped: dependency %q exceeds the deployed app limit.", dependency.WorkloadName))
+					result.WasIgnored = true
+					return result, ErrIgnored
+				}
+				return result, fmt.Errorf("githubd: provision PR dependency %q: %w", dependency.WorkloadName, provisionErr)
+			}
+			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy)
+			if err != nil {
+				return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
+			}
+			toBuild = append(toBuild, preview)
+			result.Added = append(result.Added, preview)
+		}
+		toBuild = append(toBuild, created)
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,
 			ProductionBranch: ev.PullRequest.HeadRef,
 		}
-		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, created,
-			project, ev.PullRequest.HeadSHA, ev.PullRequest.HeadRef)
-		if stageErr != nil {
-			return result, fmt.Errorf("githubd: stage preview source: %w", stageErr)
+		for _, preview := range toBuild {
+			sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, preview,
+				project, ev.PullRequest.HeadSHA, ev.PullRequest.HeadRef)
+			if stageErr != nil {
+				return result, fmt.Errorf("githubd: stage preview source for %q: %w", preview.WorkloadName, stageErr)
+			}
+			build, enqueueErr := s.Enqueuer.Enqueue(ctx, BuildSpec{
+				App:          preview,
+				DeliveryID:   webhookDeliveryID(ctx),
+				CommitSHA:    ev.PullRequest.HeadSHA,
+				RepoFullName: ev.Repository.FullName,
+				Ref:          "refs/heads/" + ev.PullRequest.HeadRef,
+				Branch:       ev.PullRequest.HeadRef,
+				Pusher:       ev.Sender.Login,
+				SourcePath:   sourcePath,
+				SourceURL:    sourceURL,
+				SourceBytes:  sourceBytes,
+				PRNumber:     int32(ev.Number),
+				SenderLogin:  ev.Sender.Login,
+				EventKind:    githubdpb.EnqueueBuildEventKind_EVENT_KIND_PULL_REQUEST,
+			})
+			if enqueueErr != nil {
+				return result, fmt.Errorf("githubd: enqueue preview build for %q: %w", preview.WorkloadName, enqueueErr)
+			}
+			result.BuildIDs = append(result.BuildIDs, build.ID)
 		}
-		build, enqueueErr := s.Enqueuer.Enqueue(ctx, BuildSpec{
-			App:          created,
-			DeliveryID:   webhookDeliveryID(ctx),
-			CommitSHA:    ev.PullRequest.HeadSHA,
-			RepoFullName: ev.Repository.FullName,
-			Ref:          "refs/heads/" + ev.PullRequest.HeadRef,
-			Branch:       ev.PullRequest.HeadRef,
-			Pusher:       ev.Sender.Login,
-			SourcePath:   sourcePath,
-			SourceURL:    sourceURL,
-			SourceBytes:  sourceBytes,
-			PRNumber:     int32(ev.Number),
-			SenderLogin:  ev.Sender.Login,
-			EventKind:    githubdpb.EnqueueBuildEventKind_EVENT_KIND_PULL_REQUEST,
-		})
-		if enqueueErr != nil {
-			return result, fmt.Errorf("githubd: enqueue preview build: %w", enqueueErr)
-		}
-		result.BuildIDs = []string{build.ID}
 	}
 
 	s.Log.Info("githubd pull_request → preview",
