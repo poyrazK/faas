@@ -2543,6 +2543,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// cwd-auto-pack paths; the receipt constructor handles a nil
 	// prov cleanly (commit_sha and dirty zero-valued).
 	var prov *zeroConfigProvenance
+	var dirtyFileCount int
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
 	// stdout and exits 0 (issue #270). No auth, no side effects — this
@@ -2637,6 +2638,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// metadata source must remain the selected working tree rather than an
 	// extracted copy.
 	explicitTarball := *tarball != ""
+	originalTarball := *tarball
 
 	// --template materializes an embedded starter project. For function
 	// templates we force the runtime + handler so the customer doesn't
@@ -2863,16 +2865,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			prov = &provVal
 			if provVal.Dirty {
 				if dirtyOut, dirtyErr := runGitCmd(provVal.Root, "status", "--porcelain"); dirtyErr == nil {
-					dirtyFiles := 0
 					for _, line := range strings.Split(strings.TrimRight(dirtyOut, "\n"), "\n") {
 						if line != "" {
-							dirtyFiles++
+							dirtyFileCount++
 						}
-					}
-					if !jsonOutput && dirtyFiles > 0 && *worktree {
-						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)", dirtyFiles, provVal.SHA[:7])
-					} else if !jsonOutput && dirtyFiles > 0 {
-						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes", dirtyFiles, provVal.SHA[:7])
 					}
 				}
 			}
@@ -3177,6 +3173,31 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not resolve simple app plan", planErr)
 		}
 		resolvedSimplePlan = &plan
+	}
+
+	// Render one coherent, non-secret summary after the source view and local
+	// inference are authoritative, but before any app creation, binding change,
+	// trigger staging, or source upload. Project deploys and read-only previews
+	// already have dedicated plan renderers; developer watch mode has its own
+	// per-sync receipt and must not repeat this block on every save.
+	if !jsonOutput && !*diff && !projectRequested && developerSync == nil {
+		source, localChanges := deployPreflightSource(
+			prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath,
+		)
+		buildPlan := buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, "", *image != "", *dockerfile)
+		renderDeployPreflight(osStdout, deployPreflightSummary{
+			Slug:            slug,
+			Source:          source,
+			LocalChanges:    localChanges,
+			Environment:     *environment,
+			BuildPlan:       buildPlan,
+			SimpleAppPlan:   resolvedSimplePlan,
+			ResourceProfile: *profile,
+			ExecutionMode:   *executionMode,
+			Release: deployPreflightRelease(
+				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
+			),
+		})
 	}
 
 	if client == nil {
@@ -3642,9 +3663,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		execution.notifyQueued(dep)
-		if !jsonOutput {
-			renderSimpleAppDeploySummary(osStdout, resolvedSimplePlan)
-		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
@@ -3740,9 +3758,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return code
 	}
 	execution.notifyQueued(dep)
-	if !jsonOutput {
-		renderSimpleAppDeploySummary(osStdout, resolvedSimplePlan)
-	}
 	if jsonOutput && !jsonWait && !streamLogsOnJSON {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is

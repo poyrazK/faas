@@ -87,13 +87,3 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
 	_, _ = fmt.Fprintln(w, "No remote state changed. Run `gregale deploy` to apply this plan.")
 	return 0
 }
-
-// renderSimpleAppDeploySummary keeps the human deploy path explicit about the
-// effective stateless contract without printing any source or secret values.
-func renderSimpleAppDeploySummary(w io.Writer, plan *simpleapp.Plan) {
-	if plan == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(w, "Effective simple app plan: resources=%s, listener=:%d %s, execution=%s, scale=to-zero, local-storage=%s, durable-state=%s\n",
-		plan.ResourceProfile, plan.Port, plan.HealthPath, plan.ExecutionMode, plan.LocalStorage, plan.DurableState)
-}
