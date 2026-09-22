@@ -424,7 +424,16 @@ func (s *server) deletePrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
 		return
 	}
-	err := store.DeletePrivateNetwork(r.Context(), acct.ID, id)
+	network, err := store.GetPrivateNetwork(r.Context(), acct.ID, id)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read private network"))
+		return
+	}
+	err = store.DeletePrivateNetwork(r.Context(), acct.ID, id)
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
@@ -436,6 +445,7 @@ func (s *server) deletePrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		}
 		return
 	}
+	_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_deleted","account_id":"%s","network_id":"%s","region":"%s","cidr":"%s"}`, acct.ID, network.ID, network.Region, network.CIDR.String()))
 	s.audit.Emit(r.Context(), "private_network.deleted", &acct.ID, map[string]any{"network_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }

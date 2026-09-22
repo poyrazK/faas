@@ -543,8 +543,9 @@ const (
 	// LISTEN gap cannot leave stale private routes on a live VM.
 	NotifyPrivateNetworkAttachmentChanged = "private_network_attachment_changed"
 	// NotifyPrivateNetworkChanged wakes schedd after a Gregale-owned network
-	// policy or peering mutation. The payload carries account/region identity so
-	// policy changes and deleted peerings converge without waiting for a sweep.
+	// policy, peering, or deletion mutation. The payload carries account/region
+	// identity; deletion payloads also carry the immutable CIDR so node-local
+	// fabric teardown can converge after the network row is gone.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge

@@ -1032,6 +1032,25 @@ func (c *VMMClient) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, 
 	return c.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true)
 }
 
+// RemovePrivateNetworkFabric tears down the node-local Gregale network
+// bridge. The vmmd operation is idempotent so a replayed delete notification
+// is safe during scheduler or node recovery.
+func (c *VMMClient) RemovePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	ack, err := c.cli.RemovePrivateNetworkFabric(ctx, &vmmdpb.RemovePrivateNetworkFabricRequest{
+		AccountId: accountID,
+		NetworkId: networkID,
+		Region:    region,
+		Cidr:      cidr.String(),
+	})
+	if err != nil {
+		return liftErr(err)
+	}
+	if ack == nil {
+		return fmt.Errorf("vmmd remove private network fabric: empty acknowledgement")
+	}
+	return nil
+}
+
 func (c *VMMClient) reconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr, managed bool) error {
 	peerStrings := make([]string, 0, len(peers))
 	for _, peer := range peers {
