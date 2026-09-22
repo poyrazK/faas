@@ -44,8 +44,8 @@ func testProjectReconcileIgnoresPreviewApps(t *testing.T, store interface {
 		}
 		return app
 	}
-	production := create("api", "api", "", 0)
-	preview := create("pr-42-api", "api", production.Slug, 42)
+	production := create("preview-isolation-api", "api", "", 0)
+	preview := create("pr-42-preview-isolation-api", "api", production.Slug, 42)
 
 	members, err := store.AppsForProject(ctx, account.ID, project.ID)
 	if err != nil || len(members) != 1 || members[0].ID != production.ID {
@@ -83,13 +83,13 @@ func testProjectReconcileIgnoresPreviewApps(t *testing.T, store interface {
 
 	// A deleted preview is not a production tombstone. A new production
 	// workload with that name must receive a fresh production app row.
-	deletedPreview := create("pr-42-worker", "worker", production.Slug, 42)
+	deletedPreview := create("pr-42-preview-isolation-worker", "worker", production.Slug, 42)
 	if _, err := store.SoftDeleteAppCascade(ctx, deletedPreview.ID); err != nil {
 		t.Fatalf("SoftDeleteAppCascade(preview): %v", err)
 	}
 	created, err := store.ApplyProjectReconcile(ctx, project,
 		[]state.ProjectReconcileMutation{{Op: "create", App: state.App{
-			Slug: "worker", WorkloadName: "worker", Type: state.AppTypeApp,
+			Slug: "preview-isolation-worker", WorkloadName: "worker", Type: state.AppTypeApp,
 			RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive,
 		}}}, nil, state.ProjectScanSourceCompose, api.MustLimitsFor(api.PlanPro))
 	if err != nil || len(created.Added) != 1 {
