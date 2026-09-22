@@ -86,6 +86,31 @@ type EventSubscriptionListResponse struct {
 	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
 }
 
+// EventDeliveryResponse is the safe, metadata-only projection of an
+// event-triggered invocation. Payloads and handler results stay behind the
+// per-invocation endpoint; this view answers the operational question of
+// whether a published event reached a worker.
+type EventDeliveryResponse struct {
+	InvocationID   string     `json:"invocation_id"`
+	EventID        string     `json:"event_id"`
+	EventSource    string     `json:"event_source"`
+	EventType      string     `json:"event_type"`
+	SubscriptionID string     `json:"subscription_id,omitempty"`
+	State          string     `json:"state"`
+	Attempts       int        `json:"attempts"`
+	LastError      string     `json:"last_error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+// EventDeliveryListResponse is an app-scoped page of event-triggered
+// invocations, ordered newest first.
+type EventDeliveryListResponse struct {
+	AppSlug    string                  `json:"app_slug"`
+	Deliveries []EventDeliveryResponse `json:"deliveries"`
+	NextBefore string                  `json:"next_before,omitempty"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
@@ -5076,18 +5101,17 @@ const (
 // AppStreamingStatus is the per-request streaming classification
 // returned by GET /v1/apps/{slug}/streaming-cap (ADR-102 D6). It is
 // the wire-level mirror of pkg/gateway.(*Handler).decideStreaming —
-// a customer hitting this endpoint sees exactly what the gateway's
-// gate machine resolved for the next inbound request, with the same
-// status enum and the same effective cap.
+// a customer hitting this endpoint sees the same status enum and plan
+// cap; a route-aware request shape also resolves the matching gateway
+// edge-rule response cap.
 //
 // Status is one of the api.StreamingStatus* constants. CapKind
 // labels the cap source: "plan" means app.Plan.MaxResponseBodyBytes
 // (the buffered cap; for non-streaming statuses this is also the
-// streaming cap because no edge rule matched), "endpoint-rule"
-// means a kind=limit edge rule with a non-zero MaxBodyBytesStreaming
-// field matched and overrode the plan cap. CapKind is omitted from
-// the wire when there is no override so a customer whose plan cap
-// applied sees a clean three-field response.
+// streaming cap), "endpoint-rule" means a route-aware probe matched
+// a kind=limit edge rule with a non-zero MaxBodyBytesStreaming field
+// and overrode the plan cap. A plan-level probe or a gatewayd miss
+// returns CapKind="plan".
 //
 // PlanAllowed + FlagEnabled mirror the two booleans that gated the
 // decision, so a customer can self-diagnose without a separate
@@ -6955,18 +6979,25 @@ type EdgeRuleRetryAction struct {
 	// MaxAttempts counts attempts, not retries: 2 is the original plus one
 	// replay. Zero applies EdgeRuleRetryDefaultMaxAttempts.
 	MaxAttempts int `json:"max_attempts,omitempty"`
-	// AllowNonIdempotent opts POST and PATCH into replay.
+	// AllowNonIdempotent opts POST and PATCH into replay when the request also
+	// carries a non-empty Idempotency-Key header.
 	//
 	// This is the only field here that can cost correctness rather than
 	// latency: a replayed POST runs the customer's side effect twice unless
-	// their handler is idempotent or they send an idempotency key. It
-	// defaults false and the CLI/docs state the consequence explicitly.
+	// their handler does not honor the idempotency key. It defaults false and
+	// the CLI/docs state the consequence explicitly.
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	// MinRemainingMs is the request-budget floor below which a replay is
 	// skipped. Zero applies EdgeRuleRetryDefaultMinRemainingMs.
 	MinRemainingMs int `json:"min_remaining_ms,omitempty"`
 	// BackoffMs delays a replay. Defaults to 0.
 	BackoffMs int `json:"backoff_ms,omitempty"`
+	// BudgetPercent caps aggregate replay attempts relative to original
+	// requests in a short per-app window. Zero applies the 10% default.
+	BudgetPercent int `json:"budget_percent,omitempty"`
+	// BudgetMinRetries is the low-traffic retry allowance per window. Zero
+	// applies the default of one.
+	BudgetMinRetries int `json:"budget_min_retries,omitempty"`
 }
 
 // Validate applies the ADR-201 §1 defaults and bounds. It mutates the
@@ -7004,6 +7035,22 @@ func (a *EdgeRuleRetryAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"retry action: backoff_ms must be in 0..%d (got %d) — the failure being retried is a dead peer, so a delay rarely helps",
 			MaxEdgeRuleRetryBackoffMs, a.BackoffMs))
+	}
+	if a.BudgetPercent == 0 {
+		a.BudgetPercent = EdgeRuleRetryDefaultBudgetPercent
+	}
+	if a.BudgetPercent < 1 || a.BudgetPercent > MaxEdgeRuleRetryBudgetPercent {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_percent must be in 1..%d (got %d)",
+			MaxEdgeRuleRetryBudgetPercent, a.BudgetPercent))
+	}
+	if a.BudgetMinRetries == 0 {
+		a.BudgetMinRetries = EdgeRuleRetryDefaultBudgetMin
+	}
+	if a.BudgetMinRetries < 0 || a.BudgetMinRetries > MaxEdgeRuleRetryBudgetMin {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_min_retries must be in 0..%d (got %d)",
+			MaxEdgeRuleRetryBudgetMin, a.BudgetMinRetries))
 	}
 	return nil
 }

@@ -18,16 +18,12 @@ package main
 // the next inbound request, plus the same effective response body
 // cap the gateway would install via capWriter.
 //
-// What this does NOT return
-//
-// The probe does NOT dial gatewayd-internal to resolve the
-// per-edge-rule cap override (D4) or to learn the operator's
-// FAAS_GATEWAY_STREAMING env state. Both live in the gatewayd
-// process and are not part of the apid cache. The probe returns
-// the plan-level cap as EffectiveCap and labels CapKind="plan"
-// when the rule-override path is unknown. A customer who needs
-// the live decision fires a real request and reads the
-// Streaming-Status response header.
+// By default the probe returns the plan-level cap. Supplying all three
+// request-shape query parameters (`host`, `path`, and `method`) asks the
+// gatewayd control listener to resolve the matching kind=limit rule, so the
+// response can report the same endpoint override the request path will use.
+// The operator's FAAS_GATEWAY_STREAMING state remains gatewayd-local; the
+// Streaming-Status response header on a real request is still canonical.
 //
 // Wire format
 //
@@ -40,10 +36,15 @@ package main
 // Why this lives on apid, not the gatewayd public listener: the
 // auth chain (ScopesReadSurface) lives in apid where it belongs;
 // the per-account rate limit applies naturally. The probe is a
-// pure read against the per-app cache; no wake, no state mutation.
+// pure read against the per-app cache and gatewayd rule cache; no wake, no
+// state mutation.
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -98,19 +99,60 @@ func isAcceptJSON(accept string) bool {
 	return false
 }
 
-// streamingCapDialGatewayd is the optional future dial path. When
-// the operator wires apid→gatewayd-internal for the streaming-cap
-// probe (matching the routes handler at handlers_routes.go), the
-// dial result refines EffectiveCap with the per-edge-rule
-// override. Not wired in this PR — the apid-side decision tree
-// covers all six enum variants without the gatewayd hop, and the
-// D6 endpoint contract is satisfied with EffectiveCap=PlanCap.
-//
-// ADR-102 D6 keeps the probe simple: read what apid already has
-// in cache, return the canonical decision. The customer who needs
-// sub-second cap accuracy fires a real request and reads the
-// Streaming-Status header. The live cap lives in the gateway; the
-// probe is a static snapshot.
+type streamingCapUpstreamResponse struct {
+	Slug                  string `json:"slug"`
+	AppID                 string `json:"app_id"`
+	Override              bool   `json:"override"`
+	MaxBodyBytesStreaming int    `json:"max_body_bytes_streaming"`
+}
+
+// resolveStreamingCapOverride asks gatewayd for the already-compiled rule
+// match. Failure is intentionally a soft fallback to the plan cap: the
+// probe remains useful during a rolling restart or on a single-box install
+// where the control listener is not configured.
+func (s *server) resolveStreamingCapOverride(r *http.Request, slug, appID, host, requestPath, method string) (int64, bool) {
+	if s.gatewaydControlURL == "" {
+		return 0, false
+	}
+	dialCtx, cancel := context.WithTimeout(r.Context(), routesDialTimeout)
+	defer cancel()
+	endpoint, err := url.JoinPath(s.gatewaydControlURL, "v1", "internal", "apps", slug, "streaming-cap")
+	if err != nil {
+		return 0, false
+	}
+	query := url.Values{}
+	query.Set("host", host)
+	query.Set("path", requestPath)
+	query.Set("method", method)
+	endpoint += "?" + query.Encode()
+	req, err := http.NewRequestWithContext(dialCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, false
+	}
+	resp, err := (&http.Client{Timeout: routesDialTimeout}).Do(req)
+	if err != nil {
+		if s.log != nil {
+			s.log.Debug("apid to gatewayd streaming-cap dial failed", "err", err, "url", endpoint)
+		}
+		return 0, false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return 0, false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return 0, false
+	}
+	var upstream streamingCapUpstreamResponse
+	if err := json.Unmarshal(body, &upstream); err != nil || upstream.AppID != appID {
+		return 0, false
+	}
+	if !upstream.Override || upstream.MaxBodyBytesStreaming <= 0 {
+		return 0, false
+	}
+	return int64(upstream.MaxBodyBytesStreaming), true
+}
 
 // getAppStreamingCap serves GET /v1/apps/{slug}/streaming-cap.
 // The auth chain matches /v1/apps/{slug}/routes (read-only, no MFA,
@@ -123,8 +165,7 @@ func (s *server) getAppStreamingCap(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
-	// Compute the static decision (no edge-rule lookup; see the
-	// file-level doc). The decision tree mirrors the gateway's
+	// Compute the static decision. The decision tree mirrors the gateway's
 	// decideStreaming for the four non-edge-rule conjuncts.
 	//
 	//   1. !app.StreamingEnabled → flag-disabled
@@ -141,18 +182,64 @@ func (s *server) getAppStreamingCap(w http.ResponseWriter, r *http.Request, acct
 	// a real request IS the canonical signal.
 	planCap := acct.Plan.MaxResponseBodyBytes()
 	status := decideStaticStreamingStatus(r, app, acct.Plan)
-	// accept-json-downgrade is informational post-D3; the
-	// request DOES stream in that case. The effective cap is
-	// still the plan cap (no endpoint-rule lookup in the probe).
+	capKind := "plan"
+	effectiveCap := planCap
+	host, requestPath, method := streamingCapRequestShape(r)
+	if host != "" || requestPath != "" || method != "" {
+		if !validStreamingCapHost(host) || !validStreamingCapPath(requestPath) || !validStreamingCapMethod(method) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid streaming-cap request shape",
+				"host, path, and method query parameters must be supplied together; path must start with '/' and method must be an uppercase token"))
+			return
+		}
+		if streamingCapCanUseEndpointRule(status) {
+			if cap, ok := s.resolveStreamingCapOverride(r, r.PathValue("slug"), app.ID, host, requestPath, method); ok {
+				effectiveCap = cap
+				capKind = "endpoint-rule"
+			}
+		}
+	}
+	// accept-json-downgrade is informational post-D3; the request DOES
+	// stream in that case, so a route-aware probe still returns the
+	// endpoint-rule cap when one matches.
 	writeJSON(w, http.StatusOK, api.AppStreamingStatus{
 		AppID:        app.ID,
 		Status:       status,
-		EffectiveCap: planCap,
+		EffectiveCap: effectiveCap,
 		PlanCap:      planCap,
 		FlagEnabled:  app.StreamingEnabled,
 		PlanAllowed:  acct.Plan.StreamingResponseAllowed(),
-		CapKind:      "plan",
+		CapKind:      capKind,
 	})
+}
+
+func streamingCapRequestShape(r *http.Request) (host, requestPath, method string) {
+	q := r.URL.Query()
+	return strings.TrimSpace(q.Get("host")), q.Get("path"), strings.ToUpper(strings.TrimSpace(q.Get("method")))
+}
+
+func validStreamingCapMethod(method string) bool {
+	if method == "" || len(method) > 32 {
+		return false
+	}
+	for i := 0; i < len(method); i++ {
+		if method[i] < 'A' || method[i] > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+func validStreamingCapHost(host string) bool {
+	return host != "" && len(host) <= 255
+}
+
+func validStreamingCapPath(requestPath string) bool {
+	return requestPath != "" && len(requestPath) <= 4096 && strings.HasPrefix(requestPath, "/")
+}
+
+func streamingCapCanUseEndpointRule(status api.StreamingStatus) bool {
+	return status == api.StreamingStatusStreaming || status == api.StreamingStatusAcceptJSONDowngrade
 }
 
 // decideStaticStreamingStatus is the apid-side mirror of the

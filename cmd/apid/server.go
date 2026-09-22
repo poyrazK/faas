@@ -731,7 +731,7 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 
 // WithGatewaydControlURL (ADR-093) attaches the loopback URL
 // apid uses to reach gatewayd-internal's control listener
-// (/v1/internal/apps/{slug}/routes). Default
+// (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
 // production overrides via FAAS_GATEWAYD_CONTROL_URL when the
@@ -1891,6 +1891,7 @@ func (s *server) handler() http.Handler {
 	// the durable events row remains the recovery source.
 	mux.HandleFunc("POST /v1/events:publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishEvent)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSubscriptions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createWorkflowRun)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))

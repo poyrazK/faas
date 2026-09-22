@@ -19,8 +19,10 @@ package gateway
 import (
 	"bytes"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -44,6 +46,8 @@ const (
 	RetrySkipBudget        = "insufficient_budget"
 	RetrySkipAttempts      = "max_attempts"
 	RetrySkipBodyNotReplay = "body_not_replayable"
+	RetrySkipIdempotency   = "missing_idempotency_key"
+	RetrySkipAggregate     = "aggregate_budget"
 )
 
 // RetryPolicy is the compiled kind=retry rule. The zero value is disabled,
@@ -66,18 +70,29 @@ type RetryPolicy struct {
 	// a dead peer, and the next instance is a different process, so waiting
 	// buys nothing. Bounded for the case where the sibling is still waking.
 	Backoff time.Duration
+	// BudgetPercent caps aggregate retries as a percentage of original
+	// requests in a short per-app window. BudgetMinRetries permits recovery
+	// from a single dead peer even at low traffic.
+	BudgetPercent    int
+	BudgetMinRetries int
 }
 
-// retryable reports whether the policy permits replaying this method.
-func (p RetryPolicy) retryable(method string) bool {
-	switch method {
+// retryable reports whether the policy permits replaying this request.
+func (p RetryPolicy) retryable(r *http.Request) (bool, string) {
+	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions,
 		http.MethodTrace, http.MethodPut, http.MethodDelete:
-		return true
+		return true, ""
 	case http.MethodPost, http.MethodPatch:
-		return p.AllowNonIdempotent
+		if !p.AllowNonIdempotent {
+			return false, RetrySkipNonIdempotent
+		}
+		if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+			return false, RetrySkipIdempotency
+		}
+		return true, ""
 	default:
-		return false
+		return false, RetrySkipNonIdempotent
 	}
 }
 
@@ -193,10 +208,16 @@ func runWithRetry(
 	attempt retryAttempt,
 	repick retryRepick,
 	obs retryObserver,
+	admissions ...retryBudgetAdmission,
 ) {
-	if !policy.Enabled || policy.MaxAttempts < 2 || !policy.retryable(r.Method) {
-		if policy.Enabled && obs != nil && !policy.retryable(r.Method) {
-			obs.IncRetryExhausted(RetrySkipNonIdempotent)
+	var admission retryBudgetAdmission
+	if len(admissions) > 0 {
+		admission = admissions[0]
+	}
+	retryable, skipReason := policy.retryable(r)
+	if !policy.Enabled || policy.MaxAttempts < 2 || !retryable {
+		if policy.Enabled && obs != nil && !retryable {
+			obs.IncRetryExhausted(skipReason)
 		}
 		attempt(w, r, target)
 		return
@@ -219,7 +240,8 @@ func runWithRetry(
 		owner := r.Body
 		defer func() { _ = owner.Close() }()
 	}
-	runAttempts(w, r, target, policy, onStale, attempt, repick, obs)
+	admission.budget.ObserveOriginal(admission.scope)
+	runAttempts(w, r, target, policy, onStale, attempt, repick, obs, admission)
 }
 
 // runAttempts is the loop proper, split out so runWithRetry stays inside the
@@ -233,6 +255,7 @@ func runAttempts(
 	attempt retryAttempt,
 	repick retryRepick,
 	obs retryObserver,
+	admission retryBudgetAdmission,
 ) {
 	for i := 0; i < policy.MaxAttempts; i++ {
 		if i > 0 && policy.Backoff > 0 {
@@ -275,6 +298,21 @@ func runAttempts(
 		if !found {
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipNoTarget)
+			}
+			buf.commit()
+			return
+		}
+		percent := policy.BudgetPercent
+		if percent <= 0 {
+			percent = api.EdgeRuleRetryDefaultBudgetPercent
+		}
+		minRetries := policy.BudgetMinRetries
+		if minRetries <= 0 {
+			minRetries = api.EdgeRuleRetryDefaultBudgetMin
+		}
+		if admission.budget != nil && !admission.budget.AllowRetry(admission.scope, percent, minRetries) {
+			if obs != nil {
+				obs.IncRetryExhausted(RetrySkipAggregate)
 			}
 			buf.commit()
 			return
@@ -372,6 +410,13 @@ func (h *Handler) WithRetryObserver(obs retryObserver) *Handler {
 	return h
 }
 
+// WithRetryBudget installs the aggregate retry-amplification limiter. The
+// same instance can be shared with the internal service proxy.
+func (h *Handler) WithRetryBudget(budget *RetryBudget) *Handler {
+	h.retryBudget = budget
+	return h
+}
+
 // retryPolicyFor resolves the effective policy for one request.
 //
 // Precedence: an injected test matcher, then a matched kind=retry edge rule,
@@ -446,5 +491,6 @@ func (h *Handler) proxyAttempt(
 		// tests that need to assert on the sequence.
 		obs = h.metrics
 	}
-	runWithRetry(w, r, target, policy, retire, forward, repick, obs)
+	runWithRetry(w, r, target, policy, retire, forward, repick, obs,
+		retryBudgetAdmission{budget: h.retryBudget, scope: app.ID})
 }

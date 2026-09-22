@@ -92,9 +92,10 @@ checked in this order and each failure is counted on
    perform. This is the single most important rule in this ADR.
 3. **The method is idempotent**, or the rule explicitly opted in. Default
    set is `GET HEAD OPTIONS TRACE PUT DELETE`. `POST` and `PATCH` are
-   excluded unless the rule sets `allow_non_idempotent: true`, which the
-   API documents as "only if your handler is idempotent or you send an
-   idempotency key".
+   excluded unless the rule sets `allow_non_idempotent: true` **and** the
+   request carries a non-empty `Idempotency-Key`. The application must honor
+   that key; the platform does not claim that an arbitrary side effect is
+   idempotent merely because the header exists.
 4. **A different target exists.** The retry re-picks through the normal
    picker with the failed instance already evicted, so it cannot select
    the same instance. No healthy sibling means no retry.
@@ -103,7 +104,11 @@ checked in this order and each failure is counted on
    matched and the remaining time is below `min_remaining_ms` (default
    250 ms), the retry is skipped and the original error is returned. A
    retry can never extend a customer's deadline.
-6. **`max_attempts` is not exhausted.** Total attempts, not retries:
+6. **The app's aggregate retry budget has capacity.** The default permits
+   retries equal to 10% of originals in a 10-second window, with a minimum of
+   one for low-traffic recovery. The public edge and internal service proxy
+   share this budget, so a broad outage cannot replay every failed request.
+7. **`max_attempts` is not exhausted.** Total attempts, not retries:
    default 2, ceiling 3.
 
 ### Action shape
@@ -113,13 +118,26 @@ checked in this order and each failure is counted on
   "retry": { "max_attempts": 2,
              "allow_non_idempotent": false,
              "min_remaining_ms": 250,
-             "backoff_ms": 0 } }
+             "backoff_ms": 0,
+             "budget_percent": 10,
+             "budget_min_retries": 1 } }
 ```
 
 `backoff_ms` defaults to 0 because the failure mode being retried is a
 *dead peer*, not a loaded one; the next instance is a different process
 and delay buys nothing. It is exposed as a bounded knob (≤ 1000 ms) for
 the case where the sibling is still waking.
+
+The aggregate budget complements `max_attempts`: the attempt ceiling bounds
+one request, while `budget_percent` and `budget_min_retries` bound total
+amplification when many requests fail together. Exhaustion is exported as
+`gateway_retry_exhausted_total{reason="aggregate_budget"}`.
+
+This guarantee is deliberately scoped to retries Gregale generates: public
+edge replay, service-proxy replay, and durable invocation redelivery. Guest
+code can still issue arbitrary outbound HTTP calls; Gregale cannot infer that
+two such calls are retries without owning the client protocol. Egress budgets
+or an SDK-level retry client would be a separate capability.
 
 ### Plan gating
 

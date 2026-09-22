@@ -321,16 +321,26 @@ func TestDrain_IncompatibleWorkerInvocationFailsWithoutWake(t *testing.T) {
 	}
 }
 
-func TestDrain_InvocationRetryPolicyOverridesPlanBudgetAndDelay(t *testing.T) {
+func TestDrain_InvocationRetryPolicyIsClampedByPlanAndKeepsDelay(t *testing.T) {
 	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, false)
 	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
 	inv.RetryPolicyJSON = json.RawMessage(`{"max_attempts":7,"base_seconds":2,"max_seconds":10}`)
 	inv.Attempts = 3
-	if got := d.invocationAttemptBudget(context.Background(), inv); got != 7 {
-		t.Fatalf("attempt budget = %d, want 7", got)
+	if got := d.invocationAttemptBudget(context.Background(), inv); got != 3 {
+		t.Fatalf("attempt budget = %d, want Hobby cap 3", got)
 	}
 	if got := d.invocationRetryDelay(inv); got != 8*time.Second {
 		t.Fatalf("retry delay = %s, want 8s", got)
+	}
+}
+
+func TestDrain_InvocationRetryBudgetLookupFailureRemainsFinite(t *testing.T) {
+	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, false)
+	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
+	inv.AppID = "missing-app"
+
+	if got := d.invocationAttemptBudget(context.Background(), inv); got != api.DurableRetryMaxAttempts {
+		t.Fatalf("attempt budget = %d, want finite safety ceiling %d", got, api.DurableRetryMaxAttempts)
 	}
 }
 

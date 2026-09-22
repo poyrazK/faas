@@ -23,9 +23,10 @@ class EdgeRuleRetryAction:
     retryable conditions is not configurable.
 
     A replay additionally requires that the response has not
-    committed, a healthy sibling exists, and the remaining
-    `kind=budget` allowance is at least `min_remaining_ms`. A
-    retry can never extend a request's deadline.
+    committed, a healthy sibling exists, the aggregate per-app
+    retry budget has capacity, and the remaining `kind=budget`
+    allowance is at least `min_remaining_ms`. A retry can never
+    extend a request's deadline.
 
     """
 
@@ -41,13 +42,15 @@ class EdgeRuleRetryAction:
     already failing.
     """
     allow_non_idempotent: bool | Unset = False
-    """Opt POST and PATCH into replay. Off by default.
+    """Opt POST and PATCH into replay. Off by default. Even when
+    enabled, these methods are replayed only when the request
+    carries a non-empty `Idempotency-Key` header.
 
     This is the only field here that can cost correctness
-    rather than latency: a replayed POST runs your handler's
-    side effect twice unless the handler is idempotent or the
-    caller sends an idempotency key. GET, HEAD, OPTIONS,
-    TRACE, PUT and DELETE are replayed without this flag.
+    rather than latency: your handler must honor the key and
+    return the stored result instead of repeating the side
+    effect. GET, HEAD, OPTIONS, TRACE, PUT and DELETE are
+    replayed without this flag.
     """
     min_remaining_ms: int | Unset = 250
     """Request-budget floor below which a replay is skipped. 0
@@ -62,6 +65,17 @@ class EdgeRuleRetryAction:
     nothing. Raise it only when the sibling may still be
     waking.
     """
+    budget_percent: int | Unset = 10
+    """Aggregate replay allowance as a percentage of original
+    requests in the gateway's short per-app window. For
+    example, 10 permits at most one replay per ten originals,
+    preventing a broad outage from doubling all traffic.
+    """
+    budget_min_retries: int | Unset = 1
+    """Minimum replay allowance per app and accounting window.
+    The default preserves one recovery opportunity for a
+    low-traffic app even when budget_percent rounds down.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +86,10 @@ class EdgeRuleRetryAction:
         min_remaining_ms = self.min_remaining_ms
 
         backoff_ms = self.backoff_ms
+
+        budget_percent = self.budget_percent
+
+        budget_min_retries = self.budget_min_retries
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -84,6 +102,10 @@ class EdgeRuleRetryAction:
             field_dict["min_remaining_ms"] = min_remaining_ms
         if backoff_ms is not UNSET:
             field_dict["backoff_ms"] = backoff_ms
+        if budget_percent is not UNSET:
+            field_dict["budget_percent"] = budget_percent
+        if budget_min_retries is not UNSET:
+            field_dict["budget_min_retries"] = budget_min_retries
 
         return field_dict
 
@@ -98,11 +120,17 @@ class EdgeRuleRetryAction:
 
         backoff_ms = d.pop("backoff_ms", UNSET)
 
+        budget_percent = d.pop("budget_percent", UNSET)
+
+        budget_min_retries = d.pop("budget_min_retries", UNSET)
+
         edge_rule_retry_action = cls(
             max_attempts=max_attempts,
             allow_non_idempotent=allow_non_idempotent,
             min_remaining_ms=min_remaining_ms,
             backoff_ms=backoff_ms,
+            budget_percent=budget_percent,
+            budget_min_retries=budget_min_retries,
         )
 
         edge_rule_retry_action.additional_properties = d

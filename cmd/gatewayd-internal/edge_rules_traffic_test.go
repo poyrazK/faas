@@ -36,6 +36,7 @@ func TestCompileRetryRulesCarriesEffectiveValues(t *testing.T) {
 	out, errs := compileRetryRules([]state.EdgeRule{
 		retryRule("r1", &state.EdgeRuleRetryAction{
 			MaxAttempts: 2, AllowNonIdempotent: true, MinRemainingMs: 500, BackoffMs: 100,
+			BudgetPercent: 25, BudgetMinRetries: 4,
 		}),
 	})
 	if len(errs) != 0 {
@@ -50,6 +51,9 @@ func TestCompileRetryRulesCarriesEffectiveValues(t *testing.T) {
 	}
 	if got.MinRemaining != 500*time.Millisecond || got.Backoff != 100*time.Millisecond {
 		t.Fatalf("compiled durations = %v/%v, want 500ms/100ms", got.MinRemaining, got.Backoff)
+	}
+	if got.BudgetPercent != 25 || got.BudgetMinRetries != 4 {
+		t.Fatalf("compiled aggregate budget = %d%%/%d, want 25%%/4", got.BudgetPercent, got.BudgetMinRetries)
 	}
 	if policy := got.Policy(); !policy.Enabled || policy.MaxAttempts != 2 {
 		t.Fatalf("Policy() = %+v, want an enabled 2-attempt policy", policy)
