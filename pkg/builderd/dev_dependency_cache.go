@@ -108,6 +108,44 @@ func copyDependencyCache(src, dst string, maxBytes int64) error {
 	})
 }
 
+// stageDependencyCacheForDrive snapshots an immutable dependency-cache tree
+// into a per-build staging directory without copying its payload when both
+// paths share a filesystem. The staging directory owns independent directory
+// entries, while hard-linked regular files keep their inodes alive if cache
+// publication or GC rotates the source after this function returns.
+//
+// Filesystems that do not support hard links retain the bounded-copy path.
+// Cache validation runs in both paths, so a malformed tree remains a cold-build
+// signal rather than weakening the staging boundary.
+func stageDependencyCacheForDrive(src, dst string, maxBytes int64, link func(string, string) error) error {
+	if link == nil {
+		link = os.Link
+	}
+	linkErr := walkDependencyCache(src, maxBytes, func(path, rel string, entry fs.DirEntry) error {
+		if rel == "." {
+			return os.MkdirAll(dst, 0o700)
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		return link(path, target)
+	})
+	if linkErr == nil {
+		return nil
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return errors.Join(fmt.Errorf("dependency cache link: %w", linkErr), fmt.Errorf("dependency cache fallback cleanup: %w", err))
+	}
+	if err := copyDependencyCache(src, dst, maxBytes); err != nil {
+		return errors.Join(fmt.Errorf("dependency cache link: %w", linkErr), fmt.Errorf("dependency cache copy fallback: %w", err))
+	}
+	return nil
+}
+
 // walkDependencyCache validates a BuildKit local cache and optionally visits
 // each entry after it has passed the path-shape and aggregate-size checks.
 // Keeping validation in the same walk as copying preserves the cold fallback's

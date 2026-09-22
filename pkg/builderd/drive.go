@@ -85,6 +85,17 @@ func CreateBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, so
 // Cache errors degrade to a cold build: source integrity and drive creation are
 // still authoritative, while the cache is explicitly disposable.
 func createBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, sourcePath, dependencyCache string) (bool, error) {
+	return createBuildDrive1WithCacheStager(ctx, dest, m, sourcePath, dependencyCache, func(src, dst string, maxBytes int64) error {
+		return stageDependencyCacheForDrive(src, dst, maxBytes, os.Link)
+	})
+}
+
+type dependencyCacheStager func(src, dst string, maxBytes int64) error
+
+// createBuildDrive1WithCacheStager keeps the cache snapshot boundary injectable
+// so VMMDriver can serialize it against cache publication without holding that
+// lock across source staging or the comparatively expensive mke2fs operation.
+func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.BuildManifest, sourcePath, dependencyCache string, stageCache dependencyCacheStager) (bool, error) {
 	if dest == "" {
 		return false, fmt.Errorf("builderd: empty drive1 path")
 	}
@@ -118,7 +129,10 @@ func createBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, so
 	// 2. Stage the guest-visible tree as plain files. This avoids a loopback
 	// mount, which would require CAP_SYS_ADMIN and is unavailable to the
 	// hardened faas-builderd systemd unit.
-	mp, err := os.MkdirTemp("", "faas-buildstage-")
+	// Keep staging beside the destination drive. Production dependency caches
+	// live below the same drive root, so regular files can be hard-linked into
+	// this short-lived tree before mke2fs copies them into the ext4 image.
+	mp, err := os.MkdirTemp(filepath.Dir(dest), ".faas-buildstage-")
 	if err != nil {
 		return false, fmt.Errorf("builderd: mktemp staging: %w", err)
 	}
@@ -126,9 +140,9 @@ func createBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, so
 
 	cacheRestored := false
 	m.DependencyCacheImport = false
-	if m.DependencyCache && dependencyCache != "" {
+	if m.DependencyCache && dependencyCache != "" && stageCache != nil {
 		cacheTarget := filepath.Join(mp, "build", "cache")
-		if cacheErr := copyDependencyCache(dependencyCache, cacheTarget, dependencyCacheMaxBytes); cacheErr == nil {
+		if cacheErr := stageCache(dependencyCache, cacheTarget, dependencyCacheMaxBytes); cacheErr == nil {
 			cacheRestored = true
 			m.DependencyCacheImport = true
 		} else {
