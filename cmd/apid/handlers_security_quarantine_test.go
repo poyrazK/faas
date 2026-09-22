@@ -143,11 +143,64 @@ func TestGetAppSecurityIncludesActiveQuarantine(t *testing.T) {
 	}
 }
 
+func TestGetAppSecurityReportsLiveImageScanCoverage(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "posture-scan-coverage")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	setSecurityPolicyForTest(t, e, "posture-scan-coverage", api.AppSecurityPolicyEnforce)
+
+	readFindings := func() map[string]api.AppSecurityFinding {
+		t.Helper()
+		rec := e.do(t, http.MethodGet, "/v1/apps/posture-scan-coverage/security", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		var posture api.AppSecurityPostureResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &posture); err != nil {
+			t.Fatal(err)
+		}
+		out := make(map[string]api.AppSecurityFinding, len(posture.Findings))
+		for _, finding := range posture.Findings {
+			out[finding.Code] = finding
+		}
+		return out
+	}
+
+	findings := readFindings()
+	if finding, ok := findings["image_scan_missing"]; !ok || finding.Severity != "high" {
+		t.Fatalf("missing scan finding = %+v, want high severity", findings["image_scan_missing"])
+	}
+
+	stampSecurityScan(t, e, dep, dep.ImageDigest, 0, 1, 0)
+	findings = readFindings()
+	if finding, ok := findings["image_scan_blocking"]; !ok || finding.Severity != "high" {
+		t.Fatalf("blocking scan finding = %+v, want high severity", findings["image_scan_blocking"])
+	}
+
+	stampSecurityScan(t, e, dep, dep.ImageDigest, 0, 0, 0)
+	findings = readFindings()
+	if _, ok := findings["image_scan_missing"]; ok {
+		t.Fatalf("missing scan finding remained after clean evidence: %+v", findings["image_scan_missing"])
+	}
+	if _, ok := findings["image_scan_blocking"]; ok {
+		t.Fatalf("blocking scan finding remained after clean evidence: %+v", findings["image_scan_blocking"])
+	}
+
+	setSecurityPolicyForTest(t, e, "posture-scan-coverage", api.AppSecurityPolicyWarn)
+	stampSecurityScan(t, e, dep, dep.ImageDigest, 0, 1, 0)
+	findings = readFindings()
+	if finding, ok := findings["image_scan_blocking"]; !ok || finding.Severity != "medium" {
+		t.Fatalf("warn-mode blocking scan finding = %+v, want medium severity", findings["image_scan_blocking"])
+	}
+}
+
 func stampSecurityScan(t *testing.T, e testEnv, dep state.Deployment, digest string, critical, high, unknown int) {
 	t.Helper()
 	now := time.Now().UTC()
 	payload, err := json.Marshal(api.ScanResult{
-		Status: "complete", ScannedAt: now.Format(time.RFC3339Nano), ImageDigest: digest,
+		ScannedAt: now.Format(time.RFC3339Nano), ImageDigest: digest,
 		ArtifactDigest: "sha256:artifact", ScannerVersion: "grype-test",
 		ScannerDBStatus: "valid", ScannerDBVersion: "db-test",
 		ScannerDBBuiltAt: now.Add(-time.Hour).Format(time.RFC3339Nano),

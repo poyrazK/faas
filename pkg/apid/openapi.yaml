@@ -7721,8 +7721,9 @@ paths:
         flag and deploy-time posture policy. Mounted with
         `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
         `security_policy=enforce` rejects new deploys while high-severity
-        posture findings remain; `warn` is advisory and `off` preserves
-        historical behavior.
+        configuration findings remain; live-image evidence findings remain
+        visible but do not block the replacement needed for recovery. `warn`
+        is advisory and `off` preserves historical behavior.
 
         Each field is optional; omitted fields are unchanged and supplied
         fields are applied atomically.
@@ -31589,7 +31590,7 @@ components:
         security_policy:
           type: [string, "null"]
           enum: [off, warn, enforce]
-          description: "Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images."
+          description: "Deploy-time response to high-severity configuration findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images."
           example: enforce
 
     AppSecurityResponse:
@@ -31608,7 +31609,7 @@ components:
           example: enforce
 
     AppSecurityPostureResponse:
-      description: "Read-only deterministic configuration posture for an app, including an active image-scan quarantine when present."
+      description: "Read-only configuration posture and live-image scan-evidence coverage for an app, including an active image-scan quarantine when present."
       type: object
       required: [app_id, slug, profile, score, security_policy, findings]
       properties:
@@ -31626,7 +31627,7 @@ components:
         security_policy:
           type: string
           enum: [off, warn, enforce]
-          description: "The app's deploy-time response to high-severity posture findings."
+          description: "The app's deploy-time response to high-severity configuration findings."
         findings:
           type: array
           items: { $ref: '#/components/schemas/AppSecurityFinding' }
@@ -31683,7 +31684,7 @@ components:
           enum: [active]
 
     AppSecurityFinding:
-      description: "One actionable security posture finding."
+      description: "One actionable security posture finding. Codes beginning with image_scan_ describe live-image scan-evidence coverage."
       type: object
       required: [code, severity, title, detail, remediation]
       properties:
