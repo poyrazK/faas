@@ -24,6 +24,10 @@
 //                     bytes — dep.ImageDigest carries the OCI digest
 //                     instead) and source-ref (server pulls the
 //                     tarball, CLI never sees bytes) paths.
+//   - preview_url:    immutable per-deployment URL for a waited
+//                     --no-traffic deploy when preview hosting is enabled.
+//   - promotion_command: copy-paste command that moves a waited
+//                     --no-traffic deployment to 100% production traffic.
 
 package main
 
@@ -64,14 +68,16 @@ type SimpleAppReceiptPlan struct {
 // cmd/gregale/receipt.go header comment for field provenance.
 type DeployReceipt struct {
 	api.DeploymentResponse
-	AppURL         string                `json:"app_url,omitempty"`
-	CommitSHA      string                `json:"commit_sha,omitempty"`
-	Dirty          bool                  `json:"dirty,omitempty"`
-	SourceSHA256   string                `json:"source_sha256,omitempty"`
-	TimedOut       bool                  `json:"timed_out,omitempty"`
-	ResumeCommand  string                `json:"resume_command,omitempty"`
-	ReleaseSummary *DeployReleaseSummary `json:"release_summary,omitempty"`
-	SimpleAppPlan  *SimpleAppReceiptPlan `json:"simple_app_plan,omitempty"`
+	AppURL           string                `json:"app_url,omitempty"`
+	CommitSHA        string                `json:"commit_sha,omitempty"`
+	Dirty            bool                  `json:"dirty,omitempty"`
+	SourceSHA256     string                `json:"source_sha256,omitempty"`
+	TimedOut         bool                  `json:"timed_out,omitempty"`
+	ResumeCommand    string                `json:"resume_command,omitempty"`
+	PreviewURL       string                `json:"preview_url,omitempty"`
+	PromotionCommand string                `json:"promotion_command,omitempty"`
+	ReleaseSummary   *DeployReleaseSummary `json:"release_summary,omitempty"`
+	SimpleAppPlan    *SimpleAppReceiptPlan `json:"simple_app_plan,omitempty"`
 }
 
 // newDeployReceipt builds a DeployReceipt from the post-deploy
