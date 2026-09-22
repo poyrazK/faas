@@ -22040,6 +22040,9 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 			continue
 		}
 		s.TotalInvocations++
+		if r.StatusDiff || r.SchemaDiff || r.BodyDiff {
+			s.ChangedResponseCount++
+		}
 		if r.StatusDiff {
 			s.StatusDiffCount++
 		}

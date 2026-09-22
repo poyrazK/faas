@@ -80,7 +80,7 @@ func StrippedRequestHeaders(rule state.MirrorRule, src http.Header) http.Header 
 	}
 	dst := make(http.Header, len(src))
 	for k, vs := range src {
-		if _, drop := stripped[k]; drop {
+		if _, drop := stripped[textproto.CanonicalMIMEHeaderKey(k)]; drop {
 			continue
 		}
 		// Copy the slice so a downstream mutation doesn't
