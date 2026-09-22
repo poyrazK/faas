@@ -202,6 +202,15 @@ and provider headers are not span attributes. Customer code that opens its own
 database or storage client remains outside the platform-owned path and needs
 the runtime's OpenTelemetry instrumentation.
 
+Guest-to-guest calls through the node-local service proxy are also represented
+as `managed_binding/service_proxy` spans. The span carries the bounded service
+name, target app ID, method, and response status; retries remain contained in
+the same dependency span, with the existing guest-transport child span
+underneath it. Service paths, queries, headers, bodies, and caller credentials
+remain excluded. This makes
+`request → caller → service binding → target guest` visible without requiring
+an SDK in either application.
+
 ## Event-triggered invocations
 
 Event-driven invocations preserve W3C trace context carried by a broker record's

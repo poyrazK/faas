@@ -1,6 +1,7 @@
 package dependencytrace
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -28,6 +29,17 @@ func NewDependencyTransport(base http.RoundTripper, attrs ...attribute.KeyValue)
 		base = http.DefaultTransport
 	}
 	return &dependencyTransport{base: base, attrs: append([]attribute.KeyValue(nil), attrs...)}
+}
+
+// StartClientSpan starts a platform-owned dependency span with the same
+// tracer and client semantics used by NewDependencyTransport. Callers use
+// this for dependencies that are forwarded by a non-HTTP-client boundary
+// (for example, the node-local service proxy).
+func StartClientSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
+	return otel.GetTracerProvider().Tracer("gregale/dependency").Start(ctx, name,
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(attrs...),
+	)
 }
 
 type dependencyTransport struct {
