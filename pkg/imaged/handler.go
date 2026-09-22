@@ -385,9 +385,6 @@ func (h *Handler) snapshotTrustedPublishers(appID string) []cosign.TrustedPublis
 // signer-revocation reconciler; callers decide whether a failure should fail
 // a deployment or quarantine an already-live app.
 func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref string) (string, error) {
-	if h == nil || h.oci == nil {
-		return "", errors.New("imaged: image signature verifier unavailable")
-	}
 	pubs := h.snapshotTrustedPublishers(app.ID)
 	if len(pubs) == 0 {
 		// Defence-in-depth: apid's pre-flight already gated this
@@ -396,6 +393,9 @@ func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref st
 		// signature check rather than verify against an empty
 		// allowlist.
 		return "", fmt.Errorf("%w: require_signed=true but no trusted publishers configured", cosign.ErrSignatureInvalid)
+	}
+	if h == nil || h.oci == nil {
+		return "", errors.New("imaged: image signature verifier unavailable")
 	}
 	signer, _, err := cosign.VerifyImageSignature(ctx, &ociImageSignaturePuller{oci: h.oci}, ref, pubs)
 	return signer, err

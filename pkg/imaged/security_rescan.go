@@ -145,7 +145,7 @@ func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
 			l.log.Warn("imaged: load app for signature revalidation", "deployment", dep.ID, "app", dep.AppID, "err", err)
 			continue
 		}
-		if app.Status != state.AppActive || !(app.RequireSigned || app.SecurityPolicy.RequiresSignedImage()) {
+		if app.Status != state.AppActive || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
 			continue
 		}
 		_, verifyErr := l.handler.checkImageSignature(ctx, app, dep.ImageDigest)
