@@ -5796,8 +5796,9 @@ type AppSecurityResponse struct {
 }
 
 // AppSecurityPostureResponse is the read-only security posture projection for
-// an app. Findings are deterministic configuration checks; the response never
-// includes credentials, allowlist values, or other secret material.
+// an app. Findings cover deterministic configuration checks and the evidence
+// coverage of currently live images; the response never includes credentials,
+// allowlist values, or other secret material.
 type AppSecurityPostureResponse struct {
 	AppID          string                 `json:"app_id"`
 	Slug           string                 `json:"slug"`

@@ -457,10 +457,10 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	// /invoke is an HTTP/request primitive. Worker and job apps have no
-	// request listener, so an async/replay row targeting one can never become
-	// deliverable. Terminalise legacy rows here as a defence-in-depth backstop;
-	// apid rejects new rows before enqueue.
-	if (inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationReplay) && !app.AcceptsRequestInvocations() {
+	// request listener, so an async/webhook/replay row targeting one can never
+	// become deliverable. Terminalise legacy rows here as a defence-in-depth
+	// backstop; apid rejects new rows before enqueue.
+	if (inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationInboundWebhook || inv.Source == state.InvocationReplay) && !app.AcceptsRequestInvocations() {
 		errText := "request invocation is incompatible with worker/job workload"
 		if err := d.store.FailInvocation(ctx, inv.ID, errText, 0, 0); err != nil {
 			d.log.Warn("drain: reject incompatible invocation", "inv", inv.ID, "app_id", inv.AppID, "err", err)

@@ -14,7 +14,7 @@ The `/metrics` listener exposes these low-cardinality families:
 | `apid_managed_postgres_reconcile_duration_seconds{resource,operation}` | Lifecycle attempt latency. |
 | `apid_managed_postgres_usage_collection_sweeps_total{outcome}` | Complete, degraded, failed, or disabled usage sweeps. |
 | `apid_managed_postgres_usage_last_success_timestamp_seconds` | Freshness of the latest complete usage sweep. |
-| `apid_managed_postgres_usage_collection_databases{state}` | Counts from the latest usage sweep. |
+| `apid_managed_postgres_usage_collection_databases{state}` | Counts from the latest usage sweep, including `state="included_in_source"` for restore descendants covered by the source aggregate. |
 | `apid_managed_postgres_usage_policy_enabled` | Whether usage guardrails are enabled. |
 | `apid_managed_postgres_provisioning_enabled` | Current evaluated staging rollout gate. |
 | `apid_managed_postgres_canary_admission_total{outcome}` | Canary allow/deny decisions. |
@@ -55,4 +55,3 @@ After the underlying issue is fixed, verify that:
 
 If any check is missing, keep the rollout gate closed and attach the metrics
 snapshot plus the qualification artifact to the incident.
-

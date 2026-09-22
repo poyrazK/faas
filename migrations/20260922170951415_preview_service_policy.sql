@@ -26,9 +26,20 @@ alter table github_deploy_policies
     alter column preview_service_policy set default 'deny',
     alter column preview_service_policy set not null;
 
-alter table github_deploy_policies
-    add constraint github_deploy_policies_preview_service_policy_chk
-    check (preview_service_policy in ('deny', 'allow_marked'));
+do $$
+begin
+    if not exists (
+        select 1
+          from pg_constraint
+         where conrelid = 'github_deploy_policies'::regclass
+           and conname = 'github_deploy_policies_preview_service_policy_chk'
+    ) then
+        alter table github_deploy_policies
+            add constraint github_deploy_policies_preview_service_policy_chk
+            check (preview_service_policy in ('deny', 'allow_marked'));
+    end if;
+end
+$$;
 -- +goose StatementEnd
 
 -- +goose Down

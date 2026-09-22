@@ -317,6 +317,26 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			_, err := c.RetryAppWebhookDelivery(ctx, "x", "w", "d")
 			return err
 		}},
+		{"ListInboundWebhookEndpoints", arr.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ListInboundWebhookEndpoints(ctx, "x")
+			return err
+		}},
+		{"CreateInboundWebhookEndpoint", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.CreateInboundWebhookEndpoint(ctx, "x", CreateInboundWebhookEndpointRequest{Name: "stripe", Provider: "stripe", SigningSecret: "secret"})
+			return err
+		}},
+		{"GetInboundWebhookEndpoint", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.GetInboundWebhookEndpoint(ctx, "x", "w")
+			return err
+		}},
+		{"UpdateInboundWebhookEndpoint", obj.URL, func(t *testing.T, c *Client) error {
+			enabled := true
+			_, err := c.UpdateInboundWebhookEndpoint(ctx, "x", "w", UpdateInboundWebhookEndpointRequest{Enabled: &enabled})
+			return err
+		}},
+		{"DeleteInboundWebhookEndpoint", obj.URL, func(t *testing.T, c *Client) error {
+			return c.DeleteInboundWebhookEndpoint(ctx, "x", "w")
+		}},
 
 		// --- Deployments ---
 		{"GetDeploymentScan", obj.URL, func(t *testing.T, c *Client) error {

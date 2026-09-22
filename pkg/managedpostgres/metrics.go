@@ -36,8 +36,9 @@ const (
 	metricsOutcomeContended = "contended"
 	metricsOutcomeFailed    = "failed"
 
-	metricsUsageRecorded = "recorded"
-	metricsUsageDeferred = "deferred"
+	metricsUsageRecorded         = "recorded"
+	metricsUsageDeferred         = "deferred"
+	metricsUsageIncludedInSource = "included_in_source"
 
 	metricsSweepSuccess  = "success"
 	metricsSweepDegraded = "degraded"
@@ -86,7 +87,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		}, []string{"outcome"}),
 		usageDatabases: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: prefix + "_managed_postgres_usage_collection_databases",
-			Help: "Managed PostgreSQL databases discovered, recorded, or deferred by the latest usage sweep.",
+			Help: "Managed PostgreSQL databases discovered, recorded, included in source usage, or deferred by the latest usage sweep.",
 		}, []string{"state"}),
 		usageLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: prefix + "_managed_postgres_usage_last_success_timestamp_seconds",
@@ -128,13 +129,13 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 			m.reconcileDuration.WithLabelValues(resource, operation)
 		}
 	}
-	for _, outcome := range []string{metricsUsageRecorded, metricsUsageDeferred} {
+	for _, outcome := range []string{metricsUsageRecorded, metricsUsageDeferred, metricsUsageIncludedInSource} {
 		m.usageDatabaseTotal.WithLabelValues(outcome).Add(0)
 	}
 	for _, outcome := range []string{metricsSweepSuccess, metricsSweepDegraded, metricsSweepError, metricsSweepDisabled} {
 		m.usageSweepTotal.WithLabelValues(outcome).Add(0)
 	}
-	for _, state := range []string{"discovered", "recorded", "deferred"} {
+	for _, state := range []string{"discovered", "recorded", metricsUsageIncludedInSource, "deferred"} {
 		m.usageDatabases.WithLabelValues(state).Set(0)
 	}
 	for _, outcome := range []string{metricsAdmissionAllowed, metricsAdmissionDenied} {
@@ -246,7 +247,7 @@ func (m *Metrics) ObserveUsage(observation UsageCollectionObservation) {
 		return
 	}
 	switch observation.Outcome {
-	case metricsUsageRecorded, metricsUsageDeferred:
+	case metricsUsageRecorded, metricsUsageDeferred, metricsUsageIncludedInSource:
 		m.usageDatabaseTotal.WithLabelValues(observation.Outcome).Inc()
 	}
 }
@@ -258,6 +259,7 @@ func (m *Metrics) ObserveUsageSweep(summary UsageCollectionSummary, sweepErr err
 	}
 	m.usageDatabases.WithLabelValues("discovered").Set(float64(summary.Discovered))
 	m.usageDatabases.WithLabelValues("recorded").Set(float64(summary.Recorded))
+	m.usageDatabases.WithLabelValues(metricsUsageIncludedInSource).Set(float64(summary.IncludedInSourceUsage))
 	m.usageDatabases.WithLabelValues("deferred").Set(float64(summary.Deferred))
 	if !summary.Enabled {
 		m.usageSweepTotal.WithLabelValues(metricsSweepDisabled).Inc()
