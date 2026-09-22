@@ -1,3 +1,4 @@
+// spec: §17 — bounded Failed Events projection retention.
 package sched
 
 import (
