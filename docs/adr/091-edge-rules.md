@@ -385,8 +385,8 @@ PR-A/B/C — keep their cite numbers untouched.)
            on the 429 path (wire-only).** New sibling header of
            `X-RouteRateLimit-{Limit,Remaining,Reset}`. Values:
            `route` (back-compat default for `KeyBy ∈ {"", "none"}`)
-           or `per-consumer` (when the consumer collapsed into the
-           `__other__` bucket). The existing
+           or `per-consumer` (for every dimensional rule, whether its
+           concrete bucket is dedicated or the collapsed `__other__`). The existing
            `x-faas-rate-limit-scope` enum is untouched.
         3. **Dry-run preview on
            `GET /v1/apps/{slug}/throttle-suggestions`** (parameter
@@ -418,6 +418,12 @@ PR-A/B/C — keep their cite numbers untouched.)
         replicas. See ADR-104 amendment 6 for the security and collision
         semantics. The host/path/method matcher remains the endpoint
         dimension and no schema migration is required.
+      **Amendment 7 (ADR-104, 2026-09-22):** Dimensional rules no
+        longer consume a shared parent route bucket before their
+        dimensional bucket; the two modes are alternatives, preserving
+        isolation between identities. Central-store fallback is exposed by
+        `gateway_ratelimit_degraded_total` plus cooldown-bounded warning and
+        audit events. See ADR-104 amendment 7.
     - **D20.6 — CORS non-preflight e2e path.** PR 6 covers CORS
       preflight e2e; non-preflight stamp-the-Origin flow is
       unit-tested at `pkg/gateway/handler.go:1175-1220` and the e2e
