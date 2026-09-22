@@ -188,9 +188,10 @@ the catalog and public API treat them as opaque. Credential issuance, usage,
 inspection, and deletion all resolve the branch, while binding cutover remains
 explicit. This is a restore-to-new-database primitive, not an automatic
 failover or application cutover promise. Neon consumption metrics are
-project-scoped, so the adapter leaves `RestoreUsageIsolated` false and the
-service rejects these restores while usage guardrails are enabled; no
-unallocated restore branch can silently bypass COGS ceilings.
+project-scoped, so the adapter leaves `RestoreUsageIsolated` false and declares
+`RestoreUsageIncludedInSource`. The collector records the shared source-project
+aggregate once and skips restore descendants, allowing account COGS guardrails
+to include restore consumption without claiming branch-level allocation.
 
 ## Binding reconciler follow-up
 

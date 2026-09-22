@@ -1,12 +1,13 @@
 from typing import Literal
 
-AlertRuleResponseFailureSource = Literal["any", "async_invoke", "cron", "delayed_task", "queue"]
+AlertRuleResponseFailureSource = Literal["any", "async_invoke", "cron", "delayed_task", "inbound_webhook", "queue"]
 
 ALERT_RULE_RESPONSE_FAILURE_SOURCE_VALUES: set[AlertRuleResponseFailureSource] = {
     "any",
     "async_invoke",
     "cron",
     "delayed_task",
+    "inbound_webhook",
     "queue",
 }
 

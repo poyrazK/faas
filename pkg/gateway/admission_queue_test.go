@@ -292,6 +292,11 @@ func TestWakeAdmissionMetricsAndRetryAfter(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" || rec.Header().Get(api.ErrorCodeHeader) != api.CodeConcurrencyQueueTimeout {
 		t.Fatalf("warm queue-timeout response = status=%d retry-after=%q code=%q", rec.Code, rec.Header().Get("Retry-After"), rec.Header().Get(api.ErrorCodeHeader))
 	}
+	rec = httptest.NewRecorder()
+	writeWakeError(rec, &ConcurrencyQueueAdmissionError{Err: errors.New("postgres unavailable"), RetryAfter: 1500 * time.Millisecond})
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" {
+		t.Fatalf("fleet queue-admission response = status=%d retry-after=%q", rec.Code, rec.Header().Get("Retry-After"))
+	}
 	m.SetConcurrencyQueueDepth("app-1", string(api.PlanPro), 2)
 	m.ObserveConcurrencyQueueWait("app-1", string(api.PlanPro), "admitted", 25*time.Millisecond)
 

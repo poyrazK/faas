@@ -385,6 +385,16 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			wantNoServerHit: true,
 		},
 		{
+			name: "invalid_ref",
+			args: []string{
+				"--repo", "onebox-faas/hello",
+				"--ref", "release branch",
+			},
+			wantExit:        1,
+			wantStderrHas:   "Invalid --ref",
+			wantNoServerHit: true,
+		},
+		{
 			name:            "ref_without_repo",
 			args:            []string{"--ref", "main"},
 			wantExit:        1,
@@ -438,8 +448,9 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			if tc.wantStderrHas != "" && !strings.Contains(stderr.String(), tc.wantStderrHas) {
 				t.Errorf("expected %q in stderr, got %q", tc.wantStderrHas, stderr.String())
 			}
-			if tc.wantNoServerHit && (sink.capturedCalls != 0 || sink.scanCalls != 0) {
-				t.Errorf("rejected call still reached the server: deploy_calls=%d scan_calls=%d", sink.capturedCalls, sink.scanCalls)
+			if tc.wantNoServerHit && (sink.capturedCalls != 0 || sink.scanCalls != 0 || sink.getAppCalls != 0 || sink.createCalls != 0) {
+				t.Errorf("rejected call still reached the server: deploy_calls=%d scan_calls=%d get_app_calls=%d create_calls=%d",
+					sink.capturedCalls, sink.scanCalls, sink.getAppCalls, sink.createCalls)
 			}
 			if tc.wantScan && sink.scanCalls != 1 {
 				t.Errorf("source-ref preview scan calls = %d, want 1", sink.scanCalls)
@@ -490,8 +501,63 @@ func TestCmdDeployRepoSourceRef_NoWait(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Deployment dep_nowait queued") {
 		t.Fatalf("stdout = %q, want queued receipt", stdout.String())
 	}
+	if planAt, queuedAt := strings.Index(stdout.String(), "Deployment plan:"), strings.Index(stdout.String(), "Deployment dep_nowait queued"); planAt < 0 || queuedAt < 0 || planAt > queuedAt {
+		t.Fatalf("preflight must precede the queued receipt:\n%s", stdout.String())
+	}
+	for _, want := range []string{
+		"Deployment plan:",
+		"app:           hello",
+		"source:        GitHub onebox-faas/hello · ref main",
+		"runtime:       detected remotely after checkout",
+		"resources:     preserve existing · plan default for new app",
+		"environment:   default",
+		"release:       standard · 100% after readiness",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q in:\n%s", want, stdout.String())
+		}
+	}
 	if sink.capturedCalls != 1 {
 		t.Fatalf("source-ref POST calls = %d, want 1 (no SSE follow-up)", sink.capturedCalls)
+	}
+}
+
+func TestCmdDeployRepoSourceRef_JSONOmitsPreflight(t *testing.T) {
+	sink := &sourceRefSink{
+		status: http.StatusAccepted,
+		body: api.DeploymentResponse{
+			ID: "dep_json", AppID: "app_hello", BuildID: "build_json", Status: "queued",
+		},
+	}
+	srv := httptest.NewServer(sink)
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	withResetJSONOutput(t, true)
+
+	stdout, restoreOut := captureStdout(t)
+	defer restoreOut()
+	_, restoreErr := captureStderr(t)
+	defer restoreErr()
+
+	code := cmdDeployTarball([]string{
+		"--name", "hello",
+		"--repo", "onebox-faas/hello",
+		"--ref", "main",
+		"--no-wait",
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(stdout.String(), "Deployment plan:") {
+		t.Fatalf("JSON stdout contains human preflight:\n%s", stdout.String())
+	}
+	var receipt DeployReceipt
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &receipt); err != nil {
+		t.Fatalf("decode JSON receipt: %v\n%s", err, stdout.String())
+	}
+	if receipt.ID != "dep_json" {
+		t.Fatalf("receipt deployment id = %q, want dep_json", receipt.ID)
 	}
 }
 

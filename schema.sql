@@ -1154,7 +1154,7 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
-    CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text])))),
+    CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'queue_depth'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
@@ -1224,6 +1224,13 @@ CREATE TABLE public.app_error_requests (
     deployment_id uuid,
     headers_sample jsonb,
     redactions text[] DEFAULT '{}'::text[] NOT NULL,
+    instance_id text DEFAULT ''::text NOT NULL,
+    node_id text DEFAULT ''::text NOT NULL,
+    region text DEFAULT ''::text NOT NULL,
+    commit_sha text DEFAULT ''::text NOT NULL,
+    deployment_tag text DEFAULT ''::text NOT NULL,
+    deployment_created_at text DEFAULT ''::text NOT NULL,
+    image_digest text DEFAULT ''::text NOT NULL,
     CONSTRAINT app_error_requests_error_class_check CHECK ((error_class = ANY (ARRAY['db_timeout'::text, 'stripe_timeout'::text, 'null_pointer'::text, 'invalid_json'::text, 'wake_failed'::text, 'upstream_5xx'::text, 'unhandled'::text, 'client_error'::text]))),
     CONSTRAINT app_error_requests_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT app_error_requests_headers_sample_check CHECK (((headers_sample IS NULL) OR (pg_column_size((headers_sample)::text) <= 8192))),
@@ -1265,6 +1272,13 @@ CREATE TABLE public.app_errors (
     first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_instance_id text DEFAULT ''::text NOT NULL,
+    last_node_id text DEFAULT ''::text NOT NULL,
+    last_region text DEFAULT ''::text NOT NULL,
+    last_commit_sha text DEFAULT ''::text NOT NULL,
+    last_deployment_tag text DEFAULT ''::text NOT NULL,
+    last_deployment_created_at text DEFAULT ''::text NOT NULL,
+    last_image_digest text DEFAULT ''::text NOT NULL,
     CONSTRAINT app_errors_error_class_check CHECK ((error_class = ANY (ARRAY['db_timeout'::text, 'stripe_timeout'::text, 'null_pointer'::text, 'invalid_json'::text, 'wake_failed'::text, 'upstream_5xx'::text, 'unhandled'::text, 'client_error'::text]))),
     CONSTRAINT app_errors_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT app_errors_http_status_check CHECK (((http_status >= 400) AND (http_status <= 599))),
@@ -2708,6 +2722,29 @@ CREATE TABLE public.idempotency_keys (
 
 
 --
+-- Name: inbound_webhook_endpoints; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.inbound_webhook_endpoints (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    provider text NOT NULL,
+    token_hash bytea NOT NULL,
+    signing_secret_sealed bytea NOT NULL,
+    delivery_path text DEFAULT '/'::text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT inbound_webhook_endpoints_delivery_path_chk CHECK (((char_length(delivery_path) >= 1) AND (char_length(delivery_path) <= 256) AND ("left"(delivery_path, 1) = '/'::text) AND (POSITION(('?'::text) IN (delivery_path)) = 0) AND (POSITION(('#'::text) IN (delivery_path)) = 0))),
+    CONSTRAINT inbound_webhook_endpoints_name_chk CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT inbound_webhook_endpoints_token_hash_len_chk CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
 -- Name: instance_billing_intervals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2811,7 +2848,7 @@ CREATE TABLE public.invocations (
     replayed_from_invocation_id uuid,
     last_replayed_at timestamp with time zone,
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text])))),
-    CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
+    CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
     CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text])))
 );
 
@@ -3426,6 +3463,12 @@ CREATE TABLE public.request_telemetry (
     guest_outcome text DEFAULT 'missing'::text NOT NULL,
     guest_error_class text DEFAULT ''::text NOT NULL,
     consumer_id uuid,
+    node_id text DEFAULT ''::text NOT NULL,
+    region text DEFAULT ''::text NOT NULL,
+    commit_sha text DEFAULT ''::text NOT NULL,
+    deployment_tag text DEFAULT ''::text NOT NULL,
+    deployment_created_at text DEFAULT ''::text NOT NULL,
+    image_digest text DEFAULT ''::text NOT NULL,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
@@ -4840,6 +4883,30 @@ ALTER TABLE ONLY public.goose_db_version
 
 ALTER TABLE ONLY public.idempotency_keys
     ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (account_id, key);
+
+
+--
+-- Name: inbound_webhook_endpoints inbound_webhook_endpoints_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inbound_webhook_endpoints
+    ADD CONSTRAINT inbound_webhook_endpoints_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: inbound_webhook_endpoints inbound_webhook_endpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inbound_webhook_endpoints
+    ADD CONSTRAINT inbound_webhook_endpoints_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: inbound_webhook_endpoints inbound_webhook_endpoints_token_hash_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inbound_webhook_endpoints
+    ADD CONSTRAINT inbound_webhook_endpoints_token_hash_uniq UNIQUE (token_hash);
 
 
 --
@@ -6588,6 +6655,20 @@ CREATE INDEX instances_wake_id_app_idx ON public.instances USING btree (app_id, 
 --
 
 CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state, started_at) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
+
+
+--
+-- Name: inbound_webhook_endpoints_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX inbound_webhook_endpoints_account_idx ON public.inbound_webhook_endpoints USING btree (account_id);
+
+
+--
+-- Name: inbound_webhook_endpoints_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX inbound_webhook_endpoints_app_created_idx ON public.inbound_webhook_endpoints USING btree (app_id, created_at, id);
 
 
 --
@@ -8566,6 +8647,22 @@ ALTER TABLE ONLY public.github_installations
 
 ALTER TABLE ONLY public.idempotency_keys
     ADD CONSTRAINT idempotency_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: inbound_webhook_endpoints inbound_webhook_endpoints_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inbound_webhook_endpoints
+    ADD CONSTRAINT inbound_webhook_endpoints_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: inbound_webhook_endpoints inbound_webhook_endpoints_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inbound_webhook_endpoints
+    ADD CONSTRAINT inbound_webhook_endpoints_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

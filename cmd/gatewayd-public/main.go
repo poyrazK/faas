@@ -232,7 +232,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
 	pgStore := state.NewPgStore(pool)
 	tcpMetrics := tcpmetrics.New(prometheus.NewRegistry(), "gatewayd_public")
-	tcpStop, err := startTCPIngress(ctx, log, pgStore, tcpMetrics)
+	tcpStop, tcpDrain, err := startTCPIngress(ctx, log, pgStore, tcpMetrics)
 	if err != nil {
 		return err
 	}
@@ -669,7 +669,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, tcpDrain); err != nil {
 		return err
 	}
 	return nil
@@ -807,13 +807,13 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 //  1. SIGTERM → flip probe bits to false. /readyz=503 immediately.
 //  2. Stop the PG ping signal so a wedged connection cannot make the
 //     readiness probe healthy again during the drain.
-//  3. Shutdown the public server, then the control server, inside one
-//     GatewayDrainGraceSeconds budget. Closing the public listener first
-//     prevents new requests from racing the in-flight barrier.
+//  3. Shutdown the public server and stop raw-TCP accepts, then the control
+//     server, inside one GatewayDrainGraceSeconds budget. Closing the public
+//     listeners first prevents new traffic from racing the in-flight barrier.
 //  4. Wait for tracked requests and hijacked streams within the remainder of
 //     that same budget. A second SIGTERM cancels the drain immediately.
 //  5. The caller's deferred pgStop runs again as an idempotent safety net.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics) error {
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -874,7 +874,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		return err
 	}
 	grace := time.Duration(api.GatewayDrainGraceSeconds) * time.Second
-	if err := shutdownGatewayServers(forceCtx, log, publicSrv, controlSrv, drainTracker, gMetrics, grace); err != nil {
+	if err := shutdownGatewayServers(forceCtx, log, publicSrv, controlSrv, drainTracker, gMetrics, grace, tcpDrain); err != nil {
 		return err
 	}
 	// Flush any in-flight spans from the BatchSpanProcessor. forceCtx is
@@ -892,10 +892,11 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 
 // shutdownGatewayServers closes both listeners before arming the request
 // barrier. http.Server.Shutdown waits for ordinary HTTP handlers; Tracker then
-// covers anything outside that envelope, notably hijacked stream pumps. Every
-// phase shares one deadline so an idle gateway exits immediately and a busy
-// gateway cannot accidentally spend the full grace budget twice.
-func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, grace time.Duration) error {
+// covers anything outside that envelope, notably hijacked stream pumps. The
+// optional raw-TCP drain uses the same context so every phase shares one
+// deadline; an idle gateway exits immediately and a busy gateway cannot
+// accidentally spend the full grace budget twice.
+func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, grace time.Duration, tcpDrain func(context.Context) error) error {
 	if grace <= 0 {
 		grace = drain.DrainGrace
 	}
@@ -907,6 +908,14 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, co
 	if err := publicSrv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("gatewayd-public: public Shutdown", "err", err)
 		shutdownErr = fmt.Errorf("gatewayd-public: public shutdown: %w", err)
+	}
+	if tcpDrain != nil {
+		if err := tcpDrain(shutdownCtx); err != nil {
+			log.Warn("gatewayd-public: TCP drain", "err", err)
+			if shutdownErr == nil {
+				shutdownErr = fmt.Errorf("gatewayd-public: TCP drain: %w", err)
+			}
+		}
 	}
 	if err := controlSrv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("gatewayd-public: control Shutdown", "err", err)

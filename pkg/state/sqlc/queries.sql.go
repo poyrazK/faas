@@ -3311,7 +3311,8 @@ const getAppErrorSample = `-- name: GetAppErrorSample :one
 SELECT
     id, request_id, received_at, route, http_status,
     error_class, sample_message, deployment_id,
-    headers_sample, redactions
+    headers_sample, redactions, instance_id, node_id, region, commit_sha,
+    deployment_tag, deployment_created_at, image_digest
 FROM app_error_requests
 WHERE account_id  = $1
   AND app_id      = $2
@@ -3327,16 +3328,23 @@ type GetAppErrorSampleParams struct {
 }
 
 type GetAppErrorSampleRow struct {
-	ID            pgtype.UUID
-	RequestID     pgtype.UUID
-	ReceivedAt    pgtype.Timestamptz
-	Route         string
-	HttpStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	DeploymentID  pgtype.UUID
-	HeadersSample []byte
-	Redactions    []string
+	ID                  pgtype.UUID
+	RequestID           pgtype.UUID
+	ReceivedAt          pgtype.Timestamptz
+	Route               string
+	HttpStatus          int32
+	ErrorClass          string
+	SampleMessage       string
+	DeploymentID        pgtype.UUID
+	HeadersSample       []byte
+	Redactions          []string
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // Single oldest request row for one fingerprint, used by the
@@ -3357,6 +3365,13 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 		&i.DeploymentID,
 		&i.HeadersSample,
 		&i.Redactions,
+		&i.InstanceID,
+		&i.NodeID,
+		&i.Region,
+		&i.CommitSha,
+		&i.DeploymentTag,
+		&i.DeploymentCreatedAt,
+		&i.ImageDigest,
 	)
 	return i, err
 }
@@ -3587,7 +3602,8 @@ const getRequestTelemetryByAppAndIdentifier = `-- name: GetRequestTelemetryByApp
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
-       consumer_id
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
 FROM request_telemetry
 WHERE app_id = $1
   AND (id::text = $2::text OR trace_id = $2::text)
@@ -3605,24 +3621,30 @@ type GetRequestTelemetryByAppAndIdentifierParams struct {
 }
 
 type GetRequestTelemetryByAppAndIdentifierRow struct {
-	ID              pgtype.UUID
-	DeploymentID    pgtype.UUID
-	Route           string
-	Method          string
-	Status          int32
-	LatencyMs       int32
-	Count           int32
-	ColdBoot        bool
-	TraceID         pgtype.Text
-	ReceivedAt      pgtype.Timestamptz
-	SpansSummary    []byte
-	WakeID          pgtype.Text
-	InstanceID      pgtype.Text
-	GuestDurationMs int32
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
-	ConsumerID      pgtype.UUID
+	ID                  pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // Direct request drill-down for the customer debugger. Customers normally
@@ -3657,6 +3679,12 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 		&i.GuestOutcome,
 		&i.GuestErrorClass,
 		&i.ConsumerID,
+		&i.NodeID,
+		&i.Region,
+		&i.CommitSha,
+		&i.DeploymentTag,
+		&i.DeploymentCreatedAt,
+		&i.ImageDigest,
 	)
 	return i, err
 }
@@ -3767,30 +3795,47 @@ const incrementAppError = `-- name: IncrementAppError :one
 INSERT INTO app_errors (
     id, account_id, app_id, deployment_id, fingerprint,
     route, http_status, error_class, sample_message,
-    count, request_count, first_seen_at, last_seen_at
+    count, request_count, first_seen_at, last_seen_at,
+    last_instance_id, last_node_id, last_region, last_commit_sha,
+    last_deployment_tag, last_deployment_created_at, last_image_digest
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    1, 1, $10, $10
+    1, 1, $10, $10,
+    $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (account_id, app_id, fingerprint) DO UPDATE SET
     count         = app_errors.count + 1,
     request_count = app_errors.request_count + 1,
-    last_seen_at  = greatest(app_errors.last_seen_at, $10)
+    last_seen_at  = greatest(app_errors.last_seen_at, $10),
+    last_instance_id = COALESCE(NULLIF(EXCLUDED.last_instance_id, ''), app_errors.last_instance_id),
+    last_node_id = COALESCE(NULLIF(EXCLUDED.last_node_id, ''), app_errors.last_node_id),
+    last_region = COALESCE(NULLIF(EXCLUDED.last_region, ''), app_errors.last_region),
+    last_commit_sha = COALESCE(NULLIF(EXCLUDED.last_commit_sha, ''), app_errors.last_commit_sha),
+    last_deployment_tag = COALESCE(NULLIF(EXCLUDED.last_deployment_tag, ''), app_errors.last_deployment_tag),
+    last_deployment_created_at = COALESCE(NULLIF(EXCLUDED.last_deployment_created_at, ''), app_errors.last_deployment_created_at),
+    last_image_digest = COALESCE(NULLIF(EXCLUDED.last_image_digest, ''), app_errors.last_image_digest)
 RETURNING (xmax = 0) AS inserted
 `
 
 type IncrementAppErrorParams struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	DeploymentID  pgtype.UUID
-	Fingerprint   string
-	Route         string
-	HttpStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	FirstSeenAt   pgtype.Timestamptz
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	AppID                   pgtype.UUID
+	DeploymentID            pgtype.UUID
+	Fingerprint             string
+	Route                   string
+	HttpStatus              int32
+	ErrorClass              string
+	SampleMessage           string
+	FirstSeenAt             pgtype.Timestamptz
+	LastInstanceID          string
+	LastNodeID              string
+	LastRegion              string
+	LastCommitSha           string
+	LastDeploymentTag       string
+	LastDeploymentCreatedAt string
+	LastImageDigest         string
 }
 
 // ---------------------------------------------------------------------------
@@ -3829,6 +3874,13 @@ func (q *Queries) IncrementAppError(ctx context.Context, db DBTX, arg IncrementA
 		arg.ErrorClass,
 		arg.SampleMessage,
 		arg.FirstSeenAt,
+		arg.LastInstanceID,
+		arg.LastNodeID,
+		arg.LastRegion,
+		arg.LastCommitSha,
+		arg.LastDeploymentTag,
+		arg.LastDeploymentCreatedAt,
+		arg.LastImageDigest,
 	)
 	var inserted bool
 	err := row.Scan(&inserted)
@@ -3839,28 +3891,36 @@ const insertAppErrorRequest = `-- name: InsertAppErrorRequest :exec
 INSERT INTO app_error_requests (
     id, account_id, app_id, fingerprint, request_id, received_at,
     route, http_status, error_class, sample_message,
-    deployment_id, headers_sample, redactions
+    deployment_id, headers_sample, redactions, instance_id, node_id,
+    region, commit_sha, deployment_tag, deployment_created_at, image_digest
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
 )
 `
 
 type InsertAppErrorRequestParams struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	Fingerprint   string
-	RequestID     pgtype.UUID
-	ReceivedAt    pgtype.Timestamptz
-	Route         string
-	HttpStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	DeploymentID  pgtype.UUID
-	HeadersSample []byte
-	Redactions    []string
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	Fingerprint         string
+	RequestID           pgtype.UUID
+	ReceivedAt          pgtype.Timestamptz
+	Route               string
+	HttpStatus          int32
+	ErrorClass          string
+	SampleMessage       string
+	DeploymentID        pgtype.UUID
+	HeadersSample       []byte
+	Redactions          []string
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // One row per request that hit the grouped fingerprint. No
@@ -3882,6 +3942,13 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentID,
 		arg.HeadersSample,
 		arg.Redactions,
+		arg.InstanceID,
+		arg.NodeID,
+		arg.Region,
+		arg.CommitSha,
+		arg.DeploymentTag,
+		arg.DeploymentCreatedAt,
+		arg.ImageDigest,
 	)
 	return err
 }
@@ -4117,7 +4184,8 @@ INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
-    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id
+    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -4125,32 +4193,44 @@ INSERT INTO request_telemetry (
     COALESCE(NULLIF($18::text, ''), '__unknown__'),
     COALESCE(NULLIF($19::text, ''), 'missing'),
     COALESCE($20::text, ''),
-    $21::uuid
+    $21::uuid,
+    $22::text,
+    $23::text,
+    $24::text,
+    $25::text,
+    $26::text,
+    $27::text
 )
 `
 
 type InsertRequestTelemetryParams struct {
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	DeploymentID    pgtype.UUID
-	Route           string
-	Method          string
-	Status          int32
-	LatencyMs       int32
-	ColdBoot        bool
-	TraceID         pgtype.Text
-	ReceivedAt      pgtype.Timestamptz
-	Count           int32
-	UaFamily        string
-	ReferrerHost    string
-	Country         string
-	WakeID          pgtype.Text
-	InstanceID      pgtype.Text
-	GuestDurationMs int32
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
-	ConsumerID      pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	Count               int32
+	UaFamily            string
+	ReferrerHost        string
+	Country             string
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // ---------------------------------------------------------------------------
@@ -4210,6 +4290,12 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.GuestOutcome,
 		arg.GuestErrorClass,
 		arg.ConsumerID,
+		arg.NodeID,
+		arg.Region,
+		arg.CommitSha,
+		arg.DeploymentTag,
+		arg.DeploymentCreatedAt,
+		arg.ImageDigest,
 	)
 	return err
 }
@@ -4743,7 +4829,9 @@ const listAppErrorGroups = `-- name: ListAppErrorGroups :many
 SELECT
     id, fingerprint, error_class, route, http_status,
     count, request_count, first_seen_at, last_seen_at,
-    sample_message
+    sample_message, last_instance_id, last_node_id, last_region,
+    last_commit_sha, last_deployment_tag, last_deployment_created_at,
+    last_image_digest
 FROM app_errors
 WHERE account_id = $1
   AND app_id     = $2
@@ -4769,16 +4857,23 @@ type ListAppErrorGroupsParams struct {
 }
 
 type ListAppErrorGroupsRow struct {
-	ID            pgtype.UUID
-	Fingerprint   string
-	ErrorClass    string
-	Route         string
-	HttpStatus    int32
-	Count         int64
-	RequestCount  int64
-	FirstSeenAt   pgtype.Timestamptz
-	LastSeenAt    pgtype.Timestamptz
-	SampleMessage string
+	ID                      pgtype.UUID
+	Fingerprint             string
+	ErrorClass              string
+	Route                   string
+	HttpStatus              int32
+	Count                   int64
+	RequestCount            int64
+	FirstSeenAt             pgtype.Timestamptz
+	LastSeenAt              pgtype.Timestamptz
+	SampleMessage           string
+	LastInstanceID          string
+	LastNodeID              string
+	LastRegion              string
+	LastCommitSha           string
+	LastDeploymentTag       string
+	LastDeploymentCreatedAt string
+	LastImageDigest         string
 }
 
 // ADR-096 §4.3 summary endpoint. Top-N grouped fingerprints for
@@ -4828,6 +4923,13 @@ func (q *Queries) ListAppErrorGroups(ctx context.Context, db DBTX, arg ListAppEr
 			&i.FirstSeenAt,
 			&i.LastSeenAt,
 			&i.SampleMessage,
+			&i.LastInstanceID,
+			&i.LastNodeID,
+			&i.LastRegion,
+			&i.LastCommitSha,
+			&i.LastDeploymentTag,
+			&i.LastDeploymentCreatedAt,
+			&i.LastImageDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -4842,7 +4944,8 @@ func (q *Queries) ListAppErrorGroups(ctx context.Context, db DBTX, arg ListAppEr
 const listAppErrorRequests = `-- name: ListAppErrorRequests :many
 SELECT
     id, request_id, received_at, route, http_status,
-    error_class, sample_message, deployment_id
+    error_class, sample_message, deployment_id, instance_id, node_id,
+    region, commit_sha, deployment_tag, deployment_created_at, image_digest
 FROM app_error_requests
 WHERE account_id  = $1
   AND app_id      = $2
@@ -4863,14 +4966,21 @@ type ListAppErrorRequestsParams struct {
 }
 
 type ListAppErrorRequestsRow struct {
-	ID            pgtype.UUID
-	RequestID     pgtype.UUID
-	ReceivedAt    pgtype.Timestamptz
-	Route         string
-	HttpStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	DeploymentID  pgtype.UUID
+	ID                  pgtype.UUID
+	RequestID           pgtype.UUID
+	ReceivedAt          pgtype.Timestamptz
+	Route               string
+	HttpStatus          int32
+	ErrorClass          string
+	SampleMessage       string
+	DeploymentID        pgtype.UUID
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // Drill-down rows for one fingerprint. Cursor paginated via
@@ -4906,6 +5016,13 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 			&i.ErrorClass,
 			&i.SampleMessage,
 			&i.DeploymentID,
+			&i.InstanceID,
+			&i.NodeID,
+			&i.Region,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.ImageDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -6487,7 +6604,8 @@ const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
-       consumer_id
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -6538,23 +6656,29 @@ type ListRequestTelemetryByAppParams struct {
 }
 
 type ListRequestTelemetryByAppRow struct {
-	ID              pgtype.UUID
-	DeploymentID    pgtype.UUID
-	Route           string
-	Method          string
-	Status          int32
-	LatencyMs       int32
-	Count           int32
-	ColdBoot        bool
-	TraceID         pgtype.Text
-	ReceivedAt      pgtype.Timestamptz
-	WakeID          pgtype.Text
-	InstanceID      pgtype.Text
-	GuestDurationMs int32
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
-	ConsumerID      pgtype.UUID
+	ID                  pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // Canonical read pattern: "give me the last N requests for this app".
@@ -6604,6 +6728,12 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 			&i.GuestOutcome,
 			&i.GuestErrorClass,
 			&i.ConsumerID,
+			&i.NodeID,
+			&i.Region,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.ImageDigest,
 		); err != nil {
 			return nil, err
 		}

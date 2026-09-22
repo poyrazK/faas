@@ -162,6 +162,15 @@ message IncrementRequestTelemetryRequest {
   // request bucket. The apid usage ledger uses it as an idempotency key so a
   // retry after a lost response cannot charge the same requests twice.
   string event_id = 22;
+
+  // Deployment provenance copied from the authoritative platform identity.
+  // Empty values are valid for legacy/partially-resolved requests.
+  string node_id = 23;
+  string region = 24;
+  string commit_sha = 25;
+  string deployment_tag = 26;
+  string deployment_created_at = 27;
+  string image_digest = 28;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

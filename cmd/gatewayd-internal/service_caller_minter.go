@@ -21,6 +21,7 @@ package main
 // and no signature is computed.
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/servicecaller"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
@@ -63,7 +65,7 @@ func serviceCallerAssertionsEnabled() bool {
 // A nil return is not an error: ServiceProxy treats a nil minter as "attach
 // nothing", so a key problem degrades to the pre-ADR-206 behaviour rather than
 // failing every internal call. The log line is what makes that visible.
-func newServiceCallerMinter(nodeID string, log *slog.Logger) gateway.ServiceCallerMinter {
+func newServiceCallerMinter(ctx context.Context, store state.ServiceCallerKeyStore, nodeID string, log *slog.Logger) gateway.ServiceCallerMinter {
 	if !serviceCallerAssertionsEnabled() {
 		return nil
 	}
@@ -73,6 +75,7 @@ func newServiceCallerMinter(nodeID string, log *slog.Logger) gateway.ServiceCall
 			"err", err, "path", serviceCallerKeyPath())
 		return nil
 	}
+	publishServiceCallerKey(ctx, store, nodeID, priv, kid, log)
 	log.Info("gatewayd: service caller assertions enabled", "kid", kid, "node", nodeID)
 	return func(in gateway.ServiceCallerMintInput) (string, error) {
 		return servicecaller.Mint(servicecaller.MintInput{
@@ -83,6 +86,45 @@ func newServiceCallerMinter(nodeID string, log *slog.Logger) gateway.ServiceCall
 			CallerEnv:        in.CallerEnv,
 		}, priv, kid, servicecaller.MaxTTL, time.Now())
 	}
+}
+
+// publishServiceCallerKey makes this node's public half readable by every
+// peer (ADR-206). An assertion is minted by the node local to the CALLER but
+// verified by a workload on the TARGET's node, so a node that keeps its key to
+// itself produces assertions nobody else can check.
+//
+// A publish failure is logged, not fatal: the daemon still serves traffic, and
+// the assertion is additive. Failing boot over it would take a node out of
+// rotation for a feature nothing consumes yet.
+func publishServiceCallerKey(ctx context.Context, store state.ServiceCallerKeyStore, nodeID string, priv ed25519.PrivateKey, kid string, log *slog.Logger) {
+	if store == nil || strings.TrimSpace(nodeID) == "" {
+		return
+	}
+	pem, err := marshalServiceCallerPublicKeyPEM(priv)
+	if err != nil {
+		log.Error("gatewayd: encode service caller public key", "err", err)
+		return
+	}
+	pubCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := store.PublishServiceCallerKey(pubCtx, state.ServiceCallerKey{
+		NodeID: nodeID, KeyID: kid, PublicKeyPEM: pem,
+	}); err != nil {
+		log.Error("gatewayd: publish service caller key; peers cannot verify assertions minted here",
+			"node", nodeID, "kid", kid, "err", err)
+		return
+	}
+	log.Info("gatewayd: published service caller key", "node", nodeID, "kid", kid)
+}
+
+// marshalServiceCallerPublicKeyPEM renders the public half in the PKIX PEM
+// shape the service_caller_keys CHECK constraint requires.
+func marshalServiceCallerPublicKeyPEM(priv ed25519.PrivateKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(priv.Public())
+	if err != nil {
+		return "", fmt.Errorf("marshal service caller public key: %w", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
 }
 
 func serviceCallerKeyPath() string {

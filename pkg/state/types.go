@@ -2869,11 +2869,12 @@ const (
 type AlertFailureSource string
 
 const (
-	AlertFailureAny         AlertFailureSource = "any"
-	AlertFailureCron        AlertFailureSource = "cron"
-	AlertFailureQueue       AlertFailureSource = "queue"
-	AlertFailureDelayedTask AlertFailureSource = "delayed_task"
-	AlertFailureAsyncInvoke AlertFailureSource = "async_invoke"
+	AlertFailureAny            AlertFailureSource = "any"
+	AlertFailureCron           AlertFailureSource = "cron"
+	AlertFailureQueue          AlertFailureSource = "queue"
+	AlertFailureDelayedTask    AlertFailureSource = "delayed_task"
+	AlertFailureAsyncInvoke    AlertFailureSource = "async_invoke"
+	AlertFailureInboundWebhook AlertFailureSource = "inbound_webhook"
 )
 
 // AlertState is the cool-down state machine (issue #396 criterion 4).
@@ -3416,9 +3417,13 @@ type InvocationSource string
 
 const (
 	InvocationAsyncInvoke InvocationSource = "async_invoke"
-	InvocationQueue       InvocationSource = "queue"
-	InvocationDelayedTask InvocationSource = "delayed_task"
-	InvocationCron        InvocationSource = "cron"
+	// InvocationInboundWebhook is a provider-verified public callback that
+	// apid accepted durably before acknowledgement. Keeping it distinct from
+	// async_invoke gives the guest an unspoofable platform-owned source marker.
+	InvocationInboundWebhook InvocationSource = "inbound_webhook"
+	InvocationQueue          InvocationSource = "queue"
+	InvocationDelayedTask    InvocationSource = "delayed_task"
+	InvocationCron           InvocationSource = "cron"
 	// InvocationReplay (issue #315 / tier-2 DX) is the source
 	// stamped on a replayed invocation. The dashboard's
 	// per-invocation detail page renders this so a customer
@@ -4188,14 +4193,15 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations  int
-	StatusDiffCount   int
-	SchemaDiffCount   int
-	BodyDiffCount     int
-	MeanLatencyDiffMs int
-	P99LatencyDiffMs  int
-	CrashCount        int
-	WindowSeconds     int
+	TotalInvocations     int
+	ChangedResponseCount int
+	StatusDiffCount      int
+	SchemaDiffCount      int
+	BodyDiffCount        int
+	MeanLatencyDiffMs    int
+	P99LatencyDiffMs     int
+	CrashCount           int
+	WindowSeconds        int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
