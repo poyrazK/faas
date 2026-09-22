@@ -1,5 +1,5 @@
 -- name: RollupMirrorResults :execrows
--- ADR-209: claiming and counting share one statement/transaction. SKIP LOCKED
+-- ADR-211: claiming and counting share one statement/transaction. SKIP LOCKED
 -- permits concurrent workers without counting the same result twice.
 WITH pending AS MATERIALIZED (
     SELECT id FROM mirror_invocation_results

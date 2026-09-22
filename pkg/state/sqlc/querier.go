@@ -1052,7 +1052,7 @@ type Querier interface {
 	// coalesce(revoked_at, now()) makes the call idempotent on already
 	// revoked rows (returns 0 rows).
 	RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionParams) (pgtype.UUID, error)
-	// ADR-209: claiming and counting share one statement/transaction. SKIP LOCKED
+	// ADR-211: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
