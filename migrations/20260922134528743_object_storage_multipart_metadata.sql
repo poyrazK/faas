@@ -3,12 +3,12 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE object_storage_multipart_uploads
-    ADD COLUMN object_metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+    ADD COLUMN IF NOT EXISTS object_metadata jsonb NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(object_metadata) = 'object')
     CHECK (octet_length(object_metadata::text) <= 32768);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-ALTER TABLE object_storage_multipart_uploads DROP COLUMN object_metadata;
+ALTER TABLE object_storage_multipart_uploads DROP COLUMN IF EXISTS object_metadata;
 -- +goose StatementEnd
