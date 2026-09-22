@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // newServiceProxyAuthorizer enforces the same-account boundary between a
-// calling workload and the service it names (ADR-168).
+// calling workload and the service it names (ADR-168), then applies the
+// caller's opt-in declared-binding policy.
 //
 // Ids are shape-checked before they reach the store. `apps.id` is a uuid
 // column, so a malformed id can never name an app — but passing one through
@@ -68,6 +71,18 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				if policy.PreviewServicePolicy == state.PreviewServicePolicyDeny {
 					return gateway.ServiceCaller{}, gateway.ErrServiceProxyPreviewProductionDenied
 				}
+			}
+		}
+		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
+			declared := false
+			for _, binding := range caller.Manifest.ServiceBindings {
+				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(target.Slug)) {
+					declared = true
+					break
+				}
+			}
+			if !declared {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
 			}
 		}
 		// The caller row is already loaded; carrying its preview identity out

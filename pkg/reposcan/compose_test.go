@@ -179,6 +179,48 @@ func TestDetectCompose_ExtractsDependsOn(t *testing.T) {
 	}
 }
 
+func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on: [billing]
+    x-gregale-service-policy: DECLARED
+  billing:
+    build: ./billing
+`
+	seeds, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil {
+		t.Fatalf("detectCompose: %v", err)
+	}
+	policies := make(map[string]ServiceBindingPolicy, len(seeds))
+	for _, seed := range seeds {
+		policies[seed.name] = seed.serviceBindingPolicy
+	}
+	if policies["api"] != ServiceBindingPolicyDeclared {
+		t.Fatalf("api policy = %q, want declared", policies["api"])
+	}
+	if policies["billing"] != "" {
+		t.Fatalf("billing policy = %q, want empty account default", policies["billing"])
+	}
+}
+
+func TestDetectCompose_RejectsUnknownServiceBindingPolicy(t *testing.T) {
+	t.Parallel()
+	_, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ./api
+    x-gregale-service-policy: permissive
+`)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must be account or declared") {
+		t.Fatalf("detectCompose error = %v, want closed policy validation", err)
+	}
+}
+
 // TestDetectCompose_PrefersComposeYAML confirms the file-pick order:
 // compose.yaml > compose.yml > docker-compose.yml > docker-compose.yaml.
 func TestDetectCompose_PrefersComposeYAML(t *testing.T) {

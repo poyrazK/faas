@@ -1139,9 +1139,13 @@ type AppResponse struct {
 	Manifest AppManifest `json:"manifest"`
 	// ServiceBindings are the repository-declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
-	// discovery projection; service-mesh authorization remains unchanged until
-	// a separate bindings-only policy is enabled.
+	// discovery projection; authorization applies them only when
+	// ServiceBindingPolicy is "declared".
 	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceBindingPolicy is the caller-side authorization policy applied to
+	// internal service requests. "account" preserves legacy same-account
+	// reachability; "declared" permits only ServiceBindings targets.
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -5625,11 +5629,14 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	Name          string   `json:"name"`
-	RootDir       string   `json:"root_dir"`
-	Dockerfile    string   `json:"dockerfile,omitempty"`
-	Command       []string `json:"command"`
-	DependsOn     []string `json:"depends_on,omitempty"`
+	Name       string   `json:"name"`
+	RootDir    string   `json:"root_dir"`
+	Dockerfile string   `json:"dockerfile,omitempty"`
+	Command    []string `json:"command"`
+	DependsOn  []string `json:"depends_on,omitempty"`
+
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
 	Ports         []int    `json:"ports"`

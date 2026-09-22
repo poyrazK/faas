@@ -1189,6 +1189,7 @@ from .secret_scan_result import SecretScanResult
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
+from .service_binding_policy import ServiceBindingPolicy
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -2541,6 +2542,7 @@ __all__ = (
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
+    "ServiceBindingPolicy",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",

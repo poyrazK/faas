@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A repository-declared dependency on another same-account app. The binding is injected for discovery; gateway authorization remains account-scoped until a separate bindings-only policy is enabled.
+ * A repository-declared dependency on another same-account app. The binding is injected for discovery and becomes an authorization capability when the caller selects the `declared` service binding policy.
  */
 export type AppServiceBinding = {
   /**

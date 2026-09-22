@@ -130,6 +130,7 @@ func (s *Service) applyActions(
 				manifest := action.App.Manifest
 				manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, action.Workload, availableServices)
 				manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(action.Workload, availableServices)
+				manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(action.Workload)
 				manifest.BuildDockerfile = action.Workload.Dockerfile
 				app.RootDir = action.Workload.RootDir
 				app.WorkloadName = action.Workload.Name
@@ -318,6 +319,7 @@ func (s *Service) applyUpdate(
 	}
 	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
 	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
+	manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(a.Workload)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -384,6 +386,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		Manifest: state.AppManifest{
 			Env:             serviceEnvForWorkloadWithAvailable(nil, w, serviceNames),
 			ServiceBindings: serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+
+			ServiceBindingPolicy: serviceBindingPolicyForWorkload(w),
+
 			BuildDockerfile: w.Dockerfile,
 		},
 		RequireAuthn:   plan.RequireAuthnDefault(),

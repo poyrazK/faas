@@ -226,6 +226,9 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Dockerfile: w.Dockerfile,
 		Command:    w.Command,
 		DependsOn:  w.DependsOn,
+
+		ServiceBindingPolicy: api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
 		Ports:      w.Ports,

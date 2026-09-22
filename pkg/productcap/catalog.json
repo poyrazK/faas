@@ -174,7 +174,7 @@
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",
-      "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call.",
+      "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call, and callers may opt into a declared-binding allowlist.",
       "maturity": "preview",
       "plans": ["free", "hobby", "pro", "scale"],
       "docs_url": "/docs/networking",
