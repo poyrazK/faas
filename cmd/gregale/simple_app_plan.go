@@ -3,10 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/hostingconfig"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
@@ -16,6 +15,7 @@ import (
 // resulting contract independent of authentication and remote state.
 func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool) (simpleapp.Plan, error) {
 	frameworkName := ""
+	port, health := 0, ""
 	if source == simpleapp.SourceDirectory {
 		resolved, _, _, err := resolveDeployShape(sourceDir, explicitFunction, explicitApp, true)
 		if err != nil {
@@ -24,17 +24,13 @@ func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.Sour
 		if resolved == shapeFunction {
 			return simpleapp.Plan{}, fmt.Errorf("simple app deploys are HTTP applications; use the normal function path for handler-only source")
 		}
-		frameworkName = string(detectFramework(sourceDir))
-	}
-	port, health := 0, ""
-	if sourceDir != "" {
-		cfg, present, err := hostingconfig.Load(os.DirFS(sourceDir))
+		inferred, err := frameworkprofile.AnalyzeDir(sourceDir)
 		if err != nil {
-			return simpleapp.Plan{}, fmt.Errorf("read hosting defaults: %w", err)
+			return simpleapp.Plan{}, fmt.Errorf("analyze deploy source: %w", err)
 		}
-		if present {
-			port, health = cfg.Port, cfg.Health
-		}
+		frameworkName = inferred.Framework
+		port = inferred.Port
+		health = inferred.HealthPath
 	}
 	return simpleapp.Resolve(simpleapp.Spec{
 		Slug:       slug,
@@ -86,14 +82,4 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
 	}
 	_, _ = fmt.Fprintln(w, "No remote state changed. Run `gregale deploy` to apply this plan.")
 	return 0
-}
-
-// renderSimpleAppDeploySummary keeps the human deploy path explicit about the
-// effective stateless contract without printing any source or secret values.
-func renderSimpleAppDeploySummary(w io.Writer, plan *simpleapp.Plan) {
-	if plan == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(w, "Effective simple app plan: resources=%s, listener=:%d %s, execution=%s, scale=to-zero, local-storage=%s, durable-state=%s\n",
-		plan.ResourceProfile, plan.Port, plan.HealthPath, plan.ExecutionMode, plan.LocalStorage, plan.DurableState)
 }

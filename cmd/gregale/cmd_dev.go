@@ -293,6 +293,7 @@ func cmdDev(args []string) int {
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
 	envFile := fs.String("env-file", "", "sync KEY=VALUE entries as developer secrets (explicit opt-in)")
+	serviceOverrideFile := fs.String("service-override-file", "", "sync validated service URLs as developer secrets (explicit opt-in)")
 	once := fs.Bool("once", false, "deploy once and exit instead of watching for changes")
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
@@ -300,11 +301,11 @@ func cmdDev(args []string) int {
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database and inject DATABASE_URL")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
 		return 1
 	}
 	if *once && *stop {
@@ -315,6 +316,9 @@ func cmdDev(args []string) int {
 	}
 	if *stop && *envFile != "" {
 		return printErr("Invalid flags", fmt.Errorf("--env-file cannot be combined with --stop"))
+	}
+	if *stop && *serviceOverrideFile != "" {
+		return printErr("Invalid flags", fmt.Errorf("--service-override-file cannot be combined with --stop"))
 	}
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
@@ -340,6 +344,24 @@ func cmdDev(args []string) int {
 		if _, _, err := readDevEnvFile(envFilePath); err != nil {
 			return printErr("Invalid developer env file", err)
 		}
+	}
+	serviceOverrideFilePath, err := resolveDevEnvFilePath(cwd, *serviceOverrideFile)
+	if err != nil {
+		return printErr("Invalid developer service override file", err)
+	}
+	var serviceOverridePairs []secretsPair
+	if serviceOverrideFilePath != "" {
+		var readErr error
+		serviceOverridePairs, _, readErr = readDevServiceOverrideFile(serviceOverrideFilePath)
+		if readErr != nil {
+			return printErr("Invalid developer service override file", readErr)
+		}
+	}
+	if envFilePath != "" && envFilePath == serviceOverrideFilePath {
+		return printErr("Invalid flags", fmt.Errorf("--env-file and --service-override-file must point to different files"))
+	}
+	if *withPostgres && serviceOverrideContainsKey(serviceOverridePairs, "DATABASE_URL") {
+		return printErr("Invalid flags", fmt.Errorf("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
 	}
 	project := *name
 	if project == "" {
@@ -421,15 +443,16 @@ func cmdDev(args []string) int {
 		devBrowserOpened = true
 		openDeveloperEnvironment(canonicalAppURL(session.App))
 	}
-	lastSynced, err := devSourceFingerprint(sourceDir, envFilePath)
+	lastSynced, err := devSourceFingerprint(sourceDir, envFilePath, serviceOverrideFilePath)
 	if err != nil {
 		return printErr("Could not watch developer source", err)
 	}
 	syncState := &devSourceSyncState{}
 	envSyncState := &devEnvSyncState{}
+	serviceOverrideSyncState := &devEnvSyncState{}
 	waitForChange := func(waitCtx context.Context, dir string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
-		if envFilePath != "" {
-			return waitForDevSourceChange(waitCtx, dir, previous, envFilePath)
+		if envFilePath != "" || serviceOverrideFilePath != "" {
+			return waitForDevSourceChange(waitCtx, dir, previous, envFilePath, serviceOverrideFilePath)
 		}
 		return waitForDevSourceChange(waitCtx, dir, previous)
 	}
@@ -448,6 +471,18 @@ func cmdDev(args []string) int {
 					PrintProgress(osStdout, "%s", report.progressLine())
 				}
 			}
+			if serviceOverrideFilePath != "" {
+				report, syncErr := serviceOverrideSyncState.syncServiceOverrides(deployCtx, client, session.App.Slug, serviceOverrideFilePath)
+				if syncErr != nil {
+					_ = printErr("Could not sync developer service overrides", syncErr)
+					diagnosticReported.Store(true)
+					reportDevDiagnostic(devDiagnosticFromError(syncErr, "sync"))
+					return 1
+				}
+				if report.Changed && !jsonOutput {
+					PrintProgress(osStdout, "%s", report.progressLineFor("developer service overrides"))
+				}
+			}
 			started := time.Now()
 			devTelemetry := newDevPhaseTracker()
 			devTelemetry.setPostgres(session.Postgres)
@@ -456,10 +491,17 @@ func cmdDev(args []string) int {
 				streamLogsOnJSON: true,
 				developerSource:  syncState,
 				extraSourceExcludes: func() []string {
-					if envFilePath == "" {
+					excludes := make([]string, 0, 2)
+					if envFilePath != "" {
+						excludes = append(excludes, envFilePath)
+					}
+					if serviceOverrideFilePath != "" {
+						excludes = append(excludes, serviceOverrideFilePath)
+					}
+					if len(excludes) == 0 {
 						return nil
 					}
-					return []string{envFilePath}
+					return excludes
 				}(),
 				onQueued: func(dep api.DeploymentResponse) {
 					devTelemetry.setDeploymentID(dep.ID)

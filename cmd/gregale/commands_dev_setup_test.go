@@ -27,7 +27,7 @@ func TestDevSetupReceiptIsReadyAndSecretSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildDevSetupReceipt(dir, dir, "demo", config, path, keys, false, false, false, false, false, "")
+	receipt := buildDevSetupReceipt(dir, dir, "demo", config, path, keys, "", 0, false, false, false, false, false, "")
 	if !receipt.Ready || !receipt.Authenticated {
 		t.Fatalf("receipt readiness = ready:%t authenticated:%t, want both true", receipt.Ready, receipt.Authenticated)
 	}
