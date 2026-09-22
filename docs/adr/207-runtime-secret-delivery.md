@@ -1,4 +1,4 @@
-# ADR-206 · Runtime secret delivery uses a no-snapshot restart
+# ADR-207 · Runtime secret delivery uses a no-snapshot restart
 
 - **Status:** accepted
 - **Date:** 2026-09-22
