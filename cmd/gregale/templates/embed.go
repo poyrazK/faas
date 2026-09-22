@@ -1,4 +1,4 @@
-// Package templates ships the fifteen `gregale deploy --template <name>`
+// Package templates ships the sixteen `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -45,10 +45,9 @@ const GoToolchainVersion = "1.25.13"
 
 // Names is the canonical template list, kept here so the CLI can
 // validate --template before touching the embed FS. The seven
-// "hello/function" scaffolds ship with `gregale deploy`; the six
-// stateless-contract scaffolds (Wave 0 PR-B + Move 1 PR-A) are
-// scaffolded by `gregale init` (commands_init.go) and tell the
-// customer which managed service to plug in. Names must stay in
+// "hello/function" scaffolds ship with `gregale deploy`; the
+// stateless-contract and event-driven scaffolds are scaffolded by
+// `gregale init` (commands_init.go). Names must stay in
 // lockstep with the //go:embed directive above — adding a template
 // means a new entry in BOTH places.
 var Names = []string{
@@ -61,6 +60,7 @@ var Names = []string{
 	"function-go",
 	"function-node24",
 	"function-python313",
+	"event-worker",
 	"s3-uploader",
 	"slack-bot",
 	"rest-api-postgres",
@@ -231,12 +231,13 @@ func NameIsValid(name string) bool {
 
 // CategoryFor returns the customer-facing group label for a template
 // name. Used by `gregale init --list` (commands_init.go) to bucket the
-// 13 templates by what the customer is trying to do, not by alphabetical
+// templates by what the customer is trying to do, not by alphabetical
 // order. Recognised categories:
 //
 //	"hello"              — first-touch smoke tests (3)
-//	"function"           — generic runtimes the customer customises (3)
+//	"function"           — generic runtimes the customer customises (6)
 //	"stateless-contract" — managed-service scaffolds that BYO credentials (5)
+//	"event-driven"       — internal event router starter (1)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
 //	""                   — unknown / not in Names
 //
@@ -250,6 +251,8 @@ func CategoryFor(name string) string {
 		return "hello"
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example":
 		return "function"
+	case "event-worker":
+		return "event-driven"
 	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver":
 		return "stateless-contract"
 	case "ai-chat":
@@ -260,4 +263,4 @@ func CategoryFor(name string) string {
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "stateless-contract", "ai"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai"}
