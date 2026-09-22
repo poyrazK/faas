@@ -37,6 +37,10 @@ func TestE2E_Autoscale_CustomMetricAdmitsCapacity(t *testing.T) {
 	if f == nil {
 		return
 	}
+	// The targets loop admits additional instances for a live deployment. The
+	// fixture only creates app metadata, so seed one readable live deployment
+	// before exercising the scale-out signal.
+	createNormalPathLiveDeployment(t, f, f.app.ID, "autoscale-custom-v1")
 	// 1. Declare the policy through the customer API, not by writing the
 	//    row. The apid validation, the jsonb encode and the column write
 	//    are all part of what this test exists to cover.
@@ -123,6 +127,9 @@ func TestE2E_Autoscale_NoMetricDoesNotAdmit(t *testing.T) {
 	if f == nil {
 		return
 	}
+	// Seed the same baseline as the positive case; otherwise a no-growth
+	// result would be vacuous because there is no deployment to scale.
+	createNormalPathLiveDeployment(t, f, f.app.ID, "autoscale-nometric-v1")
 
 	policy := &api.ScalingPolicy{
 		MaxInstances: 5,
