@@ -11607,7 +11607,7 @@ type RollupMirrorResultsParams struct {
 	WindowEnd   pgtype.Timestamptz
 }
 
-// ADR-215: claiming and counting share one statement/transaction. SKIP LOCKED
+// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 // permits concurrent workers without counting the same result twice.
 func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error) {
 	result, err := db.Exec(ctx, rollupMirrorResults, arg.WindowStart, arg.WindowEnd)

@@ -1,4 +1,4 @@
-# ADR-215 · Replay-safe mirror rollups
+# ADR-221 · Replay-safe mirror rollups
 
 - **Status:** proposed
 - **Date:** 2026-09-22

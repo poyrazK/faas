@@ -1,4 +1,4 @@
-# ADR-213 · Provider-scoped credit receipts
+# ADR-220 · Provider-scoped credit receipts
 
 - **Status:** proposed
 - **Date:** 2026-09-22

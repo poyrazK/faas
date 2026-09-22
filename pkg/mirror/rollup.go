@@ -1,7 +1,7 @@
 // Package mirror owns the hourly mirror summary and raw-ledger retention.
 // Each invocation is marked counted in the same SQL statement that adds its
 // contribution to the summary. Overlapping windows, retries, late commits and
-// concurrent workers therefore cannot double-count an invocation (ADR-215).
+// concurrent workers therefore cannot double-count an invocation (ADR-221).
 package mirror
 
 import (

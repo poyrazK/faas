@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-213: stop all legacy credit-consumption/refund writers before cutover.
+-- ADR-220: stop all legacy credit-consumption/refund writers before cutover.
 -- They neither stamp nor filter provider and cannot share the new index.
 -- Follow the refund path's invoice -> ledger order if a writer is draining.
 DO $$
