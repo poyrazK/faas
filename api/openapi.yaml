@@ -695,6 +695,7 @@ paths:
     post:
       operationId: createManagedPostgresBinding
       summary: Bind a workload app to a database
+      description: The selected database backend must advertise the requested credential access. Unsupported access is rejected before a durable binding is reserved or provider credentials are requested.
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -18210,7 +18211,7 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresBinding' } }
     CreateManagedPostgresBindingRequest:
-      description: Request to inject a managed database credential into an app environment.
+      description: Request to inject a managed database credential into an app environment. Access values are provider-neutral; the selected database backend may support only a subset.
       type: object
       additionalProperties: false
       required: [app_id, scope, environment_key, access]
@@ -18218,7 +18219,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only] }
+        access: { type: string, enum: [read_write, read_only], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     ObjectBucket:
       description: Logical bucket metadata without upstream credentials or placement details.

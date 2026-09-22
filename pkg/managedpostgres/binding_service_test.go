@@ -191,6 +191,68 @@ func TestBindingServiceCreatesAndDeletesIdempotently(t *testing.T) {
 	}
 }
 
+func TestBindingServiceRejectsUnsupportedAccessBeforeReservation(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 15, 0, 0, time.UTC)
+	enabled := true
+	provider := &bindingProvider{}
+	store := &failFinishBindingStore{MemoryStore: NewMemoryStore()}
+	service, _, database := readyBindingFixture(t, provider, store, &now, &enabled)
+	backend, err := service.registry.Default(database.Spec.Region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.Capabilities.CredentialAccess = []CredentialAccess{CredentialReadWrite}
+	service.registry.backends[backend.ID] = backend
+
+	binding, created, err := service.CreateWithResult(context.Background(), CreateBindingRequest{
+		AccountID: "account-a", DatabaseID: database.ID, AppID: "app-a",
+		Scope: "default", EnvironmentKey: "DATABASE_URL", Access: CredentialReadOnly,
+	})
+	if !errors.Is(err, ErrUnsupported) || created || binding.ID != "" {
+		t.Fatalf("unsupported create = %+v, created=%t, err=%v", binding, created, err)
+	}
+	bindings, listErr := service.List(context.Background(), "account-a", database.ID)
+	if listErr != nil || len(bindings) != 0 {
+		t.Fatalf("unsupported access reserved a binding: %+v, err=%v", bindings, listErr)
+	}
+	if provider.issueCalls != 0 || service.sink.(*bindingCredentialSink).putCalls != 0 {
+		t.Fatalf("unsupported access reached side effects: issue=%d put=%d", provider.issueCalls, service.sink.(*bindingCredentialSink).putCalls)
+	}
+}
+
+func TestBindingReconcileRejectsLegacyUnsupportedAccess(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 20, 0, 0, time.UTC)
+	enabled := true
+	provider := &bindingProvider{}
+	store := &failFinishBindingStore{MemoryStore: NewMemoryStore()}
+	service, _, database := readyBindingFixture(t, provider, store, &now, &enabled)
+	binding, created, err := store.ReserveBinding(context.Background(), Binding{
+		ID: "legacy-read-only", AccountID: "account-a", DatabaseID: database.ID, AppID: "app-a",
+		Scope: "default", EnvironmentKey: "DATABASE_URL", Access: CredentialReadOnly,
+		CredentialGeneration: 1, State: BindingStateProvisioning, RetryAt: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !created {
+		t.Fatalf("reserve legacy binding = %+v, created=%t, err=%v", binding, created, err)
+	}
+	backend, err := service.registry.Default(database.Spec.Region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.Capabilities.CredentialAccess = []CredentialAccess{CredentialReadWrite}
+	service.registry.backends[backend.ID] = backend
+
+	if _, err := service.Reconcile(context.Background(), "account-a", binding.ID); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("legacy reconcile = %v, want ErrUnsupported", err)
+	}
+	failed, err := service.Get(context.Background(), "account-a", binding.ID)
+	if err != nil || failed.State != BindingStateFailed || failed.LastErrorCode != "credential_access_unsupported" {
+		t.Fatalf("failed legacy binding = %+v, err=%v", failed, err)
+	}
+	if provider.issueCalls != 0 || service.sink.(*bindingCredentialSink).putCalls != 0 {
+		t.Fatalf("legacy unsupported access reached side effects: issue=%d put=%d", provider.issueCalls, service.sink.(*bindingCredentialSink).putCalls)
+	}
+}
+
 func TestBindingServiceRecoversCrashAfterSecretWrite(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 30, 0, 0, time.UTC)
 	enabled := true

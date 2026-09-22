@@ -453,6 +453,7 @@ type Capabilities struct {
 	PostgresMajors     []int
 	ServiceClasses     []ServiceClass
 	Availability       []Availability
+	CredentialAccess   []CredentialAccess
 	ScaleToZero        bool
 	PooledConnections  bool
 	PointInTimeRestore bool
@@ -466,13 +467,13 @@ type Capabilities struct {
 }
 
 func (c Capabilities) Validate() error {
-	if len(c.PostgresMajors) == 0 || len(c.ServiceClasses) == 0 || len(c.Availability) == 0 {
+	if len(c.PostgresMajors) == 0 || len(c.ServiceClasses) == 0 || len(c.Availability) == 0 || len(c.CredentialAccess) == 0 {
 		return ErrInvalid
 	}
 	if c.MaxRestoreWindowSeconds < 0 || c.MaxStorageBytes < 0 {
 		return ErrInvalid
 	}
-	if hasDuplicates(c.PostgresMajors) || hasDuplicates(c.ServiceClasses) || hasDuplicates(c.Availability) || hasDuplicates(c.UsageMeters) {
+	if hasDuplicates(c.PostgresMajors) || hasDuplicates(c.ServiceClasses) || hasDuplicates(c.Availability) || hasDuplicates(c.CredentialAccess) || hasDuplicates(c.UsageMeters) {
 		return ErrInvalid
 	}
 	for _, major := range c.PostgresMajors {
@@ -490,10 +491,29 @@ func (c Capabilities) Validate() error {
 			return ErrInvalid
 		}
 	}
+	for _, access := range c.CredentialAccess {
+		if access != CredentialReadWrite && access != CredentialReadOnly {
+			return ErrInvalid
+		}
+	}
 	for _, meter := range c.UsageMeters {
 		if !validMeter(meter) {
 			return ErrInvalid
 		}
+	}
+	return nil
+}
+
+// SupportsCredentialAccess checks the portable binding mode against the
+// selected backend's qualified credential surface. Keeping this capability on
+// the backend prevents Gregale from reserving work that the provider can never
+// reconcile.
+func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
+	if access != CredentialReadWrite && access != CredentialReadOnly {
+		return ErrInvalid
+	}
+	if !contains(c.CredentialAccess, access) {
+		return ErrUnsupported
 	}
 	return nil
 }
