@@ -102,16 +102,13 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, route,
 			rows = append(rows, row)
 		}
 	} else if all {
-		rows, err = client.ListAppDebugRequestsAll(ctx, slug, api.DebugTelemetryListOptions{
+		return streamAllHTTPLogsQuery(ctx, client, slug, api.DebugTelemetryListOptions{
 			Since:        since,
 			Route:        route,
 			DeploymentID: deploymentID,
 			Status:       status,
 			Limit:        limit,
 		})
-		if err != nil {
-			return printErr("Could not query all HTTP logs", err)
-		}
 	} else {
 		resp, listErr := client.ListAppDebugRequestsWithOptions(ctx, slug, api.DebugTelemetryListOptions{
 			Since:        since,
@@ -127,22 +124,53 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, route,
 		page = &resp
 	}
 
-	events := make([]api.LogQueryEvent, 0, len(rows))
-	for _, row := range rows {
-		events = append(events, httpLogQueryEvent(row))
-	}
-	if jsonOutput {
-		code := jsonOut(writeNDJSON(events))
-		if code == 0 && page != nil {
-			renderHTTPLogQueryPageWarnings(osStderr, *page)
-		}
+	code := emitHTTPLogQueryRows(rows)
+	if code != 0 {
 		return code
-	}
-	for _, event := range events {
-		renderHTTPLogQueryEvent(osStdout, event)
 	}
 	if page != nil {
 		renderHTTPLogQueryPageWarnings(osStderr, *page)
+	}
+	return 0
+}
+
+// streamAllHTTPLogsQuery emits each bounded page before fetching the next one.
+// A retained telemetry window can contain far more rows than fit in memory.
+func streamAllHTTPLogsQuery(ctx context.Context, client *api.Client, slug string, opts api.DebugTelemetryListOptions) int {
+	for {
+		page, err := client.ListAppDebugRequestsWithOptions(ctx, slug, opts)
+		if err != nil {
+			return printErr("Could not query all HTTP logs", err)
+		}
+		if code := emitHTTPLogQueryRows(page.Requests); code != 0 {
+			return code
+		}
+		if page.RetentionClamped && opts.Cursor == "" {
+			PrintWarn(osStderr, "HTTP log window was clamped to the plan's telemetry retention.")
+		}
+		if page.Complete || page.NextCursor == "" {
+			return 0
+		}
+		if page.NextCursor == opts.Cursor {
+			return printErr("Could not query all HTTP logs", fmt.Errorf("debug requests cursor did not advance"))
+		}
+		opts.Cursor = page.NextCursor
+		if err := ctx.Err(); err != nil {
+			return printErr("Could not query all HTTP logs", err)
+		}
+	}
+}
+
+func emitHTTPLogQueryRows(rows []api.DebugTelemetryRequestItem) int {
+	if jsonOutput {
+		enc := make([]api.LogQueryEvent, 0, len(rows))
+		for _, row := range rows {
+			enc = append(enc, httpLogQueryEvent(row))
+		}
+		return jsonOut(writeNDJSON(enc))
+	}
+	for _, row := range rows {
+		renderHTTPLogQueryEvent(osStdout, httpLogQueryEvent(row))
 	}
 	return 0
 }
