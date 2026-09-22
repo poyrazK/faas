@@ -1,4 +1,4 @@
-# ADR-215 · Application inbox and outbox facades
+# ADR-217 · Application inbox and outbox facades
 
 - **Status:** accepted
 - **Date:** 2026-09-22
