@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -33,6 +36,10 @@ type devEnvSyncReport struct {
 }
 
 func (r devEnvSyncReport) progressLine() string {
+	return r.progressLineFor("developer config")
+}
+
+func (r devEnvSyncReport) progressLineFor(label string) string {
 	added := strings.Join(r.AddedKeys, ", ")
 	if added == "" {
 		added = "none"
@@ -41,7 +48,7 @@ func (r devEnvSyncReport) progressLine() string {
 	if existing == "" {
 		existing = "none"
 	}
-	return fmt.Sprintf("developer config: syncing keys (added: %s; existing: %s; values hidden)", added, existing)
+	return fmt.Sprintf("%s: syncing keys (added: %s; existing: %s; values hidden)", label, added, existing)
 }
 
 type devEnvSyncState struct {
@@ -142,18 +149,94 @@ func readDevEnvFile(path string) ([]secretsPair, [sha256.Size]byte, error) {
 	return pairs, fingerprint, nil
 }
 
+var devServiceOverrideSchemes = map[string]map[string]struct{}{
+	"DATABASE_URL": {"postgres": {}, "postgresql": {}},
+	"REDIS_URL":    {"redis": {}, "rediss": {}},
+	"MONGO_URL":    {"mongodb": {}, "mongodb+srv": {}},
+	"MONGODB_URL":  {"mongodb": {}, "mongodb+srv": {}},
+	"RABBITMQ_URL": {"amqp": {}, "amqps": {}},
+	"NATS_URL":     {"nats": {}, "nats+tls": {}},
+}
+
+func serviceOverrideContainsKey(pairs []secretsPair, key string) bool {
+	for _, pair := range pairs {
+		if pair.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// readDevServiceOverrideFile accepts only connection URLs whose names and
+// schemes are known to be service bindings. This keeps an override file from
+// becoming a second, unbounded secret channel while still making common local
+// service setups easy to point at a reachable development dependency.
+func readDevServiceOverrideFile(path string) ([]secretsPair, [sha256.Size]byte, error) {
+	pairs, fingerprint, err := readDevEnvFile(path)
+	if err != nil {
+		return nil, [sha256.Size]byte{}, err
+	}
+	for _, pair := range pairs {
+		schemes, ok := devServiceOverrideSchemes[pair.Key]
+		if !ok {
+			return nil, [sha256.Size]byte{}, fmt.Errorf("service override key %q is not supported; use DATABASE_URL, REDIS_URL, MONGO_URL, RABBITMQ_URL, or NATS_URL", pair.Key)
+		}
+		parsed, parseErr := url.Parse(pair.Value)
+		if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, [sha256.Size]byte{}, fmt.Errorf("service override %q must be an absolute connection URL", pair.Key)
+		}
+		if _, ok := schemes[strings.ToLower(parsed.Scheme)]; !ok {
+			return nil, [sha256.Size]byte{}, fmt.Errorf("service override %q must use a %s URL", pair.Key, strings.Join(sortedSchemeNames(schemes), " or "))
+		}
+		if isLoopbackServiceHost(parsed.Hostname()) {
+			return nil, [sha256.Size]byte{}, fmt.Errorf("service override %q points to %q; gregale dev runs remotely, so use a reachable host or --postgres", pair.Key, parsed.Hostname())
+		}
+	}
+	return pairs, fingerprint, nil
+}
+
+func sortedSchemeNames(schemes map[string]struct{}) []string {
+	names := make([]string, 0, len(schemes))
+	for scheme := range schemes {
+		names = append(names, scheme)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func isLoopbackServiceHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // sync uploads the explicit developer config to the default secret scope.
 // It is additive/update-only: omitted keys are left untouched, so a typo or a
 // partial local file cannot delete a working remote environment. The values
 // are sent only in the API request body and never rendered.
 func (s *devEnvSyncState) sync(ctx context.Context, client devSecretClient, app, path string) (devEnvSyncReport, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	pairs, fingerprint, err := readDevEnvFile(path)
 	if err != nil {
 		return devEnvSyncReport{}, err
 	}
+	return s.syncPairs(ctx, client, app, path, pairs, fingerprint, "developer config")
+}
+
+func (s *devEnvSyncState) syncServiceOverrides(ctx context.Context, client devSecretClient, app, path string) (devEnvSyncReport, error) {
+	pairs, fingerprint, err := readDevServiceOverrideFile(path)
+	if err != nil {
+		return devEnvSyncReport{}, err
+	}
+	return s.syncPairs(ctx, client, app, path, pairs, fingerprint, "developer service overrides")
+}
+
+func (s *devEnvSyncState) syncPairs(ctx context.Context, client devSecretClient, app, path string, pairs []secretsPair, fingerprint [sha256.Size]byte, label string) (devEnvSyncReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.synced && s.path == path && s.fingerprint == fingerprint {
 		return devEnvSyncReport{}, nil
 	}
@@ -178,7 +261,7 @@ func (s *devEnvSyncState) sync(ctx context.Context, client devSecretClient, app,
 	}
 	for _, pair := range pairs {
 		if err := client.SetSecretWithScope(ctx, app, pair.Key, pair.Value, ""); err != nil {
-			return devEnvSyncReport{}, fmt.Errorf("set developer config key %q: %w", pair.Key, err)
+			return devEnvSyncReport{}, fmt.Errorf("set %s key %q: %w", label, pair.Key, err)
 		}
 	}
 	s.path = path

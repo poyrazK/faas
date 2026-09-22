@@ -159,7 +159,7 @@ func insertLogEventRow(ctx context.Context, db logEventQueryRower, normalized Lo
 // ListLogEvents returns one newest-first tenant page and one-row lookahead.
 // Both account_id and app_id stay in the SQL predicate even though app ids are
 // globally unique: the duplicate tenant key is the persistence-level IDOR
-// guard required by ADR-211.
+// guard required by ADR-213.
 func (s *PgStore) ListLogEvents(ctx context.Context, filter LogEventFilter) ([]LogEvent, bool, error) {
 	normalized, err := normalizeLogEventFilter(filter)
 	if err != nil {

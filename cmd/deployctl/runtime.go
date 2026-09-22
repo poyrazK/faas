@@ -56,7 +56,12 @@ var legacyManagedServices = []string{"gatewayd", "spool-sync"}
 var managedSocketUnits = []string{"faas-apid.socket", "faas-gatewayd-public.socket"}
 
 func managedServiceNames() []string {
-	entries := daemonunitspec.UnitEntries()
+	// OptionalRegistry services are operator-owned add-ons. Their absence from
+	// a role-specific core release bundle is not evidence that they moved to an
+	// opposite role or should be retired. The dedicated post-activation
+	// convergence for each optional service updates and restarts it only when
+	// its provider configuration is present.
+	entries := daemonunitspec.Registry
 	names := make([]string, 0, len(entries)+len(legacyManagedServices))
 	for _, entry := range entries {
 		names = append(names, entry.Name)

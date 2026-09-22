@@ -13,7 +13,7 @@ import (
 )
 
 // LogEventSource is the closed producer vocabulary admitted to the durable
-// customer log ledger (ADR-211). Adding a source requires an ADR amendment and
+// customer log ledger (ADR-213). Adding a source requires an ADR amendment and
 // a producer redaction review.
 type LogEventSource string
 
@@ -77,7 +77,7 @@ type LogEventFilter struct {
 	Limit        int
 }
 
-// LogEventStore is the ADR-211 durable projection boundary. apid is the only
+// LogEventStore is the ADR-213 durable projection boundary. apid is the only
 // production writer; source daemons publish through authenticated internal
 // transports rather than receiving database credentials.
 type LogEventStore interface {

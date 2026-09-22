@@ -234,6 +234,33 @@ func TestCDControlPlaneBundlesEveryCanonicalControlPlaneDaemon(t *testing.T) {
 	}
 }
 
+func TestCDControlPlanePreservesAndRecoversConfiguredOptionalS3Gateway(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+
+	bundle := strings.Index(workflow, `"${BUNDLE_ROOT}/optional-systemd/faas-s3-gatewayd.service"`)
+	seal := strings.Index(workflow, `bundle-create "${BUNDLE_ROOT}"`)
+	deploy := strings.Index(workflow, `deployctl deploy ${RELEASE_ID}`)
+	recover := strings.Index(workflow, "Restart configured optional S3 gateway")
+	marker := strings.Index(workflow, "apid_dropin=/etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf")
+	masked := strings.Index(workflow, `[[ "$(readlink "$installed_unit")" == /dev/null ]]`)
+	install := strings.Index(workflow, `mv -Tf "$staged_unit" "$installed_unit"`)
+	enable := strings.Index(workflow, "systemctl enable faas-s3-gatewayd.service")
+	ready := strings.Index(workflow, "http://127.0.0.1:9096/readyz")
+	if bundle < 0 || seal < 0 || deploy < 0 || recover < 0 || marker < 0 || masked < 0 || install < 0 || enable < 0 || ready < 0 {
+		t.Fatalf("optional S3 rollout contract is incomplete: bundle=%d seal=%d deploy=%d recover=%d marker=%d masked=%d install=%d enable=%d ready=%d", bundle, seal, deploy, recover, marker, masked, install, enable, ready)
+	}
+	if !(bundle < seal && seal < deploy && deploy < recover && recover < marker && marker < masked && masked < install && install < enable && enable < ready) {
+		t.Fatalf("optional S3 rollout contract is out of order: bundle=%d seal=%d deploy=%d recover=%d marker=%d masked=%d install=%d enable=%d ready=%d", bundle, seal, deploy, recover, marker, masked, install, enable, ready)
+	}
+	if strings.Contains(workflow, "if ! systemctl is-enabled --quiet faas-s3-gatewayd.service") {
+		t.Fatal("optional S3 recovery still treats the deployctl-created mask as an opt-out")
+	}
+}
+
 func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

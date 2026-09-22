@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 import type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
+import type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
 import type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 import type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
 import type { EdgeRuleHeadersAction } from './EdgeRuleHeadersAction.js';
@@ -12,6 +14,7 @@ import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
+import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
 import type { EdgeRuleRewriteAction } from './EdgeRuleRewriteAction.js';
 import type { EdgeRuleRouteAction } from './EdgeRuleRouteAction.js';
 import type { EdgeRuleThrottleAction } from './EdgeRuleThrottleAction.js';
@@ -34,6 +37,6 @@ export type UpdateEdgeRuleRequest = {
   /**
    * Replaces the jsonb column whole.
    */
-  action?: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction);
+  action?: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
 };
 

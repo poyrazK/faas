@@ -39,6 +39,7 @@ type VMRequest struct {
 	TenantID       string
 	DeploymentID   string
 	SourcePath     string // tarball or dockerfile source on disk
+	SourceSHA256   string // digest already verified by the orchestrator
 	SourceRoot     string // repository-relative build root inside the archive; empty = archive root
 	DockerfilePath string // relative to SourceRoot; empty selects Dockerfile
 	Framework      Framework

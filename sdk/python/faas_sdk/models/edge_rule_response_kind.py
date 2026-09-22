@@ -1,8 +1,10 @@
 from typing import Literal
 
 EdgeRuleResponseKind = Literal[
+    "async",
     "budget",
     "cache",
+    "circuit_breaker",
     "cors",
     "geo",
     "headers",
@@ -12,6 +14,7 @@ EdgeRuleResponseKind = Literal[
     "maintenance",
     "redirect",
     "respond",
+    "retry",
     "rewrite",
     "route",
     "throttle",
@@ -19,8 +22,10 @@ EdgeRuleResponseKind = Literal[
 ]
 
 EDGE_RULE_RESPONSE_KIND_VALUES: set[EdgeRuleResponseKind] = {
+    "async",
     "budget",
     "cache",
+    "circuit_breaker",
     "cors",
     "geo",
     "headers",
@@ -30,6 +35,7 @@ EDGE_RULE_RESPONSE_KIND_VALUES: set[EdgeRuleResponseKind] = {
     "maintenance",
     "redirect",
     "respond",
+    "retry",
     "rewrite",
     "route",
     "throttle",
