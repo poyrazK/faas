@@ -16,6 +16,18 @@
       ]
     },
     {
+      "id": "application-messaging-reliability",
+      "name": "Application inbox and outbox reliability",
+      "category": "reliability",
+      "description": "Accepted application messages are persisted through the existing invocation and signed webhook delivery ledgers.",
+      "capabilities": ["application-messaging"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"},
+        {"kind": "test", "locator": "cmd/apid/handlers_application_messaging_test.go::TestDeliverAppEventEnqueuesRegisteredWebhook"}
+      ]
+    },
+    {
       "id": "container-compatibility",
       "name": "Normal OCI container compatibility",
       "category": "compatibility",
