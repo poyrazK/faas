@@ -2995,6 +2995,12 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/failed-events/discard-all", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventsBulkAction(w, r, "discard")
 	}))))
+	mux.Handle("POST /dashboard/failed-events/replay-selected", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventsSelectedAction(w, r, "replay")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/discard-selected", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventsSelectedAction(w, r, "discard")
+	}))))
 	mux.Handle("POST /dashboard/failed-events/{slug}/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventAction(w, r, "replay")
 	}))))

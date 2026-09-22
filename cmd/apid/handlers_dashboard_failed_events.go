@@ -332,6 +332,119 @@ func (s *server) dashboardFailedEventsBulkAction(w http.ResponseWriter, r *http.
 	http.Redirect(w, r, failedEventsRedirect(selected, flash, count), http.StatusSeeOther)
 }
 
+func (s *server) dashboardFailedEventsSelectedAction(w http.ResponseWriter, r *http.Request, action string) {
+	if action != "replay" && action != "discard" {
+		http.NotFound(w, r)
+		return
+	}
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	selected := strings.TrimSpace(r.FormValue("app"))
+	ids := dashboardFailedEventIDs(r.Form["event_id"])
+	if len(ids) == 0 || len(ids) > dashboardFailedEventsMax {
+		http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
+		return
+	}
+
+	scope := "account"
+	var app state.App
+	var err error
+	if selected != "" {
+		app, err = s.store.AppBySlug(r.Context(), selected)
+		if err != nil || app.AccountID != acct.ID {
+			s.observeDashboardDeadLetterAction("account", action, state.ErrNotFound)
+			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
+			return
+		}
+		scope = app.Slug
+	}
+
+	events := make([]state.DeadLetterEvent, 0, len(ids))
+	for _, id := range ids {
+		var event state.DeadLetterEvent
+		if selected != "" {
+			event, err = s.store.DeadLetterEventByID(r.Context(), app.ID, id)
+		} else {
+			event, err = s.store.DeadLetterEventByAccountID(r.Context(), acct.ID, id)
+		}
+		if err != nil || event.ReplayedAt != nil {
+			if err == nil {
+				err = state.ErrNotFound
+			}
+			s.observeDashboardDeadLetterAction(scope, action, err)
+			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
+			return
+		}
+		events = append(events, event)
+	}
+
+	for _, event := range events {
+		if selected != "" {
+			switch action {
+			case "replay":
+				_, err = s.store.ReplayDeadLetterEvent(r.Context(), acct.ID, app.ID, event.ID)
+			case "discard":
+				err = s.store.DeleteDeadLetterEvent(r.Context(), acct.ID, app.ID, event.ID)
+			}
+		} else {
+			switch action {
+			case "replay":
+				_, err = s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, event.ID)
+			case "discard":
+				err = s.store.DeleteDeadLetterEventForAccount(r.Context(), acct.ID, event.ID)
+			}
+		}
+		s.observeDashboardDeadLetterAction(scope, action, err)
+		if err != nil {
+			s.log.Warn("dashboard failed events selected action", "action", action, "account_id", acct.ID, "app", selected, "event_id", event.ID, "err", err)
+			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
+			return
+		}
+	}
+
+	kind := "app.dlq.event_replayed"
+	if action == "discard" {
+		kind = "app.dlq.purged"
+	}
+	data := map[string]any{"count": len(events), "operation": "batch", "selection": "selected", "surface": "dashboard"}
+	if selected != "" {
+		data["app_id"] = app.ID
+	} else {
+		data["account_scope"] = true
+		if action == "replay" {
+			kind = "account.dlq.event_replayed"
+		} else {
+			kind = "account.dlq.purged"
+		}
+	}
+	s.audit.Emit(r.Context(), kind, &acct.ID, data)
+	http.Redirect(w, r, failedEventsRedirect(selected, action+"ed", len(events)), http.StatusSeeOther)
+}
+
+func dashboardFailedEventIDs(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	ids := make([]string, 0, len(raw))
+	for _, id := range raw {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (s *server) observeDashboardDeadLetterAction(app, action string, err error) {
 	status := "success"
 	if err != nil {
