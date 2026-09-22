@@ -2189,6 +2189,7 @@ Promote a live deployment to 100% production traffic
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to promote | required |
+| `--if-serving <ID>` | require this deployment id or vN revision to remain at 100% traffic |  |
 
 ### traffic status
 

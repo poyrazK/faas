@@ -2505,7 +2505,8 @@ type DeploymentPreviewURL struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	TrafficPercent int `json:"traffic_percent"`
+	TrafficPercent              int     `json:"traffic_percent"`
+	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for

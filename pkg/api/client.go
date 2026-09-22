@@ -2031,6 +2031,14 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// PatchDeploymentTrafficIfServing updates traffic only if the named live
+// sibling still owns all production traffic at the transaction boundary.
+func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID}, &out)
+}
+
 // AdvanceCanary advances exactly one persisted canary step. APID resolves
 // the next percentage from the deployment's stored preset and performs the
 // expected-step compare-and-swap together with traffic, rollout state, and

@@ -6951,7 +6951,7 @@ func (s *PgStore) UpdateDeploymentMinInstances(ctx context.Context, id string, m
 // the request path. The CHECK constraint (migration 00160) is the
 // third layer; any out-of-range value reaching this method trips a
 // 23514 SQLSTATE.
-func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error) {
+func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7030,6 +7030,20 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return Deployment{}, fmt.Errorf("state: iterate sibling weights: %w", err)
+	}
+	if len(expectedServingID) > 0 {
+		servingID := ""
+		servingCount := 0
+		for _, sibling := range siblings {
+			if sibling.Prior == 100 {
+				servingID = sibling.ID
+				servingCount++
+			}
+		}
+		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+			return Deployment{}, fmt.Errorf("state: expected serving deployment %s, found %s: %w",
+				expectedServingID[0], servingID, ErrTrafficServingChanged)
+		}
 	}
 
 	if _, err := tx.Exec(ctx,

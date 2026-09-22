@@ -151,6 +151,21 @@ var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 // repair a superseded, failed, or pending target.
 var ErrDeploymentNotLive = errors.New("state: deployment is not live")
 
+// ErrTrafficServingChanged means a conditional traffic update observed a
+// different sole 100% serving deployment while holding the live-row locks.
+var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
+
+// sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
+// dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
+func sameDeploymentID(a, b string) bool {
+	if a == b {
+		return true
+	}
+	parsedA, errA := uuid.Parse(a)
+	parsedB, errB := uuid.Parse(b)
+	return errA == nil && errB == nil && parsedA == parsedB
+}
+
 // ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
 // current step differs from the caller's expected step. The compare-and-swap
 // is checked while the deployment row is locked, so this is the safe race
@@ -2543,8 +2558,9 @@ type Store interface {
 	// unknown. The handler is responsible for the plan-gate (Pro+
 	// only, ErrPlanTrafficSplitNotAllowed) and the request-time
 	// range-check — this method holds the FOR UPDATE lock that
-	// makes the rebalance race-free against CreateDeployment.
-	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error)
+	// makes the rebalance race-free against CreateDeployment. An optional
+	// expectedServingID is checked while those locks are held, before writes.
+	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error)
 
 	// RecoverRollout (issue #976 / ADR-122 / SAFE-RELEASES-R) is
 	// the operator manual-recovery escape hatch — the back-end

@@ -294,3 +294,54 @@ func TestPatchDeploymentTraffic_NonLiveReportsConflict(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchDeploymentTraffic_ExpectedServingIsAtomic(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	notifier := &captureNotifier{}
+	e.s.notif = notifier
+	stable := mustSeedDeployment(t, e, "traffic-conditional-api")
+	if err := e.store.MarkDeploymentLive(t.Context(), stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(t.Context(), "traffic-conditional-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate",
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Repeat("f", 32)
+	rec := e.do(t, http.MethodPatch, "/v1/deployments/"+candidate.ID+"/traffic",
+		api.UpdateDeploymentTrafficRequest{TrafficPercent: 100, ExpectedServingDeploymentID: &stale}, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeTrafficServingChanged)
+	before, _ := e.store.DeploymentByID(t.Context(), stable.ID)
+	after, _ := e.store.DeploymentByID(t.Context(), candidate.ID)
+	if before.TrafficPercent != 100 || after.TrafficPercent != 0 {
+		t.Fatalf("stale PATCH changed traffic: stable=%d candidate=%d", before.TrafficPercent, after.TrafficPercent)
+	}
+	if got := notifier.byChannel(db.NotifyDeploymentChanged); len(got) != 0 {
+		t.Fatalf("stale PATCH sent %d notifications, want none", len(got))
+	}
+	// The API accepts the 32-hex form and canonicalizes it for the store.
+	serving := strings.ReplaceAll(stable.ID, "-", "")
+	rec = e.do(t, http.MethodPatch, "/v1/deployments/"+candidate.ID+"/traffic",
+		api.UpdateDeploymentTrafficRequest{TrafficPercent: 100, ExpectedServingDeploymentID: &serving}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("conditional PATCH status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	before, _ = e.store.DeploymentByID(t.Context(), stable.ID)
+	after, _ = e.store.DeploymentByID(t.Context(), candidate.ID)
+	if before.TrafficPercent != 0 || after.TrafficPercent != 100 {
+		t.Fatalf("conditional PATCH traffic: stable=%d candidate=%d, want 0/100", before.TrafficPercent, after.TrafficPercent)
+	}
+	if got := notifier.byChannel(db.NotifyDeploymentChanged); len(got) != 1 {
+		t.Fatalf("conditional PATCH sent %d notifications, want one", len(got))
+	}
+}

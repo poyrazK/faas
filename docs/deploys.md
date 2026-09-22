@@ -84,14 +84,19 @@ command after readiness succeeds. For example:
 ```
 ✓ Staged v44 with 0% production traffic.
   Preview: https://deploy-44-my-api.gregale.dev
-  Production traffic remains unchanged. https://my-api.gregale.dev
-  Promote: gregale traffic promote --app my-api --deployment v44
+  Production remains on v43. https://my-api.gregale.dev
+  Promote: gregale traffic promote --app my-api --deployment v44 --if-serving v43
 ```
 
 `--no-traffic` is the discoverable spelling for `--traffic-percent 0`. It is
 mutually exclusive with `--traffic-percent`, `--safe`, and canary flags. With
 `--json`, a waited dark deployment adds `preview_url` (when the platform's
 preview zone is enabled) and `promotion_command` to the deployment receipt.
+When one revision owns all production traffic, the command includes
+`--if-serving` so promotion fails with `traffic_serving_changed` (409) if
+another release takes over before you promote. If traffic is split or the
+CLI cannot read current traffic, inspect `gregale traffic status APP` before
+promoting; the receipt omits `promotion_command` in that case.
 `--no-wait` returns once the dark deployment is queued, before a preview URL
 is guaranteed to be live.
 

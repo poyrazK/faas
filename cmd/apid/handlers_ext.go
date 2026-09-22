@@ -1876,6 +1876,19 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if req.ExpectedServingDeploymentID != nil {
+		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
+			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
+			return
+		}
+		parsed, parseErr := uuid.Parse(*req.ExpectedServingDeploymentID)
+		if parseErr != nil {
+			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
+			return
+		}
+		canonical := parsed.String()
+		req.ExpectedServingDeploymentID = &canonical
+	}
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -1885,7 +1898,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	prev := d.TrafficPercent
-	updated, err := s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	var updated state.Deployment
+	if req.ExpectedServingDeploymentID != nil {
+		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
+	} else {
+		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
@@ -1908,6 +1926,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// for target=0 on a sole live row (legitimate Σ=0 —
 			// pinned by TestPg_UpdateDeploymentTraffic_SoleLiveRow).
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
+		case errors.Is(err, state.ErrTrafficServingChanged):
+			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "update failed", err.Error()))
 		}

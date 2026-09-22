@@ -9166,8 +9166,10 @@ paths:
         Range-check [0, 100] is enforced at the handler (422
         `invalid_traffic_percent`). The Σ invariant is asserted
         post-write as a defensive backstop (409
-        `traffic_percent_sum_invalid`) — structurally unreachable
-        with zero-siblings, but pinned by the test suite.
+        `traffic_percent_sum_invalid`).
+        An optional expected_serving_deployment_id is checked under the
+        same live-row locks before rebalance. A stale expectation returns
+        409 `traffic_serving_changed` without changing traffic.
       requestBody:
         required: true
         content:
@@ -9195,10 +9197,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            `409 Conflict` — post-write Σ invariant check tripped.
-            Structurally unreachable with the zero-siblings rebalance
-            form, but pinned by the test suite as a defensive
-            backstop against future refactors.
+            `409 Conflict` — either the post-write Σ invariant check
+            tripped (`traffic_percent_sum_invalid`) or the optional
+            expected_serving_deployment_id was stale
+            (`traffic_serving_changed`). A stale expectation is checked
+            before any traffic write.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '422':
           description: |
@@ -22242,7 +22245,7 @@ components:
         older_than: { type: string, description: "Echoes the cutoff the store applied to this clear pass (e.g. 168h = 7 days)." }
 
     UpdateDeploymentTrafficRequest:
-      description: "Body for PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are rejected at 403 plan_traffic_split_not_allowed."
+      description: "Body for PATCH /v1/deployments/{id}/traffic. Optionally require a particular live sibling to remain the sole 100% serving deployment when the update commits."
       type: object
       required: [traffic_percent]
       properties:
@@ -22252,6 +22255,9 @@ components:
           maximum: 100
           description: "Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."
           example: 25
+        expected_serving_deployment_id:
+          type: string
+          description: "Optional 32-hex or dashed deployment id. If this deployment is no longer the sole live 100% serving sibling at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
 
     AdvanceCanaryRequest:
       description: "Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step observed by the progression worker; APID derives the next traffic percentage and rejects stale observations."

@@ -4190,7 +4190,7 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 // ErrInvalidTrafficPercent. PR-C mirrors the pgstore proportional
 // redistribution (RedistributeTraffic) so both stores share the
 // largest-remainder algorithm. Σ invariant is asserted post-write.
-func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPercent int) (Deployment, error) {
+func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -4203,6 +4203,19 @@ func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPerc
 	}
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
+	}
+	if len(expectedServingID) > 0 {
+		servingID := ""
+		servingCount := 0
+		for otherID, other := range m.deployments {
+			if other.AppID == d.AppID && other.Status == DeployLive && other.TrafficPercent == 100 && otherID != id {
+				servingID = otherID
+				servingCount++
+			}
+		}
+		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+			return Deployment{}, ErrTrafficServingChanged
+		}
 	}
 
 	// Stamp target first; sibling weights collected for redistribution.
