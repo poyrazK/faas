@@ -144,9 +144,7 @@ func (m *vmConcurrencyManager) enterQueue(ctx context.Context, appID, plan strin
 		depth := len(q.tickets)
 		m.queueMu.Unlock()
 		if admission != nil && leaseID != "" {
-			releaseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_ = admission.ReleaseConcurrencyQueueLease(releaseCtx, appID, leaseID)
-			cancel()
+			_ = releaseConcurrencyQueueLease(ctx, admission, appID, leaseID)
 		}
 		return nil, depth, false, nil
 	}
@@ -179,7 +177,7 @@ func (t *concurrencyWaitTicket) wait(ctx context.Context) error {
 	}
 }
 
-func (t *concurrencyWaitTicket) leave() error {
+func (t *concurrencyWaitTicket) leave(ctx context.Context) error {
 	if t == nil || t.manager == nil {
 		return nil
 	}
@@ -195,7 +193,7 @@ func (t *concurrencyWaitTicket) leave() error {
 	q := m.queues[t.appID]
 	if q == nil {
 		m.queueMu.Unlock()
-		return releaseConcurrencyQueueLease(admission, t.appID, leaseID)
+		return releaseConcurrencyQueueLease(ctx, admission, t.appID, leaseID)
 	}
 	idx := -1
 	for i, candidate := range q.tickets {
@@ -206,7 +204,7 @@ func (t *concurrencyWaitTicket) leave() error {
 	}
 	if idx < 0 {
 		m.queueMu.Unlock()
-		return releaseConcurrencyQueueLease(admission, t.appID, leaseID)
+		return releaseConcurrencyQueueLease(ctx, admission, t.appID, leaseID)
 	}
 	wasHead := idx == 0
 	copy(q.tickets[idx:], q.tickets[idx+1:])
@@ -224,14 +222,14 @@ func (t *concurrencyWaitTicket) leave() error {
 	if sink != nil {
 		sink(t.appID, plan, depth)
 	}
-	return releaseConcurrencyQueueLease(admission, t.appID, leaseID)
+	return releaseConcurrencyQueueLease(ctx, admission, t.appID, leaseID)
 }
 
-func releaseConcurrencyQueueLease(admission ConcurrencyQueueAdmission, appID, leaseID string) error {
+func releaseConcurrencyQueueLease(ctx context.Context, admission ConcurrencyQueueAdmission, appID, leaseID string) error {
 	if admission == nil || leaseID == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	return admission.ReleaseConcurrencyQueueLease(ctx, appID, leaseID)
 }
@@ -473,7 +471,7 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	}
 	queuedAt := time.Now()
 	defer func() {
-		if err := ticket.leave(); err != nil && h.log != nil {
+		if err := ticket.leave(ctx); err != nil && h.log != nil {
 			h.log.Warn("gateway: release fleet concurrency queue lease", "app_id", app.ID, "err", err)
 		}
 	}()

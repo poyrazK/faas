@@ -36,7 +36,7 @@ func (b *PGConcurrencyQueueAdmission) TryAcquireConcurrencyQueueLease(ctx contex
 	if err != nil {
 		return "", 0, false, fmt.Errorf("concurrency queue admission: begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	// hashtextextended keeps the lock key stable without requiring a second
 	// coordination row. A hash collision only serializes unrelated apps; it

@@ -196,7 +196,7 @@ func TestVMConcurrencyWarmQueueIsBoundedFIFO(t *testing.T) {
 		t.Fatal("second waiter bypassed the queue head")
 	default:
 	}
-	if err := first.leave(); err != nil {
+	if err := first.leave(context.Background()); err != nil {
 		t.Fatalf("leave first: %v", err)
 	}
 	select {
@@ -204,7 +204,7 @@ func TestVMConcurrencyWarmQueueIsBoundedFIFO(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("leaving queue head did not release the next waiter")
 	}
-	if err := second.leave(); err != nil {
+	if err := second.leave(context.Background()); err != nil {
 		t.Fatalf("leave second: %v", err)
 	}
 	if got := m.queueDepth("app"); got != 0 {
@@ -264,17 +264,17 @@ func TestVMConcurrencyWarmQueueCapIsSharedAcrossGatewayManagers(t *testing.T) {
 		t.Fatalf("fleet overflow = depth %d ok %v err %v, want full at 2", depth, ok, err)
 	}
 
-	if err := first.leave(); err != nil {
+	if err := first.leave(context.Background()); err != nil {
 		t.Fatalf("release first fleet permit: %v", err)
 	}
 	replacement, depth, ok, err := firstGateway.enterQueue(context.Background(), "app", "pro", 2, time.Second)
 	if err != nil || !ok || depth != 2 {
 		t.Fatalf("replacement admission = depth %d ok %v err %v", depth, ok, err)
 	}
-	if err := replacement.leave(); err != nil {
+	if err := replacement.leave(context.Background()); err != nil {
 		t.Fatalf("release replacement fleet permit: %v", err)
 	}
-	if err := second.leave(); err != nil {
+	if err := second.leave(context.Background()); err != nil {
 		t.Fatalf("release second fleet permit: %v", err)
 	}
 }
