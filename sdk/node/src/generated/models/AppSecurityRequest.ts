@@ -14,7 +14,7 @@ export type AppSecurityRequest = {
    */
   require_signed?: boolean | null;
   /**
-   * Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images.
+   * Deploy-time response to high-severity configuration findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images.
    */
   security_policy?: 'off' | 'warn' | 'enforce';
 };
