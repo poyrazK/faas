@@ -1,6 +1,7 @@
 package s3gateway
 
 import (
+	"bytes"
 	"crypto/md5" // #nosec G501 -- multipart ETag compatibility uses the S3 MD5 convention.
 	"encoding/hex"
 	"encoding/xml"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +40,7 @@ func (h *Handler) publicMultipartStore(w http.ResponseWriter, r *http.Request, r
 	return h.multipartStore, true
 }
 
-func (h *Handler) loadPublicMultipart(w http.ResponseWriter, r *http.Request, req requestContext, uploadID string) (state.ObjectMultipartUpload, state.ObjectMultipartUploadStore, bool) {
+func (h *Handler) loadPublicMultipart(w http.ResponseWriter, r *http.Request, req requestContext, uploadID, key string) (state.ObjectMultipartUpload, state.ObjectMultipartUploadStore, bool) {
 	store, ok := h.publicMultipartStore(w, r, req)
 	if !ok {
 		return state.ObjectMultipartUpload{}, nil, false
@@ -48,7 +50,7 @@ func (h *Handler) loadPublicMultipart(w http.ResponseWriter, r *http.Request, re
 		return state.ObjectMultipartUpload{}, nil, false
 	}
 	upload, err := store.GetObjectMultipartUpload(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, uploadID)
-	if err != nil || upload.PartCount != 0 {
+	if err != nil || upload.PartCount != 0 || upload.Key != key {
 		if err == nil {
 			err = objectstorage.ErrNotFound
 		}
@@ -187,7 +189,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	upload, _, ok := h.loadPublicMultipart(w, r, req, uploadID)
+	upload, _, ok := h.loadPublicMultipart(w, r, req, uploadID, key)
 	if !ok {
 		return
 	}
@@ -212,7 +214,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	signed, err := req.provider.PresignMultipartPart(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartPartRequest{
-		Key: key, ProviderUploadID: upload.ProviderUploadID, PartNumber: int32(part64), SizeBytes: r.ContentLength, ExpiresIn: 60,
+		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: int32(part64), SizeBytes: r.ContentLength, ExpiresIn: 60,
 	})
 	if err != nil {
 		h.providerError(w, r, req, err, key)
@@ -263,7 +265,7 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	upload, _, ok := h.loadPublicMultipart(w, r, req, uploadID)
+	upload, _, ok := h.loadPublicMultipart(w, r, req, uploadID, key)
 	if !ok {
 		return
 	}
@@ -275,7 +277,7 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	page, err := req.provider.ListMultipartParts(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartListPartsRequest{Key: key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: marker, Limit: limit})
+	page, err := req.provider.ListMultipartParts(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartListPartsRequest{Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: marker, Limit: limit})
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -284,28 +286,34 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 	for _, part := range page.Items {
 		items = append(items, listedMultipartPart{PartNumber: part.PartNumber, ETag: part.ETag, Size: part.SizeBytes, LastModified: part.LastModified.UTC().Format(time.RFC3339Nano)})
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
+	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
 }
 
 func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	upload, store, ok := h.loadPublicMultipart(w, r, req, uploadID)
+	upload, store, ok := h.loadPublicMultipart(w, r, req, uploadID, key)
 	if !ok {
 		return
 	}
-	if upload.State == state.ObjectMultipartCompleted {
-		writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: key, ETag: multipartETag(upload.Parts), UploadID: upload.ID})
-		return
-	}
-	if upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartCompleting {
-		h.writeMultipartError(w, r, req, state.ErrConflict, "NoSuchUpload")
+	bodyBytes, err := readVerifiedRequestBody(w, r, req.signature.PayloadHash, maxCompleteMultipartBodyBytes)
+	if err != nil {
+		if h.writeAWSChunkedError(w, r, req.requestID, err) {
+			return
+		}
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
 		return
 	}
 	var body completeMultipartUploadRequest
-	decoder := xml.NewDecoder(io.LimitReader(r.Body, 4<<20))
-	if err := decoder.Decode(&body); err != nil || len(body.Parts) == 0 || len(body.Parts) > api.MaxMultipartParts {
+	decoder := xml.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.Strict = true
+	if err := decoder.Decode(&body); err != nil || body.XMLName.Local != "CompleteMultipartUpload" || len(body.Parts) == 0 || len(body.Parts) > api.MaxMultipartParts {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
 		return
 	}
@@ -319,7 +327,19 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 		previousPart = part.PartNumber
 		parts[i] = api.ObjectMultipartCompletedPart{PartNumber: part.PartNumber, ETag: part.ETag}
 	}
-	sizes, err := h.multipartPartSizes(r, req, key, upload)
+	if upload.State == state.ObjectMultipartCompleted {
+		if !slices.Equal(upload.Parts, parts) {
+			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
+			return
+		}
+		writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, ETag: multipartETag(upload.Parts), UploadID: upload.ID})
+		return
+	}
+	if upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartCompleting {
+		h.writeMultipartError(w, r, req, state.ErrConflict, "NoSuchUpload")
+		return
+	}
+	sizes, err := h.multipartPartSizes(r, req, upload.Key, upload)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -362,7 +382,7 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = req.provider.CompleteMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)}); err != nil {
+	if err = req.provider.CompleteMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return
 	}
@@ -370,14 +390,14 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 		h.writeMultipartError(w, r, req, err, "OperationAborted")
 		return
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: key, ETag: multipartETag(parts), UploadID: upload.ID})
+	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: claimed.Key, ETag: multipartETag(parts), UploadID: upload.ID})
 }
 
 func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	upload, store, ok := h.loadPublicMultipart(w, r, req, uploadID)
+	upload, store, ok := h.loadPublicMultipart(w, r, req, uploadID, key)
 	if !ok {
 		return
 	}
@@ -398,7 +418,7 @@ func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req req
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = req.provider.AbortMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: key, ProviderUploadID: claimed.ProviderUploadID}); err != nil {
+	if err = req.provider.AbortMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return
 	}
