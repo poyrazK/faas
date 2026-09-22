@@ -1,4 +1,4 @@
-# ADR-212 · Preview-scoped internal service resolution
+# ADR-219 · Preview-scoped internal service resolution
 
 - **Status:** Accepted
 - **Date:** 2026-09-22
