@@ -263,6 +263,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	budget, budgetErrs := compileBudgetRules(storeRules)
 	cache, cacheErrs := compileCacheRules(storeRules)
 	respond, respondErrs := compileRespondRules(storeRules)
+	asyncRules, asyncErrs := compileAsyncRules(storeRules)
 	retry, retryErrs := compileRetryRules(storeRules)
 	circuitBreaker, circuitBreakerErrs := compileCircuitBreakerRules(storeRules)
 	entry := &gateway.HostEntry{
@@ -281,6 +282,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		Budget:         budget,
 		Cache:          cache,
 		Respond:        respond,
+		Async:          asyncRules,
 		Retry:          retry,
 		CircuitBreaker: circuitBreaker,
 	}
@@ -300,6 +302,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, retryErrs...)
 	parseErrs = append(parseErrs, circuitBreakerErrs...)
 	parseErrs = append(parseErrs, respondErrs...)
+	parseErrs = append(parseErrs, asyncErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
 	}
@@ -352,6 +355,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		}
 		for range respondErrs {
 			g.metrics.ObserveEdgeRuleCompileError("respond")
+		}
+		for range asyncErrs {
+			g.metrics.ObserveEdgeRuleCompileError("async")
 		}
 	}
 	g.cache.PutIfGeneration(host, entry, generation)
@@ -744,6 +750,28 @@ func (g *gatewaydEdgeRules) MatchRespond(ctx context.Context, host, requestPath,
 		rules = entry.Respond
 	}
 	return gateway.PickFirstRespondMatch(rules, requestPath, method)
+}
+
+// MatchAsync returns the highest-priority durable async-route rule matching
+// the public request. It shares the per-host cache and single database load
+// with every other edge-rule kind.
+func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleAsyncResolved {
+	if g == nil || g.cache == nil {
+		return nil
+	}
+	rules, hit := g.cache.GetAsync(host)
+	if !hit {
+		entry, err := g.loadHost(ctx, host)
+		if err != nil {
+			if g.log != nil {
+				g.log.Warn("edge rule loader failed; treating async rule as miss", "host", host, "err", err)
+			}
+			return nil
+		}
+		g.warnPathGlobErrs(host, entry.PathGlobErrs)
+		rules = entry.Async
+	}
+	return gateway.PickFirstAsyncMatch(rules, requestPath, method)
 }
 
 // Reset drops every cached entry. Called by the pg_notify loop in
@@ -1481,6 +1509,34 @@ func compileRespondRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRespond
 			Methods:    buildMethodsMap(r.MatchMethods),
 			StatusCode: a.StatusCode,
 			Body:       append([]byte(nil), a.Body...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	return out, parseErrs
+}
+
+// compileAsyncRules compiles kind=async rows into the same priority/path/
+// method matcher shape as respond and cache. A missing action drops a direct-
+// database row rather than accidentally making a route asynchronous.
+func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncResolved, []gateway.PathGlobError) {
+	if len(storeRules) == 0 {
+		return nil, nil
+	}
+	out := make([]gateway.EdgeRuleAsyncResolved, 0, len(storeRules))
+	var parseErrs []gateway.PathGlobError
+	for i := range storeRules {
+		rule := &storeRules[i]
+		if !rule.Enabled || rule.Kind != state.EdgeRuleKindAsync || rule.Action.Async == nil {
+			continue
+		}
+		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
+			parseErrs = append(parseErrs, errs...)
+			continue
+		}
+		out = append(out, gateway.EdgeRuleAsyncResolved{
+			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
+			Priority: rule.Priority, PathGlob: rule.MatchPath,
+			Methods: buildMethodsMap(rule.MatchMethods),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
