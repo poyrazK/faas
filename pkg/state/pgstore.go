@@ -18427,7 +18427,8 @@ func (s *PgStore) ListRecentEventsForAccount(ctx context.Context, actorAccountID
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb expression data->>'sidecar_name' AND the closed
-// kind IN ('wake.sidecar_init_exit', 'wake.sidecar_restart') so
+// kind IN ('wake.sidecar_init_exit', 'wake.sidecar_restart',
+// 'wake.sidecar_health') so
 // the query never returns non-sidecar rows even if a future
 // event reuses the field name. Orders by at ASC; respects the
 // same since / limit contract as ListEventsByWakeID.
@@ -18447,19 +18448,19 @@ func (s *PgStore) ListEventsBySidecar(ctx context.Context, sidecarName string, s
 	}
 	// Closed kind enum — mirrors the constants in
 	// pkg/events/wake.go (WakeSidecarInitExit,
-	// WakeSidecarRestart). The closed list keeps the planner
+	// WakeSidecarRestart, WakeSidecarHealth). The closed list keeps the planner
 	// honest (an unknown kind won't quietly satisfy the
 	// filter) and matches the in-memory twin's filter in
 	// memstore.go.
 	//
-	// Index: events_sidecar_name_idx (migration 00121) is a
-	// partial expression index restricted to the same closed
-	// kinds, keyed on (data->>'sidecar_name')::text. The
-	// planner picks it up for this query's predicate (verified
-	// by TestMigrations_00121_EventsSidecarNameIdx's EXPLAIN
-	// check). A future PR that adds a new closed sidecar-kind
-	// must update the index's WHERE clause in lockstep.
-	const kindFilter = "kind in ('wake.sidecar_init_exit', 'wake.sidecar_restart')"
+	// Index: events_sidecar_name_idx (migration 00128) covers the
+	// init-exit/restart kinds, while the companion
+	// events_sidecar_health_name_idx (timestamp migration
+	// 20260922133000001) covers health transitions. PostgreSQL
+	// can combine the two partial expression indexes for this
+	// closed-kind predicate without widening the high-volume
+	// original index.
+	const kindFilter = "kind in ('wake.sidecar_init_exit', 'wake.sidecar_restart', 'wake.sidecar_health')"
 	var rows pgx.Rows
 	var err error
 	if since.IsZero() {

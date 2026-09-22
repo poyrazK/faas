@@ -416,3 +416,17 @@ func TestSweep_SidecarRestart(t *testing.T) {
 		t.Error("payload attempt mismatch")
 	}
 }
+
+func TestSweep_SidecarHealth(t *testing.T) {
+	now := time.Now()
+	e := SidecarHealth{
+		EmitAt: now, AppID: "a1", InstanceID: "i1",
+		SidecarName: "log-shipper", Status: "healthy", Reason: "started",
+	}
+	if e.Kind() != WakeSidecarHealth {
+		t.Errorf("Kind = %q", e.Kind())
+	}
+	if e.Payload()["status"] != "healthy" {
+		t.Error("payload status mismatch")
+	}
+}

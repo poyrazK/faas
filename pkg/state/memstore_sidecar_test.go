@@ -1,8 +1,8 @@
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) in-memory
 // twin tests. Mirrors the memstore_wake_id_test.go shape so the
 // pgstore and MemStore implementations stay in lockstep on:
-// (1) closed-kind filter (only wake.sidecar_init_exit and
-//     wake.sidecar_restart return),
+// (1) closed-kind filter (only the three wake.sidecar_* lifecycle
+//     kinds return),
 // (2) sidecar_name payload filter (matching key wins),
 // (3) at-order ASC (insertion order is NOT at-order — the in-memory
 //     append path runs under different locks).
@@ -41,6 +41,10 @@ func TestMemStore_ListEventsBySidecar_FiltersByKindAndName(t *testing.T) {
 		mustJSON(t, map[string]any{"sidecar_name": "metrics", "attempt": 1, "previous_exit_code": 1})); err != nil {
 		t.Fatalf("append: %v", err)
 	}
+	if err := m.AppendEvent(ctx, "vmmd", "wake.sidecar_health", nil,
+		mustJSON(t, map[string]any{"sidecar_name": "metrics", "status": "healthy"})); err != nil {
+		t.Fatalf("append: %v", err)
+	}
 	if err := m.AppendEvent(ctx, "vmmd", "wake.boot_started", nil,
 		mustJSON(t, map[string]any{"sidecar_name": "metrics", "instance_id": "i-1"})); err != nil {
 		t.Fatalf("append: %v", err)
@@ -50,11 +54,11 @@ func TestMemStore_ListEventsBySidecar_FiltersByKindAndName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEventsBySidecar: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d rows, want 2 (init_ok metrics + restart metrics, boot_started filtered)", len(got))
+	if len(got) != 3 {
+		t.Fatalf("got %d rows, want 3 (init_ok metrics + restart metrics + health, boot_started filtered)", len(got))
 	}
-	if got[0].Kind != "wake.sidecar_init_exit" || got[1].Kind != "wake.sidecar_restart" {
-		t.Errorf("order = [%s, %s], want [init_exit, restart]", got[0].Kind, got[1].Kind)
+	if got[0].Kind != "wake.sidecar_init_exit" || got[1].Kind != "wake.sidecar_restart" || got[2].Kind != "wake.sidecar_health" {
+		t.Errorf("order = [%s, %s, %s], want [init_exit, restart, health]", got[0].Kind, got[1].Kind, got[2].Kind)
 	}
 }
 

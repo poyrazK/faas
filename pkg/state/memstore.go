@@ -14777,7 +14777,8 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb data.sidecar_name key AND the closed wake.kind IN
-// ('wake.sidecar_init_exit', 'wake.sidecar_restart') so a query
+// ('wake.sidecar_init_exit', 'wake.sidecar_restart',
+// 'wake.sidecar_health') so a query
 // never returns non-sidecar rows even if a future event reuses
 // the field name. Orders by at ASC so the per-sidecar timeline
 // reads forward; respects the same since / limit contract as
@@ -14787,7 +14788,8 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 // on a non-sidecar row would be silently returned without it,
 // which would surface an unrelated event in a sidecar's audit
 // view. Closed-enum filter matches the kind constants in
-// pkg/events/wake.go (WakeSidecarInitExit, WakeSidecarRestart).
+// pkg/events/wake.go (WakeSidecarInitExit, WakeSidecarRestart,
+// WakeSidecarHealth).
 func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, since time.Time, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -14797,7 +14799,7 @@ func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, si
 		if !e.At.After(since) {
 			continue
 		}
-		if e.Kind != "wake.sidecar_init_exit" && e.Kind != "wake.sidecar_restart" {
+		if e.Kind != "wake.sidecar_init_exit" && e.Kind != "wake.sidecar_restart" && e.Kind != "wake.sidecar_health" {
 			continue
 		}
 		var payload struct {

@@ -247,7 +247,8 @@ func boot() error {
 	// events proxy. Outbound-only vsock DGRAM on the same port
 	// (1027) as framework_ready; the leading type byte
 	// disambiguates the event class (0x01 = framework_ready,
-	// 0x02 = sidecar_init_exit, 0x03 = sidecar_restart). The
+	// 0x02 = sidecar_init_exit, 0x03 = sidecar_restart,
+	// 0x08 = sidecar_health). The
 	// proxy is held by runWorkloads so the orchestrator can emit
 	// init_ok / init_failed on the init sidecar exit paths and
 	// surface restart events from supervisor.OnCrash. Soft-fail:

@@ -2,8 +2,8 @@
 // ADR-071 / PR-C).
 //
 // The FrameworkReadyReceiver is shared across all guests and
-// needs to dispatch two non-framework-ready event classes
-// (sidecar_init_exit, sidecar_restart) to a sink the cmd main
+// needs to dispatch three non-framework-ready event classes
+// (sidecar_init_exit, sidecar_restart, sidecar_health) to a sink the cmd main
 // loop owns — pkg/events.Platform with a real state.Store
 // AppendEvent, plus the vmmd_sidecar_restart_total counter
 // (PR-C §4). The receiver itself cannot own those because
@@ -51,9 +51,19 @@ type sidecarRestartWire struct {
 	Attempt int    `json:"attempt"`
 }
 
+// sidecarHealthWire is the JSON-parsed payload of a type=0x08 lifecycle
+// transition. Status is one of starting, healthy, unhealthy, restarting, or
+// failed; reason is bounded diagnostic context from guest-init.
+type sidecarHealthWire struct {
+	Sidecar string `json:"sidecar"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
+}
+
 // SidecarEventEmitter is the dispatch sink. The receiver
-// calls EmitSidecarInitExit for type=0x02 datagrams and
-// EmitSidecarRestart for type=0x03. Production wires
+// calls EmitSidecarInitExit for type=0x02 datagrams,
+// EmitSidecarRestart for type=0x03, and EmitSidecarHealth for
+// type=0x08. Production wires
 // EmitterThroughPlatform so a real pkg/events.Platform is
 // the audit destination; tests wire an in-memory fake so the
 // dispatch path is unit-testable without spinning up a real
@@ -70,6 +80,7 @@ type sidecarRestartWire struct {
 type SidecarEventEmitter interface {
 	EmitSidecarInitExit(ctx context.Context, instanceID, appID, deploymentID, wakeID string, wire sidecarInitExitWire)
 	EmitSidecarRestart(ctx context.Context, instanceID, appID, wakeID string, wire sidecarRestartWire)
+	EmitSidecarHealth(ctx context.Context, instanceID, appID, wakeID string, wire sidecarHealthWire)
 }
 
 // noopSidecarEventEmitter is the zero-value default used
@@ -84,6 +95,8 @@ func (noopSidecarEventEmitter) EmitSidecarInitExit(context.Context, string, stri
 }
 func (noopSidecarEventEmitter) EmitSidecarRestart(context.Context, string, string, string, sidecarRestartWire) {
 }
+func (noopSidecarEventEmitter) EmitSidecarHealth(context.Context, string, string, string, sidecarHealthWire) {
+}
 
 // sidecarStatusInitOK and sidecarStatusInitFailed are the
 // closed-enum wire values for the sidecarInitExitWire.Status
@@ -97,4 +110,9 @@ func (noopSidecarEventEmitter) EmitSidecarRestart(context.Context, string, strin
 const (
 	sidecarStatusInitOK     = "init_ok"
 	sidecarStatusInitFailed = "init_failed"
+	sidecarHealthStarting   = "starting"
+	sidecarHealthHealthy    = "healthy"
+	sidecarHealthUnhealthy  = "unhealthy"
+	sidecarHealthRestarting = "restarting"
+	sidecarHealthFailed     = "failed"
 )

@@ -27,7 +27,7 @@
 // workload_OOM channel: the guest-init cgroup.events listener
 // emits a JSON envelope {peak_mb, plan_mb} when the per-VM
 // cgroup v2 leaf detects an oom_kill event. Type outside the
-// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07} is dropped with a
+// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08} is dropped with a
 // Warn (forward-compatible with future event classes).
 //
 // Each connection carries one EOF-delimited frame. Lifecycle telemetry is
@@ -93,6 +93,9 @@ const (
 	// event request from the in-guest metadata proxy. The host resolves
 	// account identity from the instance-bound listener before persisting it.
 	VsockFrameworkReadyHostTypeEventPublish byte = 0x07
+	// VsockFrameworkReadyHostTypeSidecarHealth carries a sidecar lifecycle
+	// transition from guest-init.
+	VsockFrameworkReadyHostTypeSidecarHealth byte = 0x08
 )
 
 // Sidecar init-exit status closed enum (issue #463 / ADR-069 /
@@ -195,6 +198,8 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		r.dispatchSidecarInitExit(instance, msg.InitExit)
 	case parseFWReadyKindRestart:
 		r.dispatchSidecarRestart(instance, msg.Restart)
+	case parseFWReadyKindSidecarHealth:
+		r.dispatchSidecarHealth(instance, msg.SidecarHealth)
 	case parseFWReadyKindTail:
 		r.dispatchTailEvent(instance, msg.Tail)
 	case parseFWReadyKindWorkloadOOM:
@@ -283,6 +288,40 @@ func (r *FrameworkReadyReceiver) dispatchSidecarRestart(instance string, wire si
 		return
 	}
 	r.emitter.EmitSidecarRestart(r.ctx, instance, appID, "" /* wakeID not on wire — see pkg/events.SidecarRestart's struct doc */, wire)
+}
+
+// dispatchSidecarHealth translates the type=0x08 lifecycle signal into the
+// platform emitter. The closed status set keeps the event stream bounded and
+// makes dashboards safe to group by status.
+func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sidecarHealthWire) {
+	switch wire.Status {
+	case sidecarHealthStarting, sidecarHealthHealthy, sidecarHealthUnhealthy,
+		sidecarHealthRestarting, sidecarHealthFailed:
+	default:
+		r.log.Warn("sidecar_health unknown status", "instance", instance, "status", wire.Status)
+		return
+	}
+	wire.Reason = clampSidecarHealthReason(wire.Reason)
+	appID, perr := r.mgr.InstanceAppID(instance)
+	if perr != nil {
+		r.log.Debug("sidecar_health unknown instance", "instance", instance, "err", perr)
+		return
+	}
+	r.emitter.EmitSidecarHealth(r.ctx, instance, appID, "", wire)
+}
+
+func clampSidecarHealthReason(reason string) string {
+	if len(reason) <= 256 {
+		return reason
+	}
+	runes := []rune(reason)
+	if len(runes) > 256 {
+		runes = runes[:256]
+	}
+	for len(runes) > 0 && len(string(runes)) > 256 {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes)
 }
 
 // dispatchTailEvent (issue #667 / ADR-078): the type=0x04
@@ -395,8 +434,8 @@ func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload [
 // ADR-078, extended for workload OOM in Cluster C /
 // ADR-121). Closed set: OK for type=0x01, InitExit for
 // type=0x02, Restart for type=0x03, Tail for type=0x04,
-// WorkloadOOM for type=0x05, DiskTelemetry for type=0x06, and
-// EventPublish for type=0x07.
+// WorkloadOOM for type=0x05, DiskTelemetry for type=0x06,
+// EventPublish for type=0x07, and SidecarHealth for type=0x08.
 type parseFWKind uint8
 
 const (
@@ -416,6 +455,9 @@ const (
 	// parseFWReadyKindEventPublish carries the raw JSON request from the
 	// in-guest metadata event endpoint.
 	parseFWReadyKindEventPublish
+	// parseFWReadyKindSidecarHealth carries bounded guest-init sidecar
+	// lifecycle transitions (type=0x08).
+	parseFWReadyKindSidecarHealth
 )
 
 // tailEventOutcome (issue #667 / ADR-078) mirrors the
@@ -445,9 +487,10 @@ type parseFWReadyMsg struct {
 	Kind     parseFWKind
 	WarmupMs int64
 	// runtime carries the runner id (e.g. "node22") for type=0x01 only.
-	Runtime  string
-	InitExit sidecarInitExitWire
-	Restart  sidecarRestartWire
+	Runtime       string
+	InitExit      sidecarInitExitWire
+	Restart       sidecarRestartWire
+	SidecarHealth sidecarHealthWire
 	// Tail (issue #667 / ADR-078) carries the per-task
 	// outcome + elapsed_ms for type=0x04 only. Outcome is the
 	// closed enum byte (1=completed, 2=failed, 3=timeout);
@@ -528,6 +571,8 @@ func (m parseFWReadyMsg) TypeLabel() string {
 		return fmt.Sprintf("disk_telemetry(0x%02x)", VsockFrameworkReadyHostTypeDisk)
 	case parseFWReadyKindEventPublish:
 		return fmt.Sprintf("event_publish(0x%02x)", VsockFrameworkReadyHostTypeEventPublish)
+	case parseFWReadyKindSidecarHealth:
+		return fmt.Sprintf("sidecar_health(0x%02x)", VsockFrameworkReadyHostTypeSidecarHealth)
 	default:
 		return "unknown"
 	}
@@ -575,6 +620,14 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		msg.Kind = parseFWReadyKindRestart
 		if err := json.Unmarshal(rest, &msg.Restart); err != nil {
 			return msg, fmt.Errorf("sidecar_restart: %w", err)
+		}
+	case VsockFrameworkReadyHostTypeSidecarHealth:
+		if len(rest) > 512 {
+			return msg, fmt.Errorf("sidecar_health: body too large: %d", len(rest))
+		}
+		msg.Kind = parseFWReadyKindSidecarHealth
+		if err := json.Unmarshal(rest, &msg.SidecarHealth); err != nil {
+			return msg, fmt.Errorf("sidecar_health: %w", err)
 		}
 	case VsockFrameworkReadyHostTypeTail:
 		// Issue #667 / ADR-078: waitUntil terminal-event
