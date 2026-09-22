@@ -605,7 +605,7 @@ func cmdApp(args []string) int {
 			return jsonOut(writeJSON(a))
 		}
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
-		fmt.Printf("%-30s %s\n", "url:", a.URL)
+		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
 		fmt.Printf("%-30s %d\n", "guest vcpu:", a.VCPU)

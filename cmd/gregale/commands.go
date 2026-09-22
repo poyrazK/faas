@@ -316,7 +316,7 @@ func cmdApps() int {
 	// that have been grand-fathered by migration 00156.
 	_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-32s %s\n", "SLUG", "STATUS", "URL", "AUTH")
 	for _, a := range apps {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-32s %s\n", a.Slug, a.Status, a.URL, formatAppAuth(a))
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-32s %s\n", a.Slug, a.Status, canonicalAppURL(a), formatAppAuth(a))
 	}
 	return 0
 }

@@ -13,17 +13,9 @@
 // `gregale edge-rules create --kind cors` directly; the verb here
 // targets the "configure-cors-and-stop-thinking-about-it" crowd.
 //
-// Match host always defaults to the platform subdomain shape
-// `<slug>.<tenant-host>`. The CLI has no easy way to read the
-// app's verified custom domains (they live on AccountExportResponse,
-// not AppResponse), so the helper falls back unconditionally and
-// documents --host as the override. The placeholder trips the
-// gateway's host-name validator before any rule is persisted, so a
-// customer who accepts the placeholder sees a clear
-// "host not routable" in their audit log instead of a silent
-// misroute. Operators who want the dashboard-driven shape can copy
-// the match_host value from the per-app detail page and pass
-// --host on the CLI call.
+// Match host defaults to the app's selected verified custom domain, or the
+// canonical platform hostname when no custom domain is configured. Customers
+// can always override it explicitly with --host.
 //
 // Match methods default to [GET, POST, OPTIONS, PUT, PATCH, DELETE]
 // so every common HTTP verb is preflight-allowed out of the box; the
@@ -369,12 +361,16 @@ func cmdCorsShow(args []string) int {
 	return 0
 }
 
-// primaryDomainOrFallback returns the platform hostname from the API's
-// canonical app URL. This keeps the CORS helper aligned with the fleet's
-// configured wildcard suffix instead of baking a second domain contract
-// into the CLI. The customer can always override via --host.
+// primaryDomainOrFallback returns the app's selected verified custom domain
+// when one exists, then falls back to the hostname in the canonical URL. This
+// keeps the CORS helper aligned with the customer's actual ingress host
+// instead of attaching a rule to the platform hostname after a custom-domain
+// switch. The customer can always override via --host.
 func primaryDomainOrFallback(app api.AppResponse) string {
-	if parsed, err := url.Parse(app.URL); err == nil && parsed.Hostname() != "" {
+	if domain := strings.TrimSpace(app.DefaultDomain); domain != "" {
+		return domain
+	}
+	if parsed, err := url.Parse(canonicalAppURL(app)); err == nil && parsed.Hostname() != "" {
 		return parsed.Hostname()
 	}
 	return app.Slug + ".gregale.dev"

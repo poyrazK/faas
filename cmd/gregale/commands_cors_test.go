@@ -5,7 +5,46 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestPrimaryDomainOrFallbackUsesCanonicalHost(t *testing.T) {
+	tests := []struct {
+		name string
+		app  api.AppResponse
+		want string
+	}{
+		{
+			name: "verified custom domain",
+			app: api.AppResponse{
+				Slug: "demo", URL: "https://demo.gregale.dev",
+				CanonicalURL: "https://api.example.com", DefaultDomain: "api.example.com",
+			},
+			want: "api.example.com",
+		},
+		{
+			name: "canonical URL without default domain",
+			app: api.AppResponse{
+				Slug: "demo", URL: "https://demo.gregale.dev",
+				CanonicalURL: "https://api.example.com",
+			},
+			want: "api.example.com",
+		},
+		{
+			name: "platform fallback",
+			app:  api.AppResponse{Slug: "demo", URL: "https://demo.gregale.dev"},
+			want: "demo.gregale.dev",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := primaryDomainOrFallback(tt.app); got != tt.want {
+				t.Fatalf("primaryDomainOrFallback() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestCorsAllowCredentialedDefaultsUseExplicitHeaders(t *testing.T) {
 	resetJSONOut(t)
