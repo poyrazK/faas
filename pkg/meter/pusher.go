@@ -69,9 +69,7 @@ func (p *Pusher) Provider() billing.Provider {
 // against. end is exclusive so a tick at 14:00:00 covers 13:00–14:00. The
 // caller (PushHour) reads usage rows whose minute ∈ [start, end).
 func HourWindow(at time.Time) (start, end time.Time) {
-	start = at.UTC().Truncate(time.Hour).Add(-time.Hour)
-	end = at.UTC().Truncate(time.Hour)
-	return start, end
+	return billing.CompletedUsageWindow(at, time.Hour)
 }
 
 // PushHour pushes the provider's billable quantity for one billing window for
@@ -215,8 +213,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	if lookback <= 0 {
 		lookback = 30 * 24 * time.Hour
 	}
-	end := p.now().UTC().Truncate(time.Hour)
-	start := end.Add(-lookback)
+	start, end := billing.CompletedUsageWindow(p.now(), lookback)
 	ops := providerOpsFor(p.pusher)
 	windows, err := p.store.PendingBillingUsageWindows(ctx, ops.opLabel, start, end)
 	if err != nil {
@@ -370,7 +367,7 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		}
 		return windows[i].AccountID < windows[j].AccountID
 	})
-	cursors := make(map[string]meterOverageCursor)
+	cursors := make(map[string]overageCursor)
 	pushed := 0
 	var firstErr error
 	for _, window := range windows {
@@ -438,12 +435,12 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
-			computeCents := api.OverageCentsForMBSeconds(acct.Plan, computeRaw)
-			beforeCents := saturatedAdd(computeCents, billing.MeterUsageCents(policy, totalBillable-billable))
-			afterCents := saturatedAdd(computeCents, billing.MeterUsageCents(policy, totalBillable))
-			if beforeCents >= capCents || afterCents > capCents {
+			compute := api.BillableMBSeconds(acct.Plan, computeRaw)
+			if combinedOverageCapReached(capCents,
+				billableQuantities{compute: compute, egress: totalBillable - billable},
+				billableQuantities{compute: compute, egress: totalBillable}, policy) {
 				p.log.Info("meter: egress overage cap reached", "account", acct.ID, "hour", window.Hour,
-					"cap_cents", capCents, "before_cents", beforeCents, "after_cents", afterCents)
+					"cap_cents", capCents, "compute_mb_seconds", compute, "egress_quantity", totalBillable)
 				continue
 			}
 		}
@@ -489,10 +486,6 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 	return pushed, firstErr
 }
 
-type meterOverageCursor struct {
-	rawBefore int64
-}
-
 func validateMeterUsagePolicy(policy billing.MeterUsagePolicy) error {
 	if policy.Mode != billing.MeterDeliveryShadow && policy.Mode != billing.MeterDeliveryLive {
 		return fmt.Errorf("unsupported delivery mode %q", policy.Mode)
@@ -506,7 +499,7 @@ func validateMeterUsagePolicy(policy billing.MeterUsagePolicy) error {
 	return nil
 }
 
-func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Account, window state.BillingMeterWindow, policy billing.MeterUsagePolicy, cursors map[string]meterOverageCursor) (delta, total int64, err error) {
+func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Account, window state.BillingMeterWindow, policy billing.MeterUsagePolicy, cursors map[string]overageCursor) (delta, total int64, err error) {
 	hour := window.Hour.UTC().Truncate(time.Hour)
 	monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 	usageStart := monthStart
@@ -516,18 +509,16 @@ func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Accou
 	key := acct.ID + "\x00" + string(window.Meter) + "\x00" + usageStart.Format(time.RFC3339)
 	cursor, ok := cursors[key]
 	if !ok {
-		prior, err := sumMeterUsageRows(ctx, p.store, acct.ID, window.Meter, usageStart, hour)
-		if err != nil {
-			return 0, 0, err
-		}
-		cursor = meterOverageCursor{rawBefore: prior}
+		cursor.nextHour = usageStart
 	}
-	before := max(cursor.rawBefore-policy.IncludedQuantity, 0)
-	if window.Quantity > math.MaxInt64-cursor.rawBefore {
-		return 0, 0, errors.New("meter quantity overflow")
+	prior, current, err := cursor.advance(hour, window.Quantity, func(start, end time.Time) (int64, error) {
+		return sumMeterUsageRows(ctx, p.store, acct.ID, window.Meter, start, end)
+	})
+	if err != nil {
+		return 0, 0, err
 	}
-	cursor.rawBefore += window.Quantity
-	after := max(cursor.rawBefore-policy.IncludedQuantity, 0)
+	before := max(prior-policy.IncludedQuantity, 0)
+	after := max(current-policy.IncludedQuantity, 0)
 	cursors[key] = cursor
 	return after - before, after, nil
 }
@@ -556,16 +547,12 @@ func sumMeterUsageRows(ctx context.Context, store state.Store, accountID string,
 		default:
 			return 0, fmt.Errorf("unsupported billing meter %q", meter)
 		}
-		if quantity > math.MaxInt64-total {
-			return 0, errors.New("meter quantity overflow")
+		total, err = addUsageQuantity(total, quantity)
+		if err != nil {
+			return 0, err
 		}
-		total += quantity
 	}
 	return total, nil
-}
-
-type overageCursor struct {
-	rawBefore int64
 }
 
 func providerUsageMode(provider billing.Provider) billing.UsageMode {
@@ -588,13 +575,23 @@ func (p *Pusher) billableUsage(ctx context.Context, acct state.Account, hour tim
 		return 0, err
 	}
 	before := api.BillableMBSeconds(acct.Plan, prior)
-	after := api.BillableMBSeconds(acct.Plan, prior+raw)
+	current, err := addUsageQuantity(prior, raw)
+	if err != nil {
+		return 0, err
+	}
+	after := api.BillableMBSeconds(acct.Plan, current)
 	capCents, capped, err := p.store.GetAccountOverageCapCents(ctx, acct.ID)
 	if err != nil {
 		return 0, fmt.Errorf("load overage cap: %w", err)
 	}
-	if capped && overageCapReached(capCents, before, after) {
-		return 0, nil
+	if capped {
+		reached, err := p.computeCapReached(ctx, acct, window, capCents, before, after)
+		if err != nil {
+			return 0, err
+		}
+		if reached {
+			return 0, nil
+		}
 	}
 	return after - before, nil
 }
@@ -605,21 +602,28 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 	key := acct.ID + "\x00" + monthStart.Format("2006-01")
 	cursor, ok := cursors[key]
 	if !ok {
-		prior, err := sumUsageRows(ctx, p.store, acct.ID, monthStart, hour)
+		cursor.nextHour = monthStart
+	}
+	prior, current, err := cursor.advance(hour, window.MBSeconds, func(start, end time.Time) (int64, error) {
+		return sumUsageRows(ctx, p.store, acct.ID, start, end)
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	before := api.BillableMBSeconds(acct.Plan, prior)
+	after := api.BillableMBSeconds(acct.Plan, current)
+	cursors[key] = cursor
+	if capCents, capped := caps[acct.ID]; capped {
+		reached, err := p.computeCapReached(ctx, acct, hour, capCents, before, after)
 		if err != nil {
 			return 0, false, err
 		}
-		cursor = overageCursor{rawBefore: prior}
-	}
-	before := api.BillableMBSeconds(acct.Plan, cursor.rawBefore)
-	cursor.rawBefore += window.MBSeconds
-	after := api.BillableMBSeconds(acct.Plan, cursor.rawBefore)
-	cursors[key] = cursor
-	if capCents, capped := caps[acct.ID]; capped && overageCapReached(capCents, before, after) {
-		// Do not send a partial window. A partial push would be recorded as
-		// complete by the provider's hourly dedupe key and the remainder
-		// could never be replayed if the customer later raises the cap.
-		return 0, false, nil
+		if reached {
+			// Do not send a partial window. A partial push would be recorded as
+			// complete by the provider's hourly dedupe key and the remainder
+			// could never be replayed if the customer later raises the cap.
+			return 0, false, nil
+		}
 	}
 	return after - before, true, nil
 }
@@ -687,7 +691,10 @@ func sumUsageRows(ctx context.Context, store state.Store, accountID string, star
 	}
 	var total int64
 	for _, row := range rows {
-		total += row.MBSeconds
+		total, err = addUsageQuantity(total, row.MBSeconds)
+		if err != nil {
+			return 0, err
+		}
 	}
 	return total, nil
 }
