@@ -12,6 +12,11 @@ ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one
 and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
+`make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
+any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
+the gate holds that set and stops it growing. Never add a line to that file.
+
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
 
@@ -26,9 +31,11 @@ references *your branch* introduced: shared files (`api/openapi.yaml`,
 `pkg/api/dto.go`, `pkg/api/limits.go`) document many ADRs at once, so a blanket
 `sed` silently rewrites other people's.
 
-When correcting a duplicate, renumber one ADR per PR and update the references
-that ADR introduced. Numbers can appear in `// adr: NNN` citation lines,
-metrics, and runbooks — ADR-190 alone had 67 references.
+Retro-fixing the existing duplicates is deliberately out of scope for the gate.
+The number is embedded in `// adr: NNN` citation lines that
+`scripts/ci/check_spec_cited_tests.sh` reads, plus metric help strings and
+runbooks — ADR-190 alone had 67 references. Renumber one ADR per PR, and delete
+its baseline line in the same change (the gate fails on a stale entry).
 
 ## Format
 
@@ -54,7 +61,7 @@ metrics, and runbooks — ADR-190 alone had 67 references.
 | 207 | [Bounded builder cache affinity](207-bounded-builder-cache-affinity.md) | accepted | Prefer the latest successful builder briefly so production rebuilds reuse node-local caches without sacrificing availability |
 | 200 | [First-wake 5xx auto-rollback on every plan](200-auto-rollback-on-every-plan.md) | accepted | Health-driven rollback for the first wake of a new deployment, on every plan |
 | 201 | [Traffic resilience as a platform primitive](201-traffic-as-a-platform-primitive.md) | accepted | `kind=retry` + `kind=circuit_breaker` over instance health, and an nftables egress breaker driven by ADR-098 probe outcomes |
-| 212 | [Durable async routes](212-durable-async-routes.md) | accepted | `kind=async` turns a matched public request into the existing durable invocation lifecycle and returns `202` without waking the app |
+| 214 | [Durable async routes](214-durable-async-routes.md) | accepted | `kind=async` turns a matched public request into the existing durable invocation lifecycle and returns `202` without waking the app |
 | 193 | [Transactional per-node RAM reservation](193-transactional-node-reservation.md) | accepted | Invariant §6.2-2 enforced at the instances INSERT; ADR-062 retired NodeLedger's single-process premise |
 | 192 | [Wake hot path: single pre-boot staging session and full attribution](192-wake-hot-path-staging-and-attribution.md) | accepted | One loop-mount per wake for drive1 files; Manager.Wake phases and `stage_pre_boot_files_ms` on `wake.restore_breakdown` |
 | 190 | [Production BuildKit dependency cache](190-production-buildkit-cache.md) | accepted | Reuse app-scoped Railpack and Dockerfile records across production source edits |

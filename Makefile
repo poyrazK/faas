@@ -255,6 +255,14 @@ spec-cited-tests-check: ## Require changed core-path tests to cite a spec sectio
 spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synthetic pull request events
 	bash scripts/ci/check_spec_cited_tests_test.sh
 
+.PHONY: adr-number-uniqueness-check
+adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet over docs/adr/DUPLICATE_NUMBERS_BASELINE.txt)
+	bash scripts/ci/check_adr_number_uniqueness.sh
+
+.PHONY: adr-number-uniqueness-check-test
+adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
+	bash scripts/ci/check_adr_number_uniqueness_test.sh
+
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
 	bash scripts/ci/check_migration_version_hygiene.sh
@@ -629,7 +637,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
 	@$(GO) tool golangci-lint run
 
 .PHONY: runbook-sql-check

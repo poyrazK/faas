@@ -10,7 +10,7 @@ T = TypeVar("T", bound="EdgeRuleAsyncAction")
 
 @_attrs_define
 class EdgeRuleAsyncAction:
-    """Marks the matched route for durable asynchronous execution (ADR-212).
+    """Marks the matched route for durable asynchronous execution (ADR-214).
     The action is an empty object; retry, deadline, retention, and payload
     limits come from the existing invocation and account-plan contracts.
 
