@@ -54,7 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 212 | [Curated global organization activity timeline](212-global-organization-activity-timeline.md) | accepted | Organization-scoped safe activity projection, stable keyset API, and explicit producer mappings |
+| 214 | [Curated global organization activity timeline](214-global-organization-activity-timeline.md) | accepted | Organization-scoped safe activity projection, stable keyset API, and explicit producer mappings |
 | 211 | [Distributed declarative response caching](211-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
 | 210 | [Runtime secret delivery status](210-runtime-secret-delivery.md) | accepted | Expose durable runtime-secret delivery outcomes and errors to operators |
 | 209 | [Runtime secret delivery](209-runtime-secret-delivery.md) | accepted | Restart warm and init snapshots without snapshotting stale runtime secret state |

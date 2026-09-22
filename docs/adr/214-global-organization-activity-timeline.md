@@ -1,4 +1,4 @@
-# ADR-212 · Curated global organization activity timeline
+# ADR-214 · Curated global organization activity timeline
 
 - **Status:** accepted
 - **Date:** 2026-09-22
