@@ -252,7 +252,7 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	if !backend.Capabilities.PointInTimeRestore {
 		return Database{}, ErrUnsupported
 	}
-	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated {
+	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
 		return Database{}, ErrUnsupported
 	}
 	if err := backend.Capabilities.Supports(source.Spec); err != nil {
