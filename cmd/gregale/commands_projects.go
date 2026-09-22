@@ -361,22 +361,70 @@ func cmdProjectsEnvironmentConfigDiff(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	diff, err := client.GetProjectEnvironmentConfigDiff(context.Background(), positional[0], *to, *from)
+	diff, err := client.GetProjectEnvironmentDiff(context.Background(), positional[0], *to, *from)
 	if err != nil {
-		return printErr("Could not load environment config diff", err)
+		return printErr("Could not load environment diff", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(diff))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Environment config diff %s: %s -> %s\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.FromVersion, diff.ToVersion, diff.FromHash, diff.ToHash)
-	if len(diff.Changes) == 0 {
+	renderProjectEnvironmentDiff(diff)
+	return 0
+}
+
+func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
+	_, _ = fmt.Fprintf(osStdout, "Environment diff %s: %s -> %s\n\nCONFIGURATION\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.Configuration.FromVersion, diff.Configuration.ToVersion, diff.Configuration.FromHash, diff.Configuration.ToHash)
+	if len(diff.Configuration.Changes) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "  no changes")
-		return 0
 	}
-	for _, change := range diff.Changes {
+	for _, change := range diff.Configuration.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, change.Before, change.After)
 	}
-	return 0
+	for _, workload := range diff.Workloads {
+		_, _ = fmt.Fprintf(osStdout, "\nAPPLICATION %s\n  release: %-9s %s -> %s\n", workload.WorkloadSlug, workload.Release.Kind, releaseSummary(workload.Release.Before), releaseSummary(workload.Release.After))
+		for _, change := range workload.Variables {
+			_, _ = fmt.Fprintf(osStdout, "  variable %-20s %-8s %s -> %s\n", change.Key, change.Kind, optionalString(change.Before), optionalString(change.After))
+		}
+		for _, change := range workload.Secrets {
+			_, _ = fmt.Fprintf(osStdout, "  secret   %-20s %-8s %s -> %s\n", change.Key, change.Kind, secretCellSummary(change.Before), secretCellSummary(change.After))
+		}
+		for _, change := range workload.Bindings {
+			_, _ = fmt.Fprintf(osStdout, "  binding  %-20s %-8s %s\n", change.BindingID, change.Change, change.Kind)
+		}
+	}
+	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
+	for _, resource := range diff.SharedResources {
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
+	}
+}
+
+func releaseSummary(release api.ProjectEnvironmentReleaseWorkloadResponse) string {
+	for _, identity := range []string{release.ImageDigest, release.SourceSHA256, release.CommitSHA, release.BuildID, release.DeploymentID} {
+		if identity != "" {
+			return identity
+		}
+	}
+	return "<not deployed>"
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return "<missing>"
+	}
+	return *value
+}
+
+func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
+	if !cell.Present {
+		return "<missing>"
+	}
+	if cell.CredentialGeneration > 0 {
+		return fmt.Sprintf("generation %d", cell.CredentialGeneration)
+	}
+	if cell.ValueHash == "" {
+		return "present (fingerprint unavailable)"
+	}
+	return "fingerprint " + cell.ValueHash
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {

@@ -84,11 +84,11 @@ func TestProjectsEnvironmentConfigAndDiffUseEnvironmentRoutes(t *testing.T) {
 
 	t.Run("diff", func(t *testing.T) {
 		resetJSONOut(t)
-		f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":2,"to_version":3,"from_hash":"from","to_hash":"to","changes":[{"key":"MODE","kind":"changed","before":"staging","after":"production"}]}`, http.StatusOK)
+		f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","configuration":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":2,"to_version":3,"from_hash":"from","to_hash":"to","changes":[{"key":"MODE","kind":"changed","before":"staging","after":"production"}]},"workloads":[{"workload_slug":"api","workload_name":"api","release":{"kind":"changed","before":{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"old"},"after":{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"new"}},"variables":[],"secrets":[],"bindings":[]}],"shared_resources":[],"generated_at":"2026-09-22T00:00:00Z"}`, http.StatusOK)
 		if code := cmdProjectsEnvironmentConfigDiff([]string{"shop", "--from", "staging", "--to", "production"}); code != 0 {
 			t.Fatalf("exit = %d, want 0", code)
 		}
-		if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/config/diff" || f.sawQuery != "from=staging" {
+		if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/diff" || f.sawQuery != "from=staging" {
 			t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
 		}
 	})
