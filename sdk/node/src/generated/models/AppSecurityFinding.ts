@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One actionable security posture finding.
+ * One actionable security posture finding. Codes beginning with image_scan_ describe live-image scan-evidence coverage.
  */
 export type AppSecurityFinding = {
   code: string;

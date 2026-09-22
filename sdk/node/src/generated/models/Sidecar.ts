@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
  * One entry in the deploy request's `sidecars` array
@@ -41,6 +42,10 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * (`failure_class=user_error`) and essential long-running
  * sidecars restart-loop. If false, the failure is logged
  * and the other workloads continue.
+ * - `startup_probe` optionally replaces the image's baked OCI
+ * `HEALTHCHECK` for this workload. It uses the exec-style
+ * `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
+ * explicitly disable the image probe.
  * - `depends_on` optionally gates this workload on `main` or
  * another sidecar. Conditions are `started`, `healthy`, and
  * `completed_successfully`; omitted condition means `started`.
@@ -93,6 +98,7 @@ export type Sidecar = {
    * Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
    */
   essential?: boolean;
+  startup_probe?: AppManifestHealthcheck;
   /**
    * Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars.
    */

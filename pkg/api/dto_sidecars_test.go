@@ -81,6 +81,13 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 				DiskIOProfile: string(SidecarDiskIOProfileHigh),
 			},
 		},
+		{
+			name: "startup-probe-override",
+			s: Sidecar{
+				Name: "metrics", Image: "r/x@sha256:" + strings.Repeat("c", 64), Type: SidecarTypeSidecar,
+				StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/usr/local/bin/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -211,6 +218,26 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "cmd-empty-element",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeInit, Cmd: []string{"--to", ""}},
 			wantSub: "every argv element",
+		},
+		{
+			name:    "startup-probe-empty-test",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{}},
+			wantSub: "startup_probe.test",
+		},
+		{
+			name:    "startup-probe-invalid-kind",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"HTTP", "/healthz"}}},
+			wantSub: "CMD, CMD-SHELL, or NONE",
+		},
+		{
+			name:    "startup-probe-shell-extra-command",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD-SHELL", "echo ready", "ignored"}}},
+			wantSub: "exactly one command string",
+		},
+		{
+			name:    "startup-probe-timing-overflows-wire",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 1 << 31}},
+			wantSub: "must fit in int32",
 		},
 		{
 			name: "env-value-too-long",
