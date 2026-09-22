@@ -1,6 +1,6 @@
 package main
 
-// ADR-211 acceptance tests for signature-verified, durable-before-202 inbound
+// ADR-212 acceptance tests for signature-verified, durable-before-202 inbound
 // webhook ingress and deterministic provider-retry deduplication.
 
 import (

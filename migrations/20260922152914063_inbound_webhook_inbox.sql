@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-211: public, provider-verified webhook ingress that acknowledges only
+-- ADR-212: public, provider-verified webhook ingress that acknowledges only
 -- after a durable invocation row exists. The endpoint token is a bearer
 -- capability used only for routing; its SHA-256 digest is the only form stored.
 -- Provider signing secrets use the same age/X25519-at-rest posture as outbound

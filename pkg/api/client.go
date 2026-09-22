@@ -5095,7 +5095,7 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
-// --- Durable inbound webhooks (ADR-211) ----------------------------------
+// --- Durable inbound webhooks (ADR-212) ----------------------------------
 
 func (c *Client) ListInboundWebhookEndpoints(ctx context.Context, slug string) ([]InboundWebhookEndpointResponse, error) {
 	var out []InboundWebhookEndpointResponse
