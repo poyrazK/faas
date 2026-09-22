@@ -419,8 +419,18 @@ func (g *WakeGate) notifyChange(appID, accountID, plan string, depth int) {
 }
 
 func (g *WakeGate) await(ctx context.Context, call *wakeCall) error {
+	// Prefer caller cancellation when both signals are already ready. A bare
+	// select chooses randomly in that case, which can report a completed wake
+	// (and record queue latency) for a request that was cancelled before it
+	// entered the gate.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-call.done:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return call.err
 	case <-ctx.Done():
 		return ctx.Err()
