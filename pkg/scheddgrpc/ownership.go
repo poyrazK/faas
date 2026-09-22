@@ -6,6 +6,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -107,4 +108,27 @@ func (o OwnerNodeID) String() string {
 		return "<legacy single-box>"
 	}
 	return string(o)
+}
+
+// relayForeignFailure decides whether an ownership rejection of a vmmd
+// failure report can be relayed to the owning schedd (issue #3359). It relays
+// only when the rejection is FailedPrecondition, a relay is configured, and
+// this schedd's node hosts the instance. A report about an instance on some
+// other node is still refused, so the relay cannot be used to destroy
+// arbitrary instances. Returns (true, nil) when relayed; otherwise false and
+// the error the handler should return.
+func (s *Server) relayForeignFailure(ctx context.Context, authErr error, r sched.InstanceFailureReport) (bool, error) {
+	if s.failureRelay == nil || s.resolver == nil || status.Code(authErr) != codes.FailedPrecondition {
+		return false, authErr
+	}
+	ins, err := s.resolver.InstanceByID(ctx, r.InstanceID)
+	if err != nil || ins.NodeID == "" || ins.NodeID != string(s.owner) {
+		return false, authErr
+	}
+	r.AppID = ins.AppID
+	if err := s.failureRelay.RelayInstanceFailure(ctx, r); err != nil {
+		s.log.Warn("schedd: relay foreign instance failure", "instance", r.InstanceID, "kind", r.Kind, "err", err)
+		return false, status.Errorf(codes.Unavailable, "relay %s report for instance %s: %v", r.Kind, r.InstanceID, err)
+	}
+	return true, nil
 }
