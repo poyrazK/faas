@@ -2719,7 +2719,7 @@ func (m *MemStore) AppsForProject(_ context.Context, accountID, projectID string
 		if a.ProjectID == "" || a.ProjectID != projectID {
 			continue
 		}
-		if a.Status == AppDeleted {
+		if a.Status == AppDeleted || a.PreviewOfSlug != "" {
 			continue
 		}
 		out = append(out, a)
@@ -3191,7 +3191,7 @@ func (m *MemStore) ApplyProjectReconcile(
 	// Validate the action vocabulary and ownership before mutating anything.
 	liveProjectApps := make(map[string]App)
 	for id, app := range m.apps {
-		if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.Status != AppDeleted {
+		if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.PreviewOfSlug == "" && app.Status != AppDeleted {
 			liveProjectApps[id] = app
 		}
 	}
@@ -3212,6 +3212,9 @@ func (m *MemStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
+			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
+				return rollback(ErrConflict)
+			}
 			creates++
 			key := mutation.App.WorkloadName
 			if _, exists := workloadKeys[key]; exists {
@@ -3303,7 +3306,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			var tombstone App
 			for _, existing := range m.apps {
 				if existing.AccountID == project.AccountID && existing.ProjectID == project.ID &&
-					existing.WorkloadName == app.WorkloadName && existing.Status == AppDeleted {
+					existing.WorkloadName == app.WorkloadName && existing.PreviewOfSlug == "" && existing.Status == AppDeleted {
 					tombstone = existing
 					break
 				}
@@ -3375,7 +3378,7 @@ func (m *MemStore) ApplyProjectReconcile(
 		// schedules are deleted and new schedules are inserted.
 		appByWorkload := make(map[string]string)
 		for id, app := range m.apps {
-			if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.Status != AppDeleted {
+			if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.PreviewOfSlug == "" && app.Status != AppDeleted {
 				appByWorkload[app.WorkloadName] = id
 			}
 		}
@@ -3399,7 +3402,7 @@ func (m *MemStore) ApplyProjectReconcile(
 		kept := make(map[string]map[string]bool)
 		for id, cron := range m.crons {
 			app := m.apps[cron.AppID]
-			if app.ProjectID != project.ID || app.AccountID != project.AccountID {
+			if app.ProjectID != project.ID || app.AccountID != project.AccountID || app.PreviewOfSlug != "" {
 				continue
 			}
 			key := cron.Schedule + "\x00" + cron.Path

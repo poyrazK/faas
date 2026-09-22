@@ -2181,8 +2181,8 @@ type Store interface {
 	// ListProjectsForAccount returns every project under the account
 	// (sorted by created_at desc) for the dashboard list view.
 	//
-	// AppsForProject returns the project's member apps in
-	// slug-ascending order, filtered to status <> 'deleted'. Cross-
+	// AppsForProject returns the project's production workload apps in
+	// workload-name order, excluding deleted apps and preview rows. Cross-
 	// account reads return ErrNotFound, mirroring the AppsByAccount
 	// precedent so handlers can 404 cleanly without checking which
 	// store is in use.

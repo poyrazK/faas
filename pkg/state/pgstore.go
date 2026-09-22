@@ -4619,7 +4619,7 @@ func (s *PgStore) AppsForProject(ctx context.Context, accountID, projectID strin
 	}
 	sel := `select ` + appsSelectColumns + `
 		   from apps
-		  where project_id = $1 and status <> 'deleted'
+		  where project_id = $1 and preview_of_slug is null and status <> 'deleted'
 		  order by workload_name asc, created_at asc`
 	rows, err := s.pool.Query(ctx, sel, projectID)
 	if err != nil {
@@ -5124,7 +5124,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		return ProjectReconcileResult{}, err
 	}
 
-	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and status <> 'deleted' for update`, project.ID)
+	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and preview_of_slug is null and status <> 'deleted' for update`, project.ID)
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: load project apps: %w", err)
 	}
@@ -5148,6 +5148,9 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
+			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
+				return ProjectReconcileResult{}, ErrConflict
+			}
 			creates++
 			var collisionID string
 			if err := tx.QueryRow(ctx, `select id from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID); err == nil {
@@ -5219,7 +5222,7 @@ func (s *PgStore) ApplyProjectReconcile(
 			if marshalErr != nil {
 				return ProjectReconcileResult{}, fmt.Errorf("state: marshal project app manifest: %w", marshalErr)
 			}
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -5233,7 +5236,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "create":
 			app := mutation.App
 			app.AccountID, app.ProjectID = project.AccountID, project.ID
-			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
+			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and preview_of_slug is null and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
 			if tombErr == nil {
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
@@ -5267,7 +5270,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		// Resolve the complete post-mutation workload → app map, then reconcile
 		// every desired (schedule,path) identity. Repeated applies retain IDs,
 		// update enabled state, and remove legacy or source-deleted rows.
-		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and status <> 'deleted'`, project.ID)
+		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and preview_of_slug is null and status <> 'deleted'`, project.ID)
 		if err != nil {
 			return ProjectReconcileResult{}, err
 		}
