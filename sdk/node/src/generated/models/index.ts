@@ -489,6 +489,8 @@ export type { PrewarmRequest } from './PrewarmRequest.js';
 export type { PrivateNetwork } from './PrivateNetwork.js';
 export type { PrivateNetworkFirewallRule } from './PrivateNetworkFirewallRule.js';
 export type { PrivateNetworkListResponse } from './PrivateNetworkListResponse.js';
+export type { PrivateNetworkMember } from './PrivateNetworkMember.js';
+export type { PrivateNetworkMembersResponse } from './PrivateNetworkMembersResponse.js';
 export type { PrivateNetworkPeering } from './PrivateNetworkPeering.js';
 export type { PrivateNetworkPeeringListResponse } from './PrivateNetworkPeeringListResponse.js';
 export type { Problem } from './Problem.js';

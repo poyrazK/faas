@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -119,6 +121,55 @@ func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanE
 	}
 }
 
+// reconcileSecuritySignatures revalidates every live image whose app requires
+// trusted provenance. It runs at startup and after trusted-signer changes so
+// removing or replacing the last signer cannot leave an already-running image
+// grandfathered into service. The deployment's durable parked reason keeps
+// the quarantine closed across missed notifications and daemon restarts.
+func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
+	if l == nil || l.store == nil || l.handler == nil {
+		return
+	}
+	deployments, err := l.store.ListAllDeployments(ctx)
+	if err != nil {
+		l.log.Warn("imaged: list deployments for signature revalidation", "err", err)
+		return
+	}
+	for _, dep := range deployments {
+		if dep.Status != state.DeployLive || dep.Kind != state.DeploymentKindImage ||
+			strings.TrimSpace(dep.ImageDigest) == "" || strings.TrimSpace(dep.ParkedReason) != "" {
+			continue
+		}
+		app, err := l.store.AppByID(ctx, dep.AppID)
+		if err != nil {
+			l.log.Warn("imaged: load app for signature revalidation", "deployment", dep.ID, "app", dep.AppID, "err", err)
+			continue
+		}
+		if app.Status != state.AppActive || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
+			continue
+		}
+		_, verifyErr := l.handler.checkImageSignature(ctx, app, dep.ImageDigest)
+		if verifyErr == nil {
+			continue
+		}
+
+		reason := "security_signature_unavailable"
+		auditKind := "app.signature_invalid"
+		switch {
+		case errors.Is(verifyErr, cosign.ErrSignatureMissing):
+			reason = "security_signature_missing"
+			auditKind = "app.signature_missing"
+		case errors.Is(verifyErr, cosign.ErrSignatureInvalid):
+			reason = "security_signature_revoked"
+			auditKind = "app.signature_revoked"
+		}
+		l.handler.emitSignatureAudit(ctx, auditKind, app, dep, dep.ImageDigest, "")
+		if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
+			l.log.Warn("imaged: quarantine signature regression", "deployment", dep.ID, "app", app.ID, "reason", reason, "observed_at", now.UTC(), "err", quarantineErr)
+		}
+	}
+}
+
 // securityScanLeaseFailure returns a stable reason code when live scan
 // evidence is no longer sufficient to keep an enforce-mode app serving.
 // The lease is intentionally tied to the scheduled sweep interval rather than
@@ -220,6 +271,8 @@ func (l *Loop) quarantineSecurity(ctx context.Context, app state.App, dep state.
 		"kind":            "parked",
 		"app_id":          app.ID,
 		"slug":            app.Slug,
+		"deployment_id":   dep.ID,
+		"image_digest":    dep.ImageDigest,
 		"status":          string(state.AppEvictedCold),
 		"reason":          string(state.ParkReasonSecurityScanRegressed),
 		"evidence_reason": reason,

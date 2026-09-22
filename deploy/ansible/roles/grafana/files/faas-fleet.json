@@ -2356,6 +2356,50 @@
       ],
       "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 418,
+      "type": "timeseries",
+      "title": "Raw TCP sessions and quota rejections",
+      "description": "Current raw TCP sessions and account-quota rejections at gatewayd-public.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 270},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "gatewayd_public_tcp_active_sessions",
+          "legendFormat": "active",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(gatewayd_public_tcp_sessions_rejected_total{reason=\"account_limit\"}[5m]))",
+          "legendFormat": "quota rejects / s",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 419,
+      "type": "timeseries",
+      "title": "Raw TCP throughput and idle reaping",
+      "description": "Forwarded raw TCP bytes by direction and idle-timeout rate.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 270},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (direction) (rate(gatewayd_public_tcp_bytes_total[5m]))",
+          "legendFormat": "bytes / s · {{direction}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(gatewayd_public_tcp_idle_timeouts_total[5m]))",
+          "legendFormat": "idle timeouts / s",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     }
   ],
   "refresh": "30s",

@@ -3,6 +3,12 @@
 Grafana 11 export. Panels cover all 7 of the spec §12 dashboard rows
 that are scorable today; one row remains deferred (rationale below).
 
+The fleet dashboard's raw TCP panels (418-419) show gatewayd-public active
+sessions, account-quota rejections, forwarded bytes by direction, and idle
+timeout rate. Their alert rules live under `family: tcp_ingress` in
+`deploy/ansible/roles/prometheus/files/faas.rules.yml`; triage steps are in
+`docs/runbooks/FaasTCPIngress.md`.
+
 ## `bridge-protection.json` (ADR-127 §D3 / G19)
 
 Four-panel dashboard for the bridge wire-protocol framing protection

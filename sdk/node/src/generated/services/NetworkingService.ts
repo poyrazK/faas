@@ -8,6 +8,7 @@ import type { CreatePrivateNetworkPeeringRequest } from '../models/CreatePrivate
 import type { CreatePrivateNetworkRequest } from '../models/CreatePrivateNetworkRequest.js';
 import type { PrivateNetwork } from '../models/PrivateNetwork.js';
 import type { PrivateNetworkListResponse } from '../models/PrivateNetworkListResponse.js';
+import type { PrivateNetworkMembersResponse } from '../models/PrivateNetworkMembersResponse.js';
 import type { PrivateNetworkPeering } from '../models/PrivateNetworkPeering.js';
 import type { PrivateNetworkPeeringListResponse } from '../models/PrivateNetworkPeeringListResponse.js';
 import type { UpdatePrivateNetworkPolicyRequest } from '../models/UpdatePrivateNetworkPolicyRequest.js';
@@ -113,6 +114,37 @@ export class NetworkingService {
         404: `code: not_found`,
         409: `Network still has an app attachment.`,
         503: `Gregale-owned network fabric is disabled for this network deletion.`,
+      },
+    });
+  }
+  /**
+   * List members and address capacity for a private network.
+   * Returns the account-scoped stable address reservations for this
+   * Gregale-owned network. Capacity excludes the network address, gateway,
+   * and broadcast address; this endpoint is inventory only and does not
+   * probe workloads or call DigitalOcean APIs.
+   *
+   * @returns PrivateNetworkMembersResponse Private-network member inventory.
+   * @throws ApiError
+   */
+  public static listPrivateNetworkMembers({
+    id,
+  }: {
+    /**
+     * Stable Gregale network identifier whose members are listed.
+     */
+    id: string,
+  }): CancelablePromise<PrivateNetworkMembersResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/networks/{id}/members',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Gregale-owned network fabric is disabled for this network inventory read.`,
       },
     });
   }

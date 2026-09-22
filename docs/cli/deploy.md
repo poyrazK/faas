@@ -65,6 +65,15 @@ wait returns a non-zero exit code but retains the accepted deployment ID in
 `--json` output, along with an exact `resume_command`; resume it with
 `gregale deployment wait <deployment-id> --timeout ...`.
 
+Before changing remote state or uploading source, human-readable local-source,
+archive, template, and image deploys print one deployment plan containing the
+selected source, inferred runtime and start command, listener and health check,
+resource profile, environment, and release policy. In a dirty Git checkout the
+plan states whether local changes are included. The default deploy ships
+committed `HEAD`; use `--worktree` when the plan reports that local changes are
+excluded. JSON output remains a single machine-readable deployment receipt and
+does not include this human preflight block.
+
 ## Safe production rollouts
 
 For a health-gated production release, use the opt-in safe path:

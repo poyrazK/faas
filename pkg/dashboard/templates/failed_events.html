@@ -24,8 +24,10 @@
     .actions form { display: inline; margin-right: 0.35rem; }
     .bulk-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
     .bulk-actions form { display: inline; }
+    .selection { text-align: center; }
     .pagination { margin: 1rem 0; }
     button { padding: 0.3rem 0.65rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
     select { padding: 0.35rem; }
     .payload { max-width: 24rem; white-space: pre-wrap; }
     .nowrap { white-space: nowrap; }
@@ -66,19 +68,26 @@
     </form>
 
     {{if .Data.Events}}
+      <form id="failed-events-selected-actions" method="POST" action="/dashboard/failed-events/replay-selected" data-discard-form>
+        <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="app" value="{{.Data.SelectedApp}}">
+        <span id="failed-events-selected-count" class="muted">0 selected</span>
+        <button type="submit" data-selection-button disabled>Replay selected</button>
+        <button type="submit" formaction="/dashboard/failed-events/discard-selected" data-selection-button data-discard-action disabled>Discard selected</button>
+      </form>
       <div class="bulk-actions">
         <span class="muted">Bulk actions apply to up to 200 open events{{if .Data.SelectedApp}} for <code>{{.Data.SelectedApp}}</code>{{end}}.</span>
         <form method="POST" action="/dashboard/failed-events/replay-all"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="app" value="{{.Data.SelectedApp}}"><button type="submit">Replay all matching</button></form>
-        <form method="POST" action="/dashboard/failed-events/discard-all"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="app" value="{{.Data.SelectedApp}}"><button type="submit">Discard all matching</button></form>
+        <form method="POST" action="/dashboard/failed-events/discard-all" data-discard-form><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="app" value="{{.Data.SelectedApp}}"><button type="submit" data-discard-action>Discard all matching</button></form>
       </div>
     {{end}}
 
     {{if .Data.Events}}
       <table aria-label="Failed events">
-        <thead><tr><th>App</th><th>Source</th><th>Failure</th><th>Retries</th><th>Last failed</th><th>Status</th><th>Details</th><th>Action</th></tr></thead>
+        <thead><tr><th class="selection">Select</th><th>App</th><th>Source</th><th>Failure</th><th>Retries</th><th>Last failed</th><th>Status</th><th>Details</th><th>Action</th></tr></thead>
         <tbody>
           {{range .Data.Events}}
             <tr>
+              <td class="selection">{{if eq .Status "open"}}<input type="checkbox" name="event_id" value="{{.ID}}" form="failed-events-selected-actions" data-failed-event-selection aria-label="Select failed event {{.ID}}">{{else}}—{{end}}</td>
               <td>{{if .AppSlug}}<a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a>{{else}}<span class="muted">Account job</span>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
               <td><code>{{.Source}}</code>{{if .Origin}}<br><small class="muted">{{.Origin}}</small>{{end}}</td>
               <td><code>{{.ErrorKind}}</code></td>
@@ -110,6 +119,31 @@
       {{if .Data.NextPageURL}}<nav class="pagination" aria-label="Failed events pagination"><a href="{{.Data.NextPageURL}}">Older events</a></nav>{{end}}
     {{else}}
       <p class="muted">No failed events.</p>
+    {{end}}
+
+    {{if .Data.Events}}
+      <script nonce="{{.Nonce}}">
+        (() => {
+          const form = document.getElementById("failed-events-selected-actions");
+          const selections = Array.from(document.querySelectorAll("[data-failed-event-selection]"));
+          const buttons = Array.from(document.querySelectorAll("[data-selection-button]"));
+          const countLabel = document.getElementById("failed-events-selected-count");
+          const selectedCount = () => selections.filter((input) => input.checked).length;
+          const updateSelectionState = () => {
+            const count = selectedCount();
+            countLabel.textContent = `${count} selected`;
+            buttons.forEach((button) => { button.disabled = count === 0; });
+          };
+          selections.forEach((input) => input.addEventListener("change", updateSelectionState));
+          document.querySelectorAll("[data-discard-form]").forEach((discardForm) => discardForm.addEventListener("submit", (event) => {
+            if (!event.submitter || !event.submitter.hasAttribute("data-discard-action")) return;
+            const count = discardForm === form ? selectedCount() : 0;
+            const target = count > 0 ? `${count} selected event${count === 1 ? "" : "s"}` : "all matching events";
+            if (!window.confirm(`Discard ${target}? This cannot be undone from the dashboard.`)) event.preventDefault();
+          }));
+          updateSelectionState();
+        })();
+      </script>
     {{end}}
   </main>
   <footer>onebox faas · failed events</footer>

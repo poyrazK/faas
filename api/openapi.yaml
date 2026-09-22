@@ -6705,9 +6705,10 @@ paths:
       operationId: purgeAppCache
       summary: Purge cached responses for an app.
       description: |
-        Requests an in-process response-cache purge on every gateway. The
-        optional path glob limits the purge to matching normalized request
-        paths; omit it to purge the complete app cache.
+        Requests a response-cache purge on every gateway and on the optional
+        distributed cache tier. The optional path glob limits the purge to
+        matching normalized request paths; omit it to purge the complete app
+        cache.
       parameters:
         - name: path
           in: query
@@ -7994,6 +7995,38 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503':
           description: Gregale-owned network fabric is disabled for this network deletion.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/networks/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable Gregale network identifier whose members are listed.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+    get:
+      tags: [networking]
+      operationId: listPrivateNetworkMembers
+      summary: List members and address capacity for a private network.
+      description: |
+        Returns the account-scoped stable address reservations for this
+        Gregale-owned network. Capacity excludes the network address, gateway,
+        and broadcast address; this endpoint is inventory only and does not
+        probe workloads or call DigitalOcean APIs.
+      responses:
+        '200':
+          description: Private-network member inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetworkMembersResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled for this network inventory read.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -26917,6 +26950,10 @@ components:
             (`api.ResponseCacheMaxAgeMaxSeconds`). The runtime cache
             layer in `pkg/gateway/response_cache.go` re-checks this
             cap as defence-in-depth.
+          * `stale_while_revalidate_seconds` — optional. After the fresh
+            window, return the cached response immediately while one
+            gateway request refreshes the key in the background. Default
+            0 (disabled); absolute cap 300.
           * `stale_if_error_seconds` — required. Stale-on-error window
             in seconds. Default 300; absolute cap 300
             (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
@@ -26945,6 +26982,15 @@ components:
             Fresh window in seconds. 0 = inherit the apid-side default
             (60s). Positive values are clamped to the platform cap
             (3600s = 1 hour).
+        stale_while_revalidate_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: |
+            After the fresh window, serve stale for this many seconds
+            while a single coalesced background request refreshes the
+            cache key. 0 disables stale-while-revalidate.
         stale_if_error_seconds:
           type: integer
           minimum: 0
@@ -31912,6 +31958,50 @@ components:
         networks:
           type: array
           items: { $ref: '#/components/schemas/PrivateNetwork' }
+
+    PrivateNetworkMember:
+      description: Stable address reservation for one member of a Gregale-owned network.
+      type: object
+      required: [id, owner_type, owner_id, address]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_type:
+          type: string
+          description: Platform resource kind that owns the reservation, such as app.
+        owner_id:
+          type: string
+          description: Opaque platform resource identifier.
+        address:
+          type: string
+          format: ipv4
+        created_at: { type: string, format: date-time }
+
+    PrivateNetworkMembersResponse:
+      description: Account-scoped member inventory and address capacity for one network.
+      type: object
+      required: [network_id, cidr, capacity, used, available, members]
+      properties:
+        network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        cidr:
+          type: string
+          format: ipv4-cidr
+        capacity:
+          type: integer
+          minimum: 0
+          description: Allocatable member addresses after network, gateway, and broadcast reservations.
+        used:
+          type: integer
+          minimum: 0
+        available:
+          type: integer
+          minimum: 0
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/PrivateNetworkMember' }
 
     CreatePrivateNetworkRequest:
       description: POST /v1/networks body for a Gregale-owned network.

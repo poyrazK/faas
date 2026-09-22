@@ -214,7 +214,9 @@ var routeExclude = map[string]bool{
 	// by the session cookie and CSRF token. The public SDK does not model
 	// browser form surfaces; these routes intentionally have no SDK twin.
 	"POST /dashboard/failed-events/discard-all":          true,
+	"POST /dashboard/failed-events/discard-selected":     true,
 	"POST /dashboard/failed-events/replay-all":           true,
+	"POST /dashboard/failed-events/replay-selected":      true,
 	"POST /dashboard/failed-events/{slug}/{id}/discard":  true,
 	"POST /dashboard/failed-events/{slug}/{id}/replay":   true,
 	"POST /dashboard/failed-events/account/{id}/discard": true,
@@ -1021,6 +1023,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/networks":                            "ListPrivateNetworks",
 	"POST /v1/networks":                           "CreatePrivateNetwork",
 	"GET /v1/networks/{id}":                       "GetPrivateNetwork",
+	"GET /v1/networks/{id}/members":               "ListPrivateNetworkMembers",
 	"PUT /v1/networks/{id}/policy":                "UpdatePrivateNetworkPolicy",
 	"DELETE /v1/networks/{id}":                    "DeletePrivateNetwork",
 	"GET /v1/networks/{id}/peerings":              "ListPrivateNetworkPeerings",

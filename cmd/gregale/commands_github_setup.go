@@ -321,7 +321,14 @@ func validGithubSetupBranch(branch string) bool {
 	if branch == "" || len(branch) > 255 || strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") || strings.Contains(branch, "..") {
 		return false
 	}
-	return !strings.ContainsAny(branch, "~^:?*[\\\x00-\x20\x7f")
+	// ContainsAny takes literal characters, not a regular-expression range.
+	// Check controls explicitly so hyphenated branches remain valid.
+	for _, r := range branch {
+		if r <= 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return !strings.ContainsAny(branch, "~^:?*[\\")
 }
 
 func validGithubSetupRollout(rollout string) bool {

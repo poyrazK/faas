@@ -67,8 +67,9 @@ const MaxInstanceIDLen = 128
 const spoolFilePrefix = "log-"
 
 const (
-	spoolPartialSuffix = ".jsonl.partial"
-	spoolUploadSuffix  = ".jsonl.upload"
+	spoolPartialSuffix   = ".jsonl.partial"
+	spoolUploadSuffix    = ".jsonl.upload"
+	spoolCommittedSuffix = ".jsonl.committed"
 )
 
 // spoolLine is the on-disk JSON shape. Fields are kept stable
@@ -179,7 +180,7 @@ func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time,
 	if instanceID == "" || len(instanceID) > MaxInstanceIDLen {
 		return 0, fmt.Errorf("logarchive: invalid instance id (len %d)", len(instanceID))
 	}
-	if strings.ContainsAny(instanceID, "/\\\x00") {
+	if instanceID == "." || instanceID == ".." || strings.ContainsAny(instanceID, "/\\\x00") {
 		return 0, fmt.Errorf("logarchive: instance id contains path separator or NUL")
 	}
 	key := spoolKey{instance: instanceID, day: ts.UTC().Format("2006-01-02")}
@@ -297,7 +298,7 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 		}
 		name := d.Name()
 		if !strings.HasPrefix(name, spoolFilePrefix) ||
-			(!strings.HasSuffix(name, spoolPartialSuffix) && !strings.HasSuffix(name, spoolUploadSuffix)) {
+			(!strings.HasSuffix(name, spoolPartialSuffix) && !strings.HasSuffix(name, spoolUploadSuffix) && !strings.HasSuffix(name, spoolCommittedSuffix)) {
 			return nil
 		}
 		// {prefix}{YYYY-MM-DD}{suffix}. The day sits between
@@ -305,6 +306,7 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 		day := strings.TrimPrefix(name, spoolFilePrefix)
 		day = strings.TrimSuffix(day, spoolPartialSuffix)
 		day = strings.TrimSuffix(day, spoolUploadSuffix)
+		day = strings.TrimSuffix(day, spoolCommittedSuffix)
 		if len(day) != 10 { // YYYY-MM-DD
 			return nil
 		}
@@ -327,10 +329,9 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 			Size:     info.Size(),
 		}
 		key := candidate.Instance + "\x00" + candidate.Day
-		// Prefer a sealed retry fragment over the active partial. The
-		// shipper can then merge any newer partial into the retry file once,
-		// avoiding two uploads to the same daily object in one pass.
-		if existing, ok := byKey[key]; !ok || strings.HasSuffix(name, spoolUploadSuffix) || !strings.HasSuffix(existing.Path, spoolUploadSuffix) {
+		// Every state maps to one daily entry. PrepareUpload recovers any
+		// committed history before merging the sealed and active fragments.
+		if _, ok := byKey[key]; !ok {
 			byKey[key] = candidate
 		}
 		return nil
@@ -374,11 +375,14 @@ var ErrSpoolFull = errors.New("logarchive: spool full")
 // pending, the active partial is merged into it so one daily object remains
 // complete instead of allowing retries to overwrite earlier lines.
 func (s *Spool) PrepareUpload(instance, day string) (string, error) {
-	if instance == "" || len(instance) > MaxInstanceIDLen || strings.ContainsAny(instance, "/\\\x00") {
+	if instance == "" || instance == "." || instance == ".." || len(instance) > MaxInstanceIDLen || strings.ContainsAny(instance, "/\\\x00") {
 		return "", fmt.Errorf("logarchive: invalid instance id")
 	}
 	if len(day) != 10 {
 		return "", fmt.Errorf("logarchive: invalid day %q", day)
+	}
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		return "", fmt.Errorf("logarchive: invalid day: %w", err)
 	}
 	key := spoolKey{instance: instance, day: day}
 	s.mu.Lock()
@@ -395,6 +399,10 @@ func (s *Spool) PrepareUpload(instance, day string) (string, error) {
 	}
 
 	dir := filepath.Join(s.root, instance, day[:4], day[5:7])
+	base := filepath.Join(dir, spoolFilePrefix+day)
+	if err := finishArchiveCommit(base); err != nil {
+		return "", err
+	}
 	partial := filepath.Join(dir, spoolFilePrefix+day+spoolPartialSuffix)
 	upload := filepath.Join(dir, spoolFilePrefix+day+spoolUploadSuffix)
 	partialInfo, partialErr := os.Stat(partial)

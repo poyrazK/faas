@@ -1254,6 +1254,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworks))))
 	mux.HandleFunc("POST /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetwork)))))
 	mux.HandleFunc("GET /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetwork))))
+	mux.HandleFunc("GET /v1/networks/{id}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworkMembers))))
 	mux.HandleFunc("GET /v1/networks/{id}/peerings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworkPeerings))))
 	mux.HandleFunc("POST /v1/networks/{id}/peerings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetworkPeering)))))
 	mux.HandleFunc("GET /v1/networks/{id}/peerings/{peer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetworkPeering))))
@@ -3000,6 +3001,12 @@ func (s *server) handler() http.Handler {
 	}))))
 	mux.Handle("POST /dashboard/failed-events/discard-all", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventsBulkAction(w, r, "discard")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/replay-selected", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventsSelectedAction(w, r, "replay")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/discard-selected", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventsSelectedAction(w, r, "discard")
 	}))))
 	mux.Handle("POST /dashboard/failed-events/{slug}/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventAction(w, r, "replay")

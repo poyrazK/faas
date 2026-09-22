@@ -11,8 +11,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ResponseCache (ADR-122 §Decision) is the in-process per-gateway
-// response cache for kind=cache edge rules. Three properties
+// ResponseCache (ADR-122 and ADR-209) is the bounded in-process L1
+// response cache for kind=cache edge rules. It can optionally write through
+// to a distributed L2. Three properties
 // matter:
 //
 //  1. Bounded by a byte ceiling. The store tracks the sum of all
@@ -20,7 +21,7 @@ import (
 //     entry is evicted (and its size subtracted) until a new
 //     Put fits. A single misconfigured rule cannot pin the
 //     gateway's resident memory.
-//  2. Lazy expiry on Get. Entries past their fresh window are
+//  2. Lazy expiry on Get. Entries past both stale windows are
 //     dropped on read; the in-memory budget is reclaimed when
 //     the LRU eviction catches up, or immediately if the next
 //     Put needs the headroom. No background sweeper goroutine
@@ -34,13 +35,11 @@ import (
 //     NotifyAppChanged hook as a coarser (whole-app) flush
 //     (cmd/gatewayd-internal/backend.go::handleInvalidation).
 //
-// The cache is NOT shared across gatewayd-internal instances
-// (ADR-122 D7): it lives in process memory, has no Redis or
-// shared-cache backing, and does not survive a daemon restart.
-// Customers who need a durable shared cache are directed to the
-// existing docs/storage.md recommendation (Upstash Redis). The
-// platform-owned cache is a wake-elision lever, not a KV
-// replacement.
+// The local L1 does not survive a daemon restart. When a
+// SharedResponseCacheStore is attached, entries and invalidations are shared
+// across gateway instances, but that tier remains TTL-bound and
+// non-authoritative. The platform-owned cache is a wake-elision lever, not a
+// durable KV replacement.
 //
 // Cacheability is deny-by-default at the call site (see the
 // isCacheable predicate in handler_apply_edge_rule_cache.go).
@@ -49,7 +48,11 @@ import (
 type ResponseCache struct {
 	maxBytes int
 	now      func() time.Time
-	mu       sync.Mutex
+	// shared is an optional cross-gateway L2. The in-process LRU remains the
+	// first lookup and the complete fallback when the shared store is absent or
+	// unavailable.
+	shared SharedResponseCacheStore
+	mu     sync.Mutex
 	// data maps CacheKey → *list.Element holding *cacheEntry.
 	// list is the LRU; Front = most recently used, Back = LRU.
 	data map[string]*list.Element
@@ -58,6 +61,19 @@ type ResponseCache struct {
 	// on evict / drop. Bounded by maxBytes; Put never grows the
 	// store past the ceiling.
 	bytes int
+}
+
+// SharedResponseCacheStore is the optional distributed backing tier used by
+// ResponseCache. Implementations must return owned byte/header slices and must
+// bound their own network operations; a shared-store error always degrades to
+// the local cache or origin path.
+type SharedResponseCacheStore interface {
+	Get(CacheKey) (*cacheEntry, error)
+	Put(*cacheEntry) error
+	InvalidateByApp(string) error
+	InvalidateByAppPath(string, string) error
+	InvalidateAll() error
+	Close() error
 }
 
 // CacheKey is the closed set of dimensions that uniquely
@@ -135,15 +151,19 @@ func (k CacheKey) String() string {
 // 2xx/3xx status that was served; the applier gates on this
 // at cacheability time (only cacheable statuses are stored).
 //
-// FreshUntil is the absolute fresh-window expiry; stale-on-error
-// serves look at StaleUntil instead. Both captured at Put() time
-// using the cache's now() clock so test code can advance time.
+// FreshUntil is the absolute fresh-window expiry. RevalidateUntil and
+// ErrorUntil bound the independent stale-while-revalidate and stale-on-error
+// states; StaleUntil is their later retention boundary.
 type cacheEntry struct {
-	key        CacheKey
-	statusCode int
-	header     map[string][]string
-	body       []byte
-	freshUntil time.Time
+	key             CacheKey
+	statusCode      int
+	header          map[string][]string
+	body            []byte
+	freshUntil      time.Time
+	revalidateUntil time.Time
+	errorUntil      time.Time
+	// staleUntil is the later of revalidateUntil and errorUntil. It is the
+	// retention/expiry boundary used by local eviction and shared-store TTLs.
 	staleUntil time.Time
 	// ruleAction carries the per-rule knobs that the serve path
 	// needs to know without re-resolving the rule: stale-on-error
@@ -204,17 +224,28 @@ func NewResponseCacheWithClock(maxBytes int, now func() time.Time) *ResponseCach
 	}
 }
 
+// WithSharedStore attaches an optional distributed L2. It is intended to be
+// called once during daemon startup before the cache is used.
+func (c *ResponseCache) WithSharedStore(store SharedResponseCacheStore) *ResponseCache {
+	if c != nil {
+		c.shared = store
+	}
+	return c
+}
+
 // Get returns the entry for k, or nil on miss / expiry.
 //
 //   - Fresh hit (now < entry.freshUntil): returns ("fresh",
 //     entry).
-//   - Stale-on-error-eligible (now < entry.staleUntil): returns
+//   - Stale-while-revalidate-eligible (now < entry.revalidateUntil):
+//     returns ("stale_while_revalidate_eligible", entry).
+//   - Stale-on-error-eligible (now < entry.errorUntil): returns
 //     ("stale_if_error_eligible", entry). The applier only
 //     serves this state on a genuine origin failure; on a
 //     cache miss, the entry is NOT used (the per-applier
 //     rule is: stale serves only on wake failure or upstream
 //     5xx/timeout, never on a normal miss).
-//   - Expired (now >= entry.staleUntil): drops the entry on the
+//   - Expired (now >= max(revalidateUntil, errorUntil)): drops the entry on the
 //     floor (returns nil) and the next Put needs the headroom.
 //
 // Expired-and-stale entries ARE dropped on Get to keep the
@@ -226,6 +257,25 @@ func (c *ResponseCache) Get(k CacheKey) (state string, entry *cacheEntry) {
 	if c == nil {
 		return "", nil
 	}
+	state, entry = c.getLocal(k)
+	if state != "" || c.shared == nil {
+		return state, entry
+	}
+	sharedEntry, err := c.shared.Get(k)
+	if err != nil || sharedEntry == nil {
+		return "", nil
+	}
+	state = c.classify(sharedEntry)
+	if state == "" {
+		return "", nil
+	}
+	// Best-effort L1 hydration. A deliberately disabled/small L1 must not
+	// suppress a valid shared hit.
+	_ = c.putLocal(sharedEntry)
+	return state, sharedEntry
+}
+
+func (c *ResponseCache) getLocal(k CacheKey) (state string, entry *cacheEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	el, ok := c.data[k.String()]
@@ -233,20 +283,11 @@ func (c *ResponseCache) Get(k CacheKey) (state string, entry *cacheEntry) {
 		return "", nil
 	}
 	entry = el.Value.(*cacheEntry)
-	now := c.now()
-	if now.Before(entry.freshUntil) {
+	state = c.classify(entry)
+	if state == "fresh" || state == "stale_while_revalidate_eligible" || state == "stale_if_error_eligible" {
 		// Fresh hit. Promote to MRU.
 		c.list.MoveToFront(el)
-		return "fresh", entry
-	}
-	if now.Before(entry.staleUntil) {
-		// Past fresh, inside stale-on-error window. The
-		// applier checks the outcome under the wake-failure
-		// gate; on a normal miss the entry is NOT served
-		// (otherwise we'd be inventing stale hits on every
-		// cache miss past max_age).
-		c.list.MoveToFront(el)
-		return "stale_if_error_eligible", entry
+		return state, entry
 	}
 	// Expired. Drop and reclaim headroom immediately so the
 	// next Put doesn't have to wait for the LRU eviction.
@@ -257,6 +298,23 @@ func (c *ResponseCache) Get(k CacheKey) (state string, entry *cacheEntry) {
 		c.bytes = 0
 	}
 	return "", nil
+}
+
+func (c *ResponseCache) classify(entry *cacheEntry) string {
+	if c == nil || entry == nil {
+		return ""
+	}
+	now := c.now()
+	if now.Before(entry.freshUntil) {
+		return "fresh"
+	}
+	if now.Before(entry.revalidateUntil) {
+		return "stale_while_revalidate_eligible"
+	}
+	if now.Before(entry.errorUntil) {
+		return "stale_if_error_eligible"
+	}
+	return ""
 }
 
 // Put inserts an entry under k. If the entry's body size
@@ -276,6 +334,12 @@ func (c *ResponseCache) Get(k CacheKey) (state string, entry *cacheEntry) {
 // disable stale-on-error (the applier passes the per-rule
 // StaleIfErrorSeconds, which is 0 → no stale window).
 func (c *ResponseCache) Put(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, staleUntil time.Time, ruleAction *state.EdgeRuleCacheAction) bool {
+	return c.PutWithWindows(k, statusCode, header, body, freshUntil, freshUntil, staleUntil, ruleAction)
+}
+
+// PutWithWindows inserts an entry with independent stale-while-revalidate and
+// stale-if-error windows. The later boundary controls retention.
+func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction) bool {
 	if c == nil {
 		return false
 	}
@@ -285,20 +349,47 @@ func (c *ResponseCache) Put(k CacheKey, statusCode int, header map[string][]stri
 		// visible in dashboards.
 		return false
 	}
+	staleUntil := errorUntil
+	if revalidateUntil.After(staleUntil) {
+		staleUntil = revalidateUntil
+	}
+	entry := &cacheEntry{
+		key:             k,
+		statusCode:      statusCode,
+		header:          copyHeader(header),
+		body:            append([]byte(nil), body...),
+		freshUntil:      freshUntil,
+		revalidateUntil: revalidateUntil,
+		errorUntil:      errorUntil,
+		staleUntil:      staleUntil,
+		ruleAction:      ruleAction,
+	}
+	localStored := c.putLocal(entry)
+	sharedStored := false
+	if c.shared != nil {
+		sharedStored = c.shared.Put(entry) == nil
+	}
+	return localStored || sharedStored
+}
+
+func (c *ResponseCache) putLocal(entry *cacheEntry) bool {
+	if c == nil || entry == nil {
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// If we already have this key (race against a concurrent
 	// Put on the same key, e.g. two cold-boot threads), drop
 	// the old entry's bytes from the running total before
 	// inserting.
-	if el, ok := c.data[k.String()]; ok {
+	if el, ok := c.data[entry.key.String()]; ok {
 		old := el.Value.(*cacheEntry)
 		c.bytes -= len(old.body)
 		c.list.Remove(el)
-		delete(c.data, k.String())
+		delete(c.data, entry.key.String())
 	}
 	// Evict LRU until the new entry fits.
-	for c.bytes+len(body) > c.maxBytes && c.list.Len() > 0 {
+	for c.bytes+len(entry.body) > c.maxBytes && c.list.Len() > 0 {
 		back := c.list.Back()
 		if back == nil {
 			break
@@ -308,23 +399,14 @@ func (c *ResponseCache) Put(k CacheKey, statusCode int, header map[string][]stri
 		c.list.Remove(back)
 		delete(c.data, victim.key.String())
 	}
-	if len(body) > c.maxBytes {
+	if len(entry.body) > c.maxBytes {
 		// Even after evicting everything, the entry doesn't
 		// fit. Reject and leave the store empty.
 		return false
 	}
-	entry := &cacheEntry{
-		key:        k,
-		statusCode: statusCode,
-		header:     copyHeader(header),
-		body:       append([]byte(nil), body...),
-		freshUntil: freshUntil,
-		staleUntil: staleUntil,
-		ruleAction: ruleAction,
-	}
 	el := c.list.PushFront(entry)
-	c.data[k.String()] = el
-	c.bytes += len(body)
+	c.data[entry.key.String()] = el
+	c.bytes += len(entry.body)
 	return true
 }
 
@@ -336,6 +418,13 @@ func (c *ResponseCache) InvalidateByApp(appID string) {
 	if c == nil {
 		return
 	}
+	c.invalidateLocalByApp(appID)
+	if c.shared != nil {
+		_ = c.shared.InvalidateByApp(appID)
+	}
+}
+
+func (c *ResponseCache) invalidateLocalByApp(appID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for k, el := range c.data {
@@ -368,6 +457,16 @@ func (c *ResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 	if _, err := pathGlobMatch(pathGlob, "/"); err != nil {
 		return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
 	}
+	if err := c.invalidateLocalByAppPath(appID, pathGlob); err != nil {
+		return err
+	}
+	if c.shared != nil {
+		return c.shared.InvalidateByAppPath(appID, pathGlob)
+	}
+	return nil
+}
+
+func (c *ResponseCache) invalidateLocalByAppPath(appID, pathGlob string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for k, el := range c.data {
@@ -402,10 +501,22 @@ func (c *ResponseCache) InvalidateAll() {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.data = make(map[string]*list.Element)
 	c.list = list.New()
 	c.bytes = 0
+	c.mu.Unlock()
+	if c.shared != nil {
+		_ = c.shared.InvalidateAll()
+	}
+}
+
+// Close releases the optional shared backend. The local cache owns no
+// goroutines or file descriptors.
+func (c *ResponseCache) Close() error {
+	if c == nil || c.shared == nil {
+		return nil
+	}
+	return c.shared.Close()
 }
 
 // Len returns the current entry count. Used by tests + the

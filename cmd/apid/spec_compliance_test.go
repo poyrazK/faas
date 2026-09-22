@@ -201,7 +201,9 @@ var routeExclude = map[string]bool{
 	// by the session cookie and CSRF token. The public SDK does not model
 	// browser form surfaces; mirror cmd/sdk-coverage/main.go::routeExclude.
 	"POST /dashboard/failed-events/discard-all":          true,
+	"POST /dashboard/failed-events/discard-selected":     true,
 	"POST /dashboard/failed-events/replay-all":           true,
+	"POST /dashboard/failed-events/replay-selected":      true,
 	"POST /dashboard/failed-events/{slug}/{id}/discard":  true,
 	"POST /dashboard/failed-events/{slug}/{id}/replay":   true,
 	"POST /dashboard/failed-events/account/{id}/discard": true,

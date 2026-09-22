@@ -156,10 +156,14 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 			return "", fmt.Errorf("archive contains duplicate entry %q", name)
 		}
 		seen[name] = struct{}{}
-		parts := strings.Split(name, "/")
-		topLevel[parts[0]] = struct{}{}
-		if len(parts) > 1 {
-			nested = true
+		// Match tarball.RootPrefix, used by the server and builder:
+		// empty directories are not evidence of another project root.
+		if hdr.Typeflag == tar.TypeReg {
+			parts := strings.Split(name, "/")
+			topLevel[parts[0]] = struct{}{}
+			if len(parts) > 1 {
+				nested = true
+			}
 		}
 
 		localName := filepath.FromSlash(name)

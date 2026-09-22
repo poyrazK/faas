@@ -120,11 +120,17 @@ type Config struct {
 	// MetricPrefix is the exact daemon metric prefix (for example,
 	// gatewayd_public). When empty, Name is used.
 	MetricPrefix string
+	// SpanExporters are daemon-local sinks installed alongside the optional
+	// OTLP exporter. They use synchronous processors because these exporters
+	// are expected to do bounded in-memory work only; this lets a daemon retain
+	// selected platform spans even when no external collector is configured.
+	// Nil exporters are ignored.
+	SpanExporters []sdktrace.SpanExporter
 }
 
-// Init wires up the OTel SDK per the config. Returns a Handle whose
-// exporter. The shutdown is a no-op when neither OTEL_EXPORTER_OTLP_ENDPOINT
-// nor OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set (the noop provider path).
+// Init wires up the OTel SDK per the config. The shutdown is a no-op when no
+// local exporter is supplied and neither OTEL_EXPORTER_OTLP_ENDPOINT nor
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set (the noop provider path).
 // Init is safe to call at most
 // once per daemon; subsequent calls panic via SetTracerProvider.
 //
@@ -173,8 +179,14 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	// operator toggles the endpoint on.
 	counter := NewDeploymentCounter(cfg.WindowSize)
 
+	localExporters := make([]sdktrace.SpanExporter, 0, len(cfg.SpanExporters))
+	for _, exporter := range cfg.SpanExporters {
+		if exporter != nil {
+			localExporters = append(localExporters, exporter)
+		}
+	}
 	endpoint := otlpTraceEndpoint()
-	if endpoint == "" {
+	if endpoint == "" && len(localExporters) == 0 {
 		// No exporter configured. Install the SDK noop provider so
 		// call sites do not have to nil-check. The shutdown returned
 		// here is a no-op. The counter is still constructed so the
@@ -187,26 +199,30 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 		}, nil
 	}
 
-	// Let the SDK consume standard endpoint, headers, timeout, compression,
-	// and TLS variables. Preserve Gregale's legacy bare host:port form by
-	// translating only that form into an explicit plaintext URL; passing
-	// endpoint options for every case would override signal-specific env vars.
-	var exporterOptions []otlptracehttp.Option
-	if !strings.Contains(endpoint, "://") {
-		exporterOptions = []otlptracehttp.Option{
-			otlptracehttp.WithEndpointURL("http://" + endpoint),
-			otlptracehttp.WithInsecure(),
+	var otlpExporter sdktrace.SpanExporter
+	if endpoint != "" {
+		// Let the SDK consume standard endpoint, headers, timeout,
+		// compression, and TLS variables. Preserve Gregale's legacy bare
+		// host:port form by translating only that form into an explicit
+		// plaintext URL; passing endpoint options for every case would
+		// override signal-specific env vars.
+		var exporterOptions []otlptracehttp.Option
+		if !strings.Contains(endpoint, "://") {
+			exporterOptions = []otlptracehttp.Option{
+				otlptracehttp.WithEndpointURL("http://" + endpoint),
+				otlptracehttp.WithInsecure(),
+			}
 		}
-	}
-	client, err := otlptracehttp.New(ctx, exporterOptions...)
-	if err != nil {
-		health.SetUnavailable()
-		return nil, fmt.Errorf("otelinit: build OTLP/HTTP client: %w", err)
-	}
-	var exporter sdktrace.SpanExporter = client
-	if health != nil {
+		client, buildErr := otlptracehttp.New(ctx, exporterOptions...)
+		if buildErr != nil {
+			health.SetUnavailable()
+			return nil, fmt.Errorf("otelinit: build OTLP/HTTP client: %w", buildErr)
+		}
+		otlpExporter = client
 		health.SetEnabled(true)
-		exporter = health.Wrap(exporter)
+		otlpExporter = health.Wrap(otlpExporter)
+	} else {
+		health.SetEnabled(false)
 	}
 
 	rate := defaultSamplingRate
@@ -230,18 +246,32 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	root := sdktrace.TraceIDRatioBased(rate)
 	sampler := sdktrace.ParentBased(NewDeploymentAware(root, WithCounter(counter)))
 
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter,
-			sdktrace.WithBatchTimeout(batchTimeout),
-			sdktrace.WithMaxExportBatchSize(512),
-		),
+	providerOptions := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
-	)
+	}
+	if otlpExporter != nil {
+		providerOptions = append(providerOptions, sdktrace.WithBatcher(otlpExporter,
+			sdktrace.WithBatchTimeout(batchTimeout),
+			sdktrace.WithMaxExportBatchSize(512),
+		))
+	}
+	for _, exporter := range localExporters {
+		providerOptions = append(providerOptions, sdktrace.WithSyncer(exporter))
+	}
+	tp := sdktrace.NewTracerProvider(providerOptions...)
 	otel.SetTracerProvider(tp)
-	log.Info("otelinit: wired OTLP/HTTP exporter",
-		"endpoint", endpoint, "sampler", "parent_based_deployment_aware_trace_id_ratio",
-		"sampler_arg", rate, "window_size", counter.WindowSize())
+	if otlpExporter != nil {
+		log.Info("otelinit: wired OTLP/HTTP exporter",
+			"endpoint", endpoint, "local_exporters", len(localExporters),
+			"sampler", "parent_based_deployment_aware_trace_id_ratio",
+			"sampler_arg", rate, "window_size", counter.WindowSize())
+	} else {
+		log.Info("otelinit: wired local span exporters",
+			"local_exporters", len(localExporters),
+			"sampler", "parent_based_deployment_aware_trace_id_ratio",
+			"sampler_arg", rate, "window_size", counter.WindowSize())
+	}
 
 	return &Handle{
 		Shutdown: func(shutdownCtx context.Context) error {

@@ -951,6 +951,8 @@ from .private_network_firewall_rule import PrivateNetworkFirewallRule
 from .private_network_firewall_rule_direction import PrivateNetworkFirewallRuleDirection
 from .private_network_firewall_rule_protocol import PrivateNetworkFirewallRuleProtocol
 from .private_network_list_response import PrivateNetworkListResponse
+from .private_network_member import PrivateNetworkMember
+from .private_network_members_response import PrivateNetworkMembersResponse
 from .private_network_peering import PrivateNetworkPeering
 from .private_network_peering_list_response import PrivateNetworkPeeringListResponse
 from .private_network_peering_status import PrivateNetworkPeeringStatus
@@ -2281,6 +2283,8 @@ __all__ = (
     "PrivateNetworkFirewallRuleDirection",
     "PrivateNetworkFirewallRuleProtocol",
     "PrivateNetworkListResponse",
+    "PrivateNetworkMember",
+    "PrivateNetworkMembersResponse",
     "PrivateNetworkPeering",
     "PrivateNetworkPeeringListResponse",
     "PrivateNetworkPeeringStatus",

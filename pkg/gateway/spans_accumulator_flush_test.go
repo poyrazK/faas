@@ -1,3 +1,4 @@
+// adr: 127
 // spans_accumulator_flush_test.go — ADR-127 PR-D code-review
 // #5 + #10 regression coverage.
 //
@@ -79,6 +80,34 @@ func TestFlushLoop_PerTraceTruncation(t *testing.T) {
 	// Sanity: marshaledLen > 0 (a flush actually happened).
 	if marshaledLen.Load() == 0 {
 		t.Errorf("flush loop never wrote; marshaledLen = 0")
+	}
+}
+
+func TestFlushLoop_DrainsOnCancel(t *testing.T) {
+	acc := NewSpansAccumulator()
+	accountID := uuid.New()
+	traceID := "00000000000000000000000000000006"
+	if _, err := acc.Add(traceID, accountID, []summarizedSpan{{
+		TraceID: traceID,
+		SpanID:  "0000000000000006",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var writes atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := acc.RunFlushLoop(ctx, FlushLoopConfig{
+		Interval: time.Hour,
+		WriteFn: func(context.Context, string, []byte, string) (string, int64, error) {
+			writes.Add(1)
+			return "inserted", 0, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("writes on cancellation = %d, want 1", got)
 	}
 }
 

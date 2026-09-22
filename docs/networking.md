@@ -28,6 +28,13 @@ compute node; each replay replaces the complete effective CIDR set, so stale
 peering destinations are withdrawn. A network referenced by a peering cannot
 be deleted until that peering is removed.
 
+`GET /v1/networks/{id}/members` provides the account-scoped member inventory:
+each stable address reservation includes its owner type, opaque owner ID, and
+address. The response also reports allocatable capacity, used addresses, and
+remaining addresses; network, gateway, and broadcast addresses are excluded
+from capacity. This is an inventory read only and does not probe workloads or
+call DigitalOcean.
+
 The fabric slice persists the network definition and reserves stable member
 addresses (network+1 is reserved as the gateway; allocation starts at
 network+2). When the fabric flag is enabled, schedd first asks every vmmd

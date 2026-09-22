@@ -31,6 +31,18 @@
       ]
     },
     {
+      "id": "declarative-cache-readiness",
+      "name": "Declarative response-cache readiness",
+      "category": "reliability",
+      "description": "A route-level response cache serves an eligible stale response while a single background refresh restores freshness, with an operator recovery path for purge and distributed-cache failures.",
+      "capabilities": ["declarative-response-caching"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/gateway/handler_apply_edge_rule_cache_test.go::TestApplyEdgeRuleCache_StaleWhileRevalidate"},
+        {"kind": "runbook", "locator": "docs/runbooks/FaasResponseCache.md"}
+      ]
+    },
+    {
       "id": "delayed-execution-reliability",
       "name": "Delayed execution reliability",
       "category": "reliability",

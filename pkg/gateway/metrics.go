@@ -333,7 +333,8 @@ type Metrics struct {
 	routeConsumerThrottleDecisions *prometheus.CounterVec
 	// responseCache (ADR-122 §Decision) is the kind=cache outcome
 	// counter, labelled by `outcome` ∈ {hit, miss, bypass_authed,
-	// bypass_uncacheable, stale_if_error_served, store_skipped}.
+	// bypass_uncacheable, stale_while_revalidate_served,
+	// stale_if_error_served, store_skipped}.
 	// hit_rate = hit / (hit + miss + bypass_* + stale_*); the
 	// bypass_* + stale_* outcomes are reported separately so an
 	// operator can see when their hit-rate numerator is being
@@ -967,11 +968,11 @@ func NewMetrics() *Metrics {
 		// ADR-122 §Decision: kind=cache outcome counter.
 		responseCache: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_response_cache_total",
-			Help: "Edge response-cache outcomes, labelled by outcome (hit|miss|bypass_authed|bypass_uncacheable|stale_if_error_served|store_skipped). hit_rate = hit / (hit + miss). bypass_* outcomes are NOT counted in hit_rate. ADR-122.",
+			Help: "Edge response-cache outcomes, labelled by outcome (hit|miss|bypass_authed|bypass_uncacheable|stale_while_revalidate_served|stale_if_error_served|store_skipped). hit_rate = hit / (hit + miss). bypass_* and stale_* outcomes are NOT counted in hit_rate. ADR-122.",
 		}, []string{"outcome"}),
 		responseCacheByApp: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_response_cache_app_total",
-			Help: "Per-app edge response-cache outcomes, labelled by app and outcome (hit|miss|bypass_authed|bypass_uncacheable|stale_if_error_served|store_skipped). hit_rate = hit / (hit + miss). ADR-122 customer analytics.",
+			Help: "Per-app edge response-cache outcomes, labelled by app and outcome (hit|miss|bypass_authed|bypass_uncacheable|stale_while_revalidate_served|stale_if_error_served|store_skipped). hit_rate = hit / (hit + miss). ADR-122 customer analytics.",
 		}, []string{"app", "outcome"}),
 		responseCacheWakesAvoided: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_response_cache_wakes_avoided_total",
@@ -1576,7 +1577,7 @@ func NewMetrics() *Metrics {
 	// panel surfaces every outcome from boot. Adding a new
 	// outcome is a code + dashboard change (the closed set
 	// is intentional — label cardinality stays bounded).
-	for _, outcome := range []string{"hit", "miss", "bypass_authed", "bypass_uncacheable", "stale_if_error_served", "store_skipped"} {
+	for _, outcome := range []string{"hit", "miss", "bypass_authed", "bypass_uncacheable", "stale_while_revalidate_served", "stale_if_error_served", "store_skipped"} {
 		m.responseCache.WithLabelValues(outcome)
 	}
 	for _, kind := range []string{"favicon", "robots", "head"} {

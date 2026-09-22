@@ -96,6 +96,32 @@ func TestInit_NoEndpointIsNoOp(t *testing.T) {
 	}
 }
 
+func TestInit_LocalExporterWorksWithoutOTLPEndpoint(t *testing.T) {
+	prev := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+
+	exporter := tracetest.NewInMemoryExporter()
+	h, err := otelinit.Init(context.Background(), otelinit.Config{
+		Name:          "test-daemon",
+		Version:       "1.0.0",
+		SpanExporters: []sdktrace.SpanExporter{exporter},
+	}, slog.Default())
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	_, span := otelinit.Tracer("test-daemon").Start(context.Background(), "local.span")
+	span.End()
+	got := exporter.GetSpans()
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "local.span" {
+		t.Fatalf("exported spans = %+v, want local.span", got)
+	}
+}
+
 // TestInit_NameRequired pins the contract that a daemon's name is
 // required — the OTel service.name attribute has no zero form.
 func TestInit_NameRequired(t *testing.T) {

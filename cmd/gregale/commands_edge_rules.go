@@ -262,6 +262,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	// structural checks so the user gets the same error locally.
 	var cacheVaryOn, cacheMethods multiFlag
 	cacheMaxAge := fs.Int("cache-max-age-seconds", 0, "kind=cache: fresh window in seconds (default 60; max 3600)")
+	cacheStaleWhileRevalidate := fs.Int("cache-stale-while-revalidate-seconds", 0, "kind=cache: serve stale while a background refresh runs (default 0; max 300)")
 	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", 0, "kind=cache: stale-on-error window in seconds (default 300; max 300)")
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat; default GET,HEAD)")
@@ -313,60 +314,61 @@ func cmdEdgeRulesCreate(args []string) int {
 		return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
 	}
 	actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
-		RouteTarget:                *routeTarget,
-		RewriteFrom:                *rewriteFrom,
-		RewriteTo:                  *rewriteTo,
-		RedirectStatus:             *redirectStatus,
-		RedirectTo:                 *redirectTo,
-		RedirectHeaders:            redirectHeaders,
-		HeadersReqAdd:              headersReqAdd,
-		HeadersReqSet:              headersReqSet,
-		HeadersReqRm:               headersReqRm,
-		HeadersResAdd:              headersResAdd,
-		HeadersResSet:              headersResSet,
-		HeadersResRm:               headersResRm,
-		CORSOrigins:                corsOrigins,
-		CORSMethods:                corsMethods,
-		CORSHeaders:                corsHeaders,
-		CORSExpose:                 corsExpose,
-		CORSCreds:                  *corsCreds,
-		CORSMaxAge:                 *corsMaxAge,
-		JWTIssuer:                  *jwtIssuer,
-		JWTJWKS:                    *jwtJWKS,
-		JWTAudience:                jwtAudience,
-		JWTAlgorithms:              jwtAlgorithms,
-		JWTClaims:                  jwtClaims,
-		IPAllow:                    ipAllow,
-		IPDeny:                     ipDeny,
-		LimitMaxBodyBytes:          *limitMaxBodyBytes,
-		LimitMaxBodyBytesStreaming: *limitMaxBodyBytesStreaming,
-		GeoAllow:                   geoAllow,
-		GeoDeny:                    geoDeny,
-		ThrottleRPS:                *throttleRPS,
-		ThrottleBurst:              *throttleBurst,
-		ThrottleKeyBy:              *throttleKeyBy,
-		ThrottleJWTClaim:           *throttleJWTClaim,
-		ThrottleMaxKeys:            *throttleMaxKeys,
-		ThrottleMissingKeyPolicy:   *throttleMissingKeyPolicy,
-		CacheMaxAgeSeconds:         *cacheMaxAge,
-		CacheStaleIfErrorSeconds:   *cacheStaleIfError,
-		CacheVaryOn:                cacheVaryOn,
-		CacheMethods:               cacheMethods,
-		BudgetMs:                   *budgetMs,
-		BudgetOverrideHeader:       *budgetOverrideHeader,
-		RetryMaxAttempts:           *retryMaxAttempts,
-		RetryAllowNonIdempotent:    *retryAllowNonIdempotent,
-		RetryMinRemainingMs:        *retryMinRemainingMs,
-		RetryBackoffMs:             *retryBackoffMs,
-		CircuitFailureThreshold:    *circuitFailureThreshold,
-		CircuitMinRequests:         *circuitMinRequests,
-		CircuitWindowSeconds:       *circuitWindowSeconds,
-		CircuitOpenSeconds:         *circuitOpenSeconds,
-		CircuitMaxOpenSeconds:      *circuitMaxOpenSeconds,
-		MaintenanceRetryAfter:      *maintenanceRetryAfter,
-		MaintenanceMessage:         *maintenanceMessage,
-		RespondStatus:              *respondStatus,
-		RespondBody:                *respondBody,
+		RouteTarget:                      *routeTarget,
+		RewriteFrom:                      *rewriteFrom,
+		RewriteTo:                        *rewriteTo,
+		RedirectStatus:                   *redirectStatus,
+		RedirectTo:                       *redirectTo,
+		RedirectHeaders:                  redirectHeaders,
+		HeadersReqAdd:                    headersReqAdd,
+		HeadersReqSet:                    headersReqSet,
+		HeadersReqRm:                     headersReqRm,
+		HeadersResAdd:                    headersResAdd,
+		HeadersResSet:                    headersResSet,
+		HeadersResRm:                     headersResRm,
+		CORSOrigins:                      corsOrigins,
+		CORSMethods:                      corsMethods,
+		CORSHeaders:                      corsHeaders,
+		CORSExpose:                       corsExpose,
+		CORSCreds:                        *corsCreds,
+		CORSMaxAge:                       *corsMaxAge,
+		JWTIssuer:                        *jwtIssuer,
+		JWTJWKS:                          *jwtJWKS,
+		JWTAudience:                      jwtAudience,
+		JWTAlgorithms:                    jwtAlgorithms,
+		JWTClaims:                        jwtClaims,
+		IPAllow:                          ipAllow,
+		IPDeny:                           ipDeny,
+		LimitMaxBodyBytes:                *limitMaxBodyBytes,
+		LimitMaxBodyBytesStreaming:       *limitMaxBodyBytesStreaming,
+		GeoAllow:                         geoAllow,
+		GeoDeny:                          geoDeny,
+		ThrottleRPS:                      *throttleRPS,
+		ThrottleBurst:                    *throttleBurst,
+		ThrottleKeyBy:                    *throttleKeyBy,
+		ThrottleJWTClaim:                 *throttleJWTClaim,
+		ThrottleMaxKeys:                  *throttleMaxKeys,
+		ThrottleMissingKeyPolicy:         *throttleMissingKeyPolicy,
+		CacheMaxAgeSeconds:               *cacheMaxAge,
+		CacheStaleWhileRevalidateSeconds: *cacheStaleWhileRevalidate,
+		CacheStaleIfErrorSeconds:         *cacheStaleIfError,
+		CacheVaryOn:                      cacheVaryOn,
+		CacheMethods:                     cacheMethods,
+		BudgetMs:                         *budgetMs,
+		BudgetOverrideHeader:             *budgetOverrideHeader,
+		RetryMaxAttempts:                 *retryMaxAttempts,
+		RetryAllowNonIdempotent:          *retryAllowNonIdempotent,
+		RetryMinRemainingMs:              *retryMinRemainingMs,
+		RetryBackoffMs:                   *retryBackoffMs,
+		CircuitFailureThreshold:          *circuitFailureThreshold,
+		CircuitMinRequests:               *circuitMinRequests,
+		CircuitWindowSeconds:             *circuitWindowSeconds,
+		CircuitOpenSeconds:               *circuitOpenSeconds,
+		CircuitMaxOpenSeconds:            *circuitMaxOpenSeconds,
+		MaintenanceRetryAfter:            *maintenanceRetryAfter,
+		MaintenanceMessage:               *maintenanceMessage,
+		RespondStatus:                    *respondStatus,
+		RespondBody:                      *respondBody,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -512,6 +514,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// structural checks, the server enforces the ceiling.
 	var cacheVaryOn, cacheMethods multiFlag
 	cacheMaxAge := fs.Int("cache-max-age-seconds", 0, "kind=cache: new fresh window in seconds (max 3600)")
+	cacheStaleWhileRevalidate := fs.Int("cache-stale-while-revalidate-seconds", 0, "kind=cache: new stale-while-revalidate window in seconds (max 300)")
 	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", 0, "kind=cache: new stale-on-error window in seconds (max 300)")
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat)")
@@ -600,60 +603,61 @@ func cmdEdgeRulesUpdate(args []string) int {
 			return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
 		}
 		actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
-			RouteTarget:                *routeTarget,
-			RewriteFrom:                *rewriteFrom,
-			RewriteTo:                  *rewriteTo,
-			RedirectStatus:             *redirectStatus,
-			RedirectTo:                 *redirectTo,
-			RedirectHeaders:            redirectHeaders,
-			HeadersReqAdd:              headersReqAdd,
-			HeadersReqSet:              headersReqSet,
-			HeadersReqRm:               headersReqRm,
-			HeadersResAdd:              headersResAdd,
-			HeadersResSet:              headersResSet,
-			HeadersResRm:               headersResRm,
-			CORSOrigins:                corsOrigins,
-			CORSMethods:                corsMethods,
-			CORSHeaders:                corsHeaders,
-			CORSExpose:                 corsExpose,
-			CORSCreds:                  *corsCreds,
-			CORSMaxAge:                 *corsMaxAge,
-			JWTIssuer:                  *jwtIssuer,
-			JWTJWKS:                    *jwtJWKS,
-			JWTAudience:                jwtAudience,
-			JWTAlgorithms:              jwtAlgorithms,
-			JWTClaims:                  jwtClaims,
-			IPAllow:                    ipAllow,
-			IPDeny:                     ipDeny,
-			LimitMaxBodyBytes:          *limitMaxBodyBytes,
-			LimitMaxBodyBytesStreaming: *limitMaxBodyBytesStreaming,
-			GeoAllow:                   geoAllow,
-			GeoDeny:                    geoDeny,
-			ThrottleRPS:                *throttleRPS,
-			ThrottleBurst:              *throttleBurst,
-			ThrottleKeyBy:              *throttleKeyBy,
-			ThrottleJWTClaim:           *throttleJWTClaim,
-			ThrottleMaxKeys:            *throttleMaxKeys,
-			ThrottleMissingKeyPolicy:   *throttleMissingKeyPolicy,
-			CacheMaxAgeSeconds:         *cacheMaxAge,
-			CacheStaleIfErrorSeconds:   *cacheStaleIfError,
-			CacheVaryOn:                cacheVaryOn,
-			CacheMethods:               cacheMethods,
-			BudgetMs:                   *budgetMs,
-			BudgetOverrideHeader:       *budgetOverrideHeader,
-			RetryMaxAttempts:           *retryMaxAttempts,
-			RetryAllowNonIdempotent:    *retryAllowNonIdempotent,
-			RetryMinRemainingMs:        *retryMinRemainingMs,
-			RetryBackoffMs:             *retryBackoffMs,
-			CircuitFailureThreshold:    *circuitFailureThreshold,
-			CircuitMinRequests:         *circuitMinRequests,
-			CircuitWindowSeconds:       *circuitWindowSeconds,
-			CircuitOpenSeconds:         *circuitOpenSeconds,
-			CircuitMaxOpenSeconds:      *circuitMaxOpenSeconds,
-			MaintenanceRetryAfter:      *maintenanceRetryAfter,
-			MaintenanceMessage:         *maintenanceMessage,
-			RespondStatus:              *respondStatus,
-			RespondBody:                *respondBody,
+			RouteTarget:                      *routeTarget,
+			RewriteFrom:                      *rewriteFrom,
+			RewriteTo:                        *rewriteTo,
+			RedirectStatus:                   *redirectStatus,
+			RedirectTo:                       *redirectTo,
+			RedirectHeaders:                  redirectHeaders,
+			HeadersReqAdd:                    headersReqAdd,
+			HeadersReqSet:                    headersReqSet,
+			HeadersReqRm:                     headersReqRm,
+			HeadersResAdd:                    headersResAdd,
+			HeadersResSet:                    headersResSet,
+			HeadersResRm:                     headersResRm,
+			CORSOrigins:                      corsOrigins,
+			CORSMethods:                      corsMethods,
+			CORSHeaders:                      corsHeaders,
+			CORSExpose:                       corsExpose,
+			CORSCreds:                        *corsCreds,
+			CORSMaxAge:                       *corsMaxAge,
+			JWTIssuer:                        *jwtIssuer,
+			JWTJWKS:                          *jwtJWKS,
+			JWTAudience:                      jwtAudience,
+			JWTAlgorithms:                    jwtAlgorithms,
+			JWTClaims:                        jwtClaims,
+			IPAllow:                          ipAllow,
+			IPDeny:                           ipDeny,
+			LimitMaxBodyBytes:                *limitMaxBodyBytes,
+			LimitMaxBodyBytesStreaming:       *limitMaxBodyBytesStreaming,
+			GeoAllow:                         geoAllow,
+			GeoDeny:                          geoDeny,
+			ThrottleRPS:                      *throttleRPS,
+			ThrottleBurst:                    *throttleBurst,
+			ThrottleKeyBy:                    *throttleKeyBy,
+			ThrottleJWTClaim:                 *throttleJWTClaim,
+			ThrottleMaxKeys:                  *throttleMaxKeys,
+			ThrottleMissingKeyPolicy:         *throttleMissingKeyPolicy,
+			CacheMaxAgeSeconds:               *cacheMaxAge,
+			CacheStaleWhileRevalidateSeconds: *cacheStaleWhileRevalidate,
+			CacheStaleIfErrorSeconds:         *cacheStaleIfError,
+			CacheVaryOn:                      cacheVaryOn,
+			CacheMethods:                     cacheMethods,
+			BudgetMs:                         *budgetMs,
+			BudgetOverrideHeader:             *budgetOverrideHeader,
+			RetryMaxAttempts:                 *retryMaxAttempts,
+			RetryAllowNonIdempotent:          *retryAllowNonIdempotent,
+			RetryMinRemainingMs:              *retryMinRemainingMs,
+			RetryBackoffMs:                   *retryBackoffMs,
+			CircuitFailureThreshold:          *circuitFailureThreshold,
+			CircuitMinRequests:               *circuitMinRequests,
+			CircuitWindowSeconds:             *circuitWindowSeconds,
+			CircuitOpenSeconds:               *circuitOpenSeconds,
+			CircuitMaxOpenSeconds:            *circuitMaxOpenSeconds,
+			MaintenanceRetryAfter:            *maintenanceRetryAfter,
+			MaintenanceMessage:               *maintenanceMessage,
+			RespondStatus:                    *respondStatus,
+			RespondBody:                      *respondBody,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -774,10 +778,11 @@ type edgeRuleActionInputs struct {
 	// pkg/api.EdgeRuleCacheAction.Validate). The CLI does the
 	// structural checks (positive, ≤ ResponseCacheMaxAgeMaxSeconds)
 	// so the local error mirrors the server's.
-	CacheMaxAgeSeconds       int
-	CacheStaleIfErrorSeconds int
-	CacheVaryOn              []string
-	CacheMethods             []string
+	CacheMaxAgeSeconds               int
+	CacheStaleWhileRevalidateSeconds int
+	CacheStaleIfErrorSeconds         int
+	CacheVaryOn                      []string
+	CacheMethods                     []string
 	// budget (ADR-093 §Decision). Per-request wall-clock deadline.
 	// BudgetMs is required-as-positive: pkg/api.EdgeRuleBudgetAction
 	// .Validate rejects 0 because a kind=budget rule with no budget
@@ -999,6 +1004,9 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		if in.CacheStaleIfErrorSeconds < 0 || in.CacheStaleIfErrorSeconds > api.ResponseCacheStaleIfErrorMaxSeconds {
 			return nil, fmt.Errorf("cache action: stale_if_error_seconds must be in [0, %d] (0 = use default 300); got %d", api.ResponseCacheStaleIfErrorMaxSeconds, in.CacheStaleIfErrorSeconds)
 		}
+		if in.CacheStaleWhileRevalidateSeconds < 0 || in.CacheStaleWhileRevalidateSeconds > api.ResponseCacheStaleWhileRevalidateMaxSeconds {
+			return nil, fmt.Errorf("cache action: stale_while_revalidate_seconds must be in [0, %d]; got %d", api.ResponseCacheStaleWhileRevalidateMaxSeconds, in.CacheStaleWhileRevalidateSeconds)
+		}
 		for _, v := range in.CacheVaryOn {
 			if !isCacheVaryOnVocab(v) {
 				return nil, fmt.Errorf("cache action: vary_on %q not in closed vocabulary (Accept-Language|Accept-Encoding)", v)
@@ -1010,10 +1018,11 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			}
 		}
 		a := api.EdgeRuleCacheAction{
-			MaxAgeSeconds:       in.CacheMaxAgeSeconds,
-			StaleIfErrorSeconds: in.CacheStaleIfErrorSeconds,
-			VaryOn:              in.CacheVaryOn,
-			Methods:             in.CacheMethods,
+			MaxAgeSeconds:               in.CacheMaxAgeSeconds,
+			StaleWhileRevalidateSeconds: in.CacheStaleWhileRevalidateSeconds,
+			StaleIfErrorSeconds:         in.CacheStaleIfErrorSeconds,
+			VaryOn:                      in.CacheVaryOn,
+			Methods:                     in.CacheMethods,
 		}
 		// CLI-side defaults for fields the user omitted
 		// (flag == 0). The server's EdgeRuleCacheAction.Validate
@@ -1291,7 +1300,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		// silently skipped the action rebuild and sent a metadata-only
 		// PATCH. Kept alongside the budget/maintenance entries below.
 		"geo-allow", "geo-deny",
-		"cache-max-age-seconds", "cache-stale-if-error-seconds",
+		"cache-max-age-seconds", "cache-stale-while-revalidate-seconds", "cache-stale-if-error-seconds",
 		"cache-vary-on", "cache-methods",
 		"budget-ms", "budget-allow-override-header",
 		"maintenance-retry-after-seconds", "maintenance-message",

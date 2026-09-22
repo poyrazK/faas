@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,7 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 	if cfg.Root == "" {
 		return nil, errors.New("log drain: durable queue root is empty")
 	}
-	if cfg.DrainID == "" || len(cfg.DrainID) > maxQueueIDLen || strings.ContainsAny(cfg.DrainID, `/\\\x00`) {
+	if cfg.DrainID == "" || cfg.DrainID == "." || cfg.DrainID == ".." || len(cfg.DrainID) > maxQueueIDLen || strings.ContainsAny(cfg.DrainID, "/\\\x00") {
 		return nil, errors.New("log drain: durable queue id is invalid")
 	}
 	if cfg.MaxBytes <= 0 {
@@ -151,22 +152,23 @@ func (q *Queue) recoverCompactionLocked() error {
 	oldPath := q.recordsPath + ".old"
 	compactPath := q.recordsPath + ".compact"
 	_, oldErr := os.Stat(oldPath)
-	currentInfo, currentErr := os.Stat(q.recordsPath)
+	_, currentErr := os.Stat(q.recordsPath)
 	if oldErr == nil {
 		if currentErr != nil && errors.Is(currentErr, os.ErrNotExist) {
 			if err := os.Rename(oldPath, q.recordsPath); err != nil {
 				return fmt.Errorf("log drain: recover durable queue: %w", err)
 			}
 		} else if currentErr == nil {
+			// Both files exist only after the compacted suffix was installed.
+			// The old cursor belongs to the backup, even when its offset equals
+			// the new file size. Persist the reset before removing this marker.
+			next := q.state
+			next.Offset, next.Attempts = 0, 0
+			if err := q.writeStateLocked(next); err != nil {
+				return err
+			}
 			if err := os.Remove(oldPath); err != nil {
 				return fmt.Errorf("log drain: remove compacted queue backup: %w", err)
-			}
-			if q.state.Offset > currentInfo.Size() {
-				q.state.Offset = 0
-				q.state.Attempts = 0
-				if err := q.writeStateLocked(); err != nil {
-					return err
-				}
 			}
 		} else {
 			return fmt.Errorf("log drain: inspect durable queue recovery: %w", currentErr)
@@ -204,7 +206,7 @@ func (q *Queue) rebuildStatsLocked() error {
 	info, err := os.Stat(q.recordsPath)
 	if errors.Is(err, os.ErrNotExist) {
 		q.state = queueState{LastSequences: q.state.LastSequences}
-		return q.writeStateLocked()
+		return q.writeStateLocked(q.state)
 	}
 	if err != nil {
 		return fmt.Errorf("log drain: stat durable queue: %w", err)
@@ -220,7 +222,7 @@ func (q *Queue) rebuildStatsLocked() error {
 			return fmt.Errorf("log drain: compact durable queue: %w", err)
 		}
 		q.state = queueState{LastSequences: q.state.LastSequences}
-		if err := q.writeStateLocked(); err != nil {
+		if err := q.writeStateLocked(q.state); err != nil {
 			return err
 		}
 		info = nil
@@ -382,8 +384,9 @@ func (q *Queue) MarkAttempt(item QueueItem, attempts int) error {
 	if item.offset != q.state.Offset {
 		return fmt.Errorf("log drain: mark attempt for stale item: %w", ErrQueueData)
 	}
-	q.state.Attempts = attempts
-	return q.writeStateLocked()
+	next := q.state
+	next.Attempts = attempts
+	return q.writeStateLocked(next)
 }
 
 // Ack advances the cursor only after the endpoint has returned a 2xx status.
@@ -393,26 +396,27 @@ func (q *Queue) Ack(item QueueItem) error {
 	if item.offset != q.state.Offset || item.nextOffset <= item.offset {
 		return fmt.Errorf("log drain: acknowledge stale item: %w", ErrQueueData)
 	}
-	q.state.Offset = item.nextOffset
-	q.state.Attempts = 0
-	if item.Record.InstanceID != "" && item.Record.Sequence > q.state.LastSequences[item.Record.InstanceID] {
-		q.state.LastSequences[item.Record.InstanceID] = item.Record.Sequence
+	return q.advanceLocked(item)
+}
+
+// advanceLocked commits the source cursor before changing the in-memory
+// head or backlog. A failed disk write leaves the same item retryable.
+func (q *Queue) advanceLocked(item QueueItem) error {
+	next := queueState{Offset: item.nextOffset, LastSequences: maps.Clone(q.state.LastSequences)}
+	if item.Record.InstanceID != "" && item.Record.Sequence > next.LastSequences[item.Record.InstanceID] {
+		next.LastSequences[item.Record.InstanceID] = item.Record.Sequence
 	}
-	if err := q.writeStateLocked(); err != nil {
+	if err := q.writeStateLocked(next); err != nil {
 		return err
 	}
 	q.pendingRecords--
 	q.pendingBytes -= item.nextOffset - item.offset
 	q.deletePendingKey(item.Record)
 	if q.pendingRecords == 0 {
-		if err := os.Truncate(q.recordsPath, 0); err != nil {
-			return fmt.Errorf("log drain: compact acknowledged queue: %w", err)
-		}
-		q.state = queueState{LastSequences: q.state.LastSequences}
 		q.pendingBytes, q.oldestPending = 0, time.Time{}
-		return q.writeStateLocked()
+	} else {
+		q.oldestPending = q.nextEnqueuedAtLocked()
 	}
-	q.oldestPending = q.nextEnqueuedAtLocked()
 	return q.compactIfNeededLocked()
 }
 
@@ -438,7 +442,7 @@ func (q *Queue) DeadLetter(item QueueItem, attempts int, deliveryErr error) erro
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if item.offset != q.state.Offset {
+	if item.offset != q.state.Offset || item.nextOffset <= item.offset {
 		return fmt.Errorf("log drain: dead-letter stale item: %w", ErrQueueData)
 	}
 	if q.deadBytes > 0 && q.deadBytes+int64(len(payload)) > q.deadMax {
@@ -466,33 +470,13 @@ func (q *Queue) DeadLetter(item QueueItem, attempts int, deliveryErr error) erro
 	q.deadBytes += int64(len(payload))
 	q.deadLetters++
 
-	q.state.Offset = item.nextOffset
-	q.state.Attempts = 0
-	if item.Record.InstanceID != "" && item.Record.Sequence > q.state.LastSequences[item.Record.InstanceID] {
-		q.state.LastSequences[item.Record.InstanceID] = item.Record.Sequence
-	}
-	if err := q.writeStateLocked(); err != nil {
-		return err
-	}
-	q.pendingRecords--
-	q.pendingBytes -= item.nextOffset - item.offset
-	q.deletePendingKey(item.Record)
-	if q.pendingRecords == 0 {
-		if err := os.Truncate(q.recordsPath, 0); err != nil {
-			return fmt.Errorf("log drain: compact dead-lettered queue: %w", err)
-		}
-		q.state = queueState{LastSequences: q.state.LastSequences}
-		q.pendingBytes, q.oldestPending = 0, time.Time{}
-		return q.writeStateLocked()
-	}
-	q.oldestPending = q.nextEnqueuedAtLocked()
-	return q.compactIfNeededLocked()
+	return q.advanceLocked(item)
 }
 
 const queueCompactOffset = 1 << 20
 
 func (q *Queue) compactIfNeededLocked() error {
-	if q.state.Offset < queueCompactOffset {
+	if q.pendingRecords > 0 && q.state.Offset < queueCompactOffset {
 		return nil
 	}
 	info, err := os.Stat(q.recordsPath)
@@ -541,7 +525,10 @@ func (q *Queue) compactIfNeededLocked() error {
 	}
 	q.state.Offset = 0
 	q.state.Attempts = 0
-	if err := q.writeStateLocked(); err != nil {
+	// The file has already changed, so its in-memory cursor must reset even
+	// if persistence fails. Keep .old until the reset is durable so restart
+	// recovery can identify the installed suffix without relying on size.
+	if err := q.writeStateLocked(q.state); err != nil {
 		return err
 	}
 	if err := os.Remove(oldPath); err != nil {
@@ -617,8 +604,8 @@ func (q *Queue) nextLocked() (QueueItem, bool, error) {
 	return QueueItem{Record: record.Record, EnqueuedAt: record.EnqueuedAt, offset: q.state.Offset, nextOffset: q.state.Offset + int64(len(line))}, true, nil
 }
 
-func (q *Queue) writeStateLocked() error {
-	payload, err := json.Marshal(q.state)
+func (q *Queue) writeStateLocked(next queueState) error {
+	payload, err := json.Marshal(next)
 	if err != nil {
 		return fmt.Errorf("log drain: encode durable queue cursor: %w", err)
 	}
@@ -642,6 +629,7 @@ func (q *Queue) writeStateLocked() error {
 	if err := os.Rename(tmp, q.cursorPath); err != nil {
 		return fmt.Errorf("log drain: install durable queue cursor: %w", err)
 	}
+	q.state = next
 	return nil
 }
 

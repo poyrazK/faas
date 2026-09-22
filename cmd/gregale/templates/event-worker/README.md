@@ -21,6 +21,7 @@ The default subscription matches `billing.*` events of type
 ```sh
 gregale events publish billing.stripe invoice.paid \
   --data '{"amount":150}'
+gregale invocations list --limit 10
 gregale events subscriptions invoice-worker
 ```
 

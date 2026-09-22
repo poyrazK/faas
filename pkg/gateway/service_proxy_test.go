@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -212,7 +213,9 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
-		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AccountID: "d6e281f3-f5b2-436c-b4ad-8529a956609c"}, nil
+		},
 		Forward: func(_ Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if span := oteltrace.SpanFromContext(r.Context()); !span.SpanContext().IsValid() {
@@ -224,7 +227,8 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 	})
 
 	rootCtx, root := provider.Tracer("test").Start(context.Background(), "request")
-	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil).WithContext(rootCtx)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+	propagation.TraceContext{}.Inject(rootCtx, propagation.HeaderCarrier(req.Header))
 	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req)
@@ -243,6 +247,7 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 	wantStrings := map[string]string{
 		"gregale.dependency.type":       "managed_binding",
 		"gregale.dependency.kind":       "service_proxy",
+		retainedSpanAccountIDAttribute:  "d6e281f3-f5b2-436c-b4ad-8529a956609c",
 		"gregale.service.name":          "orders",
 		"gregale.service.target_app_id": "app-orders",
 		"http.request.method":           http.MethodGet,

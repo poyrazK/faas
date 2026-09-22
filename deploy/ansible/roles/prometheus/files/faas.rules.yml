@@ -3380,3 +3380,31 @@ groups:
           summary: "Broker consumer lag is high for {{ $labels.source }} shard {{ $labels.shard }}"
           description: "The schedd consumer is at least 1,000 messages behind the broker high-water mark for source {{ $labels.source }} shard {{ $labels.shard }} for ten minutes. Check the binding's worker capacity, retry rate, and broker connectivity before increasing concurrency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"
+
+  - name: faas_tcp_ingress
+    interval: 30s
+    rules:
+      - alert: FaasTCPIngressQuotaRejections
+        expr: sum(rate(gatewayd_public_tcp_sessions_rejected_total{reason="account_limit"}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: tcp_ingress
+          public_status: degraded
+        annotations:
+          summary: "Raw TCP account quotas are rejecting connections"
+          description: "The public gateway is rejecting more than 0.1 raw TCP sessions per second for account-scoped quota exhaustion for ten minutes. Inspect account session usage and raise the quota only after confirming the workload's connection pattern."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+      - alert: FaasTCPIngressIdleTimeoutSpike
+        expr: sum(rate(gatewayd_public_tcp_idle_timeouts_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: tcp_ingress
+          public_status: degraded
+        annotations:
+          summary: "Raw TCP idle timeouts are spiking"
+          description: "The public gateway has reaped more than one raw TCP session per second for ten minutes. Check client keepalive behavior, the configured FAAS_TCPD_IDLE_TIMEOUT, and whether a downstream service is stalling."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"math"
 	"math/rand/v2"
 	"time"
 )
@@ -15,9 +16,8 @@ import (
 //
 // attempt < 1 is clamped to 1 (the inline curve at
 // pkg/sched/dispatch_triggers.go:1009 has the same clamp).
-// attempt > 1 + log2(MaxSeconds) clamps the base at MaxSeconds;
-// the exponential exponent itself is capped at 9 to keep
-// time.Duration's int64 shift in range.
+// The base grows until MaxSeconds when set. Delays too large for
+// time.Duration saturate at its maximum instead of overflowing.
 //
 // JitterSeconds is a *fraction* of base (e.g. 0.2 = ±20%),
 // matching the inline curve exactly: every retry delay falls
@@ -44,19 +44,16 @@ func (p RetryPolicy) Backoff(attempt int) time.Duration {
 		attempt = 1
 	}
 
-	// Mirror the inline curve's exp clamp. The original caps at 9
-	// because time.Second << 10 already exceeds int64 range
-	// comfortably; the explicit clamp keeps the intent obvious.
-	exp := attempt - 1
-	if exp > 9 {
-		exp = 9
-	}
-
 	baseSeconds := p.BaseSeconds
 	if baseSeconds <= 0 {
 		baseSeconds = 1
 	}
-	baseSeconds *= float64(uint64(1) << exp)
+	// Unlike the historical 1s/300s policy, configurable curves may
+	// need more than nine doublings. Ldexp also preserves tiny bases.
+	// At 2048 doublings even the smallest positive float exceeds a
+	// duration; bounding the exponent avoids integer overflow inside
+	// Ldexp for extreme attempt values.
+	baseSeconds = math.Ldexp(baseSeconds, min(attempt-1, 2048))
 	if max := p.MaxSeconds; max > 0 && baseSeconds > max {
 		baseSeconds = max
 	}
@@ -67,10 +64,16 @@ func (p RetryPolicy) Backoff(attempt int) time.Duration {
 	// float would also be acceptable, but the inline curve is
 	// the load-bearing SLO for cron / queue retry and we keep
 	// the bucket count stable so callers' dashboards don't drift.
-	jitter := 0.0
+	factor := 1.0
 	if js := p.JitterSeconds; js > 0 {
-		jitter = (float64(rand.Uint64()%41) - 20) / 20 * js * baseSeconds //nolint:gosec // G404: see ADR-134 §6.7
+		factor += (float64(rand.Uint64()%41) - 20) / 20 * js //nolint:gosec // G404: see ADR-134 §6.7
 	}
-
-	return time.Duration((baseSeconds + jitter) * float64(time.Second))
+	if factor <= 0 {
+		return 0
+	}
+	nanos := baseSeconds * factor * float64(time.Second)
+	if nanos >= float64(math.MaxInt64) {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(nanos)
 }
