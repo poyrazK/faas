@@ -912,7 +912,7 @@ func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int6
 	} else if existing != nil {
 		p.log.Info("polar: refund already exists for idempotency key; not re-issuing",
 			"order_id", chargeID, "refund_id", existing.ID)
-		return existing.result(chargeID, amountCents), nil
+		return existing.result(chargeID, amountCents)
 	}
 	body := map[string]any{
 		"order_id": chargeID,
@@ -926,20 +926,24 @@ func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int6
 			if existing, lerr := p.findRefundByKey(ctx, chargeID, idem); lerr == nil && existing != nil {
 				p.log.Warn("polar: refund response lost but refund exists; recovered by metadata lookup",
 					"order_id", chargeID, "refund_id", existing.ID, "err", err)
-				return existing.result(chargeID, amountCents), nil
+				return existing.result(chargeID, amountCents)
 			}
 		}
 		return nil, fmt.Errorf("polar: create refund order=%s: %w", chargeID, err)
 	}
-	if refund.ID == "" {
-		return nil, fmt.Errorf("polar: refund order=%s returned empty ID", chargeID)
-	}
-	return refund.result(chargeID, amountCents), nil
+	return refund.result(chargeID, amountCents)
 }
 
-// result converts the provider response into the interface result,
-// defaulting the amount to the requested cents when Polar omitted it.
-func (r refundResponse) result(chargeID string, amountCents int64) *billing.RefundResult {
+// result validates both fresh and replayed refunds before exposing a success.
+// A reused key must not project a different amount onto the invoice. Preserve
+// the fallback to requested cents when the provider omits the amount.
+func (r refundResponse) result(chargeID string, amountCents int64) (*billing.RefundResult, error) {
+	if strings.TrimSpace(r.ID) == "" {
+		return nil, fmt.Errorf("polar: refund order=%s returned empty ID", chargeID)
+	}
+	if r.Amount < 0 || (r.Amount > 0 && r.Amount != amountCents) {
+		return nil, fmt.Errorf("polar: refund order=%s returned amount %d, requested %d", chargeID, r.Amount, amountCents)
+	}
 	amount := r.Amount
 	if amount <= 0 {
 		amount = amountCents
@@ -950,7 +954,7 @@ func (r refundResponse) result(chargeID string, amountCents int64) *billing.Refu
 		AmountCents:      amount,
 		Currency:         r.Currency,
 		Status:           r.Status,
-	}
+	}, nil
 }
 
 type refundListResponse struct {
@@ -966,8 +970,9 @@ type refundListItem struct {
 }
 
 // findRefundByKey scans the order's refunds for one whose metadata carries
-// key. Returns nil, nil when none matches. Read-only; the GET is retried
-// by the transport like every other read.
+// key. Returns nil, nil only after a complete search finds no match. Exhausting
+// the page budget is not proof of absence and must never authorize a POST.
+// Read-only; the GET is retried by the transport like every other read.
 func (p *Provider) findRefundByKey(ctx context.Context, orderID, key string) (*refundResponse, error) {
 	for page := 1; page <= refundLookupMaxPages; page++ {
 		query := url.Values{}
@@ -988,7 +993,7 @@ func (p *Provider) findRefundByKey(ctx context.Context, orderID, key string) (*r
 			return nil, nil
 		}
 	}
-	return nil, nil
+	return nil, fmt.Errorf("polar: refund lookup incomplete after %d pages", refundLookupMaxPages)
 }
 
 // ambiguousPolarFailure reports whether err leaves it unknown if Polar
