@@ -1718,13 +1718,28 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "cache",
 		DocSlug: "cache",
-		Short:   "Manage response cache (cache purge <slug> [--path GLOB])",
+		Short:   "Declare or purge response caching (cache GET /path/:id for 30s)",
 		Subcommands: []cliSub{
-			{Name: "purge", Short: "Purge cached responses for an app", Flags: []cliFlag{
+			{Name: "GET", Short: "Cache GET responses for a route", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "SLUG"},
+				{Name: "host", Short: "hostname override", Value: "HOST"},
+				{Name: "stale-while-revalidate", Short: "serve stale while refreshing", Value: "DURATION"},
+				{Name: "stale-if-error", Short: "serve stale when the origin fails", Value: "DURATION"},
+				{Name: "vary-on", Short: "header included in the cache key", Value: "HEADER", ClosedSet: []string{"Accept-Language", "Accept-Encoding"}},
+				{Name: "priority", Short: "match priority (lower wins)", Value: "N"},
+			}},
+			{Name: "HEAD", Short: "Cache HEAD responses for a route", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "SLUG"},
+				{Name: "host", Short: "hostname override", Value: "HOST"},
+				{Name: "stale-while-revalidate", Short: "serve stale while refreshing", Value: "DURATION"},
+				{Name: "stale-if-error", Short: "serve stale when the origin fails", Value: "DURATION"},
+				{Name: "vary-on", Short: "header included in the cache key", Value: "HEADER", ClosedSet: []string{"Accept-Language", "Accept-Encoding"}},
+				{Name: "priority", Short: "match priority (lower wins)", Value: "N"},
+			}},
+			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB]", Flags: []cliFlag{
 				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
 			}},
 		},
-		Positionals: []string{"<slug>"},
 	},
 	{
 		Name:    dispatchUploadCache,

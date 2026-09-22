@@ -83,7 +83,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only) |
-| [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
+| [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
@@ -2270,13 +2270,39 @@ Replay a sanitized historical request corpus
 
 ## cache
 
-Manage response cache (cache purge &lt;slug&gt; [--path GLOB])
+Declare or purge response caching (cache GET /path/:id for 30s)
 
-`gregale cache [<subcommand>] <slug>`
+`gregale cache [<subcommand>]`
+
+### cache GET
+
+Cache GET responses for a route
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | hostname override |  |
+| `--stale-while-revalidate <DURATION>` | serve stale while refreshing |  |
+| `--stale-if-error <DURATION>` | serve stale when the origin fails |  |
+| `--vary-on <HEADER>` | header included in the cache key | one of `Accept-Language` · `Accept-Encoding` |
+| `--priority <N>` | match priority (lower wins) |  |
+
+### cache HEAD
+
+Cache HEAD responses for a route
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | hostname override |  |
+| `--stale-while-revalidate <DURATION>` | serve stale while refreshing |  |
+| `--stale-if-error <DURATION>` | serve stale when the origin fails |  |
+| `--vary-on <HEADER>` | header included in the cache key | one of `Accept-Language` · `Accept-Encoding` |
+| `--priority <N>` | match priority (lower wins) |  |
 
 ### cache purge
 
-Purge cached responses for an app
+Purge cached responses: cache purge &lt;slug&gt; [--path GLOB]
 
 | Flag | Meaning | |
 |---|---|---|

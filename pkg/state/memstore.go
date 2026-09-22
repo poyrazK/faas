@@ -18984,34 +18984,13 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 			}
 		}
 	}
-	// kind='cache' per-app quota (ADR-122 §Decision). Mirror of
-	// the pgstore branch. Same rationale: tighter cap than
-	// EdgeRulesPerApp because per (host, path, vary) cache rules
-	// can pin the in-process store's byte ceiling. memstore is
-	// race-free under m.mu; pgstore relies on the FOR UPDATE on
-	// apps carried by the preceding quota branches.
-	if in.Kind == EdgeRuleKindCache && limits.EdgeRulesCachePerApp > 0 {
-		kindCount := 0
-		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindCache {
-				kindCount++
-			}
-		}
-		if kindCount >= limits.EdgeRulesCachePerApp {
-			return EdgeRule{}, &EdgeRuleQuotaError{
-				Limit:      limits.EdgeRulesCachePerApp,
-				Observed:   kindCount,
-				Kind:       string(EdgeRuleKindCache),
-				PerAppOnly: true,
-				PerKind:    true,
-			}
-		}
-	}
-	// ADR-201 §1/§2 per-kind quotas. Shares its decision helpers with
+	// Closed-zero per-kind quotas (ADR-122, ADR-201 §1/§2). Shares its
+	// decision helpers with
 	// PgStore (pkg/state/edge_rule_kind_quota.go) so the two stores cannot
 	// drift — the failure mode behind the always-zero uppercase-state
 	// queries, where MemStore was right, PgStore's SQL was wrong, and no
-	// test ran both. A zero quota DENIES here, unlike the branches above.
+	// test ran both. A zero quota DENIES here, unlike the throttle/geo
+	// branches above.
 	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {
 		return EdgeRule{}, denied
 	}
