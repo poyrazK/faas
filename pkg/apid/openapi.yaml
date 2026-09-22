@@ -14599,6 +14599,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-deliveries:
+    get:
+      tags: [events]
+      operationId: listEventDeliveries
+      summary: Inspect event delivery lifecycle for an app.
+      description: |
+        Returns event-triggered invocation metadata, newest first. The
+        projection includes the published event identity, subscription,
+        lifecycle state, attempts, and last error without returning payloads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: event_id
+          in: query
+          schema: { type: string }
+          description: Exact published event id to inspect.
+        - name: state
+          in: query
+          schema: { type: string, enum: [pending, dispatching, completed, failed, dead_letter] }
+          description: Exact delivery state to include.
+        - $ref: '#/components/parameters/QueueCursorBefore'
+        - $ref: '#/components/parameters/QueueCursorLimit'
+      responses:
+        '200':
+          description: App-scoped event delivery page, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventDeliveryListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -22986,6 +23019,35 @@ components:
         subscriptions:
           type: array
           items: { $ref: '#/components/schemas/EventSubscriptionResponse' }
+
+    EventDeliveryResponse:
+      description: Metadata-only lifecycle projection for one event-triggered invocation.
+      type: object
+      additionalProperties: false
+      required: [invocation_id, event_id, event_source, event_type, state, attempts, created_at]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        subscription_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+
+    EventDeliveryListResponse:
+      description: App-scoped event delivery page, ordered newest first.
+      type: object
+      additionalProperties: false
+      required: [app_slug, deliveries]
+      properties:
+        app_slug: { type: string }
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/EventDeliveryResponse' }
+        next_before: { type: string, description: ID cursor for the next older page. }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."

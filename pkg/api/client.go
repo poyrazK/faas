@@ -6155,6 +6155,36 @@ func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string
 	return c.ListEventSubscriptions(ctx, slug)
 }
 
+// ListEventDeliveries returns the app's event-triggered invocation lifecycle,
+// newest first. Optional filters are exact event-id/state matches.
+func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
+	var out EventDeliveryListResponse
+	q := url.Values{}
+	if eventID != "" {
+		q.Set("event_id", eventID)
+	}
+	if deliveryState != "" {
+		q.Set("state", deliveryState)
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListAppsSlugEventDeliveries is the route-shaped alias used by generated
+// SDK coverage and callers that prefer method names matching the REST path.
+func (c *Client) ListAppsSlugEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
+	return c.ListEventDeliveries(ctx, slug, eventID, deliveryState, before, limit)
+}
+
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
 func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse

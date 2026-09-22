@@ -59,6 +59,31 @@ type EventSubscriptionListResponse struct {
 	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
 }
 
+// EventDeliveryResponse is the safe, metadata-only projection of an
+// event-triggered invocation. Payloads and handler results stay behind the
+// per-invocation endpoint; this view answers the operational question of
+// whether a published event reached a worker.
+type EventDeliveryResponse struct {
+	InvocationID   string     `json:"invocation_id"`
+	EventID        string     `json:"event_id"`
+	EventSource    string     `json:"event_source"`
+	EventType      string     `json:"event_type"`
+	SubscriptionID string     `json:"subscription_id,omitempty"`
+	State          string     `json:"state"`
+	Attempts       int        `json:"attempts"`
+	LastError      string     `json:"last_error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+// EventDeliveryListResponse is an app-scoped page of event-triggered
+// invocations, ordered newest first.
+type EventDeliveryListResponse struct {
+	AppSlug    string                  `json:"app_slug"`
+	Deliveries []EventDeliveryResponse `json:"deliveries"`
+	NextBefore string                  `json:"next_before,omitempty"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.

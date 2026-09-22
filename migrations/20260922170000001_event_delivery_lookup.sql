@@ -1,0 +1,7 @@
+-- filename: 20260922170000001_event_delivery_lookup.sql
+-- Event-triggered invocations are identified by the canonical event id
+-- header. Keep the app-scoped delivery inspection query index-backed without
+-- affecting ordinary async invocation history.
+CREATE INDEX IF NOT EXISTS invocations_event_delivery_idx
+  ON invocations (app_id, created_at DESC, id DESC)
+  WHERE source = 'async_invoke' AND headers ? 'x-gregale-event-id';

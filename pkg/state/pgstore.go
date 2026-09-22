@@ -14563,6 +14563,42 @@ func (s *PgStore) ListInvocationsForApp(ctx context.Context, appID string, state
 	return scanInvocations(rows)
 }
 
+// ListEventDeliveriesForApp returns the app's event-triggered invocations,
+// newest first. Event fan-out stamps the event id in headers; filtering there
+// keeps ordinary async invokes out of the delivery view. The optional event
+// id and state filters are intentionally exact matches.
+func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	base := ` from invocations
+		where app_id = $1
+		  and source = 'async_invoke'
+		  and headers ? 'x-gregale-event-id'
+		  and ($2 = '' or headers->>'x-gregale-event-id' = $2)
+		  and ($3 = '' or state = $3)`
+	var rows pgx.Rows
+	var err error
+	if before == "" {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+base+`
+			order by created_at desc, id desc
+			limit $4`, appID, eventID, deliveryState, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+base+`
+			  and (created_at, id) < (
+				  select created_at, id from invocations
+				  where id = $4 and app_id = $1
+				    and source = 'async_invoke'
+				    and headers ? 'x-gregale-event-id')
+			order by created_at desc, id desc
+			limit $5`, appID, eventID, deliveryState, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return scanInvocations(rows)
+}
+
 // ListCronRunsForCron is the per-cron run-history read (issue #791)
 // behind GET /v1/crons/{id}/runs. Index-backed by
 // invocations_cron_idx (migrations/00166), whose
