@@ -158,6 +158,10 @@ type (
 	QueueSendRequest         = api.QueueSendRequest
 	QueueSendResponse        = api.QueueSendResponse
 	QueueReceiveResponse     = api.QueueReceiveResponse
+	SendAppMessageRequest    = api.SendAppMessageRequest
+	SendAppMessageResponse   = api.SendAppMessageResponse
+	DeliverAppEventRequest   = api.DeliverAppEventRequest
+	DeliverAppEventResponse  = api.DeliverAppEventResponse
 	DelayedTaskRequest       = api.DelayedTaskRequest
 	DelayedTaskResponse      = api.DelayedTaskResponse
 	ListDelayedTasksResponse = api.ListDelayedTasksResponse

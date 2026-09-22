@@ -13409,6 +13409,38 @@ paths:
   # CRUD + audit + manual-retry seam. Secrets are sealed at write
   # time (pgx/secretbox) and never returned in plaintext — the
   # response shape carries the masked constant.
+  /v1/apps/{slug}/outbox:
+    post:
+      tags: [webhooks]
+      operationId: deliverAppEvent
+      summary: Reliably deliver a custom event to a registered webhook.
+      description: |
+        Enqueues an explicitly addressed delivery in the app's durable webhook
+        ledger. `destination` is either a webhook id or its exact registered
+        target URL. The destination's configured HMAC secret, delivery format,
+        timeout, and retry policy apply. Failed deliveries appear in the same
+        delivery history and unified DLQ and can be replayed there.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliverAppEventRequest' }
+      responses:
+        '202':
+          description: The delivery was durably queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliverAppEventResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/webhooks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -14404,6 +14436,39 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/QueueSendResponse' }
         '403': { $ref: '#/components/responses/PlanQueueDepth' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/inbox:
+    post:
+      tags: [queues]
+      operationId: sendAppMessage
+      summary: Reliably send work to another Gregale application.
+      description: |
+        Wraps `data` in a CloudEvents 1.0 envelope and durably enqueues it on
+        the target application's existing invocation queue. Delivery is
+        at-least-once and uses the queue's normal retry, tracing, dead-letter,
+        replay, wake, and capacity behavior. This is a straightforward
+        application inbox, not a general-purpose streaming log.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendAppMessageRequest' }
+      responses:
+        '202':
+          description: The message was durably queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendAppMessageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/PlanQueueDepth' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -23133,6 +23198,33 @@ components:
         id: { type: string }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
+
+    SendAppMessageRequest:
+      description: A CloudEvents-compatible application-inbox message.
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 256, description: Generated when omitted. }
+        source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
+        type: { type: string, minLength: 1, maxLength: 256 }
+        time: { type: string, format: date-time, description: Server time when omitted. }
+        data_content_type: { type: string, enum: [application/json], default: application/json }
+        data: { description: Any valid JSON value delivered inside the CloudEvents envelope. }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+
+    SendAppMessageResponse:
+      type: object
+      additionalProperties: false
+      required: [id, event_id, target_app, status, status_url]
+      properties:
+        id: { type: string, description: Durable invocation identifier. }
+        event_id: { type: string }
+        target_app: { type: string }
+        status: { type: string, enum: [pending] }
+        status_url: { type: string }
+        trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
 
     EventSubscriptionResponse:
       description: One manifest-declared event subscription reconciled for an app.
@@ -33334,6 +33426,31 @@ components:
         delivery_format: "json"
         enabled: true
 
+    DeliverAppEventRequest:
+      type: object
+      additionalProperties: false
+      required: [destination, type, data]
+      properties:
+        destination:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: A webhook id or exact registered target URL owned by the source app.
+        type: { type: string, minLength: 1, maxLength: 256 }
+        data: { description: Any valid JSON value placed in the signed webhook envelope. }
+
+    DeliverAppEventResponse:
+      type: object
+      additionalProperties: false
+      required: [id, webhook_id, destination, event, status, status_url]
+      properties:
+        id: { type: string }
+        webhook_id: { type: string }
+        destination: { type: string, format: uri }
+        event: { type: string, minLength: 1, maxLength: 256 }
+        status: { type: string, enum: [pending] }
+        status_url: { type: string }
+
     UpdateAppWebhookRequest:
       type: object
       description: |
@@ -33402,7 +33519,9 @@ components:
         account_id: { type: string, format: uuid }
         event:
           type: string
-          enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
+          minLength: 1
+          maxLength: 256
+          description: Platform event name or explicitly delivered custom outbox event type.
         payload:
           type: object
           additionalProperties: true

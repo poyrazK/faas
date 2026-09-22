@@ -2,6 +2,20 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "application-messaging",
+      "name": "Application inbox and outbox",
+      "category": "async",
+      "description": "Reliably send work to another Gregale app or deliver a signed custom event to a registered webhook without operating a separate broker or delivery subsystem.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven#application-inbox",
+      "acceptance_test": "cmd/apid/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
+    },
+    {
       "id": "circuit-breaking",
       "name": "Circuit breaking",
       "category": "edge",

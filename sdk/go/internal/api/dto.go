@@ -49,6 +49,26 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+type SendAppMessageRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source,omitempty"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+	QueueName       string          `json:"queue_name,omitempty"`
+	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+}
+
+type SendAppMessageResponse struct {
+	ID        string `json:"id"`
+	EventID   string `json:"event_id"`
+	TargetApp string `json:"target_app"`
+	Status    string `json:"status"`
+	StatusURL string `json:"status_url"`
+	TraceID   string `json:"trace_id,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`
@@ -1673,6 +1693,21 @@ type CreateAppWebhookRequest struct {
 	EventFilter   []string `json:"event_filter,omitempty"`
 	RetryPolicy   string   `json:"retry_policy,omitempty"`
 	Enabled       *bool    `json:"enabled,omitempty"`
+}
+
+type DeliverAppEventRequest struct {
+	Destination string          `json:"destination"`
+	Type        string          `json:"type"`
+	Data        json.RawMessage `json:"data"`
+}
+
+type DeliverAppEventResponse struct {
+	ID          string `json:"id"`
+	WebhookID   string `json:"webhook_id"`
+	Destination string `json:"destination"`
+	Event       string `json:"event"`
+	Status      string `json:"status"`
+	StatusURL   string `json:"status_url"`
 }
 
 // UpdateAppWebhookRequest is the body of PATCH

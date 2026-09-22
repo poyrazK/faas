@@ -17,7 +17,10 @@ package api
 // validates each field against the corresponding state.* closed set
 // and rejects drift with 400 ErrAppWebhookInvalid.
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // AppWebhookSecretMaxBytes bounds the plaintext webhook_secret the
 // customer may submit on create / update. 256 mirrors the alert-rule
@@ -36,6 +39,27 @@ const AppWebhookSecretMasked = "***"
 // enumerated values byte-for-byte; the handler validates membership
 // before persisting.
 var AllowedAppWebhookRetryPolicies = []string{"default", "aggressive", "none"}
+
+// DeliverAppEventRequest is the application-outbox contract. Destination is
+// either a webhook subscription id or the exact target URL of a webhook
+// already registered for the source app. The configured subscription supplies
+// signing, delivery-format, and retry policy.
+type DeliverAppEventRequest struct {
+	Destination string          `json:"destination"`
+	Type        string          `json:"type"`
+	Data        json.RawMessage `json:"data"`
+}
+
+// DeliverAppEventResponse confirms that an outbound delivery is durably
+// queued in the existing webhook ledger.
+type DeliverAppEventResponse struct {
+	ID          string `json:"id"`
+	WebhookID   string `json:"webhook_id"`
+	Destination string `json:"destination"`
+	Event       string `json:"event"`
+	Status      string `json:"status"`
+	StatusURL   string `json:"status_url"`
+}
 
 // AllowedAppWebhookDeliveryFormats is the closed set for the
 // `delivery_format` field. `json` preserves the historical Gregale envelope;

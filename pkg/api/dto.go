@@ -38,6 +38,33 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// SendAppMessageRequest is the application-inbox contract. Gregale wraps the
+// caller's data in a CloudEvents 1.0 envelope and places it on the target
+// application's durable invocation queue. Source defaults to "gregale.send";
+// ID and Time default to server-generated values.
+type SendAppMessageRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source,omitempty"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+	QueueName       string          `json:"queue_name,omitempty"`
+	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+}
+
+// SendAppMessageResponse confirms that the message is durably queued. ID is
+// the invocation identifier used by the existing status, DLQ, and replay
+// surfaces; EventID is the CloudEvents id delivered in the payload.
+type SendAppMessageResponse struct {
+	ID        string `json:"id"`
+	EventID   string `json:"event_id"`
+	TargetApp string `json:"target_app"`
+	Status    string `json:"status"`
+	StatusURL string `json:"status_url"`
+	TraceID   string `json:"trace_id,omitempty"`
+}
+
 // EventSubscriptionResponse is one manifest-declared subscription currently
 // reconciled for an app. Filter is the normalized JSON object used by the
 // router when matching published events.

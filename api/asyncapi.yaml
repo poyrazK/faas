@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.3.0
+  version: 1.4.0
   description: |
     Gregale delivers selected app lifecycle and billing events to an app's
     configured webhook subscriptions, accepts tenant-scoped events for the
@@ -91,6 +91,32 @@ channels:
     messages:
       queueSend:
         $ref: '#/components/messages/QueueSend'
+  applicationInbox:
+    address: /v1/apps/{slug}/inbox
+    description: Reliably enqueue a CloudEvents-wrapped message for a Gregale application.
+    parameters:
+      slug:
+        description: Target application slug.
+        examples:
+          - billing
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      applicationInbox:
+        $ref: '#/components/messages/ApplicationInbox'
+  applicationOutbox:
+    address: /v1/apps/{slug}/outbox
+    description: Reliably enqueue a custom event for a registered webhook destination.
+    parameters:
+      slug:
+        description: Source application slug that owns the destination.
+        examples:
+          - checkout-api
+    servers:
+      - $ref: '#/servers/api'
+    messages:
+      applicationOutbox:
+        $ref: '#/components/messages/ApplicationOutbox'
   queueReceive:
     address: /v1/apps/{slug}/queues/receive
     description: Long-poll for the next completed queue invocation; acknowledgement is informational.
@@ -197,6 +223,34 @@ operations:
     description: The request returns the newly-created queue invocation identifier.
     messages:
       - $ref: '#/channels/queueSend/messages/queueSend'
+    security:
+      - bearerAuth: []
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  receiveApplicationInbox:
+    action: receive
+    channel:
+      $ref: '#/channels/applicationInbox'
+    summary: Accept work for another Gregale application.
+    description: Uses the durable invocation queue with at-least-once delivery, retry, DLQ, and replay.
+    messages:
+      - $ref: '#/channels/applicationInbox/messages/applicationInbox'
+    security:
+      - bearerAuth: []
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  receiveApplicationOutbox:
+    action: receive
+    channel:
+      $ref: '#/channels/applicationOutbox'
+    summary: Accept a custom event for signed webhook delivery.
+    description: Uses the registered destination's signing, timeout, retry, delivery-history, DLQ, and replay configuration.
+    messages:
+      - $ref: '#/channels/applicationOutbox/messages/applicationOutbox'
     security:
       - bearerAuth: []
     bindings:
@@ -313,6 +367,30 @@ components:
           headers:
             $ref: '#/components/schemas/QueueRequestHeaders'
           bindingVersion: '0.3.0'
+    ApplicationInbox:
+      name: application.inbox
+      title: Application inbox send
+      summary: A CloudEvents-compatible message queued for an application.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ApplicationInboxPayload'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/QueueRequestHeaders'
+          bindingVersion: '0.3.0'
+    ApplicationOutbox:
+      name: application.outbox
+      title: Application outbox delivery
+      summary: A custom event queued for a registered webhook.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ApplicationOutboxPayload'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/QueueRequestHeaders'
+          bindingVersion: '0.3.0'
     QueueReceive:
       name: queue.receive
       title: Queue receive
@@ -415,6 +493,38 @@ components:
           type: object
           additionalProperties: true
           description: JSON object delivered to the queue invocation.
+    ApplicationInboxPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 256, description: Generated when omitted. }
+        source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
+        type: { type: string, minLength: 1, maxLength: 256 }
+        time: { type: string, format: date-time }
+        data_content_type: { type: string, enum: [application/json], default: application/json }
+        data: { description: Any valid JSON value. }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        retry_policy:
+          type: object
+          additionalProperties: false
+          properties:
+            max_attempts: { type: integer }
+            base_seconds: { type: number }
+            max_seconds: { type: number }
+            jitter_seconds: { type: number }
+    ApplicationOutboxPayload:
+      type: object
+      additionalProperties: false
+      required: [destination, type, data]
+      properties:
+        destination:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: Registered webhook id or exact registered URL.
+        type: { type: string, minLength: 1, maxLength: 256 }
+        data: { description: Any valid JSON value. }
     QueueReceivePayload:
       type: object
       description: Body returned when the queue receive long-poll finds a completed invocation.

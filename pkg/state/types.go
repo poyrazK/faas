@@ -3087,10 +3087,10 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means "all events"; non-empty filters accept
-// events whose name appears in the array. The vocabulary must stay
-// in sync with app_webhook_deliveries.event CHECK in the latest
-// webhook-event allowlist migration.
+// An empty filter ([]) means "all platform events"; non-empty filters accept
+// events whose name appears in the array. The delivery ledger also stores
+// bounded custom event names from explicitly addressed application-outbox
+// calls; those names never participate in subscription fan-out matching.
 type AppWebhookEvent string
 
 const (

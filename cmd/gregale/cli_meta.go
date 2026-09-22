@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "add", "crons", "delayed-task", "events", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -370,6 +370,30 @@ var cliCommands = []cliCommand{
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest"},
+		},
+	},
+	{
+		Name:        "send",
+		DocSlug:     "send",
+		Short:       "Reliably send work to another Gregale application",
+		Positionals: []string{"<target-app>"},
+		Flags: []cliFlag{
+			{Name: "type", Short: "event type", Req: true, Value: "TYPE"},
+			{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
+			{Name: "id", Short: "stable event id", Value: "ID"},
+			{Name: "source", Short: "event source", Value: "SOURCE"},
+			{Name: "time", Short: "event time", Value: "RFC3339"},
+			{Name: "queue-name", Short: "target logical queue name", Value: "QUEUE"},
+		},
+	},
+	{
+		Name:        "deliver",
+		DocSlug:     "deliver",
+		Short:       "Reliably deliver an event to a registered webhook",
+		Positionals: []string{"<source-app>", "<webhook-id|url>"},
+		Flags: []cliFlag{
+			{Name: "type", Short: "event type", Req: true, Value: "TYPE"},
+			{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
 		},
 	},
 	{

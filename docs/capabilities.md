@@ -6,6 +6,7 @@ This matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/
 
 | Capability | Category | Maturity | Plans | Description | Acceptance evidence |
 |---|---|---|---|---|---|
+| [Application inbox and outbox](../docs/event-driven#application-inbox) | async | `preview` | `hobby`, `pro`, `scale` | Reliably send work to another Gregale app or deliver a signed custom event to a registered webhook without operating a separate broker or delivery subsystem. | `cmd/apid/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent` |
 | [Circuit breaking](../docs/adr/201-traffic-as-a-platform-primitive) | edge | `internal` | — | Stop routing to an instance that is failing in transport, and probe it back into service once it recovers. | `pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint` |
 | [Container deployments](../docs/container-compatibility) | delivery | `beta` | `free`, `hobby`, `pro`, `scale` | Deploy a stateless Linux/amd64 Docker or OCI image without rewriting it as a function. | `pkg/oci/container_contract_test.go::TestContainerDeploymentContract` |
 | [Custom domains](https://gregale.dev/docs/custom-domains) | edge | `beta` | `free`, `hobby`, `pro`, `scale` | Serve an API on a customer-owned domain with managed TLS. | `pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence` |
