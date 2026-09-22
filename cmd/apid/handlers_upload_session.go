@@ -579,7 +579,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, Companions: opts.Companions, Sidecars: opts.Sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -620,7 +620,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateAndPlanSidecars(rolloutReq, acct, api.MustLimitsFor(acct.Plan)); prob != nil {
+	if prob := s.validateAndPlanSidecars(rolloutReq, acct, api.MustLimitsFor(acct.Plan)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

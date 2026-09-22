@@ -588,7 +588,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	if p := validateAndPlanSidecars(&req, acct, limits); p != nil {
+	if p := s.validateAndPlanSidecars(&req, acct, limits); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}

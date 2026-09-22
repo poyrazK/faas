@@ -1592,9 +1592,9 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	return append([]api.WorkflowSpec{}, m.Workflows...), nil
 }
 
-// loadExtensionSidecarsManifestForDeploy resolves the manifest's named
-// telemetry presets before any deployment mutation. The image digest stays
-// customer-supplied; the preset only contributes stable defaults.
+// loadExtensionSidecarsManifestForDeploy resolves the manifest's companion
+// declarations before any deployment mutation. Preset-only companions keep
+// their image empty here; apid resolves the operator-pinned digest.
 func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) (api.Sidecars, error) {
 	if cwd == "" {
 		return nil, nil
@@ -1603,7 +1603,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	if err != nil {
 		return nil, err
 	}
-	if !ok || m == nil || len(m.Extensions) == 0 {
+	if !ok || m == nil || (len(m.Companions) == 0 && len(m.Extensions) == 0) {
 		return nil, nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1611,7 +1611,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	}
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve account plan for extension manifest: %w", err)
+		return nil, fmt.Errorf("resolve account plan for companion manifest: %w", err)
 	}
 	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
 		return nil, err
@@ -3626,7 +3626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
 			NoTriggers:     *noTriggers,
-			Sidecars:       sidecarDefs,
+			Companions:     sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3655,7 +3655,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
 				Reason: ann.Reason, Tag: ann.Tag,
-				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Sidecars: sidecarDefs,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
 			}
 			var progress resumableUploadProgress
@@ -3783,7 +3783,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:    *environment,
 		RollbackOn5xx:  rollbackOn5xxPtr,
 		Workflows:      workflowDefs,
-		Sidecars:       sidecarDefs,
+		Companions:     sidecarDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),
 		Tag:            annPtr(*tag),

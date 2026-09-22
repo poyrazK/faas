@@ -61,6 +61,9 @@ type server struct {
 	// cross-node coordination and never guards customer-intent state.
 	devSourceCacheMu sync.Mutex
 	domain           string // apps base domain for URLs
+	// companionImages is the operator-owned catalog behind preset-only
+	// companion declarations. Values are immutable OCI digest references.
+	companionImages map[string]string
 	// cliAuthURLBase is the public web origin used by the CLI device-code
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
@@ -628,6 +631,19 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 // config to supply a provider-specific console hostname.
 func (s *server) WithCLIAuthURLBase(base string) *server {
 	s.cliAuthURLBase = normalizeCLIAuthURLBase(base)
+	return s
+}
+
+// WithCompanionImages attaches a defensive copy of the managed-companion
+// image catalog. Unknown keys remain inert because request validation uses the
+// closed preset vocabulary in pkg/api.
+func (s *server) WithCompanionImages(images map[string]string) *server {
+	s.companionImages = make(map[string]string, len(images))
+	for name, image := range images {
+		if preset, ok := api.NormalizeCompanionPreset(name); ok {
+			s.companionImages[string(preset)] = strings.TrimSpace(image)
+		}
+	}
 	return s
 }
 
