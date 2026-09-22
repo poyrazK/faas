@@ -270,6 +270,7 @@ export type { DiffRequest } from './DiffRequest.js';
 export type { DiffResponse } from './DiffResponse.js';
 export type { DomainDoctorCheck } from './DomainDoctorCheck.js';
 export type { DomainDoctorReport } from './DomainDoctorReport.js';
+export type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 export type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 export type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
