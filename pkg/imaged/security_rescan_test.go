@@ -3,6 +3,8 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -23,6 +25,105 @@ func TestSecurityScanDue(t *testing.T) {
 	dep.ScannedAt = now.Add(-time.Minute)
 	if securityScanDue(dep, now, time.Hour) {
 		t.Fatal("fresh scan evidence should not be due")
+	}
+}
+
+func TestSecurityScanLeaseFailure(t *testing.T) {
+	now := time.Date(2026, 9, 19, 15, 0, 0, 0, time.UTC)
+	base := ScanResult{
+		ImageDigest:      "sha256:lease",
+		ArtifactDigest:   "sha256:artifact",
+		ScannedAt:        now.Add(-time.Hour).Format(time.RFC3339Nano),
+		ScannerVersion:   "0.78.0",
+		ScannerDBStatus:  "valid",
+		ScannerDBVersion: "2026-09-19",
+		ScannerDBBuiltAt: now.Add(-time.Hour).Format(time.RFC3339Nano),
+	}
+	encode := func(result ScanResult) []byte {
+		raw, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	dep := state.Deployment{ImageDigest: "sha256:lease", ScanStatus: "complete", ScanResult: encode(base)}
+	if got := securityScanLeaseFailure(dep, now, 2*time.Hour); got != "" {
+		t.Fatalf("fresh lease failure = %q, want none", got)
+	}
+	dep.ScanResult = encode(func() ScanResult {
+		result := base
+		result.ImageDigest = "sha256:other"
+		return result
+	}())
+	if got := securityScanLeaseFailure(dep, now, 2*time.Hour); got != "security_scan_digest_drift" {
+		t.Fatalf("digest drift reason = %q", got)
+	}
+	dep.ScanResult = encode(func() ScanResult {
+		result := base
+		result.ScannedAt = now.Add(-3 * time.Hour).Format(time.RFC3339Nano)
+		return result
+	}())
+	if got := securityScanLeaseFailure(dep, now, 2*time.Hour); got != "security_scan_evidence_expired" {
+		t.Fatalf("expired reason = %q", got)
+	}
+}
+
+func TestReconcileSecurityLeasesQuarantinesExpiredEvidence(t *testing.T) {
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(context.Background(), "security-lease@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), state.App{
+		AccountID:      account.ID,
+		Slug:           "lease-app",
+		Status:         state.AppActive,
+		SecurityPolicy: api.AppSecurityPolicyEnforce,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:lease",
+		Status:      state.DeployLive,
+		ScanStatus:  "complete",
+		ScannedAt:   time.Now().UTC().Add(-2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notif := &fakeNotifier{}
+	loop := &Loop{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		handler: &Handler{
+			store: store,
+			notif: notif,
+		},
+	}
+	now := time.Date(2026, 9, 19, 15, 0, 0, 0, time.UTC)
+	loop.reconcileSecurityLeases(context.Background(), now, time.Hour)
+	gotApp, err := store.AppByID(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotApp.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %q, want evicted_cold", gotApp.Status)
+	}
+	rows, err := store.ListDeploymentAudit(context.Background(), dep.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Kind != state.DeployScanRegressed {
+		t.Fatalf("audit rows = %+v, want one lease quarantine", rows)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(rows[0].Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["reason"] != "security_scan_evidence_missing" {
+		t.Fatalf("lease audit reason = %v", data["reason"])
 	}
 }
 

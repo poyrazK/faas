@@ -72,6 +72,96 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 	}
 }
 
+// reconcileSecurityLeases is the cheap safety net between full scanner runs.
+// A complete scan is evidence about one exact live deployment, not a permanent
+// allow-list. Once that evidence expires, or its digest/metadata no longer
+// matches the deployment row, enforce-mode traffic is parked before the next
+// request can use the stale app route. The scanner sweep remains responsible
+// for refreshing otherwise-valid evidence and for discovering newly published
+// vulnerabilities.
+func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanEvery time.Duration) {
+	if l == nil || l.store == nil {
+		return
+	}
+	if scanEvery <= 0 {
+		scanEvery = securityScanSweepEvery
+	}
+	deployments, err := l.store.ListAllDeployments(ctx)
+	if err != nil {
+		l.log.Warn("imaged: list deployments for security evidence lease", "err", err)
+		return
+	}
+	for _, dep := range deployments {
+		if dep.Status != state.DeployLive || strings.TrimSpace(dep.ImageDigest) == "" {
+			continue
+		}
+		app, err := l.store.AppByID(ctx, dep.AppID)
+		if err != nil {
+			l.log.Warn("imaged: load app for security evidence lease", "deployment", dep.ID, "app", dep.AppID, "err", err)
+			continue
+		}
+		if app.Status != state.AppActive || app.SecurityPolicy != api.AppSecurityPolicyEnforce {
+			continue
+		}
+		reason := securityScanLeaseFailure(dep, now.UTC(), scanEvery)
+		if reason == "" {
+			continue
+		}
+		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+			continue
+		}
+		if auditErr := l.appendSecurityScanLeaseAudit(ctx, app, dep, reason, now.UTC()); auditErr != nil {
+			l.log.Warn("imaged: append security evidence lease audit", "deployment", dep.ID, "err", auditErr)
+		}
+		if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
+			l.log.Warn("imaged: quarantine expired security evidence", "deployment", dep.ID, "app", app.ID, "reason", reason, "err", quarantineErr)
+		}
+	}
+}
+
+// securityScanLeaseFailure returns a stable reason code when live scan
+// evidence is no longer sufficient to keep an enforce-mode app serving.
+// The lease is intentionally tied to the scheduled sweep interval rather than
+// the five-minute deploy-admission window: a healthy live deployment has to
+// survive until the next scanner pass, while a failed pass still expires it
+// promptly on the following lease tick. One lease tick of grace prevents the
+// cheap checker from racing a scanner result that is being persisted at the
+// same boundary.
+func securityScanLeaseFailure(dep state.Deployment, now time.Time, scanEvery time.Duration) string {
+	if dep.ScanStatus != "complete" {
+		return "security_scan_evidence_incomplete"
+	}
+	result := decodeScanEvidence(dep.ScanResult)
+	if result == nil {
+		return "security_scan_evidence_missing"
+	}
+	if strings.TrimSpace(result.ImageDigest) == "" || strings.TrimSpace(result.ImageDigest) != strings.TrimSpace(dep.ImageDigest) {
+		return "security_scan_digest_drift"
+	}
+	if strings.TrimSpace(result.ArtifactDigest) == "" || strings.TrimSpace(result.ScannerVersion) == "" ||
+		strings.TrimSpace(result.ScannerDBVersion) == "" || strings.TrimSpace(result.ScannerDBBuiltAt) == "" ||
+		!strings.EqualFold(strings.TrimSpace(result.ScannerDBStatus), "valid") {
+		return "security_scan_evidence_invalid"
+	}
+	scannedAt, err := parseScanEvidenceTime(result.ScannedAt)
+	if err != nil {
+		return "security_scan_evidence_invalid"
+	}
+	lease := scanEvery + securityScanLeaseSweepEvery
+	if scannedAt.After(now) || now.Sub(scannedAt) > lease {
+		return "security_scan_evidence_expired"
+	}
+	dbBuiltAt, err := parseScanEvidenceTime(result.ScannerDBBuiltAt)
+	if err != nil || dbBuiltAt.After(now) || now.Sub(dbBuiltAt) > verifiedScannerDBAge {
+		return "security_scan_database_stale"
+	}
+	counts := result.SeverityCounts
+	if counts.Critical > 0 || counts.High > 0 || counts.Unknown > 0 || strings.TrimSpace(result.Error) != "" {
+		return "security_scan_regressed"
+	}
+	return ""
+}
+
 type appStatusCompareAndSetter interface {
 	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
 }
@@ -81,6 +171,14 @@ type appStatusCompareAndSetter interface {
 // missed notification or a partial failure keeps the first parked timestamp
 // and only emits the app_changed hint again.
 func (l *Loop) quarantineSecurityRegression(ctx context.Context, app state.App, dep state.Deployment) error {
+	return l.quarantineSecurity(ctx, app, dep, "security_scan_regressed")
+}
+
+// quarantineSecurity projects any security evidence failure into the existing
+// app lifecycle drain path. The parked reason remains the durable closed-set
+// value used by the gateway; the finer-grained reason is carried in audit and
+// notification payloads for operators.
+func (l *Loop) quarantineSecurity(ctx context.Context, app state.App, dep state.Deployment, reason string) error {
 	if l == nil || l.store == nil {
 		return fmt.Errorf("imaged: security quarantine is not wired")
 	}
@@ -119,11 +217,12 @@ func (l *Loop) quarantineSecurityRegression(ctx context.Context, app state.App, 
 		return nil
 	}
 	payload, err := json.Marshal(map[string]string{
-		"kind":   "parked",
-		"app_id": app.ID,
-		"slug":   app.Slug,
-		"status": string(state.AppEvictedCold),
-		"reason": string(state.ParkReasonSecurityScanRegressed),
+		"kind":            "parked",
+		"app_id":          app.ID,
+		"slug":            app.Slug,
+		"status":          string(state.AppEvictedCold),
+		"reason":          string(state.ParkReasonSecurityScanRegressed),
+		"evidence_reason": reason,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal quarantine notification: %w", err)
@@ -132,6 +231,37 @@ func (l *Loop) quarantineSecurityRegression(ctx context.Context, app state.App, 
 		return fmt.Errorf("notify security quarantine: %w", err)
 	}
 	return nil
+}
+
+func (l *Loop) appendSecurityScanLeaseAudit(ctx context.Context, app state.App, dep state.Deployment, reason string, observedAt time.Time) error {
+	deploymentID, err := uuid.Parse(dep.ID)
+	if err != nil {
+		return fmt.Errorf("parse deployment id: %w", err)
+	}
+	var accountID *uuid.UUID
+	if parsed, parseErr := uuid.Parse(app.AccountID); parseErr == nil {
+		accountID = &parsed
+	}
+	data, err := json.Marshal(map[string]any{
+		"app_id":              app.ID,
+		"app_slug":            app.Slug,
+		"image_digest":        dep.ImageDigest,
+		"reason":              reason,
+		"quarantine_required": true,
+		"observed_at":         observedAt.Format(time.RFC3339Nano),
+		"source":              "scheduled_security_evidence_lease",
+	})
+	if err != nil {
+		return fmt.Errorf("marshal lease evidence: %w", err)
+	}
+	_, err = l.store.AppendDeploymentAudit(ctx, state.DeploymentAudit{
+		DeploymentID: deploymentID,
+		AccountID:    accountID,
+		Kind:         state.DeployScanRegressed,
+		Actor:        "system:imaged-security-lease",
+		Data:         data,
+	})
+	return err
 }
 
 func securityScanDue(dep state.Deployment, now time.Time, every time.Duration) bool {

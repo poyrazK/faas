@@ -35,4 +35,10 @@ fresh, complete, digest-matched scan evidence with zero high, critical, or
 unknown findings. The operation requires deploy-write scope and MFA and emits
 an audit event when the app returns to `active`.
 
+After recovery, enforce-mode apps keep a bounded security-evidence lease. A
+lightweight imaged sweep checks the live deployment between full rescans and
+parks the app if the evidence expires, the image digest changes, scanner
+metadata becomes invalid, or the result contains a blocking finding. The
+quarantine audit and notification include the specific evidence reason.
+
 Report a suspected vulnerability through the security contact listed in [security.txt](security.txt). Include a minimal reproduction and affected resource ids, but never include live credentials or customer data. Gregale will acknowledge receipt and coordinate a safe disclosure window.

@@ -38,50 +38,57 @@ const (
 	staleDeploymentThreshold  = 2 * time.Hour
 	staleDeploymentBatchSize  = 64
 	securityScanSweepEvery    = 6 * time.Hour
+	// Evidence leases are checked much more frequently than the expensive
+	// scanner sweep so an enforce-mode app cannot continue serving after its
+	// last verified result has expired.
+	securityScanLeaseSweepEvery = time.Minute
 )
 
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
 // the Handler's collaborators (store, notifier, OCI puller, builder).
 type Loop struct {
-	handler           *Handler
-	store             state.Store
-	pool              *pgxpool.Pool
-	log               *slog.Logger
-	now               func() time.Time
-	lvUsedPct         func(ctx context.Context) (float64, error)
-	gcEvery           time.Duration // default 24h; tests shrink to ms
-	securityScanEvery time.Duration // default 6h; tests shrink to ms
-	detectFC          func(ctx context.Context) (string, error)
-	appsRoot          string
-	storageRoot       string
-	gcMu              sync.Mutex
+	handler            *Handler
+	store              state.Store
+	pool               *pgxpool.Pool
+	log                *slog.Logger
+	now                func() time.Time
+	lvUsedPct          func(ctx context.Context) (float64, error)
+	gcEvery            time.Duration // default 24h; tests shrink to ms
+	securityScanEvery  time.Duration // default 6h; tests shrink to ms
+	securityLeaseEvery time.Duration // default 1m; tests shrink to ms
+	detectFC           func(ctx context.Context) (string, error)
+	appsRoot           string
+	storageRoot        string
+	gcMu               sync.Mutex
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
 	remoteDeleteFailures         prometheus.Counter
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
-	// built in NewLoop and can be overridden by WithGCChannel/WithFCSweepCh.
-	gcCh           <-chan time.Time
-	fcCh           <-chan struct{}
-	securityScanCh <-chan time.Time
+	// built in NewLoop and can be overridden by the With*Channel helpers.
+	gcCh            <-chan time.Time
+	fcCh            <-chan struct{}
+	securityScanCh  <-chan time.Time
+	securityLeaseCh <-chan time.Time
 }
 
 // LoopConfig bundles the dependencies NewLoop needs. Kept as a struct so
 // tests can build it once with stub collaborators instead of threading six
 // positional args through.
 type LoopConfig struct {
-	Handler           *Handler
-	Store             state.Store
-	Pool              *pgxpool.Pool
-	Log               *slog.Logger
-	Now               func() time.Time
-	LvUsedPct         func(ctx context.Context) (float64, error)
-	DetectFC          func(ctx context.Context) (string, error)
-	AppsRoot          string
-	StorageRoot       string
-	GCEvery           time.Duration
-	SecurityScanEvery time.Duration
+	Handler            *Handler
+	Store              state.Store
+	Pool               *pgxpool.Pool
+	Log                *slog.Logger
+	Now                func() time.Time
+	LvUsedPct          func(ctx context.Context) (float64, error)
+	DetectFC           func(ctx context.Context) (string, error)
+	AppsRoot           string
+	StorageRoot        string
+	GCEvery            time.Duration
+	SecurityScanEvery  time.Duration
+	SecurityLeaseEvery time.Duration
 }
 
 // NewLoop returns a Loop wired with sane defaults. The caller (cmd/imaged)
@@ -99,18 +106,22 @@ func NewLoop(cfg LoopConfig) *Loop {
 	if cfg.SecurityScanEvery == 0 {
 		cfg.SecurityScanEvery = securityScanSweepEvery
 	}
+	if cfg.SecurityLeaseEvery == 0 {
+		cfg.SecurityLeaseEvery = securityScanLeaseSweepEvery
+	}
 	loop := &Loop{
-		handler:           cfg.Handler,
-		store:             cfg.Store,
-		pool:              cfg.Pool,
-		log:               cfg.Log,
-		now:               cfg.Now,
-		lvUsedPct:         cfg.LvUsedPct,
-		detectFC:          cfg.DetectFC,
-		appsRoot:          cfg.AppsRoot,
-		storageRoot:       cfg.StorageRoot,
-		gcEvery:           cfg.GCEvery,
-		securityScanEvery: cfg.SecurityScanEvery,
+		handler:            cfg.Handler,
+		store:              cfg.Store,
+		pool:               cfg.Pool,
+		log:                cfg.Log,
+		now:                cfg.Now,
+		lvUsedPct:          cfg.LvUsedPct,
+		detectFC:           cfg.DetectFC,
+		appsRoot:           cfg.AppsRoot,
+		storageRoot:        cfg.StorageRoot,
+		gcEvery:            cfg.GCEvery,
+		securityScanEvery:  cfg.SecurityScanEvery,
+		securityLeaseEvery: cfg.SecurityLeaseEvery,
 	}
 	if cfg.Handler != nil && cfg.Handler.ops != nil {
 		loop.remoteDeleteBacklogCount = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -161,8 +172,18 @@ func (l *Loop) WithSecurityScanChannel(ch <-chan time.Time) *Loop {
 	return l
 }
 
-// Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
-// subscriber, the GC tick, the one-shot FC sweep, and ctx.Done. Mirrors
+// WithSecurityLeaseChannel swaps the continuous evidence-lease channel. Tests
+// use it to drive lease expiry without waiting for the one-minute ticker.
+func (l *Loop) WithSecurityLeaseChannel(ch <-chan time.Time) *Loop {
+	if ch != nil {
+		l.securityLeaseCh = ch
+	}
+	return l
+}
+
+// Run blocks until ctx is cancelled. It owns the LISTEN subscriber, the GC
+// tick, the one-shot FC sweep, the scanner sweep, the evidence lease sweep,
+// and ctx.Done. Mirrors
 // pkg/sched/loop.go::Run.
 //
 // PR-B: builderd owns the build-queue durability surface now (its
@@ -189,6 +210,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 	securityScanTicker := time.NewTicker(securityScanEvery)
 	defer securityScanTicker.Stop()
+	securityLeaseEvery := l.securityLeaseEvery
+	if securityLeaseEvery <= 0 {
+		securityLeaseEvery = securityScanLeaseSweepEvery
+	}
+	securityLeaseTicker := time.NewTicker(securityLeaseEvery)
+	defer securityLeaseTicker.Stop()
 
 	if l.gcCh == nil {
 		t := time.NewTicker(l.gcEvery)
@@ -204,6 +231,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 	if l.securityScanCh == nil {
 		l.securityScanCh = securityScanTicker.C
+	}
+	if l.securityLeaseCh == nil {
+		l.securityLeaseCh = securityLeaseTicker.C
 	}
 
 	var notif <-chan db.Notification
@@ -253,6 +283,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
+	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
 
 	for {
 		select {
@@ -274,6 +305,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.reconcileStaleDeployments(ctx)
 		case tick := <-l.securityScanCh:
 			l.reconcileSecurityScans(ctx, tick, securityScanEvery)
+		case tick := <-l.securityLeaseCh:
+			l.reconcileSecurityLeases(ctx, tick, securityScanEvery)
 		case <-l.gcCh:
 			l.runGCTick(ctx, l.now())
 		case <-l.fcCh:
