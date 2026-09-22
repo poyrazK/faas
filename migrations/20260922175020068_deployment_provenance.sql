@@ -1,4 +1,5 @@
--- filename: 00591_deployment_provenance.sql
+-- filename: 20260922175020068_deployment_provenance.sql
+
 -- +goose Up
 -- +goose StatementBegin
 
