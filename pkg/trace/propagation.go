@@ -46,7 +46,10 @@ func MergeHeaders(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 // Existing platform propagation keys are removed case-insensitively before
 // the trusted context is injected.
 func MergeHeaderMap(ctx context.Context, headers map[string]string) map[string]string {
-	merged := make(map[string]string, len(headers)+4)
+	// Use only the caller-controlled map length as the capacity hint. Adding a
+	// fixed propagation allowance here can overflow an int before allocation;
+	// the map grows naturally for the small platform-owned header set below.
+	merged := make(map[string]string, len(headers))
 	for key, value := range headers {
 		if isPlatformPropagationHeader(key) {
 			continue
