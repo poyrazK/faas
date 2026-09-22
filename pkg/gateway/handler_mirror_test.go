@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // mirrorFakeBackend (issue #72 / ADR-124 PR-A3) extends the
@@ -147,6 +148,15 @@ type stubMirrorRoundTripper struct {
 	// flip body / status to drive ClassifyResult branches.
 	cannedResponse *http.Response
 	cannedErr      error
+}
+
+type mirrorResultStoreFake struct {
+	results chan state.MirrorInvocationResult
+}
+
+func (s *mirrorResultStoreFake) InsertMirrorResult(_ context.Context, result state.MirrorInvocationResult) error {
+	s.results <- result
+	return nil
 }
 
 func (s *stubMirrorRoundTripper) RoundTripMirror(_ context.Context, _ *url.URL, req *http.Request) (*http.Response, error) {
@@ -292,6 +302,71 @@ func TestHandler_MirrorFanout_PreservesSourceRequestBody(t *testing.T) {
 		t.Fatal("source request did not reach upstream")
 	}
 	waitForMirrorCalls(t, b, 1, 2*time.Second)
+}
+
+func TestHandler_MirrorFanout_ComparesSourceResponseAndPersistsResult(t *testing.T) {
+	const (
+		requestPayload = `{"input":"different from response"}`
+		responseBody   = `{"result":"same"}`
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Deliberately rely on Write's implicit 200 path. The source capture
+		// must observe both this status and these response bytes.
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &mirrorFakeBackend{
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PublicAuth: PublicAuthConfig{Mode: api.AppPublicAuthModeOpen},
+		},
+		host:         "jane-api.apps.dom",
+		upstreamAddr: upstream.Listener.Addr().String(),
+		mirrorRules: []MirrorRuleRow{{
+			ID:                 "rule-1",
+			AccountID:          "acct-1",
+			AppID:              "app-1",
+			SourceDeploymentID: "dep-A",
+			MirrorDeploymentID: "dep-B",
+			Percent:            100,
+		}},
+	}
+	rt := &stubMirrorRoundTripper{cannedResponse: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(responseBody)),
+	}}
+	store := &mirrorResultStoreFake{results: make(chan state.MirrorInvocationResult, 1)}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithMirrorRoundTripper(rt).WithMirrorResultStore(store)
+
+	req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/compare", strings.NewReader(requestPayload))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	select {
+	case result := <-store.results:
+		if result.SourceStatusCode != http.StatusOK || result.StatusCode != http.StatusOK {
+			t.Fatalf("statuses = source:%d mirror:%d, want 200/200", result.SourceStatusCode, result.StatusCode)
+		}
+		if result.StatusDiff || result.SchemaDiff || result.BodyDiff || result.Crashed {
+			t.Fatalf("unexpected comparison diff: %+v", result)
+		}
+		if len(result.SourceSchemaHash) != 32 || len(result.SchemaHash) != 32 {
+			t.Fatalf("schema hash lengths = source:%d mirror:%d, want 32/32", len(result.SourceSchemaHash), len(result.SchemaHash))
+		}
+		if result.SourceBodyHash != nil || result.BodyHash != nil {
+			t.Fatal("body hashes must remain nil when include_body=false")
+		}
+		if result.SourceDeploymentID != "dep-A" || result.MirrorDeploymentID != "dep-B" {
+			t.Fatalf("deployments = source:%q mirror:%q", result.SourceDeploymentID, result.MirrorDeploymentID)
+		}
+		if result.SourceInstanceID != "i-source" || result.RequestID == "" {
+			t.Fatalf("source_instance_id=%q request_id=%q", result.SourceInstanceID, result.RequestID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror comparison was not persisted")
+	}
 }
 
 func TestHandler_MirrorFanout_ForwardsToAdmittedMirrorTarget(t *testing.T) {

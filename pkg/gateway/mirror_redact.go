@@ -80,7 +80,7 @@ func StrippedRequestHeaders(rule state.MirrorRule, src http.Header) http.Header 
 	}
 	dst := make(http.Header, len(src))
 	for k, vs := range src {
-		if _, drop := stripped[k]; drop {
+		if _, drop := stripped[textproto.CanonicalMIMEHeaderKey(k)]; drop {
 			continue
 		}
 		// Copy the slice so a downstream mutation doesn't
@@ -123,6 +123,14 @@ func StrippedRequestHeaders(rule state.MirrorRule, src http.Header) http.Header 
 // classify emits statusDiff=true so the dashboard surfaces
 // "everything looks wrong" rather than a silent no-diff.
 func ClassifyResult(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody []byte) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
+	statusDiff, schemaDiff, bodyDiff, crashed, _, _ = ClassifyResultWithHashes(srcStatus, srcBody, mirrorStatus, mirrorBody)
+	return
+}
+
+// ClassifyResultWithHashes returns the same classification plus the exact
+// SHA-256 fingerprints used for the body comparison. Ledger and replay callers
+// use these values so response content is hashed only once.
+func ClassifyResultWithHashes(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody []byte) (statusDiff, schemaDiff, bodyDiff, crashed bool, srcFingerprint, mirrorFingerprint [sha256.Size]byte) {
 	if srcStatus != mirrorStatus {
 		statusDiff = true
 	}
@@ -135,5 +143,5 @@ func ClassifyResult(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody 
 	if mirrorStatus == 0 || mirrorStatus >= 500 {
 		crashed = true
 	}
-	return
+	return statusDiff, schemaDiff, bodyDiff, crashed, srcHash, mirrorHash
 }

@@ -78,7 +78,7 @@ tags:
   - name: deploydiff
     description: Read-only pre-deploy preview (PR-1 of the deploy-diff cluster).
   - name: edge_rules
-    description: Edge rules (route, rewrite, redirect, headers, cors, jwt, ip, validate, geo) per app.
+    description: Edge rules (route, rewrite, redirect, headers, cors, jwt, ip, validate, geo, async) per app.
   - name: mirror
     description: |
       Traffic mirroring rules (issue #72 / ADR-124 / ADR-125). Each rule
@@ -13186,6 +13186,40 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/mirrors/{id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [mirror]
+      operationId: replayMirrorRequests
+      summary: Replay a sanitized historical request corpus against the mirror deployment.
+      description: |
+        Queues 1–100 caller-sanitized JSON requests against this rule's mirror
+        deployment. Gregale strips credential, platform-owned, hop-by-hop, and
+        rule-configured redact headers again before enqueueing. GET/HEAD/OPTIONS
+        are accepted by default; POST/PUT/PATCH/DELETE require the explicit
+        `allow_unsafe_methods` acknowledgement. Source response bodies are never
+        uploaded: an optional SHA-256 expectation enables body comparison.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MirrorReplayBatchRequest' }
+      responses:
+        '202':
+          description: Sanitized requests queued for mirror replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MirrorReplayBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/edge-rules:
     get:
       tags: [edge_rules]
@@ -13231,7 +13265,7 @@ paths:
       summary: Create an edge rule on an app.
       description: |
         Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-        validate, geo}. `action` is a kind-tagged jsonb body — the per-kind
+        validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
         shape is documented under components/schemas. Plan-kind gate:
         jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
         is allowed on Free with a tighter per-app quota. Per-app
@@ -26270,7 +26304,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -26296,6 +26330,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
+            - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -26313,7 +26350,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -26338,6 +26375,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
+            - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -26373,6 +26413,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
+            - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -27151,6 +27194,15 @@ components:
           # An unconstrained schema intentionally accepts any JSON value:
           # object, array, scalar, or null.
 
+    EdgeRuleAsyncAction:
+      description: |
+        Marks the matched route for durable asynchronous execution (ADR-211).
+        The action is an empty object; retry, deadline, retention, and payload
+        limits come from the existing invocation and account-plan contracts.
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+
     EdgeRuleGeoAction:
       description: |
         ISO 3166-1 alpha-2 country allow/deny evaluator (ADR-091
@@ -27356,8 +27408,9 @@ components:
       description: |
         Body for POST /v1/apps/{slug}/mirrors. Both deployments must
         be `live` and belong to the same app. `include_body` defaults
-        to `false` (sensitive headers + bodies must be redacted or
-        disabled by default per spec hint). `redact_headers` is the
+        to `false`; enabling it stores only request/response SHA-256
+        hashes for body-difference classification, never raw bodies.
+        `redact_headers` is the
         customer's additive list on top of the always-stripped list
         (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
         WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
@@ -27385,7 +27438,7 @@ components:
         include_body:
           type: boolean
           default: false
-          description: "If true, the comparison ledger captures request/response bodies (heaviest storage cost). Off by default."
+          description: "If true, the comparison ledger captures request/response SHA-256 hashes for body-difference classification. Raw bodies are never stored. Off by default."
         redact_headers:
           type: array
           description: "Customer-supplied additional header names to redact on top of the always-stripped list (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization, WWW-Authenticate)."
@@ -27411,7 +27464,7 @@ components:
           description: "Set false to pause the rule without removing it."
         include_body:
           type: boolean
-          description: "Toggle body capture in the comparison ledger."
+          description: "Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored."
         redact_headers:
           type: array
           description: "Replace the customer's redact list. Empty array clears it."
@@ -27486,6 +27539,8 @@ components:
       type: object
       required:
         - total_invocations
+        - changed_response_count
+        - changed_response_percent
         - status_diff_count
         - schema_diff_count
         - body_diff_count
@@ -27497,6 +27552,16 @@ components:
         total_invocations:
           type: integer
           format: int64
+        changed_response_count:
+          type: integer
+          format: int64
+          description: "Requests with any status, schema, or body difference; each request is counted once."
+        changed_response_percent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: "100 × changed_response_count / total_invocations; zero when the window is empty."
         status_diff_count:
           type: integer
           format: int64
@@ -27520,6 +27585,77 @@ components:
           type: integer
           minimum: 1
           description: "The window's length in seconds. Matches the requested `?window=` value."
+
+    MirrorReplayBatchRequest:
+      description: "A bounded batch of sanitized historical requests to replay against the mirror deployment."
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/MirrorReplayRequestItem' }
+        allow_unsafe_methods:
+          type: boolean
+          default: false
+          description: "Explicit acknowledgement required when any item uses POST, PUT, PATCH, or DELETE."
+
+    MirrorReplayRequestItem:
+      description: "One sanitized historical request and its optional expected source-response metadata."
+      type: object
+      required: [method, path]
+      properties:
+        request_id:
+          type: string
+          maxLength: 128
+          description: "Optional correlation id; generated when omitted."
+        method:
+          type: string
+          enum: [GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE]
+        path:
+          type: string
+          maxLength: 4096
+          pattern: '^/'
+          description: "Absolute request path with optional query; absolute URLs are rejected."
+        headers:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string }
+        body:
+          description: "Sanitized JSON request body, bounded to 64 KiB."
+        expected_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        expected_latency_ms:
+          type: integer
+          minimum: 0
+        expected_body_sha256:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+          description: "Optional SHA-256 of the historical source response body. The body itself is not uploaded."
+
+    MirrorReplayBatchResponse:
+      description: "The replay invocations accepted and queued for asynchronous mirror execution."
+      type: object
+      required: [queued, invocations]
+      properties:
+        queued:
+          type: integer
+          minimum: 0
+        invocations:
+          type: array
+          items: { $ref: '#/components/schemas/MirrorReplayInvocation' }
+
+    MirrorReplayInvocation:
+      description: "Correlation metadata for one queued mirror replay invocation."
+      type: object
+      required: [request_id, mirror_invocation_id, status]
+      properties:
+        request_id: { type: string }
+        mirror_invocation_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued] }
 
     # ─── API keys ─────────────────────────────────────────────────────────
 
@@ -33776,6 +33912,7 @@ components:
         source_latency_ms: { type: integer }
         mirror_latency_ms: { type: integer }
         status_diff: { type: boolean }
+        body_diff: { type: boolean }
         crashed: { type: boolean }
 
 

@@ -84,6 +84,23 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, false, err
 	}
+	if database.RestoreSourceDatabaseID != "" {
+		var sourceAccountID, sourceState, sourceProviderResourceID string
+		if err := tx.QueryRow(ctx,
+			`SELECT account_id::text, state, COALESCE(provider_resource_id, '')
+			 FROM managed_postgres_databases WHERE id = $1 FOR KEY SHARE`,
+			nullableUUID(database.RestoreSourceDatabaseID),
+		).Scan(&sourceAccountID, &sourceState, &sourceProviderResourceID); err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if sourceAccountID != database.AccountID {
+			return Database{}, false, ErrNotFound
+		}
+		if State(sourceState) != StateReady || sourceProviderResourceID == "" ||
+			sourceProviderResourceID != database.RestoreSourceResourceID {
+			return Database{}, false, ErrConflict
+		}
+	}
 
 	var active int
 	if err := tx.QueryRow(ctx,
@@ -208,7 +225,10 @@ func (s *PostgresStore) Due(ctx context.Context, includeProvisioning bool, limit
 }
 
 func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseToken string, operation State, now, leaseUntil time.Time) (Database, error) {
-	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || (operation != StateProvisioning && operation != StateDeleting) {
+	if operation == StateDeleting {
+		return s.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, leaseUntil)
+	}
+	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || operation != StateProvisioning {
 		return Database{}, ErrInvalid
 	}
 	account, err := postgresUUID(accountID)
@@ -222,14 +242,12 @@ func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseT
 	database, err := queryDatabase(ctx, s.pool,
 		`UPDATE managed_postgres_databases SET
 			state = $1, lease_token = $2, lease_until = $3, updated_at = $4,
-			attempt_count = CASE WHEN $1 = 'deleting' AND state <> 'deleting'
-				THEN 1 ELSE least(attempt_count + 1, 30) END,
+			attempt_count = least(attempt_count + 1, 30),
 			last_error_code = CASE WHEN state <> $1 THEN NULL ELSE last_error_code END,
 			retry_at = $4
 		 WHERE account_id = $5 AND id = $6 AND state <> 'deleted'
 		   AND (lease_until IS NULL OR lease_until <= $4)
-		   AND (($1 = 'provisioning' AND state IN ('provisioning','failed') AND retry_at <= $4)
-		     OR ($1 = 'deleting'))
+		   AND state IN ('provisioning','failed') AND retry_at <= $4
 		 RETURNING `+postgresDatabaseColumns,
 		string(operation), leaseToken, leaseUntil, now, account, id,
 	)
@@ -247,6 +265,72 @@ func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseT
 		return Database{}, ErrNotFound
 	}
 	return Database{}, ErrConflict
+}
+
+// ClaimDelete locks the database before checking its dependants and changing
+// lifecycle state. Binding reservations take a key-share lock on this row, and
+// restore reservations take the same lock on their source, so a concurrent
+// reservation either commits first and blocks deletion or observes deleting
+// and fails before it can create a dependant.
+func (s *PostgresStore) ClaimDelete(ctx context.Context, accountID, databaseID, leaseToken string, now, leaseUntil time.Time) (Database, error) {
+	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) {
+		return Database{}, ErrInvalid
+	}
+	account, err := postgresUUID(accountID)
+	if err != nil {
+		return Database{}, err
+	}
+	id, err := postgresUUID(databaseID)
+	if err != nil {
+		return Database{}, err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Database{}, fmt.Errorf("managed postgres: begin delete claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	current, err := queryDatabase(ctx, tx,
+		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
+		 WHERE account_id = $1 AND id = $2 FOR UPDATE`,
+		account, id,
+	)
+	if err != nil {
+		return Database{}, err
+	}
+	if current.State == StateDeleted || (!current.LeaseUntil.IsZero() && current.LeaseUntil.After(now)) {
+		return Database{}, ErrConflict
+	}
+	var hasBindings, hasRestoreDescendants bool
+	if err := tx.QueryRow(ctx,
+		`SELECT
+			EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id = $1 AND state <> 'deleted'),
+			EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id = $1 AND state <> 'deleted')`,
+		id,
+	).Scan(&hasBindings, &hasRestoreDescendants); err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	if hasBindings || hasRestoreDescendants {
+		return Database{}, ErrConflict
+	}
+
+	database, err := queryDatabase(ctx, tx,
+		`UPDATE managed_postgres_databases SET
+			state = 'deleting', lease_token = $1, lease_until = $2, updated_at = $3,
+			attempt_count = CASE WHEN state <> 'deleting' THEN 1 ELSE least(attempt_count + 1, 30) END,
+			last_error_code = CASE WHEN state <> 'deleting' THEN NULL ELSE last_error_code END,
+			retry_at = $3
+		 WHERE account_id = $4 AND id = $5
+		 RETURNING `+postgresDatabaseColumns,
+		leaseToken, leaseUntil, now, account, id,
+	)
+	if err != nil {
+		return Database{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	return database, nil
 }
 
 func (s *PostgresStore) RecordProviderResource(ctx context.Context, databaseID, leaseToken, providerResourceID string, now time.Time) error {
