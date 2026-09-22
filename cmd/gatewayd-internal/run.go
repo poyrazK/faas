@@ -1213,6 +1213,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// so every configured cache rule silently fell through to a wake and all
 	// response-cache counters remained zero.
 	responseCache := gateway.NewResponseCache()
+	if redisURL := strings.TrimSpace(osGetenv("FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL")); redisURL != "" {
+		sharedCache, cacheErr := gateway.NewRedisResponseCache(ctx, redisURL)
+		if cacheErr != nil {
+			// Response caching is an optimization, never an availability
+			// dependency. Keep the local L1 active when Redis is unavailable.
+			log.Warn("distributed response cache unavailable; using local cache", "err", cacheErr)
+		} else {
+			responseCache.WithSharedStore(sharedCache)
+			log.Info("distributed response cache enabled")
+		}
+	}
+	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithWarmHint(warmHintCache.HintFunc()).

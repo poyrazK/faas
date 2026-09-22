@@ -2217,9 +2217,10 @@ export class AppsService {
   }
   /**
    * Purge cached responses for an app.
-   * Requests an in-process response-cache purge on every gateway. The
-   * optional path glob limits the purge to matching normalized request
-   * paths; omit it to purge the complete app cache.
+   * Requests a response-cache purge on every gateway and on the optional
+   * distributed cache tier. The optional path glob limits the purge to
+   * matching normalized request paths; omit it to purge the complete app
+   * cache.
    *
    * @returns void
    * @throws ApiError

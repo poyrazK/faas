@@ -1054,13 +1054,14 @@ Show durable TLS status for all domains
 
 Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)
 
-`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
+`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | source directory |  |
 | `--name <PROJECT>` | developer-session project name |  |
 | `--env-file <PATH>` | sync KEY=VALUE entries as developer secrets |  |
+| `--service-override-file <PATH>` | sync validated service URLs as developer secrets |  |
 | `--once` | deploy once and exit |  |
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
@@ -1089,6 +1090,7 @@ preflight a project and prepare the first developer environment
 | `--path <DIR>` | source directory |  |
 | `--name <PROJECT>` | developer-session project name |  |
 | `--env-file <PATH>` | validate and sync developer secrets |  |
+| `--service-override-file <PATH>` | validate and sync service URLs |  |
 | `--start` | start after preflight |  |
 | `--once` | sync once and exit |  |
 | `--no-logs` | do not attach runtime logs |  |
