@@ -296,7 +296,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	manifestCommitted = true
 	sourceAccepted = true
 	s.auditSourceRefManifestScaling(r.Context(), acct, app, stagedManifest)
-	s.auditSourceRefDeploy(r.Context(), acct, app, res, prev, req, resolvedSHA, installID, ann)
+	s.auditSourceRefDeploy(r, acct, app, res, prev, req, resolvedSHA, installID, ann)
 	// Reload the deployment row so the response carries the
 	// canonical wire shape (mirrors createDeployment's
 	// LatestDeployment re-read).
@@ -430,7 +430,8 @@ func (s *server) streamSourceTarball(ctx context.Context, acct state.Account, in
 // mergeAnnotationAudit (see handlers_source_tarball.go). nil/zero
 // values are omitted so pre-feature rows stay byte-identical at
 // the JSON layer.
-func (s *server) auditSourceRefDeploy(ctx context.Context, acct state.Account, app state.App, res apidsource.EnqueueResult, prev state.Deployment, req api.SourceRefDeployRequest, resolvedSHA string, installID int64, ann annotationForm) {
+func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app state.App, res apidsource.EnqueueResult, prev state.Deployment, req api.SourceRefDeployRequest, resolvedSHA string, installID int64, ann annotationForm) {
+	ctx := r.Context()
 
 	s.log.Info("source-ref deployment enqueued",
 		"deployment", res.DeploymentID,
@@ -488,6 +489,8 @@ func (s *server) auditSourceRefDeploy(ctx context.Context, acct state.Account, a
 	// at the JSON layer.
 	mergeAnnotationAudit(data, ann)
 	s.audit.EmitAs(ctx, resolvedActor, "deploy.source_ref", &acct.ID, mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.recordDeploymentActivity(ctx, r, acct, app, d,
+		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes, "source": "source_ref"})
 }
 
 // isValidRef is the cheap pre-flight ref-shape guard. Anything

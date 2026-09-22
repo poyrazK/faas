@@ -4820,6 +4820,46 @@ type ListAuditLogResponse struct {
 	NextBefore string          `json:"next_before,omitempty"`
 }
 
+// ActivityActorResponse is the captured identity shown beside one global
+// organization activity item. Label remains useful after an account or API
+// key is removed; AccountID is present only for human actors known locally.
+type ActivityActorResponse struct {
+	Type      string `json:"type"`
+	Label     string `json:"label"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// ActivityResourceResponse identifies the primary object affected by an
+// activity item. ID may be absent for an external resource such as a domain.
+type ActivityResourceResponse struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label"`
+}
+
+// OrgActivityResponse is one safe, display-ready entry in an organization's
+// unified infrastructure history. Data contains kind-specific non-secret
+// metadata; clients must tolerate keys they do not recognize.
+type OrgActivityResponse struct {
+	ID           string                   `json:"id"`
+	OccurredAt   string                   `json:"occurred_at"`
+	Kind         string                   `json:"kind"`
+	Summary      string                   `json:"summary"`
+	Actor        ActivityActorResponse    `json:"actor"`
+	Resource     ActivityResourceResponse `json:"resource"`
+	AppID        string                   `json:"app_id,omitempty"`
+	ProjectID    string                   `json:"project_id,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	Data         json.RawMessage          `json:"data"`
+}
+
+// ListOrgActivityResponse is a newest-first keyset page. NextBefore is opaque;
+// pass it back unchanged as the before query parameter.
+type ListOrgActivityResponse struct {
+	Items      []OrgActivityResponse `json:"items"`
+	NextBefore string                `json:"next_before,omitempty"`
+}
+
 // --- GitHub install bind picker (PR-B; §11) ---------------------------------
 //
 // InstallBindRequest is the body for both POST /v1/install/repos/list

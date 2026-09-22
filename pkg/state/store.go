@@ -6428,6 +6428,15 @@ type DefaultCustomDomainStore interface {
 	DefaultCustomDomain(context.Context, string) (string, error)
 }
 
+// OrgActivityStore is the optional durable projection behind the global
+// organization activity timeline. It remains a narrow capability instead of
+// widening Store so small test doubles and alternate stores do not need to
+// implement a customer-facing read model they never use.
+type OrgActivityStore interface {
+	AppendOrgActivity(context.Context, OrgActivity) (OrgActivity, error)
+	ListOrgActivity(context.Context, OrgActivityFilter) ([]OrgActivity, error)
+}
+
 // CustomerEventFilter is the tenant-safe query contract for the customer audit
 // timeline. Subjectless events are included only when their app, deployment,
 // build, or instance metadata resolves to an app owned by AccountID.

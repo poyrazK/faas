@@ -1977,7 +1977,7 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
-	target, problem := s.rollbackAppCore(r.Context(), acct, app, req)
+	target, problem := s.rollbackAppCore(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -1989,7 +1989,8 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
 // two entry points cannot drift.
-func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+	ctx := r.Context()
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
 		if parsed, parseErr := uuid.Parse(*req.AlertRuleID); parseErr == nil {
@@ -2108,6 +2109,14 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	if _, err := s.store.AppendDeploymentAudit(ctx, auditEntry); err != nil {
 		s.log.Warn("rollback: append deployment_audit failed", "app", app.ID, "deployment", target.ID, "err", err.Error())
 	}
+	activity := state.OrgActivity{
+		Kind: "deploy.rolled_back", SourceType: "rollback", SourceID: activitySourceID(r, target.ID),
+		Data: activityData(map[string]any{"from": current.ID, "to": target.ID, "mode": mode, "phase": "readiness_requested"}),
+	}
+	if targetID, err := uuid.Parse(target.ID); err == nil {
+		activity.DeploymentID = &targetID
+	}
+	s.recordAppActivity(ctx, r, acct, app, activity)
 	return target, nil
 }
 
@@ -2556,6 +2565,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	s.audit.Emit(r.Context(), "domain.added", &acct.ID, map[string]any{
 		"app_id": d.AppID,
 		"domain": d.Domain,
+	})
+	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
+		Kind: "domain.added", ResourceType: "domain", ResourceID: d.Domain,
+		ResourceLabel: d.Domain, SourceType: "domain.added", SourceID: activitySourceID(r, d.Domain),
+		Data: activityData(map[string]any{"app_id": d.AppID}),
 	})
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
 }

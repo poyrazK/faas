@@ -58,7 +58,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (slug defaults to linked context) |
-| [`orgs`](#orgs) | Manage orgs + members (orgs ls\|create\|info\|rm\|members ...\|keys ...\|transfer-ownership\|seat-usage\|invitations ...\|me) |
+| [`orgs`](#orgs) | Manage orgs, members, and workspace activity |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
@@ -1612,7 +1612,7 @@ Open a CLI docs page (open docs [&lt;slug&gt;])
 
 ## orgs
 
-Manage orgs + members (orgs ls|create|info|rm|members ...|keys ...|transfer-ownership|seat-usage|invitations ...|me)
+Manage orgs, members, and workspace activity
 
 `gregale orgs [<subcommand>]`
 
@@ -1627,6 +1627,19 @@ Create an org
 ### orgs info
 
 Show one org
+
+### orgs activity
+
+Show the global infrastructure timeline
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--before <CURSOR>` | pagination cursor |  |
+| `--kind-prefix <PREFIX>` | filter by activity kind prefix |  |
+| `--actor-type <TYPE>` | filter by actor category | one of `user` · `api_key` · `github` · `system` · `operator` |
+| `--app-id <UUID>` | filter by application UUID |  |
+| `--limit <N>` | page size (1..100) |  |
 
 ### orgs rm
 

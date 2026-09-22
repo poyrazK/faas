@@ -4719,6 +4719,64 @@ type DeploymentAudit struct {
 	AlertRuleID *uuid.UUID
 }
 
+// OrgActivityActorType is the stable, customer-facing identity class used by
+// the organization activity timeline. ActorLabel is the captured display
+// value; readers never need to join a possibly-deleted account or API key.
+type OrgActivityActorType string
+
+const (
+	OrgActivityActorUser     OrgActivityActorType = "user"
+	OrgActivityActorAPIKey   OrgActivityActorType = "api_key"
+	OrgActivityActorGitHub   OrgActivityActorType = "github"
+	OrgActivityActorSystem   OrgActivityActorType = "system"
+	OrgActivityActorOperator OrgActivityActorType = "operator"
+)
+
+// OrgActivity is one safe, display-ready fact in an organization's global
+// infrastructure history. Like AuditLog and DeploymentAudit, identifiers and
+// labels are copied at write time and intentionally have no foreign-key
+// dependency on resources that may later be deleted.
+//
+// Data must be a JSON object containing non-secret display metadata only.
+// Environment values, credentials, tokens, and provider payloads do not
+// belong in this read model.
+type OrgActivity struct {
+	ID             int64
+	OrgID          uuid.UUID
+	OccurredAt     time.Time
+	Kind           string
+	ActorType      OrgActivityActorType
+	ActorAccountID *uuid.UUID
+	ActorLabel     string
+	ResourceType   string
+	ResourceID     string
+	ResourceLabel  string
+	AppID          *uuid.UUID
+	ProjectID      *uuid.UUID
+	DeploymentID   *uuid.UUID
+	Data           json.RawMessage
+	SourceType     string
+	SourceID       string
+}
+
+// OrgActivityCursor is the exclusive keyset cursor for the stable
+// (occurred_at DESC, id DESC) ordering.
+type OrgActivityCursor struct {
+	OccurredAt time.Time
+	ID         int64
+}
+
+// OrgActivityFilter is always pinned to one organization. Optional filters
+// narrow the timeline without weakening that tenant boundary.
+type OrgActivityFilter struct {
+	OrgID      uuid.UUID
+	Before     *OrgActivityCursor
+	KindPrefix string
+	ActorType  OrgActivityActorType
+	AppID      *uuid.UUID
+	Limit      int
+}
+
 // AuditLogFilter is the read-side query shape for the audit_log table.
 // Handlers build one from the inbound query string; the store method
 // translates it into a single WHERE clause without string concatenation.

@@ -1260,11 +1260,19 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "orgs",
 		DocSlug: "orgs",
-		Short:   "Manage orgs + members (orgs ls|create|info|rm|members ...|keys ...|transfer-ownership|seat-usage|invitations ...|me)",
+		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "List orgs"},
 			{Name: "create", Short: "Create an org"},
 			{Name: "info", Short: "Show one org"},
+			{Name: "activity", Short: "Show the global infrastructure timeline", Flags: []cliFlag{
+				{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
+				{Name: "kind-prefix", Short: "filter by activity kind prefix", Value: "PREFIX"},
+				{Name: "actor-type", Short: "filter by actor category", Value: "TYPE", ClosedSet: []string{"user", "api_key", "github", "system", "operator"}},
+				{Name: "app-id", Short: "filter by application UUID", Value: "UUID"},
+				{Name: "limit", Short: "page size (1..100)", Value: "N"},
+			}},
 			{Name: "rm", Short: "Delete one org"},
 			{Name: "members", Short: "Manage org members"},
 			{Name: "keys", Short: "Manage org API keys"},

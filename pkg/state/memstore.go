@@ -539,6 +539,10 @@ type MemStore struct {
 	// reads are also mu-guarded so the loop is consistent with
 	// the underlying slice growth under concurrent append.
 	deploymentAudit []DeploymentAudit
+	// orgActivity is the customer-facing, organization-scoped history
+	// projection. Source keys are deduplicated on append, matching the
+	// database unique constraint.
+	orgActivity []OrgActivity
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -14842,6 +14846,89 @@ func (m *MemStore) ListDeploymentAuditByAlertRule(_ context.Context, alertRuleID
 		}
 	}
 	return out, nil
+}
+
+// AppendOrgActivity appends or returns the existing row with the same
+// (org_id, source_type, source_id) key. Returning the existing row makes
+// replayed webhooks and retried commands idempotent.
+func (m *MemStore) AppendOrgActivity(_ context.Context, entry OrgActivity) (OrgActivity, error) {
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return OrgActivity{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, row := range m.orgActivity {
+		if row.OrgID == entry.OrgID && row.SourceType == entry.SourceType && row.SourceID == entry.SourceID {
+			return cloneOrgActivity(row), nil
+		}
+	}
+	entry.ID = int64(len(m.orgActivity) + 1)
+	m.orgActivity = append(m.orgActivity, cloneOrgActivity(entry))
+	return cloneOrgActivity(entry), nil
+}
+
+// ListOrgActivity returns a stable, newest-first page pinned to one
+// organization. All optional filters are applied before the row cap.
+func (m *MemStore) ListOrgActivity(_ context.Context, filter OrgActivityFilter) ([]OrgActivity, error) {
+	if filter.OrgID == uuid.Nil {
+		return nil, errors.New("state: list org activity requires org id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := append([]OrgActivity(nil), m.orgActivity...)
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].OccurredAt.Equal(rows[j].OccurredAt) {
+			return rows[i].ID > rows[j].ID
+		}
+		return rows[i].OccurredAt.After(rows[j].OccurredAt)
+	})
+	limit := normalizeOrgActivityLimit(filter.Limit)
+	out := make([]OrgActivity, 0, limit)
+	for _, row := range rows {
+		if row.OrgID != filter.OrgID {
+			continue
+		}
+		if filter.Before != nil && (row.OccurredAt.After(filter.Before.OccurredAt) ||
+			(row.OccurredAt.Equal(filter.Before.OccurredAt) && row.ID >= filter.Before.ID)) {
+			continue
+		}
+		if filter.KindPrefix != "" && !strings.HasPrefix(row.Kind, filter.KindPrefix) {
+			continue
+		}
+		if filter.ActorType != "" && row.ActorType != filter.ActorType {
+			continue
+		}
+		if filter.AppID != nil && (row.AppID == nil || *row.AppID != *filter.AppID) {
+			continue
+		}
+		out = append(out, cloneOrgActivity(row))
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func cloneOrgActivity(row OrgActivity) OrgActivity {
+	row.Data = append(json.RawMessage(nil), row.Data...)
+	if row.ActorAccountID != nil {
+		id := *row.ActorAccountID
+		row.ActorAccountID = &id
+	}
+	if row.AppID != nil {
+		id := *row.AppID
+		row.AppID = &id
+	}
+	if row.ProjectID != nil {
+		id := *row.ProjectID
+		row.ProjectID = &id
+	}
+	if row.DeploymentID != nil {
+		id := *row.DeploymentID
+		row.DeploymentID = &id
+	}
+	return row
 }
 
 // ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the

@@ -9,6 +9,7 @@ import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { InvitationListResponse } from '../models/InvitationListResponse.js';
 import type { InvitationWithTokenResponse } from '../models/InvitationWithTokenResponse.js';
 import type { InviteMemberRequest } from '../models/InviteMemberRequest.js';
+import type { ListOrgActivityResponse } from '../models/ListOrgActivityResponse.js';
 import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js';
 import type { MemberListResponse } from '../models/MemberListResponse.js';
 import type { OrgInvitationResponse } from '../models/OrgInvitationResponse.js';
@@ -438,6 +439,83 @@ export class OrgsService {
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List the organization's global infrastructure activity.
+   * Returns one newest-first timeline across applications, deployments,
+   * environment configuration, domains, certificates, and automated
+   * platform actions. Every active member may read it (`org.view`).
+   *
+   * Entries are a curated customer-facing projection, not raw provider or
+   * security audit payloads. Labels are captured at write time and `data`
+   * contains non-secret display metadata only; environment values and
+   * credentials are never included. Pass `next_before` back unchanged as
+   * `before` to fetch the next older page.
+   *
+   * @returns ListOrgActivityResponse A stable keyset page of organization activity.
+   * @throws ApiError
+   */
+  public static listOrgActivity({
+    slug,
+    before,
+    limit = 50,
+    kindPrefix,
+    actorType,
+    appId,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Opaque cursor returned as `next_before` by the prior page.
+     */
+    before?: string,
+    /**
+     * Maximum number of activity items to return in this page.
+     */
+    limit?: number,
+    /**
+     * Optional namespaced kind prefix, such as `deploy.`.
+     */
+    kindPrefix?: string,
+    /**
+     * Restrict results to one captured actor category.
+     */
+    actorType?: 'user' | 'api_key' | 'github' | 'system' | 'operator',
+    /**
+     * Restrict results to activity associated with this application.
+     */
+    appId?: string,
+  }): CancelablePromise<ListOrgActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/activity',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+        'kind_prefix': kindPrefix,
+        'actor_type': actorType,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller is not an active member with \`org.view\`.`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

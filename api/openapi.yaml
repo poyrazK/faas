@@ -17368,6 +17368,60 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/activity:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgActivity
+      summary: List the organization's global infrastructure activity.
+      description: |
+        Returns one newest-first timeline across applications, deployments,
+        environment configuration, domains, certificates, and automated
+        platform actions. Every active member may read it (`org.view`).
+
+        Entries are a curated customer-facing projection, not raw provider or
+        security audit payloads. Labels are captured at write time and `data`
+        contains non-secret display metadata only; environment values and
+        credentials are never included. Pass `next_before` back unchanged as
+        `before` to fetch the next older page.
+      parameters:
+        - name: before
+          in: query
+          schema: { type: string }
+          description: Opaque cursor returned as `next_before` by the prior page.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum number of activity items to return in this page.
+        - name: kind_prefix
+          in: query
+          schema: { type: string }
+          description: Optional namespaced kind prefix, such as `deploy.`.
+        - name: actor_type
+          in: query
+          schema:
+            type: string
+            enum: [user, api_key, github, system, operator]
+          description: Restrict results to one captured actor category.
+        - name: app_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: Restrict results to activity associated with this application.
+      responses:
+        '200':
+          description: A stable keyset page of organization activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListOrgActivityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller is not an active member with `org.view`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/members:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -32336,6 +32390,74 @@ components:
         orgs:
           type: array
           items: { $ref: '#/components/schemas/OrgResponse' }
+
+    ActivityActorResponse:
+      description: Captured identity responsible for an activity item.
+      type: object
+      required: [type, label]
+      properties:
+        type:
+          type: string
+          enum: [user, api_key, github, system, operator]
+        label:
+          type: string
+          description: Actor name captured when the activity occurred.
+        account_id:
+          type: string
+          format: uuid
+          description: Present for a locally-known human actor.
+
+    ActivityResourceResponse:
+      description: Primary infrastructure object affected by an activity item.
+      type: object
+      required: [type, label]
+      properties:
+        type:
+          type: string
+          example: app
+        id:
+          type: string
+          description: Stable resource identifier, when one exists.
+        label:
+          type: string
+          description: Resource name captured when the activity occurred.
+
+    OrgActivityResponse:
+      description: One safe, display-ready organization activity fact.
+      type: object
+      required: [id, occurred_at, kind, summary, actor, resource, data]
+      properties:
+        id:
+          type: string
+          description: Monotonic bigint row id encoded as a string.
+        occurred_at: { type: string, format: date-time }
+        kind:
+          type: string
+          example: app.deployed
+        summary:
+          type: string
+          example: Bahadir deployed payments
+        actor: { $ref: '#/components/schemas/ActivityActorResponse' }
+        resource: { $ref: '#/components/schemas/ActivityResourceResponse' }
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        data:
+          type: object
+          additionalProperties: true
+          description: Kind-specific non-secret display metadata.
+
+    ListOrgActivityResponse:
+      description: Newest-first global organization activity page.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrgActivityResponse' }
+        next_before:
+          type: string
+          description: Continue from this value to retrieve older organization activity.
 
     OrgWithRole:
       description: |
