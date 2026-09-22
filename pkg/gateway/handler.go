@@ -851,6 +851,10 @@ type Handler struct {
 	// a nil field is safe; tests inject a stub via
 	// WithMirrorRoundTripper.
 	mirrorRoundTripper MirrorRoundTripper
+	// mirrorResultStore is the durable comparison ledger. It is optional so
+	// gateway unit tests and development backends can omit Postgres; production
+	// wires the shared PgStore.
+	mirrorResultStore mirrorResultStore
 	// mirrorSlots (issue #72 / ADR-133 / ADR-125 PR-A3
 	// code-review fix #3) is the per-rule concurrent mirror-VM
 	// cost circuit. Keyed on the mirror-rule UUID (NOT the
@@ -1731,6 +1735,14 @@ func (h *Handler) WithResponseCache(cache *ResponseCache) *Handler {
 // real upstream. Fluent setter, mirrors WithResponseCache.
 func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 	h.mirrorRoundTripper = rt
+	return h
+}
+
+// WithMirrorResultStore wires the durable per-invocation comparison ledger.
+// Writes are best-effort and happen only from detached mirror goroutines, so a
+// slow or unavailable store never delays the customer response.
+func (h *Handler) WithMirrorResultStore(store mirrorResultStore) *Handler {
+	h.mirrorResultStore = store
 	return h
 }
 
@@ -6382,12 +6394,11 @@ haveApp:
 	// asynchronously. The lookup itself does NOT block on the
 	// store read.
 	//
-	// Source snapshot (code-review PR-A3 #1, #2): the dispatch
-	// goroutine needs the source status + body to drive
-	// ClassifyResult AND to replay the body against the mirror.
-	// The proxy consumes r.Body downstream and the status is only
-	// known after the proxy commits a response header, so the
-	// handler captures both BEFORE fanout:
+	// The dispatch needs two distinct bounded snapshots: the source request
+	// body to forward to v2, and the source response body to compare with v2.
+	// The request body is captured before fanout and immediately restored. The
+	// response is captured by statusRecorder as v1 writes it and handed to the
+	// detached goroutines through mirrorSourceCapture.
 	//
 	//   - sourceBody: io.ReadAll(r.Body) capped at MirrorBodySnapshotCap
 	//     bytes (default 64 KiB — more than enough for status_diff
@@ -6395,34 +6406,23 @@ haveApp:
 	//     unbuffered).
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
-	//   - sourceStatus: read from `rec` after the proxy commits
-	//     WriteHeader. The fanout schedules BEFORE the proxy runs,
-	//     so the goroutine reads rec.status via the shared
-	//     statusRecorder pointer. nil body when the capture
-	//     failed (oversized body); statusDiff defaults to true so
-	//     the metric surfaces "we don't know what the source
-	//     did" rather than a silent no-diff.
 	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
-		sourceBody, restoreBody := snapshotSourceBody(r)
+		requestBody, restoreBody := snapshotSourceBody(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
 		// leaves Content-Length non-zero with an empty body and turns mirrored
 		// POST requests into upstream cancellations/502s.
 		restoreBody()
-		// Install the cross-goroutine status sink BEFORE the proxy
-		// commits its WriteHeader, so the dispatchMirror goroutine
-		// reads the committed status via rec.captureStatusForMirror()
-		// once its round-trip completes (proxy is local + fast,
-		// round-trip is to a cold-boot VM, so the goroutine's read
-		// lands after the proxy's store in practice — the atomic
-		// makes the handoff explicit anyway).
-		rec.mirrorStatusSink = &atomic.Int32{}
+		sourceCapture := newMirrorSourceCapture()
+		rec.mirrorSourceCapture = sourceCapture
+		defer sourceCapture.complete()
+		requestID := requestIDFrom(r)
 		for _, rule := range rules {
 			rule := rule
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
 				continue
 			}
-			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), sourceBody, rec)
+			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
 		}
 	}
 
@@ -7497,27 +7497,10 @@ type statusRecorder struct {
 	// everything on the streaming path).
 	streaming bool
 
-	// mirrorStatusSink (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix) is the cross-goroutine channel the
-	// dispatchMirror goroutine reads to learn the source
-	// response's HTTP status. nil = "no mirror on this request"
-	// (the dispatcher never scheduled a mirror, so the field
-	// stays unset — ClassifyResult falls back to status=0 which
-	// surfaces statusDiff=true rather than a silent no-diff).
-	//
-	// Handle installs the *atomic.Int32 pointer on a mirror
-	// fanout path; the proxy's WriteHeader Stores the committed
-	// status code; the dispatch goroutine Loads it after its
-	// round-trip completes (by which time the proxy has
-	// committed the response header — the proxy is local, the
-	// round-trip is to a cold-boot VM, so the gateway's local
-	// WriteHeader fires microseconds before the goroutine reads).
-	//
-	// atomic.Int32 (not int) because the writer (proxy /
-	// WriteHeader) runs in a different goroutine than the
-	// reader (dispatchMirror) — the Go memory model would flag a
-	// plain int read/write as a race.
-	mirrorStatusSink *atomic.Int32
+	// mirrorSourceCapture records the actual v1 response status and bounded
+	// body. It is concurrency-safe because detached v2 goroutines consume it
+	// after (or while) the source response is being written.
+	mirrorSourceCapture *mirrorSourceCapture
 }
 
 // Unwrap lets http.ResponseController reach the underlying server writer for
@@ -7532,22 +7515,6 @@ func (s *statusRecorder) ProblemHTMLRequest() *http.Request {
 		return nil
 	}
 	return s.request
-}
-
-// captureStatusForMirror (issue #72 / ADR-133 / ADR-125 PR-A3)
-// returns the source response's HTTP status as committed by the
-// proxy's WriteHeader. Returns 0 if no mirror was scheduled for
-// this request (mirrorStatusSink is nil), which the dispatch
-// goroutine treats as "unknown source status" — ClassifyResult
-// emits statusDiff=true to surface the "we don't know what the
-// source did" shape rather than a silent no-diff.
-//
-// Safe to call from any goroutine. nil-receiver safe.
-func (s *statusRecorder) captureStatusForMirror() int {
-	if s == nil || s.mirrorStatusSink == nil {
-		return 0
-	}
-	return int(s.mirrorStatusSink.Load())
 }
 
 // installFlushHook arms the recorder for streaming. After install,
@@ -7572,15 +7539,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
-		// Issue #72 / ADR-133 / ADR-125 PR-A3: if Handle armed a
-		// mirrorStatusSink for this request, store the committed
-		// status so the async dispatchMirror goroutine can read
-		// it (via captureStatusForMirror) and drive
-		// ClassifyResult's statusDiff branch correctly. nil
-		// sink = no mirror on this request, no-op.
-		if s.mirrorStatusSink != nil {
-			s.mirrorStatusSink.Store(int32(code))
-		}
+		s.mirrorSourceCapture.writeHeader(code)
 		// Issue #471: capture the upstream Content-Type at header
 		// commit time so the post-proxy site can detect a buffered
 		// SSE response for the deprecation log. Header() returns the
@@ -7623,6 +7582,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		// First Write with no explicit WriteHeader → 200.
 		s.status = http.StatusOK
 		s.wroteHeader = true
+		s.mirrorSourceCapture.writeHeader(http.StatusOK)
 	}
 
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
@@ -7636,6 +7596,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	// cheap insurance for the future.
 	if n > 0 {
 		s.Bytes += int64(n)
+		s.mirrorSourceCapture.write(b[:n])
 	}
 	if s.flusher != nil {
 		s.maybeFlush()

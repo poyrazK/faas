@@ -3516,6 +3516,14 @@ const (
 	// Bumping this is a PR-grade change.
 	MirrorBodySnapshotCap = 64 * 1024
 
+	// MirrorReplayMaxRequests bounds one explicitly sanitized historical
+	// replay batch. MirrorReplayMaxBatchBytes bounds the JSON corpus accepted
+	// by the API/CLI before decoding.
+	MirrorReplayMaxRequests    = 100
+	MirrorReplayMaxBatchBytes  = 8 * 1024 * 1024
+	MirrorReplayMaxHeaders     = 32
+	MirrorReplayMaxHeaderBytes = 8 * 1024
+
 	// MirrorMaxConcurrentPerRule (issue #72 / ADR-133 / ADR-125
 	// PR-A3) is the per-rule concurrent mirror-VM cost circuit.
 	// Owned by the GATEWAY (not schedd) as of PR-A3 code-review

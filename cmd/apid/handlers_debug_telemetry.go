@@ -2672,7 +2672,7 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		Source:    state.InvocationReplay,
 		Method:    row.Method,
 		Path:      row.Route,
-		Payload:   json.RawMessage("{}"),
+		Payload:   nil,
 		Headers:   headerBytes,
 		DueAt:     now,
 	})

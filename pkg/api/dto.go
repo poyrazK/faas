@@ -2534,7 +2534,8 @@ type CanaryAdvanceResponse struct {
 // removing it; 100 mirrors every customer request). IncludeBody
 // defaults to false — sensitive bodies stay off by default per
 // the spec hint; customers who want body comparison pass
-// --include-body at the CLI / set IncludeBody=true here. The
+// --include-body at the CLI / set IncludeBody=true here. Only hashes are
+// retained; raw request and response bodies are never written to the ledger. The
 // RedactHeaders list is the customer's *additive* redact set;
 // the always-stripped headers (Authorization, Cookie, Set-Cookie,
 // X-API-Key, Proxy-Authorization, WWW-Authenticate) are stripped
@@ -2609,14 +2610,53 @@ type MirrorRuleListResponse struct {
 // the parsed window in seconds so the CLI can render "last 1h"
 // without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations  int64 `json:"total_invocations"`
-	StatusDiffCount   int64 `json:"status_diff_count"`
-	SchemaDiffCount   int64 `json:"schema_diff_count"`
-	BodyDiffCount     int64 `json:"body_diff_count"`
-	MeanLatencyDiffMs int64 `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs  int64 `json:"p99_latency_diff_ms"`
-	CrashCount        int64 `json:"crash_count"`
-	WindowSeconds     int   `json:"window_seconds"`
+	TotalInvocations     int64   `json:"total_invocations"`
+	ChangedResponseCount int64   `json:"changed_response_count"`
+	ChangedResponsePct   float64 `json:"changed_response_percent"`
+	StatusDiffCount      int64   `json:"status_diff_count"`
+	SchemaDiffCount      int64   `json:"schema_diff_count"`
+	BodyDiffCount        int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
+	CrashCount           int64   `json:"crash_count"`
+	WindowSeconds        int     `json:"window_seconds"`
+}
+
+// MirrorReplayBatchRequest is an explicitly sanitized historical request
+// corpus submitted for replay against one mirror rule. Gregale does not retain
+// raw production payloads implicitly; callers export and sanitize their corpus
+// before submitting this bounded batch.
+type MirrorReplayBatchRequest struct {
+	Requests           []MirrorReplayRequestItem `json:"requests"`
+	AllowUnsafeMethods bool                      `json:"allow_unsafe_methods,omitempty"`
+}
+
+// MirrorReplayRequestItem is one sanitized request plus optional source-side
+// expectations. Body must be valid JSON because durable invocation payloads
+// are stored as jsonb. ExpectedBodySHA256 compares responses without storing
+// the historical source response.
+type MirrorReplayRequestItem struct {
+	RequestID          string            `json:"request_id,omitempty"`
+	Method             string            `json:"method"`
+	Path               string            `json:"path"`
+	Headers            map[string]string `json:"headers,omitempty"`
+	Body               json.RawMessage   `json:"body,omitempty"`
+	ExpectedStatus     int               `json:"expected_status,omitempty"`
+	ExpectedLatencyMS  int               `json:"expected_latency_ms,omitempty"`
+	ExpectedBodySHA256 string            `json:"expected_body_sha256,omitempty"`
+}
+
+// MirrorReplayBatchResponse returns durable invocation handles. Each handle
+// can be polled through the existing invocation read surface.
+type MirrorReplayBatchResponse struct {
+	Queued      int                      `json:"queued"`
+	Invocations []MirrorReplayInvocation `json:"invocations"`
+}
+
+type MirrorReplayInvocation struct {
+	RequestID          string `json:"request_id"`
+	MirrorInvocationID string `json:"mirror_invocation_id"`
+	Status             string `json:"status"`
 }
 
 // MirrorWindowDuration is the parsed window argument for the
@@ -9208,12 +9248,14 @@ type DebugReplayRequest struct {
 // excludes credentials and bodies; these platform-owned headers let schedd's
 // gateway dispatch the request through the matching ADR-125 mirror rule.
 const (
-	DebugReplayRequestIDHeader     = "x-faas-debug-replay-request-id"
-	DebugReplayDeploymentIDHeader  = "x-faas-debug-replay-deployment-id"
-	DebugReplayMirrorRuleIDHeader  = "x-faas-debug-replay-mirror-rule-id"
-	DebugReplaySourceStatusHeader  = "x-faas-debug-replay-source-status"
-	DebugReplaySourceLatencyHeader = "x-faas-debug-replay-source-latency-ms"
-	DebugReplayTraceIDHeader       = "x-faas-debug-replay-trace-id"
+	DebugReplayRequestIDHeader        = "x-faas-debug-replay-request-id"
+	DebugReplayDeploymentIDHeader     = "x-faas-debug-replay-deployment-id"
+	DebugReplayMirrorRuleIDHeader     = "x-faas-debug-replay-mirror-rule-id"
+	DebugReplaySourceStatusHeader     = "x-faas-debug-replay-source-status"
+	DebugReplaySourceLatencyHeader    = "x-faas-debug-replay-source-latency-ms"
+	DebugReplayTraceIDHeader          = "x-faas-debug-replay-trace-id"
+	DebugReplaySourceBodyHashHeader   = "x-faas-debug-replay-source-body-sha256"
+	DebugReplaySanitizedPayloadHeader = "x-faas-debug-replay-sanitized-payload"
 )
 
 // DebugReplayResponse is the wire envelope for the debug replay endpoint.
@@ -9237,6 +9279,7 @@ type DebugReplayComparison struct {
 	SourceLatencyMS    int    `json:"source_latency_ms"`
 	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
 	StatusDiff         bool   `json:"status_diff"`
+	BodyDiff           bool   `json:"body_diff"`
 	Crashed            bool   `json:"crashed"`
 }
 

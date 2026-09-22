@@ -177,6 +177,14 @@ a second POST. Deletion also searches by Gregale's stable resource ID when the
 opaque Neon ID was never persisted, closing the ambiguous-create cleanup path.
 Ambiguous duplicate names fail closed.
 
+Before any provider delete call, the PostgreSQL catalog takes an exclusive row
+lock and atomically rejects databases with an active binding or restore
+descendant. Binding reservations take a key-share lock on their target database,
+and restore reservations take the same lock on their source. Consequently, a
+concurrent reservation either commits first and blocks deletion, or observes the
+database in `deleting` and fails without creating a dependent. The provider is
+never contacted after a dependency conflict.
+
 Each app binding uses a deterministic Neon role. Repeating credential
 issuance retrieves the stored role password rather than resetting it. Revoking
 a binding deletes that role. The adapter returns credential material only in

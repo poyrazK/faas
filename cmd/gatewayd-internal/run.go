@@ -25,7 +25,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -470,11 +472,10 @@ func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv s
 	return out, http.StatusOK, err
 }
 
-// replayMirror executes the debugger's metadata-only replay against the
-// selected ADR-125 mirror deployment. The request telemetry table never
-// stores raw bodies or credentials, so the mirror receives an empty body and
-// no customer headers; the durable result still records status and latency
-// against the original request's source measurements.
+// replayMirror executes either a metadata-only debugger replay or an
+// explicitly sanitized corpus item against the selected mirror deployment.
+// Only envelopes stamped by apid as sanitized may carry a body or customer
+// headers; legacy telemetry replays remain metadata-only.
 func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
 	metadata, err := debugReplayMetadata(inv)
 	if err != nil {
@@ -496,29 +497,50 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	}
 	start := time.Now()
 	mirrorInv := inv
-	// Metadata is consumed at the gateway boundary and must never be sent to
-	// the customer's mirror deployment. The body is intentionally empty.
-	mirrorInv.Payload = nil
+	// Platform metadata is consumed at this boundary. A legacy telemetry
+	// replay is bodyless; only apid's sanitized batch endpoint stamps the
+	// marker that permits its bounded JSON body and filtered headers through.
+	sanitizedPayload := metadata[api.DebugReplaySanitizedPayloadHeader] == "true"
+	if !sanitizedPayload {
+		mirrorInv.Payload = nil
+	}
 	mirrorInv.Headers = nil
 	mirrorInv.InstanceID = target.InstanceID
+	forwardHeaders := make(map[string]string)
+	if sanitizedPayload {
+		forwardHeaders = sanitizedReplayForwardHeaders(rule, metadata)
+	}
 	// A retained trace id is safe correlation metadata, unlike customer
 	// headers. Re-attach it under the canonical platform trace header so the
 	// mirror request and its ledger row remain joinable without replaying
 	// authentication or other request credentials.
 	if traceID := strings.TrimSpace(metadata[api.DebugReplayTraceIDHeader]); traceID != "" {
-		mirrorInv.Headers, err = json.Marshal(map[string]string{middleware.TraceIDHeader: traceID})
+		forwardHeaders[middleware.TraceIDHeader] = traceID
+	}
+	if len(forwardHeaders) > 0 {
+		mirrorInv.Headers, err = json.Marshal(forwardHeaders)
 		if err != nil {
-			return inv, 0, fmt.Errorf("gateway synth: encode debug replay trace metadata: %w", err)
+			return inv, 0, fmt.Errorf("gateway synth: encode replay headers: %w", err)
 		}
 	}
-	out, statusCode, err := a.forwardInvocationWithStatus(ctx, target, mirrorInv)
+	out, statusCode, mirrorBody, err := a.forwardInvocationWithStatusAndBody(ctx, target, mirrorInv)
 	latencyMs := int(time.Since(start) / time.Millisecond)
 	if err != nil {
 		statusCode = 0
 	}
 	sourceStatus, _ := strconv.Atoi(metadata[api.DebugReplaySourceStatusHeader])
 	sourceLatency, _ := strconv.Atoi(metadata[api.DebugReplaySourceLatencyHeader])
-	statusDiff := sourceStatus != statusCode
+	statusDiff := sourceStatus != 0 && sourceStatus != statusCode
+	var sourceBodyHash []byte
+	if encodedHash := strings.TrimSpace(metadata[api.DebugReplaySourceBodyHashHeader]); encodedHash != "" {
+		sourceBodyHash, _ = hex.DecodeString(encodedHash)
+	}
+	var mirrorBodyHash []byte
+	if statusCode != 0 {
+		_, _, _, _, _, mirrorHash := gateway.ClassifyResultWithHashes(0, nil, statusCode, mirrorBody)
+		mirrorBodyHash = append([]byte(nil), mirrorHash[:]...)
+	}
+	bodyDiff := len(sourceBodyHash) == sha256.Size && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
 	result := api.DebugReplayComparison{
 		SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
@@ -528,12 +550,18 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		SourceLatencyMS:    sourceLatency,
 		MirrorLatencyMS:    latencyMs,
 		StatusDiff:         statusDiff,
+		BodyDiff:           bodyDiff,
 		Crashed:            crashed,
 	}
 	if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
 		out.Result = encoded
 	}
 	if a.store != nil {
+		var storedMirrorBodyHash, storedSourceBodyHash []byte
+		if rule.IncludeBody {
+			storedMirrorBodyHash = mirrorBodyHash
+			storedSourceBodyHash = sourceBodyHash
+		}
 		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
 			MirrorRuleID:       rule.ID,
 			AccountID:          rule.AccountID,
@@ -545,7 +573,13 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			SourceStatusCode:   sourceStatus,
 			LatencyMs:          latencyMs,
 			SourceLatencyMs:    sourceLatency,
+			BodyHash:           storedMirrorBodyHash,
+			SourceBodyHash:     storedSourceBodyHash,
+			SchemaHash:         mirrorBodyHash,
+			SourceSchemaHash:   sourceBodyHash,
 			StatusDiff:         statusDiff,
+			SchemaDiff:         bodyDiff,
+			BodyDiff:           bodyDiff,
 			Crashed:            crashed,
 			RequestID:          metadata[api.DebugReplayRequestIDHeader],
 			CompletedAt:        time.Now().UTC(),
@@ -557,6 +591,25 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		return out, statusCode, err
 	}
 	return out, statusCode, nil
+}
+
+func sanitizedReplayForwardHeaders(rule gateway.MirrorRuleRow, metadata map[string]string) map[string]string {
+	blocked := make(map[string]struct{}, len(api.MirrorAlwaysStrippedHeaders)+len(rule.RedactHeaders)+4)
+	for _, key := range append(append([]string(nil), api.MirrorAlwaysStrippedHeaders...), rule.RedactHeaders...) {
+		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
+	}
+	for _, key := range []string{"Host", "Content-Length", "Transfer-Encoding", "Connection"} {
+		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
+	}
+	out := make(map[string]string)
+	for key, value := range metadata {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, drop := blocked[canonical]; drop || strings.HasPrefix(strings.ToLower(canonical), "x-faas-") {
+			continue
+		}
+		out[canonical] = value
+	}
+	return out
 }
 
 func (a *synthAdapter) lookupReplayRule(ctx context.Context, appID, ruleID string) (gateway.MirrorRuleRow, bool, error) {
@@ -665,8 +718,13 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 }
 
 func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, error) {
+	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv)
+	return out, status, err
+}
+
+func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, []byte, error) {
 	if a.forward == nil {
-		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+		return inv, 0, nil, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 
 	method := inv.Method
@@ -682,12 +740,12 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	}
 	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(inv.Payload))
 	if err != nil {
-		return inv, 0, fmt.Errorf("gateway synth: build request: %w", err)
+		return inv, 0, nil, fmt.Errorf("gateway synth: build request: %w", err)
 	}
 	if len(inv.Headers) > 0 {
 		var headers map[string]string
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
-			return inv, 0, fmt.Errorf("gateway synth: decode invocation headers: %w", err)
+			return inv, 0, nil, fmt.Errorf("gateway synth: decode invocation headers: %w", err)
 		}
 		for key, value := range headers {
 			req.Header.Set(key, value)
@@ -721,7 +779,7 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 		} else {
 			encoded, err := json.Marshal(string(body))
 			if err != nil {
-				return inv, 0, fmt.Errorf("gateway synth: encode response: %w", err)
+				return inv, 0, nil, fmt.Errorf("gateway synth: encode response: %w", err)
 			}
 			inv.Result = encoded
 		}
@@ -736,7 +794,7 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	} else {
 		inv.State = state.InvocationDispatching
 	}
-	return inv, rec.Code, nil
+	return inv, rec.Code, append([]byte(nil), body...), nil
 }
 
 func isHandlerErrorResult(body []byte) bool {
@@ -2170,6 +2228,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	if deps.pgStore != nil {
+		handler.WithMirrorResultStore(deps.pgStore)
+	}
 	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
