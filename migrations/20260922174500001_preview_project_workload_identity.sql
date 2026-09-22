@@ -6,6 +6,7 @@
 -- preview collide with its production parent. Keep the production invariant
 -- while giving PR previews their own environment-scoped key.
 drop index if exists apps_project_workload_uniq;
+drop index if exists apps_preview_project_pr_workload_uniq;
 
 create unique index apps_project_workload_uniq
     on apps (project_id, workload_name)
