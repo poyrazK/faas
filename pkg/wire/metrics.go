@@ -1900,6 +1900,7 @@ type OpsMetrics struct {
 	// removed by the scheduler retention sweep.
 	dlqRetentionPurgedTotal prometheus.Counter
 	queue                   *queueMetrics
+	delayedTasks            *delayedTaskMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -2041,6 +2042,7 @@ func (m *OpsMetrics) HubDropped(channel string) {
 func NewOpsMetrics(prefix string) *OpsMetrics {
 	reg := prometheus.NewRegistry()
 	queue := newQueueMetrics(prefix)
+	delayedTasks := newDelayedTaskMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_ops_total",
 		Help: "Count of operations, labelled by op name and terminal status code.",
@@ -3660,6 +3662,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	commonCollectors := []prometheus.Collector{
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
+		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
@@ -5271,6 +5274,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dlqPurgedTotal:                                        dlqPurgedTotal,
 		dlqRetentionPurgedTotal:                               dlqRetentionPurgedTotal,
 		queue:                                                 queue,
+		delayedTasks:                                          delayedTasks,
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,

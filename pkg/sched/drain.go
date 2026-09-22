@@ -94,10 +94,8 @@ func invocationOutcomeForError(err error) state.InvocationOutcome {
 //     hot path Move 2 can short-circuit using ListAppsForWake +
 //     RunningInstanceForApp. For Move 1 we pay the round-trip for
 //     correctness.
-//   - Cap re-checks: row may sit in pending for a long time; if the
-//     customer's plan changed (e.g. downgrade), CountPendingInvocations
-//     re-checks the cap right before claiming. The drain never trusts
-//     apid's prior gate.
+//   - Delayed-task caps are admission-only. Once apid has durably accepted a
+//     task, the drain dispatches it even if the account later changes plans.
 //   - No new daemon: drains live inside cmd/schedd. The schedd main
 //     goroutine subscribes to invocation_due + runDrainTick (1s).
 type Drain struct {
@@ -431,13 +429,12 @@ func (d *Drain) dispatchParallel(ctx context.Context, rows []state.Invocation) {
 
 // dispatchOne is per-row. The lifecycle:
 //
-//  1. Cap re-check (delayed_task only — config-drift protection).
-//  2. ClaimInvocation (pending → dispatching, lease, attempts++).
-//  3. engine.Wake (idempotent — may return an existing RUNNING instance).
-//  4. StampInstanceInvocation — write the live handle onto the row
+//  1. ClaimInvocation (pending → dispatching, lease, attempts++).
+//  2. engine.Wake (idempotent — may return an existing RUNNING instance).
+//  3. StampInstanceInvocation — write the live handle onto the row
 //     so the meter's CountInstanceInvocationsInMinute join lands.
-//  5. gateway.Invoke (delivers envelope through wake gate).
-//  6. CompleteInvocation (state → completed; result blob attached).
+//  4. gateway.Invoke (delivers envelope through wake gate).
+//  5. CompleteInvocation (state → completed; result blob attached).
 //
 // Errors branch on transient vs permanent: transient = retryAfter 5s
 // (Claim → re-set to pending); permanent = terminal failed. The
@@ -514,6 +511,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// ClaimInvocation increments attempts atomically; keeping the pre-claim
 	// snapshot here would delay the terminal callback by one delivery cycle.
 	inv = claimed
+	d.observeDelayedTaskClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
 	// intentionally absent from request_telemetry), so let gatewayd-internal
@@ -587,6 +585,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
+		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 		}
@@ -617,6 +616,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// row so the meter gets its tick.
 		if err := d.store.CompleteInvocation(ctx, inv.ID, nil); err == nil {
 			d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, nil, "")
+			d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 		}
 		d.emitDone(ctx, inv)
 		return
@@ -637,6 +637,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
+		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 			d.emitDone(ctx, inv, state.InvocationFailed)
@@ -657,7 +658,38 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, dispatched.Result, "")
+	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
+}
+
+func (d *Drain) observeDelayedTaskClaim(inv state.Invocation) {
+	if inv.Source != state.InvocationDelayedTask || inv.Attempts != 1 {
+		return
+	}
+	scheduledAt := inv.DueAt
+	if inv.ScheduledAt != nil {
+		scheduledAt = *inv.ScheduledAt
+	}
+	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
+}
+
+func (d *Drain) observeDelayedTaskFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+	if failErr != nil {
+		return
+	}
+	outcome := wire.DelayedTaskDispatchRetry
+	if retryAfter == 0 {
+		outcome = wire.DelayedTaskDispatchFailed
+	} else if budget > 0 && inv.Attempts >= budget {
+		outcome = wire.DelayedTaskDispatchDeadLetter
+	}
+	d.observeDelayedTaskDispatch(inv, outcome)
+}
+
+func (d *Drain) observeDelayedTaskDispatch(inv state.Invocation, outcome string) {
+	if inv.Source == state.InvocationDelayedTask {
+		d.ops.ObserveDelayedTaskDispatch(outcome)
+	}
 }
 
 // isDebugMirrorReplay distinguishes the debugger's replay envelope from the
