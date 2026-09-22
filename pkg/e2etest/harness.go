@@ -979,7 +979,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	h.procs = append(h.procs, startProc(t, bin, "gatewayd-internal", env))
 	h.GatewayURL = "http://" + addr
 	h.GatewayControlURL = "http://" + controlAddr
-	waitTCP(t, controlAddr, 10*time.Second)
+	waitReadyz(t, controlAddr, 30*time.Second)
 }
 
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
@@ -1008,7 +1008,7 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 	h.procs = append(h.procs, startProc(t, bin, "gatewayd-public", env))
 	h.GatewayPublicURL = "http://" + publicAddr
 	h.GatewayPublicControlURL = "http://" + controlAddr
-	waitTCP(t, controlAddr, 15*time.Second)
+	waitReadyz(t, controlAddr, 30*time.Second)
 }
 
 // reserveGatewayAddresses chooses the public and control ports before
@@ -1911,6 +1911,41 @@ func freeTCPAddr(t *testing.T) string {
 // waitTCP dials addr every 50ms until it accepts or deadline. On timeout
 // it dumps the live daemon stdout/stderr so a CI flake has the daemon's
 // last words to bisect with (mirrors waitUnix's dumpProcs).
+// waitReadyz blocks until the daemon's control /readyz returns 200.
+//
+// waitTCP is not a sufficient gate for a routing daemon. It proves only that
+// the control port is bound, which for gatewayd-internal happens roughly
+// 300us before its Postgres pool is known to be usable and before its
+// pg_notify LISTEN for route invalidations exists. A harness that proceeds on
+// the bind alone can drive a whole test against a daemon that is already
+// dying, and the failure surfaces as an unrelated 404 routing timeout ten
+// seconds later.
+//
+// /readyz is the daemon's own answer to "may I receive traffic", so gating on
+// it means the harness asks the same question a load balancer does.
+func waitReadyz(t *testing.T, controlAddr string, d time.Duration) {
+	t.Helper()
+	waitTCP(t, controlAddr, d)
+	url := "http://" + controlAddr + "/readyz"
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(d)
+	lastStatus := 0
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			lastStatus = resp.StatusCode
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if lastStatus == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	dumpProcs(t)
+	t.Fatalf("e2etest: %s/readyz did not return 200 within %s (last status=%d)", controlAddr, d, lastStatus)
+}
+
 func waitTCP(t *testing.T, addr string, d time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(d)

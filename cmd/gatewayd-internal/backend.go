@@ -488,7 +488,7 @@ type invalidator interface {
 // with stale caches forever. The reconnect wrapper keeps the subscribe alive
 // across pg restarts. The single log-and-return on initial-acquire failure
 // remains — boot-time DB outage is a different signal.
-func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator, log *slog.Logger, nodeName ...string) {
+func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator, log *slog.Logger, subscribed chan<- struct{}, nodeName ...string) {
 	// Issue #477 / ADR-079: append NotifyKeyChanged so a key
 	// rotation triggers InvalidatePublicAuth on the
 	// basic-auth unsealed-credential cache. The cache maps
@@ -515,7 +515,15 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
 	if err != nil {
 		log.Error("gatewayd: subscribe invalidations", "err", err)
+		// subscribed stays open: /readyz must keep reporting 503 rather
+		// than admit traffic to a gateway that cannot hear route changes.
 		return
+	}
+	// The LISTEN is live from here on, so a notify fired now will be
+	// delivered. Announce readiness only at this point — announcing at
+	// goroutine entry would reintroduce exactly the window this closes.
+	if subscribed != nil {
+		close(subscribed)
 	}
 	// Reconnect wrapper owns its own cancel via the deferred goroutine.
 	for {

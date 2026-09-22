@@ -998,6 +998,20 @@ type runDeps struct {
 	// is dialed so the consumer goroutine shares the existing
 	// /run/faas/schedd.sock connection (no second dial).
 	warmHints *warmHintConsumer
+	// invalidationsReady is closed by watchInvalidations once its
+	// pg_notify LISTEN is actually established. It backs a /readyz signal
+	// so the daemon does not report ready while route invalidations are
+	// still unsubscribed.
+	//
+	// Without it, /readyz could return 200 between "control port bound" and
+	// "LISTEN registered". A deployment_changed / app_changed notify fired
+	// in that window is delivered to nobody, and the gateway serves 404 for
+	// the new route until some later refresh. In production that is an LB
+	// routing traffic at a gateway with a cold routing cache after a
+	// restart; in CI it is the TestE2E_NormalPath_* flake.
+	//
+	// nil in tests that do not construct the watcher.
+	invalidationsReady <-chan struct{}
 	// egressTLS is the server mTLS config the egress gRPC listener
 	// uses when meterd dials it from a remote compute node (ADR-052).
 	// nil in tests; production wires it in run() from
@@ -1314,7 +1328,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// stream (spec §4.1): an instance state change evicts the app's cached
 	// target so the next request re-resolves via an idempotent wake; an app or
 	// domain change flushes the host→app routes.
-	go watchInvalidations(ctx, pool, backend, log, osGetenv("FAAS_NODE_NAME"))
+	invalidationsReady := make(chan struct{})
+	go watchInvalidations(ctx, pool, backend, log, invalidationsReady, osGetenv("FAAS_NODE_NAME"))
+	deps.invalidationsReady = invalidationsReady
 
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
@@ -2888,6 +2904,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		readyProbe.RegisterSignal(signal)
 		deps.warmHints.SetOnTouch(touch)
 	}
+	// Route-invalidation subscription readiness. Starts FALSE and flips true
+	// only once watchInvalidations has established its LISTEN, so /readyz
+	// finally means what the comment above has always claimed: the routing
+	// cache is subscribed, not merely that a port is bound.
+	//
+	// Deliberately fail-closed: if the boot subscribe errors, the channel is
+	// never closed and /readyz stays 503. A gateway that cannot hear route
+	// changes would serve a frozen routing table, which is worse than being
+	// drained out of rotation.
+	if deps.invalidationsReady != nil {
+		s := readyProbe.Register()
+		go func(ready <-chan struct{}) {
+			select {
+			case <-ready:
+				s.Set(true, "")
+			case <-ctx.Done():
+			}
+		}(deps.invalidationsReady)
+	}
 	readyProbe.SetReadyObserver(func(ready bool, reason string) {
 		if deps.opsMetrics != nil {
 			deps.opsMetrics.MarkReady("gatewayd-internal", ready, reason)
@@ -3001,9 +3036,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// pre-ADR-201 behaviour.
 			Breaker: egressBreakerGroup(),
 			Metrics: deps.metrics,
-			// Prefer a replica on this node before crossing the network.
-			// Empty NodeName (legacy single-box) keeps flat round-robin.
-			LocalNodeID: cfg.NodeName,
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
