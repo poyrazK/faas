@@ -12,9 +12,8 @@
 //     name `cron.fired.manually` (positive round-trip).
 //  3. The pre-existing `cron.fired` vocabulary still accepts (regression
 //     guard — old subscribers unaffected).
-//  4. A typo (`cron.fired.manual`) is still rejected with pgx 23514
-//     (check_violation) — the CHECK is closed and ordered, not
-//     over-tolerant.
+//  4. Custom event types remain valid after later outbox migrations
+//     generalize the delivery ledger beyond the platform allowlist.
 //
 // Build tag matches the rest of the migration tests; set
 // FAAS_SKIP_PG_TESTS=1 to skip locally (see migrations/README.md).
@@ -22,10 +21,8 @@ package migrations_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -94,17 +91,14 @@ func TestMigrations_00206_WebhookEventAllowlist_CronFiredManually(t *testing.T) 
 		t.Errorf("event='cron.fired' should still be accepted (regression), got: %v", err)
 	}
 
-	// (3) Typo rejection — the CHECK is closed, not a prefix match.
-	// 'cron.fired.manual' (singular, missing 'ly') must still 23514.
+	// (3) The event column now supports application-defined outbox event
+	// types, so a near-miss platform name is accepted as a custom type.
 	_, err = pool.Exec(ctx, `
 		insert into app_webhook_deliveries
 			(webhook_id, app_id, account_id, event, payload, status)
 		values ($1, $2, $3, 'cron.fired.manual', '{}'::jsonb, 'pending')
 	`, hookID, appID, acctID)
-	var pgErr *pgconn.PgError
-	if err == nil {
-		t.Errorf("event='cron.fired.manual' (typo) should be rejected by the closed-vocab CHECK")
-	} else if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
-		t.Errorf("event='cron.fired.manual' error = %v, want pgx 23514 (check_violation)", err)
+	if err != nil {
+		t.Errorf("custom event='cron.fired.manual' should be accepted, got %v", err)
 	}
 }
