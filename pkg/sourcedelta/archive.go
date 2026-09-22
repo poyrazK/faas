@@ -131,6 +131,22 @@ func Inspect(archive *os.File, limits Limits) (Manifest, error) {
 		}
 		m.Entries[name] = entry
 	}
+	// tar stops at its end markers, before gzip necessarily verifies CRC/ISIZE.
+	// Consume bounded record padding to reach gzip EOF; an unbounded drain here
+	// would permit a tiny valid tar followed by a compressed padding bomb.
+	const maxTarPadding = 10 * 1024 // One conventional 20-block tar record.
+	padding, err := io.ReadAll(io.LimitReader(gz, maxTarPadding+1))
+	if err != nil {
+		return Manifest{}, fmt.Errorf("read gzip trailer: %w", err)
+	}
+	if len(padding) > maxTarPadding {
+		return Manifest{}, errors.New("archive has excessive trailing tar padding")
+	}
+	for _, b := range padding {
+		if b != 0 {
+			return Manifest{}, errors.New("archive has data after tar end markers")
+		}
+	}
 	m.Revision = manifestRevision(m.Entries)
 	return m, nil
 }
@@ -201,6 +217,31 @@ func Apply(baseFile, deltaFile, output *os.File, expectedBase, expectedTarget st
 	replaced := make(map[string]struct{}, len(delta.Entries))
 	for name := range delta.Entries {
 		replaced[name] = struct{}{}
+	}
+	// Both inputs can be valid individually while their union exceeds the
+	// output limit. Reject from the already-validated manifests before writing
+	// and compressing a potentially oversized reconstruction.
+	merged := make(map[string]Entry, len(base.Entries))
+	for name, entry := range base.Entries {
+		if _, drop := removed[name]; !drop {
+			merged[name] = entry
+		}
+	}
+	for name, entry := range delta.Entries {
+		merged[name] = entry
+	}
+	if len(merged) > limits.MaxEntries {
+		return Manifest{}, fmt.Errorf("reconstructed source contains more than %d entries", limits.MaxEntries)
+	}
+	var expanded int64
+	for _, entry := range merged {
+		if limits.MaxExpandedBytes > 0 && entry.Size > limits.MaxExpandedBytes-expanded {
+			return Manifest{}, fmt.Errorf("expanded reconstructed source exceeds %d bytes", limits.MaxExpandedBytes)
+		}
+		expanded += entry.Size
+	}
+	if manifestRevision(merged) != expectedTarget {
+		return Manifest{}, ErrTargetRevision
 	}
 	if err := mergeArchives(baseFile, deltaFile, output, removed, replaced, limits.MaxCompressedBytes); err != nil {
 		return Manifest{}, err

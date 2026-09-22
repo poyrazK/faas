@@ -2,10 +2,12 @@ package sourcedelta
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,6 +99,109 @@ func TestInspectRejectsExpandedArchiveOverLimit(t *testing.T) {
 	archive := openTestArchive(t, filename, false)
 	if _, err := Inspect(archive, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20, MaxExpandedBytes: 3}); err == nil {
 		t.Fatal("Inspect succeeded above expanded-byte limit")
+	}
+}
+
+func TestApplyPreflightsMergedLimitsBeforeWriting(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		limits Limits
+		want   string
+	}{
+		{"expanded bytes", Limits{MaxEntries: 10, MaxExpandedBytes: 5}, "expanded reconstructed source exceeds"},
+		{"entry count", Limits{MaxEntries: 1}, "reconstructed source contains more than"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			basePath, deltaPath := filepath.Join(dir, "base.gz"), filepath.Join(dir, "delta.gz")
+			writeTestArchive(t, basePath, map[string]string{"a": "four"})
+			writeTestArchive(t, deltaPath, map[string]string{"b": "four"})
+			base := openTestArchive(t, basePath, false)
+			delta := openTestArchive(t, deltaPath, false)
+			manifest, err := Inspect(base, tc.limits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Read-only output proves rejection precedes reconstruction.
+			output := openTestArchive(t, basePath, false)
+			_, err = Apply(base, delta, output, manifest.Revision, strings.Repeat("a", 64), nil, tc.limits)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want merged %s limit before output I/O", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestInspectRejectsCorruptGzipTrailer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.gz")
+	writeTestArchive(t, path, map[string]string{"a": "valid payload"})
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[len(data)-8] ^= 0xff // corrupt CRC32, after tar's end markers
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Inspect(openTestArchive(t, path, false), Limits{MaxEntries: 10}); err == nil {
+		t.Fatal("accepted gzip with corrupt checksum")
+	}
+}
+
+func TestInspectBoundsAndValidatesTrailingPadding(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		padding []byte
+		wantErr bool
+	}{
+		{"record padding", make([]byte, 9*1024), false},
+		{"excessive padding", make([]byte, 10*1024+1), true},
+		{"hidden payload", []byte("ignored source"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "source.gz")
+			f := openTestArchive(t, path, true)
+			gz := gzip.NewWriter(f)
+			tw := tar.NewWriter(gz)
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gz.Write(tc.padding); err != nil {
+				t.Fatal(err)
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Inspect(f, Limits{MaxEntries: 10})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Inspect error = %v", err)
+			}
+		})
+	}
+}
+
+func TestApplyWrongTargetDoesNotTouchOutput(t *testing.T) {
+	dir := t.TempDir()
+	basePath, deltaPath := filepath.Join(dir, "base.gz"), filepath.Join(dir, "delta.gz")
+	writeTestArchive(t, basePath, map[string]string{"a": "same"})
+	writeTestArchive(t, deltaPath, nil)
+	base, delta := openTestArchive(t, basePath, false), openTestArchive(t, deltaPath, false)
+	output := openTestArchive(t, filepath.Join(dir, "output.gz"), true)
+	if _, err := output.Write([]byte("untouched")); err != nil {
+		t.Fatal(err)
+	}
+	limits := Limits{MaxEntries: 10}
+	manifest, err := Inspect(base, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Apply(base, delta, output, manifest.Revision, strings.Repeat("a", 64), nil, limits)
+	if !errors.Is(err, ErrTargetRevision) {
+		t.Fatalf("error = %v", err)
+	}
+	data, err := os.ReadFile(output.Name())
+	if err != nil || !bytes.Equal(data, []byte("untouched")) {
+		t.Fatalf("output = %q, err=%v; target preflight must not write", data, err)
 	}
 }
 
