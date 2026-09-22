@@ -88,6 +88,13 @@ func (s *SpansAccumulator) RunFlushLoop(ctx context.Context, cfg FlushLoopConfig
 	for {
 		select {
 		case <-ctx.Done():
+			// Capture spans completed during daemon drain instead of waiting for
+			// another interval that will never arrive. WithoutCancel preserves
+			// the shutdown signal as the reason to stop while giving the final
+			// writer RPC a short independent deadline.
+			finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			s.drainOnce(finalCtx, cfg, pending)
+			cancel()
 			cfg.Log.Info("otel spans flush loop stopping", "reason", ctx.Err())
 			return nil
 		case <-ticker.C:

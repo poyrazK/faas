@@ -82,6 +82,34 @@ func TestFlushLoop_PerTraceTruncation(t *testing.T) {
 	}
 }
 
+func TestFlushLoop_DrainsOnCancel(t *testing.T) {
+	acc := NewSpansAccumulator()
+	accountID := uuid.New()
+	traceID := "00000000000000000000000000000006"
+	if _, err := acc.Add(traceID, accountID, []summarizedSpan{{
+		TraceID: traceID,
+		SpanID:  "0000000000000006",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var writes atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := acc.RunFlushLoop(ctx, FlushLoopConfig{
+		Interval: time.Hour,
+		WriteFn: func(context.Context, string, []byte, string) (string, int64, error) {
+			writes.Add(1)
+			return "inserted", 0, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("writes on cancellation = %d, want 1", got)
+	}
+}
+
 // TestSwapAndClear_ConcurrentAdd is the regression for
 // PR-D code-review #10. A handler Add that races the flush
 // tick lands in the freshly-emptied bucket and is picked up
