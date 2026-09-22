@@ -135,7 +135,7 @@ export class EventsService {
         'limit': limit,
       },
       errors: {
-        400: `code: validation_failed`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:
