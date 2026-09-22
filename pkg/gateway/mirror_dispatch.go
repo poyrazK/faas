@@ -39,6 +39,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -352,12 +353,20 @@ func (h *Handler) compareAndPersistMirror(
 	persistCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := h.mirrorResultStore.InsertMirrorResult(persistCtx, result); err != nil && h.log != nil {
-		h.log.Warn("mirror: ledger write failed", "rule_id", rule.ID, "app_id", rule.AppID, "request_id", requestID, "err", err)
+		// requestID may originate in the caller-controlled X-Request-ID
+		// header. Keep the sanitization inline so CodeQL can prove that no
+		// CR/LF sequence reaches the structured log sink.
+		safeRequestID := strings.ReplaceAll(requestID, "\r", "")
+		safeRequestID = strings.ReplaceAll(safeRequestID, "\n", "")
+		h.log.Warn("mirror: ledger write failed", "rule_id", rule.ID, "app_id", rule.AppID, "request_id", safeRequestID, "err", err)
 	}
 	return statusDiff, schemaDiff, bodyDiff, crashed
 }
 
 func mirrorSHA256(body []byte) []byte {
+	// codeql[go/weak-cryptographic-algorithm] false-positive: SHA-256 is a
+	// non-secret response-content fingerprint used only for equality checks;
+	// this is not password hashing or credential storage.
 	sum := sha256.Sum256(body)
 	return append([]byte(nil), sum[:]...)
 }
