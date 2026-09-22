@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "add", "crons", "delayed-task", "events", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "bindings", "crons", "delayed-task", "events", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -295,6 +295,12 @@ var cliCommands = []cliCommand{
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 		},
+	},
+	{
+		Name:        "bindings",
+		DocSlug:     "bindings",
+		Short:       "List PostgreSQL, object-storage, and queue bindings for an app",
+		Positionals: []string{"<app>"},
 	},
 	{
 		Name:    "capabilities",
