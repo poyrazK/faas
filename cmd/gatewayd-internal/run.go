@@ -537,11 +537,8 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	}
 	var mirrorBodyHash []byte
 	if statusCode != 0 {
-		// codeql[go/weak-sensitive-data-hashing] false-positive: SHA-256 is
-		// a non-secret response-content fingerprint used only for equality
-		// checks; this is not password hashing or credential storage.
-		sum := sha256.Sum256(mirrorBody)
-		mirrorBodyHash = append([]byte(nil), sum[:]...)
+		_, _, _, _, _, mirrorHash := gateway.ClassifyResultWithHashes(0, nil, statusCode, mirrorBody)
+		mirrorBodyHash = append([]byte(nil), mirrorHash[:]...)
 	}
 	bodyDiff := len(sourceBodyHash) == sha256.Size && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError

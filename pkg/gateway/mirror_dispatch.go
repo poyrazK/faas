@@ -12,7 +12,7 @@
 // metric.
 //
 // Detached-ctx discipline (ADR-098): the goroutine derives its
-// own context from context.Background with a
+// its own context with context.WithoutCancel and a
 // MirrorMaxLifetimeSeconds timeout so the customer's request
 // cancellation never reaches the mirror — the customer response
 // is already on the wire by the time dispatchMirror starts.
@@ -33,7 +33,6 @@ import (
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -315,7 +314,7 @@ func (h *Handler) compareAndPersistMirror(
 	sourceCapture *mirrorSourceCapture,
 ) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
 	source, sourceOK := sourceCapture.wait(ctx)
-	statusDiff, schemaDiff, bodyDiff, crashed = ClassifyResult(source.StatusCode, source.Body, mirrorStatus, mirrorBody)
+	statusDiff, schemaDiff, bodyDiff, crashed, sourceHash, mirrorHash := ClassifyResultWithHashes(source.StatusCode, source.Body, mirrorStatus, mirrorBody)
 
 	result := state.MirrorInvocationResult{
 		MirrorRuleID:       rule.ID,
@@ -335,7 +334,7 @@ func (h *Handler) compareAndPersistMirror(
 		CompletedAt:        time.Now().UTC(),
 	}
 	if mirrorStatus != 0 {
-		result.SchemaHash = mirrorSHA256(mirrorBody)
+		result.SchemaHash = append([]byte(nil), mirrorHash[:]...)
 		if rule.IncludeBody {
 			result.BodyHash = append([]byte(nil), result.SchemaHash...)
 		}
@@ -343,7 +342,7 @@ func (h *Handler) compareAndPersistMirror(
 	if sourceOK {
 		result.SourceStatusCode = source.StatusCode
 		result.SourceLatencyMs = mirrorDurationMilliseconds(source.Latency)
-		result.SourceSchemaHash = mirrorSHA256(source.Body)
+		result.SourceSchemaHash = append([]byte(nil), sourceHash[:]...)
 		if rule.IncludeBody {
 			result.SourceBodyHash = append([]byte(nil), result.SourceSchemaHash...)
 		}
@@ -362,14 +361,6 @@ func (h *Handler) compareAndPersistMirror(
 		h.log.Warn("mirror: ledger write failed", "rule_id", rule.ID, "app_id", rule.AppID, "request_id", safeRequestID, "err", err)
 	}
 	return statusDiff, schemaDiff, bodyDiff, crashed
-}
-
-func mirrorSHA256(body []byte) []byte {
-	// codeql[go/weak-sensitive-data-hashing] false-positive: SHA-256 is a
-	// non-secret response-content fingerprint used only for equality checks;
-	// this is not password hashing or credential storage.
-	sum := sha256.Sum256(body)
-	return append([]byte(nil), sum[:]...)
 }
 
 func mirrorDurationMilliseconds(d time.Duration) int {
