@@ -831,11 +831,12 @@ var cliCommands = []cliCommand{
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
-			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback (Pro/Scale only)"},
+			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback"},
 			{Name: "require-authn", Short: "require bearer auth on every request"},
 			{Name: "no-require-authn", Short: "drop the token requirement"},
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
+			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
@@ -1650,7 +1651,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "traffic",
 		DocSlug: "traffic",
-		Short:   "Manage deployment traffic split (issue #556; Pro/Scale only)",
+		Short:   "Manage deployment traffic split (available on every plan)",
 		Subcommands: []cliSub{
 			{
 				Name:  "set",

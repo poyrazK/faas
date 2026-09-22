@@ -938,7 +938,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 func validateSourceRefPreviewFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
-		"traffic-percent", "canary-preset", "canary-stages", "safe", "rollback-on-5xx",
+		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
 		"wait", "no-wait", "timeout",
 	} {
@@ -2071,7 +2071,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// surfaces as an exit-2 error instead of a 422.
 	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|custom); empty = no canary")
 	canaryStages := fs.String("canary-stages", "", "comma-separated percent@duration pairs for --canary-preset=custom (e.g. \"1@30s,10@2m,100@0s\")")
-	safeDeploy := fs.Bool("safe", false, "deploy with the balanced health-gated rollout and first-wake 5xx rollback (Pro/Scale only)")
+	safeDeploy := fs.Bool("safe", false, "deploy with the balanced health-gated rollout and first-wake 5xx rollback")
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
 	// --no-allow-unauthenticated analogue). Same flag pair as
 	// cmdApp / cmdAppScale. Mirrors the --warm-snapshot /
@@ -2091,14 +2091,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Empty value = no change (the Set bit in UpdateAppParams
 	// is unset, so the SQL keeps the existing value).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
-	// Issue #556 PR-A: per-deployment traffic-split weight (Pro/Scale
-	// only). Sentinel value -1 = "unset" — `fs.Int` doesn't have a
+	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
+	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
 	// distinguishes "absent" from "explicit zero". The handler
-	// validates [0, 100] (422) and the plan gate (403) on the
-	// request path; we just thread the pointer through.
-	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100, Pro/Scale only; -1 = server default 100)")
-	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses (Pro/Scale only)")
+	// validates [0, 100] on the request path; we just thread the
+	// pointer through.
+	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = server default 100)")
+	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
+	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
 	// The flag is the explicit opt-out; without it, a present
 	// gregale.yaml with a `triggers:` block is applied after app
@@ -2188,7 +2189,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2206,6 +2207,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *noTraffic {
+		if explicit["traffic-percent"] {
+			return printErr("Invalid rollout policy", fmt.Errorf("--no-traffic and --traffic-percent are mutually exclusive"))
+		}
+		if *safeDeploy || explicit["canary-preset"] || explicit["canary-stages"] {
+			return printErr("Invalid rollout policy", fmt.Errorf("--no-traffic cannot be combined with --safe, --canary-preset, or --canary-stages"))
+		}
+		// --no-traffic is the discoverable spelling for the existing wire
+		// contract. Keep the server as the source of truth by forwarding the
+		// same explicit zero used by --traffic-percent=0.
+		*trafficPercent = 0
+	}
 	rollbackOn5xxPtr, rollbackPolicyErr := resolveDeployRollbackOn5xx(*safeDeploy, explicit["rollback-on-5xx"], *rollbackOn5xx)
 	if rollbackPolicyErr != nil {
 		return printErr("Invalid rollout policy", rollbackPolicyErr)
@@ -2315,7 +2328,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "canary-preset", "canary-stages", "rollback-on-5xx", "require-authn", "no-require-authn", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "require-authn", "no-require-authn", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2442,7 +2455,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested {
 		var unsupported []string
 		for _, name := range []string{
-			"traffic-percent", "canary-preset", "canary-stages", "safe",
+			"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe",
 			"rollback-on-5xx",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
@@ -2561,6 +2574,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *safeDeploy {
 			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --github; add safe rollout policy to the generated workflow explicitly"))
 		}
+		if *noTraffic {
+			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
+		}
 		return cmdDeployGithubSnippet([]string{"--app", slug})
 	}
 
@@ -2649,7 +2665,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy)
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic)
 		return code
 	}
 
@@ -3714,11 +3730,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Manifest scaling policy failed", err)
 			}
 			commitManifestTriggers()
-			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, appURL)
+			renderQueuedDeployment(dep, appURL, *noTraffic)
 			return 0
 		}
 		if jsonWait {
-			code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, resolvedSimplePlan)
+			code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, resolvedSimplePlan)
 			if code == 0 {
 				if err := applyManifestScaling(); err != nil {
 					return printErr("Manifest scaling policy failed", err)
@@ -3735,6 +3751,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			quiet:           streamLogsOnJSON,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 			waitForRollout:  *safeDeploy,
+			darkDeploy:      *noTraffic,
 		})
 		if code == 0 {
 			if err := applyManifestScaling(); err != nil {
@@ -3805,11 +3822,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Manifest scaling policy failed", err)
 		}
 		commitManifestTriggers()
-		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, appURL)
+		renderQueuedDeployment(dep, appURL, *noTraffic)
 		return 0
 	}
 	if jsonWait {
-		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, resolvedSimplePlan)
+		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, resolvedSimplePlan)
 		if code == 0 {
 			if err := applyManifestScaling(); err != nil {
 				return printErr("Manifest scaling policy failed", err)
@@ -3826,6 +3843,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		quiet:           streamLogsOnJSON,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		waitForRollout:  *safeDeploy,
+		darkDeploy:      *noTraffic,
 	})
 	if code == 0 {
 		if err := applyManifestScaling(); err != nil {
@@ -5895,6 +5913,7 @@ type streamDeployOptions struct {
 	quiet           bool
 	waitTimeout     time.Duration
 	waitForRollout  bool
+	darkDeploy      bool
 }
 
 func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) int {
@@ -5930,6 +5949,9 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		}
 		if d.Status == deploymentStatusFailed && opts.onFailure != nil {
 			opts.onFailure(d, phase, reason)
+		}
+		if d.Status == statusLive && opts.darkDeploy {
+			return renderSuccessfulDeploymentWithOptions(ctx, c, d, appSlug, true)
 		}
 		if opts.onTerminal != nil {
 			return opts.onTerminal(d)
