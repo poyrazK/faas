@@ -187,9 +187,24 @@ for rel in \
     echo "systemd-hardening-check: ${rel}: imaged startup timeout must match the 20-minute readiness ceiling" >&2
     errors=$((errors + 1))
   fi
-  if [[ -f "$file" ]] && ! grep -Fqx 'AmbientCapabilities=CAP_CHOWN CAP_DAC_OVERRIDE' "$file"; then
-    echo "systemd-hardening-check: ${rel}: imaged must retain CAP_CHOWN and CAP_DAC_OVERRIDE for customer-owned OCI trees" >&2
-    errors=$((errors + 1))
+  # The assertion is a FLOOR, not an exact line. imaged must retain these
+  # capabilities, and it legitimately needs more: CAP_FOWNER was added so the
+  # Grype scan path can chmod a base ext4 that debugfs re-owned to root via
+  # CAP_CHOWN. Matching the whole line pinned a ceiling too, so adding a
+  # required capability failed this gate. cap_sys_admin stays denied below so
+  # relaxing the match cannot weaken the ADR-075 tripwire.
+  if [[ -f "$file" ]]; then
+    ambient="$(grep -m1 '^AmbientCapabilities=' "$file" || true)"
+    for cap in CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER; do
+      if [[ "$ambient" != *"$cap"* ]]; then
+        echo "systemd-hardening-check: ${rel}: imaged must retain ${cap} for customer-owned OCI trees and base scanning" >&2
+        errors=$((errors + 1))
+      fi
+    done
+    if printf '%s' "$ambient" | tr 'A-Z' 'a-z' | grep -q 'cap_sys_admin'; then
+      echo "systemd-hardening-check: ${rel}: imaged must NOT hold cap_sys_admin (ADR-075; vmmd is the only mount owner)" >&2
+      errors=$((errors + 1))
+    fi
   fi
 done
 

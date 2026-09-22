@@ -340,8 +340,16 @@ func TestUnitImaged_Shape(t *testing.T) {
 	if u.Slice != FaasCPSlice {
 		t.Errorf("imaged: Slice = %q, want %q", u.Slice, FaasCPSlice)
 	}
-	if !reflect.DeepEqual(u.AmbientCapabilities, []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE"}) {
-		t.Errorf("imaged: AmbientCapabilities = %v, want [CAP_CHOWN CAP_DAC_OVERRIDE]", u.AmbientCapabilities)
+	// CAP_FOWNER joined the pair when the Grype scan path was fixed. cap_sys_admin
+	// must never appear here (ADR-075: vmmd is the only mount owner).
+	wantCaps := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"}
+	if !reflect.DeepEqual(u.AmbientCapabilities, wantCaps) {
+		t.Errorf("imaged: AmbientCapabilities = %v, want %v", u.AmbientCapabilities, wantCaps)
+	}
+	for _, c := range u.AmbientCapabilities {
+		if strings.EqualFold(c, "CAP_SYS_ADMIN") {
+			t.Errorf("imaged: AmbientCapabilities must never contain %q (ADR-075)", c)
+		}
 	}
 	// imaged does NOT dial /run/faas sockets — it talks to vmmd
 	// over faas-cp.slice dependency instead. Pin the FAAS_BASE_*
