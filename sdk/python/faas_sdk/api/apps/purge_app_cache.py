@@ -86,9 +86,10 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Purge cached responses for an app.
 
-     Requests an in-process response-cache purge on every gateway. The
-    optional path glob limits the purge to matching normalized request
-    paths; omit it to purge the complete app cache.
+     Requests a response-cache purge on every gateway and on the optional
+    distributed cache tier. The optional path glob limits the purge to
+    matching normalized request paths; omit it to purge the complete app
+    cache.
 
     Args:
         slug (str):
@@ -122,9 +123,10 @@ def sync(
 ) -> Any | Problem | None:
     """Purge cached responses for an app.
 
-     Requests an in-process response-cache purge on every gateway. The
-    optional path glob limits the purge to matching normalized request
-    paths; omit it to purge the complete app cache.
+     Requests a response-cache purge on every gateway and on the optional
+    distributed cache tier. The optional path glob limits the purge to
+    matching normalized request paths; omit it to purge the complete app
+    cache.
 
     Args:
         slug (str):
@@ -153,9 +155,10 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Purge cached responses for an app.
 
-     Requests an in-process response-cache purge on every gateway. The
-    optional path glob limits the purge to matching normalized request
-    paths; omit it to purge the complete app cache.
+     Requests a response-cache purge on every gateway and on the optional
+    distributed cache tier. The optional path glob limits the purge to
+    matching normalized request paths; omit it to purge the complete app
+    cache.
 
     Args:
         slug (str):
@@ -187,9 +190,10 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Purge cached responses for an app.
 
-     Requests an in-process response-cache purge on every gateway. The
-    optional path glob limits the purge to matching normalized request
-    paths; omit it to purge the complete app cache.
+     Requests a response-cache purge on every gateway and on the optional
+    distributed cache tier. The optional path glob limits the purge to
+    matching normalized request paths; omit it to purge the complete app
+    cache.
 
     Args:
         slug (str):

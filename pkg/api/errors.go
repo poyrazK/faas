@@ -588,9 +588,15 @@ const (
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden        = "insufficient_scope"
-	CodeNotFound         = "not_found"
-	CodeMethodNotAllowed = "method_not_allowed"
+	CodeForbidden = "insufficient_scope"
+	// CodePreviewProductionDependencyDenied is returned by the internal
+	// service proxy when a project preview tries to call a production
+	// dependency while its preview_service_policy is deny. The rejection
+	// happens before endpoint lookup or wake, so a denied preview cannot cause
+	// production side effects or consume production capacity.
+	CodePreviewProductionDependencyDenied = "preview_production_dependency_denied"
+	CodeNotFound                          = "not_found"
+	CodeMethodNotAllowed                  = "method_not_allowed"
 	// CodeUndeclaredRoute is returned directly by gatewayd when the
 	// only-declared-routes contract is enabled and the request path/method is
 	// absent from the explicit list or imported OpenAPI document.

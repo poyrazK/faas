@@ -6935,9 +6935,11 @@ paths:
       operationId: getGitHubDeploymentPolicy
       summary: Read the customer-owned GitHub deployment policy.
       description: |
-        Returns the project-level policy applied by githubd to source
-        staging and pull-request previews. Missing policy rows resolve to
-        backwards-compatible defaults.
+        Returns the project-level policy applied to source staging,
+        pull-request previews, and preview-to-production internal service
+        calls. A missing policy row resolves to the safe defaults for a new
+        project; projects created before preview service isolation was
+        introduced are migration-backed to the legacy allow_marked policy.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -6958,7 +6960,10 @@ paths:
         Updates project-level GitHub deployment behaviour. Fields are
         replace-on-write; omitted fields retain their current values. The
         ignored_paths list accepts exact paths, one-segment shell globs, and
-        trailing `/**` directory patterns. Mutations require MFA.
+        trailing `/**` directory patterns. `preview_service_policy=deny`
+        rejects preview calls to production dependencies before discovery or
+        wake-up; `allow_marked` preserves the marked-call compatibility mode.
+        Mutations require MFA.
       security:
         - bearerAuth: [github:manage]
       requestBody:
@@ -19031,7 +19036,7 @@ components:
     GitHubDeploymentPolicy:
       description: Customer-owned project-level GitHub deployment behaviour.
       type: object
-      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours]
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy]
       properties:
         project_id: { type: string, format: uuid }
         root_dir:
@@ -19045,6 +19050,16 @@ components:
           description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
         preview_enabled: { type: boolean, default: true }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+        preview_service_policy:
+          type: string
+          enum: [deny, allow_marked]
+          default: deny
+          description: |
+            Controls calls from project previews to production internal
+            services. `deny` rejects the call before discovery or wake-up;
+            `allow_marked` permits it and marks the request as preview-origin
+            traffic. Projects created before this policy was introduced are
+            migration-backed to `allow_marked`.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -19058,6 +19073,9 @@ components:
           items: { type: string, minLength: 1, maxLength: 255 }
         preview_enabled: { type: boolean }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
+        preview_service_policy:
+          type: string
+          enum: [deny, allow_marked]
 
     GitHubInstallMutationRequest:
       description: |

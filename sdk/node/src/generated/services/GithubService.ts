@@ -158,9 +158,11 @@ export class GithubService {
   }
   /**
    * Read the customer-owned GitHub deployment policy.
-   * Returns the project-level policy applied by githubd to source
-   * staging and pull-request previews. Missing policy rows resolve to
-   * backwards-compatible defaults.
+   * Returns the project-level policy applied to source staging,
+   * pull-request previews, and preview-to-production internal service
+   * calls. A missing policy row resolves to the safe defaults for a new
+   * project; projects created before preview service isolation was
+   * introduced are migration-backed to the legacy allow_marked policy.
    *
    * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
    * @throws ApiError
@@ -192,7 +194,10 @@ export class GithubService {
    * Updates project-level GitHub deployment behaviour. Fields are
    * replace-on-write; omitted fields retain their current values. The
    * ignored_paths list accepts exact paths, one-segment shell globs, and
-   * trailing `**` directory patterns. Mutations require MFA.
+   * trailing `**` directory patterns. `preview_service_policy=deny`
+   * rejects preview calls to production dependencies before discovery or
+   * wake-up; `allow_marked` preserves the marked-call compatibility mode.
+   * Mutations require MFA.
    *
    * @returns GitHubDeploymentPolicy Updated GitHub deployment policy.
    * @throws ApiError

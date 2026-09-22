@@ -198,18 +198,30 @@ identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the
 same account. Cross-account calls are refused.
 
-### Preview environments call production services
+### Preview-to-production service policy
 
 A pull-request preview is provisioned as **one app**, derived from the app the
-PR touches. It does not get its own copy of that app'"'"'s dependencies, and
-service names resolve without an environment scope — so a preview'"'"'s internal
-calls reach your **production** services.
+PR touches. It does not get its own copy of that app's dependencies, and
+service names resolve without an environment scope. When permitted, a
+preview's internal calls therefore reach your **production** services.
 
-That is worth designing around. A preview of `public-api` calling `billing`
-reaches production `billing` and any side effects are real.
+New projects default to `preview_service_policy: deny`. A denied call returns
+`403 application/problem+json` with code
+`preview_production_dependency_denied` before the proxy discovers or wakes the
+target. Projects that existed when this policy shipped were migration-backed
+to `allow_marked`, preserving their live behaviour. Opt an existing project
+into isolation with:
 
-Gregale marks these calls so a service can react rather than be surprised.
-Every request from a preview app carries:
+```bash
+gregale github setup public-api --preview-service-policy deny
+```
+
+Set `allow_marked` only when the production dependency is designed to receive
+preview traffic. A preview of `public-api` calling `billing` then reaches
+production `billing`, and any side effects are real.
+
+In `allow_marked` mode, Gregale marks these calls so a service can react rather
+than be surprised. Every request from a preview app carries:
 
 ```text
 X-Faas-Caller-Env: preview
@@ -221,8 +233,9 @@ stripped before the hop, so the marker cannot be forged. Production callers
 carry neither header, so a service that ignores them is unaffected.
 
 Use them to skip irreversible work, tag writes as test data, or refuse the call
-outright. Operators can watch the fleet-wide rate with
-`gateway_service_preview_to_production_total`.
+outright. Operators can watch allowed traffic with
+`gateway_service_preview_to_production_total` and policy rejections with
+`gateway_service_call_total{outcome="preview_denied"}`.
 
 ### Verifying the caller (preview)
 

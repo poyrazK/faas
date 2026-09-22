@@ -63,6 +63,26 @@ func TestValidGithubSetupRollout(t *testing.T) {
 	}
 }
 
+func TestGithubSetupPreviewServicePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{githubSetupPreviewServicesDeny, true},
+		{githubSetupPreviewServicesAllowMarked, true},
+		{"allow", false},
+		{"", false},
+	} {
+		if got := validGithubSetupPreviewServicePolicy(tc.value); got != tc.want {
+			t.Errorf("validGithubSetupPreviewServicePolicy(%q) = %t, want %t", tc.value, got, tc.want)
+		}
+	}
+	patch := githubSetupPolicyPatch(false, false, 0, "", nil, githubSetupPreviewServicesDeny)
+	if patch == nil || patch.PreviewServicePolicy == nil || *patch.PreviewServicePolicy != githubSetupPreviewServicesDeny {
+		t.Fatalf("preview service policy patch = %+v", patch)
+	}
+}
+
 func TestGithubSetupWorkflowPathRejectsEscape(t *testing.T) {
 	for _, path := range []string{"/tmp/workflow.yml", "../workflow.yml", "..", "."} {
 		if _, err := githubSetupWorkflowPath(path); err == nil {
