@@ -55,6 +55,18 @@ func TestCreditLedgerProviderMigration(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migration replay: %v", err)
 	}
+	// Evidence added after cutover cannot retroactively identify an old debit.
+	// Simulate a schema-ahead-of-goose replay and keep that ledger row unresolved.
+	if _, err := pool.Exec(ctx, `INSERT INTO invoices (account_id,provider,provider_invoice_id,plan,status,period_start,period_end,total_cents,amount_paid_cents) VALUES ($1,'polar','shared','hobby','paid','2026-09-01','2026-10-01',200,200)`, cases[3].account); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id=20260922183947369`)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("remove provider migration ledger row = (%d, %v), want one row", tag.RowsAffected(), err)
+	}
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("provider migration schema replay: %v", err)
+	}
 	for _, tc := range cases {
 		var matched, issuance int
 		var balance, netDebit int64
