@@ -45,3 +45,39 @@ func TestSetupQueueWorkloadRejectsInvalidProfileBeforeNetwork(t *testing.T) {
 		t.Fatalf("configure calls = %d, want 0", fake.calls)
 	}
 }
+
+func TestSetupQueueWorkloadPassesRetryPolicy(t *testing.T) {
+	fake := &queueWorkloadFakeClient{}
+	policy := &api.RetryPolicyDTO{MaxAttempts: 7, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.5}
+	_, err := setupQueueWorkloadWithRetry(context.Background(), fake, "demo", "orders", 5, 3, true, policy)
+	if err != nil {
+		t.Fatalf("setupQueueWorkloadWithRetry() error = %v", err)
+	}
+	if fake.req.RetryPolicy == nil || *fake.req.RetryPolicy != *policy {
+		t.Fatalf("retry policy = %+v, want %+v", fake.req.RetryPolicy, policy)
+	}
+	if !fake.req.Force || fake.req.QueueName != "orders" || fake.req.TargetDepth != 5 || fake.req.MaxConcurrency != 3 {
+		t.Fatalf("profile request = %+v", fake.req)
+	}
+}
+
+func TestValidateQueueRetryPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		p    *api.RetryPolicyDTO
+		want bool
+	}{
+		{name: "nil", p: nil},
+		{name: "valid", p: &api.RetryPolicyDTO{MaxAttempts: 3, BaseSeconds: 1, MaxSeconds: 10, JitterSeconds: 0.25}},
+		{name: "attempts too high", p: &api.RetryPolicyDTO{MaxAttempts: 26}, want: true},
+		{name: "base above max", p: &api.RetryPolicyDTO{BaseSeconds: 11, MaxSeconds: 10}, want: true},
+		{name: "jitter above one", p: &api.RetryPolicyDTO{JitterSeconds: 1.1}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateQueueRetryPolicy(tt.p); (err != nil) != tt.want {
+				t.Fatalf("validateQueueRetryPolicy(%+v) error = %v, want error=%t", tt.p, err, tt.want)
+			}
+		})
+	}
+}
