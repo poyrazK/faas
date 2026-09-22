@@ -26,7 +26,7 @@ class UpdateMirrorRuleRequest:
     enabled: bool | Unset = UNSET
     """Set false to pause the rule without removing it."""
     include_body: bool | Unset = UNSET
-    """Toggle body capture in the comparison ledger."""
+    """Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored."""
     redact_headers: list[str] | Unset = UNSET
     """Replace the customer's redact list. Empty array clears it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

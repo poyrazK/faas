@@ -44,6 +44,54 @@ type mirrorTestNotifier struct {
 	notif []mirrorCaptured
 }
 
+func TestPrepareMirrorReplayInvocation_StripsSecretsAndRequiresUnsafeOptIn(t *testing.T) {
+	app := state.App{ID: "app-1", AccountID: "acct-1"}
+	rule := state.MirrorRule{
+		ID: "rule-1", AppID: app.ID, AccountID: app.AccountID,
+		SourceDeploymentID: "dep-source", MirrorDeploymentID: "dep-mirror",
+		RedactHeaders: []string{"X-Tenant-Secret"},
+	}
+	item := api.MirrorReplayRequestItem{
+		RequestID: "historical-1", Method: http.MethodPost, Path: "/checkout?dry_run=1",
+		Headers: map[string]string{
+			"Authorization":   "Bearer secret",
+			"Cookie":          "session=secret",
+			"X-Tenant-Secret": "tenant-secret",
+			"X-Keep":          "safe-value",
+			"X-Faas-App":      "spoofed",
+		},
+		Body:           json.RawMessage(`{"order_id":"sanitized"}`),
+		ExpectedStatus: http.StatusCreated,
+	}
+	if _, _, err := prepareMirrorReplayInvocation(app, rule, item, false, time.Now()); err == nil {
+		t.Fatal("POST replay without allow_unsafe_methods succeeded")
+	}
+	inv, requestID, err := prepareMirrorReplayInvocation(app, rule, item, true, time.Now())
+	if err != nil {
+		t.Fatalf("prepare replay: %v", err)
+	}
+	if requestID != item.RequestID || inv.Method != http.MethodPost || inv.Path != item.Path || string(inv.Payload) != string(item.Body) {
+		t.Fatalf("prepared invocation = %+v request_id=%q", inv, requestID)
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(inv.Headers, &headers); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"Authorization", "Cookie", "X-Tenant-Secret", "X-Faas-App"} {
+		if got := headers[key]; got != "" {
+			t.Fatalf("secret/platform header %s survived as %q", key, got)
+		}
+	}
+	if headers["X-Keep"] != "safe-value" || headers[api.DebugReplaySanitizedPayloadHeader] != "true" {
+		t.Fatalf("sanitized headers = %#v", headers)
+	}
+	item.Method = http.MethodGet
+	item.Path = "//example.invalid/escape"
+	if _, _, err := prepareMirrorReplayInvocation(app, rule, item, false, time.Now()); err == nil {
+		t.Fatal("network-path replay URI succeeded")
+	}
+}
+
 type mirrorCaptured struct {
 	channel string
 	payload string
@@ -482,6 +530,55 @@ func TestMirrorSummary_WindowParam(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(api.CodeInvalidMirrorWindow)) {
 		t.Errorf("window=2h body missing %s: %s", api.CodeInvalidMirrorWindow, rec.Body.String())
+	}
+}
+
+func TestMirrorSummary_ChangedResponsePercentDoesNotDoubleCount(t *testing.T) {
+	fx := newMirrorFixture(t)
+	rule, err := fx.store.CreateMirrorRuleIfUnderQuota(context.Background(), state.CreateMirrorRuleParams{
+		AccountID:          fx.proAcct.ID,
+		AppID:              fx.proApp.ID,
+		SourceDeploymentID: fx.proDep1.ID,
+		MirrorDeploymentID: fx.proDep2.ID,
+		Percent:            100, Enabled: true, IncludeBody: true, RedactHeaders: []string{},
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []state.MirrorInvocationResult{
+		{
+			MirrorRuleID: rule.ID, AccountID: fx.proAcct.ID, AppID: fx.proApp.ID,
+			SourceDeploymentID: fx.proDep1.ID, MirrorDeploymentID: fx.proDep2.ID,
+			StatusDiff: true, SchemaDiff: true, BodyDiff: true, RequestID: "changed",
+			CompletedAt: timeNow(),
+		},
+		{
+			MirrorRuleID: rule.ID, AccountID: fx.proAcct.ID, AppID: fx.proApp.ID,
+			SourceDeploymentID: fx.proDep1.ID, MirrorDeploymentID: fx.proDep2.ID,
+			RequestID: "same", CompletedAt: timeNow(),
+		},
+	} {
+		if err := fx.store.InsertMirrorResult(context.Background(), result); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := newMirrorServer(fx)
+	pt, hash, _ := api.GenerateAPIKey()
+	_, _ = fx.store.CreateAPIKey(context.Background(), fx.proAcct.ID, hash, "test", api.ScopesReadSurface)
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+fx.proApp.Slug+"/mirrors/"+rule.ID+"/summary?window=1h", nil)
+	req.Header.Set("Authorization", "Bearer "+pt)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got api.MirrorSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.TotalInvocations != 2 || got.ChangedResponseCount != 1 || got.ChangedResponsePct != 50 {
+		t.Fatalf("summary = %+v, want total=2 changed=1 percent=50", got)
 	}
 }
 

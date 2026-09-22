@@ -262,9 +262,9 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	var cacheRestored bool
 	var driveErr error
 	if cachePath == "" {
-		cacheRestored, driveErr = createBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath, "")
+		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, "", nil)
 	} else {
-		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, cachePath,
+		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, cachePath,
 			func(src, dst string, maxBytes int64) error {
 				d.dependencyCacheMu.Lock()
 				defer d.dependencyCacheMu.Unlock()

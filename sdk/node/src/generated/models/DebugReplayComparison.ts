@@ -13,6 +13,7 @@ export type DebugReplayComparison = {
   source_latency_ms?: number;
   mirror_latency_ms?: number;
   status_diff?: boolean;
+  body_diff?: boolean;
   crashed?: boolean;
 };
 

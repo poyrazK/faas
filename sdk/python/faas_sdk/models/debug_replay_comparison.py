@@ -23,6 +23,7 @@ class DebugReplayComparison:
     source_latency_ms: int | Unset = UNSET
     mirror_latency_ms: int | Unset = UNSET
     status_diff: bool | Unset = UNSET
+    body_diff: bool | Unset = UNSET
     crashed: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -53,6 +54,8 @@ class DebugReplayComparison:
 
         status_diff = self.status_diff
 
+        body_diff = self.body_diff
+
         crashed = self.crashed
 
         field_dict: dict[str, Any] = {}
@@ -72,6 +75,8 @@ class DebugReplayComparison:
             field_dict["mirror_latency_ms"] = mirror_latency_ms
         if status_diff is not UNSET:
             field_dict["status_diff"] = status_diff
+        if body_diff is not UNSET:
+            field_dict["body_diff"] = body_diff
         if crashed is not UNSET:
             field_dict["crashed"] = crashed
 
@@ -125,6 +130,8 @@ class DebugReplayComparison:
 
         status_diff = d.pop("status_diff", UNSET)
 
+        body_diff = d.pop("body_diff", UNSET)
+
         crashed = d.pop("crashed", UNSET)
 
         debug_replay_comparison = cls(
@@ -135,6 +142,7 @@ class DebugReplayComparison:
             source_latency_ms=source_latency_ms,
             mirror_latency_ms=mirror_latency_ms,
             status_diff=status_diff,
+            body_diff=body_diff,
             crashed=crashed,
         )
 

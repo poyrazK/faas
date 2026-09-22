@@ -634,6 +634,10 @@ type Store interface {
 	List(context.Context, string) ([]Database, error)
 	Due(context.Context, bool, int, time.Time) ([]Database, error)
 	Claim(context.Context, string, string, string, State, time.Time, time.Time) (Database, error)
+	// ClaimDelete serializes the deleting transition with binding and restore
+	// reservations. It must reject active bindings or restore descendants before
+	// returning so callers can safely perform irreversible provider deletion.
+	ClaimDelete(context.Context, string, string, string, time.Time, time.Time) (Database, error)
 	RecordProviderResource(context.Context, string, string, string, time.Time) error
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error

@@ -37,6 +37,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,12 @@ import (
 // upstream.
 type MirrorRoundTripper interface {
 	RoundTripMirror(ctx context.Context, target *url.URL, req *http.Request) (*http.Response, error)
+}
+
+// mirrorResultStore is the narrow durable-ledger seam used by the data plane.
+// PgStore satisfies it in production; tests can inject a channel-backed fake.
+type mirrorResultStore interface {
+	InsertMirrorResult(context.Context, state.MirrorInvocationResult) error
 }
 
 // defaultMirrorRoundTripper (issue #72 / ADR-124 PR-A3) uses
@@ -113,35 +120,27 @@ func (d *defaultMirrorRoundTripper) RoundTripMirror(ctx context.Context, target 
 //     crashed=true on the metric counter.
 //  4. Classify result (status_diff / schema_diff / bodyDiff /
 //     crashed) via mirror_redact.ClassifyResult using the
-//     source-side snapshot the handler captured BEFORE fanout
-//     (sourceBody bytes + rec.captureStatusForMirror()).
+//     actual bounded v1 response captured by statusRecorder.
 //  5. Metric increment (gateway_mirror_dispatched_total{result=...}
 //     + gateway_mirror_latency_seconds + gateway_mirror_body_diff_total).
+//  6. Append the comparison to mirror_invocation_results so the summary
+//     endpoint reflects live traffic rather than only debugger replays.
 //
-// Source snapshot discipline (PR-A3 code-review fixes #1 + #2):
-// the handler reads r.Body into a bounded []byte and installs a
-// mirrorStatusSink *atomic.Int32 on rec BEFORE the fanout goroutine
-// is scheduled. We pass both to dispatchMirror so the goroutine
-// does NOT touch r.Body again (which would race with the
-// downstream ReverseProxy — code-review #2) and does NOT need to
-// wait for the proxy to commit a status (the proxy is local + fast,
-// so by the time the round-trip returns the sink has the status;
-// code-review #1).
-//
-// The durable mirror_invocation_results ledger row insert is a
-// commit-4 follow-on (the rollup goroutine owns the write path;
-// the per-request ledger insert is a future optimisation to
-// avoid a two-step record+rollup).
-func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID string, sourceTarget *Target, rule MirrorRuleRow, srcReq *http.Request, sourceBody []byte, rec *statusRecorder) {
+// Snapshot discipline: requestBody is captured before fanout solely for
+// forwarding to v2. Source response status/body are captured independently by
+// statusRecorder and synchronized through mirrorSourceCapture, preventing the
+// old request-body-versus-response-body comparison bug.
+func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID string, sourceTarget *Target, rule MirrorRuleRow, srcReq *http.Request, requestBody []byte, requestID string, sourceCapture *mirrorSourceCapture) {
 	// The mirror goroutine outlives the customer's request. The goroutine's
 	// own ctx ignores parent cancellation and has a MirrorMaxLifetimeSeconds
 	// deadline (ADR-098 detached-ctx pattern, mirrors pkg/gateway/gate.go:172),
 	// but retains request values so identity and trace correlation survive.
-	// parentCtx is also captured so we can pull the committed status off the
-	// proxy after WriteHeader fired. Per-call //nolint:contextcheck below.
 	if h == nil || h.backend == nil {
 		return
 	}
+	timeout := time.Duration(api.MirrorMaxLifetimeSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), timeout)
+	defer cancel()
 
 	// 0. Per-rule concurrent mirror-VM cap (PR-A3 code-review fix #3).
 	// Acquired BEFORE backend.ScheduleMirror so a cap-at-max goroutine
@@ -160,17 +159,10 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.log.Warn("mirror: cap at max", "rule_id", rule.ID, "app_id", rule.AppID,
 				"source_instance_id", sourceInstanceID)
 		}
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, "", requestID, 0, nil, 0, sourceCapture)
 		return
 	}
 	defer h.releaseMirrorSlot(rule.ID)
-
-	timeout := time.Duration(api.MirrorMaxLifetimeSeconds) * time.Second
-	// Preserve correlation values and the active trace while detaching only
-	// cancellation from the customer request. The mirror has its own bounded
-	// lifetime, but its logs/traces must still identify the admitted target.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), timeout)
-	defer cancel()
-
 	// 1. Schedule the mirror VM and retain its complete forwarding target.
 	// Production implements MirrorTargetBackend so the request is delivered to
 	// the admitted shadow instance, including its node and runtime port. Legacy
@@ -214,7 +206,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.log.Warn("mirror: schedule failed", "rule_id", rule.ID, "app_id", rule.AppID,
 				"err", err.Error(), "result", resultLabel, "source_instance_id", sourceInstanceID)
 		}
-		_ = instanceID
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
 		return
 	}
 
@@ -224,7 +216,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	// srcReq.Body here would close it on the source side (code-review
 	// #2 fix).
 	//nolint:contextcheck // ctx is detached (ADR-098)
-	mirrorReq, buildErr := h.buildMirrorRequest(ctx, rule, srcReq, sourceBody)
+	mirrorReq, buildErr := h.buildMirrorRequest(ctx, rule, srcReq, requestBody)
 	if buildErr != nil {
 		if h.metrics != nil {
 			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "build_request_error")
@@ -232,6 +224,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: build request failed", "rule_id", rule.ID, "err", buildErr.Error())
 		}
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
 		return
 	}
 	applyMirrorTargetIdentity(mirrorReq, mirrorTarget, rule.AppID)
@@ -261,6 +254,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: round-trip failed", "rule_id", rule.ID, "err", err.Error())
 		}
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -273,18 +267,16 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: response body read failed", "rule_id", rule.ID, "err", readErr)
 		}
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture)
 		return
 	}
 
-	// 4. Classify. Source side: read the committed status from
-	// rec's mirrorStatusSink (the proxy committed it via WriteHeader
-	// microseconds ago — code-review #1 fix). bodyBytes were
-	// captured before the proxy read them — safe to compare
-	// directly (no body-close race — code-review #2 fix).
-	srcStatus := rec.captureStatusForMirror()
-	statusDiff, schemaDiff, bodyDiff, crashed := ClassifyResult(srcStatus, sourceBody, resp.StatusCode, mirrorBody)
-	_ = schemaDiff
-	_ = sourceInstanceID
+	// 4. Wait for the real v1 response, compare it with v2, and append the
+	// durable ledger row. This wait happens only in the detached goroutine.
+	statusDiff, _, bodyDiff, crashed := h.compareAndPersistMirror(
+		ctx, rule, sourceInstanceID, instanceID, requestID,
+		resp.StatusCode, mirrorBody, latency, sourceCapture,
+	)
 
 	// 5. Metric.
 	resultLabel := "ok"
@@ -302,6 +294,76 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.metrics.ObserveMirrorBodyDiff(rule.AppID, rule.ID)
 		}
 	}
+}
+
+// compareAndPersistMirror joins the asynchronous v2 result with the actual v1
+// response. It stores hashes, never response bodies. A missing mirror response
+// is represented by status 0 and crashed=true, matching PgStore's nullable
+// status contract.
+func (h *Handler) compareAndPersistMirror(
+	ctx context.Context,
+	rule MirrorRuleRow,
+	sourceInstanceID, instanceID, requestID string,
+	mirrorStatus int,
+	mirrorBody []byte,
+	mirrorLatency time.Duration,
+	sourceCapture *mirrorSourceCapture,
+) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
+	source, sourceOK := sourceCapture.wait(ctx)
+	statusDiff, schemaDiff, bodyDiff, crashed, sourceHash, mirrorHash := ClassifyResultWithHashes(source.StatusCode, source.Body, mirrorStatus, mirrorBody)
+
+	result := state.MirrorInvocationResult{
+		MirrorRuleID:       rule.ID,
+		AccountID:          rule.AccountID,
+		AppID:              rule.AppID,
+		SourceDeploymentID: rule.SourceDeploymentID,
+		MirrorDeploymentID: rule.MirrorDeploymentID,
+		InstanceID:         instanceID,
+		SourceInstanceID:   sourceInstanceID,
+		StatusCode:         mirrorStatus,
+		LatencyMs:          mirrorDurationMilliseconds(mirrorLatency),
+		StatusDiff:         statusDiff,
+		SchemaDiff:         schemaDiff,
+		BodyDiff:           bodyDiff,
+		Crashed:            crashed,
+		RequestID:          requestID,
+		CompletedAt:        time.Now().UTC(),
+	}
+	if mirrorStatus != 0 {
+		result.SchemaHash = append([]byte(nil), mirrorHash[:]...)
+		if rule.IncludeBody {
+			result.BodyHash = append([]byte(nil), result.SchemaHash...)
+		}
+	}
+	if sourceOK {
+		result.SourceStatusCode = source.StatusCode
+		result.SourceLatencyMs = mirrorDurationMilliseconds(source.Latency)
+		result.SourceSchemaHash = append([]byte(nil), sourceHash[:]...)
+		if rule.IncludeBody {
+			result.SourceBodyHash = append([]byte(nil), result.SourceSchemaHash...)
+		}
+	}
+	if h == nil || h.mirrorResultStore == nil {
+		return statusDiff, schemaDiff, bodyDiff, crashed
+	}
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	if err := h.mirrorResultStore.InsertMirrorResult(persistCtx, result); err != nil && h.log != nil {
+		// requestID may originate in the caller-controlled X-Request-ID
+		// header. Keep the sanitization inline so CodeQL can prove that no
+		// CR/LF sequence reaches the structured log sink.
+		safeRequestID := strings.ReplaceAll(requestID, "\r", "")
+		safeRequestID = strings.ReplaceAll(safeRequestID, "\n", "")
+		h.log.Warn("mirror: ledger write failed", "rule_id", rule.ID, "app_id", rule.AppID, "request_id", safeRequestID, "err", err)
+	}
+	return statusDiff, schemaDiff, bodyDiff, crashed
+}
+
+func mirrorDurationMilliseconds(d time.Duration) int {
+	if d <= 0 {
+		return 0
+	}
+	return max(1, int(d/time.Millisecond))
 }
 
 // applyMirrorTargetIdentity ensures every mirror transport receives the
