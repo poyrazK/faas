@@ -433,7 +433,12 @@ func (s *server) deletePrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrCapacity("could not read private network"))
 		return
 	}
-	err = store.DeletePrivateNetwork(r.Context(), acct.ID, id)
+	durableStore, atomicDeletion := store.(state.PrivateNetworkDurableDeletionStore)
+	if atomicDeletion {
+		err = durableStore.DeletePrivateNetworkDurably(r.Context(), acct.ID, id)
+	} else {
+		err = store.DeletePrivateNetwork(r.Context(), acct.ID, id)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
@@ -445,7 +450,11 @@ func (s *server) deletePrivateNetwork(w http.ResponseWriter, r *http.Request, ac
 		}
 		return
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_deleted","account_id":"%s","network_id":"%s","region":"%s","cidr":"%s"}`, acct.ID, network.ID, network.Region, network.CIDR.String()))
+	if !atomicDeletion {
+		// MemStore and older test doubles keep their notifier seam. PgStore
+		// already committed the durable outbox row with the deletion.
+		_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_deleted","account_id":"%s","network_id":"%s","region":"%s","cidr":"%s"}`, acct.ID, network.ID, network.Region, network.CIDR.String()))
+	}
 	s.audit.Emit(r.Context(), "private_network.deleted", &acct.ID, map[string]any{"network_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }
