@@ -11168,9 +11168,9 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
-// ListInvocationsByTraceID mirrors PgStore's account-scoped queue correlation
-// query. MemStore keeps the full invocation envelope for scheduler tests, but
-// this read only inspects the canonical platform trace header.
+// ListInvocationsByTraceID mirrors PgStore's account-scoped invocation
+// correlation query. MemStore keeps the full invocation envelope for scheduler
+// tests, but this read only inspects the canonical platform trace header.
 func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -11182,7 +11182,7 @@ func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceI
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AccountID != accountID || inv.Source != InvocationQueue {
+		if inv.AccountID != accountID {
 			continue
 		}
 		var headers map[string]string

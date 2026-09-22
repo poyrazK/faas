@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
 
 // publishEvent handles POST /v1/events:publish. It persists the canonical
@@ -43,6 +44,10 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	traceHeaders := pkgtrace.InjectHeaders(r.Context())
+	envelope.Traceparent = traceHeaders["traceparent"]
+	envelope.Tracestate = traceHeaders["tracestate"]
+	envelope.Baggage = traceHeaders["baggage"]
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {

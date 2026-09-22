@@ -14231,10 +14231,10 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 	return scanInvocations(rows)
 }
 
-// ListInvocationsByTraceID is the durable account-scoped queue correlation
-// read. The expression index from account_trace_lookup keeps this bounded
-// query index-backed while the projection remains the normal invocation row
-// shape for callers that need lifecycle timestamps.
+// ListInvocationsByTraceID is the durable account-scoped invocation
+// correlation read. The expression index from the trace-all migration keeps
+// this bounded query index-backed while the projection remains the normal
+// invocation row shape for callers that need lifecycle timestamps.
 func (s *PgStore) ListInvocationsByTraceID(ctx context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	if limit <= 0 {
 		limit = 100
@@ -14245,7 +14245,6 @@ func (s *PgStore) ListInvocationsByTraceID(ctx context.Context, accountID, trace
 	rows, err := s.pool.Query(ctx, `select `+invocationSelectCols+`
 		from invocations
 		where account_id = $1
-		  and source = 'queue'
 		  and headers->>'X-Gregale-Trace-Id' = $2
 		order by created_at asc, id asc
 		limit $3`, accountID, traceID, limit)

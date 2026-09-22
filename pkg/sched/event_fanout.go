@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
 
 const eventInvocationMethod = "POST"
@@ -71,11 +72,19 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 				continue
 			}
 			invocationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:event:"+envelope.ID+"\x00"+row.ID)).String()
-			headers, marshalErr := json.Marshal(map[string]string{
-				"x-gregale-event-id":     envelope.ID,
-				"x-gregale-event-source": envelope.Source,
-				"x-gregale-event-type":   envelope.Type,
-			})
+			producerHeaders := map[string]string{
+				"traceparent": envelope.Traceparent,
+				"tracestate":  envelope.Tracestate,
+				"baggage":     envelope.Baggage,
+			}
+			headers, marshalErr := json.Marshal(pkgtrace.MergeHeaderMap(
+				pkgtrace.ExtractHeaders(ctx, producerHeaders),
+				map[string]string{
+					"x-gregale-event-id":     envelope.ID,
+					"x-gregale-event-source": envelope.Source,
+					"x-gregale-event-type":   envelope.Type,
+				},
+			))
 			if marshalErr != nil {
 				routeErrs = append(routeErrs, marshalErr)
 				continue

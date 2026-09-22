@@ -1950,7 +1950,7 @@ paths:
       summary: Look up one distributed trace across the account.
       description: |
         Returns retained request telemetry, bounded span evidence, and
-        durable queue lifecycle rows linked by the platform trace id. Request
+        durable invocation lifecycle rows linked by the platform trace id. Request
         payloads and arbitrary invocation headers are never returned.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1962,7 +1962,7 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Maximum queue lifecycle rows to include in the lookup.
+          description: Maximum durable invocation rows to include in the lookup.
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
       responses:
         '200':
@@ -30073,7 +30073,7 @@ components:
 
     AccountTraceInvocation:
       type: object
-      description: "Safe queue lifecycle projection linked to the trace."
+      description: "Safe durable invocation lifecycle projection linked to the trace."
       required: [app, id, source, state, attempts, created_at]
       properties:
         app: { type: string }
