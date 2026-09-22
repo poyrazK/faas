@@ -1,8 +1,10 @@
 from typing import Literal
 
 CreateEdgeRuleRequestKind = Literal[
+    "async",
     "budget",
     "cache",
+    "circuit_breaker",
     "cors",
     "geo",
     "headers",
@@ -12,6 +14,7 @@ CreateEdgeRuleRequestKind = Literal[
     "maintenance",
     "redirect",
     "respond",
+    "retry",
     "rewrite",
     "route",
     "throttle",
@@ -19,8 +22,10 @@ CreateEdgeRuleRequestKind = Literal[
 ]
 
 CREATE_EDGE_RULE_REQUEST_KIND_VALUES: set[CreateEdgeRuleRequestKind] = {
+    "async",
     "budget",
     "cache",
+    "circuit_breaker",
     "cors",
     "geo",
     "headers",
@@ -30,6 +35,7 @@ CREATE_EDGE_RULE_REQUEST_KIND_VALUES: set[CreateEdgeRuleRequestKind] = {
     "maintenance",
     "redirect",
     "respond",
+    "retry",
     "rewrite",
     "route",
     "throttle",
