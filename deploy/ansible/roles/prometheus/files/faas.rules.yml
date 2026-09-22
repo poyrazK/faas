@@ -3358,6 +3358,7 @@ groups:
           summary: "Durable queue is stalled for app {{ $labels.app }}"
           description: "The durable queue for app {{ $labels.app }} has pending or dispatching work and its oldest pending item is older than five minutes for ten minutes. Check worker capacity, queue-depth autoscaling, and lease recovery."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"
+
       - alert: FaasDurableQueueDeadLetters
         expr: schedd_queue_dead_letter{app!=""} > 0
         for: 5m
@@ -3408,3 +3409,25 @@ groups:
           summary: "Raw TCP idle timeouts are spiking"
           description: "The public gateway has reaped more than one raw TCP session per second for ten minutes. Check client keepalive behavior, the configured FAAS_TCPD_IDLE_TIMEOUT, and whether a downstream service is stalling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+
+  - name: retry_safety
+    interval: 30s
+    rules:
+      - alert: FaasRetryAmplificationHigh
+        expr: |
+          (
+            sum(rate(gateway_retry_attempts_total{outcome=~"replay_ok|replay_failed"}[5m]))
+            /
+            clamp_min(sum(rate(gateway_retry_attempts_total{outcome=~"original_ok|original_failed"}[5m])), 0.001)
+          ) > 0.20
+          and
+          sum(rate(gateway_retry_attempts_total{outcome=~"replay_ok|replay_failed"}[5m])) > 1
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: retry_safety
+        annotations:
+          summary: "Platform retries exceed 20% of original request traffic"
+          description: "Gateway-generated replays have exceeded 20% of original attempts at more than one replay per second for ten minutes. Check transport failures and retry-rule budgets; use the retry kill switch if amplification is contributing to an incident."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRetryAmplificationHigh.md"

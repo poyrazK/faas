@@ -731,7 +731,7 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 
 // WithGatewaydControlURL (ADR-093) attaches the loopback URL
 // apid uses to reach gatewayd-internal's control listener
-// (/v1/internal/apps/{slug}/routes). Default
+// (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
 // production overrides via FAAS_GATEWAYD_CONTROL_URL when the
@@ -1891,6 +1891,7 @@ func (s *server) handler() http.Handler {
 	// the durable events row remains the recovery source.
 	mux.HandleFunc("POST /v1/events:publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishEvent)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSubscriptions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createWorkflowRun)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))
@@ -2071,6 +2072,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
+
+	// Durable inbound webhooks. Configuration is authenticated, while the
+	// provider-facing ingress route below is authenticated by the provider's
+	// signature over the raw request body. The ingress handler returns 202 only
+	// after the corresponding invocation row has committed.
+	mux.HandleFunc("GET /v1/apps/{slug}/inbound-webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInboundWebhookEndpoints))))
+	mux.HandleFunc("POST /v1/apps/{slug}/inbound-webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createInboundWebhookEndpoint))))
+	mux.HandleFunc("GET /v1/apps/{slug}/inbound-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getInboundWebhookEndpoint))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/inbound-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateInboundWebhookEndpoint))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/inbound-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteInboundWebhookEndpoint))))
 
 	// Queue bindings are the durable app-scoped contract consumed by push
 	// workers and queue-depth autoscaling. The message ledger remains under
@@ -2672,6 +2683,11 @@ func (s *server) handler() http.Handler {
 	// HMAC *is* the trust boundary.
 	mux.HandleFunc("POST /v1/webhooks/resend", s.resendWebhook)
 
+	// Customer inbound webhook ingress (no Gregale auth). The opaque route token
+	// identifies an endpoint; the configured provider signature is the trust
+	// boundary. Tokens are stored only as SHA-256 digests.
+	mux.HandleFunc("POST /v1/hooks/{token}", s.receiveInboundWebhook)
+
 	// Operator admin surface (issue #98 / ADR-028). Auth lives in
 	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers
 	// 403 every request when the allowlist is empty. The scope
@@ -2885,7 +2901,7 @@ func (s *server) handler() http.Handler {
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's
 	// main package; the dashboard and the CLI read the same
-	// 15-entry list through independent paths.
+	// 17-entry list through independent paths.
 	mux.Handle("GET /v1/templates", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listTemplates))))
 
 	// PR-C: /oauth/code-callback is the user-to-server OAuth callback

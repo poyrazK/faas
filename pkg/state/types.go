@@ -2869,11 +2869,12 @@ const (
 type AlertFailureSource string
 
 const (
-	AlertFailureAny         AlertFailureSource = "any"
-	AlertFailureCron        AlertFailureSource = "cron"
-	AlertFailureQueue       AlertFailureSource = "queue"
-	AlertFailureDelayedTask AlertFailureSource = "delayed_task"
-	AlertFailureAsyncInvoke AlertFailureSource = "async_invoke"
+	AlertFailureAny            AlertFailureSource = "any"
+	AlertFailureCron           AlertFailureSource = "cron"
+	AlertFailureQueue          AlertFailureSource = "queue"
+	AlertFailureDelayedTask    AlertFailureSource = "delayed_task"
+	AlertFailureAsyncInvoke    AlertFailureSource = "async_invoke"
+	AlertFailureInboundWebhook AlertFailureSource = "inbound_webhook"
 )
 
 // AlertState is the cool-down state machine (issue #396 criterion 4).
@@ -3416,9 +3417,13 @@ type InvocationSource string
 
 const (
 	InvocationAsyncInvoke InvocationSource = "async_invoke"
-	InvocationQueue       InvocationSource = "queue"
-	InvocationDelayedTask InvocationSource = "delayed_task"
-	InvocationCron        InvocationSource = "cron"
+	// InvocationInboundWebhook is a provider-verified public callback that
+	// apid accepted durably before acknowledgement. Keeping it distinct from
+	// async_invoke gives the guest an unspoofable platform-owned source marker.
+	InvocationInboundWebhook InvocationSource = "inbound_webhook"
+	InvocationQueue          InvocationSource = "queue"
+	InvocationDelayedTask    InvocationSource = "delayed_task"
+	InvocationCron           InvocationSource = "cron"
 	// InvocationReplay (issue #315 / tier-2 DX) is the source
 	// stamped on a replayed invocation. The dashboard's
 	// per-invocation detail page renders this so a customer
@@ -6818,10 +6823,9 @@ type EdgeRuleAction struct {
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).
 //
 // MaxAttempts counts attempts, not retries: 2 is the original plus one
-// replay. AllowNonIdempotent opts POST and PATCH into replay and is the one
-// field here that can cost a customer correctness rather than latency — a
-// replayed POST runs their side effect twice unless their handler is
-// idempotent — so it defaults false and the API documents the consequence.
+// replay. AllowNonIdempotent opts POST and PATCH into replay only when the
+// request carries an Idempotency-Key. The handler must honor that key, so the
+// field defaults false and the API documents the consequence.
 // MinRemainingMs is the request-budget floor below which a replay is skipped,
 // which is what stops a retry converting a 502 into a 504. BackoffMs defaults
 // to 0 because the failure being retried is a dead peer, not a loaded one.
@@ -6830,6 +6834,8 @@ type EdgeRuleRetryAction struct {
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	MinRemainingMs     int  `json:"min_remaining_ms,omitempty"`
 	BackoffMs          int  `json:"backoff_ms,omitempty"`
+	BudgetPercent      int  `json:"budget_percent,omitempty"`
+	BudgetMinRetries   int  `json:"budget_min_retries,omitempty"`
 }
 
 // EdgeRuleCircuitBreakerAction is the kind=circuit_breaker payload

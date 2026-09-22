@@ -107,10 +107,7 @@ func TestEdgeRulesThrottle_E2E_429Contract(t *testing.T) {
 	// 429 path MUST emit X-RouteRateLimit-Policy. For a
 	// back-compat rule (KeyBy="" — the default for the seedEdgeRuleDirect
 	// action shape above) the value is the literal "route". The
-	// per-consumer collapse path is pinned by the pkg/gateway unit
-	// tests (TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse);
-	// e2e is intentionally limited to the contract surface the
-	// gatewayd process emits without an authn chain.
+	// dimensional value is exercised by the consumer-isolation e2e below.
 	if got := headers.Get("X-RouteRateLimit-Policy"); got != "route" {
 		t.Errorf("X-RouteRateLimit-Policy = %q, want %q (back-compat default for KeyBy=\"\" rules)", got, "route")
 	}
@@ -124,5 +121,120 @@ func TestEdgeRulesThrottle_E2E_429Contract(t *testing.T) {
 	}
 	if problem.Code != "rate_limited" {
 		t.Errorf("Problem.code = %q, want %q", problem.Code, "rate_limited")
+	}
+}
+
+func TestEdgeRulesThrottle_E2E_ConsumerDimensionsAreIndependent(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
+	accountKey := h.SeedAccount(context.Background(), api.PlanHobby)
+	accountID := accountIDFromKey(t, context.Background(), pool, accountKey)
+	slug := "throttle-consumer-dimensions"
+	rawApp, appStatus := doReq(t, h, accountKey, http.MethodPost, "/v1/apps",
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
+	if appStatus != http.StatusCreated {
+		t.Fatalf("create app: status=%d body=%s", appStatus, rawApp)
+	}
+	var app api.AppResponse
+	if err := json.Unmarshal(rawApp, &app); err != nil {
+		t.Fatalf("decode app: %v body=%s", err, rawApp)
+	}
+
+	createConsumerKey := func(externalRef string) string {
+		t.Helper()
+		rawConsumer, status := doReq(t, h, accountKey, http.MethodPost,
+			"/v1/apps/"+slug+"/consumers", api.CreateAPIConsumerRequest{
+				ExternalRef: externalRef,
+				Name:        externalRef,
+			})
+		if status != http.StatusCreated {
+			t.Fatalf("create consumer %s: status=%d body=%s", externalRef, status, rawConsumer)
+		}
+		var consumer api.APIConsumerResponse
+		if err := json.Unmarshal(rawConsumer, &consumer); err != nil {
+			t.Fatalf("decode consumer %s: %v body=%s", externalRef, err, rawConsumer)
+		}
+		rawKey, status := doReq(t, h, accountKey, http.MethodPost,
+			"/v1/apps/"+slug+"/consumers/"+consumer.ID+"/keys",
+			api.CreateConsumerKeyRequest{Name: externalRef + "-primary", Scopes: []string{"read"}})
+		if status != http.StatusCreated {
+			t.Fatalf("create key for %s: status=%d body=%s", externalRef, status, rawKey)
+		}
+		var key api.ConsumerKeyResponse
+		if err := json.Unmarshal(rawKey, &key); err != nil {
+			t.Fatalf("decode key for %s: %v body=%s", externalRef, err, rawKey)
+		}
+		if key.Key == "" {
+			t.Fatalf("create key for %s returned no plaintext", externalRef)
+		}
+		return key.Key
+	}
+	consumerAKey := createConsumerKey("customer-a")
+	consumerBKey := createConsumerKey("customer-b")
+
+	synthHost := "edgectl-throttle-consumers.apps.test.example"
+	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, synthHost, slug)
+	action, err := json.Marshal(api.EdgeRuleThrottleAction{
+		RequestsPerSecond: 0.01,
+		Burst:             1,
+		KeyBy:             api.ThrottleKeyByConsumerID,
+		MaxKeysPerRule:    100,
+		MissingKeyPolicy:  api.ThrottleMissingKeyReject,
+	})
+	if err != nil {
+		t.Fatalf("marshal throttle action: %v", err)
+	}
+	rawRule, ruleStatus := doReq(t, h, accountKey, http.MethodPost,
+		"/v1/apps/"+slug+"/edge-rules", api.CreateEdgeRuleRequest{
+			MatchHost: synthHost,
+			MatchPath: "/*",
+			Kind:      string(state.EdgeRuleKindThrottle),
+			Action:    action,
+		})
+	if ruleStatus != http.StatusCreated {
+		t.Fatalf("create dimensional throttle: status=%d body=%s", ruleStatus, rawRule)
+	}
+	resetEdgeRuleCache(t, h)
+
+	_, anonymousBody, anonymousStatus := gatewayReq(t, h, http.MethodGet, "/", nil,
+		gatewayReqOptions{Host: synthHost})
+	if anonymousStatus != http.StatusUnauthorized || problemCode(anonymousBody) != api.CodeUnauthorized {
+		t.Fatalf("anonymous request = status %d code %q, want 401/%q; body=%s",
+			anonymousStatus, problemCode(anonymousBody), api.CodeUnauthorized, anonymousBody)
+	}
+
+	requestAs := func(key string) (http.Header, []byte, int) {
+		t.Helper()
+		return gatewayReq(t, h, http.MethodGet, "/", nil, gatewayReqOptions{
+			Host: synthHost, Authorization: "Bearer " + key,
+		})
+	}
+	_, body, status := requestAs(consumerAKey)
+	assertBackendFallthrough(t, status, body)
+	headers, body, status := requestAs(consumerAKey)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("consumer A second request: status=%d, want 429; body=%s", status, body)
+	}
+	if got := headers.Get("X-RouteRateLimit-Policy"); got != "per-consumer" {
+		t.Errorf("consumer A policy=%q, want per-consumer", got)
+	}
+	if got := headers.Get("X-RouteRateLimit-Remaining"); got != "0" {
+		t.Errorf("consumer A remaining=%q, want 0", got)
+	}
+
+	// Consumer B must receive its own full burst even though consumer A has
+	// exhausted theirs. A shared parent route bucket would reject this request.
+	_, body, status = requestAs(consumerBKey)
+	assertBackendFallthrough(t, status, body)
+	_, body, status = requestAs(consumerBKey)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("consumer B second request: status=%d, want 429; body=%s", status, body)
 	}
 }

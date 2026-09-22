@@ -133,6 +133,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// serviceCallerKeys mirrors service_caller_keys: one published
+	// public key per node (ADR-206).
+	serviceCallerKeys map[string]ServiceCallerKey
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
@@ -312,6 +315,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                    map[string]AppWebhook
 	appWebhookDeliveries           map[string]AppWebhookDelivery
+	inboundWebhookEndpoints        map[string]InboundWebhookEndpoint
 	queueBindings                  map[string]QueueBinding
 	managedRealtimeEndpoints       map[string]ManagedRealtimeEndpoint
 	tcpListeners                   map[string]TCPListener
@@ -979,6 +983,7 @@ func NewMemStore() *MemStore {
 		alertDeliveries:                map[string]AlertDelivery{},
 		appWebhooks:                    map[string]AppWebhook{},
 		appWebhookDeliveries:           map[string]AppWebhookDelivery{},
+		inboundWebhookEndpoints:        map[string]InboundWebhookEndpoint{},
 		queueBindings:                  map[string]QueueBinding{},
 		managedRealtimeEndpoints:       map[string]ManagedRealtimeEndpoint{},
 		tcpListeners:                   map[string]TCPListener{},
@@ -11549,6 +11554,66 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 		}
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
+	return out, nil
+}
+
+// ListEventDeliveriesForApp mirrors the PostgreSQL event-delivery projection.
+// MemStore keeps the filter in-process so handler tests exercise the same
+// account/app isolation and cursor semantics as production.
+func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	var cursor Invocation
+	if before != "" {
+		var ok bool
+		cursor, ok = m.invocations[before]
+		if !ok || cursor.AppID != appID || cursor.Source != InvocationAsyncInvoke {
+			return []Invocation{}, nil
+		}
+		var cursorHeaders map[string]string
+		if json.Unmarshal(cursor.Headers, &cursorHeaders) != nil {
+			return []Invocation{}, nil
+		}
+		if _, ok := cursorHeaders["x-gregale-event-id"]; !ok {
+			return []Invocation{}, nil
+		}
+	}
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.Source != InvocationAsyncInvoke {
+			continue
+		}
+		if before != "" && (inv.CreatedAt.After(cursor.CreatedAt) ||
+			(inv.CreatedAt.Equal(cursor.CreatedAt) && inv.ID >= cursor.ID)) {
+			continue
+		}
+		var headers map[string]string
+		if len(inv.Headers) == 0 || json.Unmarshal(inv.Headers, &headers) != nil {
+			continue
+		}
+		if strings.TrimSpace(headers["x-gregale-event-id"]) == "" {
+			continue
+		}
+		if eventID != "" && headers["x-gregale-event-id"] != eventID {
+			continue
+		}
+		if deliveryState != "" && string(inv.State) != deliveryState {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

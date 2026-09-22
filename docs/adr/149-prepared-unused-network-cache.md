@@ -20,6 +20,10 @@
   conntrack cap and address base, and the complete resulting network config
   is compared again after request validation. A mismatch rebuilds the network
   through the ordinary setup path before starting any VMM.
+  The documented default guest-port representations (`0` and `8080`) are
+  equivalent for this comparison: both install the same `:8080` DNAT rule.
+  All other identity and policy fields still require exact equality; custom
+  or invalid ports are not normalized into eligibility.
 - **Lifecycle:** Replenishment follows successful wakes and runs in one daemon
   worker with bounded operations. Entries expire after 60 seconds. While a
   configured cache remains enabled, the most recently observed eligible policy

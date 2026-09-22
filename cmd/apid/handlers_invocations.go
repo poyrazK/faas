@@ -142,7 +142,7 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		Payload:                req.Payload,
 		Headers:                invocationHeaders,
 		DueAt:                  time.Now().UTC(),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
+		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
 		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
@@ -224,7 +224,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
 		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
+		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
@@ -355,7 +355,7 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		Payload:         req.Payload,
 		Headers:         traceHeaders,
 		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, req.RetryPolicy),
+		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue queue send"))
@@ -643,7 +643,7 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		DueAt:                  sched,
 		ScheduledAt:            &sched,
 		DeadlineAt:             deadlineForRequestAt(sched, nil, acct),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
+		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
 		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
@@ -834,9 +834,9 @@ func validateInvocationRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
 	if policy == nil {
 		return nil
 	}
-	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
+	if policy.MaxAttempts < 0 || policy.MaxAttempts > api.DurableRetryMaxAttempts {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_attempts must be between 0 and 25")
+			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", api.DurableRetryMaxAttempts))
 	}
 	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
@@ -857,11 +857,8 @@ func validateInvocationRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
 	return nil
 }
 
-// marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into
-// the JSONB blob pgstore stores verbatim. Returns nil when the
-// customer didn't override — EnqueueInvocation's nullable column
-// then leaves retry_policy NULL and the drain falls back to the
-// plan default.
+// marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into the JSONB blob
+// pgstore stores verbatim.
 func marshalRetryPolicy(p *api.RetryPolicyDTO) json.RawMessage {
 	if p == nil {
 		return nil
@@ -877,17 +874,19 @@ func marshalRetryPolicy(p *api.RetryPolicyDTO) json.RawMessage {
 }
 
 // effectiveInvocationRetryPolicy applies deterministic precedence for an
-// invocation row: an explicit request override wins; otherwise the app-level
-// default is copied into the row. Queue binding consumers can replace this
-// value with their binding policy before dispatch.
-func effectiveInvocationRetryPolicy(app state.App, override *api.RetryPolicyDTO) json.RawMessage {
+// invocation row: an explicit request override wins, followed by the app
+// default, followed by the plan default. The materialized row is always
+// finite and plan-capped; the scheduler clamps it again at dispatch time so a
+// later plan downgrade cannot retain a larger budget.
+func effectiveInvocationRetryPolicy(app state.App, override *api.RetryPolicyDTO, planLimit int) json.RawMessage {
+	policy := api.RetryPolicyDTO{}
 	if override != nil {
-		return marshalRetryPolicy(override)
+		policy = *override
+	} else if len(app.RetryPolicyJSON) > 0 && string(app.RetryPolicyJSON) != "{}" {
+		_ = json.Unmarshal(app.RetryPolicyJSON, &policy)
 	}
-	if len(app.RetryPolicyJSON) == 0 || string(app.RetryPolicyJSON) == "{}" {
-		return nil
-	}
-	return append(json.RawMessage(nil), app.RetryPolicyJSON...)
+	policy.MaxAttempts = api.EffectiveRetryMaxAttempts(policy.MaxAttempts, planLimit)
+	return marshalRetryPolicy(&policy)
 }
 
 func ptrTime(t *time.Time) time.Time {
@@ -1027,6 +1026,7 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		Payload:              orig.Payload,
 		Headers:              invocationHeaders,
 		DueAt:                time.Now().UTC(),
+		RetryPolicyJSON:      effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
 		DeadlineAt:           deadlineForRequest(nil, acct),
 		ResultRetentionUntil: retentionForRequest(nil, acct),
 	})

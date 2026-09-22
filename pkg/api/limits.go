@@ -590,19 +590,17 @@ type Limits struct {
 	MaxSourceBytesPerInvocation int
 	AsyncInvokeAllowed          bool
 
-	// MaxQueueAttempts (issue #394 / Move 1 dead-letter) is the
-	// per-plan retry budget for queue messages that hit a transient
-	// failure during drain (pkg/sched/drain.go). Once a row's
-	// `attempts` reaches this value, the next transient failure
-	// transitions it to state='dead_letter' (terminal) instead of
-	// 'pending' (re-queued). Free = 0 means queues aren't entitled
-	// anyway (MaxQueueDepth = 0); the drain keeps the legacy
-	// infinite-retry behaviour because Free never queues. Hobby/Pro/
-	// Scale follow the same shape as the other async-event caps:
-	// small on the cheap tier, larger as we move up. The dead-letter
-	// rows are readable via GET /v1/apps/{slug}/queues/dead_letter
-	// (migrations/00060_invocations_dead_letter.sql lands the
-	// 'dead_letter' state value + partial index).
+	// MaxQueueAttempts (issue #394 / Move 1 dead-letter) is the shared
+	// per-plan total-attempt budget for durable invocations that hit a
+	// transient failure during drain (pkg/sched/drain.go). It covers async,
+	// queue, delayed-task, cron, and replay rows. Once a row's `attempts`
+	// reaches the effective value, the failure transitions it to
+	// state='dead_letter' (terminal) instead of 'pending' (re-queued).
+	// Free = 0 resolves to one original delivery and no replay; zero never
+	// means unlimited. Hobby/Pro/Scale follow the same shape as the other
+	// async-event caps: small on the cheap tier, larger as we move up. The
+	// dead-letter rows are readable via GET
+	// /v1/apps/{slug}/queues/dead_letter.
 	MaxQueueAttempts int
 
 	// MaxAsyncInvocationsPerAccount (ADR-134 PR-B) is the cap on
@@ -1093,6 +1091,13 @@ type Limits struct {
 	// N-apps-times-cap-per-app bypass. Both enforced in
 	// pkg/state.CreateAppWebhookIfUnderQuota.
 	WebhookPerAccount int
+	// InboundWebhookPerApp caps signature-verified public ingress endpoints on
+	// one app. Inbound endpoints have independent cardinality from outbound
+	// subscriptions because they pin different secrets and traffic paths.
+	InboundWebhookPerApp int
+	// InboundWebhookPerAccount prevents the N-apps-times-cap bypass. Creation
+	// is serialized under the owning app and account rows in the state store.
+	InboundWebhookPerAccount int
 	// LogDrainPerApp caps the number of customer runtime log destinations
 	// on one app. It follows the same plan gate as outbound webhooks.
 	LogDrainPerApp int
@@ -1770,11 +1775,10 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       0,
 		MaxSourceBytesPerInvocation: 0,
 		AsyncInvokeAllowed:          false,
-		// Free: queues aren't entitled (MaxQueueDepth = 0). Value is
-		// kept at 0 for symmetry with the rest of the async-event
-		// caps. The drain falls back to legacy infinite-retry when
-		// budget == 0, but Free customers never reach the queue
-		// surface so the path is unreachable.
+		// Free: queues aren't entitled (MaxQueueDepth = 0). Value is kept
+		// at 0 for symmetry with the rest of the async-event caps; the
+		// effective-budget helper resolves it to one original delivery and
+		// no replay for other durable invocation sources.
 		MaxQueueAttempts: 0,
 		// ADR-134 PR-B: Free's per-account cap is 100 — enough for
 		// the documented Hobby-customer-trying-Free path; tighter than
@@ -1932,10 +1936,12 @@ var planLimits = map[Plan]Limits{
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Free has no webhooks — the handler returns 402
 		// CodePlanWebhooksNotAllowed before the store is touched.
-		WebhookPerApp:      0,
-		WebhookPerAccount:  0,
-		LogDrainPerApp:     0,
-		LogDrainPerAccount: 0,
+		WebhookPerApp:            0,
+		WebhookPerAccount:        0,
+		InboundWebhookPerApp:     0,
+		InboundWebhookPerAccount: 0,
+		LogDrainPerApp:           0,
+		LogDrainPerAccount:       0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -2316,10 +2322,12 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 3,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Hobby gets 3/app, 10/account — mirrors the alert-rule ratio.
-		WebhookPerApp:      3,
-		WebhookPerAccount:  10,
-		LogDrainPerApp:     3,
-		LogDrainPerAccount: 10,
+		WebhookPerApp:            3,
+		WebhookPerAccount:        10,
+		InboundWebhookPerApp:     3,
+		InboundWebhookPerAccount: 10,
+		LogDrainPerApp:           3,
+		LogDrainPerAccount:       10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -2697,10 +2705,12 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 10,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Pro gets 10/app, 30/account — mirrors the alert-rule ratio.
-		WebhookPerApp:      10,
-		WebhookPerAccount:  30,
-		LogDrainPerApp:     10,
-		LogDrainPerAccount: 30,
+		WebhookPerApp:            10,
+		WebhookPerAccount:        30,
+		InboundWebhookPerApp:     10,
+		InboundWebhookPerAccount: 30,
+		LogDrainPerApp:           10,
+		LogDrainPerAccount:       30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -3077,10 +3087,12 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 50,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Scale gets 25/app, 100/account — mirrors the alert-rule ratio.
-		WebhookPerApp:      25,
-		WebhookPerAccount:  100,
-		LogDrainPerApp:     25,
-		LogDrainPerAccount: 100,
+		WebhookPerApp:            25,
+		WebhookPerAccount:        100,
+		InboundWebhookPerApp:     25,
+		InboundWebhookPerAccount: 100,
+		LogDrainPerApp:           25,
+		LogDrainPerAccount:       100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's
@@ -3686,6 +3698,23 @@ const (
 	// instance is a different process, so waiting buys nothing. The knob
 	// exists only for the case where the sibling is still waking.
 	MaxEdgeRuleRetryBackoffMs = 1_000
+	// EdgeRuleRetryDefaultBudgetPercent limits aggregate replay traffic to
+	// 10% of originals in the gateway's short per-app accounting window.
+	EdgeRuleRetryDefaultBudgetPercent = 10
+	// MaxEdgeRuleRetryBudgetPercent prevents a rule from allowing more than
+	// one replay per original through the aggregate budget.
+	MaxEdgeRuleRetryBudgetPercent = 100
+	// EdgeRuleRetryDefaultBudgetMin preserves one recovery opportunity for
+	// low-traffic apps even when the percentage rounds down.
+	EdgeRuleRetryDefaultBudgetMin = 1
+	// MaxEdgeRuleRetryBudgetMin bounds the low-traffic burst allowance.
+	MaxEdgeRuleRetryBudgetMin = 32
+
+	// DurableRetryMaxAttempts is the platform-wide safety ceiling for
+	// durable invocation delivery. It applies even when the account or app
+	// lookup needed to resolve a narrower plan budget is temporarily
+	// unavailable, so lookup failures can never turn into infinite retry.
+	DurableRetryMaxAttempts = 25
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -4653,6 +4682,24 @@ const (
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
 )
+
+// EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
+// count against the account plan. Zero means "inherit" on input, never
+// "unlimited" on output. Plans without a retry allowance still receive one
+// delivery attempt so the invocation can run without being replayed.
+func EffectiveRetryMaxAttempts(requested, planLimit int) int {
+	limit := planLimit
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > DurableRetryMaxAttempts {
+		limit = DurableRetryMaxAttempts
+	}
+	if requested < 1 || requested > limit {
+		return limit
+	}
+	return requested
+}
 
 // Per-plan job caps. Indexed by Plan: 0=Free 1=Hobby 2=Pro 3=Scale.
 // Lives as a var (not const) because Go does not permit array literals

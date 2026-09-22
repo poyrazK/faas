@@ -258,7 +258,7 @@ func docsURLForTemplate(name string) string {
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "ai-chat":
 		return functionsDocsURL
-	case "cron-example", "cron-worker", "event-worker", "slack-bot", "webhook-receiver":
+	case "cron-example", "cron-worker", "event-worker", "queue-worker", "slack-bot", "webhook-receiver":
 		return eventDrivenDocsURL
 	case "s3-uploader", "rest-api-postgres":
 		return storageDocsURL

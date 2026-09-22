@@ -85,10 +85,13 @@ class CreateAppRequest:
     max_retries: int | Unset = UNSET
     """Maximum consecutive restart attempts. 0 uses the plan default."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
-    decodes this DTO into a dispatch.RetryPolicy before persisting
-    to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
-    can type the override without importing pkg/dispatch directly.
+    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+    is a requested total-attempt count; zero inherits the applicable
+    account plan and never means unlimited. Durable invocation
+    producers materialize the effective plan-capped value, and the
+    scheduler re-clamps it at dispatch time to account for later plan
+    downgrades. Lives in pkg/api so the SDK can type the policy
+    without importing pkg/dispatch directly.
     """
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).

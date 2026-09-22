@@ -2227,9 +2227,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// harness path); production traffic terminates TLS at gatewayd-public
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	retryBudget := gateway.NewRetryBudget(0, nil)
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
 	if deps.pgStore != nil {
 		handler.WithMirrorResultStore(deps.pgStore)
+	}
+	if deps.pool != nil {
+		handler.WithConcurrencyQueueAdmission(state.NewPGConcurrencyQueueAdmission(deps.pool))
 	}
 	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
@@ -3158,7 +3162,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes and
-			// /v1/internal/apps/foo/service-endpoints both
+			// /v1/internal/apps/foo/service-endpoints and
+			// /v1/internal/apps/foo/streaming-cap all
 			// reach this dispatcher. Each reader validates its
 			// complete suffix before serving a response.
 			resolve := gateway.ResolveSlugFn(func(slug string) (string, bool) { //nolint:contextcheck // ADR-093 ResolveSlugFn signature is fixed; ctx captured from per-request r.Context().
@@ -3168,6 +3173,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return string(a.ID), true
 			})
+			if strings.HasSuffix(r.URL.Path, "/streaming-cap") {
+				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
+				return
+			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
 				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
 				return
@@ -3214,14 +3223,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
-			Breaker: egressBreakerGroup(),
-			Metrics: deps.metrics,
+			Breaker:     egressBreakerGroup(),
+			Metrics:     deps.metrics,
+			RetryBudget: retryBudget,
 			// Prefer a replica on this node before crossing the network.
 			// Empty NodeName (legacy single-box) keeps flat round-robin.
 			LocalNodeID: cfg.NodeName,
 			// ADR-206. nil unless FAAS_SERVICE_CALLER_ASSERTIONS is on and a
 			// signing key is available, so the default path is unchanged.
-			MintCallerAssertion: newServiceCallerMinter(cfg.NodeName, log),
+			MintCallerAssertion: newServiceCallerMinter(ctx, pgStore, cfg.NodeName, log),
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {

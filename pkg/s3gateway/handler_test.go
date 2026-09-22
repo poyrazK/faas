@@ -544,6 +544,12 @@ func TestGatewayPutMetadataAndObjectTags(t *testing.T) {
 	}
 
 	tagBody := []byte(`<Tagging><TagSet><Tag><Key>team</Key><Value>core</Value></Tag></TagSet></Tagging>`)
+	wrongTagSum := sha256.Sum256([]byte("different tagging body"))
+	badTagRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(badTagRecorder, signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/metadata.txt?tagging", tagBody, hex.EncodeToString(wrongTagSum[:])))
+	if badTagRecorder.Code != http.StatusBadRequest || !strings.Contains(badTagRecorder.Body.String(), "XAmzContentSHA256Mismatch") || provider.tags["team"] != "" {
+		t.Fatalf("tampered tagging = %d %s tags=%v", badTagRecorder.Code, badTagRecorder.Body.String(), provider.tags)
+	}
 	tagSum := sha256.Sum256(tagBody)
 	tagRequest := signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/metadata.txt?tagging", tagBody, hex.EncodeToString(tagSum[:]))
 	tagRecorder := httptest.NewRecorder()
@@ -580,6 +586,42 @@ func TestGatewayRejectsBadBodyAndWrongBucket(t *testing.T) {
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/other/key", nil, "UNSIGNED-PAYLOAD"))
 	if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), "NoSuchBucket") {
 		t.Fatalf("wrong bucket = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(*http.Request) (*http.Response, error) {
+		t.Fatal("unsupported request reached provider")
+		return nil, nil
+	})
+	tests := []struct {
+		name   string
+		method string
+		target string
+		header string
+		value  string
+	}{
+		{name: "acl", method: http.MethodPut, target: "https://s3.gregale.dev/assets/key", header: "X-Amz-Acl", value: "public-read"},
+		{name: "server side encryption", method: http.MethodPut, target: "https://s3.gregale.dev/assets/key", header: "X-Amz-Server-Side-Encryption", value: "AES256"},
+		{name: "conditional copy", method: http.MethodPut, target: "https://s3.gregale.dev/assets/key", header: "X-Amz-Copy-Source-If-Match", value: `"etag"`},
+		{name: "orphan metadata directive", method: http.MethodPut, target: "https://s3.gregale.dev/assets/key", header: "X-Amz-Metadata-Directive", value: "REPLACE"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := signedGatewayRequest(t, test.method, test.target, nil, "UNSIGNED-PAYLOAD")
+			request.Header.Set(test.header, test.value)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
+				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=ENABLED", nil, "UNSIGNED-PAYLOAD")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotImplemented || len(provider.presignRequests) != 0 {
+		t.Fatalf("checksum-mode response = %d %s presigns=%v", recorder.Code, recorder.Body.String(), provider.presignRequests)
 	}
 }
 
@@ -953,6 +995,25 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 		t.Fatalf("multipart metadata was not preserved: %+v", created)
 	}
 
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete} {
+		t.Run("wrong key "+method, func(t *testing.T) {
+			body := []byte(nil)
+			if method == http.MethodPost {
+				body = []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part></CompleteMultipartUpload>`)
+			}
+			target := "https://s3.gregale.dev/assets/wrong.bin?uploadId=" + initiated.UploadID
+			if method == http.MethodPut {
+				target += "&partNumber=1"
+				body = []byte("part")
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, signedGatewayRequest(t, method, target, body, "UNSIGNED-PAYLOAD"))
+			if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), "NoSuchUpload") {
+				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+
 	for partNumber, body := range map[int]string{1: strings.Repeat("a", int(api.MinMultipartPartBytes)), 2: "world"} {
 		target := "https://s3.gregale.dev/assets/archive.bin?partNumber=" + strconv.Itoa(partNumber) + "&uploadId=" + initiated.UploadID
 		recorder = httptest.NewRecorder()
@@ -976,10 +1037,26 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	}
 
 	completeBody := []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"etag-2"</ETag></Part></CompleteMultipartUpload>`)
+	badCompleteSum := sha256.Sum256([]byte("different completion body"))
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, completeBody, hex.EncodeToString(badCompleteSum[:])))
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "XAmzContentSHA256Mismatch") || len(provider.completedUploads) != 0 {
+		t.Fatalf("tampered complete = %d %s completed=%v", recorder.Code, recorder.Body.String(), provider.completedUploads)
+	}
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, completeBody, "UNSIGNED-PAYLOAD"))
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "CompleteMultipartUploadResult") || len(provider.completedUploads) != 1 {
 		t.Fatalf("complete = %d %s completed=%v", recorder.Code, recorder.Body.String(), provider.completedUploads)
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, completeBody, hex.EncodeToString(badCompleteSum[:])))
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "XAmzContentSHA256Mismatch") || len(provider.completedUploads) != 1 {
+		t.Fatalf("tampered completed replay = %d %s completed=%v", recorder.Code, recorder.Body.String(), provider.completedUploads)
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, completeBody, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusOK || len(provider.completedUploads) != 1 {
+		t.Fatalf("idempotent complete = %d %s completed=%v", recorder.Code, recorder.Body.String(), provider.completedUploads)
 	}
 
 	// A second upload can be initiated for a different key and aborted without
