@@ -1331,6 +1331,16 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: app_runtime_config_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_runtime_config_changes (
+    app_id uuid NOT NULL,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: app_secrets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4452,6 +4462,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_runtime_config_changes app_runtime_config_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_config_changes
+    ADD CONSTRAINT app_runtime_config_changes_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -8058,6 +8076,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_runtime_config_changes app_runtime_config_changes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_config_changes
+    ADD CONSTRAINT app_runtime_config_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

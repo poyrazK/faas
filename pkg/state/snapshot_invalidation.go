@@ -10,7 +10,15 @@ import (
 // Snapshots are process-memory caches, so runtime configuration changes must
 // invalidate every deployment and both tiers before a later wake can be
 // allowed to restore.
+//
+// It stamps the app's runtime-config change time first (issue #3360). The
+// stamp is what stops a live instance that still holds the old environment
+// from being captured into a fresh snapshot on its next idle park; the
+// invalidation below only covers snapshots that already exist.
 func InvalidateAppSnapshots(ctx context.Context, store Store, appID string) (int, error) {
+	if err := store.MarkAppRuntimeConfigChanged(ctx, appID); err != nil {
+		return 0, fmt.Errorf("mark runtime config changed: %w", err)
+	}
 	deployments, err := store.ListDeploymentsForApp(ctx, appID, 0, 0)
 	if errors.Is(err, ErrNotFound) {
 		return 0, nil

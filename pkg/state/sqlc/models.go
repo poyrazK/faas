@@ -415,6 +415,11 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppRuntimeConfigChange struct {
+	AppID     pgtype.UUID
+	ChangedAt pgtype.Timestamptz
+}
+
 type AppSecret struct {
 	AccountID                        pgtype.UUID
 	AppID                            pgtype.UUID
