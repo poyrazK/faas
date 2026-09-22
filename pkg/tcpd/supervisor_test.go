@@ -2,6 +2,7 @@ package tcpd
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -9,6 +10,73 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestSupervisorReadyOnlyAfterInitialListenersBind(t *testing.T) {
+	const publicPort = 40124
+	newSupervisor := func(listen func(string, string) (net.Listener, error), onReady func()) *Supervisor {
+		return &Supervisor{
+			BindHost: "127.0.0.1",
+			Source: supervisorSourceFunc(func(context.Context) ([]state.TCPListener, error) {
+				return []state.TCPListener{{
+					AppID: "app-1", AccountID: "acct-1", ListenerName: "echo",
+					GuestPort: 8080, PublicPort: publicPort, Protocol: "tcp", Enabled: true,
+				}}, nil
+			}),
+			Routes: NewRouteTable(),
+			Targets: targetResolverFunc(func(context.Context, Route) (gateway.Target, error) {
+				return gateway.Target{}, nil
+			}),
+			Forwarder:       forwarderFunc(func(context.Context, net.Conn, gateway.Target) error { return nil }),
+			RefreshInterval: time.Hour,
+			Listen:          listen,
+			OnReady:         onReady,
+		}
+	}
+
+	t.Run("ready after bind", func(t *testing.T) {
+		ready := make(chan int, 1)
+		binds := 0
+		supervisor := newSupervisor(func(_, _ string) (net.Listener, error) {
+			binds++
+			return net.Listen("tcp", "127.0.0.1:0")
+		}, func() { ready <- binds })
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- supervisor.Serve(ctx) }()
+		select {
+		case got := <-ready:
+			if got != 1 {
+				t.Fatalf("ready after %d binds, want 1", got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor never reported initial readiness")
+		}
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Serve after cancellation: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not stop after cancellation")
+		}
+	})
+
+	t.Run("bind failure does not report ready", func(t *testing.T) {
+		bindErr := errors.New("port already bound")
+		ready := false
+		supervisor := newSupervisor(func(_, _ string) (net.Listener, error) {
+			return nil, bindErr
+		}, func() { ready = true })
+		if err := supervisor.Serve(context.Background()); !errors.Is(err, bindErr) {
+			t.Fatalf("Serve error = %v, want bind failure", err)
+		}
+		if ready {
+			t.Fatal("supervisor reported ready despite a failed initial bind")
+		}
+	})
+}
 
 func TestSupervisorDrainStopsAcceptsAndWaitsForActiveSessions(t *testing.T) {
 	base, err := net.Listen("tcp", "127.0.0.1:0")

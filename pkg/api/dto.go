@@ -6119,6 +6119,10 @@ type Sidecar struct {
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
+	// StartupProbe optionally replaces the image's baked OCI HEALTHCHECK for
+	// this workload. The exec-style shape matches AppManifest.Healthcheck;
+	// use Test=["NONE"] to explicitly disable an image healthcheck.
+	StartupProbe *AppManifestHealthcheck `json:"startup_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6201,6 +6205,9 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
 		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
 	}
+	if p := validateSidecarStartupProbe(s.Name, s.StartupProbe); p != nil {
+		return p
+	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar dependency",
@@ -6231,6 +6238,54 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 				"Invalid sidecar dependency",
 				fmt.Sprintf("sidecar[%q].depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", s.Name, i, dep.Condition))
 		}
+	}
+	return nil
+}
+
+func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Problem {
+	if probe == nil {
+		return nil
+	}
+	if len(probe.Test) == 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe.test must contain CMD, CMD-SHELL, or NONE; use [\"NONE\"] to disable the image probe.", name))
+	}
+	switch probe.Test[0] {
+	case "NONE":
+		if len(probe.Test) != 1 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test with NONE must contain exactly one element.", name))
+		}
+	case "CMD", "CMD-SHELL":
+		if len(probe.Test) < 2 || probe.Test[1] == "" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
+		}
+		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
+		}
+	default:
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe.test must start with CMD, CMD-SHELL, or NONE.", name))
+	}
+	if probe.IntervalS < 0 || probe.TimeoutS < 0 || probe.Retries < 0 || probe.StartPeriodS < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	}
+	// These values cross the vmmd protobuf boundary as int32. Reject values
+	// that would wrap and change the guest's probe timing or retry budget.
+	const maxProtoInt32 = 1<<31 - 1
+	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
 	}
 	return nil
 }

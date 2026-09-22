@@ -451,6 +451,12 @@ const (
 	rateLimitScopeRoute   = "route"
 )
 
+// centralRateLimitDegradedCooldown bounds outage logging and audit writes to
+// one event per scope per minute. The Prometheus counter still records every
+// fallback; the cooldown only prevents a failed central store from amplifying
+// itself through one log and one best-effort audit insert per request.
+const centralRateLimitDegradedCooldown = time.Minute
+
 // AppSidecar (issue #463 / ADR-069 / ADR-071 / PR-C §5) is
 // the narrow subset of pkg/api.SidecarSpec the public
 // listener's routing-key split uses. The full spec lives
@@ -834,6 +840,11 @@ type Handler struct {
 	vmConcurrencyAudit RequireAuthnAuditor
 	// metrics may be nil; nil-guarded everywhere it is read.
 	metrics *Metrics
+	// centralRateLimitDegradedLast rate-limits the warning/audit side of a
+	// central-counter failure. The per-request metric is deliberately outside
+	// this gate. Key space is the closed {app,account,rule,other} scope set.
+	centralRateLimitDegradedMu   sync.Mutex
+	centralRateLimitDegradedLast map[string]time.Time
 	// headHeaders retains a bounded, safe subset of the last successful
 	// origin response headers for parked-app HEAD / answers. It is process
 	// local; after restart the edge returns 204 until a live response lands.
@@ -1346,19 +1357,62 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	if central == nil {
 		return h
 	}
-	if h.limiter != nil {
-		h.limiter.central = central
-	}
-	if h.accountLimiter != nil {
-		h.accountLimiter.central = central
-	}
-	if h.routeLimiter != nil {
-		h.routeLimiter.central = central
-	}
-	if h.routeConsumerLimiter != nil {
-		h.routeConsumerLimiter.central = central
+	for _, limiter := range h.limiters() {
+		limiter.central = central
+		limiter.centralErrorObserver = h.observeCentralRateLimitDegraded
 	}
 	return h
+}
+
+// observeCentralRateLimitDegraded makes the limiter's local-fallback posture
+// explicit. Metrics count every fallback. Logs and audit rows are rate-limited
+// per closed scope so a Postgres outage does not create an additional write
+// storm. The audit attempt gets its own short context because the failed
+// central consume may have exhausted or cancelled the request's child context.
+func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope string, err error) {
+	if h == nil || err == nil {
+		return
+	}
+	switch scope {
+	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule:
+	default:
+		scope = "other"
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveRateLimitDegraded(scope)
+	}
+
+	now := time.Now()
+	h.centralRateLimitDegradedMu.Lock()
+	if h.centralRateLimitDegradedLast == nil {
+		h.centralRateLimitDegradedLast = make(map[string]time.Time, 4)
+	}
+	last := h.centralRateLimitDegradedLast[scope]
+	if !last.IsZero() && now.Sub(last) < centralRateLimitDegradedCooldown {
+		h.centralRateLimitDegradedMu.Unlock()
+		return
+	}
+	h.centralRateLimitDegradedLast[scope] = now
+	h.centralRateLimitDegradedMu.Unlock()
+
+	if h.log != nil {
+		h.log.Warn("gateway rate limiter fell back to process-local counters",
+			"scope", scope, "error", err)
+	}
+	var audit RequireAuthnAuditor
+	if h.requireAuthnAudit != nil {
+		audit = h.requireAuthnAudit
+	} else if h.edgeRuleAudit != nil {
+		audit = h.edgeRuleAudit
+	}
+	if audit != nil {
+		auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
+		defer cancel()
+		audit.Emit(auditCtx, "ratelimit_degraded", nil, map[string]any{
+			"scope": scope,
+			"error": err.Error(),
+		})
+	}
 }
 
 // InvalidateRateLimit drops the in-process fallback/header mirror for
@@ -4058,8 +4112,10 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 // opts into a dimensional KeyBy value (`api_key`, `consumer_id`,
 // `jwt_subject`, `jwt_claim`, or `country`), this applier resolves the
 // trusted request concept and routes the bucket lookup through the
-// routeConsumerLimiter (separate scope so per-rule and dimensional
-// buckets don't share slots). The __other__ collapse
+// routeConsumerLimiter. A dimensional rule does not also spend from a shared
+// parent route bucket: doing so would let one identity drain that bucket and
+// starve every other identity, defeating the isolation promised by key_by.
+// The __other__ collapse
 // bucket — see ratelimit.go::AllowWithConsumerKey — is pinned
 // non-evictable so an attacker cannot weaponise key-space growth
 // to bypass the throttle. Empty KeyBy (and the "none" sentinel)
@@ -4097,8 +4153,8 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 		return false
 	}
-	// Resolve the optional request dimension before consuming a parent route
-	// token. A strict missing-key policy and an unavailable GeoIP dependency
+	// Resolve the optional request dimension before consuming its authoritative
+	// bucket. A strict missing-key policy and an unavailable GeoIP dependency
 	// must not charge a request that never reaches the application.
 	var consumerID string
 	dimensional := api.ThrottleKeyByIsPerConsumer(rule.KeyBy)
@@ -4155,65 +4211,50 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Bucket key is `appID + "\x00" + ruleID` for PR #887 rules
-	// (KeyBy == "" or "none"). Per-consumer keying (Phase 3)
-	// constructs a longer key by appending the resolved consumer
-	// identity — see resolveConsumerKey below. The routeConsumerLimiter
-	// owns the consumer-keyed buckets and applies the __other__
-	// collapse; routeLimiter owns the rule-only buckets and is
-	// untouched. Phase 1+2 rules never enter the per-consumer branch.
+	// (KeyBy == "" or "none"). Dimensional rules append the resolved
+	// identity inside routeConsumerLimiter, which also applies the bounded
+	// __other__ collapse. The two modes are alternatives: consuming both a
+	// parent route bucket and a dimensional child bucket would reintroduce a
+	// shared bottleneck and allow one identity to starve all others.
 	bucketKey := app.ID + "\x00" + rule.ID
-	// Per-rule throttle consult (ADR-104 amendment 5, issue #881
-	// Phase 4 C3). When the daemon is running under
+	// Central throttle consult (ADR-104 amendment 5, issue #881 Phase 4 C3).
+	// When the daemon is running under
 	// [ratelimit] mode = "central" (the cross-replica drift fix
 	// documented in amendment 5), every request atomically consumes from
-	// pg_ratelimit_counters — wired via
-	// AllowWithCentralParams + the centralKey "rule:<ruleID>:<plan>"
-	// triple. Empty centralKey (mode = "local", the default) reproduces
-	// today's AllowWithParams byte-for-byte. The fix to the Phase 4
-	// C3 wiring gap: the per-rule call site MUST use the central-aware
-	// sibling even though the central consume is bypassed
-	// under mode=local — otherwise enabling central mode in TOML
-	// would not affect per-rule buckets and the multi-replica drift
-	// documented in the 00126 schema would remain.
+	// pg_ratelimit_counters. Non-dimensional rules use the rule UUID itself;
+	// dimensional rules derive a deterministic bounded shard from the rule,
+	// dimension kind, and value inside AllowWithCentralConsumerKey.
 	centralKey := "rule:" + rule.ID + ":" + string(app.Plan)
-	allowed := h.routeLimiter.AllowWithCentralParams(r.Context(), bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey)
-	dimensionApplied := false
-	if allowed && dimensional {
-		if consumerID != "" {
-			// The consumer bucket key is the same
-			// `appID+"\x00"+ruleID` prefix used by the per-rule
-			// bucket, plus a "\x00"+consumerID suffix. The per-rule
-			// AllowWithParams call above already admitted the
-			// request into the rule scope (token decrement on the
-			// rule bucket — the parent bucket the per-consumer
-			// sub-buckets ride on); AllowWithCentralConsumerKey throttles
-			// within that scope and coordinates replicas when central mode
-			// is enabled.
-			//
-			// When MaxKeysPerRule == 0 (resolver-default; cmd-side
-			// compileThrottleRules substitutes the plan default) we
-			// surface a sensible ceiling here. cmd-side is the source
-			// of truth — but defence-in-depth against a direct-DB
-			// write that bypassed compileThrottleRules.
-			cap := rule.MaxKeysPerRule
-			if cap <= 0 {
-				cap = api.ThrottleMaxKeysPerRuleDefault
-			}
-			if !h.routeConsumerLimiter.AllowWithCentralConsumerKey(
-				r.Context(), bucketKey, rule.KeyBy, consumerID,
-				rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
-			) {
-				allowed = false
-				if h.metrics != nil {
-					h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "throttle")
-				}
-			} else {
-				if h.metrics != nil {
-					h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "admit")
-				}
-			}
-			dimensionApplied = true
+	allowed := false
+	deniedLimiter := h.routeLimiter
+	deniedBucketKey := bucketKey
+	policy := rateLimitScopeRoute
+	if dimensional {
+		// When MaxKeysPerRule == 0 (resolver-default; cmd-side
+		// compileThrottleRules substitutes the plan default) use the
+		// platform default as defence-in-depth against a direct-DB write.
+		cap := rule.MaxKeysPerRule
+		if cap <= 0 {
+			cap = api.ThrottleMaxKeysPerRuleDefault
 		}
+		allowed = h.routeConsumerLimiter.AllowWithCentralConsumerKey(
+			r.Context(), bucketKey, rule.KeyBy, consumerID,
+			rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
+		)
+		deniedLimiter = h.routeConsumerLimiter
+		deniedBucketKey = h.routeConsumerLimiter.consumerBucketKey(bucketKey, consumerID)
+		policy = "per-consumer"
+		if h.metrics != nil {
+			outcome := "throttle"
+			if allowed {
+				outcome = "admit"
+			}
+			h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, outcome)
+		}
+	} else {
+		allowed = h.routeLimiter.AllowWithCentralParams(
+			r.Context(), bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey,
+		)
 	}
 	if !allowed {
 		w.Header().Set("Retry-After", "1")
@@ -4221,34 +4262,11 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
 		w.Header().Set("x-faas-rate-limit-scope", "route")
-		// ADR-104 amendment 5 (issue #881 Phase 4 H1): emit
-		// X-RouteRateLimit-Policy so operators can read the
-		// per-consumer collapse state without parsing the
-		// X-RouteRateLimit-* numerics. `route` is the
-		// back-compat default (Phase 1+2 rules); `per-consumer`
-		// fires when the request hit a Phase 3 per-consumer rule
-		// AND the consumer collapsed into the __other__ bucket
-		// (the collapse-bucket invariant from
-		// pkg/gateway/ratelimit.go:119-124).
-		policy := rateLimitScopeRoute
-		// Per-consumer collapse detection (ADR-104 amendment 5,
-		// issue #881 Phase 4 H1): the 429 path's bucketKey is the
-		// RULE-level key (app.ID+"\x00"+rule.ID); the per-consumer
-		// bucket is a sub-bucket on routeConsumerLimiter that the
-		// applier already consulted above. We can't read the
-		// sub-bucket key from the wire here, so we ask the limiter
-		// directly: ConsumerIsTracked returns false iff the
-		// consumer has collapsed to the __other__ bucket (which is
-		// exactly the "per-consumer" policy-header value). Rules
-		// with KeyBy ∈ {"", "none"} never enter this branch
-		// (ThrottleKeyByIsPerConsumer is false) so the
-		// back-compat "route" default is preserved.
-		if dimensionApplied {
-			if !h.routeConsumerLimiter.ConsumerIsTracked(bucketKey, consumerID) {
-				policy = "per-consumer"
-			}
-		}
-		h.writeRouteRateLimitHeaders(w, bucketKey, rule.RequestsPerSecond, rule.Burst, policy)
+		// The policy names the authoritative bucket family: `route` for a
+		// shared rule bucket and `per-consumer` for every dimensional rule,
+		// whether the identity owns a dedicated bucket or shares __other__.
+		h.writeRouteRateLimitHeadersFromLimiter(w, deniedLimiter, deniedBucketKey,
+			rule.RequestsPerSecond, rule.Burst, policy)
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
 			"Rate limit exceeded", "slow down and retry"))
 		if h.edgeRuleAudit != nil {
@@ -7253,11 +7271,9 @@ func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID 
 // trio for the per-rule bucket (ADR-091 D20.5 amendment,
 // issue #881). Distinct header family from X-RateLimit-* and
 // X-AccountRateLimit-* so generic X-RateLimit-* consumers (e.g.
-// browser DevTools) don't conflate the three scopes. Set on both
-// the per-rule 429 path (so a customer debugging a 429 storm can
-// see which throttle tripped) and the 2xx success path (so a
-// customer's standard X-RateLimit-*-style dashboard surfaces the
-// per-rule values without bespoke parsing).
+// browser DevTools) don't conflate the three scopes. Set on the
+// per-rule 429 path so a customer debugging a 429 storm can see
+// which throttle tripped.
 //
 // rps is the rule's requests_per_second (post-clamp at apid +
 // post-clamp at compile); burst is the rule's burst ceiling
@@ -7269,17 +7285,23 @@ func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID 
 // policy is the X-RouteRateLimit-Policy value (ADR-104 amendment
 // 5, issue #881 Phase 4 H1): "route" for rules where KeyBy ∈
 // {"", "none"} (back-compat default — the value pre-Phase 4
-// callers expect to read), or "per-consumer" when the consumer
-// collapsed into the __other__ bucket on a per-consumer rule.
+// callers expect to read), or "per-consumer" for a dimensional rule.
 // The header is emitted on EVERY call site (never silently
 // omitted) so dashboards that key off its presence don't break;
 // pre-Phase 4 callers observed only the trio and the new header
 // is additive.
 func (h *Handler) writeRouteRateLimitHeaders(w http.ResponseWriter, bucketKey string, rps float64, burst int, policy string) {
-	if h == nil || h.routeLimiter == nil || bucketKey == "" {
+	if h == nil {
 		return
 	}
-	limit, remaining, reset, ok := h.routeLimiter.PeekWithParams(bucketKey, rps, float64(burst))
+	h.writeRouteRateLimitHeadersFromLimiter(w, h.routeLimiter, bucketKey, rps, burst, policy)
+}
+
+func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, limiter *Limiter, bucketKey string, rps float64, burst int, policy string) {
+	if limiter == nil || bucketKey == "" {
+		return
+	}
+	limit, remaining, reset, ok := limiter.PeekWithParams(bucketKey, rps, float64(burst))
 	if !ok {
 		return
 	}
@@ -7289,7 +7311,7 @@ func (h *Handler) writeRouteRateLimitHeaders(w http.ResponseWriter, bucketKey st
 	// ADR-104 amendment 5 (issue #881 Phase 4 H1): the policy
 	// hint is emitted unconditionally so dashboards that key off
 	// its presence don't break; the value distinguishes the
-	// route vs per-consumer collapse scope without polluting
+	// route vs per-consumer bucket family without polluting
 	// the existing x-faas-rate-limit-scope enum.
 	if policy == "" {
 		policy = rateLimitScopeRoute
