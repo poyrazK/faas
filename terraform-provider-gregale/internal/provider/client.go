@@ -99,6 +99,15 @@ type projectEnvironmentResponse struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
+type projectEnvironmentRequest struct {
+	Slug      string `json:"slug"`
+	Protected *bool  `json:"protected,omitempty"`
+}
+
+type projectEnvironmentPatch struct {
+	Protected *bool `json:"protected,omitempty"`
+}
+
 type projectEnvironmentConfigRequest struct {
 	Values json.RawMessage `json:"values"`
 }
@@ -502,6 +511,25 @@ func (c *client) getProjectEnvironment(ctx context.Context, project, environment
 	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment)
 	err := c.request(ctx, http.MethodGet, path, nil, &out, false)
 	return out, err
+}
+
+func (c *client) createProjectEnvironment(ctx context.Context, project string, req projectEnvironmentRequest) (projectEnvironmentResponse, error) {
+	var out projectEnvironmentResponse
+	path := "/v1/projects/" + escapePath(project) + "/environments"
+	err := c.request(ctx, http.MethodPost, path, req, &out, true)
+	return out, err
+}
+
+func (c *client) updateProjectEnvironment(ctx context.Context, project, environment string, patch projectEnvironmentPatch) (projectEnvironmentResponse, error) {
+	var out projectEnvironmentResponse
+	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment)
+	err := c.request(ctx, http.MethodPatch, path, patch, &out, false)
+	return out, err
+}
+
+func (c *client) deleteProjectEnvironment(ctx context.Context, project, environment string) error {
+	path := "/v1/projects/" + escapePath(project) + "/environments/" + escapePath(environment)
+	return c.request(ctx, http.MethodDelete, path, nil, nil, true)
 }
 
 func (c *client) getProjectEnvironmentConfig(ctx context.Context, project, environment string) (projectEnvironmentConfigResponse, error) {

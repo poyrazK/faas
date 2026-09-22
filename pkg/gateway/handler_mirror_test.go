@@ -218,6 +218,19 @@ func TestHandler_MirrorFanout_SpawnsGoroutine(t *testing.T) {
 
 	waitForMirrorCalls(t, b, 1, 2*time.Second)
 	waitForRTCalls(t, rt, 1, 2*time.Second)
+	rt.mu.Lock()
+	mirrorHeaders := rt.headers[len(rt.headers)-1].Clone()
+	rt.mu.Unlock()
+	for name, want := range map[string]string{
+		api.AppIDHeader:        "app-1",
+		api.DeploymentIDHeader: "dep-B",
+		api.TenantIDHeader:     "acct-1",
+		api.InstanceIDHeader:   "mirror-instance-rule-1",
+	} {
+		if got := mirrorHeaders.Get(name); got != want {
+			t.Errorf("mirror %s = %q, want %q", name, got, want)
+		}
+	}
 
 	if got := b.appLookupHits.Load(); got != 1 {
 		t.Errorf("LookupMirrorRules calls = %d, want 1 (handler must consult cache once)", got)

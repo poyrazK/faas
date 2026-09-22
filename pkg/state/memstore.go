@@ -2913,6 +2913,53 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 	return ProjectEnvironment{}, ErrNotFound
 }
 
+func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projectID, slug string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	project, ok := m.projects[projectID]
+	if !ok || project.AccountID != accountID {
+		return ErrNotFound
+	}
+
+	var environmentID string
+	var environment ProjectEnvironment
+	for id, candidate := range m.projectEnvironments {
+		if candidate.ProjectID == projectID && candidate.Slug == slug {
+			environmentID = id
+			environment = candidate
+			break
+		}
+	}
+	if environmentID == "" {
+		return ErrNotFound
+	}
+	if slug == "production" || environment.Protected {
+		return ErrConflict
+	}
+
+	for _, app := range m.apps {
+		if app.ProjectID != projectID {
+			continue
+		}
+		for _, deployment := range m.deployments {
+			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
+				normalizedDeploymentScope(deployment.Scope) == slug {
+				return ErrConflict
+			}
+		}
+	}
+
+	delete(m.projectEnvironments, environmentID)
+	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	for id, approval := range m.projectEnvironmentApprovals {
+		if approval.AccountID == accountID && approval.ProjectSlug == project.Slug && approval.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentApprovals, id)
+		}
+	}
+	return nil
+}
+
 func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

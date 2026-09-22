@@ -124,6 +124,17 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Binding{}, false, ErrUnavailable
 	}
+	database, err := s.databases.Get(ctx, request.AccountID, request.DatabaseID)
+	if err != nil {
+		return Binding{}, false, err
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return Binding{}, false, err
+	}
+	if err := backend.Capabilities.SupportsCredentialAccess(request.Access); err != nil {
+		return Binding{}, false, err
+	}
 	now := s.now()
 	binding, created, err := s.bindings.ReserveBinding(ctx, Binding{
 		ID:                   s.newID(),
@@ -154,10 +165,6 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	}
 	// A database may still be provisioning. Reserve the durable binding now so
 	// the binding reconciler can inject DATABASE_URL as soon as it is ready.
-	database, databaseErr := s.databases.Get(ctx, request.AccountID, request.DatabaseID)
-	if databaseErr != nil {
-		return binding, created, databaseErr
-	}
 	if database.State == StateProvisioning {
 		return binding, created, nil
 	}
@@ -207,6 +214,9 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "backend_unavailable", ErrUnavailable, time.Hour)
+	}
+	if err := backend.Capabilities.SupportsCredentialAccess(binding.Access); err != nil {
+		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "credential_access_unsupported", err, time.Hour)
 	}
 
 	credentialRequest := bindingCredentialRequest(binding, database.ProviderResourceID)

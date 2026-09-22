@@ -171,10 +171,10 @@ type SignedRequest = api.ObjectSignedRequest
 // persisted as object metadata so a completion response lost between the
 // provider and Gregale can be verified without exposing its upload ID.
 type MultipartCreateRequest struct {
-	SessionID   string
-	Key         string
-	SizeBytes   int64
-	ContentType string
+	SessionID string
+	Key       string
+	SizeBytes int64
+	Metadata  ObjectMetadata
 }
 
 type MultipartPartRequest struct {
@@ -249,6 +249,9 @@ const (
 	// object-tagging API (currently the GCS adapter). It never crosses the
 	// branded S3 response boundary as ordinary user metadata.
 	ReservedObjectTagsMetadataKey = "gregale-s3-tags"
+	// ReservedMultipartSessionMetadataKey fences the provider-private recovery
+	// marker written when Gregale initiates a multipart upload.
+	ReservedMultipartSessionMetadataKey = "gregale-upload-id"
 )
 
 // ValidateObjectMetadata applies the portable S3 metadata/tag limits before
@@ -264,7 +267,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 		return ErrInvalid
 	}
 	for key, value := range metadata.Metadata {
-		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) {
+		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) {
 			return ErrInvalid
 		}
 	}

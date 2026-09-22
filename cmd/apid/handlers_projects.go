@@ -361,6 +361,41 @@ func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, projectEnvironmentResponse(environment))
 }
 
+func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project, ok := s.loadProject(w, r, acct)
+	if !ok {
+		return
+	}
+	environmentSlug := r.PathValue("environment")
+	environment, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, environmentSlug)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not load project environment"))
+		}
+		return
+	}
+	if err := s.store.DeleteProjectEnvironment(r.Context(), acct.ID, project.ID, environmentSlug); err != nil {
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Project environment cannot be deleted",
+				"only unprotected, non-production environments without live releases can be deleted"))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not delete project environment"))
+		}
+		return
+	}
+	s.audit.Emit(r.Context(), "project.environment.deleted", &acct.ID, map[string]any{
+		"project_id": project.ID, "project_slug": project.Slug,
+		"environment_id": environment.ID, "environment_slug": environment.Slug,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func projectEnvironmentResponse(environment state.ProjectEnvironment) api.ProjectEnvironmentResponse {
 	return api.ProjectEnvironmentResponse{
 		ID: environment.ID, ProjectID: environment.ProjectID, Slug: environment.Slug,

@@ -232,14 +232,31 @@ func TestLiveProviderQualification(t *testing.T) {
 	partTwo := []byte("last-part")
 	multipartSize := int64(len(partOne) + len(partTwo))
 	sessionID := uuid.NewString()
+	multipartMetadata := SignRequest{
+		Method: http.MethodPut, Key: multipartKey, SizeBytes: &multipartSize, ContentType: "application/octet-stream",
+		CacheControl: "private, max-age=120", ContentDisposition: `attachment; filename="multipart.bin"`,
+		ContentEncoding: "identity", ContentLanguage: "en-US",
+		Metadata: map[string]string{"owner": "multipart-qualification"},
+		Tags:     map[string]string{"env": "test", "purpose": "multipart-qualification"},
+	}
 	providerUploadID, err := backend.Provider.EnsureMultipartUpload(ctx, bucket, MultipartCreateRequest{
-		SessionID: sessionID, Key: multipartKey, SizeBytes: multipartSize, ContentType: "application/octet-stream",
+		SessionID: sessionID, Key: multipartKey, SizeBytes: multipartSize,
+		Metadata: ObjectMetadata{
+			CacheControl: multipartMetadata.CacheControl, ContentDisposition: multipartMetadata.ContentDisposition,
+			ContentEncoding: multipartMetadata.ContentEncoding, ContentLanguage: multipartMetadata.ContentLanguage,
+			ContentType: multipartMetadata.ContentType, Metadata: multipartMetadata.Metadata, Tags: multipartMetadata.Tags,
+		},
 	})
 	if err != nil {
 		t.Fatalf("initiate multipart upload: %v", err)
 	}
 	recoveredUploadID, err := backend.Provider.EnsureMultipartUpload(ctx, bucket, MultipartCreateRequest{
-		SessionID: sessionID, Key: multipartKey, SizeBytes: multipartSize, ContentType: "application/octet-stream",
+		SessionID: sessionID, Key: multipartKey, SizeBytes: multipartSize,
+		Metadata: ObjectMetadata{
+			CacheControl: multipartMetadata.CacheControl, ContentDisposition: multipartMetadata.ContentDisposition,
+			ContentEncoding: multipartMetadata.ContentEncoding, ContentLanguage: multipartMetadata.ContentLanguage,
+			ContentType: multipartMetadata.ContentType, Metadata: multipartMetadata.Metadata, Tags: multipartMetadata.Tags,
+		},
 	})
 	if err != nil || recoveredUploadID != providerUploadID {
 		t.Fatalf("recover multipart upload: id=%q err=%v", recoveredUploadID, err)
@@ -284,9 +301,24 @@ func TestLiveProviderQualification(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("multipart GET body mismatch: got %d bytes, want %d", len(got), len(want))
 	}
+	multipartHead, err := backend.Provider.Presign(ctx, bucket, SignRequest{Method: http.MethodHead, Key: multipartKey, ExpiresIn: 300})
+	if err != nil {
+		t.Fatalf("sign multipart metadata HEAD: %v", err)
+	}
+	multipartHeaders, err := headSigned(ctx, multipartHead)
+	if err != nil {
+		t.Fatalf("multipart metadata HEAD: %v", err)
+	}
+	assertObjectMetadata(t, multipartHeaders, multipartMetadata)
+	multipartTags, err := tagger.GetObjectTags(ctx, bucket, multipartKey)
+	if err != nil {
+		t.Fatalf("get multipart object tags: %v", err)
+	}
+	assertTags(t, multipartTags, multipartMetadata.Tags)
 
 	abortID, err := backend.Provider.EnsureMultipartUpload(ctx, bucket, MultipartCreateRequest{
-		SessionID: uuid.NewString(), Key: abortKey, SizeBytes: int64(len(partOne)), ContentType: "application/octet-stream",
+		SessionID: uuid.NewString(), Key: abortKey, SizeBytes: int64(len(partOne)),
+		Metadata: ObjectMetadata{ContentType: "application/octet-stream"},
 	})
 	if err != nil {
 		t.Fatalf("initiate abort upload: %v", err)

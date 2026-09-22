@@ -617,10 +617,17 @@ func gcsMetadataHeaderValues(metadata map[string]string) map[string]string {
 }
 
 func gcsContentHeaderValues(r SignRequest) map[string]string {
+	return gcsObjectContentHeaderValues(ObjectMetadata{
+		CacheControl: r.CacheControl, ContentDisposition: r.ContentDisposition,
+		ContentEncoding: r.ContentEncoding, ContentLanguage: r.ContentLanguage,
+	})
+}
+
+func gcsObjectContentHeaderValues(metadata ObjectMetadata) map[string]string {
 	values := map[string]string{}
 	for name, value := range map[string]string{
-		"Cache-Control": r.CacheControl, "Content-Disposition": r.ContentDisposition,
-		"Content-Encoding": r.ContentEncoding, "Content-Language": r.ContentLanguage,
+		"Cache-Control": metadata.CacheControl, "Content-Disposition": metadata.ContentDisposition,
+		"Content-Encoding": metadata.ContentEncoding, "Content-Language": metadata.ContentLanguage,
 	} {
 		if value != "" {
 			values[name] = value
@@ -641,7 +648,7 @@ func (p *GCS) signedURL(ctx context.Context, bucket, key string, opts storage.Si
 }
 
 func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
-	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateContentType(r.ContentType) != nil {
+	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
 	var found, keyMarker, uploadMarker string
@@ -677,11 +684,24 @@ func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r Multip
 	if found != "" {
 		return found, nil
 	}
-	contentType := r.ContentType
+	contentType := r.Metadata.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	headers := http.Header{"Content-Type": {contentType}, "x-goog-meta-" + multipartSessionMetadata: {r.SessionID}}
+	headers := http.Header{"Content-Type": {contentType}, "x-goog-meta-" + ReservedMultipartSessionMetadataKey: {r.SessionID}}
+	for name, value := range gcsMetadataHeaderValues(r.Metadata.Metadata) {
+		headers.Set(name, value)
+	}
+	for name, value := range gcsObjectContentHeaderValues(r.Metadata) {
+		headers.Set(name, value)
+	}
+	tagging, err := EncodeObjectTags(r.Metadata.Tags)
+	if err != nil {
+		return "", err
+	}
+	if tagging != "" {
+		headers.Set("x-goog-meta-"+ReservedObjectTagsMetadataKey, tagging)
+	}
 	var initiated gcsInitiateMultipartUploadResult
 	if err := p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploads": {""}}, headers, nil, &initiated); err != nil {
 		return "", normalizeGCS(err)
@@ -769,7 +789,7 @@ func (p *GCS) CompleteMultipartUpload(ctx context.Context, bucket string, r Mult
 	if attrErr != nil {
 		return normalizeGCS(attrErr)
 	}
-	if object.Size != r.SizeBytes || object.Metadata[multipartSessionMetadata] != r.SessionID {
+	if object.Size != r.SizeBytes || object.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID {
 		return ErrConflict
 	}
 	return nil

@@ -119,6 +119,115 @@ func TestServiceProxyRoutesUpgradeToRawBridge(t *testing.T) {
 	}
 }
 
+func TestServiceProxyStampsFullTargetIdentity(t *testing.T) {
+	endpoint := ServiceEndpoint{
+		InstanceID:          "instance-orders",
+		NodeID:              "node-eu",
+		DeploymentID:        "dep-orders",
+		Region:              "eu-west",
+		CommitSHA:           "sha-orders",
+		DeploymentTag:       "stable",
+		DeploymentCreatedAt: "2026-09-22T12:00:00Z",
+		ImageDigest:         "sha256:orders",
+		Port:                8080,
+	}
+	var seenTarget Target
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{endpoints: []ServiceEndpoint{endpoint}},
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-client", AccountID: "acct-1"}, nil
+		},
+		Forward: func(target Target) http.Handler {
+			seenTarget = target
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for name, want := range map[string]string{
+					"X-Faas-Request-Id":            "req-service",
+					"X-Faas-App-Id":                "app-orders",
+					"X-Faas-Deployment-Id":         "dep-orders",
+					"X-Faas-Tenant-Id":             "acct-1",
+					"X-Faas-Instance-Id":           "instance-orders",
+					"X-Faas-Node-Id":               "node-eu",
+					"X-Faas-Region":                "eu-west",
+					"X-Faas-Commit-Sha":            "sha-orders",
+					"X-Faas-Deployment-Tag":        "stable",
+					"X-Faas-Deployment-Created-At": "2026-09-22T12:00:00Z",
+					"X-Faas-Image-Digest":          "sha256:orders",
+				} {
+					if got := r.Header.Get(name); got != want {
+						t.Errorf("%s = %q, want %q", name, got, want)
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	req.Header.Set("X-Faas-Request-Id", "req-service")
+	req.Header.Set("X-Faas-Deployment-Id", "guest-forged")
+	req.Header.Set("X-Faas-Tenant-Id", "guest-forged")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if seenTarget.DeploymentID != endpoint.DeploymentID || seenTarget.Region != endpoint.Region || seenTarget.ImageDigest != endpoint.ImageDigest {
+		t.Fatalf("forward target = %+v, want endpoint provenance", seenTarget)
+	}
+}
+
+func TestServiceProxyUpgradeStampsFullTargetIdentity(t *testing.T) {
+	endpoint := ServiceEndpoint{
+		InstanceID: "instance-orders", NodeID: "node-eu", DeploymentID: "dep-orders",
+		Region: "eu-west", CommitSHA: "sha-orders", DeploymentTag: "stable", Port: 8080,
+	}
+	var seen http.Header
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{endpoints: []ServiceEndpoint{endpoint}},
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders", WebSocketEnabled: true}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AccountID: "acct-1"}, nil
+		},
+		RawForward: func(target Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if target.DeploymentID != endpoint.DeploymentID {
+					t.Errorf("raw target deployment = %q, want %q", target.DeploymentID, endpoint.DeploymentID)
+				}
+				seen = r.Header.Clone()
+				w.WriteHeader(http.StatusSwitchingProtocols)
+			})
+		},
+		Forward: func(Target) http.Handler { return http.NotFoundHandler() },
+	})
+	req := upgradeRequest()
+	req.Header.Set("X-Faas-Request-Id", "req-upgrade")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want 101", rec.Code)
+	}
+	for name, want := range map[string]string{
+		"X-Faas-Request-Id":     "req-upgrade",
+		"X-Faas-App-Id":         "app-orders",
+		"X-Faas-Deployment-Id":  "dep-orders",
+		"X-Faas-Tenant-Id":      "acct-1",
+		"X-Faas-Instance-Id":    "instance-orders",
+		"X-Faas-Node-Id":        "node-eu",
+		"X-Faas-Region":         "eu-west",
+		"X-Faas-Commit-Sha":     "sha-orders",
+		"X-Faas-Deployment-Tag": "stable",
+	} {
+		if got := seen.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestServiceProxyUpgradeGates(t *testing.T) {
 	tests := []struct {
 		name       string

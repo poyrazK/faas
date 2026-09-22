@@ -320,6 +320,41 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.ListProjectEnvironments(fx.Ctx, uuid.NewString(), project.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account environment list err = %v, want ErrNotFound", err)
 	}
+	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("protected environment delete err = %v, want ErrConflict", err)
+	}
+	if _, err := fx.Store.UpdateProjectEnvironmentProtection(fx.Ctx, fx.Account.ID, project.ID, staging.Slug, false); err != nil {
+		t.Fatalf("unprotect staging: %v", err)
+	}
+	projectApp, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "environment-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironment app: %v", err)
+	}
+	live, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: projectApp.ID, Scope: staging.Slug, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:environment-api-live",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(live staging): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, live.ID, state.DeployLive, ""); err != nil {
+		t.Fatalf("mark staging release live: %v", err)
+	}
+	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("live environment delete err = %v, want ErrConflict", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, live.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatalf("retire staging release: %v", err)
+	}
+	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); err != nil {
+		t.Fatalf("DeleteProjectEnvironment: %v", err)
+	}
+	if _, err := fx.Store.ProjectEnvironmentBySlug(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted environment lookup err = %v, want ErrNotFound", err)
+	}
 }
 
 func testProjectReconcileMultipleCrons(t *testing.T, fx *Fixture) {

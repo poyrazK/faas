@@ -186,9 +186,12 @@ endpoint hosts, or API keys.
 Neon currently supports `read_write` bindings only. The sink prefers a pooled
 endpoint and falls back to a direct endpoint. A `read_only` binding requires an
 adapter-provided read-only endpoint and therefore fails closed as unsupported
-with the initial Neon adapter. Provider-supplied root-certificate PEM also
-fails closed until the portable binding contract can deliver a separate sealed
-certificate file; it is never silently discarded.
+with the initial Neon adapter. Gregale checks the selected backend's declared
+credential modes before reserving a binding, so unsupported requests do not
+leave failed catalog rows or reach the provider and secret sink. Reconciliation
+repeats the check for bindings written by older releases. Provider-supplied
+root-certificate PEM also fails closed until the portable binding contract can
+deliver a separate sealed certificate file; it is never silently discarded.
 
 Neon's consumption-history API maps compute and network transfer directly to
 Gregale's `compute_unit_seconds` and `egress_bytes` meters. Neon reports root
@@ -322,7 +325,7 @@ databases:
   - database: orders       # logical database name or ID
     scope: production      # defaults to default
     env: DATABASE_URL      # defaults to DATABASE_URL
-    access: read_write     # or read_only
+    access: read_write     # read_only only when the selected backend supports it
 ```
 
 The `app` field can be supplied for a multi-app project manifest; when it is

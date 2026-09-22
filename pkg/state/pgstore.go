@@ -4783,6 +4783,75 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 	return scanProjectEnvironment(row)
 }
 
+func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin project environment delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var projectSlug string
+	var protected bool
+	err = tx.QueryRow(ctx, `
+		select p.slug, e.protected
+		  from project_environments e
+		  join projects p on p.id = e.project_id
+		 where p.account_id = $1 and e.project_id = $2 and e.slug = $3
+		 for update
+	`, accountID, projectID, slug).Scan(&projectSlug, &protected)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return mapErr(err)
+	}
+	if slug == "production" || protected {
+		return ErrConflict
+	}
+
+	var hasLiveRelease bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			  from apps a
+			  join deployments d on d.app_id = a.id
+			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
+		)
+	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
+		return mapErr(err)
+	}
+	if hasLiveRelease {
+		return ErrConflict
+	}
+
+	if _, err := tx.Exec(ctx, `
+		delete from project_environment_config_versions
+		 where project_id = $1 and environment_slug = $2
+	`, projectID, slug); err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from project_environment_approvals
+		 where account_id = $1 and project_slug = $2 and environment_slug = $3
+	`, accountID, projectSlug, slug); err != nil {
+		return mapErr(err)
+	}
+	tag, err := tx.Exec(ctx, `
+		delete from project_environments
+		 where project_id = $1 and slug = $2
+	`, projectID, slug)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit project environment delete: %w", err)
+	}
+	return nil
+}
+
 // ApplyProjectPlan persists a project + its member apps + crons in
 // one transaction. The critical section sits behind a
 // `SELECT … FOR UPDATE` on the parent accounts row so two concurrent

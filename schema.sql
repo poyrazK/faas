@@ -9492,6 +9492,9 @@ CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
     part_size_bytes bigint NOT NULL CHECK (part_size_bytes BETWEEN 0 AND 5368709120),
     part_count integer NOT NULL CHECK (part_count BETWEEN 0 AND 10000),
     content_type text NOT NULL DEFAULT '' CHECK (length(content_type) <= 255),
+    object_metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(object_metadata) = 'object')
+        CHECK (octet_length(object_metadata::text) <= 32768),
     provider_upload_id text NOT NULL DEFAULT '' CHECK (length(provider_upload_id) <= 4096),
     completion_parts jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(completion_parts) = 'array'),
     state text NOT NULL DEFAULT 'initiating' CHECK (state IN ('initiating','active','completing','aborting','completed','aborted')),

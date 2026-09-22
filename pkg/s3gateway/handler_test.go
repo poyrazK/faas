@@ -71,6 +71,7 @@ type gatewayTestProvider struct {
 	deleted          []string
 	deleteErrors     map[string]error
 	multipart        map[string]map[int32]objectstorage.MultipartPart
+	multipartCreates []objectstorage.MultipartCreateRequest
 	completedUploads []string
 	abortedUploads   []string
 }
@@ -126,6 +127,7 @@ func (p *gatewayTestProvider) DeleteObjectTags(context.Context, string, string) 
 	return nil
 }
 func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCreateRequest) (string, error) {
+	p.multipartCreates = append(p.multipartCreates, r)
 	if p.multipart == nil {
 		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
 	}
@@ -927,13 +929,28 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	handler.multipartStore = newGatewayMultipartStore()
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploads=", nil, "UNSIGNED-PAYLOAD"))
+	initiateRequest := signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploads=", nil, "UNSIGNED-PAYLOAD")
+	initiateRequest.Header.Set("Content-Type", "application/octet-stream")
+	initiateRequest.Header.Set("Cache-Control", "public, max-age=60")
+	initiateRequest.Header.Set("Content-Disposition", `attachment; filename="archive.bin"`)
+	initiateRequest.Header.Set("Content-Encoding", "gzip")
+	initiateRequest.Header.Set("Content-Language", "en")
+	initiateRequest.Header.Set("X-Amz-Meta-Owner", "platform")
+	initiateRequest.Header.Set("X-Amz-Tagging", "env=prod&team=core")
+	handler.ServeHTTP(recorder, initiateRequest)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("initiate = %d %s", recorder.Code, recorder.Body.String())
 	}
 	var initiated initiateMultipartResult
 	if err := xml.Unmarshal(recorder.Body.Bytes(), &initiated); err != nil || initiated.UploadID == "" {
 		t.Fatalf("initiate response = %q %v", recorder.Body.String(), err)
+	}
+	if len(provider.multipartCreates) != 1 {
+		t.Fatalf("multipart creates = %d", len(provider.multipartCreates))
+	}
+	created := provider.multipartCreates[0].Metadata
+	if created.ContentType != "application/octet-stream" || created.CacheControl != "public, max-age=60" || created.ContentDisposition != `attachment; filename="archive.bin"` || created.ContentEncoding != "gzip" || created.ContentLanguage != "en" || created.Metadata["owner"] != "platform" || created.Tags["env"] != "prod" || created.Tags["team"] != "core" {
+		t.Fatalf("multipart metadata was not preserved: %+v", created)
 	}
 
 	for partNumber, body := range map[int]string{1: strings.Repeat("a", int(api.MinMultipartPartBytes)), 2: "world"} {

@@ -23,6 +23,9 @@ func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultip
 		LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time, RetryAt: row.RetryAt.Time,
 		AttemptCount: row.AttemptCount, LastErrorCode: row.LastErrorCode,
 	}
+	if err := json.Unmarshal(row.ObjectMetadata, &upload.Metadata); err != nil {
+		return ObjectMultipartUpload{}, err
+	}
 	if err := json.Unmarshal(row.CompletionParts, &upload.Parts); err != nil {
 		return ObjectMultipartUpload{}, err
 	}
@@ -37,6 +40,10 @@ func multipartPartsJSON(parts []api.ObjectMultipartCompletedPart) ([]byte, error
 		parts = []api.ObjectMultipartCompletedPart{}
 	}
 	return json.Marshal(parts)
+}
+
+func multipartMetadataJSON(metadata ObjectMultipartMetadata) ([]byte, error) {
+	return json.Marshal(metadata)
 }
 
 func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload ObjectMultipartUpload, limit int) (ObjectMultipartUpload, error) {
@@ -65,7 +72,7 @@ func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload Objec
 		if convertErr != nil {
 			return ObjectMultipartUpload{}, convertErr
 		}
-		if out.SizeBytes != upload.SizeBytes || out.ContentType != upload.ContentType {
+		if out.SizeBytes != upload.SizeBytes || out.ContentType != upload.ContentType || !equalObjectMultipartMetadata(out.Metadata, upload.Metadata) {
 			return ObjectMultipartUpload{}, ErrConflict
 		}
 		return out, tx.Commit(ctx)
@@ -80,10 +87,14 @@ func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload Objec
 	if count >= int64(limit) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
+	metadata, err := multipartMetadataJSON(upload.Metadata)
+	if err != nil || len(metadata) > 32768 {
+		return ObjectMultipartUpload{}, ErrConflict
+	}
 	row, err := q.ObjectMultipartInsert(ctx, tx, sqlc.ObjectMultipartInsertParams{
 		ID: mustPgUUID(upload.ID), AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID), BucketID: mustPgUUID(upload.BucketID),
 		ObjectKey: upload.Key, SizeBytes: upload.SizeBytes, PartSizeBytes: upload.PartSizeBytes, PartCount: upload.PartCount,
-		ContentType: upload.ContentType, ExpiresAt: pgtype.Timestamptz{Time: upload.ExpiresAt, Valid: true},
+		ContentType: upload.ContentType, ObjectMetadata: metadata, ExpiresAt: pgtype.Timestamptz{Time: upload.ExpiresAt, Valid: true},
 	})
 	if err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)

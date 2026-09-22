@@ -48,9 +48,9 @@ class CreateDeploymentRequest:
     """Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image
     as-is."""
     require_signed: bool | None | Unset = UNSET
-    """Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit apps.require_signed; *true is
-    a no-op when the app flag is already on; *false is rejected with 403 deploy_signature_invalid when the app flag
-    is on (operator policy wins)."""
+    """Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature
+    policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid
+    when apps.require_signed is on or security_policy=enforce (operator policy wins)."""
     sidecars: list[Sidecar] | Unset = UNSET
     """Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap
     and stateless-only contract."""

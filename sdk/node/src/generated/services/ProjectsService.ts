@@ -416,6 +416,57 @@ export class ProjectsService {
     });
   }
   /**
+   * Delete an unused project environment.
+   * Deletes only an unprotected, non-production environment that has no
+   * live releases. Configuration and approval history for the registry
+   * entry is removed with it. Production, protected environments, and
+   * environments still serving a live release return 409.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProjectEnvironment({
+    slug,
+    environment,
+    idempotencyKey,
+  }: {
+    /**
+     * Project slug owning the environment.
+     */
+    slug: string,
+    /**
+     * Environment slug.
+     */
+    environment: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Get the latest non-secret environment configuration.
    * @returns ProjectEnvironmentConfigResponse Latest immutable configuration version, or the implicit empty configuration.
    * @throws ApiError
