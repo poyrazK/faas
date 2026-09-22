@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 )
 
 // EnabledListenerSource supplies the durable listener identities tcpd should
@@ -34,6 +35,7 @@ type Supervisor struct {
 	// MaxConnectionsPerAccount bounds concurrent sessions for one account on
 	// this gateway. Zero disables the account-scoped cap.
 	MaxConnectionsPerAccount int
+	Metrics                  *tcpmetrics.Metrics
 	OnError                  func(error)
 	Listen                   func(network, address string) (net.Listener, error)
 }
@@ -130,6 +132,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				Targets:        s.Targets,
 				Forwarder:      s.Forwarder,
 				Limiter:        limiter,
+				Metrics:        s.Metrics,
 				MaxConnections: s.MaxConnections,
 				OnError: func(err error) {
 					if s.OnError != nil {
