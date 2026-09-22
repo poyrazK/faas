@@ -1,6 +1,6 @@
 # ADR-122 · Edge response cache (`kind=cache`)
 
-- **Status:** **Accepted** (distributed follow-on: ADR-209)
+- **Status:** **Accepted** (distributed follow-on: ADR-211)
 - **Date:** 2026-08-20
 - **Decision:** A new edge-rule kind, `kind=cache`, gives customers
   an opt-in per-route HTTP response cache at the gateway. Rules
@@ -229,7 +229,7 @@ response bodies on platform durable storage — a materially larger
 blast radius for the stateless-contract deviation, plus retention,
 encryption and GDPR-deletion scope that the in-memory design avoids
 entirely. Per-node hit rates were acceptable for the initial release.
-ADR-209 later adds an optional, non-authoritative Redis L2 without
+ADR-211 later adds an optional, non-authoritative Redis L2 without
 placing response bodies in Postgres or on gateway disks.
 
 ### D8 — Plan gating follows the `geo`/`throttle` precedent
@@ -276,7 +276,7 @@ support (no `edge_rules:` key exists today; `throttle` and `budget`
 are both CLI-only, so a manifest surface is a separate decision).
 
 Cross-node sharing, the purge API, and stale-while-revalidate are
-delivered by ADR-209.
+delivered by ADR-211.
 
 ## References
 

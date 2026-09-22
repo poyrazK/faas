@@ -215,6 +215,34 @@ func testUnifiedDeadLetterLedger(t *testing.T, fx *Fixture) {
 	if n, err := fx.Store.DeleteDeadLetterEventsForAccount(fx.Ctx, fx.Account.ID, 10); err != nil || n != 0 {
 		t.Fatalf("DeleteDeadLetterEventsForAccount = %d, %v; want 0", n, err)
 	}
+
+	// Automatic Failed Events retention removes only the projection. Create a
+	// second terminal source so the explicit discard assertions above and the
+	// bounded cleanup contract both exercise the two independent paths.
+	retained, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID, Source: state.InvocationQueue,
+		State: state.InvocationPending, Method: "POST", Path: "/",
+		Payload: []byte(`{"order_id":"dlq-retention"}`), DueAt: now, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation retention fixture: %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocation(fx.Ctx, retained.ID, "dlq-retention-instance", 30); err != nil {
+		t.Fatalf("ClaimInvocation retention fixture: %v", err)
+	}
+	if err := fx.Store.FailInvocation(fx.Ctx, retained.ID, "retention fixture", time.Second, 1); err != nil {
+		t.Fatalf("FailInvocation retention fixture: %v", err)
+	}
+	retentionEvents, err := fx.Store.ListDeadLetterEvents(fx.Ctx, fx.App.ID, 10, "")
+	if err != nil || len(retentionEvents) != 1 || retentionEvents[0].SourceID != retained.ID {
+		t.Fatalf("retention events = %+v, %v; want one retained source", retentionEvents, err)
+	}
+	if n, err := fx.Store.PurgeExpiredDeadLetterEvents(fx.Ctx, now.Add(24*time.Hour), 10); err != nil || n != 1 {
+		t.Fatalf("PurgeExpiredDeadLetterEvents = %d, %v; want one projection", n, err)
+	}
+	if _, err := fx.Store.DeadLetterEventByID(fx.Ctx, fx.App.ID, retentionEvents[0].ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("purged retention projection lookup = %v, want ErrNotFound", err)
+	}
 }
 
 func testProjectBindingUpdate(t *testing.T, fx *Fixture) {

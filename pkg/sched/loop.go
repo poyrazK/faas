@@ -121,6 +121,7 @@ type Loop struct {
 	watchdog              *Watchdog                           // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	liveness              *wire.Liveness                      // ADR-190 main-loop progress beats; nil opts out
 	retention             *Retention                          // §17 retention sweep; nil means "no retention" (tests can opt out)
+	deadLetterRetention   *DeadLetterRetention                // unified Failed Events projection retention
 	invocationsRetention  *InvocationsRetention               // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
 	triggersRetention     *TriggersRetention                  // ADR-134 PR-E: trigger_records retention sweep; nil opts out
 	heartbeat             *Heartbeat                          // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
@@ -303,6 +304,14 @@ func (l *Loop) beatMain() { l.liveness.Beat(MainLoopName) }
 // window + interval live in pkg/api/limits.
 func (l *Loop) WithRetention(r *Retention) *Loop {
 	l.retention = r
+	return l
+}
+
+// WithDeadLetterRetention attaches the unified Failed Events projection
+// retention sweep. It shares the hourly retention ticker with instance and
+// workflow history cleanup.
+func (l *Loop) WithDeadLetterRetention(r *DeadLetterRetention) *Loop {
+	l.deadLetterRetention = r
 	return l
 }
 
@@ -824,7 +833,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// the watchdog has had a chance to stamp its first batch.
 	var retentionT *time.Ticker
 	var retentionFirst <-chan time.Time
-	if l.retention != nil {
+	if l.retention != nil || l.deadLetterRetention != nil {
 		t := time.NewTicker(api.DefaultRetentionInterval)
 		defer t.Stop()
 		retentionT = t
@@ -1165,9 +1174,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			// this the channel is set to nil so subsequent ticks
 			// exclusively come from retentionT (the 1h ticker).
 			l.runRetention(ctx)
+			l.runDeadLetterRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
 			l.runRetention(ctx)
+			l.runDeadLetterRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.runInvocationsRetention(ctx)
 		case <-triggersRetentionTick(triggersRetentionT):
@@ -1522,6 +1533,9 @@ func (l *Loop) runWatchdog(ctx context.Context) {
 // swallowed (the sweep itself is idempotent + redelivery-safe; an
 // error means a transient store outage, not a permanent fault).
 func (l *Loop) runRetention(ctx context.Context) {
+	if l.retention == nil {
+		return
+	}
 	deleted, err := l.retention.SweepOnce(ctx)
 	if err != nil {
 		l.log.Warn("retention: sweep failed", "err", err)
@@ -1529,6 +1543,22 @@ func (l *Loop) runRetention(ctx context.Context) {
 	}
 	if deleted > 0 {
 		l.log.Info("retention: swept", "deleted", deleted)
+	}
+}
+
+// runDeadLetterRetention dispatches one unified Failed Events projection
+// retention sweep. Errors are logged and retried on the next hourly tick.
+func (l *Loop) runDeadLetterRetention(ctx context.Context) {
+	if l.deadLetterRetention == nil {
+		return
+	}
+	deleted, err := l.deadLetterRetention.SweepOnce(ctx)
+	if err != nil {
+		l.log.Warn("dead-letter retention: sweep failed", "err", err)
+		return
+	}
+	if deleted > 0 {
+		l.log.Info("dead-letter retention: swept", "deleted", deleted)
 	}
 }
 

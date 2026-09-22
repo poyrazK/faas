@@ -8287,15 +8287,22 @@ type AppErrorsSummaryResponse struct {
 // The two diverge after a dedupe-merge within the dedupe window
 // (AppErrorsDedupeWindowSeconds).
 type AppErrorSummaryItem struct {
-	Fingerprint   string `json:"fingerprint"` // 64-char lowercase hex
-	ErrorClass    string `json:"error_class"` // closed-vocab enum (CHECK constraint)
-	Route         string `json:"route"`       // matched template, NOT expanded URL
-	HTTPStatus    int32  `json:"http_status"`
-	Count         int64  `json:"count"`          // issue count (post-dedupe)
-	RequestCount  int64  `json:"request_count"`  // distinct app_error_requests rows
-	FirstSeenAt   string `json:"first_seen_at"`  // RFC3339Nano UTC
-	LastSeenAt    string `json:"last_seen_at"`   // RFC3339Nano UTC
-	SampleMessage string `json:"sample_message"` // already redacted at write time
+	Fingerprint             string `json:"fingerprint"` // 64-char lowercase hex
+	ErrorClass              string `json:"error_class"` // closed-vocab enum (CHECK constraint)
+	Route                   string `json:"route"`       // matched template, NOT expanded URL
+	HTTPStatus              int32  `json:"http_status"`
+	Count                   int64  `json:"count"`          // issue count (post-dedupe)
+	RequestCount            int64  `json:"request_count"`  // distinct app_error_requests rows
+	FirstSeenAt             string `json:"first_seen_at"`  // RFC3339Nano UTC
+	LastSeenAt              string `json:"last_seen_at"`   // RFC3339Nano UTC
+	SampleMessage           string `json:"sample_message"` // already redacted at write time
+	LastInstanceID          string `json:"last_instance_id,omitempty"`
+	LastNodeID              string `json:"last_node_id,omitempty"`
+	LastRegion              string `json:"last_region,omitempty"`
+	LastCommitSHA           string `json:"last_commit_sha,omitempty"`
+	LastDeploymentTag       string `json:"last_deployment_tag,omitempty"`
+	LastDeploymentCreatedAt string `json:"last_deployment_created_at,omitempty"`
+	LastImageDigest         string `json:"last_image_digest,omitempty"`
 }
 
 // AppErrorRequestsResponse is the body of
@@ -8321,13 +8328,20 @@ type AppErrorRequestsResponse struct {
 // the error originated from; nil when the deployment has been
 // deleted (FK ON DELETE SET NULL).
 type AppErrorRequestItem struct {
-	RequestID     string `json:"request_id"`  // uuid v7 from gateway
-	ReceivedAt    string `json:"received_at"` // RFC3339Nano UTC
-	Route         string `json:"route"`
-	HTTPStatus    int32  `json:"http_status"`
-	ErrorClass    string `json:"error_class"`
-	SampleMessage string `json:"sample_message"`
-	DeploymentID  string `json:"deployment_id,omitempty"` // uuid string, omitted when NULL
+	RequestID           string `json:"request_id"`  // uuid v7 from gateway
+	ReceivedAt          string `json:"received_at"` // RFC3339Nano UTC
+	Route               string `json:"route"`
+	HTTPStatus          int32  `json:"http_status"`
+	ErrorClass          string `json:"error_class"`
+	SampleMessage       string `json:"sample_message"`
+	DeploymentID        string `json:"deployment_id,omitempty"` // uuid string, omitted when NULL
+	InstanceID          string `json:"instance_id,omitempty"`
+	NodeID              string `json:"node_id,omitempty"`
+	Region              string `json:"region,omitempty"`
+	CommitSHA           string `json:"commit_sha,omitempty"`
+	DeploymentTag       string `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string `json:"deployment_created_at,omitempty"`
+	ImageDigest         string `json:"image_digest,omitempty"`
 }
 
 // AppErrorSampleResponse is the body of
@@ -8503,20 +8517,26 @@ type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
 	// older debugger clients. TraceID is the public x-faas-request-id customers
 	// should use for support and lookup when it is available.
-	ID           string                       `json:"id"`
-	DeploymentID string                       `json:"deployment_id"`
-	Route        string                       `json:"route"`
-	Method       string                       `json:"method"`
-	Status       int                          `json:"status"`
-	LatencyMS    int                          `json:"latency_ms"`
-	Count        int                          `json:"count"`
-	ColdBoot     bool                         `json:"cold_boot"`
-	TraceID      *string                      `json:"trace_id"`
-	ReceivedAt   string                       `json:"received_at"`
-	WakeID       string                       `json:"wake_id,omitempty"`
-	InstanceID   string                       `json:"instance_id,omitempty"`
-	ConsumerID   string                       `json:"consumer_id,omitempty"`
-	Guest        *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	ID                  string                       `json:"id"`
+	DeploymentID        string                       `json:"deployment_id"`
+	Route               string                       `json:"route"`
+	Method              string                       `json:"method"`
+	Status              int                          `json:"status"`
+	LatencyMS           int                          `json:"latency_ms"`
+	Count               int                          `json:"count"`
+	ColdBoot            bool                         `json:"cold_boot"`
+	TraceID             *string                      `json:"trace_id"`
+	ReceivedAt          string                       `json:"received_at"`
+	WakeID              string                       `json:"wake_id,omitempty"`
+	InstanceID          string                       `json:"instance_id,omitempty"`
+	ConsumerID          string                       `json:"consumer_id,omitempty"`
+	NodeID              string                       `json:"node_id,omitempty"`
+	Region              string                       `json:"region,omitempty"`
+	CommitSHA           string                       `json:"commit_sha,omitempty"`
+	DeploymentTag       string                       `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
+	ImageDigest         string                       `json:"image_digest,omitempty"`
+	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
 }
 
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a
