@@ -119,7 +119,7 @@ func cmdAlertAdd(args []string) int {
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
-	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke) — required iff --metric=failed_invocations")
+	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
@@ -208,7 +208,7 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, acti
 			return printErr("Missing failure-source", fmt.Errorf("--failure-source is required when --metric=failed_invocations")) == 0
 		}
 		if !api.AllowedAlertRuleFailureSource(*failureSource) {
-			return printErr("Invalid failure-source", fmt.Errorf("--failure-source %q must be any|cron|queue|delayed_task|async_invoke", *failureSource)) == 0
+			return printErr("Invalid failure-source", fmt.Errorf("--failure-source %q must be any|cron|queue|delayed_task|async_invoke|inbound_webhook", *failureSource)) == 0
 		}
 	}
 	if *action != "" && !api.AllowedAlertRuleAction(*action) {

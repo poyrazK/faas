@@ -119,6 +119,56 @@ func TestLoad_HostingOverridesAreStrict(t *testing.T) {
 	}
 }
 
+func TestLoad_DevProfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`dev:
+  env_file: .env.dev
+  service_override_file: .env.services.local
+  postgres: true
+  postgres_region: eu-central-1
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || m.Dev == nil || m.Dev.EnvFile != ".env.dev" || m.Dev.ServiceOverrideFile != ".env.services.local" || m.Dev.Postgres == nil || !*m.Dev.Postgres || m.Dev.PostgresRegion != "eu-central-1" {
+		t.Fatalf("dev profile = %+v, want parsed developer defaults", m.Dev)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestLoad_DevProfileRejectsUnsafePathsAndOrphanedRegion(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "absolute path", body: "dev:\n  env_file: /tmp/.env\n", want: "relative"},
+		{name: "escape path", body: "dev:\n  env_file: ../.env\n", want: "inside"},
+		{name: "orphaned region", body: "dev:\n  postgres_region: eu-central-1\n", want: "requires postgres"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m, _, err := Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = m.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoad_ScalingPolicy(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`schema_version: 1

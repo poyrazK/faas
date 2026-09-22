@@ -5,6 +5,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -173,16 +174,16 @@ func TestVMConcurrencyManagerWakesWaiterOnRelease(t *testing.T) {
 
 func TestVMConcurrencyWarmQueueIsBoundedFIFO(t *testing.T) {
 	m := newVMConcurrencyManager(nil)
-	first, depth, ok := m.enterQueue("app", "pro", 2)
-	if !ok || depth != 1 {
-		t.Fatalf("first queue entry = depth %d ok %v", depth, ok)
+	first, depth, ok, err := m.enterQueue(context.Background(), "app", "pro", 2, time.Second)
+	if err != nil || !ok || depth != 1 {
+		t.Fatalf("first queue entry = depth %d ok %v err %v", depth, ok, err)
 	}
-	second, depth, ok := m.enterQueue("app", "pro", 2)
-	if !ok || depth != 2 {
-		t.Fatalf("second queue entry = depth %d ok %v", depth, ok)
+	second, depth, ok, err := m.enterQueue(context.Background(), "app", "pro", 2, time.Second)
+	if err != nil || !ok || depth != 2 {
+		t.Fatalf("second queue entry = depth %d ok %v err %v", depth, ok, err)
 	}
-	if _, depth, ok := m.enterQueue("app", "pro", 2); ok || depth != 2 {
-		t.Fatalf("overflow queue entry = depth %d ok %v, want full at 2", depth, ok)
+	if _, depth, ok, err := m.enterQueue(context.Background(), "app", "pro", 2, time.Second); err != nil || ok || depth != 2 {
+		t.Fatalf("overflow queue entry = depth %d ok %v err %v, want full at 2", depth, ok, err)
 	}
 
 	select {
@@ -195,15 +196,86 @@ func TestVMConcurrencyWarmQueueIsBoundedFIFO(t *testing.T) {
 		t.Fatal("second waiter bypassed the queue head")
 	default:
 	}
-	first.leave()
+	if err := first.leave(context.Background()); err != nil {
+		t.Fatalf("leave first: %v", err)
+	}
 	select {
 	case <-second.ready:
 	case <-time.After(time.Second):
 		t.Fatal("leaving queue head did not release the next waiter")
 	}
-	second.leave()
+	if err := second.leave(context.Background()); err != nil {
+		t.Fatalf("leave second: %v", err)
+	}
 	if got := m.queueDepth("app"); got != 0 {
 		t.Fatalf("queue depth after drain = %d, want 0", got)
+	}
+}
+
+type fakeFleetQueueAdmission struct {
+	mu     sync.Mutex
+	next   int
+	leases map[string]map[string]struct{}
+}
+
+func (f *fakeFleetQueueAdmission) TryAcquireConcurrencyQueueLease(_ context.Context, appID string, limit int, _ time.Duration) (string, int, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.leases == nil {
+		f.leases = make(map[string]map[string]struct{})
+	}
+	appLeases := f.leases[appID]
+	if appLeases == nil {
+		appLeases = make(map[string]struct{})
+		f.leases[appID] = appLeases
+	}
+	if len(appLeases) >= limit {
+		return "", len(appLeases), false, nil
+	}
+	f.next++
+	leaseID := strconv.Itoa(f.next)
+	appLeases[leaseID] = struct{}{}
+	return leaseID, len(appLeases), true, nil
+}
+
+func (f *fakeFleetQueueAdmission) ReleaseConcurrencyQueueLease(_ context.Context, appID, leaseID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.leases[appID], leaseID)
+	return nil
+}
+
+func TestVMConcurrencyWarmQueueCapIsSharedAcrossGatewayManagers(t *testing.T) {
+	admission := &fakeFleetQueueAdmission{}
+	firstGateway := newVMConcurrencyManager(nil)
+	secondGateway := newVMConcurrencyManager(nil)
+	firstGateway.setQueueAdmission(admission)
+	secondGateway.setQueueAdmission(admission)
+
+	first, depth, ok, err := firstGateway.enterQueue(context.Background(), "app", "pro", 2, time.Second)
+	if err != nil || !ok || depth != 1 {
+		t.Fatalf("first gateway admission = depth %d ok %v err %v", depth, ok, err)
+	}
+	second, depth, ok, err := secondGateway.enterQueue(context.Background(), "app", "pro", 2, time.Second)
+	if err != nil || !ok || depth != 2 {
+		t.Fatalf("second gateway admission = depth %d ok %v err %v", depth, ok, err)
+	}
+	if _, depth, ok, err := firstGateway.enterQueue(context.Background(), "app", "pro", 2, time.Second); err != nil || ok || depth != 2 {
+		t.Fatalf("fleet overflow = depth %d ok %v err %v, want full at 2", depth, ok, err)
+	}
+
+	if err := first.leave(context.Background()); err != nil {
+		t.Fatalf("release first fleet permit: %v", err)
+	}
+	replacement, depth, ok, err := firstGateway.enterQueue(context.Background(), "app", "pro", 2, time.Second)
+	if err != nil || !ok || depth != 2 {
+		t.Fatalf("replacement admission = depth %d ok %v err %v", depth, ok, err)
+	}
+	if err := replacement.leave(context.Background()); err != nil {
+		t.Fatalf("release replacement fleet permit: %v", err)
+	}
+	if err := second.leave(context.Background()); err != nil {
+		t.Fatalf("release second fleet permit: %v", err)
 	}
 }
 

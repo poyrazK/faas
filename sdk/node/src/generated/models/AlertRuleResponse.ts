@@ -22,7 +22,7 @@ export type AlertRuleResponse = {
   /**
    * Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk).
    */
-  failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke';
+  failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke' | 'inbound_webhook';
   webhook_url: string;
   /**
    * Literal "***" — the plaintext is never returned.

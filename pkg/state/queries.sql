@@ -1060,16 +1060,26 @@ SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1;
 INSERT INTO app_errors (
     id, account_id, app_id, deployment_id, fingerprint,
     route, http_status, error_class, sample_message,
-    count, request_count, first_seen_at, last_seen_at
+    count, request_count, first_seen_at, last_seen_at,
+    last_instance_id, last_node_id, last_region, last_commit_sha,
+    last_deployment_tag, last_deployment_created_at, last_image_digest
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    1, 1, $10, $10
+    1, 1, $10, $10,
+    $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (account_id, app_id, fingerprint) DO UPDATE SET
     count         = app_errors.count + 1,
     request_count = app_errors.request_count + 1,
-    last_seen_at  = greatest(app_errors.last_seen_at, $10)
+    last_seen_at  = greatest(app_errors.last_seen_at, $10),
+    last_instance_id = COALESCE(NULLIF(EXCLUDED.last_instance_id, ''), app_errors.last_instance_id),
+    last_node_id = COALESCE(NULLIF(EXCLUDED.last_node_id, ''), app_errors.last_node_id),
+    last_region = COALESCE(NULLIF(EXCLUDED.last_region, ''), app_errors.last_region),
+    last_commit_sha = COALESCE(NULLIF(EXCLUDED.last_commit_sha, ''), app_errors.last_commit_sha),
+    last_deployment_tag = COALESCE(NULLIF(EXCLUDED.last_deployment_tag, ''), app_errors.last_deployment_tag),
+    last_deployment_created_at = COALESCE(NULLIF(EXCLUDED.last_deployment_created_at, ''), app_errors.last_deployment_created_at),
+    last_image_digest = COALESCE(NULLIF(EXCLUDED.last_image_digest, ''), app_errors.last_image_digest)
 RETURNING (xmax = 0) AS inserted;
 
 -- name: InsertAppErrorRequest :exec
@@ -1080,11 +1090,12 @@ RETURNING (xmax = 0) AS inserted;
 INSERT INTO app_error_requests (
     id, account_id, app_id, fingerprint, request_id, received_at,
     route, http_status, error_class, sample_message,
-    deployment_id, headers_sample, redactions
+    deployment_id, headers_sample, redactions, instance_id, node_id,
+    region, commit_sha, deployment_tag, deployment_created_at, image_digest
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
 );
 
 -- name: ListAppErrorGroups :many
@@ -1109,7 +1120,9 @@ INSERT INTO app_error_requests (
 SELECT
     id, fingerprint, error_class, route, http_status,
     count, request_count, first_seen_at, last_seen_at,
-    sample_message
+    sample_message, last_instance_id, last_node_id, last_region,
+    last_commit_sha, last_deployment_tag, last_deployment_created_at,
+    last_image_digest
 FROM app_errors
 WHERE account_id = sqlc.arg('account_id')
   AND app_id     = sqlc.arg('app_id')
@@ -1133,7 +1146,8 @@ LIMIT sqlc.arg('limit');
 -- leading (received_at) reference, breaking pagination.
 SELECT
     id, request_id, received_at, route, http_status,
-    error_class, sample_message, deployment_id
+    error_class, sample_message, deployment_id, instance_id, node_id,
+    region, commit_sha, deployment_tag, deployment_created_at, image_digest
 FROM app_error_requests
 WHERE account_id  = sqlc.arg('account_id')
   AND app_id      = sqlc.arg('app_id')
@@ -1151,7 +1165,8 @@ LIMIT sqlc.arg('limit');
 SELECT
     id, request_id, received_at, route, http_status,
     error_class, sample_message, deployment_id,
-    headers_sample, redactions
+    headers_sample, redactions, instance_id, node_id, region, commit_sha,
+    deployment_tag, deployment_created_at, image_digest
 FROM app_error_requests
 WHERE account_id  = $1
   AND app_id      = $2
@@ -1702,7 +1717,8 @@ INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
-    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id
+    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1710,7 +1726,13 @@ INSERT INTO request_telemetry (
     COALESCE(NULLIF(sqlc.arg('guest_runtime')::text, ''), '__unknown__'),
     COALESCE(NULLIF(sqlc.arg('guest_outcome')::text, ''), 'missing'),
     COALESCE(sqlc.arg('guest_error_class')::text, ''),
-    sqlc.arg('consumer_id')::uuid
+    sqlc.arg('consumer_id')::uuid,
+    sqlc.arg('node_id')::text,
+    sqlc.arg('region')::text,
+    sqlc.arg('commit_sha')::text,
+    sqlc.arg('deployment_tag')::text,
+    sqlc.arg('deployment_created_at')::text,
+    sqlc.arg('image_digest')::text
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1723,7 +1745,8 @@ INSERT INTO request_telemetry (
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
-       consumer_id
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -1808,7 +1831,8 @@ WHERE app_id = $1
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
-       consumer_id
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
 FROM request_telemetry
 WHERE app_id = sqlc.arg(app_id)
   AND (id::text = sqlc.arg(identifier)::text OR trace_id = sqlc.arg(identifier)::text)
