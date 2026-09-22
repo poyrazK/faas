@@ -142,6 +142,9 @@ func runConfigurationPreflight(getenv func(string) string, output, errorOutput i
 	if !backend.Capabilities.RestoreUsageIsolated {
 		result.Warnings = append(result.Warnings, "restore_usage_not_isolated")
 	}
+	if !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
+		result.Warnings = append(result.Warnings, "restore_usage_unaccounted")
+	}
 	return writeConfigurationPreflight(result, failed, errorOutput, output)
 }
 

@@ -678,14 +678,13 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 	switch rule.Metric {
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
-		// per-rule source filter expands "any" to the four
+		// per-rule source filter expands "any" to every alertable
 		// InvocationSource values that ship today.
 		since := e.windowStart(rule.WindowSpec, e.now())
 		source := rule.FailureSource
 		if source == "" || source == state.AlertFailureAny {
 			// Empty defaults to "any" per the handler-side
-			// schema validation. Sum across the four sources
-			// by issuing four queries — the table is small
+			// schema validation. Sum across the sources below — the table is small
 			// (terminal rows only) and the per-rule scan
 			// stays bounded.
 			return e.summariseFailed(ctx, rule, since)
@@ -824,10 +823,10 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 	}
 }
 
-// summariseFailed walks the four InvocationSource values and sums
+// summariseFailed walks every alertable InvocationSource value and sums
 // the per-source counts so a rule with source="any" sees the total
 // of terminal-failed invocations on (account, app) inside the
-// window. Bounded: four queries, indexed by account_id +
+// window. Bounded by the closed source set, indexed by account_id +
 // state=failed.
 func (e *Evaluator) summariseFailed(ctx context.Context, rule state.AlertRule, since time.Time) (float64, bool, string) {
 	var total int
@@ -836,6 +835,7 @@ func (e *Evaluator) summariseFailed(ctx context.Context, rule state.AlertRule, s
 		state.InvocationQueue,
 		state.InvocationDelayedTask,
 		state.InvocationCron,
+		state.InvocationInboundWebhook,
 	} {
 		n, err := e.store.CountFailedInvocationsSince(ctx, rule.AccountID, rule.AppID, src, since)
 		if err != nil {
