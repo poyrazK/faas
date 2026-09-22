@@ -63,6 +63,12 @@ command should stream build progress until the app is live.
 gregale deploy --repo onebox-faas/hello --ref main --no-wait
 ```
 
+Before Gregale creates or fetches the app, human-readable deploys print the
+repository and ref, environment, release policy, and resource behavior. Runtime,
+entrypoint, listener, and health details are intentionally marked as remotely
+resolved because the control plane has not checked out the source yet. `--json`
+keeps stdout machine-readable and omits this preflight block.
+
 ## Failure modes
 
 | Server response | What it means | What to do |
@@ -70,7 +76,7 @@ gregale deploy --repo onebox-faas/hello --ref main --no-wait
 | `409 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Back off and retry; the CLI surfaces the hint on stderr. |
 | `404 github_install_not_found` | The account has no `github_installations` row. | Run `gregale connect` on a workstation once, then re-run CI. |
 | `413 source_too_large` | Repo tarball exceeds the per-plan `SourceTarballMaxMB` cap (Free/Hobby 100 MB, Pro/Scale 250 MB). | Trim history (`git gc`), use a sparse checkout, or upgrade plan. |
-| `400 invalid_ref` | `--ref` is not a branch, tag, or 7+/40-char SHA. | Pin to a SHA or a real branch / tag. |
+| Local `Invalid --ref`, or server `400 invalid_ref` | The ref has invalid syntax, or the remote branch, tag, or SHA cannot be resolved. | Pin to a SHA or a real branch / tag. |
 | `429 plan_limit_*` | Per-plan concurrency / RAM cap reached. | Wait for a slot, or upgrade. |
 
 The CLI derives a stable retry key from the repo, ref, and deploy intent.

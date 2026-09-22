@@ -1234,6 +1234,41 @@ func TestCmdDeployTarball_PreservesExplicitTrafficPercent(t *testing.T) {
 	}
 }
 
+func TestCmdDeployTarball_NoTrafficSendsExplicitZero(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "index.js"), []byte("console.log('ok')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var gotTraffic string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			writeJSONTest(w, api.AppResponse{ID: "app-id", Slug: "dark-source"})
+		case r.URL.Path == "/v1/apps/dark-source/deployments" && r.Method == http.MethodPost:
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				t.Errorf("ParseMultipartForm: %v", err)
+			}
+			gotTraffic = r.FormValue("traffic_percent")
+			writeJSONTest(w, api.DeploymentResponse{ID: "dep-id", AppID: "app-id", Status: "pending", TrafficPercent: 0})
+		default:
+			http.Error(w, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{"--path", source, "--name", "dark-source", "--app", "--yes", "--no-wait", "--no-traffic"}); code != 0 {
+		t.Fatalf("cmdDeployTarball exit = %d, want 0", code)
+	}
+	if gotTraffic != "0" {
+		t.Fatalf("traffic_percent form value = %q, want explicit zero", gotTraffic)
+	}
+}
+
 func mustAtoiForTest(raw string) int {
 	if raw == "25" {
 		return 25

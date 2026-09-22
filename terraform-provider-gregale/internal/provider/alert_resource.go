@@ -103,7 +103,7 @@ func (r *alertResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"failure_source": schema.StringAttribute{
 				Optional:            true,
 				Description:         "Invocation source filter for the failed_invocations metric.",
-				MarkdownDescription: "Invocation source filter for `failed_invocations`: `any`, `cron`, `queue`, `delayed_task`, or `async_invoke`.",
+				MarkdownDescription: "Invocation source filter for `failed_invocations`: `any`, `cron`, `queue`, `delayed_task`, `async_invoke`, or `inbound_webhook`.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},

@@ -31,6 +31,10 @@ class EdgeRuleCacheAction:
         (`api.ResponseCacheMaxAgeMaxSeconds`). The runtime cache
         layer in `pkg/gateway/response_cache.go` re-checks this
         cap as defence-in-depth.
+      * `stale_while_revalidate_seconds` — optional. After the fresh
+        window, return the cached response immediately while one
+        gateway request refreshes the key in the background. Default
+        0 (disabled); absolute cap 300.
       * `stale_if_error_seconds` — required. Stale-on-error window
         in seconds. Default 300; absolute cap 300
         (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
@@ -60,6 +64,11 @@ class EdgeRuleCacheAction:
     (errors return 502/504 directly). Positive values are
     clamped to the platform cap (300s = 5 minutes).
     """
+    stale_while_revalidate_seconds: int | Unset = 0
+    """After the fresh window, serve stale for this many seconds
+    while a single coalesced background request refreshes the
+    cache key. 0 disables stale-while-revalidate.
+    """
     vary_on: list[EdgeRuleCacheActionVaryOnItem] | Unset = UNSET
     """Non-credential request headers that participate in the
     cache key. Closed vocabulary:
@@ -84,6 +93,8 @@ class EdgeRuleCacheAction:
 
         stale_if_error_seconds = self.stale_if_error_seconds
 
+        stale_while_revalidate_seconds = self.stale_while_revalidate_seconds
+
         vary_on: list[str] | Unset = UNSET
         if not isinstance(self.vary_on, Unset):
             vary_on = []
@@ -106,6 +117,8 @@ class EdgeRuleCacheAction:
                 "stale_if_error_seconds": stale_if_error_seconds,
             }
         )
+        if stale_while_revalidate_seconds is not UNSET:
+            field_dict["stale_while_revalidate_seconds"] = stale_while_revalidate_seconds
         if vary_on is not UNSET:
             field_dict["vary_on"] = vary_on
         if methods is not UNSET:
@@ -119,6 +132,8 @@ class EdgeRuleCacheAction:
         max_age_seconds = d.pop("max_age_seconds")
 
         stale_if_error_seconds = d.pop("stale_if_error_seconds")
+
+        stale_while_revalidate_seconds = d.pop("stale_while_revalidate_seconds", UNSET)
 
         _vary_on = d.pop("vary_on", UNSET)
         vary_on: list[EdgeRuleCacheActionVaryOnItem] | Unset = UNSET
@@ -141,6 +156,7 @@ class EdgeRuleCacheAction:
         edge_rule_cache_action = cls(
             max_age_seconds=max_age_seconds,
             stale_if_error_seconds=stale_if_error_seconds,
+            stale_while_revalidate_seconds=stale_while_revalidate_seconds,
             vary_on=vary_on,
             methods=methods,
         )
