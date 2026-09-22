@@ -23,6 +23,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const (
@@ -291,64 +294,141 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
 		return
 	}
+	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(r.Context(), serviceProxySpanName(service),
+		attribute.String("gregale.dependency.type", "managed_binding"),
+		attribute.String("gregale.dependency.kind", "service_proxy"),
+		attribute.String("http.request.method", r.Method),
+	)
+	if validServiceDNSLabel(service) {
+		dependencySpan.SetAttributes(attribute.String("gregale.service.name", service))
+	}
+	upgrade := isUpgradeRequest(r)
+	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
+	dispatchWriter := http.ResponseWriter(traceWriter)
+	if upgrade {
+		// A hijacked response needs the original writer. The ordinary trace
+		// writer intentionally records HTTP response status only and does not
+		// impersonate net.Hijacker.
+		dispatchWriter = w
+	}
+	defer func() {
+		if !upgrade {
+			status := traceWriter.status
+			if status == 0 {
+				// net/http implicitly commits 200 when a handler returns without
+				// writing a response.
+				status = http.StatusOK
+			}
+			dependencySpan.SetAttributes(attribute.Int("http.response.status_code", status))
+			if status >= http.StatusBadRequest {
+				dependencySpan.SetStatus(codes.Error, strconv.Itoa(status))
+			}
+		}
+		dependencySpan.End()
+	}()
+	r = r.WithContext(dependencyCtx)
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
 	if p.resolveCaller != nil {
-		resolved, err := p.resolveCaller(r.Context(), r.RemoteAddr)
+		resolved, err := p.resolveCaller(dependencyCtx, r.RemoteAddr)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
-			serviceProxyProblem(w, http.StatusServiceUnavailable, "caller identity is unavailable")
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "caller identity is unavailable")
 			return
 		}
 		if resolved == "" {
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
-			serviceProxyProblem(w, http.StatusForbidden, "caller identity is unknown")
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller identity is unknown")
 			return
 		}
 		if caller != "" && resolved != caller {
 			p.metrics.IncServiceCall(ServiceCallDenied)
-			serviceProxyProblem(w, http.StatusForbidden, "caller identity does not match the node identity")
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller identity does not match the node identity")
 			return
 		}
 		caller = resolved
 	}
 	if caller == "" {
 		p.metrics.IncServiceCall(ServiceCallUnauthenticated)
-		serviceProxyProblem(w, http.StatusUnauthorized, "caller identity is required")
+		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
-	target, err := p.resolveTarget(r.Context(), service)
+	target, err := p.resolveTarget(dependencyCtx, service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
 			p.metrics.IncServiceCall(ServiceCallNotFound)
-			serviceProxyProblem(w, http.StatusNotFound, "service is not registered")
+			serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
 			return
 		}
-		serviceProxyProblem(w, http.StatusServiceUnavailable, err.Error())
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	if p.authorize == nil {
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
 	}
-	callerInfo, err := p.authorize(r.Context(), caller, target.AppID)
+	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
+	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyDenied) {
 			p.metrics.IncServiceCall(ServiceCallDenied)
-			serviceProxyProblem(w, http.StatusForbidden, "caller is not allowed to reach this service")
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller is not allowed to reach this service")
 			return
 		}
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service authorization is unavailable")
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service authorization is unavailable")
 		return
 	}
 	if p.provider == nil || p.forward == nil {
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy transport is not wired")
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, woken, served := p.routableEndpoints(w, r, target.AppID)
+	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID)
 	if !served {
 		return
 	}
-	p.dispatch(w, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+func serviceProxySpanName(service string) string {
+	if validServiceDNSLabel(service) {
+		return "service." + service
+	}
+	return "service.proxy"
+}
+
+// serviceProxyTraceResponseWriter records the final HTTP status while
+// preserving streaming through http.Flusher and response-controller
+// unwrapping. Upgrade requests bypass it because they need net.Hijacker.
+type serviceProxyTraceResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *serviceProxyTraceResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serviceProxyTraceResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *serviceProxyTraceResponseWriter) Flush() {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // dispatch picks the guest bridge for the resolved target (ADR-197).

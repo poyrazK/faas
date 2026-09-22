@@ -216,7 +216,7 @@ type cliFlag struct {
 
 // templateNames13 is the canonical template catalog. The historical name is
 // retained because tests and completion metadata refer to this package-local
-// symbol; it now contains all 15 embedded templates. Mirrors
+// symbol; it now contains all 16 embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -231,6 +231,7 @@ var templateNames13 = []string{
 	"function-go",
 	"function-node24",
 	"function-python313",
+	"event-worker",
 	"s3-uploader",
 	"slack-bot",
 	"rest-api-postgres",
@@ -1335,7 +1336,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "receive", Short: "Receive a wake request"},
 			{Name: "state", Short: "Show queue state"},
-			{Name: statusLiteral, Short: "Alias for queue state"},
+			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness"},
 			{Name: "peek", Short: "Peek at the next wake"},
 			{Name: "dead-letter", Short: "Inspect the dead-letter queue"},
 			{Name: "ack", Short: "Ack a wake"},

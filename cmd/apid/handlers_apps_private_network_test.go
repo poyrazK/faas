@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func withPrivateNetworkEnabled(t *testing.T, enabled bool) {
@@ -41,7 +42,7 @@ func TestPrivateNetwork_FlagOffBlocksAllHandlers(t *testing.T) {
 func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 	withPrivateNetworkEnabled(t, true)
 	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "private-life")
+	appID := mustSeedApp(t, e, "private-life")
 
 	rec := e.do(t, "PUT", "/v1/apps/private-life/network/private",
 		privateNetworkRequest("prod-vpc", "fra1", []string{"10.20.1.1/16", "10.30.0.0/16"}), nil)
@@ -68,6 +69,24 @@ func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 	}
 	if resp.Attachment == nil || resp.Attachment.NetworkID != "prod-vpc" || resp.MaxCIDRs != 64 {
 		t.Fatalf("GET response = %+v", resp)
+	}
+	healthStore := state.PrivateNetworkAttachmentHealthStore(e.store)
+	attachment, err := e.store.GetAppPrivateNetworkAttachment(t.Context(), e.acct.ID, appID)
+	if err != nil {
+		t.Fatalf("read attachment for health seed: %v", err)
+	}
+	if err := healthStore.UpsertPrivateNetworkAttachmentNodeStatus(t.Context(), state.PrivateNetworkAttachmentNodeStatus{
+		AccountID: e.acct.ID, AppID: appID, NetworkID: attachment.NetworkID, NodeID: "node-a",
+		FabricStatus: "ready", FabricDetail: "bridge ready", RouteStatus: "error", RouteDetail: "route update failed",
+	}); err != nil {
+		t.Fatalf("seed node health: %v", err)
+	}
+	rec = e.do(t, "GET", "/v1/apps/private-life/network/private", nil, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode GET health: %v", err)
+	}
+	if len(resp.Attachment.Nodes) != 1 || resp.Attachment.Nodes[0].NodeID != "node-a" || resp.Attachment.Nodes[0].RouteStatus != "error" {
+		t.Fatalf("GET node health = %#v", resp.Attachment.Nodes)
 	}
 
 	rec = e.do(t, "DELETE", "/v1/apps/private-life/network/private", nil, nil)

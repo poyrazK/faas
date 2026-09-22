@@ -7,7 +7,7 @@
 // `swapIO` and `swapStdout` helpers from sign_keys_test.go are reused.
 //
 // What we cover:
-//   - every Wave 0 PR-B template materializes with the expected
+//   - every Wave 0 PR-B template and the event-worker starter materialize with the expected
 //     file set and a README that mentions the right `gregale secrets
 //     set` commands (drift pin between the CLI hint and the README)
 //   - missing / unknown / non-empty --path rejection paths
@@ -30,7 +30,8 @@ import (
 )
 
 // TestCmdInit_AllTemplatesMaterialize: every Wave 0 PR-B template
-// (s3-uploader, slack-bot, rest-api-postgres, cron-worker) writes the
+// (s3-uploader, slack-bot, rest-api-postgres, cron-worker) and the
+// event-worker starter write the
 // expected file set to a fresh t.TempDir() via runCmdInit. Pinned so a
 // future template addition can't silently drop the README or
 // package.json. The pre-existing seven templates are out of scope for
@@ -98,6 +99,15 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				"ANTHROPIC_API_KEY",
 				"gregale secrets set",
 				"--create-only",
+			},
+		},
+		{
+			name:  "event-worker",
+			files: []string{"handler.js", "package.json", "gregale.yaml", "README.md"},
+			readmeHas: []string{
+				"event_triggers",
+				"gregale events publish",
+				"invoice.paid",
 			},
 		},
 	}
@@ -396,11 +406,12 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		t.Fatalf("runCmdInitList = %d, want 0", code)
 	}
 	out := buf.String()
-	// Order: hello → function → stateless-contract → ai (the pinned
+	// Order: hello → function → event-driven → stateless-contract → ai (the pinned
 	// CategoryOrder). Find each header line; assert relative order.
 	idx := map[string]int{
 		"hello":              strings.Index(out, "hello ("),
 		"function":           strings.Index(out, "function ("),
+		"event-driven":       strings.Index(out, "event-driven ("),
 		"stateless-contract": strings.Index(out, "stateless-contract ("),
 		"ai":                 strings.Index(out, "ai ("),
 	}
@@ -409,7 +420,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 			t.Errorf("missing category header %q in --list output:\n%s", k, out)
 		}
 	}
-	if idx["hello"] >= idx["function"] || idx["function"] >= idx["stateless-contract"] || idx["stateless-contract"] >= idx["ai"] {
+	if idx["hello"] >= idx["function"] || idx["function"] >= idx["event-driven"] || idx["event-driven"] >= idx["stateless-contract"] || idx["stateless-contract"] >= idx["ai"] {
 		t.Errorf("category order drift: %v\noutput:\n%s", idx, out)
 	}
 	// Spot-check expected contents under each category so a future
@@ -417,6 +428,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	wantPerCat := map[string][]string{
 		"hello":              {"hello-node", "hello-python", "hello-go"},
 		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
+		"event-driven":       {"event-worker"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver"},
 		"ai":                 {"ai-chat"},
 	}

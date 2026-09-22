@@ -321,13 +321,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	// CodePlanStreamingNotAllowed returns the same status on
 	// POST vs PATCH — telemetry collapsing on `code` is uniform.
 	//
-	// TODO(ADR-102-followup): add apps_streaming_enabled_plan_check
-	// Postgres CHECK constraint via NOT VALID + VALIDATE
-	// migrations once production telemetry confirms zero Free+
-	// streaming_enabled=true rows. Until then this runtime gate is
-	// the only enforcement; a direct-DB write or backup-restore
-	// can still violate the invariant. The follow-up ships a
-	// 1-cycle telemetry window after this PR lands.
+	// The apps_streaming_enabled_plan_check migration is the database
+	// backstop for direct writes and restores. Keep this runtime gate as
+	// the customer-facing 403 so API callers get the same stable error.
 	if req.StreamingEnabled != nil && *req.StreamingEnabled && !acct.Plan.StreamingResponseAllowed() {
 		return state.App{}, api.NewProblem(http.StatusForbidden,
 			api.CodePlanStreamingNotAllowed,

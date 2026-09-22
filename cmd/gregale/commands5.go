@@ -1118,6 +1118,7 @@ func cmdDashboard(args []string) int {
 //	send         enqueue one payload via POST /v1/apps/{slug}/queues/send
 //	receive      drain the next row via POST .../queues/receive
 //	state        depth + cap via GET .../queues/state
+//	status       queue doctor view (depth, scaling, bindings, and liveness)
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
 //	ack          release a leased row
@@ -1131,6 +1132,7 @@ func cmdQueueDispatch(args []string) int {
 			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
 			"  receive <slug>         drain the next row (blocks)\n"+
 			"  state <slug>            depth + cap (no lease)\n"+
+			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
 			"  ack <slug> <row-id>    release a leased row\n"+
@@ -1146,8 +1148,10 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueSend(args[1:])
 	case "receive":
 		return cmdQueueReceive(args[1:])
-	case "state", statusLiteral:
+	case "state":
 		return cmdQueueState(args[1:])
+	case statusLiteral:
+		return cmdQueueStatus(args[1:])
 	case "peek":
 		return cmdQueuePeek(args[1:])
 	case "dead-letter":
@@ -1165,6 +1169,7 @@ func cmdQueueDispatch(args []string) int {
 			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
 			"  receive <slug>         drain the next row\n"+
 			"  state <slug>            depth + cap\n"+
+			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
 			"  ack <slug> <row-id>    release a leased row\n"+

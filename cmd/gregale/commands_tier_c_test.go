@@ -414,15 +414,36 @@ func TestTierC_QueueState_HappyPath(t *testing.T) {
 	}
 }
 
-func TestTierC_QueueStatusAlias_HappyPath(t *testing.T) {
+func TestTierC_QueueStatusDoctor_HappyPath(t *testing.T) {
 	resetJSONOut(t)
-	body := `{"depth":0,"in_flight":0}`
-	f := authedFakeAPI(t, body, http.StatusOK)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test-token")
+	seen := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.URL.Path] = true
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			writeJSONTest(w, api.AppResponse{Slug: "demo", ScalingPolicy: &api.ScalingPolicy{Target: &api.ScalingTarget{Metric: "queue_depth", Value: 10}}})
+		case "/v1/apps/demo/queues/state":
+			writeJSONTest(w, api.QueueStateResponse{AppSlug: "demo", Depth: 2})
+		case "/v1/apps/demo/queue-bindings":
+			writeJSONTest(w, []api.QueueBindingResponse{{ID: "binding-1", Name: "default", QueueName: "default", Mode: "push", WorkloadClass: "worker", Enabled: true}})
+		case "/v1/apps/demo/queue-bindings/binding-1/status":
+			writeJSONTest(w, api.QueueBindingStatusResponse{BindingID: "binding-1", Name: "default", ConsumerState: "active", ConsumerLiveness: "healthy", Depth: 2})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
 	if code := cmdQueueDispatch([]string{"status", "demo"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/queues/state" {
-		t.Errorf("route = %s %s, want GET /v1/apps/demo/queues/state", f.sawMethod, f.sawPath)
+	for _, path := range []string{"/v1/apps/demo", "/v1/apps/demo/queues/state", "/v1/apps/demo/queue-bindings", "/v1/apps/demo/queue-bindings/binding-1/status"} {
+		if !seen[path] {
+			t.Errorf("missing queue status request %s", path)
+		}
 	}
 }
 

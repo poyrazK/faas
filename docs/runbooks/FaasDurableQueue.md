@@ -32,6 +32,12 @@ last poll/success/error timestamps, the last error text, and broker-native lag
 when the source exposes it. A stale snapshot means schedd has not completed a
 poll in 30 seconds; use the schedd metrics for fleet-wide liveness and alerting.
 
+For the common operator workflow, the `gregale queue status <slug>` command
+combines app queue state, the scaling target, every binding's consumer
+liveness, broker lag, dead letters, and the last consumer error. Use `--json`
+for automation. The command is read-only and does not lease or acknowledge
+messages.
+
 ## Simple workload setup
 
 For the common worker/job case, `gregale queue setup <slug>` (or

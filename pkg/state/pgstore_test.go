@@ -1248,9 +1248,8 @@ func TestPg_CreateAppIfUnderQuota_ConcurrentAcrossAccounts(t *testing.T) {
 //
 //   - Hobby + streaming=true   → round-trip stays true
 //   - Free  + streaming=false  → round-trip stays false
-//   - Free  + streaming=true   → round-trip stays true (callers
-//     must enforce the plan gate; the store is the writer of
-//     truth, not the gatekeeper)
+//   - Free  + streaming=true   → insert is rejected by the database
+//     plan invariant (callers still enforce the customer-facing gate)
 func TestPg_CreateAppIfUnderQuota_WritesStreamingEnabled(t *testing.T) {
 	s, ctx := pgStore(t)
 
@@ -1258,10 +1257,11 @@ func TestPg_CreateAppIfUnderQuota_WritesStreamingEnabled(t *testing.T) {
 		name        string
 		plan        api.Plan
 		wantWritten bool
+		wantError   bool
 	}{
 		{name: "HobbyDefaultsToTrueWhenSet", plan: api.PlanHobby, wantWritten: true},
 		{name: "FreeExplicitlyFalse", plan: api.PlanFree, wantWritten: false},
-		{name: "FreeExplicitlyTrueDespitePlanGate", plan: api.PlanFree, wantWritten: true},
+		{name: "FreeExplicitlyTrueRejected", plan: api.PlanFree, wantWritten: true, wantError: true},
 	}
 	for i, tc := range cases {
 		i, tc := i, tc
@@ -1285,6 +1285,12 @@ func TestPg_CreateAppIfUnderQuota_WritesStreamingEnabled(t *testing.T) {
 				StreamingEnabled: want,
 			}
 			created, err := s.CreateAppIfUnderQuota(ctx, app, limits)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("CreateAppIfUnderQuota succeeded; want apps_streaming_enabled_plan_check violation")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("CreateAppIfUnderQuota: %v", err)
 			}

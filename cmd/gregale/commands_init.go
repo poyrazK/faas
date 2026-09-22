@@ -97,7 +97,7 @@ func cmdInit(args []string) int {
 	return runCmdInitWithSecrets(*tpl, *dest, *deploy, *name, *secretsFile, osStdout, os.Stderr)
 }
 
-// runCmdInitList prints the 13 templates grouped by category, in the
+// runCmdInitList prints the built-in templates grouped by category, in the
 // canonical order pinned by templates.CategoryOrder. Each category
 // gets a header (category name) + a count + a comma-separated list
 // of names. This is the only place the grouping is rendered; the
@@ -258,7 +258,7 @@ func docsURLForTemplate(name string) string {
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "ai-chat":
 		return functionsDocsURL
-	case "cron-example", "cron-worker", "slack-bot", "webhook-receiver":
+	case "cron-example", "cron-worker", "event-worker", "slack-bot", "webhook-receiver":
 		return eventDrivenDocsURL
 	case "s3-uploader", "rest-api-postgres":
 		return storageDocsURL
