@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 // devSetupReceipt is the local, side-effect-free plan produced by
@@ -81,6 +82,7 @@ func cmdDevSetup(args []string) int {
 		PrintUsage(osStderr, devSetupUsage, "dev")
 		return 2
 	}
+	explicitFlags := flagSetWasSet(fs)
 	if *once && !*start {
 		return printErr("Invalid flags", errors.New("--once requires --start"))
 	}
@@ -90,10 +92,6 @@ func cmdDevSetup(args []string) int {
 	if *open && !*start {
 		return printErr("Invalid flags", errors.New("--open requires --start"))
 	}
-	if !*withPostgres && *postgresRegion != "" {
-		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
@@ -105,6 +103,14 @@ func cmdDevSetup(args []string) int {
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	manifest, err := loadDevManifest(sourceDir)
+	if err != nil {
+		return printErr("Invalid developer manifest", err)
+	}
+	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	if !*withPostgres && *postgresRegion != "" {
+		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
 	}
 	envFilePath, envKeyCount, err := resolveSetupEnvFile(cwd, *envFile)
 	if err != nil {
@@ -287,18 +293,18 @@ func devSetupSourceMarkers(sourceDir string) []string {
 	if err != nil {
 		return nil
 	}
-	markers := make([]string, 0)
+	found := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if _, ok := appMarker[name]; ok || functionHandlerFiles[name] {
-			markers = append(markers, entry.Name())
+		if markers.IsAppMarker(name) || functionHandlerFiles[name] {
+			found = append(found, entry.Name())
 		}
 	}
-	sort.Strings(markers)
-	return markers
+	sort.Strings(found)
+	return found
 }
 
 func devSetupDependencyFiles(sourceDir string) []string {

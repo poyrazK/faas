@@ -53,7 +53,7 @@ func postgresTestDatabase(accountID, name string, at time.Time) Database {
 
 func postgresReadyDatabase(t *testing.T, store *PostgresStore, accountID, name string, at time.Time) Database {
 	t.Helper()
-	database, created, err := store.Reserve(context.Background(), postgresTestDatabase(accountID, name, at), 10)
+	database, created, err := store.Reserve(context.Background(), postgresTestDatabase(accountID, name, at), 100)
 	if err != nil || !created {
 		t.Fatalf("reserve ready database: created=%v database=%+v err=%v", created, database, err)
 	}
@@ -174,7 +174,7 @@ func TestPostgresStoreLeaseRecoveryRetryAndTombstone(t *testing.T) {
 	}
 
 	deletingAt := thirdAt.Add(2 * time.Second)
-	deleting, err := store.Claim(ctx, accountID, database.ID, "delete-worker", StateDeleting, deletingAt, deletingAt.Add(2*time.Minute))
+	deleting, err := store.ClaimDelete(ctx, accountID, database.ID, "delete-worker", deletingAt, deletingAt.Add(2*time.Minute))
 	if err != nil || deleting.AttemptCount != 1 {
 		t.Fatalf("delete claim: %+v %v", deleting, err)
 	}
@@ -191,6 +191,137 @@ func TestPostgresStoreLeaseRecoveryRetryAndTombstone(t *testing.T) {
 	replacement, created, err := store.Reserve(ctx, postgresTestDatabase(accountID, "orders", deletingAt.Add(2*time.Second)), 3)
 	if err != nil || !created || replacement.ID == database.ID {
 		t.Fatalf("name reuse: created=%v replacement=%+v err=%v", created, replacement, err)
+	}
+}
+
+func TestPostgresStoreClaimDeleteRejectsActiveBinding(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	app, err := state.NewPgStore(pool).CreateApp(ctx, state.App{
+		AccountID: accountID,
+		Slug:      "delete-fence-" + uuid.NewString(),
+		Type:      state.AppTypeApp,
+		RAMMB:     256,
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	start := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	database := postgresReadyDatabase(t, store, accountID, "delete-fence", start)
+	if _, created, err := store.ReserveBinding(ctx, testBinding(accountID, database.ID, app.ID, uuid.NewString(), start.Add(3*time.Second))); err != nil || !created {
+		t.Fatalf("reserve binding: created=%v err=%v", created, err)
+	}
+	if _, err := store.ClaimDelete(ctx, accountID, database.ID, "delete-worker", start.Add(4*time.Second), start.Add(time.Minute)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("claim delete with active binding = %v, want ErrConflict", err)
+	}
+	current, err := store.Get(ctx, accountID, database.ID)
+	if err != nil || current.State != StateReady || current.LeaseToken != "" {
+		t.Fatalf("database changed after rejected delete: database=%+v err=%v", current, err)
+	}
+}
+
+func TestPostgresStoreDeleteClaimSerializesBindingReservation(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	raceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	stateStore := state.NewPgStore(pool)
+	start := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
+	for index := 0; index < 8; index++ {
+		at := start.Add(time.Duration(index) * time.Minute)
+		database := postgresReadyDatabase(t, store, accountID, fmt.Sprintf("binding-race-%02d", index), at)
+		app, err := stateStore.CreateApp(raceCtx, state.App{
+			AccountID: accountID,
+			Slug:      fmt.Sprintf("binding-race-%02d-%s", index, uuid.NewString()),
+			Type:      state.AppTypeApp,
+			RAMMB:     256,
+		})
+		if err != nil {
+			t.Fatalf("create app %d: %v", index, err)
+		}
+		binding := testBinding(accountID, database.ID, app.ID, uuid.NewString(), at.Add(3*time.Second))
+		started := make(chan struct{})
+		bindingResult := make(chan error, 1)
+		deleteResult := make(chan error, 1)
+		go func() {
+			<-started
+			_, _, reserveErr := store.ReserveBinding(raceCtx, binding)
+			bindingResult <- reserveErr
+		}()
+		go func() {
+			<-started
+			_, claimErr := store.ClaimDelete(raceCtx, accountID, database.ID, uuid.NewString(), at.Add(4*time.Second), at.Add(time.Minute))
+			deleteResult <- claimErr
+		}()
+		close(started)
+		bindingErr, deleteErr := <-bindingResult, <-deleteResult
+		if (bindingErr == nil) == (deleteErr == nil) {
+			t.Fatalf("race %d must have exactly one winner: binding=%v delete=%v", index, bindingErr, deleteErr)
+		}
+		if bindingErr != nil && !errors.Is(bindingErr, ErrConflict) {
+			t.Fatalf("race %d binding error = %v, want ErrConflict", index, bindingErr)
+		}
+		if deleteErr != nil && !errors.Is(deleteErr, ErrConflict) {
+			t.Fatalf("race %d delete error = %v, want ErrConflict", index, deleteErr)
+		}
+		current, err := store.Get(raceCtx, accountID, database.ID)
+		if err != nil {
+			t.Fatalf("race %d get database: %v", index, err)
+		}
+		if bindingErr == nil && current.State != StateReady {
+			t.Fatalf("race %d binding won with database state %s", index, current.State)
+		}
+		if deleteErr == nil && current.State != StateDeleting {
+			t.Fatalf("race %d delete won with database state %s", index, current.State)
+		}
+	}
+}
+
+func TestPostgresStoreDeleteClaimSerializesRestoreReservation(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	raceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	start := time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
+	for index := 0; index < 8; index++ {
+		at := start.Add(time.Duration(index) * time.Minute)
+		source := postgresReadyDatabase(t, store, accountID, fmt.Sprintf("restore-race-source-%02d", index), at)
+		target := postgresTestDatabase(accountID, fmt.Sprintf("restore-race-target-%02d", index), at.Add(3*time.Second))
+		target.RestoreSourceDatabaseID = source.ID
+		target.RestoreSourceResourceID = source.ProviderResourceID
+		target.RestorePointInTime = at.Add(-time.Hour)
+
+		started := make(chan struct{})
+		restoreResult := make(chan error, 1)
+		deleteResult := make(chan error, 1)
+		go func() {
+			<-started
+			_, _, reserveErr := store.Reserve(raceCtx, target, 100)
+			restoreResult <- reserveErr
+		}()
+		go func() {
+			<-started
+			_, claimErr := store.ClaimDelete(raceCtx, accountID, source.ID, uuid.NewString(), at.Add(4*time.Second), at.Add(time.Minute))
+			deleteResult <- claimErr
+		}()
+		close(started)
+		restoreErr, deleteErr := <-restoreResult, <-deleteResult
+		if (restoreErr == nil) == (deleteErr == nil) {
+			t.Fatalf("race %d must have exactly one winner: restore=%v delete=%v", index, restoreErr, deleteErr)
+		}
+		if restoreErr != nil && !errors.Is(restoreErr, ErrConflict) {
+			t.Fatalf("race %d restore error = %v, want ErrConflict", index, restoreErr)
+		}
+		if deleteErr != nil && !errors.Is(deleteErr, ErrConflict) {
+			t.Fatalf("race %d delete error = %v, want ErrConflict", index, deleteErr)
+		}
+		current, err := store.Get(raceCtx, accountID, source.ID)
+		if err != nil {
+			t.Fatalf("race %d get source: %v", index, err)
+		}
+		if restoreErr == nil && current.State != StateReady {
+			t.Fatalf("race %d restore won with source state %s", index, current.State)
+		}
+		if deleteErr == nil && current.State != StateDeleting {
+			t.Fatalf("race %d delete won with source state %s", index, current.State)
+		}
 	}
 }
 
