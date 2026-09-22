@@ -424,7 +424,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// so propagate the active public-edge span explicitly. The internal
 	// gateway extracts it before starting gateway.request, keeping the edge,
 	// request telemetry, guest, and retained service spans on one trace.
-	propagation.TraceContext{}.Inject(outReq.Context(), propagation.HeaderCarrier(outReq.Header))
+	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(outReq.Header))
 	// Forwarding trust is peer-scoped. A configured TLS terminator may
 	// provide one canonical client IP and scheme; direct callers cannot.
 	clientIP, proto := p.forwardingContext(r)
