@@ -222,6 +222,19 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 			return api.ErrValidation(fmt.Sprintf("circuit_breaker action: %v", err))
 		}
 		return a.Validate()
+	case state.EdgeRuleKindAsync:
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return api.ErrValidation(fmt.Sprintf("async action: %v", err))
+		}
+		if len(fields) != 0 {
+			return api.ErrValidation("async action does not accept fields; send an empty object")
+		}
+		var a api.EdgeRuleAsyncAction
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return api.ErrValidation(fmt.Sprintf("async action: %v", err))
+		}
+		return a.Validate()
 	}
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
 }
@@ -312,6 +325,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.ErrPlanEdgeRuleKindNotAllowed(acct.Plan, req.Kind))
 			return
 		}
+		if req.Kind == string(state.EdgeRuleKindAsync) && !limits.AsyncInvokeAllowed {
+			api.WriteProblem(w, api.ErrPlanEdgeRuleKindNotAllowed(acct.Plan, req.Kind))
+			return
+		}
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -319,6 +336,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	if req.Kind == string(state.EdgeRuleKindRespond) && app.PreviewOfSlug == "" {
 		api.WriteProblem(w, api.ErrValidation("respond edge rules are only allowed on preview applications"))
+		return
+	}
+	if req.Kind == string(state.EdgeRuleKindAsync) && !app.AcceptsRequestInvocations() {
+		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
 		return
 	}
 	if prob := validateEdgeRuleBody(&req, acct.Plan); prob != nil {
@@ -662,6 +683,11 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				OpenSeconds:      a.OpenSeconds,
 				MaxOpenSeconds:   a.MaxOpenSeconds,
 			}
+		}
+	case state.EdgeRuleKindAsync:
+		var a api.EdgeRuleAsyncAction
+		if err := json.Unmarshal(raw, &a); err == nil {
+			out.Async = &state.EdgeRuleAsyncAction{}
 		}
 	}
 	return out

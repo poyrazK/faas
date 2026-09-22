@@ -2543,6 +2543,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// cwd-auto-pack paths; the receipt constructor handles a nil
 	// prov cleanly (commit_sha and dirty zero-valued).
 	var prov *zeroConfigProvenance
+	var dirtyFileCount int
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
 	// stdout and exits 0 (issue #270). No auth, no side effects — this
@@ -2637,6 +2638,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// metadata source must remain the selected working tree rather than an
 	// extracted copy.
 	explicitTarball := *tarball != ""
+	originalTarball := *tarball
 
 	// --template materializes an embedded starter project. For function
 	// templates we force the runtime + handler so the customer doesn't
@@ -2798,18 +2800,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
-	if *simplePlan {
-		sourceKind := simpleapp.SourceDirectory
-		if *image != "" {
-			sourceKind = simpleapp.SourceImage
-		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
-		if planErr != nil {
-			return printErr("Could not resolve simple app plan", planErr)
-		}
-		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
-	}
-	// Authenticate before any zero-config source scan or archive extraction. The
+	// Authenticate before any deploy-time zero-config source scan or archive
+	// extraction. The local --plan path is the deliberate exception: it resolves
+	// the same source selection below but never needs account state or remote
+	// access.
+	//
 	// zero-config path can inspect the working tree, run doctor checks, and
 	// materialise a potentially large archive; doing that for an unauthenticated
 	// invocation wastes customer CPU/IO and can expose source-side diagnostics
@@ -2819,7 +2814,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localZeroConfig := *image == "" && *tarball == ""
 	var client *Client
 	var err error
-	if localZeroConfig || explicitTarball {
+	if !*simplePlan && (localZeroConfig || explicitTarball) {
 		var authErr error
 		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
 		if authErr != nil {
@@ -2863,16 +2858,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			prov = &provVal
 			if provVal.Dirty {
 				if dirtyOut, dirtyErr := runGitCmd(provVal.Root, "status", "--porcelain"); dirtyErr == nil {
-					dirtyFiles := 0
 					for _, line := range strings.Split(strings.TrimRight(dirtyOut, "\n"), "\n") {
 						if line != "" {
-							dirtyFiles++
+							dirtyFileCount++
 						}
-					}
-					if !jsonOutput && dirtyFiles > 0 && *worktree {
-						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)", dirtyFiles, provVal.SHA[:7])
-					} else if !jsonOutput && dirtyFiles > 0 {
-						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes", dirtyFiles, provVal.SHA[:7])
 					}
 				}
 			}
@@ -2900,6 +2889,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		} else if !errors.Is(perr, ErrNotInGitRepo) && !errors.Is(perr, ErrNoGitRemote) {
 			return printErr("Could not resolve git metadata", perr)
 		}
+	}
+	if *simplePlan {
+		sourceKind := simpleapp.SourceDirectory
+		if *image != "" {
+			sourceKind = simpleapp.SourceImage
+		}
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		if planErr != nil {
+			return printErr("Could not resolve simple app plan", planErr)
+		}
+		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
 	}
 	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
 		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction
@@ -3177,6 +3177,31 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not resolve simple app plan", planErr)
 		}
 		resolvedSimplePlan = &plan
+	}
+
+	// Render one coherent, non-secret summary after the source view and local
+	// inference are authoritative, but before any app creation, binding change,
+	// trigger staging, or source upload. Project deploys and read-only previews
+	// already have dedicated plan renderers; developer watch mode has its own
+	// per-sync receipt and must not repeat this block on every save.
+	if !jsonOutput && !*diff && !projectRequested && developerSync == nil {
+		source, localChanges := deployPreflightSource(
+			prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath,
+		)
+		buildPlan := buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, "", *image != "", *dockerfile)
+		renderDeployPreflight(osStdout, deployPreflightSummary{
+			Slug:            slug,
+			Source:          source,
+			LocalChanges:    localChanges,
+			Environment:     *environment,
+			BuildPlan:       buildPlan,
+			SimpleAppPlan:   resolvedSimplePlan,
+			ResourceProfile: *profile,
+			ExecutionMode:   *executionMode,
+			Release: deployPreflightRelease(
+				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
+			),
+		})
 	}
 
 	if client == nil {
@@ -3642,9 +3667,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		execution.notifyQueued(dep)
-		if !jsonOutput {
-			renderSimpleAppDeploySummary(osStdout, resolvedSimplePlan)
-		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
@@ -3740,9 +3762,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return code
 	}
 	execution.notifyQueued(dep)
-	if !jsonOutput {
-		renderSimpleAppDeploySummary(osStdout, resolvedSimplePlan)
-	}
 	if jsonOutput && !jsonWait && !streamLogsOnJSON {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is

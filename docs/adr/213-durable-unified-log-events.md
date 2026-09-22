@@ -1,4 +1,4 @@
-# ADR-211 · Durable unified customer log events
+# ADR-213 · Durable unified customer log events
 
 - **Status:** accepted foundation
 - **Date:** 2026-09-22

@@ -116,6 +116,8 @@ func TestDetectFramework(t *testing.T) {
 		{"python_setup", []string{"setup.py"}, fwPython},
 		{"go", []string{"go.mod", "main.go"}, fwGo},
 		{"dockerfile_wins_over_node", []string{"Dockerfile", "package.json"}, fwDocker},
+		{"node_wins_over_python_and_go", []string{"go.mod", "package.json", "requirements.txt"}, fwNode},
+		{"python_wins_over_go", []string{"go.mod", "requirements.txt"}, fwPython},
 		{"dockerfile_case_insensitive", []string{"dockerfile"}, fwDocker},
 		{"empty", nil, fwUnknown},
 		{"unrelated_only", []string{"README.md", "notes.txt"}, fwUnknown},

@@ -877,6 +877,7 @@ var cliCommands = []cliCommand{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets", Value: "PATH"},
+			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
@@ -893,6 +894,7 @@ var cliCommands = []cliCommand{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
+				{Name: "service-override-file", Short: "validate and sync service URLs", Value: "PATH"},
 				{Name: "start", Short: "start after preflight"},
 				{Name: "once", Short: "sync once and exit"},
 				{Name: "no-logs", Short: "do not attach runtime logs"},
@@ -1118,9 +1120,14 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[flags]", "<slug>", "[<request-id>]"},
 	},
 	{
-		Name:        "trace",
-		DocSlug:     "trace",
-		Short:       "Look up a W3C trace through the account trace index",
+		Name:    "trace",
+		DocSlug: "trace",
+		Short:   "Look up a W3C trace through the account trace index",
+		Flags: []cliFlag{
+			{Name: "watch", Short: "poll until linked invocations reach a terminal state"},
+			{Name: "interval", Short: "poll interval (default 1s)", Value: "DURATION"},
+			{Name: "timeout", Short: "maximum watch duration (default 5m)", Value: "DURATION"},
+		},
 		Positionals: []string{"<trace-id>"},
 	},
 	{
