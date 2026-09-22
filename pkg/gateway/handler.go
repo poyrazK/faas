@@ -118,6 +118,9 @@ type App struct {
 	ConcurrencyOverflow string
 	// MaxQueueWaitMS overrides the plan-derived wait budget for admission.
 	MaxQueueWaitMS int
+	// MaxQueueDepth overrides the plan-derived warm saturation waiter cap.
+	// Zero uses the plan default.
+	MaxQueueDepth int
 	// WakeMaxQueueDepth overrides the per-app cold-wake waiter cap. Zero uses
 	// the plan default.
 	WakeMaxQueueDepth int
@@ -330,6 +333,7 @@ type App struct {
 type concurrencyAdmissionConfig struct {
 	overflow             string
 	maxQueueWaitMS       int
+	maxQueueDepth        int
 	wakeMaxQueueDepth    int
 	wakeMaxQueueWaitSecs int
 }
@@ -338,6 +342,7 @@ func concurrencyConfigForApp(app App) concurrencyAdmissionConfig {
 	return concurrencyAdmissionConfig{
 		overflow:             app.ConcurrencyOverflow,
 		maxQueueWaitMS:       app.MaxQueueWaitMS,
+		maxQueueDepth:        app.MaxQueueDepth,
 		wakeMaxQueueDepth:    app.WakeMaxQueueDepth,
 		wakeMaxQueueWaitSecs: app.WakeMaxQueueWaitSeconds,
 	}
@@ -1267,6 +1272,11 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.vmConcurrency = newVMConcurrencyManager(func(plan string, delta int64) {
 		if m != nil {
 			m.ObserveVMInflightDelta(plan, delta)
+		}
+	})
+	h.vmConcurrency.setQueueDepthSink(func(appID, plan string, depth int) {
+		if m != nil {
+			m.SetConcurrencyQueueDepth(appID, plan, depth)
 		}
 	})
 	// piApps is a value-typed sync.Map wrapper; its zero value is valid
@@ -6059,7 +6069,7 @@ haveApp:
 	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
-	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS).MaxWait)
+	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
 	defer cancelBurstWait()
 	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 	if burstErr != nil {
@@ -6137,8 +6147,10 @@ haveApp:
 	// the request waits under the plan's bounded capacity-admission allowance.
 	var vmRelease func()
 	var vmWaited bool
-	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS).MaxWait)
+	queuePolicy := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth)
+	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), queuePolicy.MaxWait)
 	defer cancelCapacityWait()
+	capacityWaitStarted := time.Now()
 	capacityCtx, capacitySpan := pkgtrace.StartSpan(capacityWaitCtx, "gateway.capacity_wait",
 		attribute.String("app_id", app.ID),
 		attribute.String("instance_id", pick.Target.InstanceID),
@@ -6155,10 +6167,34 @@ haveApp:
 	capacitySpan.End()
 	if vmWaited {
 		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
+		waitedFor := time.Since(capacityWaitStarted)
+		outcome := "admitted"
+		switch {
+		case errors.Is(err, ErrConcurrencyQueueFull):
+			outcome = "full"
+		case errors.Is(err, ErrConcurrencyQueueWaitTimeout), errors.Is(err, context.DeadlineExceeded):
+			outcome = "timeout"
+		case errors.Is(err, context.Canceled):
+			outcome = "canceled"
+		case err != nil:
+			outcome = "error"
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveConcurrencyQueueWait(app.ID, string(app.Plan), outcome, waitedFor)
+		}
+		if err == nil {
+			waitedMS := waitedFor.Milliseconds()
+			w.Header().Set(api.QueueWaitHeader, strconv.FormatInt(waitedMS, 10))
+			w.Header().Add("Server-Timing", fmt.Sprintf("gregale_queue;dur=%d", waitedMS))
+		}
 	}
 	if err != nil {
-		if h.metrics != nil && isWakeConcurrencyDrop(err) {
-			h.metrics.ObserveConcurrencyThrottled(app.ID, api.ConcurrencyOverflowDrop)
+		if h.metrics != nil {
+			if isWakeConcurrencyDrop(err) {
+				h.metrics.ObserveConcurrencyThrottled(app.ID, api.ConcurrencyOverflowDrop)
+			} else if errors.Is(err, ErrConcurrencyQueueFull) || errors.Is(err, ErrConcurrencyQueueWaitTimeout) {
+				h.metrics.ObserveConcurrencyThrottled(app.ID, api.ConcurrencyOverflowQueue)
+			}
 		}
 		writeBurstCapacityError(w, r, err)
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, pick.Target)
@@ -7892,6 +7928,23 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeConcurrencyThrottled,
 			"Concurrency limit reached", "the app is configured to drop requests when its concurrency limit is saturated"))
+	case errors.Is(err, ErrConcurrencyQueueFull):
+		retryAfter := wakeRetryAfterSeconds(err, 1)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		w.Header().Set(api.ErrorCodeHeader, api.CodeConcurrencyQueueFull)
+		problem := api.NewProblem(http.StatusTooManyRequests, api.CodeConcurrencyQueueFull,
+			"Concurrency queue full", "the app's bounded warm-capacity queue is full; retry after capacity is released")
+		var full *ConcurrencyQueueFullError
+		if errors.As(err, &full) {
+			problem = problem.WithLimit(int64(full.Limit), int64(full.Depth))
+		}
+		api.WriteProblem(w, problem)
+	case errors.Is(err, ErrConcurrencyQueueWaitTimeout):
+		retryAfter := wakeRetryAfterSeconds(err, 1)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		w.Header().Set(api.ErrorCodeHeader, api.CodeConcurrencyQueueTimeout)
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeConcurrencyQueueTimeout,
+			"Concurrency queue wait expired", "no warm instance slot became available within the configured wait budget"))
 	case errors.Is(err, ErrWakeQueueWaitTimeout):
 		retryAfter := wakeRetryAfterSeconds(err, 5)
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
@@ -7963,11 +8016,17 @@ func wakeRetryAfterSeconds(err error, fallback int) int {
 	var perAppFull *WakeQueueFullError
 	var perAppTimeout *WakeQueueWaitTimeoutError
 	var concurrencyDrop *WakeConcurrencyDropError
+	var concurrencyFull *ConcurrencyQueueFullError
+	var concurrencyTimeout *ConcurrencyQueueWaitTimeoutError
 	var globalFull *WakeAdmissionQueueFullError
 	var globalTimeout *WakeAdmissionQueueWaitTimeoutError
 	switch {
 	case errors.As(err, &concurrencyDrop):
 		retryAfter = concurrencyDrop.RetryAfter
+	case errors.As(err, &concurrencyFull):
+		retryAfter = concurrencyFull.RetryAfter
+	case errors.As(err, &concurrencyTimeout):
+		retryAfter = concurrencyTimeout.RetryAfter
 	case errors.As(err, &perAppFull):
 		retryAfter = perAppFull.RetryAfter
 	case errors.As(err, &perAppTimeout):

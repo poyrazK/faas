@@ -6,7 +6,7 @@ Scaling is configured per app. Keep at least one instance for latency-sensitive 
 gregale app APP_ID scale --min 1 --max-concurrency 5
 gregale app APP_ID scale --min 0 --max-concurrency 20
 gregale app APP_ID scale --max-concurrency 10 --concurrency-overflow drop
-gregale app APP_ID scale --concurrency-overflow queue --max-queue-wait-ms 2500
+gregale app APP_ID scale --concurrency-overflow queue --max-queue-depth 32 --max-queue-wait 2s
 gregale app APP_ID
 ```
 
@@ -30,7 +30,8 @@ scaling:
   scale_out_cooldown_s: 5
   scale_in_cooldown_s: 60
   concurrency_overflow: queue # queue or drop
-  max_queue_wait_ms: 2500 # 0 uses the plan default
+  max_queue_depth: 32 # warm-saturation waiters; 0 uses the plan default
+  max_queue_wait_ms: 2000 # warm-saturation wait; 0 uses the plan default
   wake_max_queue_depth: 32 # 0 uses the plan default; max 8x plan default
   wake_max_queue_wait_seconds: 30 # 0 uses the plan default; max 60
 ```
@@ -208,9 +209,21 @@ The CLI validates the shape and shows the nested policy in `gregale deploy
 --dry-run`. The server then applies the complete policy atomically and checks
 plan quotas, cooldown bounds, and workload compatibility.
 
-`concurrency_overflow: queue` keeps requests in the bounded admission queue;
+`concurrency_overflow: queue` keeps requests in a bounded FIFO admission queue;
 `drop` returns HTTP 429 when the app's concurrency boundary is saturated.
-`max_queue_wait_ms` overrides the plan wait budget and is bounded by the API.
+The warm queue is deliberately short and separate from cold-wake admission:
+Free defaults to 8 waiters for 1 second, Hobby to 32 waiters for 2 seconds,
+Pro to 128 waiters for 2 seconds, and Scale to 512 waiters for 2 seconds.
+`max_queue_depth` and `max_queue_wait_ms` override those plan defaults; zero
+keeps the default and the API applies plan-specific caps.
+The CLI also accepts the more readable `--max-queue-wait 750ms` or
+`--max-queue-wait 2s`; `--max-queue-wait-ms` remains available for scripts.
+
+When a queued request reaches an instance, the response includes
+`X-Gregale-Queue-Wait-Ms` and a `Server-Timing` entry named `gregale_queue`.
+A full warm queue returns HTTP 429 with error code `concurrency_queue_full`;
+a request whose wait budget expires returns HTTP 503 with error code
+`concurrency_queue_timeout`. Both failure responses include `Retry-After`.
 
 `wake_max_queue_depth` and `wake_max_queue_wait_seconds` independently bound
 the per-app cold-wake queue. Zero keeps the plan default; the depth override is

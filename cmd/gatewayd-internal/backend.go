@@ -243,11 +243,13 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 	concurrencyOverflow := ""
 	maxQueueWaitMS := 0
+	maxQueueDepth := 0
 	wakeMaxQueueDepth := 0
 	wakeMaxQueueWaitSeconds := 0
 	if app.ScalingPolicy != nil {
 		concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
 		maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
+		maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 	}
@@ -262,6 +264,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		MaxConcurrency:          app.MaxConcurrency,
 		ConcurrencyOverflow:     concurrencyOverflow,
 		MaxQueueWaitMS:          maxQueueWaitMS,
+		MaxQueueDepth:           maxQueueDepth,
 		WakeMaxQueueDepth:       wakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds,
 		AutoscaleTargetRPS:      app.AutoscaleTargetRPS,

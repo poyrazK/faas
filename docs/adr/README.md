@@ -129,7 +129,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 051 | Characterization boot: observed workload classification + in-guest port normalization | accepted | ADR-050 Phase 4 |
 | 052 | Adding a function runtime: 7-layer additive procedure | accepted | Tier 1 PR 1+2 worked example |
 | 053 | Deploy-time overrides for OCI image deploys (entrypoint/cmd/env/port/healthcheck) | accepted | issue #460 (PR A ships contract; PR B imaged layer injection; PR C port plumbing) |
-| 059 | Customer-configurable scaling policy (4-PR: persistence + inflight signal + engine cooldown + worker carve-out) | proposed | issue #462 / PR #493 / #501 / #507 / #512 |
+| 059 | Customer-configurable scaling policy (persistence, inflight signal, cooldown, worker carve-out, and bounded warm-saturation queue) | proposed; amended 2026-09-22 | issue #462 / PR #493 / #501 / #507 / #512; warm-queue amendment |
 | 060 | Per-app GB-h floor for `min_instances > 0` (meterd synthetic rows + UUID v5 lineage) | proposed | issue #515 (follow-up to #462) |
 | 061 | Organizations, memberships, and unpriced seats (IAM-6: account→org split, path-scoped APIs, automatic personal org) | proposed | issue #190 (PR 1 / PR 2+ staged rollout) |
 | 062 | Tier A per-node schedd + schedd-side async placement claim | proposed | Phase 2 / Gate A |

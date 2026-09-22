@@ -408,6 +408,8 @@ var cliCommands = []cliCommand{
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "concurrency-overflow", Short: "set saturated concurrency behavior", ClosedSet: []string{"queue", "drop"}},
+			{Name: "max-queue-depth", Short: "set maximum warm-saturation waiters", Value: "N"},
+			{Name: "max-queue-wait", Short: "set maximum warm-saturation wait as a duration", Value: "DURATION"},
 			{Name: "max-queue-wait-ms", Short: "set maximum queued concurrency wait", Value: "N"},
 			{Name: "wake-max-queue-depth", Short: "set per-app cold-wake waiter cap", Value: "N"},
 			{Name: "wake-max-queue-wait-seconds", Short: "set per-app cold-wake wait budget", Value: "N"},

@@ -877,9 +877,10 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 
 // TestConcurrentColdRequestsRespectPlanWakeWaiterCap (issue #168) — at the
 // Free-plan cap of max_concurrency=1, concurrent cold requests still
-// coalesce to exactly ONE admit. The plan-derived wake waiter budget is four,
-// so excess followers receive bounded 503 responses instead of creating an
-// unbounded queue. Higher plans admit more; covered by
+// coalesce to exactly ONE admit. The plan-derived wake waiter budget is four.
+// Once the app is warm, its separate saturation queue is also bounded, so
+// excess followers receive typed 429s (or a bounded 503 on timeout) instead
+// of creating an unbounded queue. Higher plans admit more; covered by
 // TestCapThreeAdmitsThreeDistinctInstances.
 func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
@@ -900,10 +901,10 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 			switch rec.Code {
 			case http.StatusOK:
 				successes.Add(1)
-			case http.StatusServiceUnavailable:
+			case http.StatusTooManyRequests, http.StatusServiceUnavailable:
 				rejected.Add(1)
 			default:
-				t.Errorf("status = %d, want 200 or bounded 503", rec.Code)
+				t.Errorf("status = %d, want 200, bounded 429, or bounded 503", rec.Code)
 			}
 		}()
 	}
@@ -912,7 +913,7 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 		t.Errorf("50 concurrent cold requests should trigger 1 admit, got %d", got)
 	}
 	if got := successes.Load() + rejected.Load(); got != 50 {
-		t.Errorf("all concurrent cold requests should finish with 200 or bounded 503, got %d/50", got)
+		t.Errorf("all concurrent cold requests should finish with 200 or bounded overload response, got %d/50", got)
 	}
 }
 

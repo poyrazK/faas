@@ -636,7 +636,10 @@ type ScalingConfig struct {
 	ConcurrencyOverflow string `yaml:"concurrency_overflow,omitempty"`
 	// MaxQueueWaitMS overrides the plan-derived admission wait. Zero uses
 	// the plan default.
-	MaxQueueWaitMS          int `yaml:"max_queue_wait_ms,omitempty"`
+	MaxQueueWaitMS int `yaml:"max_queue_wait_ms,omitempty"`
+	// MaxQueueDepth bounds warm-saturation waiters. Zero uses the plan
+	// default; the API applies the plan-specific upper bound.
+	MaxQueueDepth           int `yaml:"max_queue_depth,omitempty"`
 	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
 	// Timezone is the IANA zone the schedules below are evaluated in
@@ -757,6 +760,9 @@ func (s *ScalingConfig) Validate() error {
 	if s.MaxQueueWaitMS < 0 || s.MaxQueueWaitMS > api.MaxConcurrencyQueueWaitMS {
 		return fmt.Errorf("scaling: max_queue_wait_ms must be between 0 and %d; got %d", api.MaxConcurrencyQueueWaitMS, s.MaxQueueWaitMS)
 	}
+	if s.MaxQueueDepth < 0 {
+		return fmt.Errorf("scaling: max_queue_depth must be >= 0; got %d", s.MaxQueueDepth)
+	}
 	if s.WakeMaxQueueDepth < 0 {
 		return fmt.Errorf("scaling: wake_max_queue_depth must be >= 0; got %d", s.WakeMaxQueueDepth)
 	}
@@ -842,6 +848,7 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		ScaleInCooldownS:        defaultScaleInCooldownS,
 		ConcurrencyOverflow:     s.ConcurrencyOverflow,
 		MaxQueueWaitMS:          s.MaxQueueWaitMS,
+		MaxQueueDepth:           s.MaxQueueDepth,
 		WakeMaxQueueDepth:       s.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: s.WakeMaxQueueWaitSeconds,
 	}

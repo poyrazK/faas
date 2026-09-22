@@ -1631,6 +1631,9 @@ type ScalingPolicy struct {
 	// MaxQueueWaitMS is an optional per-app admission wait override. Zero
 	// means the gateway uses the plan-derived wait budget.
 	MaxQueueWaitMS int
+	// MaxQueueDepth is an optional per-app warm saturation waiter cap. Zero
+	// means the gateway uses the plan-derived default.
+	MaxQueueDepth int
 	// WakeMaxQueueDepth is an optional per-app cold-wake waiter cap. Zero
 	// means the gateway uses the plan-derived default.
 	WakeMaxQueueDepth int
@@ -1729,6 +1732,7 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 		ScaleInCooldownS        int               `json:"scale_in_cooldown_s,omitempty"`
 		ConcurrencyOverflow     string            `json:"concurrency_overflow,omitempty"`
 		MaxQueueWaitMS          int               `json:"max_queue_wait_ms,omitempty"`
+		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
@@ -1755,6 +1759,7 @@ func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		ScaleInCooldownS        int               `json:"scale_in_cooldown_s,omitempty"`
 		ConcurrencyOverflow     string            `json:"concurrency_overflow,omitempty"`
 		MaxQueueWaitMS          int               `json:"max_queue_wait_ms,omitempty"`
+		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`

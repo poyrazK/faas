@@ -3460,6 +3460,19 @@ const (
 	// waiter budget. A zero value means "use the plan default".
 	WakeQueueMaxDepthMultiplier = 8
 	WakeQueueMaxWaitSeconds     = 60
+	// Warm concurrency-overflow queues are intentionally much shorter than
+	// cold-wake queues. A running API that is saturated should get a brief
+	// chance to reuse a released slot or a newly-scaled sibling, not inherit the
+	// 10-30 second cold-boot allowance and surprise callers with extreme tail
+	// latency. Depth defaults bound the memory/socket footprint independently
+	// of the wait deadline; customer overrides remain plan-capped below.
+	ConcurrencyQueueFreeDefaultDepth   = 8
+	ConcurrencyQueueHobbyDefaultDepth  = 32
+	ConcurrencyQueueProDefaultDepth    = 128
+	ConcurrencyQueueScaleDefaultDepth  = 512
+	ConcurrencyQueueFreeDefaultWait    = time.Second
+	ConcurrencyQueuePaidDefaultWait    = 2 * time.Second
+	ConcurrencyQueueMaxDepthMultiplier = 8
 	// MaxConcurrencyQueueWaitMS bounds the customer-controlled admission
 	// wait override. The zero value keeps the plan-derived default.
 	MaxConcurrencyQueueWaitMS = 120_000
@@ -4890,6 +4903,35 @@ func WakeQueueMaxDepthForPlan(p Plan) int {
 		depth = 1
 	}
 	return depth * WakeQueueMaxDepthMultiplier
+}
+
+// ConcurrencyQueueDefaultsForPlan returns the warm-instance saturation queue
+// defaults. This is deliberately separate from WakeQueueDefaultsForPlan:
+// cold boots need seconds, while an already-running API should shed overload
+// quickly enough to preserve its latency budget.
+func ConcurrencyQueueDefaultsForPlan(p Plan) (maxDepth int, maxWait time.Duration, ok bool) {
+	switch p {
+	case PlanFree:
+		return ConcurrencyQueueFreeDefaultDepth, ConcurrencyQueueFreeDefaultWait, true
+	case PlanHobby:
+		return ConcurrencyQueueHobbyDefaultDepth, ConcurrencyQueuePaidDefaultWait, true
+	case PlanPro:
+		return ConcurrencyQueueProDefaultDepth, ConcurrencyQueuePaidDefaultWait, true
+	case PlanScale:
+		return ConcurrencyQueueScaleDefaultDepth, ConcurrencyQueuePaidDefaultWait, true
+	default:
+		return 1, ConcurrencyQueueFreeDefaultWait, false
+	}
+}
+
+// ConcurrencyQueueMaxDepthForPlan is the largest customer-configurable warm
+// saturation backlog. Zero continues to mean "use the plan default".
+func ConcurrencyQueueMaxDepthForPlan(p Plan) int {
+	depth, _, ok := ConcurrencyQueueDefaultsForPlan(p)
+	if !ok {
+		depth = 1
+	}
+	return depth * ConcurrencyQueueMaxDepthMultiplier
 }
 
 // MustLimitsFor returns the limits for a plan and panics on an unknown plan.

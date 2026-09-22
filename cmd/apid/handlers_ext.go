@@ -684,6 +684,12 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Invalid scaling policy",
 				fmt.Sprintf("max_queue_wait_ms must be between 0 and %d", api.MaxConcurrencyQueueWaitMS))
 		}
+		if sp.MaxQueueDepth < 0 || (sp.MaxQueueDepth > 0 && sp.MaxQueueDepth > api.ConcurrencyQueueMaxDepthForPlan(acct.Plan)) {
+			return api.NewProblem(http.StatusUnprocessableEntity,
+				api.CodeValidation,
+				"Invalid scaling policy",
+				fmt.Sprintf("max_queue_depth must be between 0 and %d for the %s plan", api.ConcurrencyQueueMaxDepthForPlan(acct.Plan), acct.Plan))
+		}
 		if sp.WakeMaxQueueDepth < 0 || (sp.WakeMaxQueueDepth > 0 && sp.WakeMaxQueueDepth > api.WakeQueueMaxDepthForPlan(acct.Plan)) {
 			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 				"Invalid scaling policy",
@@ -6473,6 +6479,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		ScaleInCooldownS:        sp.ScaleInCooldownS,
 		ConcurrencyOverflow:     sp.ConcurrencyOverflow,
 		MaxQueueWaitMS:          sp.MaxQueueWaitMS,
+		MaxQueueDepth:           sp.MaxQueueDepth,
 		WakeMaxQueueDepth:       sp.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: sp.WakeMaxQueueWaitSeconds,
 	}

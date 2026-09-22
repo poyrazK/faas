@@ -377,6 +377,8 @@ type AppEffectiveLimits struct {
 	CPUWeight              int   `json:"cpu_weight"`
 	MaxInstances           int   `json:"max_instances"`
 	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
+	ConcurrencyQueueDepth  int   `json:"concurrency_queue_depth"`
+	ConcurrencyQueueWaitMS int64 `json:"concurrency_queue_wait_ms"`
 	AppRequestRateRPS      int   `json:"app_request_rate_rps"`
 	AppRequestBurst        int   `json:"app_request_burst"`
 	AccountRequestRateRPM  int   `json:"account_request_rate_rpm"`

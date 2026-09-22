@@ -216,7 +216,7 @@ func TestCmdAppConcurrencyPolicyPreservesExistingScalingFields(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdApp([]string{constSlug, "--concurrency-overflow", "drop", "--max-queue-wait-ms", "1250"}); code != 0 {
+	if code := cmdApp([]string{constSlug, "--concurrency-overflow", "drop", "--max-queue-depth", "17", "--max-queue-wait", "1250ms"}); code != 0 {
 		t.Fatalf("cmdApp exit = %d, want 0", code)
 	}
 	if got.ScalingPolicy == nil {
@@ -229,8 +229,23 @@ func TestCmdAppConcurrencyPolicyPreservesExistingScalingFields(t *testing.T) {
 	if policy.Target == nil || policy.Target.Metric != "rps" || policy.Target.Value != 10 {
 		t.Fatalf("scaling_policy.target = %+v, existing target was not preserved", policy.Target)
 	}
-	if policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueWaitMS != 1250 {
-		t.Fatalf("scaling_policy concurrency fields = %+v, want drop/1250", policy)
+	if policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 17 || policy.MaxQueueWaitMS != 1250 {
+		t.Fatalf("scaling_policy concurrency fields = %+v, want drop/17/1250", policy)
+	}
+}
+
+func TestCLIQueueWaitMilliseconds(t *testing.T) {
+	if got, set, err := cliQueueWaitMilliseconds(0, 1500*time.Millisecond, false, true); err != nil || !set || got != 1500 {
+		t.Fatalf("duration conversion = %d/%v/%v, want 1500/true/nil", got, set, err)
+	}
+	if got, set, err := cliQueueWaitMilliseconds(1250, 0, true, false); err != nil || !set || got != 1250 {
+		t.Fatalf("legacy millisecond conversion = %d/%v/%v, want 1250/true/nil", got, set, err)
+	}
+	if _, _, err := cliQueueWaitMilliseconds(1000, time.Second, true, true); err == nil {
+		t.Fatal("combining duration and millisecond flags should fail")
+	}
+	if _, _, err := cliQueueWaitMilliseconds(0, 500*time.Microsecond, false, true); err == nil {
+		t.Fatal("sub-millisecond duration should fail instead of silently becoming the plan default")
 	}
 }
 

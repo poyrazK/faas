@@ -2530,6 +2530,7 @@ func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
 		ScaleInCooldownS:        77,
 		ConcurrencyOverflow:     api.ConcurrencyOverflowDrop,
 		MaxQueueWaitMS:          1234,
+		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
 		Timezone:                "Europe/Istanbul",

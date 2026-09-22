@@ -1531,6 +1531,10 @@ const (
 	// CodeConcurrencyThrottled is returned when an app explicitly selects
 	// overflow=drop and its concurrency boundary is saturated.
 	CodeConcurrencyThrottled = "concurrency_throttled"
+	// Warm saturation queue outcomes are distinct from cold-wake and fleet
+	// capacity failures so clients can make safe retry decisions.
+	CodeConcurrencyQueueFull    = "concurrency_queue_full"
+	CodeConcurrencyQueueTimeout = "concurrency_queue_timeout"
 
 	// Dashboard auth (issue #165, ADR-032). Pre-#165, POST /login
 	// auto-created an account + minted a "web-console" API key + set
@@ -1776,7 +1780,7 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeExportRateLimited, CodeDeployRateLimited,
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
 		CodeAuthRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
@@ -1795,7 +1799,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
-	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid:
 		return http.StatusServiceUnavailable

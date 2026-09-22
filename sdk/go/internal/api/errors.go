@@ -376,7 +376,9 @@ const (
 	// CodePlanLimitConcur because the gateway treats this as a benign
 	// no-op when it already has ≥1 cached target, while plan_limit
 	// (the Wake path) is always fatal to the requesting call.
-	CodeAppConcurReached = "app_concurrency_reached"
+	CodeAppConcurReached        = "app_concurrency_reached"
+	CodeConcurrencyQueueFull    = "concurrency_queue_full"
+	CodeConcurrencyQueueTimeout = "concurrency_queue_timeout"
 
 	// Dashboard auth (issue #165, ADR-032). Pre-#165, POST /login
 	// auto-created an account + minted a "web-console" API key + set
@@ -444,14 +446,14 @@ func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached:
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyQueueFull:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
 		CodeHandlerMissing, CodeImageRequired:
 		return http.StatusBadRequest
-	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout:
+	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeBuildOOM, CodeBuildTimeout:
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized:
 		return http.StatusUnauthorized

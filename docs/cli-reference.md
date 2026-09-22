@@ -310,7 +310,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -318,6 +318,8 @@ Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|-
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
+| `--max-queue-depth <N>` | set maximum warm-saturation waiters |  |
+| `--max-queue-wait <DURATION>` | set maximum warm-saturation wait as a duration |  |
 | `--max-queue-wait-ms <N>` | set maximum queued concurrency wait |  |
 | `--wake-max-queue-depth <N>` | set per-app cold-wake waiter cap |  |
 | `--wake-max-queue-wait-seconds <N>` | set per-app cold-wake wait budget |  |

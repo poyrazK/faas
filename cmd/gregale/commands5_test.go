@@ -1034,7 +1034,7 @@ func TestCmdAppScale_ConcurrencyPolicyPreservesExistingScalingFields(t *testing.
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAppScale("hello", []string{"--concurrency-overflow", "queue", "--max-queue-wait-ms", "900"}); code != 0 {
+	if code := cmdAppScale("hello", []string{"--concurrency-overflow", "queue", "--max-queue-depth", "13", "--max-queue-wait-ms", "900"}); code != 0 {
 		t.Fatalf("cmdAppScale exit = %d, want 0", code)
 	}
 	if got.ScalingPolicy == nil || got.ScalingPolicy.Target == nil {
@@ -1043,8 +1043,8 @@ func TestCmdAppScale_ConcurrencyPolicyPreservesExistingScalingFields(t *testing.
 	if got.ScalingPolicy.MinInstances != 1 || got.ScalingPolicy.MaxInstances != 3 || got.ScalingPolicy.Target.Metric != "rps" || got.ScalingPolicy.Target.Value != 5 {
 		t.Fatalf("existing scaling fields were not preserved: %+v", got.ScalingPolicy)
 	}
-	if got.ScalingPolicy.ConcurrencyOverflow != api.ConcurrencyOverflowQueue || got.ScalingPolicy.MaxQueueWaitMS != 900 {
-		t.Fatalf("concurrency fields = %+v, want queue/900", got.ScalingPolicy)
+	if got.ScalingPolicy.ConcurrencyOverflow != api.ConcurrencyOverflowQueue || got.ScalingPolicy.MaxQueueDepth != 13 || got.ScalingPolicy.MaxQueueWaitMS != 900 {
+		t.Fatalf("concurrency fields = %+v, want queue/13/900", got.ScalingPolicy)
 	}
 }
 

@@ -232,6 +232,7 @@ func TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip(t *testing.T) {
 		ScaleInCooldownS:        77,
 		ConcurrencyOverflow:     "drop",
 		MaxQueueWaitMS:          1234,
+		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
 		Timezone:                ist,

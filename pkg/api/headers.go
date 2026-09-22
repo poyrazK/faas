@@ -44,6 +44,10 @@ const (
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
 	ErrorCodeHeader = "X-Faas-Error-Code"
+	// QueueWaitHeader reports warm saturation delay for a successfully
+	// admitted request. It is customer-facing diagnostic metadata; Server-
+	// Timing carries the same value for browser tooling.
+	QueueWaitHeader = "X-Gregale-Queue-Wait-Ms"
 )
 
 // PlatformIdentity is the immutable identity of the workload that is about

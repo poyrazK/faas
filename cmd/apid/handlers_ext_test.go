@@ -1232,6 +1232,10 @@ func TestGetApp_SurfacesEffectiveLimits(t *testing.T) {
 			if got.MaxInstances != out.MaxConcurrency || got.ConcurrencyPerInstance != limits.ConcurrencyPerVMBound {
 				t.Errorf("scaling limits = %d/%d, want %d/%d", got.MaxInstances, got.ConcurrencyPerInstance, out.MaxConcurrency, limits.ConcurrencyPerVMBound)
 			}
+			wantQueueDepth, wantQueueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+			if got.ConcurrencyQueueDepth != wantQueueDepth || got.ConcurrencyQueueWaitMS != wantQueueWait.Milliseconds() {
+				t.Errorf("warm queue limits = %d/%dms, want %d/%dms", got.ConcurrencyQueueDepth, got.ConcurrencyQueueWaitMS, wantQueueDepth, wantQueueWait.Milliseconds())
+			}
 			if got.AppRequestRateRPS != limits.RateLimitRPS || got.AppRequestBurst != limits.RateLimitBurst || got.AccountRequestRateRPM != limits.RateLimitPerAccountRPM {
 				t.Errorf("request rates = %d/%d/%d, want %d/%d/%d", got.AppRequestRateRPS, got.AppRequestBurst, got.AccountRequestRateRPM, limits.RateLimitRPS, limits.RateLimitBurst, limits.RateLimitPerAccountRPM)
 			}
@@ -1267,11 +1271,14 @@ func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
 	app := state.App{
 		RAMMB:          384,
 		MaxConcurrency: 5,
-		ScalingPolicy:  &state.ScalingPolicy{MaxInstances: 3},
+		ScalingPolicy:  &state.ScalingPolicy{MaxInstances: 3, MaxQueueDepth: 19, MaxQueueWaitMS: 1750},
 	}
 	got := appEffectiveLimits(app, api.PlanPro)
 	if got.MaxInstances != 3 {
 		t.Fatalf("max_instances = %d, want scaling-policy ceiling 3", got.MaxInstances)
+	}
+	if got.ConcurrencyQueueDepth != 19 || got.ConcurrencyQueueWaitMS != 1750 {
+		t.Fatalf("warm queue limits = %d/%dms, want 19/1750ms", got.ConcurrencyQueueDepth, got.ConcurrencyQueueWaitMS)
 	}
 	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
 		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
@@ -4108,6 +4115,44 @@ func TestUpdateAppScalingPolicy_HobbyHappy(t *testing.T) {
 	if out.ScalingPolicy.MaxInstances != 2 {
 		t.Errorf("ScalingPolicy.MaxInstances = %d, want 2", out.ScalingPolicy.MaxInstances)
 	}
+}
+
+func TestUpdateAppScalingPolicy_WarmQueueDepthRoundTrips(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "hobby-warm-queue")
+	rec := e.do(t, "PATCH", "/v1/apps/hobby-warm-queue", api.UpdateAppRequest{
+		ScalingPolicy: &api.ScalingPolicy{
+			ScaleOutCooldownS:   5,
+			ScaleInCooldownS:    60,
+			ConcurrencyOverflow: api.ConcurrencyOverflowQueue,
+			MaxQueueDepth:       48,
+			MaxQueueWaitMS:      1750,
+		},
+		SetScalingPolicy: true,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.ScalingPolicy == nil || out.ScalingPolicy.MaxQueueDepth != 48 || out.ScalingPolicy.MaxQueueWaitMS != 1750 {
+		t.Fatalf("scaling policy = %+v, want warm queue overrides", out.ScalingPolicy)
+	}
+	if out.EffectiveLimits.ConcurrencyQueueDepth != 48 || out.EffectiveLimits.ConcurrencyQueueWaitMS != 1750 {
+		t.Fatalf("effective warm queue = %d/%dms, want 48/1750ms", out.EffectiveLimits.ConcurrencyQueueDepth, out.EffectiveLimits.ConcurrencyQueueWaitMS)
+	}
+}
+
+func TestUpdateAppScalingPolicy_WarmQueueDepthHonorsPlanCap(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	mustSeedApp(t, e, "free-warm-queue-cap")
+	rec := e.do(t, "PATCH", "/v1/apps/free-warm-queue-cap", api.UpdateAppRequest{
+		ScalingPolicy:    &api.ScalingPolicy{MaxQueueDepth: api.ConcurrencyQueueMaxDepthForPlan(api.PlanFree) + 1},
+		SetScalingPolicy: true,
+	}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
 }
 
 // TestUpdateAppScalingPolicy_FreeGateMaxInstances pins the

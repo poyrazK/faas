@@ -850,6 +850,10 @@ type ScalingPolicy struct {
 	// MaxQueueWaitMS overrides the plan-derived admission wait. Zero uses
 	// the plan default. The handler caps this at MaxConcurrencyQueueWaitMS.
 	MaxQueueWaitMS int `json:"max_queue_wait_ms,omitempty"`
+	// MaxQueueDepth overrides the plan-derived warm saturation waiter cap.
+	// Zero uses the plan default. This is intentionally independent from the
+	// cold-wake queue because those queues have different latency envelopes.
+	MaxQueueDepth int `json:"max_queue_depth,omitempty"`
 	// WakeMaxQueueDepth overrides the per-app cold-wake waiter cap. Zero uses
 	// the plan default; the API bounds positive values to 8x that default.
 	WakeMaxQueueDepth int `json:"wake_max_queue_depth,omitempty"`
@@ -943,6 +947,7 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"scale_in_cooldown_s":         {},
 		"concurrency_overflow":        {},
 		"max_queue_wait_ms":           {},
+		"max_queue_depth":             {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
 		"timezone":                    {},
@@ -1012,6 +1017,8 @@ type AppEffectiveLimits struct {
 	CPUWeight              int   `json:"cpu_weight"`
 	MaxInstances           int   `json:"max_instances"`
 	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
+	ConcurrencyQueueDepth  int   `json:"concurrency_queue_depth"`
+	ConcurrencyQueueWaitMS int64 `json:"concurrency_queue_wait_ms"`
 	AppRequestRateRPS      int   `json:"app_request_rate_rps"`
 	AppRequestBurst        int   `json:"app_request_burst"`
 	AccountRequestRateRPM  int   `json:"account_request_rate_rpm"`
