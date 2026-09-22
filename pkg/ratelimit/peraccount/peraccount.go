@@ -27,6 +27,7 @@ package peraccount
 
 import (
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -47,30 +48,14 @@ type Limiter struct {
 	now     func() time.Time // clock injection seam for tests
 }
 
-// accountBucket is the per-account token-bucket state.
-//
-// cap is the immutable bucket capacity — set on the first Take
-// call for this account and frozen thereafter. Freezing the cap
-// matters because the limiter is now shared across call sites
-// (PR-B IncrementRequestTelemetry passes Hobby/Pro/Scale caps
-// derived from per-account limits; PR-D WriteSpansSummary falls
-// back to PlanScale on cache miss). If the cap were recomputed
-// from each caller's argument, two callers passing different
-// caps would oscillate the refill rate on the same bucket —
-// the effective capacity would be whichever caller ran last,
-// defeating the plan ceiling. With cap frozen on first Take,
-// the first caller's plan wins and every subsequent caller
-// matches it.
+// accountBucket retains its capacity across caller-supplied cap drift.
+// Only CacheLimits, which receives an authoritative account lookup, may change
+// an existing capacity. This permits plan changes without allowing fallback
+// callers to oscillate the same bucket's rate.
 type accountBucket struct {
 	tokens     float64
 	lastRefill time.Time
 	cap        int
-	// capSet guards against late-bound cap changes: a second
-	// caller passing a different cap compared to the frozen
-	// value is rejected via the metric / log so operator can
-	// see the wiring bug. We don't silently overwrite — a
-	// silent overwrite is how the original bug surfaced.
-	capSet bool
 }
 
 // NewLimiter wires an empty limiter using time.Now() as the clock.
@@ -108,66 +93,54 @@ func (r *Limiter) Take(accountID uuid.UUID, bucketCap int) (bool, int64) {
 	now := r.now()
 	b, ok := r.bucket[accountID]
 	if !ok {
-		// First call for this account: freeze the cap. Every
-		// subsequent Take / refill must use this cap.
-		b = &accountBucket{
-			tokens:     float64(bucketCap),
-			lastRefill: now,
-			cap:        bucketCap,
-			capSet:     true,
+		if limits, resolved := r.limits[accountID]; resolved {
+			bucketCap = limits.DebugTelemetryRequestsPerMinute
 		}
+		if bucketCap <= 0 {
+			return false, 60_000
+		}
+		b = &accountBucket{tokens: float64(bucketCap), lastRefill: now, cap: bucketCap}
 		r.bucket[accountID] = b
-	} else {
-		if b.capSet && b.cap != bucketCap {
-			// Cap-drift wiring bug. PR-B's per-account
-			// DebugTelemetryRequestsPerMinute and PR-D's
-			// fallback must agree — they don't share a
-			// cache on the first call, so a writer that
-			// runs before the recorder sees a different
-			// cap than the recorder later sees. The frozen
-			// cap wins; the caller's arg is dropped.
-			//
-			// In practice this never fires once the shared
-			// limiter (PR-D fix #3) is wired and the cache
-			// is pre-warmed. The branch is the safety net.
-			slog.Default().Warn("peraccount: caller-supplied cap drifted from frozen bucket cap; using frozen value",
-				"account_id", accountID,
-				"frozen_cap", b.cap,
-				"caller_cap", bucketCap)
-		}
-		// Refill: tokens accrue at b.cap / 60 per second.
-		// Always use the FROZEN cap, not the caller's arg.
-		elapsed := now.Sub(b.lastRefill).Seconds()
-		if elapsed > 0 {
-			b.tokens += elapsed * float64(b.cap) / 60.0
-			if b.tokens > float64(b.cap) {
-				b.tokens = float64(b.cap)
-			}
-			b.lastRefill = now
-		}
+	} else if _, resolved := r.limits[accountID]; !resolved && b.cap != bucketCap {
+		slog.Default().Warn("peraccount: caller cap differs from bucket; awaiting resolved account limits",
+			"account_id", accountID, "bucket_cap", b.cap, "caller_cap", bucketCap)
+	}
+	b.refill(now)
+	if b.cap <= 0 {
+		return false, 60_000
 	}
 	if b.tokens >= 1 {
 		b.tokens--
 		return true, 0
 	}
-	// Empty bucket. retry_after_ms = time until the next token
-	// accrues (one minute-token is b.cap / 60 per second → 1
-	// token per (60 / b.cap) seconds → 1000 * (60 / b.cap)
-	// milliseconds).
-	retryMs := int64(60_000 / b.cap)
-	if retryMs < 1 {
-		retryMs = 1
-	}
-	return false, retryMs
+	// Round up the remaining fractional-token delay: truncating can tell a
+	// caller to retry before any token is actually available.
+	retryMs := int64(math.Ceil((1 - b.tokens) * 60_000 / float64(b.cap)))
+	return false, max(1, retryMs)
 }
 
-// CacheLimits stores the resolved per-account caps. Called once
-// per AccountByID round-trip (not per row).
+func (b *accountBucket) refill(now time.Time) {
+	if elapsed := now.Sub(b.lastRefill).Seconds(); elapsed > 0 {
+		b.tokens = min(float64(b.cap), b.tokens+elapsed*float64(b.cap)/60)
+		b.lastRefill = now
+	}
+}
+
+// CacheLimits stores authoritative account caps and updates an existing bucket.
+// Settle elapsed time at the old rate first, then clamp its balance to the new
+// capacity. Refreshes neither grant fresh bursts nor retroactively refill at a
+// newly upgraded rate. Called per AccountByID round-trip, not per row.
 func (r *Limiter) CacheLimits(accountID uuid.UUID, limits api.Limits) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := r.now()
+	if b := r.bucket[accountID]; b != nil {
+		b.refill(now)
+		b.cap = max(0, limits.DebugTelemetryRequestsPerMinute)
+		b.tokens = min(b.tokens, float64(b.cap))
+	}
 	r.limits[accountID] = limits
-	r.cacheAt[accountID] = r.now()
+	r.cacheAt[accountID] = now
 }
 
 // CachedLimits returns the cached limits + true if fresh, or

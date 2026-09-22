@@ -209,3 +209,101 @@ func TestLimiter_Take_CapFrozenOnFirstCall(t *testing.T) {
 		t.Errorf("retryMs = 1, want ~600 (cap was frozen at 100, second caller's cap=50000 must NOT override)")
 	}
 }
+
+// adr: 127
+func TestLimiterResolvedPlanReconfiguresExistingBucket(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		old, next int
+	}{
+		{"upgrade", 60, 120},
+		{"downgrade", 120, 60},
+		{"disable", 60, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+			r := peraccount.NewLimiter()
+			r.SetClock(func() time.Time { return now })
+			id := uuid.New()
+			for i := 0; i < tc.old; i++ {
+				if ok, _ := r.Take(id, tc.old); !ok {
+					t.Fatal("initial bucket exhausted early")
+				}
+			}
+			r.CacheLimits(id, api.Limits{DebugTelemetryRequestsPerMinute: tc.next})
+			now = now.Add(time.Minute)
+			for i := 0; i < tc.next; i++ {
+				// A stale in-flight caller must not undo an authoritative refresh.
+				if ok, _ := r.Take(id, tc.old); !ok {
+					t.Fatalf("resolved cap %d: token %d denied", tc.next, i)
+				}
+			}
+			if ok, _ := r.Take(id, tc.old); ok {
+				t.Fatalf("allowed more than resolved cap %d", tc.next)
+			}
+		})
+	}
+}
+
+func TestLimiterCachedPlanWinsBeforeFirstTake(t *testing.T) {
+	r := peraccount.NewLimiter()
+	r.SetClock(func() time.Time { return time.Unix(0, 0) })
+	id := uuid.New()
+	r.CacheLimits(id, api.Limits{DebugTelemetryRequestsPerMinute: 1})
+	if ok, _ := r.Take(id, 50000); !ok {
+		t.Fatal("initial token denied")
+	}
+	if ok, _ := r.Take(id, 50000); ok {
+		t.Fatal("fallback cap overrode resolved plan")
+	}
+}
+
+func TestLimiterRetryDelayUsesFractionalBalanceAndRoundsUp(t *testing.T) {
+	for _, tc := range []struct {
+		cap     int
+		elapsed time.Duration
+		want    int64
+	}{
+		{60, 750 * time.Millisecond, 250},
+		{7, 0, 8572},
+	} {
+		now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+		r := peraccount.NewLimiter()
+		r.SetClock(func() time.Time { return now })
+		id := uuid.New()
+		for i := 0; i < tc.cap; i++ {
+			r.Take(id, tc.cap)
+		}
+		now = now.Add(tc.elapsed)
+		if ok, delay := r.Take(id, tc.cap); ok || delay != tc.want {
+			t.Fatalf("cap %d after %s: ok=%v retry=%d, want %d", tc.cap, tc.elapsed, ok, delay, tc.want)
+		}
+		now = now.Add(time.Duration(tc.want) * time.Millisecond)
+		if ok, _ := r.Take(id, tc.cap); !ok {
+			t.Fatal("retry hint woke caller before a token was available")
+		}
+	}
+}
+
+func TestLimiterRefreshDoesNotMintTokensOrRetroactivelyChangeRate(t *testing.T) {
+	now := time.Unix(0, 0)
+	r := peraccount.NewLimiter()
+	r.SetClock(func() time.Time { return now })
+	id := uuid.New()
+	for i := 0; i < 60; i++ {
+		r.Take(id, 60)
+	}
+	now = now.Add(time.Second) // One token at the old rate.
+	r.CacheLimits(id, api.Limits{DebugTelemetryRequestsPerMinute: 120})
+	if ok, _ := r.Take(id, 120); !ok {
+		t.Fatal("old-rate accrued token lost")
+	}
+	r.CacheLimits(id, api.Limits{DebugTelemetryRequestsPerMinute: 120})
+	if ok, _ := r.Take(id, 120); ok {
+		t.Fatal("refresh minted a token")
+	}
+	now = now.Add(500 * time.Millisecond)
+	if ok, _ := r.Take(id, 120); !ok {
+		t.Fatal("new refill rate not applied")
+	}
+}
