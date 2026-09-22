@@ -1254,6 +1254,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworks))))
 	mux.HandleFunc("POST /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetwork)))))
 	mux.HandleFunc("GET /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetwork))))
+	mux.HandleFunc("GET /v1/networks/{id}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworkMembers))))
 	mux.HandleFunc("GET /v1/networks/{id}/peerings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworkPeerings))))
 	mux.HandleFunc("POST /v1/networks/{id}/peerings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetworkPeering)))))
 	mux.HandleFunc("GET /v1/networks/{id}/peerings/{peer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetworkPeering))))

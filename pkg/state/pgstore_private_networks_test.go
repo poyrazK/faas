@@ -110,6 +110,10 @@ func TestPgStorePrivateNetworkAndAttachmentLifecycle(t *testing.T) {
 	if err != nil || replayed.ID != first.ID || replayed.Address != first.Address {
 		t.Fatalf("idempotent allocation = %+v, err=%v", replayed, err)
 	}
+	members, err := s.ListPrivateNetworkAddresses(ctx, accountID, network.ID)
+	if err != nil || len(members) != 1 || members[0].ID != first.ID || members[0].Address != first.Address {
+		t.Fatalf("ListPrivateNetworkAddresses = %+v, err=%v", members, err)
+	}
 	if _, err := s.AllocatePrivateNetworkAddress(ctx, uuid.NewString(), network.ID, "app", "other"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account allocation = %v, want not found", err)
 	}

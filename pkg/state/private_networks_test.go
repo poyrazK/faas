@@ -133,6 +133,16 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	if err != nil || second.Address.String() != "10.42.0.3" {
 		t.Fatalf("second address = %+v, err=%v", second, err)
 	}
+	addresses, err := store.ListPrivateNetworkAddresses(ctx, "acct-1", network.ID)
+	if err != nil || len(addresses) != 2 || addresses[0].Address.String() != "10.42.0.2" || addresses[1].Address.String() != "10.42.0.3" {
+		t.Fatalf("ListPrivateNetworkAddresses = %+v, err=%v", addresses, err)
+	}
+	if got := PrivateNetworkAddressCapacity(network.CIDR); got != 13 {
+		t.Fatalf("PrivateNetworkAddressCapacity = %d, want 13", got)
+	}
+	if addresses, err := store.ListPrivateNetworkAddresses(ctx, "other-account", network.ID); err != nil || len(addresses) != 0 {
+		t.Fatalf("wrong-account member list = %+v, err=%v", addresses, err)
+	}
 	if err := store.ReleasePrivateNetworkAddress(ctx, "acct-1", network.ID, "app", "app-1"); err != nil {
 		t.Fatalf("ReleasePrivateNetworkAddress: %v", err)
 	}
@@ -255,5 +265,8 @@ func TestMemStorePrivateNetworkValidationAndErrorPaths(t *testing.T) {
 	}
 	if err := store.ReleasePrivateNetworkAddress(cancelled, "acct-1", first.ID, "app", "owner"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled release = %v", err)
+	}
+	if _, err := store.ListPrivateNetworkAddresses(cancelled, "acct-1", first.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled member list = %v", err)
 	}
 }
