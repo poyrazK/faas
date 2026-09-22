@@ -12,10 +12,9 @@
 // metric.
 //
 // Detached-ctx discipline (ADR-098): the goroutine derives its
-// own context from context.Background with a
-// MirrorMaxLifetimeSeconds timeout so the customer's request
-// cancellation never reaches the mirror — the customer response
-// is already on the wire by the time dispatchMirror starts.
+// own bounded context with a MirrorMaxLifetimeSeconds timeout so
+// the customer's request cancellation never reaches the mirror —
+// while preserving request values and trace correlation.
 //
 // No panic recovery (matches the WakeGate leader contract at
 // pkg/gateway/gate.go:172-175 — "ensure never panics"). A panic
@@ -135,9 +134,10 @@ func (d *defaultMirrorRoundTripper) RoundTripMirror(ctx context.Context, target 
 // avoid a two-step record+rollup).
 func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID string, sourceTarget *Target, rule MirrorRuleRow, srcReq *http.Request, sourceBody []byte, rec *statusRecorder) {
 	// The mirror goroutine outlives the customer's request. The goroutine's
-	// own ctx is rooted at context.Background() with a MirrorMaxLifetimeSeconds
-	// deadline (ADR-098 detached-ctx pattern, mirrors pkg/gateway/gate.go:172);
-	// parentCtx is captured only so we can pull the committed status off the
+	// own ctx ignores parent cancellation and has a MirrorMaxLifetimeSeconds
+	// deadline (ADR-098 detached-ctx pattern, mirrors pkg/gateway/gate.go:172),
+	// but retains request values so identity and trace correlation survive.
+	// parentCtx is also captured so we can pull the committed status off the
 	// proxy after WriteHeader fired. Per-call //nolint:contextcheck below.
 	if h == nil || h.backend == nil {
 		return
@@ -165,7 +165,10 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	defer h.releaseMirrorSlot(rule.ID)
 
 	timeout := time.Duration(api.MirrorMaxLifetimeSeconds) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Preserve correlation values and the active trace while detaching only
+	// cancellation from the customer request. The mirror has its own bounded
+	// lifetime, but its logs/traces must still identify the admitted target.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), timeout)
 	defer cancel()
 
 	// 1. Schedule the mirror VM and retain its complete forwarding target.
@@ -177,12 +180,12 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	var instanceID string
 	var err error
 	if targetBackend, ok := h.backend.(MirrorTargetBackend); ok {
-		//nolint:contextcheck // ctx is rooted at context.Background() (ADR-098 detached-ctx pattern)
+		//nolint:contextcheck // ctx is detached from customer cancellation (ADR-098)
 		mirrorTarget, err = targetBackend.ScheduleMirrorTarget(ctx, rule.AppID, rule.MirrorDeploymentID, rule.ID)
 		instanceID = mirrorTarget.InstanceID
 	} else {
 		var wakeID string
-		//nolint:contextcheck // ctx is rooted at context.Background() (ADR-098 detached-ctx pattern)
+		//nolint:contextcheck // ctx is detached from customer cancellation (ADR-098)
 		instanceID, wakeID, err = h.backend.ScheduleMirror(ctx, rule.AppID, rule.MirrorDeploymentID, rule.ID)
 		if sourceTarget != nil {
 			mirrorTarget = *sourceTarget
@@ -231,6 +234,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		}
 		return
 	}
+	applyMirrorTargetIdentity(mirrorReq, mirrorTarget, rule.AppID)
 
 	// 3. Round-trip through the same per-node HTTP→vmmd bridge as ordinary
 	// customer traffic. Tests and legacy single-box deployments can still
@@ -241,9 +245,6 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		//nolint:contextcheck // ctx is detached (ADR-098)
 		resp, err = rt.RoundTripMirror(ctx, mirrorTargetURL(&mirrorTarget), mirrorReq)
 	} else if h.proxyByNode != nil {
-		identity := mirrorTarget.PlatformIdentity("", mirrorReq.Header.Get(api.RequestIDHeader))
-		identity.AppID = rule.AppID
-		identity.ApplyGuestHeaders(mirrorReq.Header)
 		capture := newMirrorResponseCapture()
 		h.proxyByNode(mirrorTarget).ServeHTTP(capture, mirrorReq)
 		resp = capture.response()
@@ -301,6 +302,21 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.metrics.ObserveMirrorBodyDiff(rule.AppID, rule.ID)
 		}
 	}
+}
+
+// applyMirrorTargetIdentity ensures every mirror transport receives the
+// admitted mirror deployment identity, not the source replica's claims that
+// were copied while building the redacted request.
+func applyMirrorTargetIdentity(req *http.Request, target Target, appID string) {
+	if req == nil {
+		return
+	}
+	identity := target.PlatformIdentity(req.Header.Get(api.TenantIDHeader), req.Header.Get(api.RequestIDHeader))
+	if appID != "" {
+		identity.AppID = appID
+	}
+	identity.ApplyGuestHeaders(req.Header)
+	injectGuestTraceContext(req.Context(), req.Header)
 }
 
 // mirrorResponseCapture is the bounded ResponseWriter used when a mirror is
