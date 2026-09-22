@@ -23,12 +23,16 @@ func cmdSend(args []string) int {
 	source := fs.String("source", "", "event source (defaults to gregale.send)")
 	eventTime := fs.String("time", "", "event time (RFC3339; defaults to server time)")
 	queueName := fs.String("queue-name", "", "target logical queue name")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying an uncertain send")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE]", "send")
+		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--idempotency-key KEY]", "send")
 		return 1
+	}
+	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
+		return printErr("Invalid --idempotency-key", err)
 	}
 	body, err := resolvePayload(*data)
 	if err != nil {
@@ -49,7 +53,11 @@ func cmdSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.SendAppMessage(context.Background(), positional[0], api.SendAppMessageRequest{
+	ctx := context.Background()
+	if key := strings.TrimSpace(*idempotencyKey); key != "" {
+		ctx = api.ContextWithIdempotencyKey(ctx, key)
+	}
+	resp, err := client.SendAppMessage(ctx, positional[0], api.SendAppMessageRequest{
 		ID:        strings.TrimSpace(*id),
 		Source:    strings.TrimSpace(*source),
 		Type:      strings.TrimSpace(*typ),
@@ -74,12 +82,16 @@ func cmdDeliver(args []string) int {
 	fs := newFlagSet("deliver", flag.ContinueOnError)
 	typ := fs.String("type", "", "event type (required)")
 	data := fs.String("data", "", "JSON event data (inline | @file | -; required)")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying an uncertain delivery")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale deliver <source-app> <webhook-id|url> --type TYPE --data <json|@file|->", "deliver")
+		PrintUsage(os.Stderr, "usage: gregale deliver <source-app> <webhook-id|url> --type TYPE --data <json|@file|-> [--idempotency-key KEY]", "deliver")
 		return 1
+	}
+	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
+		return printErr("Invalid --idempotency-key", err)
 	}
 	body, err := resolvePayload(*data)
 	if err != nil {
@@ -92,7 +104,11 @@ func cmdDeliver(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.DeliverAppEvent(context.Background(), positional[0], api.DeliverAppEventRequest{
+	ctx := context.Background()
+	if key := strings.TrimSpace(*idempotencyKey); key != "" {
+		ctx = api.ContextWithIdempotencyKey(ctx, key)
+	}
+	resp, err := client.DeliverAppEvent(ctx, positional[0], api.DeliverAppEventRequest{
 		Destination: positional[1],
 		Type:        strings.TrimSpace(*typ),
 		Data:        json.RawMessage(body),

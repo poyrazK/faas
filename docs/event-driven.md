@@ -35,8 +35,8 @@ SDKs expose `SendAppMessage` / `sendAppMessage` / `send_app_message`.
 Gregale normalizes the request into a CloudEvents 1.0 envelope and places that
 envelope on the target's durable invocation queue. The normal queue depth,
 wake, retry, trace, dead-letter, and replay behavior applies. Use `--id` for a
-stable logical event id and an `Idempotency-Key` when retrying an uncertain API
-request.
+stable logical event id and `--idempotency-key` (or the API's
+`Idempotency-Key` header) when retrying an uncertain request.
 
 Delivery is at least once. The receiver must deduplicate the envelope's `id`
 before applying non-idempotent side effects. This is an application inbox for
@@ -68,6 +68,8 @@ delivery to that destination.
 Gregale signs the same canonical string and emits the same delivery headers as
 ordinary app webhooks. Receivers should verify the signature, reject stale
 timestamps, and deduplicate the durable delivery id.
+Use `--idempotency-key` when retrying a `gregale deliver` call whose outcome
+is unknown; a new key can enqueue a second delivery.
 
 ## Delayed tasks
 

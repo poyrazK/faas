@@ -385,6 +385,7 @@ var cliCommands = []cliCommand{
 			{Name: "source", Short: "event source", Value: "SOURCE"},
 			{Name: "time", Short: "event time", Value: "RFC3339"},
 			{Name: "queue-name", Short: "target logical queue name", Value: "QUEUE"},
+			{Name: "idempotency-key", Short: "stable key for retrying an uncertain send", Value: "KEY"},
 		},
 	},
 	{
@@ -395,6 +396,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "type", Short: "event type", Req: true, Value: "TYPE"},
 			{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
+			{Name: "idempotency-key", Short: "stable key for retrying an uncertain delivery", Value: "KEY"},
 		},
 	},
 	{
