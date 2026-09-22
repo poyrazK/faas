@@ -2900,7 +2900,7 @@ func (s *server) handler() http.Handler {
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's
 	// main package; the dashboard and the CLI read the same
-	// 15-entry list through independent paths.
+	// 17-entry list through independent paths.
 	mux.Handle("GET /v1/templates", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listTemplates))))
 
 	// PR-C: /oauth/code-callback is the user-to-server OAuth callback
