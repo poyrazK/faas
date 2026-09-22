@@ -6206,37 +6206,22 @@ haveApp:
 		identity.AppID = app.ID
 	}
 	identity.ApplyGuestHeaders(r.Header)
+	// Keep the same scheduler-authored identity on the request context so
+	// request-scoped logs and any subsequent schedd/vmmd metadata hop cannot
+	// drift from the headers sent to the guest.
+	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
+	requestSpan.SetAttributes(pkgtrace.PlatformIdentityAttributes(identity)...)
 
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and
 	// the guest-side bridge remain children of this span. Stable identifiers
 	// are used here; request paths and headers are intentionally excluded.
-	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward",
-		attribute.String("app_id", app.ID),
-		attribute.String("instance_id", target.InstanceID),
-		attribute.String("deployment_id", target.DeploymentID),
-		attribute.String("node_id", target.NodeID),
+	forwardAttrs := pkgtrace.PlatformIdentityAttributes(identity)
+	forwardAttrs = append(forwardAttrs,
 		attribute.String("protocol", decideProtocol(app)),
 		attribute.Bool("cold", cold),
 	)
-	if identity.TenantID != "" {
-		forwardSpan.SetAttributes(attribute.String("tenant_id", identity.TenantID))
-	}
-	if identity.Region != "" {
-		forwardSpan.SetAttributes(attribute.String("region", identity.Region))
-	}
-	if identity.CommitSHA != "" {
-		forwardSpan.SetAttributes(attribute.String("commit_sha", identity.CommitSHA))
-	}
-	if identity.DeploymentTag != "" {
-		forwardSpan.SetAttributes(attribute.String("deployment_tag", identity.DeploymentTag))
-	}
-	if identity.DeploymentCreatedAt != "" {
-		forwardSpan.SetAttributes(attribute.String("deployment_created_at", identity.DeploymentCreatedAt))
-	}
-	if identity.ImageDigest != "" {
-		forwardSpan.SetAttributes(attribute.String("image_digest", identity.ImageDigest))
-	}
+	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
 	r = r.WithContext(forwardCtx)
 	defer func() {
 		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
@@ -6802,7 +6787,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// time so the slog latency_ms field is no longer effectively ~0. Doing
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
-	(&requestLogger{log: h.log}).Log(appID, code, elapsed, cold, requestID)
+	requestLog := h.log
+	if fields, ok := wire.FromContext(r.Context()); ok {
+		requestLog = wire.WithCorrelationFields(requestLog, fields)
+	} else if target.InstanceID != "" || target.DeploymentID != "" {
+		identity := target.PlatformIdentity("", requestID)
+		if identity.AppID == "" {
+			identity.AppID = appID
+		}
+		requestLog = wire.WithPlatformIdentityLogger(requestLog, identity)
+	}
+	(&requestLogger{log: requestLog}).Log(appID, code, elapsed, cold, requestID)
 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead

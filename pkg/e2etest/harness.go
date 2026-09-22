@@ -116,6 +116,11 @@ type Harness struct {
 	// schedd config instead of silently falling back to another pair.
 	gatewayPublicAddr  string
 	gatewayControlAddr string
+	// Keep the gateway ports held between configuration and daemon startup.
+	// freeTCPAddr closes its probe immediately, leaving a long race while the
+	// harness boots apid and schedd before gatewayd (notably on CI).
+	gatewayPublicReservation  net.Listener
+	gatewayControlReservation net.Listener
 	// RecoveryHMACKeyHex is a per-test 64-char hex string (32 bytes
 	// when decoded) that the harness injects as FAAS_MFA_RECOVERY_HMAC_KEY
 	// into every daemon's environment. Required because apid's
@@ -199,6 +204,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	currentHarness = h
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
+		t.Cleanup(h.releaseGatewayAddressReservations)
 	}
 	if which&GatewaySynthStub != 0 {
 		startGatewaySynthStub(t, h)
@@ -704,6 +710,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	currentHarness = h
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
+		t.Cleanup(h.releaseGatewayAddressReservations)
 	}
 	if which&GatewaySynthStub != 0 {
 		startGatewaySynthStub(t, h)
@@ -963,6 +970,10 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	), 0o600); err != nil {
 		t.Fatalf("e2etest: write gatewayd.toml: %v", err)
 	}
+	// Release the held ports only after the final config is written and just
+	// before exec. This closes the allocation gap that let another listener
+	// claim a reserved address while apid/schedd were booting.
+	h.releaseGatewayAddressReservations()
 	synthSock := filepath.Join(h.SockDir, "gatewayd-internal.sock")
 	env := append(testEnvCommon(dbURL),
 		"FAAS_GATEWAY_LISTEN="+addr,
@@ -1005,18 +1016,42 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 	waitReadyz(t, controlAddr, 30*time.Second)
 }
 
-// reserveGatewayAddresses chooses the public and control ports before
-// schedd's TOML is rendered. freeTCPAddr closes its probe listener, so the
-// later daemon bind still gets the usual race-resistant availability check;
-// reserving both addresses here only makes the configuration deterministic.
+// reserveGatewayAddresses chooses and holds the public and control ports
+// before schedd's TOML is rendered. The listeners stay open while apid and
+// schedd boot, then startGatewayd releases them immediately before exec so a
+// second local process cannot claim one of the configured ports in between.
 func reserveGatewayAddresses(t *testing.T, h *Harness) {
 	t.Helper()
-	// No pairwise de-duplication needed: freeTCPAddr never hands the same
-	// address to two callers in this process.
-	addr := freeTCPAddr(t)
-	controlAddr := freeTCPAddr(t)
-	h.gatewayPublicAddr = addr
-	h.gatewayControlAddr = controlAddr
+	public, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("e2etest: reserve gateway public address: %v", err)
+	}
+	control, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = public.Close()
+		t.Fatalf("e2etest: reserve gateway control address: %v", err)
+	}
+	h.gatewayPublicReservation = public
+	h.gatewayControlReservation = control
+	h.gatewayPublicAddr = public.Addr().String()
+	h.gatewayControlAddr = control.Addr().String()
+}
+
+// releaseGatewayAddressReservations closes the held gateway listeners. It is
+// safe to call more than once: startup calls it immediately before launching
+// gatewayd and test cleanup calls it again for failed/partial boots.
+func (h *Harness) releaseGatewayAddressReservations() {
+	if h == nil {
+		return
+	}
+	if h.gatewayPublicReservation != nil {
+		_ = h.gatewayPublicReservation.Close()
+		h.gatewayPublicReservation = nil
+	}
+	if h.gatewayControlReservation != nil {
+		_ = h.gatewayControlReservation.Close()
+		h.gatewayControlReservation = nil
+	}
 }
 
 func startGatewaySynthStub(t *testing.T, h *Harness) {
@@ -1333,6 +1368,7 @@ func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]stri
 // when startProc's bytes.Buffer is GC'd; surfacing it always is cheaper
 // than re-running with -v on a CI flake (issue #52 PR #59 follow-up).
 func (h *Harness) stop() {
+	h.releaseGatewayAddressReservations()
 	for _, p := range h.procs {
 		if p.Process == nil {
 			continue

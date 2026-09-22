@@ -6480,7 +6480,28 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		out.Target = &state.ScalingTarget{
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
+			Name:   sp.Target.Name,
 		}
+	}
+	// ADR-194 targets, ADR-195 schedules. These were absent here for the
+	// life of both features: the handler accepted them, validated them,
+	// returned 200 — and dropped them on the floor, so a policy written
+	// through PATCH /v1/apps/{slug} reached the scheduler with no
+	// multi-signal targets and no schedules at all. Nothing caught it
+	// because every unit test builds the state policy directly and the
+	// store conformance case calls UpdateApp, both of which bypass this
+	// function. See TestPolicyRoundTrip_CarriesEveryField below, which
+	// fails if a field is added to either type without being copied here.
+	for _, t := range sp.Targets {
+		out.Targets = append(out.Targets, state.ScalingTarget{
+			Metric: t.Metric, Value: t.Value, Name: t.Name,
+		})
+	}
+	out.Timezone = sp.Timezone
+	for _, sched := range sp.Schedules {
+		out.Schedules = append(out.Schedules, state.ScalingSchedule{
+			Cron: sched.Cron, DurationS: sched.DurationS, MinInstances: sched.MinInstances,
+		})
 	}
 	return out
 }

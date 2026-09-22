@@ -26,6 +26,13 @@ type Envelope struct {
 	DataContentType string          `json:"data_content_type"`
 	Data            json.RawMessage `json:"data"`
 	AccountID       string          `json:"account_id"`
+	// Traceparent, Tracestate, and Baggage are platform-stamped CloudEvents
+	// extensions. They are not accepted from the public DTO directly; apid
+	// stamps the authenticated publish request's context before persisting the
+	// envelope, and schedd uses them to link each fan-out invocation.
+	Traceparent string `json:"traceparent,omitempty"`
+	Tracestate  string `json:"tracestate,omitempty"`
+	Baggage     string `json:"baggage,omitempty"`
 }
 
 const (

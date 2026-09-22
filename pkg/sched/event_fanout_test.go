@@ -11,9 +11,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 func TestRoutePublishedEventMatchesFiltersAndIsolatesAccounts(t *testing.T) {
+	previousPropagator := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(previousPropagator) })
 	ctx := context.Background()
 	store := state.NewMemStore()
 
@@ -62,6 +67,7 @@ func TestRoutePublishedEventMatchesFiltersAndIsolatesAccounts(t *testing.T) {
 		DataContentType: events.JSONDataContentType,
 		Data:            json.RawMessage(`{"amount":150,"invoice_id":"inv-1"}`),
 		AccountID:       accountAID,
+		Traceparent:     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -95,6 +101,10 @@ func TestRoutePublishedEventMatchesFiltersAndIsolatesAccounts(t *testing.T) {
 		headers["x-gregale-event-source"] != envelope.Source ||
 		headers["x-gregale-event-type"] != envelope.Type {
 		t.Fatalf("event headers = %+v, want id/source/type headers", headers)
+	}
+	if headers["traceparent"] != envelope.Traceparent ||
+		headers["X-Gregale-Trace-Id"] != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("event trace headers = %+v, want producer context", headers)
 	}
 
 	filteredInvocations, err := store.ListInvocationsForApp(ctx, filteredApp.ID)

@@ -75,6 +75,7 @@ export type { AppOpenAPIPolicyPreviewRule } from './AppOpenAPIPolicyPreviewRule.
 export type { AppPrivateNetworkAttachment } from './AppPrivateNetworkAttachment.js';
 export type { AppPrivateNetworkAttachmentRequest } from './AppPrivateNetworkAttachmentRequest.js';
 export type { AppPrivateNetworkAttachmentResponse } from './AppPrivateNetworkAttachmentResponse.js';
+export type { AppPrivateNetworkNodeStatus } from './AppPrivateNetworkNodeStatus.js';
 export type { AppRegistryCredentialListResponse } from './AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './AppRegistryCredentialResponse.js';
 export type { AppResponse } from './AppResponse.js';

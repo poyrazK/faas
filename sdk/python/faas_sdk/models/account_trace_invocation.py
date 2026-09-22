@@ -14,7 +14,7 @@ T = TypeVar("T", bound="AccountTraceInvocation")
 
 @_attrs_define
 class AccountTraceInvocation:
-    """Safe queue lifecycle projection linked to the trace."""
+    """Safe durable invocation lifecycle projection linked to the trace."""
 
     app: str
     id: str

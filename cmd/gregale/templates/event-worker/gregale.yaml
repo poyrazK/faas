@@ -1,0 +1,10 @@
+function:
+  runtime: node22
+  handler: handler.handler
+
+# The starter receives high-value invoice events. Change these declarations
+# before deploying if your producer uses a different source or event type.
+event_triggers:
+  - source: billing.*
+    type: invoice.paid
+    filter: '{"data":{"amount":{"$gt":100}}}'

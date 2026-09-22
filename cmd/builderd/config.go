@@ -113,6 +113,10 @@ type Config struct {
 	// customer's deploy burst can't starve a quieter customer past
 	// the §14 queue-wait SLO.
 	FairnessWindow time.Duration `toml:"fairness_window"`
+	// CacheAffinityGrace is the short locality preference for rebuilds. During
+	// this window the last successful builder gets first chance to reuse its
+	// node-local caches; after it, any builder can claim the build.
+	CacheAffinityGrace time.Duration `toml:"cache_affinity_grace"`
 	// WarmIdle is the paused-builder reuse window. The environment override
 	// FAAS_BUILDER_WARM_IDLE_MS accepts a positive integer number of
 	// milliseconds and wins over this TOML value.
@@ -300,6 +304,7 @@ func LoadConfig(path string) (*Config, error) {
 		// narrow enough that one customer's idle window rescues the
 		// next customer's queued build without an SLA-busting wait.
 		FairnessWindow:          30 * time.Second,
+		CacheAffinityGrace:      builderdpkg.DefaultCacheAffinityGrace,
 		StuckBuildSweepInterval: 10 * time.Minute,
 		StuckBuildThreshold:     time.Duration(api.BuildTimeoutSeconds)*time.Second + 10*time.Minute,
 		// B2.1 (issue #196): cache GC. 50 GB cap matches the spec

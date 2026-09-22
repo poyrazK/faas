@@ -31,8 +31,11 @@ type Supervisor struct {
 	Forwarder       Forwarder
 	RefreshInterval time.Duration
 	MaxConnections  int
-	OnError         func(error)
-	Listen          func(network, address string) (net.Listener, error)
+	// MaxConnectionsPerAccount bounds concurrent sessions for one account on
+	// this gateway. Zero disables the account-scoped cap.
+	MaxConnectionsPerAccount int
+	OnError                  func(error)
+	Listen                   func(network, address string) (net.Listener, error)
 }
 
 type supervisedListener struct {
@@ -57,6 +60,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 	if s.BindHost == "" {
 		s.BindHost = "0.0.0.0"
 	}
+	limiter := NewConnectionLimiter(s.MaxConnectionsPerAccount)
 
 	listeners := make(map[int]supervisedListener)
 	var mu sync.Mutex
@@ -125,6 +129,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				Routes:         s.Routes,
 				Targets:        s.Targets,
 				Forwarder:      s.Forwarder,
+				Limiter:        limiter,
 				MaxConnections: s.MaxConnections,
 				OnError: func(err error) {
 					if s.OnError != nil {
@@ -175,6 +180,8 @@ func (s *Supervisor) validate() error {
 		return errors.New("tcpd supervisor has no forwarder")
 	case s.MaxConnections < 0:
 		return errors.New("tcpd supervisor max connections cannot be negative")
+	case s.MaxConnectionsPerAccount < 0:
+		return errors.New("tcpd supervisor max connections per account cannot be negative")
 	default:
 		return nil
 	}

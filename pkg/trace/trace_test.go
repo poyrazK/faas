@@ -19,6 +19,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
 
@@ -97,4 +98,34 @@ func TestStartSpan_NoopWhenNoCollector(t *testing.T) {
 		t.Errorf("StartSpan returned valid span; expected noop fallback")
 	}
 	sp.End()
+}
+
+func TestPlatformIdentityAttributes(t *testing.T) {
+	attrs := pkgtrace.PlatformIdentityAttributes(api.PlatformIdentity{
+		RequestID:           "req-1",
+		AppID:               "app-1",
+		DeploymentID:        "dep-1",
+		TenantID:            "tenant-1",
+		InstanceID:          "instance-1",
+		NodeID:              "node-1",
+		Region:              "eu-west",
+		CommitSHA:           "abc123",
+		DeploymentTag:       "canary",
+		DeploymentCreatedAt: "2026-09-19T19:00:00Z",
+		ImageDigest:         "sha256:digest",
+	})
+	got := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		got[string(attr.Key)] = attr.Value.AsString()
+	}
+	for key, want := range map[string]string{
+		"request_id": "req-1", "app_id": "app-1", "deployment_id": "dep-1",
+		"tenant_id": "tenant-1", "instance_id": "instance-1", "node_id": "node-1",
+		"region": "eu-west", "commit_sha": "abc123", "deployment_tag": "canary",
+		"deployment_created_at": "2026-09-19T19:00:00Z", "image_digest": "sha256:digest",
+	} {
+		if got[key] != want {
+			t.Errorf("attribute %q = %q, want %q", key, got[key], want)
+		}
+	}
 }

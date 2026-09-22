@@ -23,6 +23,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const (
@@ -102,6 +105,11 @@ type ServiceCaller struct {
 	// the current, documented behaviour — this field exists so the hop can
 	// say so instead of doing it silently.
 	PreviewOfSlug string
+	// AccountID and InstanceID are carried for the ADR-206 assertion claims.
+	// The authorizer already loaded the caller row to check the tenant
+	// boundary, so these cost nothing extra.
+	AccountID  string
+	InstanceID string
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary between caller and
@@ -114,6 +122,33 @@ type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID s
 // compatibility assertion. This lets guest requests omit a spoofable
 // platform header while preserving the header contract for trusted callers.
 type ServiceProxyCallerResolver func(ctx context.Context, remoteAddr string) (appID string, err error)
+
+// ServiceCallerMintInput is what the proxy knows about a call it has already
+// authorized, handed to the minter so pkg/gateway does not import the token
+// library or care about its key material.
+type ServiceCallerMintInput struct {
+	CallerAppID      string
+	TargetAppID      string
+	AccountID        string
+	CallerInstanceID string
+	CallerEnv        string
+}
+
+// ServiceCallerMinter produces the ADR-206 assertion attesting the caller the
+// proxy verified. nil attaches nothing, which is the default: the assertion
+// has no consumer yet, so an operator without a verifier should not pay for a
+// signature on every call.
+type ServiceCallerMinter func(ServiceCallerMintInput) (string, error)
+
+// ServiceCallerAssertionHeader carries the ADR-206 assertion to the target. It
+// is deliberately not Authorization: that header belongs to the customer's own
+// scheme, and overwriting it would break an app that authenticates its callers
+// itself.
+const ServiceCallerAssertionHeader = "X-Faas-Caller-Assertion"
+
+// servicecallerEnvPreview mirrors servicecaller.EnvPreview without importing
+// the token package into the request path.
+const servicecallerEnvPreview = "preview"
 
 // ServiceProxyWaker holds the caller while the scheduler brings a parked
 // target service back (ADR-196). It returns nil once the wake attempt has
@@ -150,6 +185,9 @@ type ServiceProxyConfig struct {
 	EndpointTTL time.Duration
 	Now         func() time.Time
 	Log         *slog.Logger
+	// MintCallerAssertion attaches a verifiable statement of who called
+	// (ADR-206). nil attaches nothing.
+	MintCallerAssertion ServiceCallerMinter
 	// LocalNodeID is this gateway's compute node. When set, endpoint
 	// selection prefers a replica on this node before crossing the network
 	// (ADR-168 refinement). Empty preserves flat round-robin.
@@ -167,6 +205,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	mintAssertion ServiceCallerMinter
 	localNodeID   string
 	provider      ServiceEndpointProvider
 	resolve       ServiceProxyResolver
@@ -227,6 +266,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		})
 	}
 	return &ServiceProxy{
+		mintAssertion: cfg.MintCallerAssertion,
 		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
 		provider:      cfg.Provider,
 		resolve:       cfg.Resolve,
@@ -254,64 +294,141 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
 		return
 	}
+	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(r.Context(), serviceProxySpanName(service),
+		attribute.String("gregale.dependency.type", "managed_binding"),
+		attribute.String("gregale.dependency.kind", "service_proxy"),
+		attribute.String("http.request.method", r.Method),
+	)
+	if validServiceDNSLabel(service) {
+		dependencySpan.SetAttributes(attribute.String("gregale.service.name", service))
+	}
+	upgrade := isUpgradeRequest(r)
+	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
+	dispatchWriter := http.ResponseWriter(traceWriter)
+	if upgrade {
+		// A hijacked response needs the original writer. The ordinary trace
+		// writer intentionally records HTTP response status only and does not
+		// impersonate net.Hijacker.
+		dispatchWriter = w
+	}
+	defer func() {
+		if !upgrade {
+			status := traceWriter.status
+			if status == 0 {
+				// net/http implicitly commits 200 when a handler returns without
+				// writing a response.
+				status = http.StatusOK
+			}
+			dependencySpan.SetAttributes(attribute.Int("http.response.status_code", status))
+			if status >= http.StatusBadRequest {
+				dependencySpan.SetStatus(codes.Error, strconv.Itoa(status))
+			}
+		}
+		dependencySpan.End()
+	}()
+	r = r.WithContext(dependencyCtx)
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
 	if p.resolveCaller != nil {
-		resolved, err := p.resolveCaller(r.Context(), r.RemoteAddr)
+		resolved, err := p.resolveCaller(dependencyCtx, r.RemoteAddr)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
-			serviceProxyProblem(w, http.StatusServiceUnavailable, "caller identity is unavailable")
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "caller identity is unavailable")
 			return
 		}
 		if resolved == "" {
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
-			serviceProxyProblem(w, http.StatusForbidden, "caller identity is unknown")
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller identity is unknown")
 			return
 		}
 		if caller != "" && resolved != caller {
 			p.metrics.IncServiceCall(ServiceCallDenied)
-			serviceProxyProblem(w, http.StatusForbidden, "caller identity does not match the node identity")
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller identity does not match the node identity")
 			return
 		}
 		caller = resolved
 	}
 	if caller == "" {
 		p.metrics.IncServiceCall(ServiceCallUnauthenticated)
-		serviceProxyProblem(w, http.StatusUnauthorized, "caller identity is required")
+		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
-	target, err := p.resolveTarget(r.Context(), service)
+	target, err := p.resolveTarget(dependencyCtx, service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
 			p.metrics.IncServiceCall(ServiceCallNotFound)
-			serviceProxyProblem(w, http.StatusNotFound, "service is not registered")
+			serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
 			return
 		}
-		serviceProxyProblem(w, http.StatusServiceUnavailable, err.Error())
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	if p.authorize == nil {
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
 	}
-	callerInfo, err := p.authorize(r.Context(), caller, target.AppID)
+	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
+	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyDenied) {
 			p.metrics.IncServiceCall(ServiceCallDenied)
-			serviceProxyProblem(w, http.StatusForbidden, "caller is not allowed to reach this service")
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller is not allowed to reach this service")
 			return
 		}
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service authorization is unavailable")
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service authorization is unavailable")
 		return
 	}
 	if p.provider == nil || p.forward == nil {
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service proxy transport is not wired")
+		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, woken, served := p.routableEndpoints(w, r, target.AppID)
+	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID)
 	if !served {
 		return
 	}
-	p.dispatch(w, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+func serviceProxySpanName(service string) string {
+	if validServiceDNSLabel(service) {
+		return "service." + service
+	}
+	return "service.proxy"
+}
+
+// serviceProxyTraceResponseWriter records the final HTTP status while
+// preserving streaming through http.Flusher and response-controller
+// unwrapping. Upgrade requests bypass it because they need net.Hijacker.
+type serviceProxyTraceResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *serviceProxyTraceResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serviceProxyTraceResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *serviceProxyTraceResponseWriter) Flush() {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // dispatch picks the guest bridge for the resolved target (ADR-197).
@@ -577,18 +694,45 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	// caller's word for it.
 	request.Header.Del(ServiceCallerEnvHeader)
 	request.Header.Del(ServiceCallerPreviewOfHeader)
+	request.Header.Del(ServiceCallerAssertionHeader)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
 	// A preview app has no sibling copy of its dependencies, so this call is
 	// crossing from a preview into a production service. Say so on the hop and
 	// count it, rather than letting a PR quietly exercise production.
+	callerEnv := ""
 	if caller.PreviewOfSlug != "" {
-		request.Header.Set(ServiceCallerEnvHeader, "preview")
+		callerEnv = servicecallerEnvPreview
+		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
 		p.metrics.IncServicePreviewToProduction()
 	}
+	p.attachCallerAssertion(request, target, caller, callerEnv)
 	return request
+}
+
+// attachCallerAssertion adds the ADR-206 statement of who called. A mint
+// failure is logged and dropped rather than failing the call: nothing verifies
+// the assertion yet, so refusing traffic over a signing problem would trade a
+// working mesh for a feature with no consumer.
+func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) {
+	if p.mintAssertion == nil || caller.AppID == "" {
+		return
+	}
+	token, err := p.mintAssertion(ServiceCallerMintInput{
+		CallerAppID:      caller.AppID,
+		TargetAppID:      target.AppID,
+		AccountID:        caller.AccountID,
+		CallerInstanceID: caller.InstanceID,
+		CallerEnv:        callerEnv,
+	})
+	if err != nil {
+		p.log.Warn("gateway: service caller assertion mint failed; forwarding unsigned",
+			"caller", caller.AppID, "target", target.AppID, "err", err)
+		return
+	}
+	request.Header.Set(ServiceCallerAssertionHeader, token)
 }
 
 // forwardUpgrade carries an Upgrade request to the guest over the raw-bytes

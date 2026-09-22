@@ -79,6 +79,11 @@ var ErrDraining = errors.New("builderd: draining")
 
 const activeVMCancelTimeout = 15 * time.Second
 
+// DefaultCacheAffinityGrace is deliberately short: it covers notification and
+// polling jitter while adding only a bounded delay if the preferred node is
+// unavailable. The normal durable-worker poll interval is two seconds.
+const DefaultCacheAffinityGrace = 5 * time.Second
+
 // Config is the on-disk shape of /etc/faas/builderd.toml. Every field has a
 // working default.
 type Config struct {
@@ -116,6 +121,13 @@ type Config struct {
 	// behaves like the pre-B2.2 FIFO claim). Default 30s; a longer
 	// window trades queue latency for fairness.
 	FairnessWindow time.Duration `toml:"fairness_window"`
+	// CacheAffinityGrace is the bounded period in which a queued rebuild
+	// prefers the node that completed the app's latest successful build. That
+	// node is the best candidate to hold the app's node-local artifact and
+	// BuildKit dependency caches. After the grace period any builder may claim
+	// the row, so locality never becomes an availability dependency. Zero uses
+	// DefaultCacheAffinityGrace.
+	CacheAffinityGrace time.Duration `toml:"cache_affinity_grace"`
 	// WarmIdle is how long a captured builder snapshot remains eligible for
 	// reuse. The guaranteed builder slot uses this bound for every capture
 	// and restore decision.
@@ -207,6 +219,9 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 	}
 	if cfg.SourceWaitTimeout == 0 {
 		cfg.SourceWaitTimeout = 10 * time.Second
+	}
+	if cfg.CacheAffinityGrace == 0 {
+		cfg.CacheAffinityGrace = DefaultCacheAffinityGrace
 	}
 	if cfg.WarmIdle <= 0 {
 		cfg.WarmIdle = DefaultWarmIdle
@@ -494,7 +509,13 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	}
 	defer b.endProcess()
 
-	build, err := b.store.ClaimQueuedBuild(ctx, buildID)
+	var build state.Build
+	var err error
+	if affinity, ok := b.store.(state.BuildAffinityClaimStore); ok && b.builderNodeID != "" && b.cfg.CacheAffinityGrace > 0 {
+		build, err = affinity.ClaimQueuedBuildWithNodeAffinity(ctx, buildID, b.builderNodeID, b.cfg.CacheAffinityGrace)
+	} else {
+		build, err = b.store.ClaimQueuedBuild(ctx, buildID)
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			// Already claimed (duplicate notify) or terminal. Drop
@@ -531,7 +552,9 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 
 	var build state.Build
 	var err error
-	if b.cfg.FairnessWindow > 0 {
+	if affinity, ok := b.store.(state.BuildAffinityClaimStore); ok && b.builderNodeID != "" && b.cfg.CacheAffinityGrace > 0 {
+		build, err = affinity.ClaimNextQueuedBuildWithNodeAffinity(ctx, b.builderNodeID, b.cfg.CacheAffinityGrace, b.cfg.FairnessWindow)
+	} else if b.cfg.FairnessWindow > 0 {
 		build, err = b.store.ClaimNextQueuedBuildWithFairness(ctx, b.cfg.FairnessWindow)
 	} else {
 		build, err = b.store.ClaimNextQueuedBuild(ctx)

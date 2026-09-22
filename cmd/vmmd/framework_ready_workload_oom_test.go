@@ -114,7 +114,7 @@ func TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON(t *testing.T) {
 }
 
 // TestParseFrameworkReadyDatagram_TypeClosedSet pins the
-// 7-value closed-set discipline: {0x01..0x07} parse OK;
+// 8-value closed-set discipline: {0x01..0x08} parse OK;
 // anything else returns the "unknown msg sub-type" sentinel.
 // Mirrors TestParseFrameworkReadyDatagram's earlier
 // closed-set guard. Future event classes add a byte + a
@@ -128,7 +128,7 @@ func TestParseFrameworkReadyDatagram_TypeClosedSet(t *testing.T) {
 	}{
 		{"type_0x00", []byte{0x00}},
 		{"type_0xFF", []byte{0xFF, 0x00, 0x00}},
-		{"type_0x08_then_payload", []byte{0x08, '{', '}'}},
+		{"type_0x09_then_payload", []byte{0x09, '{', '}'}},
 		{"type_0x10_then_long_payload", append([]byte{0x10}, []byte(strings.Repeat("x", 32))...)},
 	}
 	for _, tc := range cases {

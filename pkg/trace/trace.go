@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -86,4 +87,28 @@ func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (c
 // via PR-A).
 func SpanFromContext(ctx context.Context) oteltrace.Span {
 	return oteltrace.SpanFromContext(ctx)
+}
+
+// PlatformIdentityAttributes returns the canonical OTel attributes for a
+// scheduler-selected deployment. Empty optional fields are omitted so spans
+// remain useful for image, source, and legacy deployments alike.
+func PlatformIdentityAttributes(identity api.PlatformIdentity) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, 10)
+	add := func(key, value string) {
+		if value != "" {
+			attrs = append(attrs, attribute.String(key, value))
+		}
+	}
+	add("request_id", identity.RequestID)
+	add("app_id", identity.AppID)
+	add("deployment_id", identity.DeploymentID)
+	add("tenant_id", identity.TenantID)
+	add("instance_id", identity.InstanceID)
+	add("node_id", identity.NodeID)
+	add("region", identity.Region)
+	add("commit_sha", identity.CommitSHA)
+	add("deployment_tag", identity.DeploymentTag)
+	add("deployment_created_at", identity.DeploymentCreatedAt)
+	add("image_digest", identity.ImageDigest)
+	return attrs
 }

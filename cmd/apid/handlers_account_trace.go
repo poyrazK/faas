@@ -19,9 +19,9 @@ import (
 var accountTraceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // accountTraceLookup is the durable tenant-scoped read behind `gregale trace`.
-// Request evidence remains retention-bound per app; queue lifecycle rows are
-// joined from the indexed invocation envelope so a trace can be followed even
-// when no request-telemetry row was retained for one of the hops.
+// Request evidence remains retention-bound per app; durable invocation rows
+// are joined from the indexed invocation envelope so a trace can be followed
+// even when no request-telemetry row was retained for one of the hops.
 func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if !limits.DebugTelemetryEnabled {
@@ -53,9 +53,9 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		appSlugs[app.ID] = app.Slug
 	}
 
-	queueRows, err := s.store.ListInvocationsByTraceID(r.Context(), acct.ID, traceID, limit)
+	invocationRows, err := s.store.ListInvocationsByTraceID(r.Context(), acct.ID, traceID, limit)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("list queue trace invocations"))
+		api.WriteProblem(w, api.ErrCapacity("list trace invocations"))
 		return
 	}
 	result := api.AccountTraceLookupResponse{
@@ -63,11 +63,11 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		GeneratedAt: time.Now().UTC(),
 		Limit:       limit,
 		Matches:     make([]api.AccountTraceMatch, 0),
-		Invocations: make([]api.AccountTraceInvocation, 0, len(queueRows)),
+		Invocations: make([]api.AccountTraceInvocation, 0, len(invocationRows)),
 		Spans:       make([]api.DebugTelemetrySpan, 0),
 		Errors:      make([]api.AccountTraceLookupError, 0),
 	}
-	for _, inv := range queueRows {
+	for _, inv := range invocationRows {
 		app, ok := appSlugs[inv.AppID]
 		if !ok {
 			continue

@@ -25,6 +25,18 @@ change the invocation result.
 Applications can subscribe to events published through Gregale's internal
 event router. A YAML deployment declares subscriptions with `event_triggers`:
 
+For a first worker, scaffold the complete example instead of writing the
+manifest and handler by hand:
+
+```bash
+gregale init --template event-worker --path ./invoice-worker
+cd invoice-worker && gregale deploy --name invoice-worker
+```
+
+The generated project includes a safe `billing.*` / `invoice.paid` filter and
+an acknowledgement handler. Edit `gregale.yaml` when your event vocabulary is
+ready.
+
 ```yaml
 event_triggers:
   - source: billing.*

@@ -157,12 +157,15 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
-	privateNetworks           map[string]PrivateNetwork
-	privateNetworkAddresses   map[string]PrivateNetworkAddress
-	privateNetworkPeerings    map[string]PrivateNetworkPeering
-	reservedIPLeases          map[string]ReservedIP
-	reservedIPInventory       map[string]ReservedIPInventory
-	appDeletionClaims         map[string]struct{}
+
+	privateNetworkAttachmentNodeStatuses map[string]PrivateNetworkAttachmentNodeStatus
+
+	privateNetworks         map[string]PrivateNetwork
+	privateNetworkAddresses map[string]PrivateNetworkAddress
+	privateNetworkPeerings  map[string]PrivateNetworkPeering
+	reservedIPLeases        map[string]ReservedIP
+	reservedIPInventory     map[string]ReservedIPInventory
+	appDeletionClaims       map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -893,16 +896,19 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},
 		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
-		privateNetworks:           map[string]PrivateNetwork{},
-		privateNetworkAddresses:   map[string]PrivateNetworkAddress{},
-		privateNetworkPeerings:    map[string]PrivateNetworkPeering{},
-		reservedIPLeases:          map[string]ReservedIP{},
-		reservedIPInventory:       map[string]ReservedIPInventory{},
-		appDeletionClaims:         map[string]struct{}{},
-		githubDeployBranches:      map[string]map[string]string{},
-		githubDeployPolicies:      map[string]GitHubDeployPolicy{},
-		githubBindings:            map[string]GitHubBinding{},
-		githubInstalls:            map[string]GitHubInstall{},
+
+		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
+
+		privateNetworks:         map[string]PrivateNetwork{},
+		privateNetworkAddresses: map[string]PrivateNetworkAddress{},
+		privateNetworkPeerings:  map[string]PrivateNetworkPeering{},
+		reservedIPLeases:        map[string]ReservedIP{},
+		reservedIPInventory:     map[string]ReservedIPInventory{},
+		appDeletionClaims:       map[string]struct{}{},
+		githubDeployBranches:    map[string]map[string]string{},
+		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
+		githubBindings:          map[string]GitHubBinding{},
+		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -3862,9 +3868,6 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	for _, d := range m.deployments {
-		if app, ok := m.apps[d.AppID]; !ok || app.Status == AppDeleted {
-			continue
-		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -9255,6 +9258,19 @@ func (m *MemStore) SetBuildStartedAtForTest(id string, t time.Time) {
 	m.builds[id] = b
 }
 
+// SetBuildEnqueuedAtForTest backdates a queued row so bounded-affinity tests
+// can exercise fleet-wide fallback without sleeping through the grace period.
+func (m *MemStore) SetBuildEnqueuedAtForTest(id string, t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[id]
+	if !ok {
+		return
+	}
+	b.EnqueuedAt = t
+	m.builds[id] = b
+}
+
 // SetInstanceMigratedFromForTest is a test-only hook that lets
 // future tests (e.g. a post-Phase-3 conflict path test) stamp
 // MigratedFromNodeID on a wedged state='migrating' row. The
@@ -9304,6 +9320,64 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	b.StartedAt = time.Now()
 	m.builds[id] = b
 	return b, nil
+}
+
+// ClaimQueuedBuildWithNodeAffinity mirrors the PostgreSQL notification-path
+// claim. A fresh rebuild prefers the app's latest successful builder; missing
+// provenance and rows older than affinityGrace remain fleet-wide claims.
+func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nodeID string, affinityGrace time.Duration) (Build, error) {
+	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
+		return m.ClaimQueuedBuild(ctx, id)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[id]
+	if !ok || b.Status != BuildQueued || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
+		return Build{}, ErrNotFound
+	}
+	b.Status = BuildRunning
+	b.StartedAt = time.Now()
+	m.builds[id] = b
+	return b, nil
+}
+
+func (m *MemStore) buildEligibleOnNodeLocked(build Build, nodeID string, affinityGrace time.Duration, now time.Time) bool {
+	if affinityGrace <= 0 || !build.EnqueuedAt.After(now.Add(-affinityGrace)) {
+		return true
+	}
+	preferred := m.preferredBuilderNodeLocked(build)
+	return preferred == "" || preferred == nodeID
+}
+
+func (m *MemStore) preferredBuilderNodeLocked(candidate Build) string {
+	dep, ok := m.deployments[candidate.DeploymentID]
+	if !ok {
+		return ""
+	}
+	var (
+		pickedID string
+		pickedAt time.Time
+		node     string
+	)
+	for id, build := range m.builds {
+		if id == candidate.ID || build.Status != BuildSucceeded {
+			continue
+		}
+		priorDep, ok := m.deployments[build.DeploymentID]
+		if !ok || priorDep.AppID != dep.AppID {
+			continue
+		}
+		prov, ok := m.buildProvenance[id]
+		if !ok || strings.TrimSpace(prov.BuilderNodeID) == "" {
+			continue
+		}
+		if pickedID == "" || build.FinishedAt.After(pickedAt) || (build.FinishedAt.Equal(pickedAt) && id > pickedID) {
+			pickedID = id
+			pickedAt = build.FinishedAt
+			node = prov.BuilderNodeID
+		}
+	}
+	return node
 }
 
 // ClaimNextQueuedBuild mirrors PgStore.ClaimNextQueuedBuild (PR-B). The
@@ -9415,6 +9489,80 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 				pick = c.id
 				earliest = c.enqueuedAt
 			}
+		}
+	}
+	if pick == "" {
+		return Build{}, ErrNotFound
+	}
+	b := m.builds[pick]
+	b.Status = BuildRunning
+	b.StartedAt = time.Now()
+	m.builds[pick] = b
+	return b, nil
+}
+
+// ClaimNextQueuedBuildWithNodeAffinity mirrors the PostgreSQL polling claim.
+// It filters the queue by bounded node affinity first, then applies the same
+// account-fairness preference among eligible rows.
+func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nodeID string, affinityGrace, fairnessWindow time.Duration) (Build, error) {
+	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
+		if fairnessWindow > 0 {
+			return m.ClaimNextQueuedBuildWithFairness(ctx, fairnessWindow)
+		}
+		return m.ClaimNextQueuedBuild(ctx)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	skip := map[string]struct{}{}
+	if fairnessWindow > 0 {
+		for accountID, claimedAt := range m.recentClaims {
+			if now.Sub(claimedAt) <= fairnessWindow {
+				skip[accountID] = struct{}{}
+			}
+		}
+	}
+	type candidate struct {
+		id         string
+		enqueuedAt time.Time
+		account    string
+	}
+	queued := make([]candidate, 0)
+	for id, build := range m.builds {
+		if build.Status != BuildQueued || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
+			continue
+		}
+		dep, ok := m.deployments[build.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := m.apps[dep.AppID]
+		if !ok {
+			continue
+		}
+		queued = append(queued, candidate{id: id, enqueuedAt: build.EnqueuedAt, account: app.AccountID})
+	}
+	if len(queued) == 0 {
+		return Build{}, ErrNotFound
+	}
+	hasFresh := false
+	for _, c := range queued {
+		if _, recent := skip[c.account]; !recent {
+			hasFresh = true
+			break
+		}
+	}
+	pick := ""
+	var earliest time.Time
+	for _, c := range queued {
+		if hasFresh {
+			if _, recent := skip[c.account]; recent {
+				continue
+			}
+		}
+		if pick == "" || c.enqueuedAt.Before(earliest) || (c.enqueuedAt.Equal(earliest) && c.id < pick) {
+			pick = c.id
+			earliest = c.enqueuedAt
 		}
 	}
 	if pick == "" {
@@ -11168,9 +11316,9 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
-// ListInvocationsByTraceID mirrors PgStore's account-scoped queue correlation
-// query. MemStore keeps the full invocation envelope for scheduler tests, but
-// this read only inspects the canonical platform trace header.
+// ListInvocationsByTraceID mirrors PgStore's account-scoped invocation
+// correlation query. MemStore keeps the full invocation envelope for scheduler
+// tests, but this read only inspects the canonical platform trace header.
 func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -11182,7 +11330,7 @@ func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceI
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AccountID != accountID || inv.Source != InvocationQueue {
+		if inv.AccountID != accountID {
 			continue
 		}
 		var headers map[string]string
@@ -14777,7 +14925,8 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb data.sidecar_name key AND the closed wake.kind IN
-// ('wake.sidecar_init_exit', 'wake.sidecar_restart') so a query
+// ('wake.sidecar_init_exit', 'wake.sidecar_restart',
+// 'wake.sidecar_health') so a query
 // never returns non-sidecar rows even if a future event reuses
 // the field name. Orders by at ASC so the per-sidecar timeline
 // reads forward; respects the same since / limit contract as
@@ -14787,7 +14936,8 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 // on a non-sidecar row would be silently returned without it,
 // which would surface an unrelated event in a sidecar's audit
 // view. Closed-enum filter matches the kind constants in
-// pkg/events/wake.go (WakeSidecarInitExit, WakeSidecarRestart).
+// pkg/events/wake.go (WakeSidecarInitExit, WakeSidecarRestart,
+// WakeSidecarHealth).
 func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, since time.Time, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -14797,7 +14947,7 @@ func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, si
 		if !e.At.After(since) {
 			continue
 		}
-		if e.Kind != "wake.sidecar_init_exit" && e.Kind != "wake.sidecar_restart" {
+		if e.Kind != "wake.sidecar_init_exit" && e.Kind != "wake.sidecar_restart" && e.Kind != "wake.sidecar_health" {
 			continue
 		}
 		var payload struct {
@@ -21638,10 +21788,13 @@ func (m *MemStore) ReplaceProvisionedStaticEgressIPs(_ context.Context, accountI
 // memstore's trigger-stub helpers (commit #6). Real production
 // code never sees this — the apid's MemStore tests do.
 func memNewUUID() [16]byte {
+	// Use the same cryptographically-random UUID source as the rest of the
+	// MemStore. A timestamp byte is not sufficient here: trigger IDs are used
+	// as map keys and as record ownership boundaries, so a collision can make
+	// one trigger claim another trigger's records.
+	id := uuid.New()
 	var b [16]byte
-	b[0] = byte(time.Now().UnixNano() & 0xff)
-	b[6] = (b[6] & 0x0f) | 0x40 // version 7
-	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC4122
+	copy(b[:], id[:])
 	return b
 }
 

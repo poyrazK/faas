@@ -107,3 +107,41 @@ func TestPgBuildClaimFairnessConcurrentOwners(t *testing.T) {
 		t.Errorf("claimed %d distinct builds, want %d", len(seen), count)
 	}
 }
+
+func TestPgBuildClaimNodeAffinityNotificationAndFallback(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx, "-affinity", "affinity")
+	prior, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := s.ClaimQueuedBuild(ctx, prior.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateBuildStatus(ctx, prior.ID, state.BuildSucceeded, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateBuildProvenance(ctx, state.BuildProvenance{
+		BuildID: prior.ID, BuilderNodeID: "node-a", StartedAt: claim.StartedAt, FinishedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newDep, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.CreateBuild(ctx, newDep.ID, state.DeploymentKindTarball, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimQueuedBuildWithNodeAffinity(ctx, fresh.ID, "node-b", time.Hour); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("wrong-node fresh claim = %v, want ErrNotFound", err)
+	}
+	if _, err := pool.Exec(ctx, `update builds set enqueued_at = now() - interval '1 minute' where id = $1`, fresh.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimQueuedBuildWithNodeAffinity(ctx, fresh.ID, "node-b", 5*time.Second); err != nil {
+		t.Fatalf("fallback claim: %v", err)
+	}
+}

@@ -41,6 +41,13 @@ func TestCorrelationRoundTrip(t *testing.T) {
 	lifted.WakeID = "wake-minted"
 	lifted.AppID = "app-1"
 	lifted.NodeID = "node-1"
+	lifted.DeploymentID = "dep-1"
+	lifted.TenantID = "tenant-1"
+	lifted.Region = "eu-west"
+	lifted.CommitSHA = "abc123"
+	lifted.DeploymentTag = "canary"
+	lifted.DeploymentCreatedAt = "2026-09-19T19:00:00Z"
+	lifted.ImageDigest = "sha256:digest"
 	lifted.TriggerClass = "monitor"
 	clientCtx := wire.WithCorrelationOutgoing(context.Background(), lifted)
 
@@ -53,11 +60,18 @@ func TestCorrelationRoundTrip(t *testing.T) {
 		t.Fatal("client-side read returned ok=false")
 	}
 	want := wire.CorrelationFields{
-		RequestID:    "req-from-gatewayd-internal",
-		WakeID:       "wake-minted",
-		AppID:        "app-1",
-		NodeID:       "node-1",
-		TriggerClass: "monitor",
+		RequestID:           "req-from-gatewayd-internal",
+		WakeID:              "wake-minted",
+		AppID:               "app-1",
+		NodeID:              "node-1",
+		DeploymentID:        "dep-1",
+		TenantID:            "tenant-1",
+		Region:              "eu-west",
+		CommitSHA:           "abc123",
+		DeploymentTag:       "canary",
+		DeploymentCreatedAt: "2026-09-19T19:00:00Z",
+		ImageDigest:         "sha256:digest",
+		TriggerClass:        "monitor",
 	}
 	if got != want {
 		t.Errorf("round-trip mismatch:\n got %+v\nwant %+v", got, want)

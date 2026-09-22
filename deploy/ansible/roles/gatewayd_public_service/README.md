@@ -44,6 +44,9 @@ daemon forwards plaintext requests to `gatewayd-internal` over
   gate is unenforced.
 - `tcpd.env.j2` — opt-in runtime contract for durable TCP listeners. The
   default public range is 40000–49999; TLS paths and limits are optional.
+  `faas_tcpd_idle_timeout` bounds quiet sessions and
+  `faas_tcpd_max_connections_per_account` bounds concurrent sessions per
+  account on each gateway.
 
 ## Note on the public edge
 

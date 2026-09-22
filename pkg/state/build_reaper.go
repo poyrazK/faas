@@ -25,6 +25,21 @@ type BuildClaimRecoveryStore interface {
 	RequeueBuildIfClaim(ctx context.Context, claim Build) error
 }
 
+// BuildAffinityClaimStore is the optional cache-locality claim capability used
+// by builderd on multi-node fleets. A queued build initially prefers the node
+// that completed the app's most recent successful build, because that node is
+// the best candidate to hold both the exact artifact and BuildKit dependency
+// caches. affinityGrace bounds the preference: after it expires, any healthy
+// builder may claim the row so cache locality can never strand a deployment.
+//
+// Both the notification-driven claim and the durable polling claim belong in
+// this capability. Keeping only one affinity-aware would leave the two claim
+// paths racing with different placement rules.
+type BuildAffinityClaimStore interface {
+	ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nodeID string, affinityGrace time.Duration) (Build, error)
+	ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nodeID string, affinityGrace, fairnessWindow time.Duration) (Build, error)
+}
+
 // ActiveDeploymentRootfsStore is the optional CAS surface used by imaged when
 // it publishes a freshly-built application layer. The status predicate is
 // part of the write so a cancellation or supersede racing with the layer

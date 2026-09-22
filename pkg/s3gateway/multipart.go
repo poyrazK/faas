@@ -193,8 +193,9 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 	if !h.admit(w, r, req, key, 0, false) {
 		return
 	}
-	if req.signature.PayloadHash != "UNSIGNED-PAYLOAD" {
-		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", "Multipart uploads with signed streaming payloads are not implemented by Gregale yet.", r.URL.Path, req.requestID)
+	integrity, err := newRequestIntegrityReader(r.Body, r.ContentLength, req.signature.PayloadHash, r.Header)
+	if err != nil {
+		h.writeAWSChunkedError(w, r, req.requestID, err)
 		return
 	}
 	if !h.recordProviderRequest(w, r, req) {
@@ -207,7 +208,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		h.providerError(w, r, req, err, key)
 		return
 	}
-	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPut, signed.URL, io.LimitReader(r.Body, r.ContentLength))
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPut, signed.URL, io.LimitReader(integrity, r.ContentLength))
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
@@ -218,10 +219,23 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
+		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
+			return
+		}
+		if req.streaming != nil && req.streaming.err != nil && h.writeAWSChunkedError(w, r, req.requestID, req.streaming.err) {
+			return
+		}
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
 	defer h.closeResponseBody(response.Body, req.requestID)
+	if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
+		return
+	}
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && integrity.remaining != 0 {
+		writeS3Error(w, http.StatusBadRequest, "IncompleteBody", "You did not provide the number of bytes specified by Content-Length.", r.URL.Path, req.requestID)
+		return
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return

@@ -348,6 +348,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206 opt-in: mint a signed caller assertion on every internal service call. Off is production-correct today because nothing verifies one yet (guest JWKS, runtime helper, and allow_callers policy are follow-ups), so no deploy path sets it and an operator without a verifier loads no key and computes no signature |
+| `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |
 | `FAAS_SIGN_KEY` | imaged | `default` |  |  | `` |  |
 | `FAAS_SIGN_PUB` | apid, schedd | `unit` |  |  | `` |  |
@@ -378,8 +380,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TAIL_WAIT_SEC` | guest | `guest` |  |  | `` |  |
 | `FAAS_TCPD_BIND_HOST` | gatewayd-public | `default` |  |  | `` | raw TCP ingress bind host; used only when FAAS_TCPD_ENABLED is true |
 | `FAAS_TCPD_ENABLED` | gatewayd-public | `default` |  |  | `` | opt-in raw TCP ingress runtime; enable only with the reserved-range firewall rules |
+| `FAAS_TCPD_IDLE_TIMEOUT` | gatewayd-public | `default` |  |  | `` | maximum quiet period for a raw TCP session; defaults to the platform streaming idle timeout |
 | `FAAS_TCPD_MAX_BYTES` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_MAX_CONNECTIONS` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_MAX_CONNECTIONS_PER_ACCOUNT` | gatewayd-public | `default` |  |  | `` | optional account-scoped cap for concurrent raw TCP sessions; zero leaves only the process-wide cap |
 | `FAAS_TCPD_REFRESH_INTERVAL` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_SCHEDD_TARGET` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_SCHEDD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |

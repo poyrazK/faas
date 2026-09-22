@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1380,10 +1381,13 @@ func (e *Engine) startCreateSpan(wakeCtx context.Context, name, snapID string, b
 	if e.tracer == nil {
 		return wakeCtx, nil
 	}
-	attrs := []attribute.KeyValue{
-		attribute.String("app_id", bootInput.appID),
-		attribute.String("instance_id", bootInput.insID),
-		attribute.String("deployment_id", bootInput.depID),
+	attrs := pkgtrace.PlatformIdentityAttributes(bootInput.identity)
+	if len(attrs) == 0 {
+		attrs = append(attrs,
+			attribute.String("app_id", bootInput.appID),
+			attribute.String("instance_id", bootInput.insID),
+			attribute.String("deployment_id", bootInput.depID),
+		)
 	}
 	if snapID != "" {
 		attrs = append(attrs, attribute.String("snap_id", snapID))
@@ -3259,14 +3263,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// across the schedd engine.
 	var wakeSpan oteltrace.Span
 	if e.tracer != nil {
+		wakeAttrs := pkgtrace.PlatformIdentityAttributes(bootInput.identity)
+		wakeAttrs = append(wakeAttrs,
+			attribute.String("wake_id", wakeID),
+			attribute.String("init_state", string(bootInput.initState)),
+		)
 		bootCtx, wakeSpan = e.tracer.Start(bootCtx, "sched.wake",
-			oteltrace.WithAttributes(
-				attribute.String("app_id", appID),
-				attribute.String("deployment_id", bootInput.depID),
-				attribute.String("instance_id", bootInput.insID),
-				attribute.String("wake_id", wakeID),
-				attribute.String("init_state", string(bootInput.initState)),
-			),
+			oteltrace.WithAttributes(wakeAttrs...),
 		)
 		defer wakeSpan.End()
 	}
@@ -3275,19 +3278,20 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// engine-minted wake_id / instance_id so a single inbound id
 	// carries across the schedd → vmmd boundary.
 	inboundCorr, _ := wire.FromContext(ctx)
-	bootCtx = wire.WithContext(bootCtx, wire.CorrelationFields{
-		RequestID:          inboundCorr.RequestID,
-		InvocationID:       inboundCorr.InvocationID,
-		AppID:              appID,
-		DeploymentID:       bootInput.depID,
-		InstanceID:         bootInput.insID,
-		NodeID:             bootInput.nodeID,
-		WakeID:             wakeID,
-		Trigger:            bootInput.trigger,
-		TriggerClass:       inboundCorr.TriggerClass,
-		QueuedCount:        bootInput.queuedCount,
-		ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
-	})
+	bootCtx = wire.WithPlatformIdentity(bootCtx, bootInput.identity)
+	bootCorr, _ := wire.FromContext(bootCtx)
+	bootCorr.RequestID = inboundCorr.RequestID
+	bootCorr.InvocationID = inboundCorr.InvocationID
+	bootCorr.AppID = appID
+	bootCorr.DeploymentID = bootInput.depID
+	bootCorr.InstanceID = bootInput.insID
+	bootCorr.NodeID = bootInput.nodeID
+	bootCorr.WakeID = wakeID
+	bootCorr.Trigger = bootInput.trigger
+	bootCorr.TriggerClass = inboundCorr.TriggerClass
+	bootCorr.QueuedCount = bootInput.queuedCount
+	bootCorr.ConcurrencyAtAdmit = bootInput.concurrencyAtAdmit
+	bootCtx = wire.WithContext(bootCtx, bootCorr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_started at the
 	// entry to Phase 3 (the unlocked vmmd RPC). The customer-facing
 	// timeline endpoint joins this row to wake.boot_completed /

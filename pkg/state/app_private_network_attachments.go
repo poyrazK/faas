@@ -55,10 +55,40 @@ type AppPrivateNetworkAttachmentReconcileStore interface {
 	UpdateAppPrivateNetworkAttachmentStatus(ctx context.Context, accountID, appID, status, detail string) (AppPrivateNetworkAttachment, error)
 }
 
+// PrivateNetworkAttachmentNodeStatus is the durable per-node health projection
+// for one attachment. The two stages are stored independently because fabric
+// preparation can succeed while route/policy publication fails (or vice versa).
+// An empty stage means that the corresponding applier did not participate in
+// the observation, which preserves compatibility with provider route-only
+// attachments.
+type PrivateNetworkAttachmentNodeStatus struct {
+	AccountID    string
+	AppID        string
+	NetworkID    string
+	NodeID       string
+	FabricStatus string
+	FabricDetail string
+	RouteStatus  string
+	RouteDetail  string
+	ObservedAt   time.Time
+}
+
+// PrivateNetworkAttachmentHealthStore is an additive operator-observability
+// surface. It deliberately stays separate from the attachment store so older
+// adapters can keep serving the customer API while health persistence rolls
+// out. Rows are keyed by app and node and replaced on every reconciliation.
+type PrivateNetworkAttachmentHealthStore interface {
+	UpsertPrivateNetworkAttachmentNodeStatus(context.Context, PrivateNetworkAttachmentNodeStatus) error
+	ListPrivateNetworkAttachmentNodeStatuses(context.Context, string, string) ([]PrivateNetworkAttachmentNodeStatus, error)
+	DeletePrivateNetworkAttachmentNodeStatuses(context.Context, string, string) error
+}
+
 var _ AppPrivateNetworkAttachmentStore = (*MemStore)(nil)
 var _ AppPrivateNetworkAttachmentStore = (*PgStore)(nil)
 var _ AppPrivateNetworkAttachmentReconcileStore = (*MemStore)(nil)
 var _ AppPrivateNetworkAttachmentReconcileStore = (*PgStore)(nil)
+var _ PrivateNetworkAttachmentHealthStore = (*MemStore)(nil)
+var _ PrivateNetworkAttachmentHealthStore = (*PgStore)(nil)
 
 func (m *MemStore) GetAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) (AppPrivateNetworkAttachment, error) {
 	if err := ctx.Err(); err != nil {

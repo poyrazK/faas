@@ -30,6 +30,7 @@ func (r ListenerStoreResolver) Resolve(ctx context.Context, publicPort int) (Rou
 	route := Route{
 		PublicPort:   listener.PublicPort,
 		AppID:        listener.AppID,
+		AccountID:    listener.AccountID,
 		ListenerName: listener.ListenerName,
 		GuestPort:    listener.GuestPort,
 		Protocol:     listener.Protocol,

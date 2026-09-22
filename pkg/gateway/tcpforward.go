@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -28,12 +29,16 @@ type TCPForwarder struct {
 	// MaxBytes bounds each direction of a session. Zero uses the platform
 	// default. A smaller value is useful for plan-specific admission.
 	MaxBytes int64
+	// IdleTimeout is the maximum quiet period for either direction of a TCP
+	// session. Zero uses the platform default; activity in either direction
+	// resets the timer.
+	IdleTimeout time.Duration
 }
 
 // ServeConn forwards conn until either side closes or the stream fails. It
 // returns a gRPC status for transport failures so tcpd can distinguish a
 // missing compute node from a guest-side close in its metrics.
-func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Target) error {
+func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Target) error { //nolint:contextcheck // this transport boundary derives an activity-cancelled context before dialing or streaming.
 	if f.Nodes == nil {
 		return status.Error(codes.FailedPrecondition, "TCP forwarder has no node lookup")
 	}
@@ -45,7 +50,19 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	}
 	defer func() { _ = conn.Close() }()
 
-	cli, closer, ok := f.Nodes.ClientFor(ctx, target.NodeID)
+	idle := f.IdleTimeout
+	if idle <= 0 {
+		idle = api.StreamingIdleTimeoutDefault
+	}
+	idleSession := newIdleSession(ctx, idle)
+	defer idleSession.stop()
+	idleCtx := idleSession.ctx //nolint:contextcheck // the idle-session context inherits the caller and adds activity-based cancellation.
+	go func() {
+		<-idleCtx.Done()
+		_ = conn.Close()
+	}()
+
+	cli, closer, ok := f.Nodes.ClientFor(idleCtx, target.NodeID) //nolint:contextcheck // idleCtx is the caller context augmented with the session idle timer.
 	if !ok || cli == nil {
 		return status.Errorf(codes.Unavailable, "compute node %q is unavailable", target.NodeID)
 	}
@@ -53,9 +70,9 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 		defer func() { _ = closer.Close() }()
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	streamCtx, cancel := context.WithCancel(idleCtx)
 	defer cancel()
-	stream, err := cli.ForwardTCPStream(ctx)
+	stream, err := cli.ForwardTCPStream(streamCtx) //nolint:contextcheck // streamCtx inherits idleCtx and is canceled when either copy direction ends.
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "open TCP forward stream: %v", err)
 	}
@@ -75,10 +92,10 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 
 	results := make(chan tcpDirectionResult, 2)
 	go func() {
-		results <- tcpDirectionResult{side: tcpDirectionSend, err: tcpConnToStream(ctx, conn, stream, maxBytes)}
+		results <- tcpDirectionResult{side: tcpDirectionSend, err: tcpConnToStream(streamCtx, conn, stream, maxBytes, idleSession.touch)}
 	}()
 	go func() {
-		results <- tcpDirectionResult{side: tcpDirectionReceive, err: tcpStreamToConn(conn, stream, maxBytes)}
+		results <- tcpDirectionResult{side: tcpDirectionReceive, err: tcpStreamToConn(conn, stream, maxBytes, idleSession.touch)}
 	}()
 
 	first := <-results
@@ -116,12 +133,15 @@ type tcpDirectionResult struct {
 	err  error
 }
 
-func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64) error {
+func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64, touch func()) error {
 	buf := make([]byte, 32*1024)
 	var total int64
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
+			if touch != nil {
+				touch()
+			}
 			total += int64(n)
 			if total > maxBytes {
 				return status.Errorf(codes.ResourceExhausted, "TCP request exceeded %d bytes", maxBytes)
@@ -148,7 +168,7 @@ func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreami
 	}
 }
 
-func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64) error {
+func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64, touch func()) error {
 	first := true
 	var total int64
 	for {
@@ -161,6 +181,9 @@ func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.Forwa
 		}
 		if err != nil {
 			return status.Errorf(codes.Unavailable, "receive TCP response bytes: %v", err)
+		}
+		if touch != nil {
+			touch()
 		}
 		if first {
 			first = false

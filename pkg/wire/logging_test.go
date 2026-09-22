@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -74,6 +75,58 @@ func TestNewCorrelationLogger_EmitsCanonicalFields(t *testing.T) {
 		if got, _ := rec[k].(string); got != v {
 			t.Errorf("field %q = %q, want %q", k, got, v)
 		}
+	}
+}
+
+func TestPlatformIdentityLogger_EmitsDeploymentFields(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.New(slog.NewJSONHandler(&buf, nil))
+	log := wire.WithPlatformIdentityLogger(base, api.PlatformIdentity{
+		RequestID:           "req-identity",
+		AppID:               "app-1",
+		DeploymentID:        "dep-1",
+		TenantID:            "tenant-1",
+		InstanceID:          "instance-1",
+		NodeID:              "node-1",
+		Region:              "eu-west",
+		CommitSHA:           "abc123",
+		DeploymentTag:       "canary",
+		DeploymentCreatedAt: "2026-09-19T19:00:00Z",
+		ImageDigest:         "sha256:digest",
+	})
+	log.Info("identity")
+	recs := decodeLines(t, &buf)
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	for key, want := range map[string]string{
+		"request_id": "req-identity", "app_id": "app-1", "deployment_id": "dep-1",
+		"tenant_id": "tenant-1", "instance_id": "instance-1", "node_id": "node-1",
+		"region": "eu-west", "commit_sha": "abc123", "deployment_tag": "canary",
+		"deployment_created_at": "2026-09-19T19:00:00Z", "image_digest": "sha256:digest",
+	} {
+		if got, _ := recs[0][key].(string); got != want {
+			t.Errorf("field %q = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestWithPlatformIdentity_PreservesLifecycleFields(t *testing.T) {
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		RequestID: "req-1", WakeID: "wake-1", InvocationID: "inv-1", Trigger: "gateway",
+	})
+	ctx = wire.WithPlatformIdentity(ctx, api.PlatformIdentity{
+		AppID: "app-1", DeploymentID: "dep-1", TenantID: "tenant-1", Region: "eu-west",
+	})
+	got, ok := wire.FromContext(ctx)
+	if !ok {
+		t.Fatal("identity context did not round-trip")
+	}
+	if got.WakeID != "wake-1" || got.InvocationID != "inv-1" || got.Trigger != "gateway" {
+		t.Fatalf("lifecycle fields changed: %+v", got)
+	}
+	if got.AppID != "app-1" || got.DeploymentID != "dep-1" || got.TenantID != "tenant-1" || got.Region != "eu-west" {
+		t.Fatalf("identity fields missing: %+v", got)
 	}
 }
 

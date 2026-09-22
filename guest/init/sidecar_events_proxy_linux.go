@@ -2,7 +2,7 @@
 
 // Sidecar events proxy (issue #463 / ADR-069 / ADR-071 / PR-C §3,§4).
 //
-// guest-init's runWorkloads orchestrator emits two sidecar-class
+// guest-init's runWorkloads orchestrator emits three sidecar-class
 // events to the host so the platform can audit init failures and
 // observe restart rates:
 //
@@ -21,9 +21,15 @@
 //     vmmd_sidecar_restart_total{app,sidecar} and emits
 //     pkg/events.SidecarRestart (AC #3).
 //
+//   - sidecar_health     (type=0x08 on port 1027) — fired for the
+//     lifecycle transitions of a long-running sidecar: starting,
+//     healthy, unhealthy, restarting, or failed. vmmd translates
+//     the frame into pkg/events.SidecarHealth and increments the
+//     transition counter.
+//
 // Wire (guest-init → vsock STREAM, port 1027):
 //
-//	[1B type=0x02 | 0x03][json envelope bytes (UTF-8)]
+//	[1B type=0x02 | 0x03 | 0x08][json envelope bytes (UTF-8)]
 //
 // The envelope shape (json):
 //
@@ -33,12 +39,13 @@
 //	  "exit_code":    <int>,        // 0x02 only
 //	  "duration_ms":  <int>,        // 0x02 only
 //	  "attempt":      <int>         // 0x03 only
+//	  "reason":       "<bounded text>" // 0x08 only
 //	}
 //
 // This piggybacks on the same vsock channel PR #470 carved for
 // framework_ready (port 1027, type=0x01). The host receiver
 // (cmd/vmmd/framework_ready_recv.go) dispatches on the leading
-// type byte and routes 0x02/0x03 to the sidecar events emitter.
+// type byte and routes 0x02/0x03/0x08 to the sidecar events emitter.
 // A future PR can split into per-event-class sockets for cleaner
 // backpressure; the closed enum + bounded payload keeps the
 // single-socket design safe in PR-C.
@@ -66,7 +73,7 @@ import (
 // ADR-071 / PR-C). The guest-init proxy and the host receiver
 // share the same port; the leading type byte disambiguates the
 // event class (0x01 = framework_ready, 0x02 = sidecar_init_exit,
-// 0x03 = sidecar_restart). Duplicated by design — guest-init and
+// 0x03 = sidecar_restart, 0x08 = sidecar_health). Duplicated by design — guest-init and
 // cmd/vmmd cannot share compile-time symbols.
 const VsockSidecarEventsPort uint32 = 1027
 
@@ -78,6 +85,10 @@ const VsockSidecarEventsTypeInitExit byte = 0x02
 // VsockSidecarEventsTypeRestart is the discriminator byte for the
 // restart-counter envelope.
 const VsockSidecarEventsTypeRestart byte = 0x03
+
+// VsockSidecarEventsTypeHealth is the discriminator byte for the
+// bounded sidecar lifecycle envelope.
+const VsockSidecarEventsTypeHealth byte = 0x08
 
 // VsockTailEventType (issue #667 / ADR-078) is the discriminator
 // byte for the waitUntil(post-response tail) terminal-event
@@ -147,6 +158,15 @@ type sidecarRestartEnvelope struct {
 	Attempt int    `json:"attempt"`
 }
 
+// sidecarHealthEnvelope is the JSON payload the proxy sends for type=0x08.
+// Status is a closed set shared with cmd/vmmd; reason is diagnostic text only
+// and is bounded before the frame is written.
+type sidecarHealthEnvelope struct {
+	Sidecar string `json:"sidecar"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+}
+
 // sidecarMaxDatagram caps the JSON envelope. sidecar names are
 // bounded by api.SidecarCapMax=2 + a reasonable length bound
 // (~32 chars); the JSON envelope settles well under 256 bytes
@@ -165,7 +185,7 @@ func startSidecarEventsProxy(log *slog.Logger) (*sidecarEventsProxy, error) {
 	return p, nil
 }
 
-// sidecarEventsProxy is the outbound-only sender for the two
+// sidecarEventsProxy is the outbound-only sender for the three
 // sidecar event classes.
 type sidecarEventsProxy struct {
 	log *slog.Logger
@@ -210,6 +230,36 @@ func (p *sidecarEventsProxy) SendRestart(sidecar string, attempt int) error {
 		return fmt.Errorf("sidecar restart marshal: %w", err)
 	}
 	return p.send(VsockSidecarEventsTypeRestart, body)
+}
+
+// SendHealth ships one bounded sidecar lifecycle transition to the host.
+// The send is best-effort at the caller, just like the existing restart and
+// init-exit signals: losing an observation must not change workload behavior.
+func (p *sidecarEventsProxy) SendHealth(sidecar, status, reason string) error {
+	if p == nil {
+		return nil
+	}
+	reason = clampSidecarHealthReason(reason)
+	env := sidecarHealthEnvelope{Sidecar: sidecar, Status: status, Reason: reason}
+	body, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("sidecar health marshal: %w", err)
+	}
+	return p.send(VsockSidecarEventsTypeHealth, body)
+}
+
+func clampSidecarHealthReason(reason string) string {
+	if len(reason) <= 256 {
+		return reason
+	}
+	runes := []rune(reason)
+	if len(runes) > 256 {
+		runes = runes[:256]
+	}
+	for len(runes) > 0 && len(string(runes)) > 256 {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes)
 }
 
 // SendTailEvent (issue #667 / ADR-078) ships one waitUntil

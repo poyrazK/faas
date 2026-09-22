@@ -9,8 +9,8 @@
 // can't import it. The CLI's runtime validator already reads
 // templates.Exists → templates.Names locally; a server endpoint keeps
 // the dashboard and the CLI in sync without a refactor (a divergent
-// release would show a 13-entry list on one and a 14-entry list on
-// the other — the deploy doc notes the pairing requirement).
+// release would show different template lists — the deploy doc notes
+// the pairing requirement).
 //
 // The endpoint is cookie-session-authenticated (dashboardChain) — same
 // gate the rest of the dashboard surface uses. No API-key auth; this
@@ -66,6 +66,8 @@ func templateDescription(name string) string {
 		return "scheduled job worker with retries — bring your own schedule"
 	case "webhook-receiver":
 		return "signed webhook receiver — bring your own upstream"
+	case "event-worker":
+		return "event-triggered worker — subscribe to routed events"
 	case "ai-chat":
 		return "OpenAI-compatible chat scaffold — bring your own key"
 	}
@@ -129,7 +131,7 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 
 // projectAppsNewTemplates converts the wire templateView slice into
 // the dashboard-local views.AppsNewTemplateView so the template can
-// stay a pure renderer. Same 15 rows as /v1/templates returns; the
+// stay a pure renderer. Same rows as /v1/templates returns; the
 // dashboard never recomputes descriptions / categories client-side.
 func projectAppsNewTemplates(wire []templateView) []views.AppsNewTemplateView {
 	out := make([]views.AppsNewTemplateView, 0, len(wire))

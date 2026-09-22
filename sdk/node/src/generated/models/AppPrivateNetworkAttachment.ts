@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppPrivateNetworkNodeStatus } from './AppPrivateNetworkNodeStatus.js';
 /**
  * Provider-neutral private-network attachment intent for one app.
  * `pending` and `error` are fail-closed; only `ready` admits private
@@ -23,6 +24,10 @@ export type AppPrivateNetworkAttachment = {
   address?: string;
   status: 'pending' | 'ready' | 'error';
   status_detail?: string;
+  /**
+   * Last durable convergence result for each compute node serving this attachment.
+   */
+  nodes?: Array<AppPrivateNetworkNodeStatus>;
   created_at?: string;
   updated_at?: string;
 };

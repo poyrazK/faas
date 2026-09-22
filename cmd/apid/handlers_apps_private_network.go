@@ -61,7 +61,7 @@ func (s *server) getAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 	}
 	var out *api.AppPrivateNetworkAttachment
 	if err == nil {
-		converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID))
+		converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID), privateNetworkNodeStatuses(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID))
 		out = &converted
 	}
 	writeJSON(w, http.StatusOK, api.AppPrivateNetworkAttachmentResponse{
@@ -180,6 +180,12 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("could not save private network attachment"))
 		return
 	}
+	if healthStore, ok := s.store.(state.PrivateNetworkAttachmentHealthStore); ok {
+		// The attachment mutation is authoritative; stale health is harmless
+		// because the next reconciliation replaces it. Do not turn a successful
+		// customer mutation into a 5xx if telemetry cleanup is unavailable.
+		_ = healthStore.DeletePrivateNetworkAttachmentNodeStatuses(r.Context(), acct.ID, app.ID)
+	}
 	if fabric != nil && previous.NetworkID != "" && previous.NetworkID != req.NetworkID {
 		_ = fabric.ReleasePrivateNetworkAddress(r.Context(), acct.ID, previous.NetworkID, "app", app.ID)
 	}
@@ -192,7 +198,7 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		"app_id": app.ID, "network_id": attachment.NetworkID, "region": attachment.Region,
 		"cidrs": prefixesToStrings(attachment.CIDRs), "allowed_cidrs": prefixesToStrings(attachment.AllowedCIDRs), "status": attachment.Status,
 	})
-	converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID))
+	converted := privateNetworkAttachmentResponse(attachment, privateNetworkAddress(r.Context(), s.store, acct.ID, app.ID, attachment.NetworkID), nil)
 	writeJSON(w, http.StatusAccepted, api.AppPrivateNetworkAttachmentResponse{
 		FeatureEnabled: true,
 		PlanAllowed:    limits.PrivateNetworkAllowed,
@@ -231,6 +237,9 @@ func (s *server) clearAppPrivateNetworkAttachment(w http.ResponseWriter, r *http
 		return
 	}
 	if err == nil {
+		if healthStore, ok := s.store.(state.PrivateNetworkAttachmentHealthStore); ok {
+			_ = healthStore.DeletePrivateNetworkAttachmentNodeStatuses(r.Context(), acct.ID, app.ID)
+		}
 		_ = s.notif.Notify(r.Context(), "app_changed", string(safetext.JSONObject(
 			privateNetworkAttachmentChange{
 				Kind: "private_network_attachment", AppID: app.ID, AccountID: acct.ID,
@@ -241,7 +250,7 @@ func (s *server) clearAppPrivateNetworkAttachment(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment, address string) api.AppPrivateNetworkAttachment {
+func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment, address string, nodes []api.AppPrivateNetworkNodeStatus) api.AppPrivateNetworkAttachment {
 	out := api.AppPrivateNetworkAttachment{
 		ID:           in.ID,
 		NetworkID:    in.NetworkID,
@@ -251,6 +260,7 @@ func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment, addr
 		Address:      address,
 		Status:       in.Status,
 		StatusDetail: in.StatusDetail,
+		Nodes:        nodes,
 	}
 	if !in.CreatedAt.IsZero() {
 		t := in.CreatedAt.UTC()
@@ -259,6 +269,33 @@ func privateNetworkAttachmentResponse(in state.AppPrivateNetworkAttachment, addr
 	if !in.UpdatedAt.IsZero() {
 		t := in.UpdatedAt.UTC()
 		out.UpdatedAt = &t
+	}
+	return out
+}
+
+func privateNetworkNodeStatuses(ctx context.Context, store state.Store, accountID, appID, networkID string) []api.AppPrivateNetworkNodeStatus {
+	healthStore, ok := store.(state.PrivateNetworkAttachmentHealthStore)
+	if !ok {
+		return nil
+	}
+	rows, err := healthStore.ListPrivateNetworkAttachmentNodeStatuses(ctx, accountID, appID)
+	if err != nil {
+		return nil
+	}
+	out := make([]api.AppPrivateNetworkNodeStatus, 0, len(rows))
+	for _, row := range rows {
+		if row.NetworkID != networkID {
+			continue
+		}
+		status := api.AppPrivateNetworkNodeStatus{
+			NodeID: row.NodeID, FabricStatus: row.FabricStatus, FabricDetail: row.FabricDetail,
+			RouteStatus: row.RouteStatus, RouteDetail: row.RouteDetail,
+		}
+		if !row.ObservedAt.IsZero() {
+			observedAt := row.ObservedAt.UTC()
+			status.ObservedAt = &observedAt
+		}
+		out = append(out, status)
 	}
 	return out
 }

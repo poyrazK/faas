@@ -128,6 +128,11 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, destinationProblem)
 		return
 	}
+	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), req.Headers)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("headers must be a JSON object of string values"))
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		AppID:                  app.ID,
 		AccountID:              acct.ID,
@@ -135,7 +140,7 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		Method:                 req.Method,
 		Path:                   req.Path,
 		Payload:                req.Payload,
-		Headers:                req.Headers,
+		Headers:                invocationHeaders,
 		DueAt:                  time.Now().UTC(),
 		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
 		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
@@ -196,6 +201,11 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if acct.Plan == api.PlanFree {
 		timeout = 5 * time.Second
 	}
+	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), req.Headers)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("headers must be a JSON object of string values"))
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		AppID:     app.ID,
 		AccountID: acct.ID,
@@ -203,7 +213,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		Method:    req.Method,
 		Path:      req.Path,
 		Payload:   req.Payload,
-		Headers:   req.Headers,
+		Headers:   invocationHeaders,
 		DueAt:     time.Now().UTC(),
 		// PR-B fixup (code-review #1185 findings #7 + #8): wire the
 		// customer's deadline / retry-policy / retention overrides
@@ -332,7 +342,7 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, problem)
 		return
 	}
-	traceHeaders, err := json.Marshal(pkgtrace.InjectHeaders(r.Context()))
+	traceHeaders, err := pkgtrace.MergeHeaders(r.Context(), nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("encode queue trace context"))
 		return
@@ -594,11 +604,17 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	sched := req.ScheduledAt.UTC()
+	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), nil)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("encode delayed task trace context"))
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		AppID:       app.ID,
 		AccountID:   acct.ID,
 		Source:      state.InvocationDelayedTask,
 		Payload:     req.Payload,
+		Headers:     invocationHeaders,
 		DueAt:       sched,
 		ScheduledAt: &sched,
 	})
@@ -902,6 +918,11 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 	// lifecycle. LeaseExpiresAt / ReceivedAt / CompletedAt / Result /
 	// LastError / AckURL are nil on a fresh INSERT; the drain
 	// populates them as the row flows through dispatch.
+	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), orig.Headers)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("original invocation headers must be a JSON object of string values"))
+		return
+	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		AppID:                orig.AppID,
 		AccountID:            acct.ID,
@@ -909,7 +930,7 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		Method:               orig.Method,
 		Path:                 orig.Path,
 		Payload:              orig.Payload,
-		Headers:              orig.Headers,
+		Headers:              invocationHeaders,
 		DueAt:                time.Now().UTC(),
 		DeadlineAt:           deadlineForRequest(nil, acct),
 		ResultRetentionUntil: retentionForRequest(nil, acct),

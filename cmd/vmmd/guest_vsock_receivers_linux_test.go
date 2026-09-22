@@ -31,6 +31,7 @@ func TestGuestEventStreamDispatchesClosedEventSet(t *testing.T) {
 		{VsockFrameworkReadyHostTypeReady, 0},
 		append([]byte{VsockFrameworkReadyHostTypeInitExit}, mustJSON(t, sidecarInitExitWire{Sidecar: "migrate", Status: sidecarStatusInitOK})...),
 		append([]byte{VsockFrameworkReadyHostTypeRestart}, mustJSON(t, sidecarRestartWire{Sidecar: "worker", Attempt: 1})...),
+		append([]byte{VsockFrameworkReadyHostTypeSidecarHealth}, mustJSON(t, sidecarHealthWire{Sidecar: "worker", Status: sidecarHealthHealthy, Reason: "started"})...),
 		tail,
 		append([]byte{VsockFrameworkReadyHostTypeWorkloadOOM}, mustJSON(t, workloadOOMWire{PeakMB: 512, PlanMB: 256})...),
 		append([]byte{VsockFrameworkReadyHostTypeDisk}, mustJSON(t, diskUsageWire{UsedBytes: 20, CapacityBytes: 100})...),

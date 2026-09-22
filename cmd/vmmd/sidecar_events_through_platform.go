@@ -15,6 +15,9 @@
 //     nil-safe via the OpsMetrics.ObserveSidecarRestart
 //     receiver.
 //
+//   - <daemon>_sidecar_health_transition_total{app, sidecar, status}
+//     for the type=0x08 lifecycle envelope.
+//
 //   - the deployments.audit table via state.Store when
 //     the wire envelope is init_failed (PR-C §3, AC #1
 //     surface — failure_class: user_error audit row).
@@ -214,6 +217,26 @@ func (e *SidecarEventsThroughPlatform) EmitSidecarRestart(
 	// struct that owns every other daemon-level counter.
 	// Nil-safe via the OpsMetrics receiver.
 	e.Metrics.ObserveSidecarRestart(appID, wireEnv.Sidecar)
+}
+
+// EmitSidecarHealth translates a guest-init lifecycle transition into the
+// canonical event stream and transition counter. Both sinks are nil-safe so
+// local vmmd runs can still receive the wire without requiring a database or
+// metrics registry.
+func (e *SidecarEventsThroughPlatform) EmitSidecarHealth(
+	ctx context.Context, instanceID, appID, wakeID string, wireEnv sidecarHealthWire,
+) {
+	if e == nil {
+		return
+	}
+	if e.Platform != nil {
+		e.Platform.Emit(ctx, events.SidecarHealth{
+			EmitAt: nowOrDefault(e.Now), WakeID: wakeID, AppID: appID,
+			InstanceID: instanceID, SidecarName: wireEnv.Sidecar,
+			Status: wireEnv.Status, Reason: wireEnv.Reason,
+		})
+	}
+	e.Metrics.ObserveSidecarHealth(appID, wireEnv.Sidecar, wireEnv.Status)
 }
 
 // nowOrDefault returns the receiver's clock, falling back
