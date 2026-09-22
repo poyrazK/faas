@@ -4260,6 +4260,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"usage_daily", `delete from usage_daily where app_id = $1`},
 		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
 		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
+		{"log_events", `delete from log_events where app_id = $1`},
 		{"debug_regression_observations", `delete from debug_regression_observations where app_id = $1`},
 		{"mirror_invocation_results", `delete from mirror_invocation_results where app_id = $1`},
 		{"mirror_invocation_summary", `delete from mirror_invocation_summary where app_id = $1`},

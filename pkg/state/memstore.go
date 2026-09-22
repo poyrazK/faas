@@ -499,6 +499,7 @@ type MemStore struct {
 	// to the production shape.
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
+	logEvents      []LogEvent
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)
 	// mirrors the per-workload filesystem handle table. Keyed by
 	// "<deploymentID>\x00<sidecarName>" to give O(1) upsert +
@@ -5626,6 +5627,13 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	m.usage = filteredUsage
+	filteredLogEvents := m.logEvents[:0]
+	for _, event := range m.logEvents {
+		if event.AppID != id {
+			filteredLogEvents = append(filteredLogEvents, event)
+		}
+	}
+	m.logEvents = filteredLogEvents
 	delete(m.apps, id)
 	return nil
 }

@@ -2706,6 +2706,7 @@ type Store interface {
 	// cheap).
 	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
 	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
+	LogEventStore
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
