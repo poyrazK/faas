@@ -42,6 +42,40 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestForwardingReverseProxy_UnavailableTargetReturnsActionableProblem(t *testing.T) {
+	lookup := &fakeNodeLookup{}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)(gateway.Target{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://app.example.test/", nil)
+
+	proxy.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.Contains(got, "application/problem+json") {
+		t.Fatalf("Content-Type = %q, want application/problem+json", got)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "5" {
+		t.Errorf("Retry-After = %q, want 5", got)
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeAppUnavailable {
+		t.Errorf("code = %q, want %q", problem.Code, api.CodeAppUnavailable)
+	}
+	if problem.Hint == "" {
+		t.Error("hint is empty; unavailable app response must give a next action")
+	}
+	for _, internal := range []string{"node", "instance", "forwarder", "gRPC"} {
+		if strings.Contains(recorder.Body.String(), internal) {
+			t.Errorf("response leaked infrastructure term %q: %s", internal, recorder.Body.String())
+		}
+	}
+}
+
 func TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders(t *testing.T) {
 	stream := &fakeBidiStream{
 		Responses: []*vmmdpb.ForwardHTTPStreamResponse{

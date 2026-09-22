@@ -230,7 +230,7 @@ func (s *server) issueDashboardConfigCSRF(w http.ResponseWriter, log *slog.Logge
 func (s *server) dashboardSetEnv(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardConfigCSRF(w, r, dashboardEnvMutationAction, dashboardEnvCSRFCookie, acct.ID) {
@@ -253,7 +253,7 @@ func (s *server) dashboardSetEnv(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardDeleteEnv(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardConfigCSRF(w, r, dashboardEnvMutationAction, dashboardEnvCSRFCookie, acct.ID) {
@@ -275,7 +275,7 @@ func (s *server) dashboardDeleteEnv(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardSetSecret(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardConfigCSRF(w, r, dashboardSecretMutationAction, dashboardSecretCSRFCookie, acct.ID) {
@@ -298,7 +298,7 @@ func (s *server) dashboardSetSecret(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardConfigCSRF(w, r, dashboardSecretMutationAction, dashboardSecretCSRFCookie, acct.ID) {
@@ -320,7 +320,7 @@ func (s *server) dashboardDeleteSecret(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardRotateSecret(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardConfigCSRF(w, r, dashboardSecretMutationAction, dashboardSecretCSRFCookie, acct.ID) {

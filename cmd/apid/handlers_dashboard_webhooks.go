@@ -171,7 +171,7 @@ func (s *server) verifyDashboardWebhooksCSRF(w http.ResponseWriter, r *http.Requ
 func (s *server) dashboardCreateAppWebhook(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardWebhooksCSRF(w, r, acct.ID) {
@@ -204,7 +204,7 @@ func (s *server) dashboardCreateAppWebhook(w http.ResponseWriter, r *http.Reques
 func (s *server) dashboardToggleAppWebhook(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardWebhooksCSRF(w, r, acct.ID) {
@@ -231,7 +231,7 @@ func (s *server) dashboardToggleAppWebhook(w http.ResponseWriter, r *http.Reques
 func (s *server) dashboardDeleteAppWebhook(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardWebhooksCSRF(w, r, acct.ID) {
@@ -248,7 +248,7 @@ func (s *server) dashboardDeleteAppWebhook(w http.ResponseWriter, r *http.Reques
 func (s *server) dashboardRotateAppWebhookSecret(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardWebhooksCSRF(w, r, acct.ID) {
@@ -266,7 +266,7 @@ func (s *server) dashboardRotateAppWebhookSecret(w http.ResponseWriter, r *http.
 func (s *server) dashboardRetryAppWebhookDelivery(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardWebhooksCSRF(w, r, acct.ID) {

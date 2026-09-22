@@ -146,7 +146,9 @@ func (s *server) createMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 				api.WriteProblem(w, api.ErrMirrorRuleQuotaExceeded(limits, qe.Observed))
 				return
 			}
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "could not create mirror rule", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "create mirror rule",
+				"Gregale could not create this mirror rule.",
+				"Retry the request in a moment; if it continues, contact support.", err)
 		}
 		return
 	}
@@ -191,7 +193,9 @@ func (s *server) listMirrorRules(w http.ResponseWriter, r *http.Request, acct st
 	}
 	rules, err := s.store.ListMirrorRules(r.Context(), app.ID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "could not list mirror rules", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "list mirror rules",
+			"Gregale could not load mirror rules for this app.",
+			"Refresh the page or retry the request in a moment.", err)
 		return
 	}
 	out := make([]api.MirrorRuleResponse, 0, len(rules))
@@ -285,12 +289,16 @@ func (s *server) updateMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 			if req.Percent != nil {
 				api.WriteProblem(w, api.ErrInvalidMirrorPercent(*req.Percent))
 			} else {
-				api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "update failed", err.Error()))
+				writeCustomerInternalProblem(w, r, s.log, "update mirror rule",
+					"Gregale could not update this mirror rule.",
+					"Retry the request in a moment; if it continues, contact support.", err)
 			}
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such mirror rule")
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "update failed", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "update mirror rule",
+				"Gregale could not update this mirror rule.",
+				"Retry the request in a moment; if it continues, contact support.", err)
 		}
 		return
 	}
@@ -342,7 +350,9 @@ func (s *server) deleteMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such mirror rule")
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "delete failed", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "delete mirror rule",
+				"Gregale could not delete this mirror rule.",
+				"Retry the request in a moment; if it continues, contact support.", err)
 		}
 		return
 	}
@@ -394,7 +404,9 @@ func (s *server) getMirrorRuleSummary(w http.ResponseWriter, r *http.Request, ac
 	since := timeNow().Add(-time.Duration(window) * time.Second)
 	summary, err := s.store.MirrorSummary(r.Context(), rule.ID, since)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "could not compute mirror summary", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load mirror rule summary",
+			"Gregale could not load the mirror summary.",
+			"Refresh the page or retry the request in a moment.", err)
 		return
 	}
 	changedPercent := 0.0

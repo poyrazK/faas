@@ -52,7 +52,7 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 	if !s.oauthConfig.Google.Enabled() {
 		s.disabledOAuthResponse(w, auth.GoogleProviderName,
 			"GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset",
-			"Google sign-in is not configured on this host. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
+			"Google sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
 	clientID := s.oauthConfig.Google.ClientID
@@ -162,7 +162,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	if !s.oauthConfig.Google.Enabled() {
 		s.disabledOAuthResponse(w, auth.GoogleProviderName,
 			"GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset",
-			"Google sign-in is not configured on this host. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
+			"Google sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
 	nonceCookie, err := r.Cookie(googleAuthNonceCookie)
@@ -270,7 +270,9 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// Fetch Google User Profile
 	userInfoReq, err := http.NewRequestWithContext(r.Context(), "GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "build Google profile request",
+			"Gregale could not complete sign in with Google.",
+			"Return to sign in and try again.", err)
 		return
 	}
 	userInfoReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
@@ -325,7 +327,9 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// (one OAuth subject binds to one account, period).
 	acct, err := s.provisionOrFetchGoogleAccount(r.Context(), googleUser)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Account Error", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "complete Google sign-in",
+			"Gregale could not finish setting up your account.",
+			"Return to sign in and try connecting Google again.", err)
 		return
 	}
 
@@ -334,7 +338,9 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// emits auth.session.created via the unified helper.
 	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, mfaSessionPending(acct), "google")
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Session Error", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "create Google dashboard session",
+			"Gregale could not start your dashboard session.",
+			"Return to sign in and try connecting Google again.", err)
 		return
 	}
 

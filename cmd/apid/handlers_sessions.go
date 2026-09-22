@@ -77,8 +77,9 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	if _, err := s.store.RevokeSession(r.Context(), current.ID, acct.ID); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity, "Session revoke failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "revoke current dashboard session",
+			"Gregale could not sign out this device.",
+			"Retry signing out; if the session remains active, contact support.", err)
 		return
 	}
 	s.clearSessionCookie(w, r)
@@ -99,8 +100,9 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, acct state.Accou
 func (s *server) listSessions(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	sessions, err := s.store.ListSessions(r.Context(), acct.ID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity, "Session list failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "list dashboard sessions",
+			"Gregale could not load your active sessions.",
+			"Reload the page in a moment; if it continues, contact support.", err)
 		return
 	}
 	current, ok := sessionFrom(r)
@@ -144,8 +146,9 @@ func (s *server) revokeSession(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	ok, err := s.store.RevokeSession(r.Context(), id, acct.ID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity, "Session revoke failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "revoke dashboard session",
+			"Gregale could not revoke this session.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	if !ok {
@@ -184,8 +187,9 @@ func (s *server) revokeAllSessions(w http.ResponseWriter, r *http.Request, acct 
 	}
 	n, err := s.store.RevokeAllSessions(r.Context(), acct.ID, current.ID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity, "Session revoke-all failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "revoke other dashboard sessions",
+			"Gregale could not sign out your other devices.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	if s.audit != nil {

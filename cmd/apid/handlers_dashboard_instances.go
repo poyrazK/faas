@@ -195,7 +195,7 @@ func dashboardInstanceActionFlash(r *http.Request) string {
 func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	slug, action := r.PathValue("slug"), r.PathValue("action")

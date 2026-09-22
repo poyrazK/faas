@@ -15,7 +15,12 @@ const disposableRunsCapabilityKey = "disposable-runs"
 func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	capabilities, err := api.CapabilitiesForPlan(acct.Plan)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Capability registry unavailable", err.Error()))
+		logCustomerFailure(s.log, "resolve customer capabilities", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Available features temporarily unavailable",
+			"Gregale could not load the available features for this account.").
+			WithHeader("Retry-After", "5").
+			WithHint("Retry in a moment; if it continues, contact support."))
 		return
 	}
 	// Entitlement is only one half of availability. A capability must also be

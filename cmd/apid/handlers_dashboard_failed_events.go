@@ -148,7 +148,7 @@ func failedEventsPageURL(app, before string) string {
 func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Request, action string) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {
@@ -207,7 +207,7 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *http.Request, action string) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {
@@ -261,7 +261,7 @@ func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *htt
 func (s *server) dashboardFailedEventsBulkAction(w http.ResponseWriter, r *http.Request, action string) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {
@@ -339,7 +339,7 @@ func (s *server) dashboardFailedEventsSelectedAction(w http.ResponseWriter, r *h
 	}
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {

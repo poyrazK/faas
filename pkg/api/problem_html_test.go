@@ -30,7 +30,8 @@ func TestWriteProblem_BrowserHTMLByStatus(t *testing.T) {
 				request:          httptest.NewRequest(http.MethodGet, "https://api.example.test", nil),
 			}
 			recorder.request.Header.Set("Accept", "text/html,application/xhtml+xml")
-			WriteProblem(recorder, NewProblem(status, "platform_failure", "Failure", "secret.example.test/customer-app"))
+			WriteProblem(recorder, NewProblem(status, "platform_failure", "Platform temporarily unavailable", "secret.example.test/customer-app").
+				WithHint("Retry this request in a moment."))
 
 			if got := recorder.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 				t.Fatalf("Content-Type = %q, want text/html", got)
@@ -45,10 +46,39 @@ func TestWriteProblem_BrowserHTMLByStatus(t *testing.T) {
 			if !strings.Contains(body, `data-faas-error-code="platform_failure"`) {
 				t.Error("HTML is missing the machine-readable data attribute")
 			}
+			for _, want := range []string{"Platform temporarily unavailable", "Retry this request in a moment.", "Error code:", "platform_failure"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("HTML is missing customer-facing text %q", want)
+				}
+			}
 			if strings.Contains(body, "secret.example.test") || strings.Contains(body, "customer-app") {
 				t.Error("HTML must not expose problem detail or customer data")
 			}
 		})
+	}
+}
+
+func TestWriteProblemForRequest_NegotiatesWithoutWriterAdapter(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://api.example.test/login", nil)
+	request.Header.Set("Accept", "text/html")
+
+	WriteProblemForRequest(recorder, request, NewProblem(
+		http.StatusTooManyRequests,
+		CodeAuthRateLimited,
+		"Too many failed authentication attempts",
+		"hidden rate-limit detail",
+	).WithHint("Wait a minute, then sign in again."))
+
+	if got := recorder.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/html", got)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "Wait a minute, then sign in again.") {
+		t.Errorf("HTML missing next action: %s", body)
+	}
+	if strings.Contains(body, "hidden rate-limit detail") {
+		t.Errorf("HTML exposed Problem.Detail: %s", body)
 	}
 }
 

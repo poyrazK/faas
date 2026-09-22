@@ -89,7 +89,7 @@ func (s *server) renderDashboardFireCron(w http.ResponseWriter, r *http.Request,
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		// sessionAuth would have redirected; defensive 401.
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	// Path params must match the canonical slug + cron-id shapes
@@ -102,7 +102,7 @@ func (s *server) renderDashboardFireCron(w http.ResponseWriter, r *http.Request,
 	// slug) would compose into an open-redirect target if we
 	// skipped this regex gate.
 	if !validSlug(slug) || !dashboardFireCronIDRe.MatchString(cronID) {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The app slug or cron ID is invalid.")
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, dashboardFireCronAction, acct.ID); err != nil {

@@ -569,7 +569,8 @@ var hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
 func buildTestAlertEvent(acct state.Account, app state.App, rule state.AlertRule, preset state.AlertPreset) (string, webhookout.Event, float64, *api.Problem) {
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
-		return "", webhookout.Event{}, 0, api.ErrCapacity("could not generate delivery id: " + err.Error())
+		return "", webhookout.Event{}, 0, api.ErrCapacity("Gregale could not create a test alert right now.").
+			WithHint("Retry the request in a moment; if it continues, contact support.")
 	}
 	deliveryID := hex.EncodeToString(idBytes)
 	// Synthetic observed value: threshold + 1% for "gt" and

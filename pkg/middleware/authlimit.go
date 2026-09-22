@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
@@ -39,7 +40,7 @@ type AuthLimitConfig struct {
 	// where anti-enumeration returns 200 even for unknown emails, so
 	// a true 401/403-only limiter would miss the brute-force signal.
 	CountStatuses []int
-	// OnLimited overrides the default plain-text 429 response after the
+	// OnLimited overrides the default Problem 429 response after the
 	// shared IP bucket is exhausted. Authentication stacks use it to validate
 	// the presented credential and admit a valid principal behind a shared
 	// NAT, while retaining the limiter's single IP bucket for invalid calls.
@@ -84,13 +85,13 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses http.Error (text/plain, line 209), the success path forwards to next.ServeHTTP which sets application/json or application/problem+json. See statusRecorder doc-comment.
+// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses api.WriteProblemForRequest, and the success path forwards to next.ServeHTTP. See statusRecorder doc-comment.
 func (r *statusRecorder) Write(p []byte) (int, error) {
 	if !r.wroteHeader {
 		r.wroteHeader = true
 	}
 
-	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses http.Error (text/plain, line 209), the success path forwards to next.ServeHTTP which sets application/json or application/problem+json. See statusRecorder doc-comment.
+	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses api.WriteProblemForRequest, and the success path forwards to next.ServeHTTP. See statusRecorder doc-comment.
 	return r.ResponseWriter.Write(p)
 }
 
@@ -290,8 +291,7 @@ func AuthLimitWithLimiter(cfg AuthLimitConfig, lim *Limiter) func(http.Handler) 
 					cfg.OnLimited(w, r)
 					return
 				}
-				w.Header().Set("Retry-After", "60")
-				http.Error(w, "too many failed login attempts; try again in 60 seconds", http.StatusTooManyRequests)
+				api.WriteProblemForRequest(w, r, api.ErrAuthRateLimited(60))
 				cfg.Log.Warn("auth_limit blocked",
 					"ip", logsanitize.Field(ip),
 					"path", logsanitize.Field(r.URL.Path),

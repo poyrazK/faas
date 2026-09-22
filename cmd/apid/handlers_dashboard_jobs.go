@@ -215,7 +215,7 @@ func dashboardJobsActionFlash(r *http.Request) string {
 func (s *server) dashboardQueueDeadLetterReplay(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")

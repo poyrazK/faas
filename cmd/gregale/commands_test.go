@@ -1,15 +1,41 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestPrintErrTransportErrorIsActionableInTextMode(t *testing.T) {
+	previousErr, previousJSON := osStderr, jsonOutput
+	var stderr bytes.Buffer
+	osStderr, jsonOutput = &stderr, false
+	t.Cleanup(func() {
+		osStderr, jsonOutput = previousErr, previousJSON
+	})
+
+	err := &url.Error{Op: http.MethodGet, URL: "https://api.gregale.dev/v1/apps", Err: errors.New("connection refused")}
+	if code := printErr("List failed", err); code != 3 {
+		t.Fatalf("exit code = %d, want platform error 3", code)
+	}
+	output := stderr.String()
+	for _, want := range []string{"Could not reach Gregale", "connection refused", "FAAS_API", cliDocsURL} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "List failed") {
+		t.Errorf("output kept generic call-site title instead of transport diagnosis:\n%s", output)
+	}
+}
 
 func TestSanitizeSlug(t *testing.T) {
 	tests := map[string]string{

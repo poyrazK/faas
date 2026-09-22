@@ -26,7 +26,11 @@
 
 package main
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // appLogsDispatcher routes one inbound request to either the
 // live stream (no ?archive=1) or the bucket-proxy archive
@@ -54,14 +58,13 @@ func (d *appLogsDispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Archive not wired — handler not constructed in
 		// this build (test seam). Fail loud with a stable
-		// 503 so the SDK's branch on archive_unconfigured
-		// surfaces the operator-side fix path.
-		http.Error(w, "archive handler not wired", http.StatusServiceUnavailable)
+		// 503 so the SDK can branch without exposing gateway wiring.
+		api.WriteProblem(w, api.ErrLogArchiveUnavailable())
 		return
 	}
 	if d.live != nil {
 		d.live.ServeHTTP(w, r)
 		return
 	}
-	http.Error(w, "logs handler not wired", http.StatusServiceUnavailable)
+	api.WriteProblem(w, api.ErrAppLogsUnavailable())
 }

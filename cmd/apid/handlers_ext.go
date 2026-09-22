@@ -997,7 +997,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if cap > 0 {
 			n, err := s.store.CountAppsWithEvictionPriority(r.Context(), acct.ID, string(api.EvictionPriorityReserved))
 			if err != nil {
-				api.WriteProblem(w, api.ErrInternal(fmt.Sprintf("count reserved apps: %v", err)))
+				writeCustomerInternalProblem(w, r, s.log, "count reserved applications",
+					"Gregale could not check this account's reserved application limit.",
+					"Retry the request in a moment; if it continues, contact support.", err)
 				return
 			}
 			// n excludes the current app already (CountAppsWithEvictionPriority
@@ -1023,7 +1025,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
 		recipient := setSecretRecipient()
 		if recipient == nil {
-			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal public_auth credentials"))
+			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
+				"Gregale could not securely update these app settings.",
+				"Retry in a few seconds; if it still fails, contact support.", nil))
 			return
 		}
 		// Plaintext shape: "<basic_user>\n<basic_pass>" —
@@ -1789,7 +1793,9 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 			s.notFound(w, "no such deployment")
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "update failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "update deployment minimum instances",
+			"Gregale could not update this deployment's minimum instance count.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	// Audit emit (issue #557 / ADR-072 §Decision 6). The kind
@@ -1909,7 +1915,9 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// pinned by TestPg_UpdateDeploymentTraffic_SoleLiveRow).
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "update failed", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
+				"Gregale could not update this deployment's traffic split.",
+				"Refresh the deployment status before retrying.", err)
 		}
 		return
 	}
@@ -2020,14 +2028,18 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
 				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
 				if readErr != nil {
-					return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup rollback target state: %v", readErr))
+					return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
+						"Gregale could not load the rollback target right now.",
+						"Retry the request in a moment; if it continues, contact support.", readErr)
 				}
 				if candidate.Status == state.DeployLive {
 					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
 				}
 				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
-				return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup rollback target: %v", err))
+				return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
+					"Gregale could not load the rollback target right now.",
+					"Retry the request in a moment; if it continues, contact support.", err)
 			}
 		}
 	} else {
@@ -2042,7 +2054,9 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup current deployment: %v", err))
+		return state.Deployment{}, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
+			"Gregale could not load the current deployment right now.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
@@ -2116,7 +2130,9 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q has no immutable rootfs artifact key", target.ID))
 	}
 	if s.rollbackArtifactVerifier == nil {
-		return api.ErrCapacity("rollback artifact verification is not configured")
+		return customerCapacityProblem(s.log, "verify rollback target", "Deployment temporarily unavailable",
+			"Gregale could not verify this deployment right now.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	err := s.rollbackArtifactVerifier.Verify(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
 	if err == nil {
