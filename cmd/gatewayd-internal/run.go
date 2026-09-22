@@ -2231,6 +2231,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil {
 		handler.WithMirrorResultStore(deps.pgStore)
 	}
+	if deps.pool != nil {
+		handler.WithConcurrencyQueueAdmission(state.NewPGConcurrencyQueueAdmission(deps.pool))
+	}
 	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
@@ -2597,28 +2600,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			for i := range rows {
 				row := rows[i]
 				req := &apidpb.IncrementRequestTelemetryRequest{
-					EventId:          row.EventID.String(),
-					AccountId:        row.AccountID.String(),
-					AppId:            row.AppID.String(),
-					DeploymentId:     row.DeploymentID.String(),
-					RouteTemplate:    row.Route,
-					Method:           row.Method,
-					HttpStatus:       int32(row.Status),
-					LatencyMs:        int32(row.LatencyMS),
-					ColdBoot:         row.ColdBoot,
-					TraceId:          row.TraceID,
-					ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(),
-					Count:            int32(row.Count),
-					UaFamily:         row.UAFamily,
-					ReferrerHost:     row.ReferrerHost,
-					Country:          row.Country,
-					WakeId:           row.WakeID,
-					InstanceId:       row.InstanceID,
-					GuestDurationMs:  int32(row.GuestDurationMS),
-					GuestRuntime:     row.GuestRuntime,
-					GuestOutcome:     row.GuestOutcome,
-					GuestErrorClass:  row.GuestErrorClass,
-					ConsumerId:       row.ConsumerID,
+					EventId:             row.EventID.String(),
+					AccountId:           row.AccountID.String(),
+					AppId:               row.AppID.String(),
+					DeploymentId:        row.DeploymentID.String(),
+					RouteTemplate:       row.Route,
+					Method:              row.Method,
+					HttpStatus:          int32(row.Status),
+					LatencyMs:           int32(row.LatencyMS),
+					ColdBoot:            row.ColdBoot,
+					TraceId:             row.TraceID,
+					ReceivedAtUnixMs:    row.ReceivedAt.UnixMilli(),
+					Count:               int32(row.Count),
+					UaFamily:            row.UAFamily,
+					ReferrerHost:        row.ReferrerHost,
+					Country:             row.Country,
+					WakeId:              row.WakeID,
+					InstanceId:          row.InstanceID,
+					GuestDurationMs:     int32(row.GuestDurationMS),
+					GuestRuntime:        row.GuestRuntime,
+					GuestOutcome:        row.GuestOutcome,
+					GuestErrorClass:     row.GuestErrorClass,
+					ConsumerId:          row.ConsumerID,
+					NodeId:              row.NodeID,
+					Region:              row.Region,
+					CommitSha:           row.CommitSHA,
+					DeploymentTag:       row.DeploymentTag,
+					DeploymentCreatedAt: row.DeploymentCreatedAt,
+					ImageDigest:         row.ImageDigest,
 				}
 				if row.Count < 1 {
 					req.Count = 1
@@ -3215,7 +3224,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			LocalNodeID: cfg.NodeName,
 			// ADR-206. nil unless FAAS_SERVICE_CALLER_ASSERTIONS is on and a
 			// signing key is available, so the default path is unchanged.
-			MintCallerAssertion: newServiceCallerMinter(cfg.NodeName, log),
+			MintCallerAssertion: newServiceCallerMinter(ctx, pgStore, cfg.NodeName, log),
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {

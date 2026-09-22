@@ -109,6 +109,12 @@ type Config struct {
 	// api.DefaultRetentionInterval cadence (1h) regardless.
 	RetentionDuration int64 `toml:"retention_duration_ns"`
 
+	// DeadLetterRetentionDuration is the unified Failed Events projection
+	// retention window. Only dead_letter_events rows are removed; source rows
+	// and audit events are retained. Zero or negative uses
+	// api.DefaultDeadLetterRetention (30d).
+	DeadLetterRetentionDuration int64 `toml:"dead_letter_retention_duration_ns"`
+
 	// HeartbeatInterval is the per-node liveness sweep cadence
 	// (issue #97 / ADR-025 axis 3, PR #114). Zero or negative reverts
 	// to sched.DefaultHeartbeatInterval (30s). Shorter is fine for

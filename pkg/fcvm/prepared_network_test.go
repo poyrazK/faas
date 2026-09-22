@@ -1,4 +1,5 @@
 // adr: 053
+// adr: 149 — prepared-network reuse preserves exact identity and policy matching.
 package fcvm
 
 import (
@@ -6,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -182,6 +184,114 @@ func TestPreparedNetworkChangedConfigRebuildsPolicy(t *testing.T) {
 	run := m.run.(*fakeRunner)
 	if !run.ran("ip netns del fc-changed") || !run.ran("1.1.1.1/32") {
 		t.Fatal("old policy survived rebuild")
+	}
+}
+
+func TestPreparedNetworkDefaultPortMatches(t *testing.T) {
+	for _, ports := range [][2]int{{0, 0}, {0, netns.AppPort}, {netns.AppPort, 0}, {netns.AppPort, netns.AppPort}} {
+		t.Run(fmt.Sprintf("%d-to-%d", ports[0], ports[1]), func(t *testing.T) {
+			m, p := testPreparedPool(t, 1)
+			policy := fillTestPreparedPool(t, m, p, 250)
+			e := p.claim("default-port", policy)
+			if e == nil {
+				t.Fatal("cache miss")
+			}
+			defer p.discard(*e)
+			e.config.GuestAppPort = ports[0]
+			nc := e.config
+			nc.GuestAppPort = ports[1]
+			// Prove the two representations install exactly the same rules;
+			// matching them must not broaden the prepared policy.
+			if !reflect.DeepEqual(e.config.SetupCommands(), nc.SetupCommands()) ||
+				!reflect.DeepEqual(e.config.NftCommands(), nc.NftCommands()) ||
+				!reflect.DeepEqual(e.config.TcCommands(), nc.TcCommands()) {
+				t.Fatal("default-port representations render different networks")
+			}
+			run := m.run.(*fakeRunner)
+			before := len(run.commands)
+			if hit, err := m.setupWakeNetwork(t.Context(), nc, e); !hit || err != nil {
+				t.Fatalf("equivalent default port rebuilt network: hit=%v err=%v", hit, err)
+			}
+			if len(run.commands) != before {
+				t.Fatal("cache hit executed network commands")
+			}
+			if e.config.GuestAppPort != ports[0] || nc.GuestAppPort != ports[1] {
+				t.Fatal("comparison mutated caller configuration")
+			}
+		})
+	}
+}
+
+func TestPreparedNetworkWakeWithExplicitDefaultPort(t *testing.T) {
+	for _, port := range []int{0, netns.AppPort} {
+		t.Run(fmt.Sprint(port), func(t *testing.T) {
+			m, p := testPreparedPool(t, 1)
+			fillTestPreparedPool(t, m, p, 250)
+			run := m.run.(*fakeRunner)
+			setupBefore, teardownBefore := run.setupCount, run.teardownCount
+			instance := fmt.Sprintf("wake-default-%d", port)
+			t.Cleanup(func() {
+				if err := m.Destroy(context.Background(), instance); err != nil {
+					t.Error(err)
+				}
+			})
+			inst, err := m.Wake(t.Context(), WakeRequest{
+				Instance: instance, BaseKey: "/base.ext4", LayerKey: "/layer.ext4",
+				VcpuCount: 2, MemSizeMiB: 128, Plan: "scale", EgressMbit: 250,
+				Port: port, Snapshot: usableSnapshot(),
+			})
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			if inst.Method != WakeRestore || inst.Port != port {
+				t.Fatalf("wake changed method or port: method=%v port=%d", inst.Method, inst.Port)
+			}
+			if run.setupCount != setupBefore || run.teardownCount != teardownBefore {
+				t.Fatalf("wake rebuilt prepared network: setup=%d->%d teardown=%d->%d",
+					setupBefore, run.setupCount, teardownBefore, run.teardownCount)
+			}
+			if m.LeasedCount() != 1 || len(p.ready) != 0 || len(m.alloc.reserved) != 0 {
+				t.Fatal("wake did not transfer the prepared reservation exactly once")
+			}
+		})
+	}
+}
+
+func TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*netns.Config)
+	}{
+		{"custom_port", func(c *netns.Config) { c.GuestAppPort = 3000 }},
+		{"negative_port", func(c *netns.Config) { c.GuestAppPort = -1 }},
+		{"overflow_port", func(c *netns.Config) { c.GuestAppPort = 65536 }},
+		{"instance", func(c *netns.Config) { c.Instance = "other" }},
+		{"namespace", func(c *netns.Config) { c.Netns = "fc-other" }},
+		{"tap_owner", func(c *netns.Config) { c.TapUID++ }},
+		{"host_ip", func(c *netns.Config) { c.HostIP = netip.MustParseAddr("10.100.2.3") }},
+		{"bridge", func(c *netns.Config) { c.HostBridgeIP = netip.MustParseAddr("10.101.0.1") }},
+		{"egress_rate", func(c *netns.Config) { c.EgressMbit++ }},
+		{"conntrack_cap", func(c *netns.Config) { c.ConntrackCap++ }},
+		{"egress_allowlist", func(c *netns.Config) {
+			c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.1.1.1/32")}
+		}},
+		{"private_network", func(c *netns.Config) {
+			c.PrivateNetworkCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.0.0/24")}
+		}},
+		{"operator_exceptions", func(c *netns.Config) {
+			c.OperatorExceptions = []netip.Prefix{netip.MustParsePrefix("10.43.0.0/24")}
+		}},
+		{"egress_circuit", func(c *netns.Config) { c.EgressCircuitEnabled = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := netns.NewConfig("same", "fc-same", "vh0", "vp0", netip.MustParseAddr("10.100.0.2"))
+			requested := prepared
+			requested.GuestAppPort = netns.AppPort
+			tc.change(&requested)
+			if preparedNetworkConfigMatches(prepared, requested) || preparedNetworkConfigMatches(requested, prepared) {
+				t.Fatal("default-port normalization hid a configuration change")
+			}
+		})
 	}
 }
 
