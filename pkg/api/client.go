@@ -3181,6 +3181,30 @@ func (c *Client) CreateDelayedTask(ctx context.Context, slug string, req Delayed
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/delayed-tasks", req, &out)
 }
 
+// CreateDelayedTaskWithIdempotencyKey lets producers reuse the same key when
+// retrying an uncertain create response, preventing duplicate scheduled work.
+func (c *Client) CreateDelayedTaskWithIdempotencyKey(ctx context.Context, slug string, req DelayedTaskRequest, idempotencyKey string) (DelayedTaskResponse, error) {
+	var out DelayedTaskResponse
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/delayed-tasks", req, &out, idempotencyKey)
+}
+
+// ListDelayedTasks returns one newest-first page for an app.
+func (c *Client) ListDelayedTasks(ctx context.Context, slug, before string, limit int) (ListDelayedTasksResponse, error) {
+	var out ListDelayedTasksResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/delayed-tasks"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetDelayedTask returns a single delayed-task by id. Account-scoped
 // — cross-account reads surface 404, not 200 with a foreign row.
 func (c *Client) GetDelayedTask(ctx context.Context, id string) (DelayedTaskResponse, error) {

@@ -11313,6 +11313,36 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
+// ListDelayedTasksForApp returns only delayed_task rows owned by appID.
+func (m *MemStore) ListDelayedTasksForApp(_ context.Context, appID string, limit int, before string) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AppID == appID && inv.Source == InvocationDelayedTask {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if before != "" {
+		for i, inv := range out {
+			if inv.ID == before {
+				out = out[i+1:]
+				break
+			}
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListInvocationsByTraceID mirrors PgStore's account-scoped queue correlation
 // query. MemStore keeps the full invocation envelope for scheduler tests, but
 // this read only inspects the canonical platform trace header.

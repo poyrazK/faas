@@ -14339,6 +14339,35 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 	return scanInvocations(rows)
 }
 
+// ListDelayedTasksForApp is the app-scoped delayed-task collection read.
+func (s *PgStore) ListDelayedTasksForApp(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var rows pgx.Rows
+	var err error
+	if before == "" {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
+			from invocations
+			where app_id = $1 and source = 'delayed_task'
+			order by created_at desc, id desc
+			limit $2`, appID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
+			from invocations
+			where app_id = $1 and source = 'delayed_task'
+			  and (created_at, id) < (
+			      select created_at, id from invocations
+			      where id = $2 and app_id = $1 and source = 'delayed_task')
+			order by created_at desc, id desc
+			limit $3`, appID, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return scanInvocations(rows)
+}
+
 // ListInvocationsByTraceID is the durable account-scoped queue correlation
 // read. The expression index from account_trace_lookup keeps this bounded
 // query index-backed while the projection remains the normal invocation row

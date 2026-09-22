@@ -668,9 +668,22 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "delayed-task",
 		DocSlug: "delayed-task",
-		Short:   "Schedule a deferred invocation (delayed-task add|get|cancel)",
+		Short:   "Schedule and inspect deferred invocations",
 		Subcommands: []cliSub{
-			{Name: "add", Short: "Schedule a deferred invocation"},
+			{Name: "add", Short: "Schedule a deferred invocation", Flags: []cliFlag{
+				{Name: "app", Value: "SLUG", Short: "app slug", Req: true},
+				{Name: "scheduled-at", Value: "RFC3339", Short: "absolute dispatch time; exclusive with --delay"},
+				{Name: "delay", Value: "DURATION", Short: "relative delay such as 30m; exclusive with --scheduled-at"},
+				{Name: "payload", Value: "JSON|@FILE|-", Short: "JSON request payload"},
+				{Name: "method", Value: "METHOD", Short: "HTTP method (default POST)"},
+				{Name: "path", Value: "PATH", Short: "app path (default /)"},
+				{Name: "idempotency-key", Value: "KEY", Short: "stable create retry key"},
+			}},
+			{Name: "list", Short: "List delayed tasks for an app", Flags: []cliFlag{
+				{Name: "app", Value: "SLUG", Short: "app slug", Req: true},
+				{Name: "limit", Value: "N", Short: "page size (1-200)"},
+				{Name: "before", Value: "ID", Short: "pagination cursor"},
+			}},
 			{Name: "get", Short: "Show one delayed task"},
 			{Name: "info", Short: "Alias for get"},
 			{Name: "cancel", Short: "Cancel a delayed task"},

@@ -655,6 +655,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/account/dlq/{id}":                         "DeleteAccountDlqId",
 	"POST /v1/account/dlq/{id}/replay":                    "PostAccountDlqIdReplay",
 	"POST /v1/apps/{slug}/delayed-tasks":                  "CreateDelayedTask",
+	"GET /v1/apps/{slug}/delayed-tasks":                   "ListDelayedTasks",
 	"GET /v1/delayed-tasks/{id}":                          "GetDelayedTask",
 	"DELETE /v1/delayed-tasks/{id}":                       "CancelDelayedTask",
 	"GET /v1/invocations":                                 "ListInvocations",

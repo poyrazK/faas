@@ -62,6 +62,10 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
+	// scheduled into the future. A one-year ceiling prevents effectively
+	// immortal pending rows while still covering annual workflows.
+	MaxDelayedTaskDelaySeconds = 365 * 24 * 60 * 60
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

@@ -25,7 +25,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
-| [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
+| [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
@@ -815,13 +815,33 @@ Preflight local source or OCI image metadata; runtime checks are skipped
 
 ## delayed-task
 
-Schedule a deferred invocation (delayed-task add|get|cancel)
+Schedule and inspect deferred invocations
 
 `gregale delayed-task [<subcommand>]`
 
 ### delayed-task add
 
 Schedule a deferred invocation
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--scheduled-at <RFC3339>` | absolute dispatch time; exclusive with --delay |  |
+| `--delay <DURATION>` | relative delay such as 30m; exclusive with --scheduled-at |  |
+| `--payload <JSON|@FILE|->` | JSON request payload |  |
+| `--method <METHOD>` | HTTP method (default POST) |  |
+| `--path <PATH>` | app path (default /) |  |
+| `--idempotency-key <KEY>` | stable create retry key |  |
+
+### delayed-task list
+
+List delayed tasks for an app
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--limit <N>` | page size (1-200) |  |
+| `--before <ID>` | pagination cursor |  |
 
 ### delayed-task get
 

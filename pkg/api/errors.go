@@ -5550,10 +5550,15 @@ func ErrLongPollTimeout() *Problem {
 // scheduled_at that is in the past (or zero). The handler uses time.Now()
 // as the source of truth so a clock-skewed client gets a 400 rather than
 // a row that fires immediately on insert.
-func ErrInvalidScheduledAt() *Problem {
+
+func ErrInvalidScheduledAt(details ...string) *Problem {
+	detail := "scheduled_at must be a future timestamp; the server clock rejected the value"
+	if len(details) > 0 && details[0] != "" {
+		detail = details[0]
+	}
 	return NewProblem(http.StatusBadRequest, "invalid_scheduled_at",
 		"Invalid scheduled_at",
-		"scheduled_at must be a future timestamp; the server clock rejected the value").
+		detail).
 		WithDocs(docsBase + "/event-driven#delayed-tasks")
 }
 

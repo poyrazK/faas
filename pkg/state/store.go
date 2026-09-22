@@ -3920,6 +3920,10 @@ type Store interface {
 	// Move 2 cursor change: was time.Time (drifted across equal-second
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
+	// ListDelayedTasksForApp is the customer-facing delayed-task collection.
+	// It is app- and source-scoped and uses the same stable invocation-id cursor
+	// ordering as ListInvocationsForAccount.
+	ListDelayedTasksForApp(ctx context.Context, appID string, limit int, before string) ([]Invocation, error)
 	// ListInvocationsByTraceID returns bounded, metadata-only invocation rows
 	// linked to a platform trace. The account predicate is mandatory; the
 	// implementation reads only the canonical platform trace header and never

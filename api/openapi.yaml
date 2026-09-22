@@ -14617,13 +14617,42 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/delayed-tasks:
+    get:
+      tags: [delayed_tasks]
+      operationId: listDelayedTasks
+      summary: List delayed tasks for an app.
+      description: Newest-first, cursor-paginated delayed-task history.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: Invocation id returned as next_before by a prior page.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+          description: Page size from 1 to 200; defaults to 20.
+      responses:
+        '200':
+          description: One page of delayed tasks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListDelayedTasksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [delayed_tasks]
       operationId: delayedTaskCreate
       summary: Schedule a delayed task to fire at a future time.
       description: |
-        Cap-checked against the plan's MaxDelayedTasksPerApp (Hobby 5,
-        Pro 50, Scale 1_000_000). The drain re-checks at dispatch.
+        Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
+        bounded to one year. Cap-checked against the plan's
+        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
+        re-checks at dispatch. Delivery is at least once; handlers should use
+        the invocation id to make side effects idempotent.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -19711,7 +19740,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -27332,7 +27361,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -27413,7 +27442,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -27440,7 +27469,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
@@ -30264,13 +30293,31 @@ components:
         purged: { type: integer, minimum: 0 }
 
     DelayedTaskResponse:
-      description: "Delayed task create/get shape. ScheduledAt is the customer-facing UTC dispatch time. State is populated on get, omitted on create (always `pending` there)."
+      description: "Delayed task create/get/list shape with lifecycle and result metadata."
       type: object
-      required: [id, scheduled_at]
+      required: [id, scheduled_at, state]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         scheduled_at: { type: string, format: date-time }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        method: { type: string }
+        path: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        result: {}
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    ListDelayedTasksResponse:
+      description: One newest-first page of delayed tasks for an app.
+      type: object
+      required: [tasks]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/DelayedTaskResponse' }
+        next_before: { type: string, pattern: '^[a-f0-9]{32}$' }
 
     CreateExecutionRequest:
       description: |
@@ -30630,12 +30677,21 @@ components:
         jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve." }
 
     DelayedTaskRequest:
-      description: "Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must be in the future (UTC)."
+      description: "Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling form; the maximum delay is 31,536,000 seconds (365 days)."
       type: object
-      required: [scheduled_at]
+      oneOf:
+        - required: [scheduled_at]
+        - required: [delay_seconds]
       properties:
         payload: { type: object, additionalProperties: true }
         scheduled_at: { type: string, format: date-time }
+        delay_seconds: { type: integer, format: int64, minimum: 1, maximum: 31536000 }
+        headers: { type: object, additionalProperties: true }
+        method: { type: string, default: POST }
+        path: { type: string, default: "/" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        retention_seconds: { type: integer, minimum: 0 }
+        destinations: { $ref: '#/components/schemas/InvocationDestinations' }
 
     # ─── IAM-3 (ADR-039) dashboard session surface ────────────────────────
 
@@ -33882,7 +33938,7 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     InvalidScheduledAt:
-      description: 'code: invalid_scheduled_at — delayed-task scheduled_at is in the past.'
+      description: 'code: invalid_scheduled_at — the schedule is missing, ambiguous, in the past, or beyond the one-year horizon.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
