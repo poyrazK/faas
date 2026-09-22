@@ -3186,7 +3186,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider: serviceEndpointProvider,
+			Provider:   serviceEndpointProvider,
 			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
 			Forward:    deps.nodeCache.Forwarding(),
