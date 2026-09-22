@@ -3216,7 +3216,7 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
 
-// Durable inbound webhook errors (ADR-209). Plan gating and quota follow the
+// Durable inbound webhook errors (ADR-211). Plan gating and quota follow the
 // outbound webhook posture; ingress validation keeps signature and body-size
 // failures distinct so providers and operators can diagnose retries safely.
 const (

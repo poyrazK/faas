@@ -143,7 +143,7 @@ tags:
     description: |
       Provider-verified webhook ingress that persists an app invocation before
       returning 202, then uses the normal wake, retry, and dead-letter path.
-      Stripe is the initial provider adapter (ADR-209).
+      Stripe is the initial provider adapter (ADR-211).
   - name: alert_rules
     description: |
       Customer-configurable alert rules (issue #396 / ADR-045 PR 3).
@@ -13589,7 +13589,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
-  # ─── Durable inbound webhooks (ADR-209) ───────────────────────────────────
+  # ─── Durable inbound webhooks (ADR-211) ───────────────────────────────────
   /v1/apps/{slug}/inbound-webhooks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -34480,7 +34480,7 @@ components:
         text/plain:
           schema: { $ref: '#/components/schemas/RateLimitPlain' }
 
-    # ─── Inbound-webhook problem responses (ADR-209) ───────────────────────────
+    # ─── Inbound-webhook problem responses (ADR-211) ───────────────────────────
     InboundWebhookInvalid:
       description: 'code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.'
       content:

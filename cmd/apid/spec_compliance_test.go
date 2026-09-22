@@ -47,7 +47,7 @@ const (
 	orgsFile              = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
 	scanFile              = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile          = "webhooks.go"         // issue #476 / ADR-076
-	inboundWebhooksFile   = "inbound_webhooks.go" // ADR-209 — durable provider webhook ingress DTOs
+	inboundWebhooksFile   = "inbound_webhooks.go" // ADR-211 — durable provider webhook ingress DTOs
 	realtimeFile          = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
 	logDrainsFile         = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
 	billingFile           = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs

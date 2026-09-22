@@ -1,6 +1,6 @@
 package state
 
-// ADR-209 state-layer coverage for endpoint quotas and soft-delete isolation.
+// ADR-211 state-layer coverage for endpoint quotas and soft-delete isolation.
 
 import (
 	"bytes"
