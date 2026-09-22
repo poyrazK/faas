@@ -69,6 +69,32 @@ Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them
 too.
 
+## Dark deployments
+
+Stage a revision, wait until it is ready, and keep production traffic on the
+current release:
+
+```bash
+gregale deploy --no-traffic
+```
+
+The command prints the new revision's preview URL and a copy-paste promotion
+command after readiness succeeds. For example:
+
+```
+✓ Staged v44 with 0% production traffic.
+  Preview: https://deploy-44-my-api.gregale.dev
+  Production traffic remains unchanged. https://my-api.gregale.dev
+  Promote: gregale traffic set --app my-api --deployment v44 --percent 100
+```
+
+`--no-traffic` is the discoverable spelling for `--traffic-percent 0`. It is
+mutually exclusive with `--traffic-percent`, `--safe`, and canary flags. With
+`--json`, a waited dark deployment adds `preview_url` (when the platform's
+preview zone is enabled) and `promotion_command` to the deployment receipt.
+`--no-wait` returns once the dark deployment is queued, before a preview URL
+is guaranteed to be live.
+
 ## Progressive rollouts
 
 Instead of moving all traffic at once, shift it in stages and let the platform

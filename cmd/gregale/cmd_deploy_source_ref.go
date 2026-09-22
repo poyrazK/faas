@@ -93,10 +93,10 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug,
 }
 
 func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers bool) int {
-	return cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, repo, ref, ann, waitForDeploy, jsonWait, idempotencyKey, waitTimeout, noTriggers, false)
+	return cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, repo, ref, ann, waitForDeploy, jsonWait, idempotencyKey, waitTimeout, noTriggers, false, false)
 }
 
-func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers, waitForRollout bool) int {
+func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers, waitForRollout, darkDeploy bool) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -160,13 +160,13 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		return jsonOut(writeJSON(newDeployReceipt(dep, nil, appURL, "")))
 	}
 	if !waitForDeploy {
-		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, appURL)
+		renderQueuedDeployment(dep, appURL, darkDeploy)
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, waitTimeout, waitForRollout)
+		return writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, waitTimeout, waitForRollout, darkDeploy)
 	}
-	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout})
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout, darkDeploy: darkDeploy})
 }
 
 func ensureSourceRefApp(ctx context.Context, client *Client, slug string) (api.AppResponse, error) {

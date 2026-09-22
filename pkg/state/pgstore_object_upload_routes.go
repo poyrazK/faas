@@ -55,7 +55,7 @@ func (s *PgStore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploa
 	return scanObjectUploadRoute(s.pool.QueryRow(ctx, `
 		INSERT INTO object_upload_routes
 			(id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9
+		SELECT $1,$2,$3,$4,$5,$6,$7,COALESCE($8::text[], ARRAY[]::text[]),$9
 		 WHERE EXISTS (
 			SELECT 1 FROM object_buckets
 			 WHERE id=$5 AND account_id=$2 AND app_id=$3 AND state='ready'

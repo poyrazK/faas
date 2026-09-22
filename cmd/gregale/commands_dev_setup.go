@@ -82,6 +82,7 @@ func cmdDevSetup(args []string) int {
 		PrintUsage(osStderr, devSetupUsage, "dev")
 		return 2
 	}
+	explicitFlags := flagSetWasSet(fs)
 	if *once && !*start {
 		return printErr("Invalid flags", errors.New("--once requires --start"))
 	}
@@ -91,10 +92,6 @@ func cmdDevSetup(args []string) int {
 	if *open && !*start {
 		return printErr("Invalid flags", errors.New("--open requires --start"))
 	}
-	if !*withPostgres && *postgresRegion != "" {
-		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
@@ -106,6 +103,14 @@ func cmdDevSetup(args []string) int {
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	manifest, err := loadDevManifest(sourceDir)
+	if err != nil {
+		return printErr("Invalid developer manifest", err)
+	}
+	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	if !*withPostgres && *postgresRegion != "" {
+		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
 	}
 	envFilePath, envKeyCount, err := resolveSetupEnvFile(cwd, *envFile)
 	if err != nil {
