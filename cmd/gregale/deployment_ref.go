@@ -21,6 +21,16 @@ func parseRevisionRef(ref string) (int, bool) {
 	if trimmed == "" {
 		return 0, false
 	}
+	// A deployment id WINS over the revision reading. Hex digits include
+	// 0-9, so an all-numeric 32-char id ("000...001", which fixtures use
+	// constantly and gen_random_uuid can produce) is simultaneously a valid
+	// id and a valid bare revision. Resolving it as a revision would send
+	// the customer to a different deployment than the one they named, or
+	// fail outright — silently, and only for ids that happen to be
+	// all-digits. Ambiguity is resolved toward the unambiguous form.
+	if deploymentIDPattern.MatchString(trimmed) {
+		return 0, false
+	}
 	digits := trimmed
 	if c := digits[0]; c == 'v' || c == 'V' {
 		digits = digits[1:]
@@ -93,4 +103,52 @@ func resolveDeploymentRef(ctx context.Context, client *api.Client, appSlug, ref 
 		}
 	}
 	return "", fmt.Errorf("no deployment %s exists for app %q", renderRevision(revision), appSlug)
+}
+
+// resolveDeploymentArg is the resolver every deployment-addressing command
+// should call. It differs from resolveDeploymentRef in where the app comes
+// from: a `v42` handle is only meaningful relative to one app, and most of
+// these commands are addressed by deployment id alone.
+//
+// App resolution order, matching resolveAppFlagOrContext used across the CLI:
+//
+//  1. an explicit --app flag;
+//  2. otherwise the app linked to this checkout (`gregale link --app`).
+//
+// So `gregale deployment v42` just works inside a linked project, and --app
+// covers the unlinked case. A uuid short-circuits before any of this, so no
+// command pays a lookup or requires an app for the reference form it already
+// accepted — every existing invocation keeps working untouched.
+//
+// The error names --app explicitly rather than surfacing the link machinery's
+// "project has multiple or no workloads" prose: the caller typed a revision,
+// and the actionable fix is to say which app it belongs to.
+func resolveDeploymentArg(ctx context.Context, client *api.Client, explicitApp, ref string) (string, error) {
+	revision, ok := parseRevisionRef(ref)
+	if !ok {
+		return ref, nil
+	}
+	appSlug, err := resolveAppFlagOrContext(explicitApp)
+	if err != nil || strings.TrimSpace(appSlug) == "" {
+		return "", fmt.Errorf("cannot resolve deployment revision %s: pass --app <slug>, or run inside a linked project (gregale link --app <slug>)", renderRevision(revision))
+	}
+	return resolveDeploymentRef(ctx, client, appSlug, ref)
+}
+
+// validDeploymentRef reports whether ref is an acceptable deployment
+// reference: either the 32-hex / dashed uuid shape deploymentIDPattern
+// enforces, or an ADR-198 `v42` revision handle.
+//
+// This replaces bare deploymentIDPattern checks at ARGUMENT-VALIDATION time
+// so `gregale deployment v42` is not rejected before it can be resolved. The
+// uuid arm is unchanged, so a malformed id still fails locally with
+// validation_failed rather than costing a 404 round-trip (UX §3.3, "the first
+// error is the right one") — the only new thing accepted is a form the
+// product itself prints.
+func validDeploymentRef(ref string) bool {
+	if deploymentIDPattern.MatchString(ref) {
+		return true
+	}
+	_, ok := parseRevisionRef(ref)
+	return ok
 }

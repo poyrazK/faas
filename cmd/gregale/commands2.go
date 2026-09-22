@@ -3920,7 +3920,7 @@ func cmdTrafficSet(args []string) int {
 	// handle (ADR-198), because this endpoint is addressed by deployment
 	// id alone and carries no app context. Passing a uuid keeps working
 	// with no --app, so the pre-ADR-198 invocation is unchanged.
-	app := fs.String("app", "", "app slug (required when --deployment is a vN revision)")
+	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
 	if err := fs.Parse(args); err != nil {
@@ -3937,7 +3937,10 @@ func cmdTrafficSet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	deploymentID, err := resolveDeploymentRef(context.Background(), client, *app, *deployment)
+	// ADR-198: use the ambient resolver so `traffic set` behaves like every
+	// other deployment-addressing command — --app when given, else the
+	// linked project.
+	deploymentID, err := resolveDeploymentArg(context.Background(), client, *app, *deployment)
 	if err != nil {
 		return printErr("Traffic set failed", err)
 	}
@@ -5152,7 +5155,7 @@ func cmdLogs(args []string) int {
 	}
 	fs := newFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines")
-	deployment := fs.String("deployment", "", "deployment id (default: latest)")
+	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
@@ -5228,7 +5231,22 @@ func cmdLogs(args []string) int {
 			return 2
 		}
 	}
-	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
+	// ADR-198: --deployment accepts a vN handle. `slug` is already
+	// resolved above (positional, else linked project), so the revision is
+	// unambiguous without a second flag. A uuid short-circuits.
+	deploymentRef := *deployment
+	if deploymentRef != "" {
+		logsClient, clientErr := authedClient()
+		if clientErr != nil {
+			return printErr("Not logged in", clientErr)
+		}
+		resolved, resolveErr := resolveDeploymentRef(context.Background(), logsClient, slug, deploymentRef)
+		if resolveErr != nil {
+			return printErr("Could not resolve deployment", resolveErr)
+		}
+		deploymentRef = resolved
+	}
+	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,
 		Since: *since,
 		Level: *level,
@@ -5247,7 +5265,7 @@ func cmdLogs(args []string) int {
 func cmdLogsTail(args []string) int {
 	fs := newFlagSet("logs tail", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines (alias always follows; flag is redundant)")
-	deployment := fs.String("deployment", "", "deployment id (default: latest)")
+	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")

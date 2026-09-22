@@ -101,8 +101,8 @@ func cmdMirrorList(args []string) int {
 func cmdMirrorCreate(args []string) int {
 	fs := newFlagSet("mirror create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	source := fs.String("source", "", "source deployment id (required)")
-	mirror := fs.String("mirror", "", "mirror deployment id (required)")
+	source := fs.String("source", "", "source deployment id or vN revision (required)")
+	mirror := fs.String("mirror", "", "mirror deployment id or vN revision (required)")
 	percent := fs.Int("percent", 100, "fan-out percent in [0, 100]; 100 = every request")
 	includeBody := fs.Bool("include-body", false, "include request/response bodies in the comparison ledger")
 	var redactHeaders multiFlag
@@ -121,13 +121,26 @@ func cmdMirrorCreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	// ADR-198: both ends accept a vN handle. --app is already required, so
+	// the revisions are unambiguous; uuids short-circuit without a lookup.
+	// Resolved before the create call so a bad reference fails with the
+	// handle the customer typed rather than a server-side 404 on a uuid
+	// they never saw.
+	sourceID, err := resolveDeploymentRef(context.Background(), client, *slug, *source)
+	if err != nil {
+		return printErr("Could not resolve --source deployment", err)
+	}
+	mirrorID, err := resolveDeploymentRef(context.Background(), client, *slug, *mirror)
+	if err != nil {
+		return printErr("Could not resolve --mirror deployment", err)
+	}
 	headers := redactHeaders
 	if headers == nil {
 		headers = multiFlag{}
 	}
 	resp, err := client.PostAppsSlugMirrors(context.Background(), *slug, api.CreateMirrorRuleRequest{
-		SourceDeploymentID: *source,
-		MirrorDeploymentID: *mirror,
+		SourceDeploymentID: sourceID,
+		MirrorDeploymentID: mirrorID,
 		Percent:            *percent,
 		IncludeBody:        *includeBody,
 		RedactHeaders:      headers,

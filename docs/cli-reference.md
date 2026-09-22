@@ -851,10 +851,11 @@ List deployments (--app SLUG or linked context | --limit N | --before C | --all 
 
 Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
 
-`gregale deployment [<subcommand>] <id> [--show-scan] [--min <N>]`
+`gregale deployment [<subcommand>] <id|vN> [--app <SLUG>] [--show-scan] [--min <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
 
@@ -885,7 +886,11 @@ Set the per-deployment cold-wake floor
 
 Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)
 
-`gregale deploys [<subcommand>] <id>`
+`gregale deploys [<subcommand>] <id|vN> [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 
 ### deploys show
 
@@ -1498,7 +1503,7 @@ Read app or deployment logs (gregale logs &lt;slug&gt;; slug defaults to linked 
 | Flag | Meaning | |
 |---|---|---|
 | `--follow` | stream logs until interrupted |  |
-| `--deployment <ID>` | deployment id (default: latest) |  |
+| `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
 | `--grep <SUBSTR>` | only show lines containing this substring |  |
 | `--since <RFC3339>` | only show lines at or after this RFC3339 timestamp |  |
 | `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
@@ -2131,7 +2136,7 @@ Set the traffic split for a deployment
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | app slug; required when --deployment is a vN revision |  |
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
@@ -2161,8 +2166,8 @@ Create a mirror rule
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--source <ID>` | source deployment id (live) | required |
-| `--mirror <ID>` | mirror deployment id (live; same app) | required |
+| `--source <ID>` | source deployment id or vN revision (live) | required |
+| `--mirror <ID>` | mirror deployment id or vN revision (live; same app) | required |
 | `--percent <N>` | fan-out percent in [0, 100]; 100 = every request |  |
 | `--include-body` | include request/response bodies in the comparison ledger |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |

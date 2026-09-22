@@ -4,12 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// deploymentIDRefPattern is the deployment-id shape apid accepts: 32 hex
+// chars or the dashed uuid form. It exists here only to let
+// ParseDeploymentRevisionRef reject an id before reading it as a revision;
+// mirrors cmd/gregale's deploymentIDPattern.
+var deploymentIDRefPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // ParseDeploymentRevisionRef reports whether ref is a customer-facing
 // revision handle (ADR-198) and, if so, the revision it names.
@@ -25,6 +32,14 @@ import (
 func ParseDeploymentRevisionRef(ref string) (int, bool) {
 	trimmed := strings.TrimSpace(ref)
 	if trimmed == "" {
+		return 0, false
+	}
+	// A deployment id WINS over the revision reading. Hex digits include
+	// 0-9, so an all-numeric 32-char id is simultaneously a valid id and a
+	// valid bare revision; resolving it as a revision would target a
+	// different deployment than the caller named. Ambiguity resolves toward
+	// the unambiguous form. Mirrors cmd/gregale/deployment_ref.go.
+	if deploymentIDRefPattern.MatchString(trimmed) {
 		return 0, false
 	}
 	digits := trimmed

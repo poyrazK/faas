@@ -32,6 +32,13 @@ var revisionRefCases = []struct {
 	// characters, so Atoi rejects them. This is the case that makes it safe
 	// to accept both forms on the same argument.
 	{"uuid is not a revision", "8f14e45fceea467a9c8e9b0e21c6d5a1", 0, false},
+	// A 32-char ALL-NUMERIC id is simultaneously a valid deployment id and a
+	// valid bare revision, because hex digits include 0-9. The id must win:
+	// resolving it as a revision sends the caller to a different deployment
+	// than the one they named. Fixtures use "000...001" constantly and
+	// gen_random_uuid can produce one, so this is reachable, not theoretical.
+	{"all-numeric 32-char id is an id, not revision 1", "00000000000000000000000000000001", 0, false},
+	{"all-numeric dashed uuid is an id", "00000000-0000-0000-0000-000000000001", 0, false},
 	{"hyphenated uuid", "8f14e45f-ceea-467a-9c8e-9b0e21c6d5a1", 0, false},
 	{"uuid starting with v-like hex", "deadbeefcafe4000a000000000000000", 0, false},
 

@@ -376,14 +376,15 @@ func cmdDeployment(args []string) int {
 func cmdDeploymentWait(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	progress := fs.Bool("progress", false, "print rollout transitions while waiting (human output only)")
 	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 || *timeoutSeconds <= 0 || !deploymentIDPattern.MatchString(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS]", "deployment")
+	if len(pos) != 1 || *timeoutSeconds <= 0 || !validDeploymentRef(pos[0]) {
+		PrintUsage(os.Stderr, "usage: gregale deployment wait <id|vN> [--app SLUG] [--rollout] [--progress] [--timeout SECONDS]", "deployment")
 		return 1
 	}
 	client, err := authedClient()
@@ -392,6 +393,13 @@ func cmdDeploymentWait(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSeconds)*time.Second)
 	defer cancel()
+	// ADR-198 — resolve inside the command's own deadline so a slow lookup
+	// is bounded by --timeout like every other call this command makes.
+	resolvedID, resolveErr := resolveDeploymentArg(ctx, client, *appFlag, pos[0])
+	if resolveErr != nil {
+		return printErr("Could not resolve deployment", resolveErr)
+	}
+	pos[0] = resolvedID
 	waitTarget := "live"
 	if *rollout {
 		waitTarget = "live and rollout-complete"
@@ -474,25 +482,37 @@ func cmdDeploymentWait(args []string) int {
 // `secret_scan` field, the text rendering prints both blocks
 // in order.
 func cmdDeploymentGet(args []string) int {
+	// splitArgsForFlags, not a bare fs.Parse: Go's flag package stops at the
+	// first positional, so `gregale deployment v42 --app my-api` would treat
+	// --app as another positional and fail. The id-first ordering is what a
+	// customer copying a v42 handle out of `traffic status` will type.
+	flags, pos := splitArgsForFlags(args, "show-scan", "show-secret-scan")
 	fs := newFlagSet("deployment", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	showScan := fs.Bool("show-scan", false, "fetch + print the per-deploy grype scan payload (GET /v1/deployments/{id}/scan)")
 	showSecretScan := fs.Bool("show-secret-scan", false,
 		"fetch + print the per-deploy image-layer secret-scan payload (GET /v1/deployments/{id}/secret-scan)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] [--show-secret-scan]", "deployment")
+	if len(pos) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN> [--app SLUG] [--show-scan] [--show-secret-scan]", "deployment")
 		return 1
 	}
-	id := fs.Arg(0)
-	if !deploymentIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] [--show-secret-scan]   (id is 32 hex chars)", "deployment")
+	id := pos[0]
+	if !validDeploymentRef(id) {
+		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN> [--app SLUG] [--show-scan] [--show-secret-scan]   (id is 32 hex chars, or a vN revision)", "deployment")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// ADR-198: a vN handle resolves against --app, else the linked project.
+	// A uuid short-circuits without a lookup.
+	id, err = resolveDeploymentArg(context.Background(), client, *appFlag, id)
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	d, err := client.GetDeployment(context.Background(), id)
 	if err != nil {
@@ -706,6 +726,7 @@ func cmdDeploymentSetMinInstances(args []string) int {
 	// cmdDelayedTaskAdd (commands_delayed_task.go:118).
 	flags, pos := splitArgsForFlags(args)
 	fs := newFlagSet("deployment set-min-instances", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	min := fs.Int("min", 0, "min_instances floor (>= 0; 0 inherits the parent app floor)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -728,13 +749,18 @@ func cmdDeploymentSetMinInstances(args []string) int {
 		return printErr("Invalid --min", fmt.Errorf("--min must be >= 0; got %d", *min))
 	}
 	id := pos[0]
-	if !deploymentIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale deployment set-min-instances <id> --min N   (id is 32 hex chars)", "deployment")
+	if !validDeploymentRef(id) {
+		PrintUsage(os.Stderr, "usage: gregale deployment set-min-instances <id|vN> [--app SLUG] --min N   (id is 32 hex chars, or a vN revision)", "deployment")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// ADR-198 — see cmdDeploymentGet.
+	id, err = resolveDeploymentArg(context.Background(), client, *appFlag, id)
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	d, err := client.PatchDeployment(context.Background(), id, api.UpdateDeploymentRequest{MinInstances: min})
 	if err != nil {

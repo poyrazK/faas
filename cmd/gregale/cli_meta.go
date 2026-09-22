@@ -702,8 +702,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor"},
 		},
-		Positionals: []string{"<id>"},
+		Positionals: []string{"<id|vN>"},
 		Flags: []cliFlag{
+			{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 			{Name: "show-scan", Short: "include the per-deploy grype scan payload"},
 			{Name: "min", Short: "min_instances floor (>= 0)", Value: "N"},
 		},
@@ -731,7 +732,10 @@ var cliCommands = []cliCommand{
 			// read surface).
 			{Name: "retry", Short: "Retry a failed deployment from a specific stage (--from=<stage>)"},
 		},
-		Positionals: []string{"<id>"},
+		Positionals: []string{"<id|vN>"},
+		Flags: []cliFlag{
+			{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+		},
 	},
 	{
 		Name:    "deploy",
@@ -1177,7 +1181,7 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "follow", Short: "stream logs until interrupted"},
-			{Name: "deployment", Short: "deployment id (default: latest)", Value: "ID"},
+			{Name: "deployment", Short: "deployment id or vN revision (default: latest)", Value: "ID"},
 			{Name: "grep", Short: "only show lines containing this substring", Value: "SUBSTR"},
 			{Name: "since", Short: "only show lines at or after this RFC3339 timestamp", Value: "RFC3339"},
 			{Name: "level", Short: "only show lines at this level", Value: "LEVEL", ClosedSet: []string{"info", "warn", "error"}},
@@ -1624,7 +1628,7 @@ var cliCommands = []cliCommand{
 				Name:  "set",
 				Short: "Set the traffic split for a deployment",
 				Flags: []cliFlag{
-					{Name: "app", Short: "app slug; required when --deployment is a vN revision", Value: "SLUG"},
+					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to set the traffic split on", Req: true, Value: "ID"},
 					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
 				},
@@ -1645,8 +1649,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "create", Short: "Create a mirror rule", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
-				{Name: "source", Short: "source deployment id (live)", Req: true, Value: "ID"},
-				{Name: "mirror", Short: "mirror deployment id (live; same app)", Req: true, Value: "ID"},
+				{Name: "source", Short: "source deployment id or vN revision (live)", Req: true, Value: "ID"},
+				{Name: "mirror", Short: "mirror deployment id or vN revision (live; same app)", Req: true, Value: "ID"},
 				{Name: "percent", Short: "fan-out percent in [0, 100]; 100 = every request", Value: "N"},
 				{Name: "include-body", Short: "include request/response bodies in the comparison ledger"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},

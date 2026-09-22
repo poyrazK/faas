@@ -16,6 +16,7 @@ const deploysReorderUsage = "usage: gregale deploys reorder <id> --priority <int
 
 func cmdDeploysReorder(args []string) int {
 	fs := newFlagSet("deploys reorder", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	priority := fs.Int("priority", -1, "new priority (0=deploy-immediately, 100=FIFO default, 1000=background)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -29,13 +30,19 @@ func cmdDeploysReorder(args []string) int {
 		return 1
 	}
 	id := fs.Arg(0)
-	if !deploymentIDPattern.MatchString(id) {
+	if !validDeploymentRef(id) {
 		PrintUsage(os.Stderr, deploysReorderUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// ADR-198: a vN handle resolves against --app, else the linked project.
+	// A uuid short-circuits without a lookup.
+	id, err = resolveDeploymentArg(context.Background(), client, *appFlag, id)
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	resp, err := client.ReorderDeployment(context.Background(), id, *priority)
 	if err != nil {
