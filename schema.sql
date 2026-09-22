@@ -2434,7 +2434,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
-    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text])))),
+    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
     CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
     CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
     CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
@@ -2494,7 +2494,7 @@ CREATE TABLE public.edge_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     validate_mode text DEFAULT 'block'::text NOT NULL,
     cors_preset_id uuid,
-    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text]))),
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text]))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
     CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
 );
