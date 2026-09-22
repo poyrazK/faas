@@ -1896,7 +1896,10 @@ type OpsMetrics struct {
 	dlqReplayedTotal *prometheus.CounterVec
 	// dlqPurgedTotal counts operator acknowledgement/purge outcomes.
 	dlqPurgedTotal *prometheus.CounterVec
-	queue          *queueMetrics
+	// dlqRetentionPurgedTotal counts unified failed-events projection rows
+	// removed by the scheduler retention sweep.
+	dlqRetentionPurgedTotal prometheus.Counter
+	queue                   *queueMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -4371,6 +4374,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: "faas_dlq_purged_total",
 		Help: "Count of dead-letter purge attempts, labelled by bounded app and closed status.",
 	}, []string{"app", "status"})
+	dlqRetentionPurgedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "faas_dlq_retention_purged_total",
+		Help: "Count of unified failed-events projection rows removed by the scheduler retention sweep. Source rows and audit events are not deleted.",
+	})
 	for _, app := range []string{labelAppUnknown, otherAppLabel} {
 		for _, kind := range []string{"dead_letter", "poison_record", "max_attempts", "broker_error", "rate_limited", "timeout", "failed", "other"} {
 			dlqEventsTotal.WithLabelValues(app, kind)
@@ -4380,7 +4387,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			dlqPurgedTotal.WithLabelValues(app, status)
 		}
 	}
-	commonCollectors = append(commonCollectors, dlqEventsTotal, dlqReplayedTotal, dlqPurgedTotal)
+	commonCollectors = append(commonCollectors, dlqEventsTotal, dlqReplayedTotal, dlqPurgedTotal, dlqRetentionPurgedTotal)
 
 	// PR-#TBD / C5 — operator-action observability layer
 	// (PR #1106 P2d follow-on). Four new series feed the
@@ -5262,6 +5269,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dlqEventsTotal:                                        dlqEventsTotal,
 		dlqReplayedTotal:                                      dlqReplayedTotal,
 		dlqPurgedTotal:                                        dlqPurgedTotal,
+		dlqRetentionPurgedTotal:                               dlqRetentionPurgedTotal,
 		queue:                                                 queue,
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
@@ -10066,6 +10074,15 @@ func (m *OpsMetrics) ObserveDLQPurge(app, status string) {
 		return
 	}
 	m.dlqPurgedTotal.WithLabelValues(m.appLabel(app), dlqOperationStatusLabel(status)).Inc()
+}
+
+// ObserveDLQRetention records rows removed by automatic Failed Events
+// projection retention. n <= 0 is a no-op.
+func (m *OpsMetrics) ObserveDLQRetention(n int) {
+	if m == nil || m.dlqRetentionPurgedTotal == nil || n <= 0 {
+		return
+	}
+	m.dlqRetentionPurgedTotal.Add(float64(n))
 }
 
 func dlqErrorKindLabel(kind string) string {

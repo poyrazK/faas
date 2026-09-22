@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ResponseCache (ADR-122 and ADR-209) is the bounded in-process L1
+// ResponseCache (ADR-122 and ADR-211) is the bounded in-process L1
 // response cache for kind=cache edge rules. It can optionally write through
 // to a distributed L2. Three properties
 // matter:

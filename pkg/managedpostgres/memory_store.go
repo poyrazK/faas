@@ -47,6 +47,16 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 	if _, exists := s.databases[database.ID]; exists {
 		return Database{}, false, ErrConflict
 	}
+	if database.RestoreSourceDatabaseID != "" {
+		source, exists := s.databases[database.RestoreSourceDatabaseID]
+		if !exists || source.AccountID != database.AccountID {
+			return Database{}, false, ErrNotFound
+		}
+		if source.State != StateReady || source.ProviderResourceID == "" ||
+			source.ProviderResourceID != database.RestoreSourceResourceID {
+			return Database{}, false, ErrConflict
+		}
+	}
 	active := 0
 	for _, existing := range s.databases {
 		if existing.AccountID == database.AccountID && existing.State != StateDeleted {
@@ -128,7 +138,10 @@ func (s *MemoryStore) Due(_ context.Context, includeProvisioning bool, limit int
 	return items, nil
 }
 
-func (s *MemoryStore) Claim(_ context.Context, accountID, databaseID, leaseToken string, operation State, now, leaseUntil time.Time) (Database, error) {
+func (s *MemoryStore) Claim(ctx context.Context, accountID, databaseID, leaseToken string, operation State, now, leaseUntil time.Time) (Database, error) {
+	if operation == StateDeleting {
+		return s.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, leaseUntil)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[databaseID]
@@ -138,23 +151,14 @@ func (s *MemoryStore) Claim(_ context.Context, accountID, databaseID, leaseToken
 	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
-	switch operation {
-	case StateProvisioning:
-		if database.State != StateProvisioning && database.State != StateFailed {
-			return Database{}, ErrConflict
-		}
-		if database.RetryAt.After(now) {
-			return Database{}, ErrConflict
-		}
-	case StateDeleting:
-		if database.State == StateDeleted {
-			return Database{}, ErrConflict
-		}
-	default:
+	if operation != StateProvisioning {
 		return Database{}, ErrInvalid
 	}
-	if operation == StateDeleting && database.State != StateDeleting {
-		database.AttemptCount = 0
+	if database.State != StateProvisioning && database.State != StateFailed {
+		return Database{}, ErrConflict
+	}
+	if database.RetryAt.After(now) {
+		return Database{}, ErrConflict
 	}
 	if operation != database.State {
 		database.LastErrorCode = ""
@@ -163,6 +167,45 @@ func (s *MemoryStore) Claim(_ context.Context, accountID, databaseID, leaseToken
 		database.AttemptCount++
 	}
 	database.State = operation
+	database.LeaseToken = leaseToken
+	database.LeaseUntil = leaseUntil
+	database.UpdatedAt = now
+	database.RetryAt = now
+	s.databases[databaseID] = database
+	return cloneDatabase(database), nil
+}
+
+func (s *MemoryStore) ClaimDelete(_ context.Context, accountID, databaseID, leaseToken string, now, leaseUntil time.Time) (Database, error) {
+	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) {
+		return Database{}, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[databaseID]
+	if !ok || database.AccountID != accountID {
+		return Database{}, ErrNotFound
+	}
+	if database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
+		return Database{}, ErrConflict
+	}
+	for _, candidate := range s.databases {
+		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
+			return Database{}, ErrConflict
+		}
+	}
+	for _, binding := range s.bindings {
+		if binding.DatabaseID == database.ID && binding.State != BindingStateDeleted {
+			return Database{}, ErrConflict
+		}
+	}
+	if database.State != StateDeleting {
+		database.AttemptCount = 0
+		database.LastErrorCode = ""
+	}
+	if database.AttemptCount < 30 {
+		database.AttemptCount++
+	}
+	database.State = StateDeleting
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.UpdatedAt = now
@@ -247,6 +290,11 @@ func (s *MemoryStore) FinishDelete(_ context.Context, databaseID, leaseToken str
 	}
 	for _, candidate := range s.databases {
 		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
+			return Database{}, ErrConflict
+		}
+	}
+	for _, binding := range s.bindings {
+		if binding.DatabaseID == database.ID && binding.State != BindingStateDeleted {
 			return Database{}, ErrConflict
 		}
 	}

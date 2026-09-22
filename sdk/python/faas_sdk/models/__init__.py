@@ -807,6 +807,13 @@ from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
 from .mirror_clean_condition import MirrorCleanCondition
+from .mirror_replay_batch_request import MirrorReplayBatchRequest
+from .mirror_replay_batch_response import MirrorReplayBatchResponse
+from .mirror_replay_invocation import MirrorReplayInvocation
+from .mirror_replay_invocation_status import MirrorReplayInvocationStatus
+from .mirror_replay_request_item import MirrorReplayRequestItem
+from .mirror_replay_request_item_headers import MirrorReplayRequestItemHeaders
+from .mirror_replay_request_item_method import MirrorReplayRequestItemMethod
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
@@ -2141,6 +2148,13 @@ __all__ = (
     "MFAVerifyRequest",
     "MFAVerifyResponse",
     "MirrorCleanCondition",
+    "MirrorReplayBatchRequest",
+    "MirrorReplayBatchResponse",
+    "MirrorReplayInvocation",
+    "MirrorReplayInvocationStatus",
+    "MirrorReplayRequestItem",
+    "MirrorReplayRequestItemHeaders",
+    "MirrorReplayRequestItemMethod",
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",

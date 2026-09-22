@@ -308,6 +308,7 @@ func cmdDev(args []string) int {
 		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
 		return 1
 	}
+	explicitFlags := flagSetWasSet(fs)
 	if *once && *stop {
 		return printErr("Invalid flags", fmt.Errorf("--once and --stop are mutually exclusive"))
 	}
@@ -319,9 +320,6 @@ func cmdDev(args []string) int {
 	}
 	if *stop && *serviceOverrideFile != "" {
 		return printErr("Invalid flags", fmt.Errorf("--service-override-file cannot be combined with --stop"))
-	}
-	if !*withPostgres && *postgresRegion != "" {
-		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
 	}
 
 	cwd, err := os.Getwd()
@@ -335,6 +333,20 @@ func cmdDev(args []string) int {
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	manifest, err := loadDevManifest(sourceDir)
+	if err != nil {
+		return printErr("Invalid developer manifest", err)
+	}
+	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	if !*withPostgres && *postgresRegion != "" {
+		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
+	}
+	if *stop && *envFile != "" {
+		return printErr("Invalid flags", fmt.Errorf("--env-file cannot be combined with --stop"))
+	}
+	if *stop && *serviceOverrideFile != "" {
+		return printErr("Invalid flags", fmt.Errorf("--service-override-file cannot be combined with --stop"))
 	}
 	envFilePath, err := resolveDevEnvFilePath(cwd, *envFile)
 	if err != nil {
@@ -580,7 +592,7 @@ func cmdDev(args []string) int {
 			return cancelErr
 		},
 		waitForChange: waitForChange,
-		resolve:       resolveDevSourceConfig,
+		resolve:       resolveDevSourceConfigWithManifest,
 		refresh: func(config devSourceConfig) error {
 			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion))
 			if refreshErr == nil {
