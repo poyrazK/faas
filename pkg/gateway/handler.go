@@ -287,6 +287,14 @@ type App struct {
 	// existing route cache (apps_update / domain_changed wipes
 	// the route cache, and the next Lookup re-derives).
 	Scope string
+	// PinnedDeploymentID is set only for a deployment-preview hostname. It
+	// makes the public request path select the immutable deployment addressed
+	// by deploy-{revision}-{slug}, independent of customer traffic weights.
+	// PinnedDeploymentScope is the deployment's environment scope and must be
+	// forwarded on a cold admission so the exact artifact receives the same
+	// scoped configuration it was built to serve.
+	PinnedDeploymentID    string
+	PinnedDeploymentScope string
 	// CORS improvements D1: per-app default CORS
 	// opt-in. Plumbed from apps.cors_default_enabled
 	// through pgRouter.toApp so applyEdgeRuleCORS
@@ -6069,25 +6077,38 @@ haveApp:
 	if app.SessionAffinity {
 		preferredInstanceID = h.affinityTargetFromRequest(r, app.ID)
 	}
+	exactDeploymentID := smokeDeploymentID
+	exactDeploymentScope := app.Scope
+	exactDeploymentTrigger := sched.TriggerDeploymentSmoke
+	exactUnavailableTitle := "Deployment verification unavailable"
+	exactUnavailableDetail := "the candidate deployment has no routable target"
+	if !deploymentSmoke && app.PinnedDeploymentID != "" {
+		exactDeploymentID = app.PinnedDeploymentID
+		exactDeploymentScope = app.PinnedDeploymentScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Deployment preview unavailable"
+		exactUnavailableDetail = "the requested deployment is not ready to serve preview traffic"
+	}
+	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
-	if deploymentSmoke {
+	if exactDeployment {
 		picker, ok := h.backend.(deploymentTargetPicker)
 		if !ok {
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
-				"Deployment verification unavailable", "the gateway cannot select a candidate deployment directly"))
+				exactUnavailableTitle, "the gateway cannot select a deployment directly"))
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 			return
 		}
-		pick = picker.PickForDeployment(app.ID, smokeDeploymentID)
+		pick = picker.PickForDeployment(app.ID, exactDeploymentID)
 		if !pick.OK {
-			// A snapshot candidate is parked before this public verification
-			// runs. Admit one deployment-scoped verification instance outside
-			// the customer's serving-concurrency count; node RAM/vCPU limits
-			// remain authoritative in schedd.
+			// A snapshot candidate or zero-percent live deployment can be cold
+			// before its exact URL is visited. Admit one deployment-scoped
+			// instance; schedd remains authoritative for the bounded rollout
+			// overlap and node RAM/vCPU limits.
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
-				r.Context(), app.ID, smokeDeploymentID, app.Scope,
-				sched.TriggerDeploymentSmoke, maxInstances+1,
+				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,
+				exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant,
 			)
 			if admitErr != nil || atCapacity {
 				if admitErr == nil {
@@ -6098,10 +6119,10 @@ haveApp:
 				return
 			}
 			cold, wakeID, wakeMethod = true, admittedWakeID, method
-			pick = picker.PickForDeployment(app.ID, smokeDeploymentID)
+			pick = picker.PickForDeployment(app.ID, exactDeploymentID)
 			if !pick.OK {
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
-					"Deployment verification unavailable", "the candidate became unavailable after admission"))
+					exactUnavailableTitle, "the requested deployment became unavailable after admission"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
 				return
 			}
@@ -6122,9 +6143,9 @@ haveApp:
 			}
 		}
 	}
-	if deploymentSmoke && !pick.OK {
+	if exactDeployment && !pick.OK {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
-			"Deployment verification unavailable", "the candidate deployment has no routable target"))
+			exactUnavailableTitle, exactUnavailableDetail))
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
 		return
 	}
@@ -6220,30 +6241,35 @@ haveApp:
 			return
 		}
 	}
-	// The first request above guarantees one routable target. Reconcile the
-	// request pressure accumulated by the whole burst. Additional capacity is
-	// admitted in the background once a healthy target exists; the forwarding
-	// concurrency gate bounds work on that target while siblings become ready.
-	//nolint:contextcheck // request ctx at handler boundary.
+	// The first ordinary request above guarantees one routable target.
+	// Reconcile pressure accumulated by that app-level burst. Exact-deployment
+	// URLs deliberately skip this step: burst admission uses the weighted app
+	// picker and could wake or select a sibling deployment instead of the
+	// immutable revision named by the hostname.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
-	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
-	defer cancelBurstWait()
-	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
-	if burstErr != nil {
-		// A burst that cannot become routable within its admission policy is
-		// a controlled timeout, not an upstream 502. Client disconnects
-		// remain silent; genuine admission failures use the normal
-		// capacity problem response.
-		writeBurstCapacityError(w, r, burstErr)
-		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
-		return
+	waitedForBurst := false
+	if !exactDeployment {
+		//nolint:contextcheck // request ctx at handler boundary.
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		defer cancelBurstWait()
+		var burstErr error
+		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+		if burstErr != nil {
+			// A burst that cannot become routable within its admission policy is
+			// a controlled timeout, not an upstream 502. Client disconnects
+			// remain silent; genuine admission failures use the normal
+			// capacity problem response.
+			writeBurstCapacityError(w, r, burstErr)
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
+		}
 	}
 
 	// Choose from the capacity that is now ready. A pre-wake selection
 	// would send every queued request to the first guest even after waiting
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
-	if !deploymentSmoke && (!pick.OK || waitedForBurst) {
+	if !exactDeployment && (!pick.OK || waitedForBurst) {
 		pick = h.pickAfterCapacity(app, preferredInstanceID)
 	}
 
@@ -6313,7 +6339,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, smokeDeploymentID)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),

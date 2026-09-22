@@ -1255,6 +1255,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	router := pgRouter{
 		store:                 pgStore,
 		appsSuffix:            appsSuffix(appsDomain),
+		deploySuffix:          wire.DeployWildcardSuffix,
 		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
 	}
 	// ADR-025 axis 4: sticky-warm affinity cache. Built first so the

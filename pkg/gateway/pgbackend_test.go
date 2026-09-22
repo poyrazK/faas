@@ -57,6 +57,32 @@ func TestPGBackend_LookupCachesAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestPGBackend_LookupKeepsDeploymentPinsHostLocal(t *testing.T) {
+	router := &fakeRouter{byID: map[string]gateway.App{
+		"orders.apps.gregale.dev": {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+		},
+		"deploy-42-orders.gregale.dev": {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PinnedDeploymentID: "deployment-42", PinnedDeploymentScope: "staging",
+		},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+
+	preview, ok := b.Lookup(context.Background(), "deploy-42-orders.gregale.dev")
+	if !ok || preview.PinnedDeploymentID != "deployment-42" || preview.PinnedDeploymentScope != "staging" {
+		t.Fatalf("preview lookup = %+v, ok=%v", preview, ok)
+	}
+	production, ok := b.Lookup(context.Background(), "orders.apps.gregale.dev")
+	if !ok || production.PinnedDeploymentID != "" || production.PinnedDeploymentScope != "" {
+		t.Fatalf("production lookup inherited deployment pin: %+v, ok=%v", production, ok)
+	}
+	preview, ok = b.Lookup(context.Background(), "deploy-42-orders.gregale.dev")
+	if !ok || preview.PinnedDeploymentID != "deployment-42" || preview.PinnedDeploymentScope != "staging" {
+		t.Fatalf("cached preview lookup lost deployment pin: %+v, ok=%v", preview, ok)
+	}
+}
+
 func TestPGBackend_LookupUnknownHost(t *testing.T) {
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, gateway.NewFakeScheduler(""), nil)
 	if _, ok := b.Lookup(context.Background(), "nope.example.com"); ok {

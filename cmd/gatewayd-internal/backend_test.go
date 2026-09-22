@@ -84,6 +84,46 @@ func TestPgRouter_ResolveSlugHost(t *testing.T) {
 	}
 }
 
+func TestPgRouter_ResolveDeploymentPreviewPinsRevision(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders", api.PlanPro)
+	deployment, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployLive, Scope: "staging",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	host := gateway.BuildDeploymentPreviewURL(".gregale.dev", deployment.Revision, app.Slug)
+	router := pgRouter{
+		store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev",
+	}
+
+	resolved, ok, err := router.ResolveHost(context.Background(), host)
+	if err != nil || !ok {
+		t.Fatalf("ResolveHost(%q) ok=%v err=%v", host, ok, err)
+	}
+	if resolved.ID != app.ID || resolved.PinnedDeploymentID != deployment.ID || resolved.PinnedDeploymentScope != "staging" {
+		t.Fatalf("resolved = %+v, want app=%q deployment=%q scope=staging", resolved, app.ID, deployment.ID)
+	}
+}
+
+func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders-failed", api.PlanPro)
+	deployment, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployFailed,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	host := gateway.BuildDeploymentPreviewURL(".gregale.dev", deployment.Revision, app.Slug)
+	router := pgRouter{store: store, deploySuffix: ".gregale.dev"}
+
+	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
+		t.Fatalf("inactive deployment route ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
 func TestPgRouter_InternalAppIsNotPubliclyRouted(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "private", api.PlanPro)
@@ -389,6 +429,9 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	}
 	if f.refreshed[0] != "app-7" {
 		t.Errorf("refreshed[0] = %q, want app-7", f.refreshed[0])
+	}
+	if len(f.resetApps) != 1 || f.resetApps[0] != "app-7" {
+		t.Errorf("resetApps = %v, want [app-7]", f.resetApps)
 	}
 	if len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-7" {
 		t.Errorf("responseCacheByApp = %v, want [app-7]", f.responseCacheByApp)

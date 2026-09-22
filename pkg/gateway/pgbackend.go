@@ -865,8 +865,10 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
-	if appID, ok := b.routes.Peek(host); ok {
-		if app, ok := b.getApp(appID); ok {
+	if target, ok := b.routes.PeekTarget(host); ok {
+		if app, ok := b.getApp(target.AppID); ok {
+			app.PinnedDeploymentID = target.PinnedDeploymentID
+			app.PinnedDeploymentScope = target.PinnedDeploymentScope
 			return app, true
 		}
 	}
@@ -879,8 +881,15 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	b.routes.Put(host, app.ID)
-	b.putApp(app)
+	b.routes.PutTarget(host, RouteTarget{
+		AppID:                 app.ID,
+		PinnedDeploymentID:    app.PinnedDeploymentID,
+		PinnedDeploymentScope: app.PinnedDeploymentScope,
+	})
+	baseApp := app
+	baseApp.PinnedDeploymentID = ""
+	baseApp.PinnedDeploymentScope = ""
+	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
 }
