@@ -48,6 +48,14 @@ identify a replay; one transaction commits the telemetry row and its redacted
 log projection, and a replay commits neither again. Historical telemetry rows
 are not backfilled by this adapter.
 
+`meterd` reconciles the current and next two UTC month partitions on startup
+and hourly, relocating overlapping default-partition rows before attachment.
+It deletes expired events in bounded batches using each account's log archive
+cap (Free 1 day, Hobby 7, Pro 30, Scale 90), then drops whole partitions only
+after the 90-day maximum has passed. Missing accounts use the one-day floor.
+Coverage, default-partition growth, deletion counts, and failures are exported
+as meterd metrics.
+
 The public read path is app-scoped and always predicates both `account_id` and
 `app_id`. A cursor contains the fixed query window plus the last
 `(occurred_at,id)` tuple. Adding a new source is an additive vocabulary change

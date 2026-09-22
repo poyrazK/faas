@@ -731,6 +731,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	ops := wire.NewOpsMetrics("meterd")
 	requestTelemetryPartitions := newRequestTelemetryPartitionMetrics(ops.Registry(), deps.now)
+	logEventMaintenance := newLogEventMaintenanceMetrics(ops.Registry(), deps.now)
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
@@ -1220,6 +1221,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	partitionDB := poolAdapter{pool}
 	go meter.RequestTelemetryPartitionLoop(ctx, partitionDB, meter.RequestTelemetryPartitionInterval, log, requestTelemetryPartitions.observe)
 	go meter.RetentionLoopRequestTelemetry(ctx, partitionDB, meter.RequestTelemetryRetentionInterval, log)
+	go meter.LogEventPartitionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observePartition)
+	go meter.LogEventRetentionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observeRetention)
 
 	// SAFE-RELEASES production-leveling Stream D (issue #976 /
 	// ADR-122 post-merge audit): deployment_audit GC cron.
