@@ -6,6 +6,7 @@ package conformance
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -47,6 +48,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
+		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
 		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
 		{"build_claim_fairness_prefers_the_quiet_account", testBuildClaimFairnessPrefersTheQuietAccount},
@@ -2471,5 +2473,126 @@ func testCustomMetricsContract(t *testing.T, fx *Fixture) {
 	// intent is "this metric is gone", which is already true.
 	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
 		t.Errorf("delete of a missing name = %v, want nil", err)
+	}
+}
+
+// testScalingPolicyRoundTrip pins that a scaling policy written through the
+// production PATCH path survives a read on BOTH stores, field for field.
+//
+// This is the gap that let ADR-194 ship inert. `targets` — the entire
+// multi-signal surface — was marshalled into apps.scaling_policy and thrown
+// away on every read, because UnmarshalJSON copied the decoded shape field
+// by field from a hand-maintained list that nobody extended. The whole
+// scaling suite stayed green through it: every trigger test builds
+// state.App in memory and hands it straight to the trigger, so no test in
+// the tree crossed the persistence boundary at all. UpdateApp was on
+// uncovered.txt, which is precisely the condition that file's header warns
+// about.
+//
+// Every field is set to a DISTINCTIVE non-zero value. A zero would pass
+// against a store that silently dropped it, which is the failure being
+// tested — and the values are absolute, not "both stores agree", because
+// both stores were wrong together in #1666.
+//
+// The two stores prove DIFFERENT halves here, and it is worth being precise
+// about which:
+//
+//   - MemStore holds the *ScalingPolicy pointer directly and never
+//     serialises, so this case pins the STRUCT contract there: that
+//     UpdateApp stores what it was given and AppByID hands it back.
+//     Re-introducing the ADR-194 decoder bug does NOT fail the MemStore
+//     run, which was confirmed by doing exactly that.
+//   - PgStore marshals to the scaling_policy jsonb column and decodes on
+//     read, so the same case pins the SERIALISATION contract there. That
+//     run is where a dropped field actually surfaces, and it executes in
+//     CI's `pg shard 2a` job via TestPgStoreConformance.
+//
+// The codec itself is separately pinned, without needing a database, by
+// TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip in pkg/state.
+func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
+	t.Helper()
+	want := state.ScalingPolicy{
+		MinInstances: 2,
+		MaxInstances: 9,
+		// Every metric class: per-instance rate, saturation, backlog,
+		// broker-reported, and a named custom metric. A store that
+		// mishandles the name on the custom entry, or drops the list,
+		// fails here rather than in production.
+		Targets: []state.ScalingTarget{
+			{Metric: api.ScalingMetricRPS, Value: 50},
+			{Metric: api.ScalingMetricCPU, Value: 70},
+			{Metric: api.ScalingMetricConcurrentRequests, Value: 80},
+			{Metric: api.ScalingMetricQueueDepth, Value: 5},
+			{Metric: api.ScalingMetricQueueLag, Value: 500},
+			{Metric: api.ScalingMetricCustom, Name: "orders_pending", Value: 100},
+		},
+		ScaleOutCooldownS:       7,
+		ScaleInCooldownS:        77,
+		ConcurrencyOverflow:     api.ConcurrencyOverflowDrop,
+		MaxQueueWaitMS:          1234,
+		WakeMaxQueueDepth:       31,
+		WakeMaxQueueWaitSeconds: 41,
+		Timezone:                "Europe/Istanbul",
+		Schedules: []state.ScalingSchedule{
+			{Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3},
+			{Cron: "0 2 * * *", DurationS: 5400, MinInstances: 1},
+		},
+	}
+
+	if _, err := fx.Store.UpdateApp(fx.Ctx, fx.App.ID, state.UpdateAppParams{
+		ScalingPolicy:    &want,
+		SetScalingPolicy: true,
+	}); err != nil {
+		t.Fatalf("UpdateApp with a scaling policy: %v", err)
+	}
+
+	// Read through AppByID, the same call the schedd triggers reach the
+	// policy by, rather than trusting UpdateApp's return value — a store
+	// could echo the input while persisting something else.
+	got, err := fx.Store.AppByID(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("AppByID after writing a scaling policy: %v", err)
+	}
+	if got.ScalingPolicy == nil {
+		t.Fatal("scaling policy is nil after a write: the whole jsonb column was dropped")
+	}
+	if !reflect.DeepEqual(want, *got.ScalingPolicy) {
+		t.Fatalf("scaling policy did not survive the round trip.\n want: %+v\n got:  %+v\n\n"+
+			"Every field of state.ScalingPolicy must be carried by BOTH policyShape structs in "+
+			"types.go AND by the store's write/read path. This is how ADR-194's `targets` "+
+			"shipped inert.", want, *got.ScalingPolicy)
+	}
+
+	// The effective-floor helper is what the reaper, the engine and the
+	// billing sampler all read, so the schedule has to be live after the
+	// round trip and not merely present in the struct. Inside the Monday
+	// window: 08:00 Istanbul = 05:00Z, so 11:00Z is open and demands 3.
+	inWindow := time.Date(2026, 9, 21, 11, 0, 0, 0, time.UTC)
+	if floor := got.EffectiveMinInstancesAt(inWindow); floor != 3 {
+		t.Errorf("EffectiveMinInstancesAt(in-window) = %d, want 3: the schedule survived the "+
+			"round trip as data but does not drive the floor", floor)
+	}
+	// Outside every window the static min_instances applies.
+	outOfWindow := time.Date(2026, 9, 21, 22, 0, 0, 0, time.UTC)
+	if floor := got.EffectiveMinInstancesAt(outOfWindow); floor != 2 {
+		t.Errorf("EffectiveMinInstancesAt(out-of-window) = %d, want 2 (the static floor)", floor)
+	}
+
+	// A named custom target must keep its name: the name is what selects
+	// WHICH pushed metric the trigger reads, so losing it silently
+	// disconnects the app from its own signal.
+	value, ok := got.ScalingPolicy.TargetFor(api.ScalingMetricCustom)
+	if !ok || value != 100 {
+		t.Errorf("TargetFor(custom) = (%v, %v), want (100, true)", value, ok)
+	}
+	var customName string
+	for _, target := range got.ScalingPolicy.EffectiveTargets() {
+		if target.Metric == api.ScalingMetricCustom {
+			customName = target.Name
+		}
+	}
+	if customName != "orders_pending" {
+		t.Errorf("custom target name = %q, want \"orders_pending\": the trigger looks the "+
+			"pushed metric up by name, so an empty one reads as no signal", customName)
 	}
 }

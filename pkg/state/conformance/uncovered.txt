@@ -24,7 +24,6 @@ AddOrgMember
 AlertPresetByName
 AlertRuleByAccountAppAndPresetName
 AlertRuleByID
-AppByID
 AppBySlug
 AppBySlugIncludingDeleted
 AppLogDrainByID
@@ -636,7 +635,6 @@ UpdateAccountStatus
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateApp
 UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
