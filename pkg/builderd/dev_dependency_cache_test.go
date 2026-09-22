@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -65,15 +66,26 @@ func TestPublishDependencyCacheReplacesAtomically(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "export")
 	writeCacheFixture(t, src, "first")
+	sourceInfo, err := os.Stat(filepath.Join(src, "blobs", "sha256", "fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	dst := filepath.Join(root, "stable")
 	if err := publishDependencyCache(src, dst, 1<<20); err != nil {
 		t.Fatal(err)
 	}
 	assertCacheFixture(t, dst, "first")
-
-	if err := os.RemoveAll(src); err != nil {
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("same-filesystem source remains after publish: %v", err)
+	}
+	publishedInfo, err := os.Stat(filepath.Join(dst, "blobs", "sha256", "fixture"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !os.SameFile(sourceInfo, publishedInfo) {
+		t.Fatal("same-filesystem publish copied the cache instead of moving it")
+	}
+
 	writeCacheFixture(t, src, "second")
 	if err := publishDependencyCache(src, dst, 1<<20); err != nil {
 		t.Fatal(err)
@@ -81,6 +93,42 @@ func TestPublishDependencyCacheReplacesAtomically(t *testing.T) {
 	assertCacheFixture(t, dst, "second")
 	if _, err := os.Stat(dst + ".previous"); !os.IsNotExist(err) {
 		t.Fatalf("previous generation remains after publish: %v", err)
+	}
+}
+
+func TestStageDependencyCacheFallsBackToCopyAcrossFilesystems(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "export")
+	staged := filepath.Join(root, "staged")
+	writeCacheFixture(t, src, "cross-device")
+
+	err := stageDependencyCache(src, staged, 1<<20, func(string, string) error {
+		return syscall.EXDEV
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCacheFixture(t, staged, "cross-device")
+	assertCacheFixture(t, src, "cross-device")
+}
+
+func TestStageDependencyCacheValidatesBeforeMove(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "export")
+	writeCacheFixture(t, src, "safe")
+	if err := os.Symlink("index.json", filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	renameCalled := false
+	err := stageDependencyCache(src, filepath.Join(root, "staged"), 1<<20, func(string, string) error {
+		renameCalled = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported entry") {
+		t.Fatalf("error = %v, want unsupported entry", err)
+	}
+	if renameCalled {
+		t.Fatal("invalid cache reached rename")
 	}
 }
 
