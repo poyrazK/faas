@@ -2502,6 +2502,10 @@ func (s *server) handler() http.Handler {
 	// index events_wake_id_idx (migrations/00113) for O(frames)
 	// latency regardless of events table size.
 	mux.HandleFunc("GET /v1/apps/{slug}/wakes/{wake_id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWakeTimeline))))
+	// Issue #463 / ADR-069: customer-facing sidecar lifecycle timeline.
+	// The read is backed by the sidecar_name partial indexes and applies
+	// the same per-app forge-proof as the wake timeline above.
+	mux.HandleFunc("GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSidecarTimeline))))
 
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.

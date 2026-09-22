@@ -15680,6 +15680,75 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Sidecar lifecycle timeline (issue #463 / ADR-069) ───────────────────
+
+  /v1/apps/{slug}/sidecars/{sidecar_name}/timeline:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "App slug (lowercase, kebab-case; per-account unique)."
+      - name: sidecar_name
+        in: path
+        required: true
+        schema: { type: string }
+        description: "The sidecar name from the app deployment's sidecar set."
+    get:
+      tags: [apps, observability]
+      operationId: listSidecarTimeline
+      summary: List the lifecycle timeline for one sidecar.
+      description: |
+        Oldest-first (forward narrative). Returns the sidecar's init-exit,
+        restart, and health-transition frames. The `latest` field is the
+        most recent `wake.sidecar_health` status (`starting`, `healthy`,
+        `unhealthy`, `restarting`, or `failed`) when one is available.
+
+        The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
+        same MFA, scope, per-app rate-limit, and Hobby+ observability gates
+        as the wake timeline. Cross-account rows are dropped by verifying
+        every event's `data.app_id` against the slug's resolved app.
+      parameters:
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: "Only return rows with `at > since` (RFC 3339)."
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+          description: "Max frames to return. Values above 1000 are rejected."
+      responses:
+        '200':
+          description: Sidecar lifecycle frames and the latest health snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SidecarTimelineResponse'
+              example:
+                sidecar_name: metrics
+                app_id: "0123456789abcdef0123456789abcdef"
+                limit: 200
+                next_cursor: ""
+                latest: { at: "2026-07-25T13:25:02.100Z", status: healthy }
+                events:
+                  - at: "2026-07-25T13:25:00.420Z"
+                    kind: wake.sidecar_health
+                    actor: vmmd
+                    data: { app_id: "0123456789abcdef0123456789abcdef", sidecar_name: metrics, status: starting, reason: init }
+                  - at: "2026-07-25T13:25:02.100Z"
+                    kind: wake.sidecar_health
+                    actor: vmmd
+                    data: { app_id: "0123456789abcdef0123456789abcdef", sidecar_name: metrics, status: healthy, reason: healthcheck_ok }
+        '400':
+          description: Malformed query parameter — `since` is not RFC 3339 or `limit` is out of range.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
+        '404':
+          description: No such app (slug) or sidecar timeline is unknown.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/templates:
     get:
       tags: [templates]
@@ -27715,6 +27784,48 @@ components:
           type: string
           format: uuid
           description: "Resolved app id (the slug's owning app)."
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/WakeTimelineEvent' }
+        next_cursor:
+          type: string
+          description: "Opaque RFC 3339 cursor for the next page. Empty when this is the last page."
+        limit:
+          type: integer
+          description: "Effective limit applied (always 1..1000)."
+          example: 200
+
+    SidecarTimelineStatus:
+      description: "Most recent health transition for a sidecar, if one has been recorded."
+      type: object
+      required: [at, status]
+      properties:
+        at:
+          type: string
+          format: date-time
+          description: "RFC 3339 UTC timestamp of the health transition."
+        status:
+          type: string
+          enum: [starting, healthy, unhealthy, restarting, failed]
+          description: "Closed sidecar health state emitted by guest-init."
+        reason:
+          type: string
+          description: "Optional producer-supplied transition reason."
+
+    SidecarTimelineResponse:
+      description: "Envelope for GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline."
+      type: object
+      required: [sidecar_name, app_id, events, limit]
+      properties:
+        sidecar_name:
+          type: string
+          description: "Echo of the sidecar_name path segment."
+        app_id:
+          type: string
+          format: uuid
+          description: "Resolved app id (the slug's owning app)."
+        latest:
+          $ref: '#/components/schemas/SidecarTimelineStatus'
         events:
           type: array
           items: { $ref: '#/components/schemas/WakeTimelineEvent' }

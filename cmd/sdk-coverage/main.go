@@ -701,7 +701,8 @@ var methodRouteMap = map[string]string{
 	// (literal hyphens preserved in the path segment). The explicit
 	// map drops the path-separator noise and conforms to the SDK's
 	// flat verb naming.
-	"GET /v1/apps/{slug}/wakes/{wake_id}/timeline": "ListWakeTimeline",
+	"GET /v1/apps/{slug}/wakes/{wake_id}/timeline":         "ListWakeTimeline",
+	"GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline": "ListSidecarTimeline",
 
 	// ADR-050 Phase 3 — repo decomposition. The two routes take
 	// multipart bodies so the SDK verb is named after the action
