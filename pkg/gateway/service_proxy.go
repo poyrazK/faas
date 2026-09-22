@@ -81,6 +81,11 @@ var (
 // the request path.
 type ServiceTarget struct {
 	AppID string
+	// PreviewScoped distinguishes a target selected from the caller's PR scope
+	// from the production fallback. It is not a routing input: the resolver
+	// already chose the app. The hop uses it only to publish truthful
+	// preview-to-preview versus preview-to-production telemetry.
+	PreviewScoped bool
 	// AppProtocol mirrors apps.app_protocol (ADR-124): http1, http2, or grpc.
 	// Empty is treated as http1, which preserves the behaviour of every
 	// caller written before the protocol became part of this contract.
@@ -92,10 +97,12 @@ type ServiceTarget struct {
 	WebSocketEnabled bool
 }
 
-// ServiceProxyResolver maps a service name to its routing identity. The
-// context is part of the contract so production implementations can use the
-// request deadline for the app/account lookup.
-type ServiceProxyResolver func(ctx context.Context, service string) (target ServiceTarget, ok bool, err error)
+// ServiceProxyResolver maps a service name to its routing identity in the
+// caller's environment. Production callers retain global slug resolution;
+// project PR previews may first resolve a workload from their own
+// account/project/PR scope. The context is part of the contract so production
+// implementations can use the request deadline for store lookups.
+type ServiceProxyResolver func(ctx context.Context, callerAppID, service string) (target ServiceTarget, ok bool, err error)
 
 // ServiceCaller is what the authorizer learned about the calling workload
 // while checking the tenant boundary. It is returned rather than discarded so
@@ -105,11 +112,9 @@ type ServiceCaller struct {
 	// PreviewOfSlug is non-empty when the caller is a PR preview app, naming
 	// the production app it previews.
 	//
-	// Service names resolve with no environment scope, and previews are
-	// created one app per PR, so a preview has no sibling copy of its
-	// dependencies: its internal calls reach the production services. That is
-	// the current, documented behaviour — this field exists so the hop can
-	// say so instead of doing it silently.
+	// Project previews resolve a same-PR workload first, then may fall back to
+	// production under policy. This field lets either target learn that its
+	// caller is preview code instead of trusting a guest-supplied marker.
 	PreviewOfSlug string
 	// AccountID and InstanceID are carried for the ADR-206 assertion claims.
 	// The authorizer already loaded the caller row to check the tenant
@@ -363,7 +368,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
-	target, err := p.resolveTarget(dependencyCtx, service)
+	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
 			p.metrics.IncServiceCall(ServiceCallNotFound)
@@ -550,11 +555,11 @@ func validServiceDNSLabel(service string) bool {
 	return true
 }
 
-func (p *ServiceProxy) resolveTarget(ctx context.Context, service string) (ServiceTarget, error) {
+func (p *ServiceProxy) resolveTarget(ctx context.Context, callerAppID, service string) (ServiceTarget, error) {
 	if p.resolve == nil {
 		return ServiceTarget{}, fmt.Errorf("service name resolver is not wired")
 	}
-	target, ok, err := p.resolve(ctx, service)
+	target, ok, err := p.resolve(ctx, callerAppID, service)
 	if err != nil {
 		return ServiceTarget{}, fmt.Errorf("service name lookup: %w", err)
 	}
@@ -725,15 +730,20 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
-	// A preview app has no sibling copy of its dependencies, so this call is
-	// crossing from a preview into a production service. Say so on the hop and
-	// count it, rather than letting a PR quietly exercise production.
+	// Preview identity is always propagated, including an isolated
+	// preview-to-preview hop. The resolver tells us whether the chosen target
+	// came from the same PR scope so the fleet counters do not misclassify that
+	// isolated traffic as a production dependency.
 	callerEnv := ""
 	if caller.PreviewOfSlug != "" {
 		callerEnv = servicecallerEnvPreview
 		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
-		p.metrics.IncServicePreviewToProduction()
+		if target.PreviewScoped {
+			p.metrics.IncServicePreviewToPreview()
+		} else {
+			p.metrics.IncServicePreviewToProduction()
+		}
 	}
 	p.attachCallerAssertion(request, target, caller, callerEnv)
 	return request

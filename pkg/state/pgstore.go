@@ -2477,6 +2477,23 @@ func (s *PgStore) PreviewAppsByParent(ctx context.Context, accountID, parentSlug
 	return scanApps(rows)
 }
 
+func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error) {
+	if accountID == "" || projectID == "" || previewPRNumber <= 0 || workloadName == "" {
+		return App{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		select `+appsSelectColumns+`
+		  from apps
+		 where account_id = $1
+		   and project_id = $2
+		   and preview_pr_number = $3
+		   and workload_name = $4
+		   and preview_of_slug is not null
+		   and status <> 'deleted'
+	`, accountID, projectID, previewPRNumber, workloadName)
+	return scanApp(row)
+}
+
 // ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) is the
 // global "all my open PRs" view that backs the new
 // /dashboard/previews page. Same shape as PreviewAppsByParent but

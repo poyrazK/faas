@@ -19,7 +19,7 @@ func (p staticProvider) ServiceEndpoints(context.Context, string) (ServiceEndpoi
 func newProtocolTestProxy(target ServiceTarget, forward, rawForward func(Target) http.Handler) *ServiceProxy {
 	return NewServiceProxy(ServiceProxyConfig{
 		Provider:   staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}}},
-		Resolve:    func(context.Context, string) (ServiceTarget, bool, error) { return target, true, nil },
+		Resolve:    func(context.Context, string, string) (ServiceTarget, bool, error) { return target, true, nil },
 		Authorize:  func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		Forward:    forward,
 		RawForward: rawForward,
@@ -134,7 +134,7 @@ func TestServiceProxyStampsFullTargetIdentity(t *testing.T) {
 	var seenTarget Target
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: staticProvider{endpoints: []ServiceEndpoint{endpoint}},
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
@@ -187,7 +187,7 @@ func TestServiceProxyUpgradeStampsFullTargetIdentity(t *testing.T) {
 	var seen http.Header
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: staticProvider{endpoints: []ServiceEndpoint{endpoint}},
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders", WebSocketEnabled: true}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {

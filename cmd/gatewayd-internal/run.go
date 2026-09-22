@@ -3184,23 +3184,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider: serviceEndpointProvider,
-			Resolve: func(ctx context.Context, service string) (gateway.ServiceTarget, bool, error) {
-				app, err := pgStore.AppBySlug(ctx, service)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ServiceTarget{}, false, nil
-				}
-				if err != nil {
-					return gateway.ServiceTarget{}, false, fmt.Errorf("resolve service %q: %w", service, err)
-				}
-				// ADR-197: carry the target's wire-protocol posture with its
-				// identity so the guest hop can pick the H1 or H2C bridge
-				// without a second store read on the request path.
-				return gateway.ServiceTarget{
-					AppID:            app.ID,
-					AppProtocol:      app.AppProtocol,
-					WebSocketEnabled: app.WebSocketEnabled,
-				}, app.ID != "", nil
-			},
+			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),

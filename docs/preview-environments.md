@@ -196,10 +196,13 @@ be managed by the connected GitHub integration.
 
 ## Internal service calls from a preview
 
-A preview is one app, not a copy of your whole project, so it has no preview
-copy of the services it depends on. Service names are not environment-scoped:
-if a preview is allowed to call a dependency, the destination is the
-**production** service and its side effects are real.
+A project PR preview first resolves a service name inside its own account,
+project, and PR. If that workload preview exists, the call stays isolated; a
+preview in another PR, project, or account is never eligible.
+
+Provisioning still creates one app rather than copying the whole project, so a
+dependency preview may not exist yet. The gateway then considers the
+**production** service and its side effects are real if policy permits it.
 
 For new projects, Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
@@ -215,8 +218,10 @@ gregale github setup checkout --preview-service-policy deny
 Use `--preview-service-policy allow_marked` only when the production dependency
 is intentionally preview-safe.
 
-In `allow_marked` mode, Gregale marks every such call with
+Gregale marks every call made by a preview, including isolated sibling calls,
+with
 `X-Faas-Caller-Env: preview` and
 `X-Faas-Caller-Preview-Of: <production app slug>`. Both are platform-owned and
 cannot be set by a workload. See [networking](networking.md) for how to use
-them to skip side effects or refuse the call.
+them to skip side effects or refuse the call, and for the separate
+preview-to-preview and preview-to-production counters.

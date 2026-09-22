@@ -3662,6 +3662,22 @@ func (m *MemStore) PreviewAppsByParent(_ context.Context, accountID, parentSlug 
 	return out, nil
 }
 
+func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error) {
+	if accountID == "" || projectID == "" || previewPRNumber <= 0 || workloadName == "" {
+		return App{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, app := range m.apps {
+		if app.AccountID == accountID && app.ProjectID == projectID &&
+			app.PreviewPrNumber == previewPRNumber && app.WorkloadName == workloadName &&
+			app.PreviewOfSlug != "" && app.Status != AppDeleted {
+			return app, nil
+		}
+	}
+	return App{}, ErrNotFound
+}
+
 // ListPreviewsForTeardown (ADR-095 PR-C / issue #272) is the MemStore
 // mirror of PgStore.ListPreviewsForTeardown. Same contract: return
 // every non-torn_down preview row that is either in a terminal-ish

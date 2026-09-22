@@ -20,7 +20,7 @@ func previewProxy(t *testing.T, m *Metrics, caller ServiceCaller, seen *http.Hea
 	t.Helper()
 	return NewServiceProxy(ServiceProxyConfig{
 		Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "i", NodeID: "n", Port: 8080}}},
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return caller, nil },
@@ -79,6 +79,39 @@ func TestServiceProxyMarksPreviewToProductionCall(t *testing.T) {
 	}
 }
 
+func TestServiceProxyCountsPreviewScopedTargetWithoutProductionLeak(t *testing.T) {
+	m := NewMetrics()
+	var seen http.Header
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "i", NodeID: "n", Port: 8080}}},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-preview-orders", PreviewScoped: true}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-preview-client", PreviewOfSlug: "client"}, nil
+		},
+		Metrics: m,
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = r.Header.Clone()
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+	})
+
+	previewCall(t, proxy)
+
+	if seen.Get(ServiceCallerEnvHeader) != servicecallerEnvPreview {
+		t.Errorf("%s = %q, want preview", ServiceCallerEnvHeader, seen.Get(ServiceCallerEnvHeader))
+	}
+	if got := testutil.ToFloat64(m.servicePreviewToPreview); got != 1 {
+		t.Errorf("preview_to_preview = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.servicePreviewToProduction); got != 0 {
+		t.Errorf("preview_to_production = %v, want 0", got)
+	}
+}
+
 // A production caller is the ordinary case and must carry nothing new, or
 // every guest would have to learn to ignore a header it always receives.
 func TestServiceProxyLeavesProductionCallerUnmarked(t *testing.T) {
@@ -131,7 +164,7 @@ func TestServiceProxyRejectsPreviewDependencyBeforeDiscovery(t *testing.T) {
 	var forwardCalls atomic.Int32
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {

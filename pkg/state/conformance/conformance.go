@@ -491,10 +491,19 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	limits := api.MustLimitsFor(api.PlanPro)
 	expiresAt := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID,
+		Slug:      "preview-lifecycle-" + uuid.NewString()[:8],
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
 	create := func(slug string, prNumber int) state.App {
 		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
 			AccountID:        fx.Account.ID,
+			ProjectID:        project.ID,
 			Slug:             slug,
+			WorkloadName:     "api",
 			Type:             state.AppTypeApp,
 			Runtime:          "node22",
 			RAMMB:            limits.RAMMB,
@@ -525,6 +534,13 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	}
 	if len(byAccount) != 2 || !containsAppIDs(byAccount, developer.ID) || !containsAppIDs(byAccount, pr.ID) {
 		t.Fatalf("ListPreviewsForAccount = %+v, want exactly both preview apps", byAccount)
+	}
+	scoped, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 42, "api")
+	if err != nil || scoped.ID != pr.ID {
+		t.Fatalf("PreviewAppByProjectWorkload = (%+v, %v), want PR preview %q", scoped, err, pr.ID)
+	}
+	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 0, "api"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("PreviewAppByProjectWorkload(developer) = %v, want ErrNotFound", err)
 	}
 
 	if _, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, "invalid"); !errors.Is(err, state.ErrInvalidPreviewPrState) {

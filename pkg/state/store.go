@@ -1695,6 +1695,12 @@ type Store interface {
 	// Soft-deleted rows are filtered out — the teardown janitor's
 	// tombstone-aware sweep uses ListPreviewsForTeardown instead.
 	PreviewAppsByParent(ctx context.Context, accountID, parentSlug string) ([]App, error)
+	// PreviewAppByProjectWorkload resolves one workload inside a pull-request
+	// preview environment. The complete tenant/project/PR tuple is required so
+	// a service lookup can never drift into a sibling PR or another account.
+	// Developer sessions (preview_pr_number=0), production rows, and deleted
+	// previews are intentionally excluded.
+	PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error)
 	// ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) lists
 	// every non-deleted preview row for the account, across all
 	// parents. Backs the new /dashboard/previews page (a global

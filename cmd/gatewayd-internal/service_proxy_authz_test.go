@@ -228,3 +228,46 @@ func TestServiceProxyAuthorizerEnforcesPreviewServicePolicy(t *testing.T) {
 		t.Fatalf("dangling preview authorization = %v, want fail-closed denial", err)
 	}
 }
+
+func TestServiceProxyAuthorizerEnforcesPreviewEnvironmentBoundary(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "preview-environment-authz@local", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "preview-environment-authz"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	otherProject, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "preview-environment-authz-other"})
+	if err != nil {
+		t.Fatalf("CreateProject(other): %v", err)
+	}
+	create := func(slug, projectID string, prNumber int) state.App {
+		t.Helper()
+		app, createErr := store.CreateApp(ctx, state.App{
+			AccountID: account.ID, ProjectID: projectID, Slug: slug,
+			WorkloadName: slug, PreviewOfSlug: "production-" + slug,
+			PreviewPrNumber: prNumber, RAMMB: 128, Status: state.AppActive,
+		})
+		if createErr != nil {
+			t.Fatalf("CreateApp(%s): %v", slug, createErr)
+		}
+		return app
+	}
+	caller := create("pr-42-caller", project.ID, 42)
+	sameEnvironment := create("pr-42-target", project.ID, 42)
+	otherPR := create("pr-43-target", project.ID, 43)
+	otherProjectTarget := create("pr-42-other-target", otherProject.ID, 42)
+	authorize := newServiceProxyAuthorizer(store)
+
+	if _, err := authorize(ctx, caller.ID, sameEnvironment.ID); err != nil {
+		t.Fatalf("same preview environment denied: %v", err)
+	}
+	for _, target := range []state.App{otherPR, otherProjectTarget} {
+		if _, err := authorize(ctx, caller.ID, target.ID); !errors.Is(err, gateway.ErrServiceProxyDenied) {
+			t.Errorf("cross-environment target %q authorization = %v, want denial", target.Slug, err)
+		}
+	}
+}

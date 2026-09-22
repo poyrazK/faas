@@ -40,7 +40,7 @@ func TestServiceProxyRetriesStaleGETAndCachesLease(t *testing.T) {
 	var seenInstance atomic.Value
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(_ context.Context, caller, target string) (ServiceCaller, error) {
@@ -97,7 +97,7 @@ func TestServiceProxyRefreshesExpiredLease(t *testing.T) {
 	now := time.Unix(100, 0)
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
@@ -125,7 +125,7 @@ func TestServiceProxyAuthorizationAndCallerIdentity(t *testing.T) {
 	var forwarded atomic.Bool
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(_ context.Context, caller, target string) (ServiceCaller, error) {
@@ -170,7 +170,7 @@ func TestServiceProxyDoesNotRetryPOST(t *testing.T) {
 	var calls atomic.Int32
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
@@ -210,7 +210,7 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 	}}
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: providerBackend,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
@@ -317,7 +317,10 @@ func TestServiceProxyRoutesDNSHostName(t *testing.T) {
 	var gotPath string
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(_ context.Context, service string) (ServiceTarget, bool, error) {
+		Resolve: func(_ context.Context, caller, service string) (ServiceTarget, bool, error) {
+			if caller != "app-client" {
+				t.Fatalf("caller = %q, want app-client", caller)
+			}
 			if service != "orders" {
 				t.Fatalf("service = %q, want orders", service)
 			}
@@ -360,7 +363,7 @@ func TestParseServiceProxyHostRejectsUnsafeNames(t *testing.T) {
 func TestServiceProxyRejectsMalformedPathAndEmptyRegistry(t *testing.T) {
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: &serviceProxyProvider{},
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
