@@ -823,9 +823,10 @@ type Handler struct {
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
-	// picker selects a concrete instance. It is intentionally gateway-local:
-	// the guest listener remains runtime-agnostic while the edge can account
-	// for the complete bridge lifetime, including streams and upgrades.
+	// picker selects a concrete instance. Instance slots and FIFO ordering are
+	// gateway-local; production installs a shared admission backend so the
+	// queue-depth budget remains fleet-wide. The guest listener stays runtime-
+	// agnostic while the edge accounts for streams and upgrades.
 	vmConcurrency *vmConcurrencyManager
 	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
 	// observes a full instance slot set. It shares the gateway audit sink so
@@ -1498,6 +1499,16 @@ func (h *Handler) WithWakeAdmissionAudit(audit RequireAuthnAuditor) *Handler {
 // without event persistence.
 func (h *Handler) WithVMConcurrencyAudit(audit RequireAuthnAuditor) *Handler {
 	h.vmConcurrencyAudit = audit
+	return h
+}
+
+// WithConcurrencyQueueAdmission installs the shared permit backend that makes
+// max_queue_depth a fleet-wide per-app cap across gateway replicas. A nil
+// backend retains process-local admission for tests and single-process embeds.
+func (h *Handler) WithConcurrencyQueueAdmission(admission ConcurrencyQueueAdmission) *Handler {
+	if h != nil && h.vmConcurrency != nil {
+		h.vmConcurrency.setQueueAdmission(admission)
+	}
 	return h
 }
 
@@ -6992,26 +7003,32 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = telemetryTraceID(requestID)
 			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
-				AccountID:       acctUUID,
-				AppID:           appUUID,
-				DeploymentID:    deploymentUUID,
-				Route:           telemetryRoute,
-				Method:          r.Method,
-				Status:          status,
-				LatencyMS:       int(elapsed / time.Millisecond),
-				ColdBoot:        cold,
-				TraceID:         requestTraceID,
-				ReceivedAt:      time.Now(),
-				WakeID:          target.WakeID,
-				InstanceID:      target.InstanceID,
-				UAFamily:        uaFamily,
-				ReferrerHost:    referrerHost,
-				Country:         country,
-				GuestDurationMS: guestEvidence.DurationMS,
-				GuestRuntime:    guestEvidence.Runtime,
-				GuestOutcome:    guestEvidence.Outcome,
-				GuestErrorClass: guestEvidence.ErrorClass,
-				ConsumerID:      consumerID,
+				AccountID:           acctUUID,
+				AppID:               appUUID,
+				DeploymentID:        deploymentUUID,
+				Route:               telemetryRoute,
+				Method:              r.Method,
+				Status:              status,
+				LatencyMS:           int(elapsed / time.Millisecond),
+				ColdBoot:            cold,
+				TraceID:             requestTraceID,
+				ReceivedAt:          time.Now(),
+				WakeID:              target.WakeID,
+				InstanceID:          target.InstanceID,
+				UAFamily:            uaFamily,
+				ReferrerHost:        referrerHost,
+				Country:             country,
+				GuestDurationMS:     guestEvidence.DurationMS,
+				GuestRuntime:        guestEvidence.Runtime,
+				GuestOutcome:        guestEvidence.Outcome,
+				GuestErrorClass:     guestEvidence.ErrorClass,
+				ConsumerID:          consumerID,
+				NodeID:              target.NodeID,
+				Region:              target.Region,
+				CommitSHA:           target.CommitSHA,
+				DeploymentTag:       target.DeploymentTag,
+				DeploymentCreatedAt: target.DeploymentCreatedAt,
+				ImageDigest:         target.ImageDigest,
 			})
 		}
 	}
@@ -8011,6 +8028,11 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set(api.ErrorCodeHeader, api.CodeConcurrencyQueueTimeout)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeConcurrencyQueueTimeout,
 			"Concurrency queue wait expired", "no warm instance slot became available within the configured wait budget"))
+	case errors.Is(err, ErrConcurrencyQueueAdmissionUnavailable):
+		retryAfter := wakeRetryAfterSeconds(err, 1)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Concurrency queue temporarily unavailable", "the fleet-wide queue admission budget could not be checked; retry shortly"))
 	case errors.Is(err, ErrWakeQueueWaitTimeout):
 		retryAfter := wakeRetryAfterSeconds(err, 5)
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
@@ -8084,6 +8106,7 @@ func wakeRetryAfterSeconds(err error, fallback int) int {
 	var concurrencyDrop *WakeConcurrencyDropError
 	var concurrencyFull *ConcurrencyQueueFullError
 	var concurrencyTimeout *ConcurrencyQueueWaitTimeoutError
+	var concurrencyAdmission *ConcurrencyQueueAdmissionError
 	var globalFull *WakeAdmissionQueueFullError
 	var globalTimeout *WakeAdmissionQueueWaitTimeoutError
 	switch {
@@ -8093,6 +8116,8 @@ func wakeRetryAfterSeconds(err error, fallback int) int {
 		retryAfter = concurrencyFull.RetryAfter
 	case errors.As(err, &concurrencyTimeout):
 		retryAfter = concurrencyTimeout.RetryAfter
+	case errors.As(err, &concurrencyAdmission):
+		retryAfter = concurrencyAdmission.RetryAfter
 	case errors.As(err, &perAppFull):
 		retryAfter = perAppFull.RetryAfter
 	case errors.As(err, &perAppTimeout):

@@ -196,6 +196,37 @@ func TestGetAppSecurityReportsLiveImageScanCoverage(t *testing.T) {
 	}
 }
 
+func TestGetAppSecurityDoesNotRequireImportedImageScanForSourceDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "posture-source-coverage")
+	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindTarball, Status: state.DeployBuilding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.SetDeploymentRootfs(t.Context(), dep.ID, "/srv/fc/apps/posture-source-coverage/"+dep.ID+".ext4", "apps/posture-source-coverage/"+dep.ID+".ext4", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	setSecurityPolicyForTest(t, e, "posture-source-coverage", api.AppSecurityPolicyEnforce)
+	rec := e.do(t, http.MethodGet, "/v1/apps/posture-source-coverage/security", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var posture api.AppSecurityPostureResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &posture); err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range posture.Findings {
+		if strings.HasPrefix(finding.Code, "image_scan_") {
+			t.Fatalf("source deployment has imported-image finding: %+v", finding)
+		}
+	}
+}
+
 func stampSecurityScan(t *testing.T, e testEnv, dep state.Deployment, digest string, critical, high, unknown int) {
 	t.Helper()
 	now := time.Now().UTC()

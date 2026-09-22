@@ -474,6 +474,11 @@ func (s *server) liveImageScanFindings(ctx context.Context, app state.App) ([]ap
 	now := time.Now().UTC()
 	counts := map[string]int{}
 	for _, dep := range live {
+		// Source and Dockerfile builds do not use the imported-image scan
+		// admission path and must not be reported as missing OCI evidence.
+		if dep.Kind != state.DeploymentKindImage {
+			continue
+		}
 		if reason := classifyLiveImageScan(dep, now); reason != "" {
 			counts[reason]++
 		}

@@ -53,6 +53,23 @@ gregale dev --postgres --postgres-region eu-central-1 # choose database placemen
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
 ```
 
+For a repeatable team setup, put non-secret developer defaults in the
+project's `gregale.yaml`:
+
+```yaml
+dev:
+  env_file: .env.dev
+  service_override_file: .env.services.local
+  postgres: true
+  postgres_region: eu-central-1
+```
+
+These paths are relative to the selected source root. The files must still be
+created locally, are validated before any remote mutation, and remain excluded
+from the source archive. Explicit CLI flags take precedence over the manifest;
+`gregale dev setup` shows the resulting effective command without starting or
+mutating the environment.
+
 The dashboard at `/dashboard/developers` lists the active environments for
 the signed-in account. It shows each stable URL, runtime, current instance
 state, latest sync result, useful links for logs/request analytics/config, and

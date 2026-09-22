@@ -1,5 +1,6 @@
 //go:build linux && metal
 
+// adr: 149 — claiming a prepared network preserves its namespace and isolation.
 package fcvm
 
 import (
@@ -104,6 +105,17 @@ func TestMetalPreparedNetworkOwnership(t *testing.T) {
 	}
 	if _, err := os.Stat("/run/netns/" + old.config.Netns); !os.IsNotExist(err) {
 		t.Fatalf("old namespace alias survived: %v", err)
+	}
+	// Production sends an explicit default port. It must keep the claimed
+	// namespace, not destroy and rebuild it because NewConfig used zero.
+	requested := e.config
+	requested.GuestAppPort = netns.AppPort
+	if hit, err := m.setupWakeNetwork(ctx, requested, e); !hit || err != nil {
+		t.Fatalf("explicit default port missed prepared network: hit=%v err=%v", hit, err)
+	}
+	afterSetup, err := os.Stat("/run/netns/" + e.config.Netns)
+	if err != nil || !os.SameFile(before, afterSetup) {
+		t.Fatalf("default-port wake replaced the prepared namespace: %v", err)
 	}
 	assertBatchNetwork(t, e.config)
 	if m.LeasedCount() != 1 || len(m.alloc.reserved) != 1 {
