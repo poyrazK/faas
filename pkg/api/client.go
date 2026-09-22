@@ -1612,6 +1612,19 @@ func (c *Client) UpdateProjectEnvironment(ctx context.Context, projectSlug, envi
 	return out, c.do(ctx, http.MethodPatch, path, req, &out)
 }
 
+// DeleteProjectEnvironment removes an unused project environment. Gregale
+// rejects production, protected, and environments with live releases.
+func (c *Client) DeleteProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string) error {
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// DeleteProjectsSlugEnvironmentsEnvironment is the route-shaped alias used by
+// the SDK coverage contract. Prefer DeleteProjectEnvironment for new callers.
+func (c *Client) DeleteProjectsSlugEnvironmentsEnvironment(ctx context.Context, projectSlug, environmentSlug string) error {
+	return c.DeleteProjectEnvironment(ctx, projectSlug, environmentSlug)
+}
+
 // GetProjectEnvironmentConfig returns the latest non-secret configuration
 // snapshot for one project environment. An unconfigured environment returns
 // version zero with an empty object and its canonical empty hash.
