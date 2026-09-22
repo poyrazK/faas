@@ -335,10 +335,13 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	}
 	live, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
 		AppID: projectApp.ID, Scope: staging.Slug, Kind: state.DeploymentKindImage,
-		ImageDigest: "sha256:environment-api-live", Status: state.DeployLive,
+		ImageDigest: "sha256:environment-api-live",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(live staging): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, live.ID, state.DeployLive, ""); err != nil {
+		t.Fatalf("mark staging release live: %v", err)
 	}
 	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("live environment delete err = %v, want ErrConflict", err)
