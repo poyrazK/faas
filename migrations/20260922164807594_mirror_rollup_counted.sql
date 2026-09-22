@@ -24,6 +24,20 @@ BEGIN
     ALTER TABLE mirror_invocation_results
         ADD COLUMN rollup_counted boolean NOT NULL DEFAULT false;
 
+    -- The old date_trunc used the session timezone. Remove misaligned recent
+    -- buckets before rebuilding in UTC, or the old and repaired buckets would
+    -- both remain. Only touch rules with retained evidence and complete hours;
+    -- historical/partially-pruned buckets remain outside this repair.
+    DELETE FROM mirror_invocation_summary AS summary
+    WHERE summary.hour_bucket >= complete_hour
+      AND summary.hour_bucket <> (
+          date_trunc('hour', summary.hour_bucket AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+      )
+      AND EXISTS (
+          SELECT 1 FROM mirror_invocation_results AS result
+          WHERE result.mirror_rule_id = summary.rule_id
+      );
+
     -- Whole hours inside retention can be repaired from the retained ledger.
     -- Older hours may already have lost raw rows: never reduce their existing
     -- totals. Historical overcounts/holes with missing raw evidence cannot be

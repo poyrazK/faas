@@ -40,7 +40,8 @@ This is a coordinated writer cutover, not a mixed-version rolling upgrade:
    and leaves counted/archived history intact.
 
 Whole UTC hours strictly inside the seven-day retention boundary are rebuilt
-from retained rows. Older buckets preserve the larger of the existing and
+from retained rows, removing misaligned recent legacy buckets first. Older
+buckets preserve the larger of the existing and
 retained totals, and buckets with no raw rows are untouched. This avoids
 shrinking archived history, but **cannot exactly repair legacy overcounts,
 missing contributions or non-UTC buckets once their raw evidence is gone**.

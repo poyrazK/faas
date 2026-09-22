@@ -280,3 +280,16 @@ func TestRollupMigrationBaselineAndReplayPG(t *testing.T) {
 		})
 	}
 }
+
+func TestRollupMigrationRepairsLegacyTimezoneBucketPG(t *testing.T) {
+	pool, rule := legacyMirrorDB(t)
+	hour := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour)
+	insertMirrorResult(t, pool, rule, hour.Add(45*time.Minute))
+	if _, err := pool.Exec(t.Context(), `INSERT INTO mirror_invocation_summary
+		(rule_id, app_id, hour_bucket, total_invocations)
+		SELECT id, app_id, $2, 9 FROM mirror_rules WHERE id = $1`, rule, hour.Add(30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	applyMirrorMigration(t, pool, "20260922164807594_mirror_rollup_counted.sql")
+	assertMirrorSummary(t, pool, rule, hour, 1)
+}
