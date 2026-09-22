@@ -1,11 +1,12 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.list_delayed_tasks_response import ListDelayedTasksResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -13,18 +14,21 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
-    path: str | Unset = UNSET,
+    before: str | Unset = UNSET,
+    limit: int | Unset = 20,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
-    params["path"] = path
+    params["before"] = before
+
+    params["limit"] = limit
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
-        "method": "delete",
-        "url": "/v1/apps/{slug}/cache".format(
+        "method": "get",
+        "url": "/v1/apps/{slug}/delayed-tasks".format(
             slug=quote(str(slug), safe=""),
         ),
         "params": params,
@@ -33,30 +37,23 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ListDelayedTasksResponse | Problem | None:
+    if response.status_code == 200:
+        response_200 = ListDelayedTasksResponse.from_dict(response.json())
+
+        return response_200
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
         return response_401
 
-    if response.status_code == 403:
-        response_403 = Problem.from_dict(response.json())
-
-        return response_403
-
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
         return response_404
-
-    if response.status_code == 422:
-        response_422 = Problem.from_dict(response.json())
-
-        return response_422
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -69,7 +66,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ListDelayedTasksResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -82,30 +81,30 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    path: str | Unset = UNSET,
-) -> Response[Any | Problem]:
-    """Purge cached responses for an app.
+    before: str | Unset = UNSET,
+    limit: int | Unset = 20,
+) -> Response[ListDelayedTasksResponse | Problem]:
+    """List delayed tasks for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+     Newest-first, cursor-paginated delayed-task history.
 
     Args:
         slug (str):
-        path (str | Unset):
+        before (str | Unset):
+        limit (int | Unset):  Default: 20.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[ListDelayedTasksResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
-        path=path,
+        before=before,
+        limit=limit,
     )
 
     response = client.get_httpx_client().request(
@@ -119,31 +118,31 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    path: str | Unset = UNSET,
-) -> Any | Problem | None:
-    """Purge cached responses for an app.
+    before: str | Unset = UNSET,
+    limit: int | Unset = 20,
+) -> ListDelayedTasksResponse | Problem | None:
+    """List delayed tasks for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+     Newest-first, cursor-paginated delayed-task history.
 
     Args:
         slug (str):
-        path (str | Unset):
+        before (str | Unset):
+        limit (int | Unset):  Default: 20.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        ListDelayedTasksResponse | Problem
     """
 
     return sync_detailed(
         slug=slug,
         client=client,
-        path=path,
+        before=before,
+        limit=limit,
     ).parsed
 
 
@@ -151,30 +150,30 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    path: str | Unset = UNSET,
-) -> Response[Any | Problem]:
-    """Purge cached responses for an app.
+    before: str | Unset = UNSET,
+    limit: int | Unset = 20,
+) -> Response[ListDelayedTasksResponse | Problem]:
+    """List delayed tasks for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+     Newest-first, cursor-paginated delayed-task history.
 
     Args:
         slug (str):
-        path (str | Unset):
+        before (str | Unset):
+        limit (int | Unset):  Default: 20.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[ListDelayedTasksResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
-        path=path,
+        before=before,
+        limit=limit,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -186,31 +185,31 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    path: str | Unset = UNSET,
-) -> Any | Problem | None:
-    """Purge cached responses for an app.
+    before: str | Unset = UNSET,
+    limit: int | Unset = 20,
+) -> ListDelayedTasksResponse | Problem | None:
+    """List delayed tasks for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+     Newest-first, cursor-paginated delayed-task history.
 
     Args:
         slug (str):
-        path (str | Unset):
+        before (str | Unset):
+        limit (int | Unset):  Default: 20.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        ListDelayedTasksResponse | Problem
     """
 
     return (
         await asyncio_detailed(
             slug=slug,
             client=client,
-            path=path,
+            before=before,
+            limit=limit,
         )
     ).parsed

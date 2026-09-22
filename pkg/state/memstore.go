@@ -6557,6 +6557,53 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	}
 
 	now := time.Now()
+	if IsServiceRollout(*target) {
+		if action != "abort" {
+			return *target, 0, ErrRolloutStateInvalid
+		}
+		handoff := target.ServiceRolloutHandoff
+		if !handoff.ActiveAbort() {
+			var predecessor Deployment
+			found := false
+			for _, other := range m.deployments {
+				if other.AppID != appID || other.ID == target.ID || other.Status != DeployLive ||
+					normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) ||
+					IsServiceRollout(other) || !other.CreatedAt.Before(target.CreatedAt) {
+					continue
+				}
+				if !found || other.CreatedAt.After(predecessor.CreatedAt) ||
+					(other.CreatedAt.Equal(predecessor.CreatedAt) && other.ID > predecessor.ID) {
+					predecessor = other
+					found = true
+				}
+			}
+			if !found {
+				return *target, 0, ErrRolloutStateInvalid
+			}
+			handoff = ServiceRolloutHandoff{
+				Action:                  ServiceRolloutActionAbort,
+				Phase:                   ServiceRolloutPhasePending,
+				PredecessorDeploymentID: predecessor.ID,
+				Reason:                  reason,
+				StartedAt:               &now,
+				UpdatedAt:               &now,
+			}
+			target.ServiceRolloutHandoff = handoff
+			m.deployments[target.ID] = *target
+		}
+		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
+			DeploymentID: uuid.MustParse(target.ID),
+			AccountID:    nil,
+			Kind:         DeployRolledBack,
+			Actor:        "operator:cli:recover_rollout",
+			At:           now,
+			Data:         json.RawMessage(rolloutAuditData("abort_requested", reason)),
+		})
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: append service abort request audit: %w", err)
+		}
+		return *target, auditID, nil
+	}
 
 	switch action {
 	case "advance":

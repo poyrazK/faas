@@ -4936,6 +4936,25 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		RolloutAbortedReason: d.RolloutAbortedReason,
 		APIHostingReceipt:    d.APIHostingReceipt,
 	}
+	if d.ServiceRolloutHandoff.Action != "" {
+		h := d.ServiceRolloutHandoff
+		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{
+			Action:                  h.Action,
+			Phase:                   h.Phase,
+			PredecessorDeploymentID: h.PredecessorDeploymentID,
+			Generation:              h.Generation,
+			ExpectedGateways:        append([]string(nil), h.ExpectedGateways...),
+			AcknowledgedGateways:    append([]string(nil), h.AcknowledgedGateways...),
+			MissingGateways:         append([]string(nil), h.MissingGateways...),
+			RetryCount:              h.RetryCount,
+			LastError:               h.LastError,
+			Reason:                  h.Reason,
+			StartedAt:               h.StartedAt,
+			UpdatedAt:               h.UpdatedAt,
+			AcknowledgedAt:          h.AcknowledgedAt,
+			CompletedAt:             h.CompletedAt,
+		}
+	}
 	if len(d.OverrideEntrypoint) > 0 {
 		resp.OverrideEntrypoint = d.OverrideEntrypoint
 	}

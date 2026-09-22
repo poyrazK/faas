@@ -601,6 +601,7 @@ export type { SecretScanResult } from './SecretScanResult.js';
 export type { SecurityQuarantineRecoveryRequest } from './SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './SecurityQuarantineRecoveryResponse.js';
 export type { ServiceReplicas } from './ServiceReplicas.js';
+export type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
 export type { SessionInfo } from './SessionInfo.js';
 export type { SessionListResponse } from './SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './SessionsRevokeAllResponse.js';

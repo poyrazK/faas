@@ -7795,6 +7795,69 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 	}
 
 	now := time.Now().UTC()
+	if IsServiceRollout(dep) {
+		// A service rollout cannot use the synchronous generic recovery
+		// transitions: changing weights and terminal state here would bypass
+		// the gateway acknowledgement and request-drain barriers owned by
+		// schedd. Record an idempotent abort intent instead; deployment_changed
+		// wakes schedd after this transaction commits.
+		if action != "abort" {
+			return dep, 0, ErrRolloutStateInvalid
+		}
+		handoff := dep.ServiceRolloutHandoff
+		if !handoff.ActiveAbort() {
+			var predecessorID string
+			if err := tx.QueryRow(ctx,
+				`select id
+				   from deployments
+				  where app_id = $1 and scope = $2 and status = 'live' and id <> $3
+				    and created_at < $4
+				    and not (canary_total_steps = 0 and rollout_state = 'rolling_out')
+				  order by created_at desc, id desc
+				  limit 1`, dep.AppID, dep.Scope, dep.ID, dep.CreatedAt).Scan(&predecessorID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return dep, 0, ErrRolloutStateInvalid
+				}
+				return Deployment{}, 0, fmt.Errorf("state: request service rollout abort predecessor: %w", err)
+			}
+			handoff = ServiceRolloutHandoff{
+				Action:                  ServiceRolloutActionAbort,
+				Phase:                   ServiceRolloutPhasePending,
+				PredecessorDeploymentID: predecessorID,
+				Reason:                  reason,
+				StartedAt:               &now,
+				UpdatedAt:               &now,
+			}
+			payload, err := json.Marshal(handoff)
+			if err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: request service rollout abort encode: %w", err)
+			}
+			if _, err := tx.Exec(ctx,
+				`update deployments set service_rollout_handoff = $2::jsonb where id = $1`,
+				dep.ID, payload); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: request service rollout abort stamp: %w", err)
+			}
+		}
+		var auditID int64
+		if err := tx.QueryRow(ctx,
+			`insert into deployment_audit
+			    (deployment_id, account_id, kind, actor, at, data)
+			 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
+			 returning id`, dep.ID, nil, string(DeployRolledBack),
+			"operator:cli:recover_rollout", now,
+			rolloutAuditData("abort_requested", reason)).Scan(&auditID); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort audit: %w", err)
+		}
+		updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+			`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, dep.ID))
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort readback: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort commit: %w", err)
+		}
+		return updated, auditID, nil
+	}
 
 	var (
 		auditKind   DeploymentAuditKind
@@ -22474,7 +22537,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(canary_preset, 'none'), canary_step, canary_total_steps,
 	canary_step_started_at, canary_stages, coalesce(nullif(rollout_state, ''), 'pending'),
 	rollout_started_at, rollout_completed_at, rollout_aborted_at,
-	coalesce(rollout_aborted_reason, ''),
+	coalesce(rollout_aborted_reason, ''), coalesce(service_rollout_handoff, '{}'::jsonb),
 	-- ADR-124 deployment queue controls (migration 00391/00491). priority
 	-- is NOT NULL DEFAULT 100 so the coalesce is purely for symmetry
 	-- with the rest of the projection (and for the rare pre-PR
@@ -22532,7 +22595,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.canary_preset, 'none'), d.canary_step, d.canary_total_steps,
 	d.canary_step_started_at, d.canary_stages, coalesce(nullif(d.rollout_state, ''), 'pending'),
 	d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at,
-	coalesce(d.rollout_aborted_reason, ''),
+	coalesce(d.rollout_aborted_reason, ''), coalesce(d.service_rollout_handoff, '{}'::jsonb),
 	-- ADR-124 deployment queue controls (migration 00391/00491). See the
 	-- unqualified-projection counterpart above for the rationale on
 	-- coalesce choices.
@@ -22586,6 +22649,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	var firstWakeAt, first5xxWindowEndsAt, lastAutoRollbackAt *time.Time
 	var canaryStepStartedAt *time.Time
 	var rolloutStartedAt, rolloutCompletedAt, rolloutAbortedAt *time.Time
+	var serviceRolloutHandoff json.RawMessage
 	// Issue #460 / ADR-053: six override columns scanned here so
 	// the SELECT projections in DeploymentByID / LatestDeployment /
 	// etc. match. The scan order matches the column order in the
@@ -22646,7 +22710,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.CanaryPreset, &d.CanaryStep, &d.CanaryTotalSteps,
 		&canaryStepStartedAt, &d.CanaryStages, &d.RolloutState,
 		&rolloutStartedAt, &rolloutCompletedAt, &rolloutAbortedAt,
-		&d.RolloutAbortedReason,
+		&d.RolloutAbortedReason, &serviceRolloutHandoff,
 		// ADR-124 deployment queue controls (migration 00391/00491). The
 		// scan order mirrors the SELECT projection above — see the
 		// docblock on deploymentSelectColumnsWithRootfs for the
@@ -22688,6 +22752,11 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	d.RolloutStartedAt = rolloutStartedAt
 	d.RolloutCompletedAt = rolloutCompletedAt
 	d.RolloutAbortedAt = rolloutAbortedAt
+	if len(serviceRolloutHandoff) > 0 {
+		if err := json.Unmarshal(serviceRolloutHandoff, &d.ServiceRolloutHandoff); err != nil {
+			return fmt.Errorf("state: decode service rollout handoff: %w", err)
+		}
+	}
 	return nil
 }
 

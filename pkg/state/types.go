@@ -2130,6 +2130,10 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
+	// barriers for zero-step service rollouts. Empty for ordinary canaries and
+	// stable deployments.
+	ServiceRolloutHandoff ServiceRolloutHandoff `json:"service_rollout_handoff,omitempty"`
 
 	// Parking reason + timestamp (issue #554 / ADR-079 follow-up).
 	// pkg/sched.Engine.ParkDeployment sets these before flipping

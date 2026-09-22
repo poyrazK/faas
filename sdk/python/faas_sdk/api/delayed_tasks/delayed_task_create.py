@@ -6,7 +6,6 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.delayed_task_request import DelayedTaskRequest
 from ...models.delayed_task_response import DelayedTaskResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
@@ -15,7 +14,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
-    body: DelayedTaskRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -29,7 +28,7 @@ def _get_kwargs(
         ),
     }
 
-    _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body
 
     headers["Content-Type"] = "application/json"
 
@@ -86,19 +85,22 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: DelayedTaskRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DelayedTaskResponse | Problem]:
     """Schedule a delayed task to fire at a future time.
 
-     Cap-checked against the plan's MaxDelayedTasksPerApp (Hobby 5,
-    Pro 50, Scale 1_000_000). The drain re-checks at dispatch.
+     Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
+    bounded to one year. Cap-checked against the plan's
+    MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
+    re-checks at dispatch. Delivery is at least once; handlers should use
+    the invocation id to make side effects idempotent.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (DelayedTaskRequest): Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must
-            be in the future (UTC).
+        body (Any): Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling
+            form; the maximum delay is 31,536,000 seconds (365 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,19 +127,22 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: DelayedTaskRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> DelayedTaskResponse | Problem | None:
     """Schedule a delayed task to fire at a future time.
 
-     Cap-checked against the plan's MaxDelayedTasksPerApp (Hobby 5,
-    Pro 50, Scale 1_000_000). The drain re-checks at dispatch.
+     Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
+    bounded to one year. Cap-checked against the plan's
+    MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
+    re-checks at dispatch. Delivery is at least once; handlers should use
+    the invocation id to make side effects idempotent.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (DelayedTaskRequest): Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must
-            be in the future (UTC).
+        body (Any): Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling
+            form; the maximum delay is 31,536,000 seconds (365 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,19 +164,22 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: DelayedTaskRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DelayedTaskResponse | Problem]:
     """Schedule a delayed task to fire at a future time.
 
-     Cap-checked against the plan's MaxDelayedTasksPerApp (Hobby 5,
-    Pro 50, Scale 1_000_000). The drain re-checks at dispatch.
+     Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
+    bounded to one year. Cap-checked against the plan's
+    MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
+    re-checks at dispatch. Delivery is at least once; handlers should use
+    the invocation id to make side effects idempotent.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (DelayedTaskRequest): Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must
-            be in the future (UTC).
+        body (Any): Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling
+            form; the maximum delay is 31,536,000 seconds (365 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,19 +204,22 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: DelayedTaskRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> DelayedTaskResponse | Problem | None:
     """Schedule a delayed task to fire at a future time.
 
-     Cap-checked against the plan's MaxDelayedTasksPerApp (Hobby 5,
-    Pro 50, Scale 1_000_000). The drain re-checks at dispatch.
+     Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
+    bounded to one year. Cap-checked against the plan's
+    MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
+    re-checks at dispatch. Delivery is at least once; handlers should use
+    the invocation id to make side effects idempotent.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (DelayedTaskRequest): Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must
-            be in the future (UTC).
+        body (Any): Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling
+            form; the maximum delay is 31,536,000 seconds (365 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

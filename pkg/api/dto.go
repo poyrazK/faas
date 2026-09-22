@@ -2405,11 +2405,33 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState         string     `json:"rollout_state,omitempty"`
-	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	RolloutState          string                         `json:"rollout_state,omitempty"`
+	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
+}
+
+// ServiceRolloutHandoffResponse exposes the durable scheduler barrier state
+// for readiness-gated service deployments. Gateway lists contain registered
+// node names only; request or customer identifiers are never used as metric
+// labels or placed in this status payload.
+type ServiceRolloutHandoffResponse struct {
+	Action                  string     `json:"action"`
+	Phase                   string     `json:"phase"`
+	PredecessorDeploymentID string     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64      `json:"generation,omitempty"`
+	ExpectedGateways        []string   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string   `json:"missing_gateways,omitempty"`
+	RetryCount              int        `json:"retry_count"`
+	LastError               string     `json:"last_error,omitempty"`
+	Reason                  string     `json:"reason,omitempty"`
+	StartedAt               *time.Time `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
 // BuildPlan describes what the build pipeline did with the source

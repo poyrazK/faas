@@ -6502,10 +6502,13 @@ paths:
             on the in-flight row + 0 on the siblings. No stuck-check;
             this is the operator's "I'm sure, ship it" path.
 
-          - `abort`: flips `rollout_state = 'aborted'` with
-            `rollout_aborted_reason = reason`. Legal from
-            `rollout_state ∈ {pending, rolling_out}`. Emits a
-            `deploy.rolled_back` audit row.
+          - `abort`: ordinary canaries transition synchronously to
+            `rollout_state = 'aborted'`. A zero-step service rollout instead
+            records a durable abort request and returns 202; schedd restores
+            the predecessor route, waits for gateway acknowledgement and
+            candidate request drain, then finalises the abort. `advance` and
+            `promote` are invalid for service rollouts. Emits a
+            `deploy.rolled_back` audit row for the operator intent.
 
         Returns the post-transition Deployment + the audit row id
         so the operator's terminal can echo `audit_id=…`. Plan-tier
@@ -6527,6 +6530,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RolloutTransitionResponse'
+        '202':
+          description: A service-rollout abort was accepted for scheduler-owned zero-downtime handoff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RolloutTransitionResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
@@ -22115,6 +22123,38 @@ components:
         rollout_aborted_reason:
           type: string
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
+        service_rollout_handoff:
+          $ref: '#/components/schemas/ServiceRolloutHandoffResponse'
+
+    ServiceRolloutHandoffResponse:
+      description: Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff.
+      type: object
+      required: [action, phase, retry_count]
+      properties:
+        action:
+          type: string
+          enum: [promote, abort]
+        phase:
+          type: string
+          enum: [pending, routing, draining, complete]
+        predecessor_deployment_id: { type: string }
+        generation: { type: integer, format: int64, minimum: 0 }
+        expected_gateways:
+          type: array
+          items: { type: string }
+        acknowledged_gateways:
+          type: array
+          items: { type: string }
+        missing_gateways:
+          type: array
+          items: { type: string }
+        retry_count: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        reason: { type: string }
+        started_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: [string, "null"], format: date-time }
+        acknowledged_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
 
     BuildPlan:
       description: "Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."
