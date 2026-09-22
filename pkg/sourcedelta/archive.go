@@ -153,6 +153,7 @@ func Inspect(archive *os.File, limits Limits) (Manifest, error) {
 
 // Create writes the entries that differ from base into delta and reports paths
 // removed from target. The caller owns both files; delta must be writable.
+// The output must not refer to the same underlying file as target.
 func Create(base Manifest, target, delta *os.File, limits Limits) (result Result, err error) {
 	targetManifest, err := Inspect(target, limits)
 	if err != nil {
@@ -191,6 +192,7 @@ func Create(base Manifest, target, delta *os.File, limits Limits) (result Result
 
 // Apply reconstructs a complete source archive from base + delta - deleted.
 // The result is rejected unless both advertised revisions match content.
+// Output must be writable and distinct from both underlying input files.
 func Apply(baseFile, deltaFile, output *os.File, expectedBase, expectedTarget string, deleted []string, limits Limits) (Manifest, error) {
 	base, err := Inspect(baseFile, limits)
 	if err != nil || base.Revision != expectedBase {
@@ -317,7 +319,7 @@ func filterArchive(source, output *os.File, include map[string]struct{}, maxByte
 		return err
 	}
 	defer closeIn()
-	tw, closeOut, err := createArchive(output, maxBytes)
+	tw, closeOut, err := createArchive(output, maxBytes, source)
 	if err != nil {
 		return err
 	}
@@ -354,7 +356,7 @@ func filterArchive(source, output *os.File, include map[string]struct{}, maxByte
 }
 
 func mergeArchives(base, delta, output *os.File, removed, replaced map[string]struct{}, maxBytes int64) (err error) {
-	tw, closeOut, err := createArchive(output, maxBytes)
+	tw, closeOut, err := createArchive(output, maxBytes, base, delta)
 	if err != nil {
 		return err
 	}
@@ -431,7 +433,23 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func createArchive(archive *os.File, maxBytes int64) (*tar.Writer, func() error, error) {
+func createArchive(archive *os.File, maxBytes int64, inputs ...*os.File) (*tar.Writer, func() error, error) {
+	// Compare open files, not names or descriptors: separate opens and hard
+	// links can alias an input just as surely as reusing the same *os.File.
+	// Keep this check beside Truncate so every archive writer protects inputs.
+	outputInfo, err := archive.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat output archive: %w", err)
+	}
+	for _, input := range inputs {
+		inputInfo, err := input.Stat()
+		if err != nil {
+			return nil, nil, fmt.Errorf("stat input archive: %w", err)
+		}
+		if os.SameFile(outputInfo, inputInfo) {
+			return nil, nil, errors.New("source delta output aliases an input archive")
+		}
+	}
 	if err := archive.Truncate(0); err != nil {
 		return nil, nil, fmt.Errorf("truncate archive: %w", err)
 	}
