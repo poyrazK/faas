@@ -232,6 +232,7 @@ var templateNames13 = []string{
 	"function-node24",
 	"function-python313",
 	"event-worker",
+	"queue-worker",
 	"s3-uploader",
 	"slack-bot",
 	"rest-api-postgres",
