@@ -6666,7 +6666,9 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 // public status page. Successful deployments are live or superseded rows;
 // failed rows backed by a user_error build are explicitly excluded. Failures
 // after a successful build (scan, snapshot, readiness) have no user_error
-// build and therefore remain visible as platform failures.
+// build and therefore remain visible as platform failures. Deleted apps remain
+// in the aggregate because release-acceptance apps are deliberately cleaned up
+// after their terminal result is recorded.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
@@ -6681,9 +6683,7 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 				  )
 			)
 		  from deployments d
-		  join apps a on a.id = d.app_id
-		 where a.status <> 'deleted'
-		   and (
+		 where (
 			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
 			or
 			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)

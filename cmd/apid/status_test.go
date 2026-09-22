@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -489,7 +490,7 @@ func TestStatusHandler_MissingFileFallback(t *testing.T) {
 // TestStatus_DegradedFlag drives the 4th PromQL query through four
 // cases that together pin down the contract:
 //
-//  1. Firing alerts present → Degraded=true, Source="degraded: firing alerts".
+//  1. Customer-impacting alert present → Degraded=true with an explicit source.
 //  2. No firing alerts     → Degraded=false, Source="prometheus".
 //  3. Alert query fails    → Degraded=false, Source is degraded because
 //     component health is unknown even though the three SLO queries work.
@@ -506,7 +507,7 @@ func TestStatus_DegradedFlag(t *testing.T) {
 	t.Run("firing", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"apid","severity":"warn"},"value":[0,"1"]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"apid","severity":"warn","public_status":"degraded"},"value":[0,"1"]}]}}`))
 				return
 			}
 			primary(w)
@@ -521,8 +522,8 @@ func TestStatus_DegradedFlag(t *testing.T) {
 		if !snap.Degraded {
 			t.Errorf("Degraded = false, want true when alerts firing")
 		}
-		if snap.Source != "degraded: firing alerts" {
-			t.Errorf("Source = %q, want %q", snap.Source, "degraded: firing alerts")
+		if snap.Source != "degraded: customer-impacting alerts" {
+			t.Errorf("Source = %q, want %q", snap.Source, "degraded: customer-impacting alerts")
 		}
 	})
 
@@ -600,7 +601,7 @@ func TestStatus_DegradedFlag(t *testing.T) {
 	t.Run("labeled_vector", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"gatewayd-public","severity":"page"},"value":[0,"1"]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"gatewayd-public","severity":"page","public_status":"partial_outage"},"value":[0,"1"]}]}}`))
 				return
 			}
 			primary(w)
@@ -636,16 +637,19 @@ func TestStatusDegradedQueryExcludesNonServiceAlerts(t *testing.T) {
 	if !strings.Contains(alertQuery, `family!~"alert_preset_signals|alert_preset_correlation"`) {
 		t.Fatalf("alert query does not exclude tenant preset families: %s", alertQuery)
 	}
-	if !strings.Contains(alertQuery, `public_status!="internal"`) {
-		t.Fatalf("alert query does not exclude internal operator alerts: %s", alertQuery)
+	if !strings.Contains(alertQuery, `public_status=~"degraded|partial_outage"`) {
+		t.Fatalf("alert query does not positively select customer-impacting alerts: %s", alertQuery)
+	}
+	if strings.Contains(alertQuery, `severity=~`) {
+		t.Fatalf("alert query incorrectly derives public impact from operator severity: %s", alertQuery)
 	}
 }
 
 func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
-	// The last platform-attributable terminal result remains authoritative even
-	// when the deployment was queued long before the former 15-minute window.
+	// Terminal time, rather than queue time, decides whether a deployment falls
+	// inside the rolling public-status window.
 	queuedAt := time.Now().Add(-time.Hour)
 	acct, _ := store.CreateAccount(ctx, "deployment-status@example.com", api.PlanPro)
 	app, _ := store.CreateApp(ctx, state.App{
@@ -692,10 +696,10 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.BuildSuccessPct != 0 || !snap.Degraded {
-		t.Fatalf("status = %+v, want 0%% and degraded", snap)
+	if math.Abs(snap.BuildSuccessPct-50) > 0.001 || !snap.Degraded {
+		t.Fatalf("status = %+v, want 50%% and degraded", snap)
 	}
-	if !strings.Contains(snap.Source, "last platform deployment failed") {
+	if !strings.Contains(snap.Source, "deployment success target breached") {
 		t.Fatalf("source = %q", snap.Source)
 	}
 
@@ -709,12 +713,13 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clearedSnap.BuildSuccessPct != 100 || clearedSnap.Degraded {
-		t.Fatalf("status after later success = %+v, want 100%% and operational", clearedSnap)
+	wantAfterSuccess := float64(2) / 3 * 100
+	if math.Abs(clearedSnap.BuildSuccessPct-wantAfterSuccess) > 0.001 || !clearedSnap.Degraded {
+		t.Fatalf("status after later success = %+v, want %.3f%% and degraded", clearedSnap, wantAfterSuccess)
 	}
 	// Acceptance deployments are deliberately deleted after their release
 	// gate completes. Their terminal result must remain the durable platform
-	// outcome or cleanup would reveal the older failure again.
+	// outcome or cleanup would erase genuine acceptance evidence.
 	if err := store.DeleteApp(ctx, app.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -722,8 +727,8 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if postCleanupSnap.BuildSuccessPct != 100 || postCleanupSnap.Degraded {
-		t.Fatalf("status after acceptance cleanup = %+v, want durable success", postCleanupSnap)
+	if math.Abs(postCleanupSnap.BuildSuccessPct-wantAfterSuccess) > 0.001 || !postCleanupSnap.Degraded {
+		t.Fatalf("status after acceptance cleanup = %+v, want durable rolling aggregate", postCleanupSnap)
 	}
 }
 

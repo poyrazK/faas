@@ -3862,9 +3862,6 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	for _, d := range m.deployments {
-		if app, ok := m.apps[d.AppID]; !ok || app.Status == AppDeleted {
-			continue
-		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
