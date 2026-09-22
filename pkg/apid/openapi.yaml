@@ -27367,6 +27367,7 @@ components:
           description: "The window's length in seconds. Matches the requested `?window=` value."
 
     MirrorReplayBatchRequest:
+      description: "A bounded batch of sanitized historical requests to replay against the mirror deployment."
       type: object
       required: [requests]
       properties:
@@ -27381,6 +27382,7 @@ components:
           description: "Explicit acknowledgement required when any item uses POST, PUT, PATCH, or DELETE."
 
     MirrorReplayRequestItem:
+      description: "One sanitized historical request and its optional expected source-response metadata."
       type: object
       required: [method, path]
       properties:
@@ -27415,6 +27417,7 @@ components:
           description: "Optional SHA-256 of the historical source response body. The body itself is not uploaded."
 
     MirrorReplayBatchResponse:
+      description: "The replay invocations accepted and queued for asynchronous mirror execution."
       type: object
       required: [queued, invocations]
       properties:
@@ -27426,6 +27429,7 @@ components:
           items: { $ref: '#/components/schemas/MirrorReplayInvocation' }
 
     MirrorReplayInvocation:
+      description: "Correlation metadata for one queued mirror replay invocation."
       type: object
       required: [request_id, mirror_invocation_id, status]
       properties:
