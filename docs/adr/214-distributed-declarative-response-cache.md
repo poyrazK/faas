@@ -1,4 +1,4 @@
-# ADR-211 · Distributed declarative response caching
+# ADR-214 · Distributed declarative response caching
 
 - **Status:** Accepted
 - **Date:** 2026-09-22

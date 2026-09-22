@@ -47,6 +47,7 @@ const (
 	orgsFile              = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
 	scanFile              = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile          = "webhooks.go"         // issue #476 / ADR-076
+	inboundWebhooksFile   = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
 	realtimeFile          = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
 	logDrainsFile         = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
 	billingFile           = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
@@ -319,6 +320,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
+	"InboundWebhookEndpointRow":       true,
 	"AppLogDrainRow":                  true,
 	"QueueBindingRow":                 true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
@@ -931,6 +933,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", orgsFile),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
+		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
 		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
