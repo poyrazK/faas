@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -248,5 +249,52 @@ func TestNodeJoinDelegatesCgroupControllersBeforeDraining(t *testing.T) {
 	// an unsupported token would reject the whole write and leave memory off.
 	if strings.Contains(block, `"+memory +cpu +pids"`) || strings.Contains(block, "+memory +cpu") {
 		t.Error("delegation task writes multiple controllers in one body; the kernel applies it atomically")
+	}
+}
+
+// TestNodeJoinDrainWindowCoversMigrationCost pins the graceful-drain wait.
+//
+// The original 48 x 2s = 96 seconds could not cover a real drain. Draining
+// migrates every instance off the node, and each migration is a snapshot
+// capture on the source plus a restore on the destination; capture alone runs
+// ~15 s for a 256 MB guest and production apps are 1024 MB. Observed
+// repeatedly on cd-platform: the drain reached "instances still on <node>: 1",
+// the play gave up and rolled the lifecycle back, and the drain completed on
+// its own moments later — the rollout was failing a migration that worked.
+//
+// adr: 205
+// spec: §14
+func TestNodeJoinDrainWindowCoversMigrationCost(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatalf("read node_join.yml: %v", err)
+	}
+	play := string(body)
+
+	drain := strings.Index(play, "Wait for the existing node to reach an empty maintenance hold")
+	if drain < 0 {
+		t.Fatal("drain wait task not found")
+	}
+	tail := play[drain:]
+	if end := strings.Index(tail, "\n      rescue:"); end > 0 {
+		tail = tail[:end]
+	}
+
+	retries, delay := 0, 0
+	for _, line := range strings.Split(tail, "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "retries: "); ok && retries == 0 {
+			retries, _ = strconv.Atoi(strings.TrimSpace(rest))
+		}
+		if rest, ok := strings.CutPrefix(line, "delay: "); ok && delay == 0 {
+			delay, _ = strconv.Atoi(strings.TrimSpace(rest))
+		}
+	}
+	if retries == 0 || delay == 0 {
+		t.Fatalf("could not read drain retries/delay: retries=%d delay=%d", retries, delay)
+	}
+	// Minutes, not seconds. 96s was the value that kept failing working drains.
+	if window := retries * delay; window < 300 {
+		t.Fatalf("drain window is %ds (retries=%d delay=%d); a migration-based drain needs minutes", window, retries, delay)
 	}
 }

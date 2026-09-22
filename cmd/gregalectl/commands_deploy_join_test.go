@@ -566,7 +566,11 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 	for _, token := range []string{
 		"drain-status",
 		"--break-glass-db",
-		"retries: 48",
+		// The barrier must RETRY; the specific count is pinned by
+		// TestNodeJoinDrainWindowCoversMigrationCost, which asserts the
+		// window is long enough for a migration-based drain. Pinning the
+		// literal 48 here made a correct widening look like a regression.
+		"retries:",
 		"until: faas_compute_node_drain_status.rc == 0",
 		"rescue:",
 		"Restore an originally active node after graceful drain failure",

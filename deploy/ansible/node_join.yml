@@ -1162,8 +1162,22 @@
               - --break-glass-db
           register: faas_compute_node_drain_status
           changed_when: false
-          retries: 48
-          delay: 2
+          # 48 x 2s = 96 seconds, which a graceful drain cannot meet. Draining
+          # migrates every instance off the node, and each migration is a
+          # snapshot capture on the source plus a restore on the destination.
+          # Capture alone runs ~15 s for a 256 MB guest, and production apps
+          # here are 1024 MB, so even a handful of instances needs minutes.
+          #
+          # Observed repeatedly: the drain reached "instances still on
+          # <node>: 1", the play gave up and rolled the lifecycle back, and
+          # the drain then completed on its own moments later. The rollout was
+          # failing a migration that was working.
+          #
+          # 150 x 4s = 10 minutes, matching the per-instance cost with room
+          # for a node holding its full admission ceiling. A node that is
+          # genuinely stuck still fails, just not one that is merely slow.
+          retries: 150
+          delay: 4
           until: faas_compute_node_drain_status.rc == 0
       rescue:
         - name: Restore an originally active node after graceful drain failure
