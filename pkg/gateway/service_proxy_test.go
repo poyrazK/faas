@@ -206,9 +206,11 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 		Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
 	}}
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider:  providerBackend,
-		Resolve:   func(context.Context, string) (string, bool, error) { return "app-orders", true, nil },
-		Authorize: func(context.Context, string, string) error { return nil },
+		Provider: providerBackend,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
 		Forward: func(_ Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if span := oteltrace.SpanFromContext(r.Context()); !span.SpanContext().IsValid() {
