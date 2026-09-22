@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAppStreamingCapRouteAwareUsesGatewaydOverride(t *testing.T) {
@@ -15,6 +16,13 @@ func TestAppStreamingCapRouteAwareUsesGatewaydOverride(t *testing.T) {
 	app, err := e.store.AppBySlug(t.Context(), "my-api")
 	if err != nil {
 		t.Fatalf("load app: %v", err)
+	}
+	streaming := true
+	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{
+		StreamingEnabled:    &streaming,
+		SetStreamingEnabled: true,
+	}); err != nil {
+		t.Fatalf("enable streaming: %v", err)
 	}
 
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
