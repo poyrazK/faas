@@ -44,7 +44,7 @@ type redisResponseCacheRecord struct {
 // NewRedisResponseCache connects to a redis:// or rediss:// endpoint and
 // verifies it before the gateway begins serving. The caller may treat an error
 // as a signal to retain local-only caching.
-func NewRedisResponseCache(rawURL string) (*RedisResponseCache, error) {
+func NewRedisResponseCache(parentCtx context.Context, rawURL string) (*RedisResponseCache, error) {
 	opts, err := redis.ParseURL(rawURL)
 	if err != nil {
 		// rawURL may contain credentials; do not allow parser details to put
@@ -56,7 +56,7 @@ func NewRedisResponseCache(rawURL string) (*RedisResponseCache, error) {
 	opts.WriteTimeout = redisResponseCacheIOTimeout
 	opts.PoolSize = 8
 	client := redis.NewClient(opts)
-	ctx, cancel := context.WithTimeout(context.Background(), redisResponseCacheAdminTimeout)
+	ctx, cancel := context.WithTimeout(parentCtx, redisResponseCacheAdminTimeout)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
@@ -134,8 +134,8 @@ func (c *RedisResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 		return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
 	}
 	return c.unlinkPattern(redisResponseCacheAppPattern(appID), func(raw []byte) (bool, error) {
-		var record redisResponseCacheRecord
-		if err := json.Unmarshal(raw, &record); err != nil {
+		record, ok := decodeRedisResponseCacheRecord(raw)
+		if !ok {
 			// A corrupt record cannot safely match a path, but it is already
 			// scoped to this app by the key prefix. Purging it is safer than
 			// leaving an undeletable entry behind.
@@ -143,6 +143,14 @@ func (c *RedisResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 		}
 		return pathGlobMatch(pathGlob, record.Key.NormalizedPath)
 	})
+}
+
+func decodeRedisResponseCacheRecord(raw []byte) (redisResponseCacheRecord, bool) {
+	var record redisResponseCacheRecord
+	if json.Unmarshal(raw, &record) != nil {
+		return redisResponseCacheRecord{}, false
+	}
+	return record, true
 }
 
 func (c *RedisResponseCache) InvalidateAll() error {

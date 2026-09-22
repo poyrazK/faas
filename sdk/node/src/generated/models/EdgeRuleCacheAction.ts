@@ -13,6 +13,10 @@
  * (`api.ResponseCacheMaxAgeMaxSeconds`). The runtime cache
  * layer in `pkg/gateway/response_cache.go` re-checks this
  * cap as defence-in-depth.
+ * * `stale_while_revalidate_seconds` — optional. After the fresh
+ * window, return the cached response immediately while one
+ * gateway request refreshes the key in the background. Default
+ * 0 (disabled); absolute cap 300.
  * * `stale_if_error_seconds` — required. Stale-on-error window
  * in seconds. Default 300; absolute cap 300
  * (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
@@ -39,6 +43,13 @@ export type EdgeRuleCacheAction = {
    *
    */
   max_age_seconds: number;
+  /**
+   * After the fresh window, serve stale for this many seconds
+   * while a single coalesced background request refreshes the
+   * cache key. 0 disables stale-while-revalidate.
+   *
+   */
+  stale_while_revalidate_seconds?: number;
   /**
    * Stale-on-error window in seconds. 0 = no stale-on-error
    * (errors return 502/504 directly). Positive values are

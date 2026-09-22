@@ -1214,7 +1214,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// response-cache counters remained zero.
 	responseCache := gateway.NewResponseCache()
 	if redisURL := strings.TrimSpace(osGetenv("FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL")); redisURL != "" {
-		sharedCache, cacheErr := gateway.NewRedisResponseCache(redisURL)
+		sharedCache, cacheErr := gateway.NewRedisResponseCache(ctx, redisURL)
 		if cacheErr != nil {
 			// Response caching is an optimization, never an availability
 			// dependency. Keep the local L1 active when Redis is unavailable.
