@@ -44,6 +44,24 @@ type Provider interface {
 	AbortMultipartUpload(context.Context, string, MultipartAbortRequest) error
 }
 
+// ObjectReadPresigner is the optional provider capability used by Gregale's
+// proxying data planes. Unlike customer-facing download URLs, these reads must
+// preserve the object's stored response metadata (not force an attachment or
+// application/octet-stream response).
+type ObjectReadPresigner interface {
+	PresignObjectRead(context.Context, string, string, string, int64) (SignedRequest, error)
+}
+
+// PresignObjectRead keeps existing third-party providers source-compatible
+// while allowing built-in providers to distinguish transparent proxy reads
+// from customer-facing forced-download URLs.
+func PresignObjectRead(ctx context.Context, provider Provider, bucket, method, key string, expiresIn int64) (SignedRequest, error) {
+	if signer, ok := provider.(ObjectReadPresigner); ok {
+		return signer.PresignObjectRead(ctx, bucket, method, key, expiresIn)
+	}
+	return provider.Presign(ctx, bucket, SignRequest{Method: method, Key: key, ExpiresIn: expiresIn})
+}
+
 // ObjectReader is an optional provider capability used by operator-owned
 // access-log collectors. It is deliberately separate from Provider so a
 // storage driver does not have to expose raw object bodies to customer API

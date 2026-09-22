@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "add", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "bindings", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -295,6 +295,12 @@ var cliCommands = []cliCommand{
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 		},
+	},
+	{
+		Name:        "bindings",
+		DocSlug:     "bindings",
+		Short:       "List PostgreSQL, object-storage, and queue bindings for an app",
+		Positionals: []string{"<app>"},
 	},
 	{
 		Name:    "capabilities",
@@ -1693,6 +1699,14 @@ var cliCommands = []cliCommand{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to set the traffic split on", Req: true, Value: "ID"},
 					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
+				},
+			},
+			{
+				Name:  "promote",
+				Short: "Promote a live deployment to 100% production traffic",
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
 				},
 			},
 			{

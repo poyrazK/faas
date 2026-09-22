@@ -6,6 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
+| [`bindings`](#bindings) | List PostgreSQL, object-storage, and queue bindings for an app |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -164,6 +165,13 @@ Provision or attach object storage and inject sealed S3 settings
 | `--label <LABEL>` | bucket-scoped compute credential label |  |
 | `--prefix <PREFIX>` | injected storage secret prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
+
+
+## bindings
+
+List PostgreSQL, object-storage, and queue bindings for an app
+
+`gregale bindings <app>`
 
 
 ## capabilities
@@ -2223,6 +2231,15 @@ Set the traffic split for a deployment
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
+
+### traffic promote
+
+Promote a live deployment to 100% production traffic
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--deployment <ID>` | deployment id or vN revision to promote | required |
 
 ### traffic status
 

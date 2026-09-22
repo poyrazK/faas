@@ -41,6 +41,9 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		{"traffic set", func() int {
 			return cmdTrafficSet([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "--percent", "50", "unexpected"})
 		}},
+		{"traffic promote", func() int {
+			return cmdTrafficPromote([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "unexpected"})
+		}},
 		{"cron add", func() int {
 			return cmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
 		}},
