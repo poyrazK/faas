@@ -3684,6 +3684,11 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// "last_fired_at" semantics (kept on the crons table; both
 	// surfaces are still served per the chosen plan).
 	cronID := c.ID
+	cronHeaders, err := json.Marshal(pkgtrace.MergeHeaderMap(ctx, map[string]string{"x-faas-cron": "true"}))
+	if err != nil {
+		l.log.Warn("cron: encode trace context", "cron_id", c.ID, "err", err)
+		return CronRun{}, true
+	}
 	inv := state.Invocation{
 		AppID:     c.AppID,
 		AccountID: acct.ID,
@@ -3691,7 +3696,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		Method:    "POST",
 		Path:      c.Path,
 		CronID:    &cronID,
-		Headers:   json.RawMessage(`{"x-faas-cron":"true"}`),
+		Headers:   cronHeaders,
 		DueAt:     now,
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)

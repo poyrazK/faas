@@ -19,6 +19,12 @@ import (
 
 const sigV4Algorithm = "AWS4-HMAC-SHA256"
 
+const (
+	streamingSignedPayload        = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingSignedPayloadTrailer = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	streamingUnsignedTrailer      = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+)
+
 var errSignature = errors.New("s3 gateway: invalid signature")
 
 type sigV4Request struct {
@@ -78,7 +84,10 @@ func parseSigV4(r *http.Request, region string, now time.Time) (sigV4Request, er
 		return sigV4Request{}, errSignature
 	}
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
-	if payloadHash != "UNSIGNED-PAYLOAD" {
+	if isStreamingPayloadHash(payloadHash) && (!seen["content-encoding"] || !seen["x-amz-decoded-content-length"] || payloadHash != streamingSignedPayload && !seen["x-amz-trailer"]) {
+		return sigV4Request{}, errSignature
+	}
+	if payloadHash != "UNSIGNED-PAYLOAD" && !isStreamingPayloadHash(payloadHash) {
 		decoded, err := hex.DecodeString(payloadHash)
 		if err != nil || len(decoded) != 32 || payloadHash != strings.ToLower(payloadHash) {
 			return sigV4Request{}, errSignature
@@ -93,6 +102,15 @@ func parseSigV4(r *http.Request, region string, now time.Time) (sigV4Request, er
 		AccessKeyID: credential[0], PayloadHash: payloadHash, SignedAt: signedAt,
 		SignedHeader: attributes["SignedHeaders"], Signature: signature, ScopeDate: credential[1],
 	}, nil
+}
+
+func isStreamingPayloadHash(value string) bool {
+	switch value {
+	case streamingSignedPayload, streamingSignedPayloadTrailer, streamingUnsignedTrailer:
+		return true
+	default:
+		return false
+	}
 }
 
 // parsePresignedSigV4 validates the non-cryptographic parts of a query

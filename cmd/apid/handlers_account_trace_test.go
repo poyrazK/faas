@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestAccountTraceLookupIncludesDurableQueueRow(t *testing.T) {
+func TestAccountTraceLookupIncludesDurableInvocationRows(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "trace-app")
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
@@ -23,6 +23,14 @@ func TestAccountTraceLookupIncludesDurableQueueRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
+	asyncInv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
+		Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736","traceparent":"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}`),
+		DueAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation async: %v", err)
+	}
 
 	rec := e.do(t, http.MethodGet, "/v1/account/traces/"+traceID, nil, nil)
 	if rec.Code != http.StatusOK {
@@ -32,10 +40,14 @@ func TestAccountTraceLookupIncludesDurableQueueRow(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out.Invocations) != 1 || out.Invocations[0].ID != inv.ID {
-		t.Fatalf("invocations = %+v, want %s", out.Invocations, inv.ID)
+	seen := map[string]bool{}
+	for _, item := range out.Invocations {
+		seen[item.ID] = true
 	}
-	if out.Invocations[0].Traceparent == "" || !out.Partial {
-		t.Fatalf("queue projection = %+v, partial=%v; MemStore telemetry should be enrichment-only", out.Invocations[0], out.Partial)
+	if len(out.Invocations) != 2 || !seen[inv.ID] || !seen[asyncInv.ID] {
+		t.Fatalf("invocations = %+v, want %s and %s", out.Invocations, inv.ID, asyncInv.ID)
+	}
+	if out.Invocations[0].Traceparent == "" || out.Invocations[1].Traceparent == "" || !out.Partial {
+		t.Fatalf("invocation projection = %+v, partial=%v; MemStore telemetry should be enrichment-only", out.Invocations, out.Partial)
 	}
 }

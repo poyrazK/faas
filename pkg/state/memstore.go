@@ -3862,9 +3862,6 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	for _, d := range m.deployments {
-		if app, ok := m.apps[d.AppID]; !ok || app.Status == AppDeleted {
-			continue
-		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -11343,9 +11340,9 @@ func (m *MemStore) ListDelayedTasksForApp(_ context.Context, appID string, limit
 	return out, nil
 }
 
-// ListInvocationsByTraceID mirrors PgStore's account-scoped queue correlation
-// query. MemStore keeps the full invocation envelope for scheduler tests, but
-// this read only inspects the canonical platform trace header.
+// ListInvocationsByTraceID mirrors PgStore's account-scoped invocation
+// correlation query. MemStore keeps the full invocation envelope for scheduler
+// tests, but this read only inspects the canonical platform trace header.
 func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -11357,7 +11354,7 @@ func (m *MemStore) ListInvocationsByTraceID(_ context.Context, accountID, traceI
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AccountID != accountID || inv.Source != InvocationQueue {
+		if inv.AccountID != accountID {
 			continue
 		}
 		var headers map[string]string
@@ -14952,7 +14949,8 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb data.sidecar_name key AND the closed wake.kind IN
-// ('wake.sidecar_init_exit', 'wake.sidecar_restart') so a query
+// ('wake.sidecar_init_exit', 'wake.sidecar_restart',
+// 'wake.sidecar_health') so a query
 // never returns non-sidecar rows even if a future event reuses
 // the field name. Orders by at ASC so the per-sidecar timeline
 // reads forward; respects the same since / limit contract as
@@ -14962,7 +14960,8 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 // on a non-sidecar row would be silently returned without it,
 // which would surface an unrelated event in a sidecar's audit
 // view. Closed-enum filter matches the kind constants in
-// pkg/events/wake.go (WakeSidecarInitExit, WakeSidecarRestart).
+// pkg/events/wake.go (WakeSidecarInitExit, WakeSidecarRestart,
+// WakeSidecarHealth).
 func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, since time.Time, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -14972,7 +14971,7 @@ func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, si
 		if !e.At.After(since) {
 			continue
 		}
-		if e.Kind != "wake.sidecar_init_exit" && e.Kind != "wake.sidecar_restart" {
+		if e.Kind != "wake.sidecar_init_exit" && e.Kind != "wake.sidecar_restart" && e.Kind != "wake.sidecar_health" {
 			continue
 		}
 		var payload struct {
@@ -21813,10 +21812,13 @@ func (m *MemStore) ReplaceProvisionedStaticEgressIPs(_ context.Context, accountI
 // memstore's trigger-stub helpers (commit #6). Real production
 // code never sees this — the apid's MemStore tests do.
 func memNewUUID() [16]byte {
+	// Use the same cryptographically-random UUID source as the rest of the
+	// MemStore. A timestamp byte is not sufficient here: trigger IDs are used
+	// as map keys and as record ownership boundaries, so a collision can make
+	// one trigger claim another trigger's records.
+	id := uuid.New()
 	var b [16]byte
-	b[0] = byte(time.Now().UnixNano() & 0xff)
-	b[6] = (b[6] & 0x0f) | 0x40 // version 7
-	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC4122
+	copy(b[:], id[:])
 	return b
 }
 

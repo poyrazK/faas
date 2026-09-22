@@ -35,6 +35,10 @@ class DeploymentSummaryResponse:
     """The immediately older deployment by created_at, or null for an initial release."""
     rollback_target_id: None | Unset | UUID = UNSET
     """The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists."""
+    rollback_target_revision: int | Unset = UNSET
+    """Revision (ADR-198) of `rollback_target_id`, so a client can render the rollback command with the `v41`
+    handle a customer can read and retype. Omitted when the target predates the revision column; fall back to
+    `rollback_target_id` rather than rendering `v0`."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +67,8 @@ class DeploymentSummaryResponse:
         else:
             rollback_target_id = self.rollback_target_id
 
+        rollback_target_revision = self.rollback_target_revision
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +81,8 @@ class DeploymentSummaryResponse:
             field_dict["previous"] = previous
         if rollback_target_id is not UNSET:
             field_dict["rollback_target_id"] = rollback_target_id
+        if rollback_target_revision is not UNSET:
+            field_dict["rollback_target_revision"] = rollback_target_revision
 
         return field_dict
 
@@ -127,11 +135,14 @@ class DeploymentSummaryResponse:
 
         rollback_target_id = _parse_rollback_target_id(d.pop("rollback_target_id", UNSET))
 
+        rollback_target_revision = d.pop("rollback_target_revision", UNSET)
+
         deployment_summary_response = cls(
             deployment=deployment,
             changes=changes,
             previous=previous,
             rollback_target_id=rollback_target_id,
+            rollback_target_revision=rollback_target_revision,
         )
 
         deployment_summary_response.additional_properties = d

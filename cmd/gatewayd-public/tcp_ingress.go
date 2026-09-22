@@ -90,6 +90,22 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		}
 		maxConnections = parsed
 	}
+	maxConnectionsPerAccount := 0
+	if raw := os.Getenv("FAAS_TCPD_MAX_CONNECTIONS_PER_ACCOUNT"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 0 {
+			return nil, fmt.Errorf("gatewayd-public: FAAS_TCPD_MAX_CONNECTIONS_PER_ACCOUNT must be a non-negative integer, got %q", raw)
+		}
+		maxConnectionsPerAccount = parsed
+	}
+	idleTimeout := api.StreamingIdleTimeoutDefault
+	if raw := os.Getenv("FAAS_TCPD_IDLE_TIMEOUT"); raw != "" {
+		parsed, parseErr := time.ParseDuration(raw)
+		if parseErr != nil || parsed <= 0 {
+			return nil, fmt.Errorf("gatewayd-public: FAAS_TCPD_IDLE_TIMEOUT must be a positive duration, got %q", raw)
+		}
+		idleTimeout = parsed
+	}
 	refreshInterval := 2 * time.Second
 	if raw := os.Getenv("FAAS_TCPD_REFRESH_INTERVAL"); raw != "" {
 		parsed, parseErr := time.ParseDuration(raw)
@@ -100,13 +116,14 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 	}
 
 	supervisor := &tcpd.Supervisor{
-		BindHost:        envOr("FAAS_TCPD_BIND_HOST", "0.0.0.0"),
-		Source:          store,
-		Routes:          tcpd.ListenerStoreResolver{Store: store},
-		Targets:         &tcpd.StoreTargetResolver{Instances: store, Admitter: sched},
-		Forwarder:       gateway.TCPForwarder{Nodes: nodes, MaxBytes: maxBytes},
-		RefreshInterval: refreshInterval,
-		MaxConnections:  maxConnections,
+		BindHost:                 envOr("FAAS_TCPD_BIND_HOST", "0.0.0.0"),
+		Source:                   store,
+		Routes:                   tcpd.ListenerStoreResolver{Store: store},
+		Targets:                  &tcpd.StoreTargetResolver{Instances: store, Admitter: sched},
+		Forwarder:                gateway.TCPForwarder{Nodes: nodes, MaxBytes: maxBytes, IdleTimeout: idleTimeout},
+		RefreshInterval:          refreshInterval,
+		MaxConnections:           maxConnections,
+		MaxConnectionsPerAccount: maxConnectionsPerAccount,
 		OnError: func(err error) {
 			log.Error("gatewayd-public: tcpd runtime error", "err", err)
 		},

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestComponentsForAlertMapsDaemonsAndFailsWideForUnknownControlPlane(t *testing.T) {
+func TestComponentsForAlertMapsDaemonsWithoutFailingWide(t *testing.T) {
 	tests := []struct {
 		name   string
 		labels map[string]string
@@ -17,7 +17,7 @@ func TestComponentsForAlertMapsDaemonsAndFailsWideForUnknownControlPlane(t *test
 		{"public capability", map[string]string{"component": "observability"}, []Component{ComponentObservability}},
 		{"public gateway", map[string]string{"daemon": "gatewayd-public"}, []Component{ComponentNetworking}},
 		{"generic with daemon", map[string]string{"component": "platform", "daemon": "vmmd"}, []Component{ComponentAppExecution}},
-		{"unknown control plane", map[string]string{"component": "controlplane"}, AllComponents()},
+		{"unknown control plane", map[string]string{"component": "controlplane"}, nil},
 		{"irrelevant unknown", map[string]string{"component": "customer-workload"}, nil},
 	}
 	for _, tt := range tests {
@@ -31,15 +31,16 @@ func TestComponentsForAlertMapsDaemonsAndFailsWideForUnknownControlPlane(t *test
 
 func TestEvaluateUsesWorstStateAndNeverInventsMajorOutage(t *testing.T) {
 	states := Evaluate([]Alert{
-		{Severity: "warn", Labels: map[string]string{"component": "builderd"}},
-		{Severity: "page", Labels: map[string]string{"component": "builderd"}},
-		{Severity: "page", Labels: map[string]string{"component": "gatewayd-internal"}},
+		{Severity: "page", Labels: map[string]string{"component": "builderd", "public_status": "degraded"}},
+		{Severity: "warn", Labels: map[string]string{"component": "gatewayd-internal", "public_status": "partial_outage"}},
+		{Severity: "page", Labels: map[string]string{"component": "apid"}},
+		{Severity: "page", Labels: map[string]string{"component": "observability", "public_status": "major_outage"}},
 	}, []Overlay{
 		{State: StateMaintenance, Components: []Component{ComponentDeployments}},
 		{State: StateMajorOutage, Components: []Component{ComponentAPIConsole}},
 	})
-	if states[ComponentDeployments] != StatePartialOutage {
-		t.Fatalf("deployments = %q, want partial_outage", states[ComponentDeployments])
+	if states[ComponentDeployments] != StateDegraded {
+		t.Fatalf("deployments = %q, want degraded", states[ComponentDeployments])
 	}
 	if states[ComponentNetworking] != StatePartialOutage {
 		t.Fatalf("networking = %q, want partial_outage", states[ComponentNetworking])
@@ -48,7 +49,7 @@ func TestEvaluateUsesWorstStateAndNeverInventsMajorOutage(t *testing.T) {
 		t.Fatalf("api_console = %q, want operator major_outage", states[ComponentAPIConsole])
 	}
 	if states[ComponentObservability] != StateOperational {
-		t.Fatalf("observability = %q, want operational", states[ComponentObservability])
+		t.Fatalf("observability = %q, want operational because automated major outages are ignored", states[ComponentObservability])
 	}
 }
 
@@ -77,8 +78,8 @@ func TestSummarizeDayAndThirtyDayUptimeRespectCoverage(t *testing.T) {
 		buckets = append(buckets, b)
 	}
 	obs := SummarizeDay(day, buckets, 10)
-	if obs.State != StateDegraded || obs.CoveragePct != 80 || obs.UptimePct == nil || math.Abs(*obs.UptimePct-87.5) > 0.001 {
-		t.Fatalf("observation = %#v, want degraded, 80%% coverage, 87.5%% uptime", obs)
+	if obs.State != StateDegraded || obs.CoveragePct != 80 || obs.UptimePct == nil || math.Abs(*obs.UptimePct-100) > 0.001 {
+		t.Fatalf("observation = %#v, want degraded, 80%% coverage, 100%% uptime", obs)
 	}
 
 	low := SummarizeDay(day, buckets[:7], 10)

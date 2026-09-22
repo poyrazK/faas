@@ -57,7 +57,7 @@ const (
 		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
 		and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
 	) or vector(100)`
-	statusAlertQuery = `ALERTS{alertstate="firing",severity=~"page|warn",family!~"alert_preset_signals|alert_preset_correlation",public_status!="internal"}`
+	statusAlertQuery = `ALERTS{alertstate="firing",family!~"alert_preset_signals|alert_preset_correlation",public_status=~"degraded|partial_outage"}`
 )
 
 // statusHandler serves GET /status. Reads the static HTML from disk
@@ -156,9 +156,11 @@ type statusEvaluation struct {
 	telemetryAvailable bool
 }
 
-type latestDeploymentOutcomeStore interface {
-	LatestPlatformDeploymentOutcome(context.Context) (state.LatestDeploymentOutcome, error)
+type deploymentOutcomeCounter interface {
+	CountDeploymentOutcomesSince(context.Context, time.Time) (state.DeploymentOutcomeCounts, error)
 }
+
+const statusDeploymentOutcomeWindow = 24 * time.Hour
 
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
@@ -311,40 +313,29 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 	}
 
-	// 3. Deployment success from the authoritative last-known terminal result.
+	// 3. Deployment success over an authoritative rolling database window.
 	// The legacy field name remains build_success_pct for wire compatibility,
 	// but the numerator covers deployments that reached live and the
 	// denominator also covers platform-attributable build, scan, snapshot,
 	// and readiness failures. User-code build failures are excluded by the
-	// store result. Prometheus remains a compatibility fallback only for
-	// embedders that do not expose the durable result.
+	// store aggregate. Prometheus remains a compatibility fallback for
+	// embedders without the aggregate and for an idle database window. A
+	// bounded window prevents one old failure from advertising continuous
+	// downtime forever.
 	buildAvailable := false
-	deploymentFailed := false
 	queryPrometheusBuild := true
-	if outcomes, ok := c.store.(latestDeploymentOutcomeStore); ok {
-		outcome, outcomeErr := outcomes.LatestPlatformDeploymentOutcome(ctx)
+	if counter, ok := c.store.(deploymentOutcomeCounter); ok {
+		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow))
 		switch {
-		case outcomeErr == nil:
+		case countErr == nil && counts.Succeeded+counts.Failed > 0:
 			queryPrometheusBuild = false
 			buildAvailable = true
-			if outcome.Succeeded {
-				snap.legacy.BuildSuccessPct = 100
-			} else {
-				snap.legacy.BuildSuccessPct = 0
-				deploymentFailed = true
-				snap.legacy.Degraded = true
-				snap.legacy.Source = appmetrics.SourceDegradedPrefix + "last platform deployment failed"
-			}
-		case errors.Is(outcomeErr, state.ErrNotFound):
-			// A new installation has no durable result yet. Preserve the
-			// existing rolling telemetry until the first terminal deployment;
-			// after that, the durable outcome prevents quiet periods from
-			// incorrectly clearing a failure.
-		case outcomeErr != nil:
+			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(counts.Succeeded+counts.Failed) * 100
+		case countErr != nil:
 			queryPrometheusBuild = false
-			c.log.Warn("status: latest deployment outcome failed", "err", outcomeErr)
+			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)
 			if firstErr == nil {
-				firstErr = outcomeErr
+				firstErr = countErr
 			}
 		}
 	}
@@ -364,10 +355,10 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		okCount++
 	}
 
-	// 4. Degraded flag: at least one customer-impacting platform warn- or
-	// page-severity alert is firing. Operator-internal and per-tenant alert
-	// families remain actionable without becoming public incidents. A query
-	// error here is logged but treated as
+	// 4. Degraded flag: at least one alert explicitly declares a supported
+	// public_status impact. Operator severity is deliberately independent:
+	// an urgent page may be internal-only, while customer impact must be opted
+	// in and classified by the rule author. A query error here is logged but treated as
 	// "no firing alerts" — the flag is intentionally conservative so
 	// a transient ALERTS{} hiccup doesn't poison the public snapshot.
 	// The full-pipeline failure (Prometheus unreachable) still
@@ -380,9 +371,9 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 		snap.states = publicstatus.Evaluate(alerts, nil)
 		snap.telemetryAvailable = true
-		if len(samples) > 0 {
+		if publicstatus.Overall(snap.states, true) != publicstatus.StateOperational {
 			snap.legacy.Degraded = true
-			snap.legacy.Source = "degraded: firing alerts"
+			snap.legacy.Source = "degraded: customer-impacting alerts"
 		}
 	} else {
 		c.log.Warn("status: labeled alert query failed", "err", err)
@@ -390,9 +381,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 			firstErr = err
 		}
 	}
-	if deploymentFailed {
-		snap.states[publicstatus.ComponentDeployments] = publicstatus.StateDegraded
-	} else if _, durable := c.store.(latestDeploymentOutcomeStore); durable && !buildAvailable {
+	if _, durable := c.store.(deploymentOutcomeCounter); durable && !buildAvailable {
 		snap.states[publicstatus.ComponentDeployments] = publicstatus.StateUnknown
 	}
 	applyStatusIndicatorBreaches(&snap)

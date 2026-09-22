@@ -28,8 +28,12 @@ var (
 // the workload network namespace; it is copied onto the gateway target before
 // forwarding so the target cannot accidentally select the HTTP port.
 type Route struct {
-	PublicPort   int
-	AppID        string
+	PublicPort int
+	AppID      string
+	// AccountID scopes connection quotas without exposing account metadata to
+	// the forwarding transport. It is optional for in-memory route tables and
+	// falls back to AppID when absent.
+	AccountID    string
 	ListenerName string
 	GuestPort    int
 	Protocol     string

@@ -6666,7 +6666,9 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 // public status page. Successful deployments are live or superseded rows;
 // failed rows backed by a user_error build are explicitly excluded. Failures
 // after a successful build (scan, snapshot, readiness) have no user_error
-// build and therefore remain visible as platform failures.
+// build and therefore remain visible as platform failures. Deleted apps remain
+// in the aggregate because release-acceptance apps are deliberately cleaned up
+// after their terminal result is recorded.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
@@ -6681,9 +6683,7 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 				  )
 			)
 		  from deployments d
-		  join apps a on a.id = d.app_id
-		 where a.status <> 'deleted'
-		   and (
+		 where (
 			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
 			or
 			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
@@ -14368,10 +14368,10 @@ func (s *PgStore) ListDelayedTasksForApp(ctx context.Context, appID string, limi
 	return scanInvocations(rows)
 }
 
-// ListInvocationsByTraceID is the durable account-scoped queue correlation
-// read. The expression index from account_trace_lookup keeps this bounded
-// query index-backed while the projection remains the normal invocation row
-// shape for callers that need lifecycle timestamps.
+// ListInvocationsByTraceID is the durable account-scoped invocation
+// correlation read. The expression index from the trace-all migration keeps
+// this bounded query index-backed while the projection remains the normal
+// invocation row shape for callers that need lifecycle timestamps.
 func (s *PgStore) ListInvocationsByTraceID(ctx context.Context, accountID, traceID string, limit int) ([]Invocation, error) {
 	if limit <= 0 {
 		limit = 100
@@ -14382,7 +14382,6 @@ func (s *PgStore) ListInvocationsByTraceID(ctx context.Context, accountID, trace
 	rows, err := s.pool.Query(ctx, `select `+invocationSelectCols+`
 		from invocations
 		where account_id = $1
-		  and source = 'queue'
 		  and headers->>'X-Gregale-Trace-Id' = $2
 		order by created_at asc, id asc
 		limit $3`, accountID, traceID, limit)
@@ -18564,7 +18563,8 @@ func (s *PgStore) ListRecentEventsForAccount(ctx context.Context, actorAccountID
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb expression data->>'sidecar_name' AND the closed
-// kind IN ('wake.sidecar_init_exit', 'wake.sidecar_restart') so
+// kind IN ('wake.sidecar_init_exit', 'wake.sidecar_restart',
+// 'wake.sidecar_health') so
 // the query never returns non-sidecar rows even if a future
 // event reuses the field name. Orders by at ASC; respects the
 // same since / limit contract as ListEventsByWakeID.
@@ -18584,19 +18584,19 @@ func (s *PgStore) ListEventsBySidecar(ctx context.Context, sidecarName string, s
 	}
 	// Closed kind enum — mirrors the constants in
 	// pkg/events/wake.go (WakeSidecarInitExit,
-	// WakeSidecarRestart). The closed list keeps the planner
+	// WakeSidecarRestart, WakeSidecarHealth). The closed list keeps the planner
 	// honest (an unknown kind won't quietly satisfy the
 	// filter) and matches the in-memory twin's filter in
 	// memstore.go.
 	//
-	// Index: events_sidecar_name_idx (migration 00121) is a
-	// partial expression index restricted to the same closed
-	// kinds, keyed on (data->>'sidecar_name')::text. The
-	// planner picks it up for this query's predicate (verified
-	// by TestMigrations_00121_EventsSidecarNameIdx's EXPLAIN
-	// check). A future PR that adds a new closed sidecar-kind
-	// must update the index's WHERE clause in lockstep.
-	const kindFilter = "kind in ('wake.sidecar_init_exit', 'wake.sidecar_restart')"
+	// Index: events_sidecar_name_idx (migration 00128) covers the
+	// init-exit/restart kinds, while the companion
+	// events_sidecar_health_name_idx (timestamp migration
+	// 20260922133000001) covers health transitions. PostgreSQL
+	// can combine the two partial expression indexes for this
+	// closed-kind predicate without widening the high-volume
+	// original index.
+	const kindFilter = "kind in ('wake.sidecar_init_exit', 'wake.sidecar_restart', 'wake.sidecar_health')"
 	var rows pgx.Rows
 	var err error
 	if since.IsZero() {

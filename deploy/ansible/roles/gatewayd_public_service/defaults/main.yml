@@ -6,6 +6,8 @@ faas_tcpd_enabled: false
 faas_tcpd_bind_host: 0.0.0.0
 faas_tcpd_max_bytes: ''
 faas_tcpd_max_connections: ''
+faas_tcpd_max_connections_per_account: ''
+faas_tcpd_idle_timeout: ''
 faas_tcpd_refresh_interval: ''
 faas_tcpd_schedd_target: ''
 faas_tcpd_schedd_tls_ca_path: ''

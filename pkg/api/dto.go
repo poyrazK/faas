@@ -4254,8 +4254,9 @@ type AccountTraceMatch struct {
 	Request DebugTelemetryRequestItem `json:"request"`
 }
 
-// AccountTraceInvocation is a safe queue lifecycle projection. Payloads,
-// result bodies, and arbitrary invocation headers are intentionally absent.
+// AccountTraceInvocation is a safe durable invocation lifecycle projection.
+// Payloads, result bodies, and arbitrary invocation headers are intentionally
+// absent. Source distinguishes async, queue, delayed, cron, and replay rows.
 type AccountTraceInvocation struct {
 	App         string `json:"app"`
 	ID          string `json:"id"`

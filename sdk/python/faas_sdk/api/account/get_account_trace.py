@@ -93,7 +93,7 @@ def sync_detailed(
     """Look up one distributed trace across the account.
 
      Returns retained request telemetry, bounded span evidence, and
-    durable queue lifecycle rows linked by the platform trace id. Request
+    durable invocation lifecycle rows linked by the platform trace id. Request
     payloads and arbitrary invocation headers are never returned.
 
     Args:
@@ -129,7 +129,7 @@ def sync(
     """Look up one distributed trace across the account.
 
      Returns retained request telemetry, bounded span evidence, and
-    durable queue lifecycle rows linked by the platform trace id. Request
+    durable invocation lifecycle rows linked by the platform trace id. Request
     payloads and arbitrary invocation headers are never returned.
 
     Args:
@@ -160,7 +160,7 @@ async def asyncio_detailed(
     """Look up one distributed trace across the account.
 
      Returns retained request telemetry, bounded span evidence, and
-    durable queue lifecycle rows linked by the platform trace id. Request
+    durable invocation lifecycle rows linked by the platform trace id. Request
     payloads and arbitrary invocation headers are never returned.
 
     Args:
@@ -194,7 +194,7 @@ async def asyncio(
     """Look up one distributed trace across the account.
 
      Returns retained request telemetry, bounded span evidence, and
-    durable queue lifecycle rows linked by the platform trace id. Request
+    durable invocation lifecycle rows linked by the platform trace id. Request
     payloads and arbitrary invocation headers are never returned.
 
     Args:

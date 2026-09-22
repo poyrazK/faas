@@ -23,6 +23,7 @@ func TestServerRoutesConnectionToGuestPort(t *testing.T) {
 	route := Route{
 		PublicPort:   publicPort,
 		AppID:        "app-1",
+		AccountID:    "acct-1",
 		ListenerName: "postgres",
 		GuestPort:    5432,
 		Protocol:     "tcp",
@@ -79,6 +80,63 @@ func TestServerRoutesConnectionToGuestPort(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Serve did not stop after cancellation")
+	}
+}
+
+func TestServerRejectsConnectionWhenAccountQuotaIsFull(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	publicPort := listener.Addr().(*net.TCPAddr).Port
+	route := Route{PublicPort: publicPort, AppID: "app-1", AccountID: "acct-1", ListenerName: "echo", GuestPort: 5432, Protocol: "tcp"}
+	routes := NewRouteTable()
+	if err := routes.Upsert(route); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	server := &Server{
+		Listener: listener,
+		Routes:   routes,
+		Targets:  targetResolverFunc(func(context.Context, Route) (gateway.Target, error) { return gateway.Target{}, nil }),
+		Forwarder: forwarderFunc(func(context.Context, net.Conn, gateway.Target) error {
+			close(started)
+			<-gate
+			return nil
+		}),
+		Limiter: NewConnectionLimiter(1),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(ctx) }()
+
+	first, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("first Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first connection did not reach the forwarder")
+	}
+	second, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("second Dial: %v", err)
+	}
+	defer second.Close()
+	_ = second.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var one [1]byte
+	if _, err := second.Read(one[:]); err == nil {
+		t.Fatal("quota-rejected connection unexpectedly received data")
+	}
+	close(gate)
+	cancel()
+	if err := <-serveDone; err != nil {
+		t.Fatalf("Serve after cancellation: %v", err)
 	}
 }
 

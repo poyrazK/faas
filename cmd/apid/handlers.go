@@ -1041,7 +1041,22 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		out.Target = &api.ScalingTarget{
 			Metric: p.Target.Metric,
 			Value:  p.Target.Value,
+			Name:   p.Target.Name,
 		}
+	}
+	// ADR-194 targets, ADR-195 schedules — the read half of the same gap
+	// policyPtrFromReq had. A customer could not see what they had
+	// configured even once the write path carried it.
+	for _, t := range p.Targets {
+		out.Targets = append(out.Targets, api.ScalingTarget{
+			Metric: t.Metric, Value: t.Value, Name: t.Name,
+		})
+	}
+	out.Timezone = p.Timezone
+	for _, sched := range p.Schedules {
+		out.Schedules = append(out.Schedules, api.ScalingSchedule{
+			Cron: sched.Cron, DurationS: sched.DurationS, MinInstances: sched.MinInstances,
+		})
 	}
 	return out
 }
