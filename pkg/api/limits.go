@@ -590,19 +590,17 @@ type Limits struct {
 	MaxSourceBytesPerInvocation int
 	AsyncInvokeAllowed          bool
 
-	// MaxQueueAttempts (issue #394 / Move 1 dead-letter) is the
-	// per-plan retry budget for queue messages that hit a transient
-	// failure during drain (pkg/sched/drain.go). Once a row's
-	// `attempts` reaches this value, the next transient failure
-	// transitions it to state='dead_letter' (terminal) instead of
-	// 'pending' (re-queued). Free = 0 means queues aren't entitled
-	// anyway (MaxQueueDepth = 0); the drain keeps the legacy
-	// infinite-retry behaviour because Free never queues. Hobby/Pro/
-	// Scale follow the same shape as the other async-event caps:
-	// small on the cheap tier, larger as we move up. The dead-letter
-	// rows are readable via GET /v1/apps/{slug}/queues/dead_letter
-	// (migrations/00060_invocations_dead_letter.sql lands the
-	// 'dead_letter' state value + partial index).
+	// MaxQueueAttempts (issue #394 / Move 1 dead-letter) is the shared
+	// per-plan total-attempt budget for durable invocations that hit a
+	// transient failure during drain (pkg/sched/drain.go). It covers async,
+	// queue, delayed-task, cron, and replay rows. Once a row's `attempts`
+	// reaches the effective value, the failure transitions it to
+	// state='dead_letter' (terminal) instead of 'pending' (re-queued).
+	// Free = 0 resolves to one original delivery and no replay; zero never
+	// means unlimited. Hobby/Pro/Scale follow the same shape as the other
+	// async-event caps: small on the cheap tier, larger as we move up. The
+	// dead-letter rows are readable via GET
+	// /v1/apps/{slug}/queues/dead_letter.
 	MaxQueueAttempts int
 
 	// MaxAsyncInvocationsPerAccount (ADR-134 PR-B) is the cap on
@@ -1777,11 +1775,10 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       0,
 		MaxSourceBytesPerInvocation: 0,
 		AsyncInvokeAllowed:          false,
-		// Free: queues aren't entitled (MaxQueueDepth = 0). Value is
-		// kept at 0 for symmetry with the rest of the async-event
-		// caps. The drain falls back to legacy infinite-retry when
-		// budget == 0, but Free customers never reach the queue
-		// surface so the path is unreachable.
+		// Free: queues aren't entitled (MaxQueueDepth = 0). Value is kept
+		// at 0 for symmetry with the rest of the async-event caps; the
+		// effective-budget helper resolves it to one original delivery and
+		// no replay for other durable invocation sources.
 		MaxQueueAttempts: 0,
 		// ADR-134 PR-B: Free's per-account cap is 100 — enough for
 		// the documented Hobby-customer-trying-Free path; tighter than
@@ -3701,6 +3698,23 @@ const (
 	// instance is a different process, so waiting buys nothing. The knob
 	// exists only for the case where the sibling is still waking.
 	MaxEdgeRuleRetryBackoffMs = 1_000
+	// EdgeRuleRetryDefaultBudgetPercent limits aggregate replay traffic to
+	// 10% of originals in the gateway's short per-app accounting window.
+	EdgeRuleRetryDefaultBudgetPercent = 10
+	// MaxEdgeRuleRetryBudgetPercent prevents a rule from allowing more than
+	// one replay per original through the aggregate budget.
+	MaxEdgeRuleRetryBudgetPercent = 100
+	// EdgeRuleRetryDefaultBudgetMin preserves one recovery opportunity for
+	// low-traffic apps even when the percentage rounds down.
+	EdgeRuleRetryDefaultBudgetMin = 1
+	// MaxEdgeRuleRetryBudgetMin bounds the low-traffic burst allowance.
+	MaxEdgeRuleRetryBudgetMin = 32
+
+	// DurableRetryMaxAttempts is the platform-wide safety ceiling for
+	// durable invocation delivery. It applies even when the account or app
+	// lookup needed to resolve a narrower plan budget is temporarily
+	// unavailable, so lookup failures can never turn into infinite retry.
+	DurableRetryMaxAttempts = 25
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -4668,6 +4682,24 @@ const (
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
 )
+
+// EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
+// count against the account plan. Zero means "inherit" on input, never
+// "unlimited" on output. Plans without a retry allowance still receive one
+// delivery attempt so the invocation can run without being replayed.
+func EffectiveRetryMaxAttempts(requested, planLimit int) int {
+	limit := planLimit
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > DurableRetryMaxAttempts {
+		limit = DurableRetryMaxAttempts
+	}
+	if requested < 1 || requested > limit {
+		return limit
+	}
+	return requested
+}
 
 // Per-plan job caps. Indexed by Plan: 0=Free 1=Hobby 2=Pro 3=Scale.
 // Lives as a var (not const) because Go does not permit array literals

@@ -922,7 +922,7 @@ func NewMetrics() *Metrics {
 		}, []string{"outcome"}),
 		retryExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_exhausted_total",
-			Help: "Times the ADR-201 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|no_healthy_sibling|insufficient_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high non_idempotent_method rate means customers want the allow_non_idempotent opt-in; a high insufficient_budget rate means their kind=budget deadlines are too tight for a replay to help. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
+			Help: "Times the ADR-201 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|missing_idempotency_key|no_healthy_sibling|insufficient_budget|aggregate_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high missing_idempotency_key rate means opted-in POST/PATCH callers are missing their replay key; aggregate_budget means the app-wide retry allowance prevented an outage from multiplying traffic. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
 		}, []string{"reason"}),
 		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_circuit_transitions_total",
@@ -3384,6 +3384,7 @@ func (m *Metrics) PreInstantiateTrafficResilience() {
 		for _, r := range []string{
 			RetrySkipCommitted, RetrySkipNonIdempotent, RetrySkipNoTarget,
 			RetrySkipBudget, RetrySkipAttempts, RetrySkipBodyNotReplay,
+			RetrySkipIdempotency, RetrySkipAggregate,
 		} {
 			m.retryExhausted.WithLabelValues(r)
 		}

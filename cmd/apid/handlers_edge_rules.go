@@ -670,6 +670,8 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				AllowNonIdempotent: a.AllowNonIdempotent,
 				MinRemainingMs:     a.MinRemainingMs,
 				BackoffMs:          a.BackoffMs,
+				BudgetPercent:      a.BudgetPercent,
+				BudgetMinRetries:   a.BudgetMinRetries,
 			}
 		}
 	case state.EdgeRuleKindCircuitBreaker:

@@ -6872,18 +6872,25 @@ type EdgeRuleRetryAction struct {
 	// MaxAttempts counts attempts, not retries: 2 is the original plus one
 	// replay. Zero applies EdgeRuleRetryDefaultMaxAttempts.
 	MaxAttempts int `json:"max_attempts,omitempty"`
-	// AllowNonIdempotent opts POST and PATCH into replay.
+	// AllowNonIdempotent opts POST and PATCH into replay when the request also
+	// carries a non-empty Idempotency-Key header.
 	//
 	// This is the only field here that can cost correctness rather than
 	// latency: a replayed POST runs the customer's side effect twice unless
-	// their handler is idempotent or they send an idempotency key. It
-	// defaults false and the CLI/docs state the consequence explicitly.
+	// their handler does not honor the idempotency key. It defaults false and
+	// the CLI/docs state the consequence explicitly.
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	// MinRemainingMs is the request-budget floor below which a replay is
 	// skipped. Zero applies EdgeRuleRetryDefaultMinRemainingMs.
 	MinRemainingMs int `json:"min_remaining_ms,omitempty"`
 	// BackoffMs delays a replay. Defaults to 0.
 	BackoffMs int `json:"backoff_ms,omitempty"`
+	// BudgetPercent caps aggregate replay attempts relative to original
+	// requests in a short per-app window. Zero applies the 10% default.
+	BudgetPercent int `json:"budget_percent,omitempty"`
+	// BudgetMinRetries is the low-traffic retry allowance per window. Zero
+	// applies the default of one.
+	BudgetMinRetries int `json:"budget_min_retries,omitempty"`
 }
 
 // Validate applies the ADR-201 §1 defaults and bounds. It mutates the
@@ -6921,6 +6928,22 @@ func (a *EdgeRuleRetryAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"retry action: backoff_ms must be in 0..%d (got %d) — the failure being retried is a dead peer, so a delay rarely helps",
 			MaxEdgeRuleRetryBackoffMs, a.BackoffMs))
+	}
+	if a.BudgetPercent == 0 {
+		a.BudgetPercent = EdgeRuleRetryDefaultBudgetPercent
+	}
+	if a.BudgetPercent < 1 || a.BudgetPercent > MaxEdgeRuleRetryBudgetPercent {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_percent must be in 1..%d (got %d)",
+			MaxEdgeRuleRetryBudgetPercent, a.BudgetPercent))
+	}
+	if a.BudgetMinRetries == 0 {
+		a.BudgetMinRetries = EdgeRuleRetryDefaultBudgetMin
+	}
+	if a.BudgetMinRetries < 0 || a.BudgetMinRetries > MaxEdgeRuleRetryBudgetMin {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_min_retries must be in 0..%d (got %d)",
+			MaxEdgeRuleRetryBudgetMin, a.BudgetMinRetries))
 	}
 	return nil
 }

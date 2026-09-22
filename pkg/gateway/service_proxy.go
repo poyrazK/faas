@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -50,10 +51,6 @@ const (
 	// a PR preview, not by production traffic — useful for skipping
 	// side effects, tagging writes, or refusing the call outright.
 	ServiceCallerPreviewOfHeader = "X-Faas-Caller-Preview-Of"
-
-	// ServiceProxyMaxAttempts bounds transport retries. Only idempotent,
-	// bodyless requests may use the second attempt.
-	ServiceProxyMaxAttempts = 2
 
 	serviceProxyDefaultEndpointTTL = 5 * time.Second
 	serviceProxyErrorBodyLimit     = 64 * 1024
@@ -199,6 +196,13 @@ type ServiceProxyConfig struct {
 	// EndpointTTL with no backoff growth. cmd/gatewayd-internal passes a
 	// DefaultConfig group when FAAS_GATEWAY_CIRCUIT_BREAKER is on.
 	Breaker *circuit.Group
+	// RetryPolicy applies the same attempt, idempotency, request-deadline,
+	// and aggregate-budget contract as public edge retries. The zero value
+	// preserves the historical service-proxy default of one replay.
+	RetryPolicy RetryPolicy
+	// RetryBudget may be shared with the public handler so all platform-
+	// generated retries for an app draw from the same aggregate allowance.
+	RetryBudget *RetryBudget
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -220,7 +224,9 @@ type ServiceProxy struct {
 	now           func() time.Time
 	log           *slog.Logger
 
-	breaker *circuit.Group
+	breaker     *circuit.Group
+	retryPolicy RetryPolicy
+	retryBudget *RetryBudget
 
 	mu        sync.Mutex
 	snapshots map[string]serviceProxySnapshot
@@ -266,6 +272,32 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 			cfg.Metrics.IncCircuitTransition(string(from), string(to))
 		})
 	}
+	retryPolicy := cfg.RetryPolicy
+	if retryPolicy.MaxAttempts == 0 {
+		retryPolicy.MaxAttempts = 2
+		retryPolicy.MinRemaining = time.Duration(api.EdgeRuleRetryDefaultMinRemainingMs) * time.Millisecond
+	}
+	if retryPolicy.MaxAttempts < 1 {
+		retryPolicy.MaxAttempts = 1
+	}
+	if retryPolicy.MaxAttempts > api.EdgeRuleRetryMaxAttempts {
+		retryPolicy.MaxAttempts = api.EdgeRuleRetryMaxAttempts
+	}
+	retryPolicy.Enabled = retryPolicy.MaxAttempts >= 2
+	if retryPolicy.BudgetPercent <= 0 {
+		retryPolicy.BudgetPercent = api.EdgeRuleRetryDefaultBudgetPercent
+	} else if retryPolicy.BudgetPercent > api.MaxEdgeRuleRetryBudgetPercent {
+		retryPolicy.BudgetPercent = api.MaxEdgeRuleRetryBudgetPercent
+	}
+	if retryPolicy.BudgetMinRetries <= 0 {
+		retryPolicy.BudgetMinRetries = api.EdgeRuleRetryDefaultBudgetMin
+	} else if retryPolicy.BudgetMinRetries > api.MaxEdgeRuleRetryBudgetMin {
+		retryPolicy.BudgetMinRetries = api.MaxEdgeRuleRetryBudgetMin
+	}
+	retryBudget := cfg.RetryBudget
+	if retryBudget == nil {
+		retryBudget = NewRetryBudget(0, now)
+	}
 	return &ServiceProxy{
 		mintAssertion: cfg.MintCallerAssertion,
 		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
@@ -281,6 +313,8 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		now:           now,
 		log:           log,
 		breaker:       breaker,
+		retryPolicy:   retryPolicy,
+		retryBudget:   retryBudget,
 		snapshots:     make(map[string]serviceProxySnapshot),
 		next:          make(map[string]uint64),
 	}
@@ -467,7 +501,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 		return
 	}
 	p.countForward(woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints, serviceProxyRetryable(r))
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints)
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold
@@ -766,22 +800,57 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(w, request)
 }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, retry bool) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
-	for attempt := 0; attempt < ServiceProxyMaxAttempts; attempt++ {
+	policy := p.retryPolicy
+	retryable, skipReason := policy.retryable(request)
+	maxAttempts := 1
+	if policy.Enabled && retryable {
+		maxAttempts = policy.MaxAttempts
+	}
+	if policy.Enabled && !retryable {
+		p.metrics.IncRetryExhausted(skipReason)
+	}
+	hasBody := request.Body != nil && request.Body != http.NoBody
+	if maxAttempts > 1 && hasBody && request.GetBody == nil {
+		maxAttempts = 1
+		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
+	}
+	if maxAttempts > 1 {
+		p.retryBudget.ObserveOriginal(appID)
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok {
+			if attempt > 0 {
+				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
+			}
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 			return
 		}
-		applyServiceEndpointIdentity(request, target, endpoint, caller)
+		forwardReq := request
+		if attempt > 0 {
+			var err error
+			forwardReq, err = replayRequest(request)
+			if err != nil {
+				p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
+				return
+			}
+		}
+		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
 		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
-		forwardReq := request.WithContext(withStaleTargetSignal(request.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
+		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
 		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
+		if attempt > 0 && forwardReq.Body != nil {
+			_ = forwardReq.Body.Close()
+		}
+		if maxAttempts > 1 {
+			p.metrics.IncRetryAttempt(attemptOutcome(attempt, signal.stale.Load()))
+		}
 		if !signal.stale.Load() {
 			// Report the healthy transport. Without this the breaker only
 			// ever observes failures, the rolling ratio is a constant 1.0,
@@ -789,12 +858,46 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			// surrounds it. It also closes a half-open probe.
 			p.healthy(appID, endpoint.InstanceID)
 		}
-		if retry && !buffer.committed && signal.stale.Load() && attempt+1 < ServiceProxyMaxAttempts {
-			continue
+		if !signal.stale.Load() {
+			buffer.commit()
+			buffer.commitTrailers()
+			return
 		}
-		buffer.commit()
-		buffer.commitTrailers()
-		return
+		if buffer.committed {
+			p.metrics.IncRetryExhausted(RetrySkipCommitted)
+			buffer.commitTrailers()
+			return
+		}
+		if attempt+1 >= maxAttempts {
+			p.metrics.IncRetryExhausted(RetrySkipAttempts)
+			buffer.commit()
+			buffer.commitTrailers()
+			return
+		}
+		if budget, ok := reqbudget.FromContext(request.Context()); ok && budget.Remaining(p.now()) < policy.MinRemaining {
+			p.metrics.IncRetryExhausted(RetrySkipBudget)
+			buffer.commit()
+			buffer.commitTrailers()
+			return
+		}
+		if !p.retryBudget.AllowRetry(appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+			p.metrics.IncRetryExhausted(RetrySkipAggregate)
+			buffer.commit()
+			buffer.commitTrailers()
+			return
+		}
+		if policy.Backoff > 0 {
+			timer := time.NewTimer(policy.Backoff)
+			select {
+			case <-timer.C:
+			case <-request.Context().Done():
+				timer.Stop()
+				buffer.commit()
+				buffer.commitTrailers()
+				return
+			}
+			timer.Stop()
+		}
 	}
 }
 
@@ -915,15 +1018,6 @@ func parseServiceProxyPath(path string) (service, targetPath string, ok bool) {
 		targetPath = "/" + parts[1]
 	}
 	return service, targetPath, true
-}
-
-func serviceProxyRetryable(r *http.Request) bool {
-	switch r.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		return r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0
-	default:
-		return false
-	}
 }
 
 func serviceProxyProblem(w http.ResponseWriter, status int, detail string) {

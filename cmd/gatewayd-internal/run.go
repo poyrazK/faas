@@ -2227,7 +2227,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// harness path); production traffic terminates TLS at gatewayd-public
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	retryBudget := gateway.NewRetryBudget(0, nil)
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
 	if deps.pgStore != nil {
 		handler.WithMirrorResultStore(deps.pgStore)
 	}
@@ -3217,8 +3218,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
-			Breaker: egressBreakerGroup(),
-			Metrics: deps.metrics,
+			Breaker:     egressBreakerGroup(),
+			Metrics:     deps.metrics,
+			RetryBudget: retryBudget,
 			// Prefer a replica on this node before crossing the network.
 			// Empty NodeName (legacy single-box) keeps flat round-robin.
 			LocalNodeID: cfg.NodeName,
