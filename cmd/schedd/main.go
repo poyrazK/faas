@@ -1081,6 +1081,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var privateNetworkSubscriber *sched.PrivateNetworkAttachmentSubscriber
 	var privateNetworkPolicySubscriber *sched.PrivateNetworkPolicySubscriber
 	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
+	var privateNetworkFabricDeletionSubscriber *sched.PrivateNetworkFabricDeletionSubscriber
 	if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
@@ -1122,6 +1123,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					connector = nil
 				} else {
 					fabricApplier = sched.NewPrivateNetworkFabricApplier(store, fabricRouter, log)
+					teardownRouter, teardownOK := any(vmmRouter).(sched.PrivateNetworkFabricTeardownRouter)
+					if !teardownOK {
+						log.Warn("schedd: Gregale network fabric teardown unavailable; vmmd router lacks teardown capability")
+					} else {
+						teardown := sched.NewPrivateNetworkFabricTeardown(store, teardownRouter, log)
+						privateNetworkFabricDeletionSubscriber = sched.NewPrivateNetworkFabricDeletionSubscriber(teardown, log)
+					}
 				}
 			}
 			if connector == nil {
@@ -1629,6 +1637,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
 		WithPrivateNetworkPolicySubscriber(privateNetworkPolicySubscriber).
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
+		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
 		WithTriggerSecretIdentities(hostAgeIdentities).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
@@ -2095,7 +2104,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
-	if privateNetworkSubscriber != nil || privateNetworkPolicySubscriber != nil || privateNetworkPeeringSubscriber != nil {
+	if privateNetworkSubscriber != nil || privateNetworkPolicySubscriber != nil || privateNetworkPeeringSubscriber != nil || privateNetworkFabricDeletionSubscriber != nil {
 		// Private-network mutations have their own durable channel because an
 		// attachment policy update must converge immediately, while a peering
 		// withdrawal carries the affected region after its row is gone.

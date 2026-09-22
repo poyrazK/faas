@@ -55,6 +55,14 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 		if backoff < 0 || backoff > api.MaxEdgeRuleRetryBackoffMs {
 			backoff = 0
 		}
+		budgetPercent := r.Action.Retry.BudgetPercent
+		if budgetPercent < 1 || budgetPercent > api.MaxEdgeRuleRetryBudgetPercent {
+			budgetPercent = api.EdgeRuleRetryDefaultBudgetPercent
+		}
+		budgetMinRetries := r.Action.Retry.BudgetMinRetries
+		if budgetMinRetries < 0 || budgetMinRetries > api.MaxEdgeRuleRetryBudgetMin {
+			budgetMinRetries = api.EdgeRuleRetryDefaultBudgetMin
+		}
 		out = append(out, gateway.EdgeRuleRetryResolved{
 			ID:                 r.ID,
 			AccountID:          r.AccountID,
@@ -66,6 +74,8 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 			AllowNonIdempotent: r.Action.Retry.AllowNonIdempotent,
 			MinRemaining:       time.Duration(minRemaining) * time.Millisecond,
 			Backoff:            time.Duration(backoff) * time.Millisecond,
+			BudgetPercent:      budgetPercent,
+			BudgetMinRetries:   budgetMinRetries,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

@@ -1543,6 +1543,42 @@ type OrgListResponse struct {
 	Orgs []OrgResponse `json:"orgs"`
 }
 
+// ActivityActorResponse is the captured identity shown beside one global
+// organization activity item.
+type ActivityActorResponse struct {
+	Type      string `json:"type"`
+	Label     string `json:"label"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// ActivityResourceResponse identifies the primary affected infrastructure
+// object. ID can be absent for external resources such as domains.
+type ActivityResourceResponse struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label"`
+}
+
+// OrgActivityResponse is one display-ready organization activity fact.
+type OrgActivityResponse struct {
+	ID           string                   `json:"id"`
+	OccurredAt   string                   `json:"occurred_at"`
+	Kind         string                   `json:"kind"`
+	Summary      string                   `json:"summary"`
+	Actor        ActivityActorResponse    `json:"actor"`
+	Resource     ActivityResourceResponse `json:"resource"`
+	AppID        string                   `json:"app_id,omitempty"`
+	ProjectID    string                   `json:"project_id,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	Data         json.RawMessage          `json:"data"`
+}
+
+// ListOrgActivityResponse is a newest-first keyset page.
+type ListOrgActivityResponse struct {
+	Items      []OrgActivityResponse `json:"items"`
+	NextBefore string                `json:"next_before,omitempty"`
+}
+
 // OrgMemberResponse is the wire shape for a single org membership row.
 type OrgMemberResponse struct {
 	AccountID string `json:"account_id"`

@@ -2130,6 +2130,10 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
+	// barriers for zero-step service rollouts. Empty for ordinary canaries and
+	// stable deployments.
+	ServiceRolloutHandoff ServiceRolloutHandoff `json:"service_rollout_handoff,omitempty"`
 
 	// Parking reason + timestamp (issue #554 / ADR-079 follow-up).
 	// pkg/sched.Engine.ParkDeployment sets these before flipping
@@ -4724,6 +4728,64 @@ type DeploymentAudit struct {
 	AlertRuleID *uuid.UUID
 }
 
+// OrgActivityActorType is the stable, customer-facing identity class used by
+// the organization activity timeline. ActorLabel is the captured display
+// value; readers never need to join a possibly-deleted account or API key.
+type OrgActivityActorType string
+
+const (
+	OrgActivityActorUser     OrgActivityActorType = "user"
+	OrgActivityActorAPIKey   OrgActivityActorType = "api_key"
+	OrgActivityActorGitHub   OrgActivityActorType = "github"
+	OrgActivityActorSystem   OrgActivityActorType = "system"
+	OrgActivityActorOperator OrgActivityActorType = "operator"
+)
+
+// OrgActivity is one safe, display-ready fact in an organization's global
+// infrastructure history. Like AuditLog and DeploymentAudit, identifiers and
+// labels are copied at write time and intentionally have no foreign-key
+// dependency on resources that may later be deleted.
+//
+// Data must be a JSON object containing non-secret display metadata only.
+// Environment values, credentials, tokens, and provider payloads do not
+// belong in this read model.
+type OrgActivity struct {
+	ID             int64
+	OrgID          uuid.UUID
+	OccurredAt     time.Time
+	Kind           string
+	ActorType      OrgActivityActorType
+	ActorAccountID *uuid.UUID
+	ActorLabel     string
+	ResourceType   string
+	ResourceID     string
+	ResourceLabel  string
+	AppID          *uuid.UUID
+	ProjectID      *uuid.UUID
+	DeploymentID   *uuid.UUID
+	Data           json.RawMessage
+	SourceType     string
+	SourceID       string
+}
+
+// OrgActivityCursor is the exclusive keyset cursor for the stable
+// (occurred_at DESC, id DESC) ordering.
+type OrgActivityCursor struct {
+	OccurredAt time.Time
+	ID         int64
+}
+
+// OrgActivityFilter is always pinned to one organization. Optional filters
+// narrow the timeline without weakening that tenant boundary.
+type OrgActivityFilter struct {
+	OrgID      uuid.UUID
+	Before     *OrgActivityCursor
+	KindPrefix string
+	ActorType  OrgActivityActorType
+	AppID      *uuid.UUID
+	Limit      int
+}
+
 // AuditLogFilter is the read-side query shape for the audit_log table.
 // Handlers build one from the inbound query string; the store method
 // translates it into a single WHERE clause without string concatenation.
@@ -6866,10 +6928,9 @@ type EdgeRuleAction struct {
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).
 //
 // MaxAttempts counts attempts, not retries: 2 is the original plus one
-// replay. AllowNonIdempotent opts POST and PATCH into replay and is the one
-// field here that can cost a customer correctness rather than latency — a
-// replayed POST runs their side effect twice unless their handler is
-// idempotent — so it defaults false and the API documents the consequence.
+// replay. AllowNonIdempotent opts POST and PATCH into replay only when the
+// request carries an Idempotency-Key. The handler must honor that key, so the
+// field defaults false and the API documents the consequence.
 // MinRemainingMs is the request-budget floor below which a replay is skipped,
 // which is what stops a retry converting a 502 into a 504. BackoffMs defaults
 // to 0 because the failure being retried is a dead peer, not a loaded one.
@@ -6878,6 +6939,8 @@ type EdgeRuleRetryAction struct {
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	MinRemainingMs     int  `json:"min_remaining_ms,omitempty"`
 	BackoffMs          int  `json:"backoff_ms,omitempty"`
+	BudgetPercent      int  `json:"budget_percent,omitempty"`
+	BudgetMinRetries   int  `json:"budget_min_retries,omitempty"`
 }
 
 // EdgeRuleCircuitBreakerAction is the kind=circuit_breaker payload

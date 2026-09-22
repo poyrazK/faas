@@ -24,6 +24,9 @@ func TestBuildEdgeRuleActionRetryAppliesDefaults(t *testing.T) {
 	if got.MinRemainingMs != api.EdgeRuleRetryDefaultMinRemainingMs {
 		t.Fatalf("min_remaining_ms = %d, want the default %d", got.MinRemainingMs, api.EdgeRuleRetryDefaultMinRemainingMs)
 	}
+	if got.BudgetPercent != api.EdgeRuleRetryDefaultBudgetPercent || got.BudgetMinRetries != api.EdgeRuleRetryDefaultBudgetMin {
+		t.Fatalf("aggregate budget = %d%%/%d, want defaults %d%%/%d", got.BudgetPercent, got.BudgetMinRetries, api.EdgeRuleRetryDefaultBudgetPercent, api.EdgeRuleRetryDefaultBudgetMin)
+	}
 	if got.AllowNonIdempotent {
 		t.Fatal("allow_non_idempotent defaulted to true; replaying POST must be an explicit opt-in")
 	}
@@ -35,6 +38,8 @@ func TestBuildEdgeRuleActionRetryCarriesFlags(t *testing.T) {
 		RetryAllowNonIdempotent: true,
 		RetryMinRemainingMs:     1000,
 		RetryBackoffMs:          250,
+		RetryBudgetPercent:      25,
+		RetryBudgetMinRetries:   4,
 	})
 	if err != nil {
 		t.Fatalf("buildEdgeRuleAction: %v", err)
@@ -43,7 +48,7 @@ func TestBuildEdgeRuleActionRetryCarriesFlags(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.MaxAttempts != 3 || !got.AllowNonIdempotent || got.MinRemainingMs != 1000 || got.BackoffMs != 250 {
+	if got.MaxAttempts != 3 || !got.AllowNonIdempotent || got.MinRemainingMs != 1000 || got.BackoffMs != 250 || got.BudgetPercent != 25 || got.BudgetMinRetries != 4 {
 		t.Fatalf("action = %+v, want the flag values carried verbatim", got)
 	}
 }
@@ -60,6 +65,8 @@ func TestBuildEdgeRuleActionRetryRejectsBadValues(t *testing.T) {
 		{"above the ceiling", edgeRuleActionInputs{RetryMaxAttempts: 99}, "max_attempts"},
 		{"backoff above cap", edgeRuleActionInputs{RetryBackoffMs: 99999}, "backoff_ms"},
 		{"min_remaining above cap", edgeRuleActionInputs{RetryMinRemainingMs: 99999999}, "min_remaining_ms"},
+		{"budget percent above cap", edgeRuleActionInputs{RetryBudgetPercent: 101}, "budget_percent"},
+		{"budget minimum above cap", edgeRuleActionInputs{RetryBudgetMinRetries: 33}, "budget_min_retries"},
 	}
 	for _, tc := range cases {
 		_, err := buildEdgeRuleAction("retry", tc.in)

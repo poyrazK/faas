@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 218 | [Curated global organization activity timeline](218-global-organization-activity-timeline.md) | accepted | Organization-scoped safe activity projection, stable keyset API, and explicit producer mappings |
 | 214 | [Distributed declarative response caching](214-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
 | 210 | [Runtime secret delivery and status](210-runtime-secret-delivery.md) | accepted | Snapshot-safe restart and version-fenced delivery outcomes for app secrets |
 | 208 | [Acknowledged routing handoff for zero-downtime service rollouts](208-zero-downtime-service-rollout-handoff.md) | accepted | Two-phase route publication, serving-gateway acknowledgements, and post-ack per-instance request draining before predecessor retirement |

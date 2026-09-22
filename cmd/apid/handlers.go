@@ -663,7 +663,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
-	notifyAndAuditDeployment(r.Context(), s, acct, app, d, prev, &req)
+	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
 }
 

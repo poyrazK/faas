@@ -195,3 +195,44 @@ func TestPgStoreAbortServiceRolloutRestoresPrevious(t *testing.T) {
 		t.Fatalf("second AbortServiceRollout error = %v, want ErrServiceRolloutInvalid", err)
 	}
 }
+
+func TestPgStoreRecoverServiceRolloutRequestsReverseHandoff(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	stable, rollout := seedServiceRollout(t, s)
+
+	requested, auditID, err := s.RecoverRollout(t.Context(), rollout.AppID, "abort", "operator stop")
+	if err != nil {
+		t.Fatalf("RecoverRollout(abort): %v", err)
+	}
+	if auditID == 0 || requested.Status != state.DeployLive || requested.RolloutState != "rolling_out" || requested.TrafficPercent != 0 {
+		t.Fatalf("requested abort = %+v audit:%d; want live/rolling_out/0 with audit", requested, auditID)
+	}
+	if h := requested.ServiceRolloutHandoff; h.Action != state.ServiceRolloutActionAbort || h.Phase != state.ServiceRolloutPhasePending || h.PredecessorDeploymentID != stable.ID {
+		t.Fatalf("requested handoff = %+v; want abort/pending predecessor", h)
+	}
+	if _, err := s.FinalizeServiceRollout(t.Context(), rollout.ID); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("FinalizeServiceRollout after abort request = %v, want ErrServiceRolloutInvalid", err)
+	}
+
+	routing, err := s.BeginServiceRolloutAbort(t.Context(), rollout.ID)
+	if err != nil {
+		t.Fatalf("BeginServiceRolloutAbort: %v", err)
+	}
+	if routing.ServiceRolloutHandoff.Phase != state.ServiceRolloutPhaseRouting || routing.ServiceRolloutHandoff.RetryCount != 1 {
+		t.Fatalf("routing handoff = %+v; want routing/retry 1", routing.ServiceRolloutHandoff)
+	}
+	if old, err := s.DeploymentByID(t.Context(), stable.ID); err != nil || old.Status != state.DeployLive || old.TrafficPercent != 100 {
+		t.Fatalf("predecessor during reverse handoff = %+v err:%v; want live/100", old, err)
+	}
+	if candidate, err := s.DeploymentByID(t.Context(), rollout.ID); err != nil || candidate.Status != state.DeployLive || candidate.TrafficPercent != 0 {
+		t.Fatalf("candidate during reverse handoff = %+v err:%v; want live/0", candidate, err)
+	}
+
+	aborted, err := s.AbortServiceRollout(t.Context(), rollout.ID, routing.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		t.Fatalf("AbortServiceRollout: %v", err)
+	}
+	if aborted.Status != state.DeploySuperseded || aborted.RolloutState != "aborted" || aborted.ServiceRolloutHandoff.Phase != state.ServiceRolloutPhaseComplete || aborted.ServiceRolloutHandoff.CompletedAt == nil {
+		t.Fatalf("final abort = %+v; want superseded/aborted/complete", aborted)
+	}
+}

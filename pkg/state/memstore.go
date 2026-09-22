@@ -543,6 +543,10 @@ type MemStore struct {
 	// reads are also mu-guarded so the loop is consistent with
 	// the underlying slice growth under concurrent append.
 	deploymentAudit []DeploymentAudit
+	// orgActivity is the customer-facing, organization-scoped history
+	// projection. Source keys are deduplicated on append, matching the
+	// database unique constraint.
+	orgActivity []OrgActivity
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -6562,6 +6566,53 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	}
 
 	now := time.Now()
+	if IsServiceRollout(*target) {
+		if action != "abort" {
+			return *target, 0, ErrRolloutStateInvalid
+		}
+		handoff := target.ServiceRolloutHandoff
+		if !handoff.ActiveAbort() {
+			var predecessor Deployment
+			found := false
+			for _, other := range m.deployments {
+				if other.AppID != appID || other.ID == target.ID || other.Status != DeployLive ||
+					normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) ||
+					IsServiceRollout(other) || !other.CreatedAt.Before(target.CreatedAt) {
+					continue
+				}
+				if !found || other.CreatedAt.After(predecessor.CreatedAt) ||
+					(other.CreatedAt.Equal(predecessor.CreatedAt) && other.ID > predecessor.ID) {
+					predecessor = other
+					found = true
+				}
+			}
+			if !found {
+				return *target, 0, ErrRolloutStateInvalid
+			}
+			handoff = ServiceRolloutHandoff{
+				Action:                  ServiceRolloutActionAbort,
+				Phase:                   ServiceRolloutPhasePending,
+				PredecessorDeploymentID: predecessor.ID,
+				Reason:                  reason,
+				StartedAt:               &now,
+				UpdatedAt:               &now,
+			}
+			target.ServiceRolloutHandoff = handoff
+			m.deployments[target.ID] = *target
+		}
+		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
+			DeploymentID: uuid.MustParse(target.ID),
+			AccountID:    nil,
+			Kind:         DeployRolledBack,
+			Actor:        "operator:cli:recover_rollout",
+			At:           now,
+			Data:         json.RawMessage(rolloutAuditData("abort_requested", reason)),
+		})
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: append service abort request audit: %w", err)
+		}
+		return *target, auditID, nil
+	}
 
 	switch action {
 	case "advance":
@@ -11544,6 +11595,66 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 	return out, nil
 }
 
+// ListEventDeliveriesForApp mirrors the PostgreSQL event-delivery projection.
+// MemStore keeps the filter in-process so handler tests exercise the same
+// account/app isolation and cursor semantics as production.
+func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	var cursor Invocation
+	if before != "" {
+		var ok bool
+		cursor, ok = m.invocations[before]
+		if !ok || cursor.AppID != appID || cursor.Source != InvocationAsyncInvoke {
+			return []Invocation{}, nil
+		}
+		var cursorHeaders map[string]string
+		if json.Unmarshal(cursor.Headers, &cursorHeaders) != nil {
+			return []Invocation{}, nil
+		}
+		if _, ok := cursorHeaders["x-gregale-event-id"]; !ok {
+			return []Invocation{}, nil
+		}
+	}
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.Source != InvocationAsyncInvoke {
+			continue
+		}
+		if before != "" && (inv.CreatedAt.After(cursor.CreatedAt) ||
+			(inv.CreatedAt.Equal(cursor.CreatedAt) && inv.ID >= cursor.ID)) {
+			continue
+		}
+		var headers map[string]string
+		if len(inv.Headers) == 0 || json.Unmarshal(inv.Headers, &headers) != nil {
+			continue
+		}
+		if strings.TrimSpace(headers["x-gregale-event-id"]) == "" {
+			continue
+		}
+		if eventID != "" && headers["x-gregale-event-id"] != eventID {
+			continue
+		}
+		if deliveryState != "" && string(inv.State) != deliveryState {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // QueueState (issue #394) is the read-side counter aggregator. MemStore
 // walks the in-memory map under the lock and returns the three numbers
 // in one pass — no transactional semantics needed because the lock
@@ -14847,6 +14958,89 @@ func (m *MemStore) ListDeploymentAuditByAlertRule(_ context.Context, alertRuleID
 		}
 	}
 	return out, nil
+}
+
+// AppendOrgActivity appends or returns the existing row with the same
+// (org_id, source_type, source_id) key. Returning the existing row makes
+// replayed webhooks and retried commands idempotent.
+func (m *MemStore) AppendOrgActivity(_ context.Context, entry OrgActivity) (OrgActivity, error) {
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return OrgActivity{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, row := range m.orgActivity {
+		if row.OrgID == entry.OrgID && row.SourceType == entry.SourceType && row.SourceID == entry.SourceID {
+			return cloneOrgActivity(row), nil
+		}
+	}
+	entry.ID = int64(len(m.orgActivity) + 1)
+	m.orgActivity = append(m.orgActivity, cloneOrgActivity(entry))
+	return cloneOrgActivity(entry), nil
+}
+
+// ListOrgActivity returns a stable, newest-first page pinned to one
+// organization. All optional filters are applied before the row cap.
+func (m *MemStore) ListOrgActivity(_ context.Context, filter OrgActivityFilter) ([]OrgActivity, error) {
+	if filter.OrgID == uuid.Nil {
+		return nil, errors.New("state: list org activity requires org id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := append([]OrgActivity(nil), m.orgActivity...)
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].OccurredAt.Equal(rows[j].OccurredAt) {
+			return rows[i].ID > rows[j].ID
+		}
+		return rows[i].OccurredAt.After(rows[j].OccurredAt)
+	})
+	limit := normalizeOrgActivityLimit(filter.Limit)
+	out := make([]OrgActivity, 0, limit)
+	for _, row := range rows {
+		if row.OrgID != filter.OrgID {
+			continue
+		}
+		if filter.Before != nil && (row.OccurredAt.After(filter.Before.OccurredAt) ||
+			(row.OccurredAt.Equal(filter.Before.OccurredAt) && row.ID >= filter.Before.ID)) {
+			continue
+		}
+		if filter.KindPrefix != "" && !strings.HasPrefix(row.Kind, filter.KindPrefix) {
+			continue
+		}
+		if filter.ActorType != "" && row.ActorType != filter.ActorType {
+			continue
+		}
+		if filter.AppID != nil && (row.AppID == nil || *row.AppID != *filter.AppID) {
+			continue
+		}
+		out = append(out, cloneOrgActivity(row))
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func cloneOrgActivity(row OrgActivity) OrgActivity {
+	row.Data = append(json.RawMessage(nil), row.Data...)
+	if row.ActorAccountID != nil {
+		id := *row.ActorAccountID
+		row.ActorAccountID = &id
+	}
+	if row.AppID != nil {
+		id := *row.AppID
+		row.AppID = &id
+	}
+	if row.ProjectID != nil {
+		id := *row.ProjectID
+		row.ProjectID = &id
+	}
+	if row.DeploymentID != nil {
+		id := *row.DeploymentID
+		row.DeploymentID = &id
+	}
+	return row
 }
 
 // ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the
@@ -19076,34 +19270,13 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 			}
 		}
 	}
-	// kind='cache' per-app quota (ADR-122 §Decision). Mirror of
-	// the pgstore branch. Same rationale: tighter cap than
-	// EdgeRulesPerApp because per (host, path, vary) cache rules
-	// can pin the in-process store's byte ceiling. memstore is
-	// race-free under m.mu; pgstore relies on the FOR UPDATE on
-	// apps carried by the preceding quota branches.
-	if in.Kind == EdgeRuleKindCache && limits.EdgeRulesCachePerApp > 0 {
-		kindCount := 0
-		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindCache {
-				kindCount++
-			}
-		}
-		if kindCount >= limits.EdgeRulesCachePerApp {
-			return EdgeRule{}, &EdgeRuleQuotaError{
-				Limit:      limits.EdgeRulesCachePerApp,
-				Observed:   kindCount,
-				Kind:       string(EdgeRuleKindCache),
-				PerAppOnly: true,
-				PerKind:    true,
-			}
-		}
-	}
-	// ADR-201 §1/§2 per-kind quotas. Shares its decision helpers with
+	// Closed-zero per-kind quotas (ADR-122, ADR-201 §1/§2). Shares its
+	// decision helpers with
 	// PgStore (pkg/state/edge_rule_kind_quota.go) so the two stores cannot
 	// drift — the failure mode behind the always-zero uppercase-state
 	// queries, where MemStore was right, PgStore's SQL was wrong, and no
-	// test ran both. A zero quota DENIES here, unlike the branches above.
+	// test ran both. A zero quota DENIES here, unlike the throttle/geo
+	// branches above.
 	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {
 		return EdgeRule{}, denied
 	}

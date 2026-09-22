@@ -778,7 +778,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 
 	uploadSessionCommittedTotal().WithLabelValues(string(acct.Plan)).Inc()
 
-	s.auditUploadSessionCommitted(r.Context(), acct, app, uploadID, res.DeploymentID, res.BuildID, row.ReceivedBytes, limits)
+	s.auditUploadSessionCommitted(r, acct, app, uploadID, res.DeploymentID, res.BuildID, row.ReceivedBytes, limits)
 
 	// Read the deployment created by this commit, not merely the
 	// latest deployment for the app. Another deploy may legitimately
@@ -872,13 +872,14 @@ func (s *server) writeUploadSessionTerminalProblem(ctx context.Context, w http.R
 // wire-stable `upload.session_committed` kind so the audit log
 // distinguishes the resumable path from the legacy single-shot.
 func (s *server) auditUploadSessionCommitted(
-	ctx context.Context,
+	r *http.Request,
 	acct state.Account,
 	app state.App,
 	uploadID, deploymentID, buildID string,
 	sourceBytes int64,
 	limits api.Limits,
 ) {
+	ctx := r.Context()
 	d, dErr := s.store.DeploymentByID(ctx, deploymentID)
 	resolvedActor := ""
 	if dErr == nil {
@@ -899,6 +900,10 @@ func (s *server) auditUploadSessionCommitted(
 		mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin)
 	}
 	s.audit.EmitAs(ctx, resolvedActor, "upload.session_committed", &acct.ID, data)
+	if dErr == nil {
+		s.recordDeploymentActivity(ctx, r, acct, app, d,
+			map[string]any{"revision": d.Revision, "scope": d.Scope, "source": "upload_session"})
+	}
 	_ = limits // reserved for future ADR-driven per-plan source-tarball bump
 }
 

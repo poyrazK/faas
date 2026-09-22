@@ -85,7 +85,7 @@ command after readiness succeeds. For example:
 ✓ Staged v44 with 0% production traffic.
   Preview: https://deploy-44-my-api.gregale.dev
   Production traffic remains unchanged. https://my-api.gregale.dev
-  Promote: gregale traffic set --app my-api --deployment v44 --percent 100
+  Promote: gregale traffic promote --app my-api --deployment v44
 ```
 
 `--no-traffic` is the discoverable spelling for `--traffic-percent 0`. It is

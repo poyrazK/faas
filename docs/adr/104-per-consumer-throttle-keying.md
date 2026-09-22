@@ -8,7 +8,7 @@
   `max_keys_per_rule` (Free 100 / Hobby 1000 / Pro 5000 / Scale 10000).
   When the per-rule consumer set exceeds the cap, all over-cap callers
   collapse into a single non-evicting `__other__` bucket that still
-  consumes the parent rule's tokens.
+  consumes tokens at the rule's configured rate.
 - **Why:** PR #887 (ADR-091 D20.5 amendment) shipped `kind=throttle` keyed
   only by `appID + "\x00" + ruleID`. Customers asked for two follow-ups
   that the v1 bucket shape cannot express:
@@ -36,7 +36,7 @@
   The `__other__` bucket is created exactly once per rule (lazy-init
   on first overflow) and is **pinned non-evictable** — it always
   consumes tokens regardless of how full it is, so an attacker who
-  pushed past the cap still pays the parent rule's rps cost.
+  pushed past the cap still pays the rule's configured rps cost.
 - **Consequences:**
   - New `EdgeRuleThrottleAction.KeyBy` (closed vocab, default `none`),
     `JWTClaimName` (regex `^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`), and
@@ -113,12 +113,15 @@
     verification, sourced from `pkg/edgejwks/verifier.go:46-52`.
 - LRU interaction:
   - `routeLimiter` (today, `NewLimiterWithLRU(EdgeRuleCacheCap=10_000)`)
-    continues to hold the per-rule bucket. Phase 3 keeps the
-    `appID + "\x00" + ruleID` shape here unchanged.
+    holds the per-rule bucket only for `key_by ∈ {"", "none"}`. Phase 3
+    keeps the `appID + "\x00" + ruleID` shape for that mode unchanged.
   - `routeConsumerLimiter` (NEW, `NewLimiterWithLRU(EdgeRuleConsumerCacheCap=100_000)`)
     holds the per-rule per-consumer buckets plus the `__other__` overflow.
     `__other__` is marked non-evictable in `Limiter` bookkeeping
     (mirrors the full-bucket-only invariant at `pkg/gateway/ratelimit.go:234-267`).
+  - These modes are alternatives. A dimensional request does not also
+    consume a shared parent route bucket: that bucket would let one noisy
+    identity exhaust the shared burst and starve every other identity.
 - Property tests (the load-bearing ones):
   - `TestRouteConsumerThrottle_OtherBucketPinnedEvenWhenFull` —
     the `__other__` bucket must NOT be evictable even at full.
@@ -204,15 +207,11 @@ Prometheus counter + audit row documents the degraded window.
 New sibling header of `X-RouteRateLimit-{Limit,Remaining,Reset}`,
 emitted on the per-rule 429 path. Values: literal `route` (default
 — preserved back-compat for rules with `KeyBy ∈ {"", "none"}`) or
-`per-consumer` (when `api.ThrottleKeyByIsPerConsumer(rule.KeyBy)`
-AND the consumer collapses to the `__other__` bucket). The
+`per-consumer` (when `api.ThrottleKeyByIsPerConsumer(rule.KeyBy)`). The
 existing `x-faas-rate-limit-scope` enum is untouched.
 
-The applier consults `Limiter.ConsumerIsTracked(ruleKey,
-consumerID)` after the per-consumer bucket consume (a new
-accessor at `pkg/gateway/ratelimit.go::ConsumerIsTracked`). When
-the consumer has collapsed to `__other__`, the accessor returns
-false and the policy header is set to `per-consumer`.
+The numeric headers are read from the concrete dimensional bucket selected
+for the request, including the pinned `__other__` bucket after overflow.
 
 ### C. Dry-run preview on throttle-suggestions
 
@@ -259,7 +258,7 @@ bounded request dimensions:
   claims cannot crowd it out of the bounded request context.
 - `missing_key_policy="shared"` (the default) places requests missing an
   authentication-backed dimension into one `__anonymous__` child bucket.
-  `"reject"` returns 401 before either parent or child tokens are consumed,
+  `"reject"` returns 401 before any tokens are consumed,
   preventing credential omission from bypassing a user or tenant limit.
 - The apid DTO→state conversion now carries all throttle fields. Before this
   amendment it dropped `key_by`, `jwt_claim_name`, and `max_keys_per_rule`, so
@@ -275,6 +274,21 @@ bounded request dimensions:
 
 The route matcher remains the endpoint dimension: host, path glob, and method
 select the rule before the request dimension selects its child bucket.
+
+## Amendment 7 (isolation and degraded-mode observability, 2026-09-22)
+
+Dimensional and route-wide buckets are mutually exclusive enforcement modes.
+The initial Phase-3 applier consumed the shared route bucket before the
+dimensional bucket. That accidentally allowed one identity to exhaust the
+shared burst and starve unrelated identities, contradicting the purpose of
+`key_by`. Dimensional requests now consume only their bounded dimensional
+bucket; non-dimensional rules retain the original route bucket unchanged.
+
+Central-store failures now increment
+`gateway_ratelimit_degraded_total{scope="app|account|rule|other"}` on every
+local fallback. A warning and `ratelimit_degraded` audit event are emitted at
+most once per scope per minute so a database outage cannot amplify itself
+through logging or audit writes.
 
 ## References
 

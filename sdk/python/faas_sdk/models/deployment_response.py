@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from ..models.log_excerpt import LogExcerpt
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
+    from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
     from ..models.workflow_spec import WorkflowSpec
 
 
@@ -244,6 +245,8 @@ class DeploymentResponse:
     """Wall-clock timestamp at which the rollout was aborted."""
     rollout_aborted_reason: str | Unset = UNSET
     """Operator or orchestrator reason recorded when the rollout is aborted."""
+    service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
+    """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -534,6 +537,10 @@ class DeploymentResponse:
 
         rollout_aborted_reason = self.rollout_aborted_reason
 
+        service_rollout_handoff: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_rollout_handoff, Unset):
+            service_rollout_handoff = self.service_rollout_handoff.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -648,6 +655,8 @@ class DeploymentResponse:
             field_dict["rollout_aborted_at"] = rollout_aborted_at
         if rollout_aborted_reason is not UNSET:
             field_dict["rollout_aborted_reason"] = rollout_aborted_reason
+        if service_rollout_handoff is not UNSET:
+            field_dict["service_rollout_handoff"] = service_rollout_handoff
 
         return field_dict
 
@@ -662,6 +671,7 @@ class DeploymentResponse:
         from ..models.log_excerpt import LogExcerpt
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
+        from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
@@ -1172,6 +1182,13 @@ class DeploymentResponse:
 
         rollout_aborted_reason = d.pop("rollout_aborted_reason", UNSET)
 
+        _service_rollout_handoff = d.pop("service_rollout_handoff", UNSET)
+        service_rollout_handoff: ServiceRolloutHandoffResponse | Unset
+        if isinstance(_service_rollout_handoff, Unset):
+            service_rollout_handoff = UNSET
+        else:
+            service_rollout_handoff = ServiceRolloutHandoffResponse.from_dict(_service_rollout_handoff)
+
         deployment_response = cls(
             id=id,
             app_id=app_id,
@@ -1230,6 +1247,7 @@ class DeploymentResponse:
             rollout_completed_at=rollout_completed_at,
             rollout_aborted_at=rollout_aborted_at,
             rollout_aborted_reason=rollout_aborted_reason,
+            service_rollout_handoff=service_rollout_handoff,
         )
 
         deployment_response.additional_properties = d

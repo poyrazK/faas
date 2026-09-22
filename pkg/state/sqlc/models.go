@@ -1656,6 +1656,27 @@ type Org struct {
 	UpdatedAt              pgtype.Timestamptz
 }
 
+// Curated organization activity timeline; safe display facts only, FK-free and append-only
+type OrgActivity struct {
+	ID             int64
+	OrgID          pgtype.UUID
+	OccurredAt     pgtype.Timestamptz
+	Kind           string
+	ActorType      string
+	ActorAccountID pgtype.UUID
+	ActorLabel     string
+	ResourceType   string
+	ResourceID     pgtype.Text
+	ResourceLabel  string
+	AppID          pgtype.UUID
+	ProjectID      pgtype.UUID
+	DeploymentID   pgtype.UUID
+	// Non-secret display metadata. Environment variable values and credentials are forbidden.
+	Data       []byte
+	SourceType string
+	SourceID   string
+}
+
 type OrgInvitation struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID

@@ -28,11 +28,13 @@
  * - `upgrade-bypass` — request is an HTTP/1.1 Upgrade (e.g.
  * WebSocket) and bypasses the streaming path.
  *
- * `effective_cap_bytes` is the plan cap (`cap_kind="plan"`)
- * on every probe in this PR. The per-edge-rule override lives
- * in gatewayd state and is not part of the apid cache; a
- * customer who needs the live cap fires a real request and
- * reads the `Streaming-Status` response header.
+ * `effective_cap_bytes` is the plan cap (`cap_kind="plan"`) when
+ * no route shape is supplied. A route-aware probe may return
+ * `cap_kind="endpoint-rule"` when the compiled gatewayd rule
+ * matches; gatewayd failures and non-matches fall back to the
+ * plan cap. A customer who needs the canonical live status still
+ * fires a real request and reads the `Streaming-Status` response
+ * header.
  *
  */
 export type AppStreamingStatus = {
@@ -43,10 +45,9 @@ export type AppStreamingStatus = {
   flag_enabled: boolean;
   plan_allowed: boolean;
   /**
-   * `plan` is the only value this probe ever returns in
-   * this PR. The endpoint-rule and none values are reserved
-   * for the future gatewayd-side dial path described in
-   * `cmd/apid/handlers_streaming_cap.go`.
+   * `plan` is the plan-level fallback, `endpoint-rule` is a
+   * matching compiled gatewayd response cap, and `none` is
+   * reserved for a future explicit no-cap result.
    *
    */
   cap_kind?: 'plan' | 'endpoint-rule' | 'none';
