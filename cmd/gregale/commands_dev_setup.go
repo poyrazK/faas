@@ -11,32 +11,35 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 // devSetupReceipt is the local, side-effect-free plan produced by
 // `gregale dev setup`. It deliberately contains only paths, filenames, and
-// counts: an env file is validated but its values never enter the receipt.
+// counts: config files are validated but their values never enter the receipt.
 type devSetupReceipt struct {
-	Version          int                    `json:"version"`
-	Path             string                 `json:"path"`
-	Project          string                 `json:"project"`
-	Class            string                 `json:"class"`
-	Framework        string                 `json:"framework,omitempty"`
-	FrameworkVersion string                 `json:"framework_version,omitempty"`
-	Runtime          string                 `json:"runtime,omitempty"`
-	Handler          string                 `json:"handler,omitempty"`
-	SourceMarkers    []string               `json:"source_markers,omitempty"`
-	DependencyFiles  []string               `json:"dependency_files,omitempty"`
-	EnvFile          string                 `json:"env_file,omitempty"`
-	EnvKeyCount      int                    `json:"env_key_count,omitempty"`
-	Hosting          *devSetupHosting       `json:"hosting,omitempty"`
-	Authenticated    bool                   `json:"authenticated"`
-	Ready            bool                   `json:"ready"`
-	Next             []string               `json:"next"`
-	StartCommand     []string               `json:"start_command,omitempty"`
-	Warnings         []string               `json:"warnings,omitempty"`
-	ConfigPresent    bool                   `json:"config_present"`
-	Doctor           *devSetupDoctorSummary `json:"doctor,omitempty"`
+	Version                 int                    `json:"version"`
+	Path                    string                 `json:"path"`
+	Project                 string                 `json:"project"`
+	Class                   string                 `json:"class"`
+	Framework               string                 `json:"framework,omitempty"`
+	FrameworkVersion        string                 `json:"framework_version,omitempty"`
+	Runtime                 string                 `json:"runtime,omitempty"`
+	Handler                 string                 `json:"handler,omitempty"`
+	SourceMarkers           []string               `json:"source_markers,omitempty"`
+	DependencyFiles         []string               `json:"dependency_files,omitempty"`
+	EnvFile                 string                 `json:"env_file,omitempty"`
+	EnvKeyCount             int                    `json:"env_key_count,omitempty"`
+	ServiceOverridesFile    string                 `json:"service_overrides_file,omitempty"`
+	ServiceOverrideKeyCount int                    `json:"service_override_key_count,omitempty"`
+	Hosting                 *devSetupHosting       `json:"hosting,omitempty"`
+	Authenticated           bool                   `json:"authenticated"`
+	Ready                   bool                   `json:"ready"`
+	Next                    []string               `json:"next"`
+	StartCommand            []string               `json:"start_command,omitempty"`
+	Warnings                []string               `json:"warnings,omitempty"`
+	ConfigPresent           bool                   `json:"config_present"`
+	Doctor                  *devSetupDoctorSummary `json:"doctor,omitempty"`
 }
 
 type devSetupHosting struct {
@@ -54,7 +57,7 @@ type devSetupDoctorSummary struct {
 	Errors   int           `json:"errors"`
 }
 
-const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]]"
+const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]]"
 
 // cmdDevSetup prepares the first developer environment without making a
 // remote mutation. --start hands the validated, exact plan to cmdDev, which
@@ -64,6 +67,7 @@ func cmdDevSetup(args []string) int {
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	envFile := fs.String("env-file", "", "validate and sync KEY=VALUE entries as developer secrets")
+	serviceOverrideFile := fs.String("service-override-file", "", "validate and sync service URLs as developer secrets")
 	start := fs.Bool("start", false, "start the developer environment after preflight")
 	once := fs.Bool("once", false, "start, sync once, and exit")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream when starting")
@@ -78,6 +82,7 @@ func cmdDevSetup(args []string) int {
 		PrintUsage(osStderr, devSetupUsage, "dev")
 		return 2
 	}
+	explicitFlags := flagSetWasSet(fs)
 	if *once && !*start {
 		return printErr("Invalid flags", errors.New("--once requires --start"))
 	}
@@ -87,10 +92,6 @@ func cmdDevSetup(args []string) int {
 	if *open && !*start {
 		return printErr("Invalid flags", errors.New("--open requires --start"))
 	}
-	if !*withPostgres && *postgresRegion != "" {
-		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
@@ -103,9 +104,33 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Invalid developer source", err)
 	}
+	manifest, err := loadDevManifest(sourceDir)
+	if err != nil {
+		return printErr("Invalid developer manifest", err)
+	}
+	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	if !*withPostgres && *postgresRegion != "" {
+		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
+	}
 	envFilePath, envKeyCount, err := resolveSetupEnvFile(cwd, *envFile)
 	if err != nil {
 		return printErr("Invalid developer env file", err)
+	}
+	serviceOverrideFilePath, serviceOverrideKeyCount, err := resolveSetupServiceOverrideFile(cwd, *serviceOverrideFile)
+	if err != nil {
+		return printErr("Invalid developer service override file", err)
+	}
+	if envFilePath != "" && envFilePath == serviceOverrideFilePath {
+		return printErr("Invalid flags", errors.New("--env-file and --service-override-file must point to different files"))
+	}
+	if *withPostgres && serviceOverrideFilePath != "" {
+		pairs, _, readErr := readDevServiceOverrideFile(serviceOverrideFilePath)
+		if readErr != nil {
+			return printErr("Invalid developer service override file", readErr)
+		}
+		if serviceOverrideContainsKey(pairs, "DATABASE_URL") {
+			return printErr("Invalid flags", errors.New("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
+		}
 	}
 
 	project := *name
@@ -127,7 +152,7 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Could not prepare developer setup", err)
 	}
-	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion)
+	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion)
 
 	if !receipt.Authenticated {
 		receipt.Warnings = append(receipt.Warnings, "not logged in; run `gregale login` before starting")
@@ -150,7 +175,7 @@ func cmdDevSetup(args []string) int {
 			return 1
 		}
 		if *start {
-			return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion))
+			return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion))
 		}
 		return 0
 	}
@@ -163,7 +188,7 @@ func cmdDevSetup(args []string) int {
 		return 0
 	}
 	PrintProgress(osStdout, "Starting the developer environment")
-	return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion))
+	return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion))
 }
 
 func resolveDevSetupSource(sourceDir string) (devSourceConfig, error) {
@@ -194,18 +219,35 @@ func resolveSetupEnvFile(cwd, raw string) (string, int, error) {
 	return path, len(pairs), nil
 }
 
-func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig, envFile string, envKeyCount int, start, once, noLogs, open, postgres bool, postgresRegion string) devSetupReceipt {
+func resolveSetupServiceOverrideFile(cwd, raw string) (string, int, error) {
+	if raw == "" {
+		return "", 0, nil
+	}
+	path, err := resolveDevEnvFilePath(cwd, raw)
+	if err != nil {
+		return "", 0, err
+	}
+	pairs, _, err := readDevServiceOverrideFile(path)
+	if err != nil {
+		return "", 0, err
+	}
+	return path, len(pairs), nil
+}
+
+func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig, envFile string, envKeyCount int, serviceOverrideFile string, serviceOverrideKeyCount int, start, once, noLogs, open, postgres bool, postgresRegion string) devSetupReceipt {
 	receipt := devSetupReceipt{
-		Version:       1,
-		Path:          sourceDir,
-		Project:       project,
-		Class:         devSetupShapeName(config.shape),
-		Runtime:       config.runtime,
-		Handler:       config.handler,
-		EnvFile:       envFile,
-		EnvKeyCount:   envKeyCount,
-		Authenticated: strings.TrimSpace(loadToken()) != "",
-		ConfigPresent: false,
+		Version:                 1,
+		Path:                    sourceDir,
+		Project:                 project,
+		Class:                   devSetupShapeName(config.shape),
+		Runtime:                 config.runtime,
+		Handler:                 config.handler,
+		EnvFile:                 envFile,
+		EnvKeyCount:             envKeyCount,
+		ServiceOverridesFile:    serviceOverrideFile,
+		ServiceOverrideKeyCount: serviceOverrideKeyCount,
+		Authenticated:           strings.TrimSpace(loadToken()) != "",
+		ConfigPresent:           false,
 	}
 	if receipt.Class == "app" {
 		receipt.Framework = string(detectFramework(sourceDir))
@@ -219,7 +261,7 @@ func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig
 			receipt.Hosting = &devSetupHosting{Start: manifest.Hosting.Start, Port: manifest.Hosting.Port, Health: manifest.Hosting.Health}
 		}
 	}
-	receipt.StartCommand = devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, once, noLogs, open, postgres, postgresRegion)
+	receipt.StartCommand = devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile, once, noLogs, open, postgres, postgresRegion)
 	receipt.Doctor = buildDevSetupDoctorSummary(sourceDir, config.shape)
 	receipt.Ready = receipt.Authenticated && receipt.Doctor.Errors == 0
 	return receipt
@@ -251,18 +293,18 @@ func devSetupSourceMarkers(sourceDir string) []string {
 	if err != nil {
 		return nil
 	}
-	markers := make([]string, 0)
+	found := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if _, ok := appMarker[name]; ok || functionHandlerFiles[name] {
-			markers = append(markers, entry.Name())
+		if markers.IsAppMarker(name) || functionHandlerFiles[name] {
+			found = append(found, entry.Name())
 		}
 	}
-	sort.Strings(markers)
-	return markers
+	sort.Strings(found)
+	return found
 }
 
 func devSetupDependencyFiles(sourceDir string) []string {
@@ -294,8 +336,8 @@ func devSetupNextSteps(receipt devSetupReceipt, start bool) []string {
 	return []string{devSetupShellCommand(receipt.StartCommand)}
 }
 
-func devSetupDevArgs(sourcePath, name, envFile string, once, noLogs, open, postgres bool, postgresRegion string) []string {
-	args := make([]string, 0, 12)
+func devSetupDevArgs(sourcePath, name, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string) []string {
+	args := make([]string, 0, 14)
 	if sourcePath != "" {
 		args = append(args, "--path", sourcePath)
 	}
@@ -304,6 +346,9 @@ func devSetupDevArgs(sourcePath, name, envFile string, once, noLogs, open, postg
 	}
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
+	}
+	if serviceOverrideFile != "" {
+		args = append(args, "--service-override-file", serviceOverrideFile)
 	}
 	if once {
 		args = append(args, "--once")
@@ -323,7 +368,7 @@ func devSetupDevArgs(sourcePath, name, envFile string, once, noLogs, open, postg
 	return args
 }
 
-func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile string, once, noLogs, open, postgres bool, postgresRegion string) []string {
+func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string) []string {
 	args := []string{"gregale", "dev"}
 	rel, err := filepath.Rel(cwd, sourceDir)
 	if err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
@@ -338,6 +383,13 @@ func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile string, once, no
 			envFile = filepath.ToSlash(envRel)
 		}
 		args = append(args, "--env-file", envFile)
+	}
+	if serviceOverrideFile != "" {
+		overrideRel, relErr := filepath.Rel(cwd, serviceOverrideFile)
+		if relErr == nil && !strings.HasPrefix(overrideRel, ".."+string(filepath.Separator)) {
+			serviceOverrideFile = filepath.ToSlash(overrideRel)
+		}
+		args = append(args, "--service-override-file", serviceOverrideFile)
 	}
 	if once {
 		args = append(args, "--once")
@@ -391,6 +443,11 @@ func renderDevSetup(stdout, stderr io.Writer, receipt devSetupReceipt) {
 		PrintProgress(stdout, "env file: %s (%d keys; values hidden)", receipt.EnvFile, receipt.EnvKeyCount)
 	} else {
 		PrintProgress(stdout, "env file: none selected (use --env-file .env.dev to opt in)")
+	}
+	if receipt.ServiceOverridesFile != "" {
+		PrintProgress(stdout, "service overrides: %s (%d URLs; values hidden)", receipt.ServiceOverridesFile, receipt.ServiceOverrideKeyCount)
+	} else {
+		PrintProgress(stdout, "service overrides: none selected (use --service-override-file .env.services.local to opt in)")
 	}
 	if receipt.Hosting != nil && (receipt.Hosting.Port != 0 || receipt.Hosting.Health != "" || receipt.Hosting.Start != "") {
 		PrintProgress(stdout, "hosting overrides: start=%q port=%d health=%s", receipt.Hosting.Start, receipt.Hosting.Port, receipt.Hosting.Health)

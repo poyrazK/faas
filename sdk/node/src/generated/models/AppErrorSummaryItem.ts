@@ -33,5 +33,18 @@ export type AppErrorSummaryItem = {
    * PII-redacted sample message (already-redacted at write time; ≤AppErrorsSampleMessageCapBytes=512 bytes).
    */
   sample_message: string;
+  /**
+   * Most recent platform instance that produced this fingerprint.
+   */
+  last_instance_id?: string;
+  /**
+   * Most recent compute node that produced this fingerprint.
+   */
+  last_node_id?: string;
+  last_region?: string;
+  last_commit_sha?: string;
+  last_deployment_tag?: string;
+  last_deployment_created_at?: string;
+  last_image_digest?: string;
 };
 

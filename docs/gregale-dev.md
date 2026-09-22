@@ -47,10 +47,28 @@ gregale dev history --limit 50 # show a larger bounded history
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
+gregale dev --service-override-file .env.services.local # opt in to service URL overrides
 gregale dev --postgres         # provision an isolated database and inject DATABASE_URL
 gregale dev --postgres --postgres-region eu-central-1 # choose database placement
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
 ```
+
+For a repeatable team setup, put non-secret developer defaults in the
+project's `gregale.yaml`:
+
+```yaml
+dev:
+  env_file: .env.dev
+  service_override_file: .env.services.local
+  postgres: true
+  postgres_region: eu-central-1
+```
+
+These paths are relative to the selected source root. The files must still be
+created locally, are validated before any remote mutation, and remain excluded
+from the source archive. Explicit CLI flags take precedence over the manifest;
+`gregale dev setup` shows the resulting effective command without starting or
+mutating the environment.
 
 The dashboard at `/dashboard/developers` lists the active environments for
 the signed-in account. It shows each stable URL, runtime, current instance
@@ -87,6 +105,17 @@ Changes to the file trigger the same debounced redeploy as source edits. The
 file itself is excluded from the source archive, including when it lives inside
 the watched directory. Use `gregale secrets unset --app <slug> KEY` when a key
 must be removed intentionally.
+
+`--service-override-file` is a narrower companion for local service wiring. It
+accepts only absolute connection URLs for `DATABASE_URL`, `REDIS_URL`,
+`MONGO_URL`/`MONGODB_URL`, `RABBITMQ_URL`, and `NATS_URL`, with the matching
+connection scheme. The file is validated before the first remote mutation,
+excluded from the source archive, and synced only to the stable developer app's
+sealed default secret scope. It never changes production bindings or deletes
+omitted keys. Because `gregale dev` runs remotely, loopback hosts such as
+`localhost` and `127.0.0.1` are rejected; use a reachable development service,
+a tunnel, or `--postgres` instead. `gregale dev setup` performs the same
+validation and includes the option in its copy-paste start command.
 
 `--postgres` provisions one development-class, scale-to-zero PostgreSQL
 database for this local workspace and binds its sealed credential to the

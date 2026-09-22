@@ -150,6 +150,34 @@ New `POST /v1/apps/{slug}/debug/requests/{req_id}/replay`:
   the completed invocation result exposes only status, latency, status-diff,
   and crash metadata—never request bodies or credentials.
 
+#### 6.1 Explicit sanitized-corpus replay
+
+`POST /v1/apps/{slug}/mirrors/{id}/replay` and
+`gregale mirror replay --app … --id … --file corpus.json` accept a corpus the
+customer has exported and sanitized outside Gregale. This is deliberately
+separate from `request_telemetry`: Gregale does not begin archiving raw
+production request bodies or headers as a side effect of enabling the
+debugger.
+
+- A batch contains 1–100 requests, is capped at 8 MiB, and each JSON body is
+  capped at the existing 64 KiB mirror snapshot limit.
+- GET, HEAD, and OPTIONS are replayable by default. POST, PUT, PATCH, and
+  DELETE require `allow_unsafe_methods=true`; the CLI only sets it from the
+  explicit `--allow-unsafe-methods` flag, never from a copied input file.
+- apid strips authorization/cookie/API-key, hop-by-hop, platform-owned, and
+  rule-configured redact headers before enqueueing. gatewayd repeats that
+  filtering at dispatch as defense in depth.
+- The optional `expected_body_sha256` compares the new response with the
+  historical response without uploading or retaining that source response.
+  The comparison ledger stores hashes only when the rule opted into
+  `include_body`; raw responses are never stored there.
+- Every item uses the existing durable replay invocation lifecycle and targets
+  only the enabled mirror deployment named by the rule. It never reaches the
+  source/production deployment.
+- Mirror summaries report a deduplicated `changed_response_count` and
+  `changed_response_percent` across status, schema, and body differences, so
+  one request with multiple diff flags is counted only once.
+
 ### 7. Customer-visible surfaces
 
 | Surface | Verb | Notes |
@@ -159,11 +187,13 @@ New `POST /v1/apps/{slug}/debug/requests/{req_id}/replay`:
 | apid | `GET /v1/apps/{slug}/debug/regressions` | RequestTelemetryRegression — active regressions since last deploy |
 | apid | `POST /v1/apps/{slug}/debug/compare` | Per-route p50/p95/p99 split between two deployments |
 | apid | `POST /v1/apps/{slug}/debug/requests/{req_id}/replay` | §6 |
+| apid | `POST /v1/apps/{slug}/mirrors/{id}/replay` | Explicit customer-sanitized batch replay (§6.1) |
 | apid | `GET /v1/apps/{slug}/debug/requests/{req_id}/evidence` | Bounded root-cause synthesis from redacted evidence |
 | apid | `POST /v1/otel/v1/traces` | §5 |
 | CLI | `gregale debug requests {list,get,evidence,explain,replay}` | `cmd/gregale/commands_debug.go` |
 | CLI | `gregale debug regressions <slug>` | |
 | CLI | `gregale debug compare <slug> --source v80 --mirror v81` | |
+| CLI | `gregale mirror replay --app <slug> --id <rule> --file <corpus>` | Sanitized corpus replay; unsafe verbs require an explicit flag |
 | Dashboard | `/dashboard/apps/{slug}/debug` | `pkg/dashboard/templates/app_debug.html` |
 | Prometheus | `FaasDebugTelemetryIngestStalled` page alert | `deploy/ansible/roles/prometheus/files/faas.rules.yml` |
 

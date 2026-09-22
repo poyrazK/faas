@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -12,16 +14,36 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+const traceUsage = "usage: gregale trace <trace-id> [--watch] [--interval <DURATION>] [--timeout <DURATION>]"
+
+const (
+	defaultTraceWatchInterval = time.Second
+	defaultTraceWatchTimeout  = 5 * time.Minute
+	traceWatchRetryBase       = 250 * time.Millisecond
+	traceWatchRetryMax        = 5 * time.Second
+)
+
+type traceWatchOptions struct {
+	watch    bool
+	interval time.Duration
+	timeout  time.Duration
+}
+
 // cmdTrace locates one W3C trace id through the durable account-scoped trace
 // index. The API joins retained request evidence with all durable invocation
 // lifecycle rows so the CLI can show cross-service propagation without app
 // fan-out.
 func cmdTrace(args []string) int {
-	if len(args) != 1 || args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(osStderr, "usage: gregale trace <trace-id>", "trace")
+	if hasTraceHelp(args) {
+		PrintUsage(osStderr, traceUsage, "trace")
+		return 0
+	}
+	traceID, options, err := parseTraceArgs(args)
+	if err != nil {
+		PrintUsage(osStderr, traceUsage, "trace")
+		_, _ = fmt.Fprintf(osStderr, "trace: %s\n", err)
 		return 1
 	}
-	traceID := strings.TrimSpace(args[0])
 	if !validTraceID(traceID) {
 		return printErr("Invalid trace id", fmt.Errorf("trace id must be 32 lowercase hexadecimal characters"))
 	}
@@ -31,11 +53,224 @@ func cmdTrace(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	if options.watch {
+		return watchTrace(ctx, client, traceID, options)
+	}
 	result, err := client.GetAccountTrace(ctx, traceID)
 	if err != nil {
 		return printErr("Could not look up trace", err)
 	}
+	return renderTraceResult(traceID, result)
+}
 
+func hasTraceHelp(args []string) bool {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
+func parseTraceArgs(args []string) (string, traceWatchOptions, error) {
+	options := traceWatchOptions{
+		interval: defaultTraceWatchInterval,
+		timeout:  defaultTraceWatchTimeout,
+	}
+	var traceID string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--watch":
+			options.watch = true
+		case arg == "--interval" || strings.HasPrefix(arg, "--interval="):
+			value, next, err := traceFlagValue(args, i, "--interval")
+			if err != nil {
+				return "", traceWatchOptions{}, err
+			}
+			i = next
+			options.interval, err = time.ParseDuration(value)
+			if err != nil || options.interval <= 0 {
+				return "", traceWatchOptions{}, fmt.Errorf("--interval must be a positive duration")
+			}
+		case arg == "--timeout" || strings.HasPrefix(arg, "--timeout="):
+			value, next, err := traceFlagValue(args, i, "--timeout")
+			if err != nil {
+				return "", traceWatchOptions{}, err
+			}
+			i = next
+			options.timeout, err = time.ParseDuration(value)
+			if err != nil || options.timeout <= 0 {
+				return "", traceWatchOptions{}, fmt.Errorf("--timeout must be a positive duration")
+			}
+		case strings.HasPrefix(arg, "-"):
+			return "", traceWatchOptions{}, fmt.Errorf("unknown flag %q", arg)
+		case traceID == "":
+			traceID = strings.TrimSpace(arg)
+		default:
+			return "", traceWatchOptions{}, fmt.Errorf("expected one trace id")
+		}
+	}
+	if traceID == "" {
+		return "", traceWatchOptions{}, fmt.Errorf("trace id is required")
+	}
+	return traceID, options, nil
+}
+
+func traceFlagValue(args []string, index int, name string) (string, int, error) {
+	arg := args[index]
+	if strings.HasPrefix(arg, name+"=") {
+		value := strings.TrimPrefix(arg, name+"=")
+		if value == "" {
+			return "", index, fmt.Errorf("%s requires a duration", name)
+		}
+		return value, index, nil
+	}
+	if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+		return "", index, fmt.Errorf("%s requires a duration", name)
+	}
+	return args[index+1], index + 1, nil
+}
+
+func watchTrace(ctx context.Context, client *Client, traceID string, options traceWatchOptions) int {
+	watchCtx, cancel := context.WithTimeout(ctx, options.timeout)
+	defer cancel()
+
+	var previous string
+	retryAttempt := 0
+	for {
+		result, err := client.GetAccountTrace(watchCtx, traceID)
+		if err != nil {
+			if watchCtx.Err() != nil {
+				_, _ = fmt.Fprintf(osStderr, "Trace %s watch timed out after %s.\n", traceID, options.timeout)
+				return 3
+			}
+			if !traceWatchRetryableError(err) {
+				return printErr("Could not look up trace", err)
+			}
+			retryAttempt++
+			delay := traceWatchRetryDelay(retryAttempt, traceWatchRetryAfter(err))
+			if !jsonOutput {
+				_, _ = fmt.Fprintf(osStderr, "trace %s: temporary lookup failure; retrying in %s\n", traceID, delay)
+			}
+			if !waitTraceWatch(watchCtx, delay) {
+				_, _ = fmt.Fprintf(osStderr, "Trace %s watch timed out after %s.\n", traceID, options.timeout)
+				return 3
+			}
+			continue
+		}
+		retryAttempt = 0
+		current := traceSnapshotKey(result)
+		if current != previous {
+			if previous != "" && !jsonOutput {
+				_, _ = fmt.Fprintln(osStdout, "\n--- trace update ---")
+			}
+			if jsonOutput {
+				if code := jsonOut(json.NewEncoder(osStdout).Encode(result)); code != 0 {
+					return code
+				}
+			} else {
+				_ = renderTraceResult(traceID, result)
+			}
+			previous = current
+		}
+		if traceWatchComplete(result) {
+			if result.Partial {
+				return 3
+			}
+			if len(result.Matches) == 0 && len(result.Invocations) == 0 {
+				return 1
+			}
+			return 0
+		}
+		if !waitTraceWatch(watchCtx, options.interval) {
+			_, _ = fmt.Fprintf(osStderr, "Trace %s watch timed out after %s.\n", traceID, options.timeout)
+			return 3
+		}
+	}
+}
+
+func traceWatchRetryableError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		// The trace endpoint is read-only, so transport and decoding failures
+		// are safe to retry while the overall watch timeout remains in force.
+		return true
+	}
+	status := apiErr.Problem.Status
+	return status == 408 || status == 425 || status == 429 || status >= 500
+}
+
+func traceWatchRetryAfter(err error) *int64 {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Problem.RetryAfterSeconds
+	}
+	return nil
+}
+
+func traceWatchRetryDelay(attempt int, retryAfter *int64) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := traceWatchRetryBase
+	for i := 1; i < attempt && delay < traceWatchRetryMax; i++ {
+		if delay > traceWatchRetryMax/2 {
+			delay = traceWatchRetryMax
+			break
+		}
+		delay *= 2
+	}
+	if retryAfter != nil && *retryAfter > 0 {
+		if *retryAfter >= int64(traceWatchRetryMax/time.Second) {
+			return traceWatchRetryMax
+		}
+		hint := time.Duration(*retryAfter) * time.Second
+		if hint > delay {
+			delay = hint
+		}
+	}
+	if delay > traceWatchRetryMax {
+		return traceWatchRetryMax
+	}
+	return delay
+}
+
+func waitTraceWatch(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func traceSnapshotKey(result api.AccountTraceLookupResponse) string {
+	result.GeneratedAt = time.Time{}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Sprintf("%d/%d/%d/%t", len(result.Matches), len(result.Invocations), len(result.Spans), result.Partial)
+	}
+	return string(encoded)
+}
+
+func traceWatchComplete(result api.AccountTraceLookupResponse) bool {
+	if len(result.Invocations) == 0 {
+		return len(result.Matches) > 0 || len(result.Spans) > 0
+	}
+	for _, invocation := range result.Invocations {
+		switch invocation.State {
+		case "completed", "failed", "cancelled", "dead_letter":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) int {
 	if jsonOutput {
 		code := jsonOut(writeJSON(result))
 		if code != 0 {

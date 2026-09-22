@@ -252,7 +252,7 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	if !backend.Capabilities.PointInTimeRestore {
 		return Database{}, ErrUnsupported
 	}
-	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated {
+	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
 		return Database{}, ErrUnsupported
 	}
 	if err := backend.Capabilities.Supports(source.Spec); err != nil {
@@ -386,18 +386,9 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	if database.State == StateDeleted {
 		return database, nil
 	}
-	active, err := s.store.List(ctx, accountID)
-	if err != nil {
-		return Database{}, err
-	}
-	for _, candidate := range active {
-		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
-			return Database{}, ErrConflict
-		}
-	}
 	now := s.now()
 	leaseToken := s.newLeaseToken()
-	database, err = s.store.Claim(ctx, accountID, databaseID, leaseToken, StateDeleting, now, now.Add(s.leaseDuration))
+	database, err = s.store.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Database{}, err
 	}

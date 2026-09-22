@@ -19,6 +19,10 @@ class MirrorSummaryResponse:
     """
 
     total_invocations: int
+    changed_response_count: int
+    """Requests with any status, schema, or body difference; each request is counted once."""
+    changed_response_percent: float
+    """100 × changed_response_count / total_invocations; zero when the window is empty."""
     status_diff_count: int
     schema_diff_count: int
     body_diff_count: int
@@ -32,6 +36,10 @@ class MirrorSummaryResponse:
 
     def to_dict(self) -> dict[str, Any]:
         total_invocations = self.total_invocations
+
+        changed_response_count = self.changed_response_count
+
+        changed_response_percent = self.changed_response_percent
 
         status_diff_count = self.status_diff_count
 
@@ -52,6 +60,8 @@ class MirrorSummaryResponse:
         field_dict.update(
             {
                 "total_invocations": total_invocations,
+                "changed_response_count": changed_response_count,
+                "changed_response_percent": changed_response_percent,
                 "status_diff_count": status_diff_count,
                 "schema_diff_count": schema_diff_count,
                 "body_diff_count": body_diff_count,
@@ -69,6 +79,10 @@ class MirrorSummaryResponse:
         d = dict(src_dict)
         total_invocations = d.pop("total_invocations")
 
+        changed_response_count = d.pop("changed_response_count")
+
+        changed_response_percent = d.pop("changed_response_percent")
+
         status_diff_count = d.pop("status_diff_count")
 
         schema_diff_count = d.pop("schema_diff_count")
@@ -85,6 +99,8 @@ class MirrorSummaryResponse:
 
         mirror_summary_response = cls(
             total_invocations=total_invocations,
+            changed_response_count=changed_response_count,
+            changed_response_percent=changed_response_percent,
             status_diff_count=status_diff_count,
             schema_diff_count=schema_diff_count,
             body_diff_count=body_diff_count,

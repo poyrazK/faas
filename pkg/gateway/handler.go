@@ -102,6 +102,9 @@ type App struct {
 	// Function/default budget posture by limits.RequestBudgetForType.
 	Type AppType
 	Plan api.Plan
+	// RequestInvocationsEnabled is true for request-serving apps/functions and
+	// false for worker/job workloads, which have no HTTP invocation listener.
+	RequestInvocationsEnabled bool
 	// OnlyAllowDeclaredRoutes enables the pre-wake route contract. When set,
 	// the gateway asks DeclaredRouteMatcher before authentication, rate
 	// limiting, or capacity admission. Undeclared paths are answered directly
@@ -826,9 +829,10 @@ type Handler struct {
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
-	// picker selects a concrete instance. It is intentionally gateway-local:
-	// the guest listener remains runtime-agnostic while the edge can account
-	// for the complete bridge lifetime, including streams and upgrades.
+	// picker selects a concrete instance. Instance slots and FIFO ordering are
+	// gateway-local; production installs a shared admission backend so the
+	// queue-depth budget remains fleet-wide. The guest listener stays runtime-
+	// agnostic while the edge accounts for streams and upgrades.
 	vmConcurrency *vmConcurrencyManager
 	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
 	// observes a full instance slot set. It shares the gateway audit sink so
@@ -859,6 +863,10 @@ type Handler struct {
 	// a nil field is safe; tests inject a stub via
 	// WithMirrorRoundTripper.
 	mirrorRoundTripper MirrorRoundTripper
+	// mirrorResultStore is the durable comparison ledger. It is optional so
+	// gateway unit tests and development backends can omit Postgres; production
+	// wires the shared PgStore.
+	mirrorResultStore mirrorResultStore
 	// mirrorSlots (issue #72 / ADR-133 / ADR-125 PR-A3
 	// code-review fix #3) is the per-rule concurrent mirror-VM
 	// cost circuit. Keyed on the mirror-rule UUID (NOT the
@@ -1105,6 +1113,9 @@ type Handler struct {
 	// proxy all see the *target* app's context, not the
 	// inbound host's (auth remains per-app).
 	edgeRules EdgeRuleMatcher
+	// asyncRoutes persists requests matched by kind=async. Nil is a fail-closed
+	// runtime wiring error only when such a rule actually matches.
+	asyncRoutes AsyncRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1545,6 +1556,16 @@ func (h *Handler) WithVMConcurrencyAudit(audit RequireAuthnAuditor) *Handler {
 	return h
 }
 
+// WithConcurrencyQueueAdmission installs the shared permit backend that makes
+// max_queue_depth a fleet-wide per-app cap across gateway replicas. A nil
+// backend retains process-local admission for tests and single-process embeds.
+func (h *Handler) WithConcurrencyQueueAdmission(admission ConcurrencyQueueAdmission) *Handler {
+	if h != nil && h.vmConcurrency != nil {
+		h.vmConcurrency.setQueueAdmission(admission)
+	}
+	return h
+}
+
 // WithForwarding installs the per-node HTTP→gRPC forwarder built by
 // pkg/gateway/forwardproxy.go (issue #98 / ADR-028). When set, every
 // request dispatches through fn(nodeID) where nodeID is the value
@@ -1655,6 +1676,12 @@ func (h *Handler) WithEdgeRules(matcher EdgeRuleMatcher, resolve ResolveTargetAp
 	h.edgeRules = matcher
 	h.resolveTargetApp = resolve
 	h.edgeRuleAudit = audit
+	return h
+}
+
+// WithAsyncRouteEnqueuer arms durable enqueue for kind=async rules.
+func (h *Handler) WithAsyncRouteEnqueuer(enqueuer AsyncRouteEnqueuer) *Handler {
+	h.asyncRoutes = enqueuer
 	return h
 }
 
@@ -1773,6 +1800,14 @@ func (h *Handler) WithResponseCache(cache *ResponseCache) *Handler {
 // real upstream. Fluent setter, mirrors WithResponseCache.
 func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 	h.mirrorRoundTripper = rt
+	return h
+}
+
+// WithMirrorResultStore wires the durable per-invocation comparison ledger.
+// Writes are best-effort and happen only from detached mirror goroutines, so a
+// slow or unavailable store never delays the customer response.
+func (h *Handler) WithMirrorResultStore(store mirrorResultStore) *Handler {
+	h.mirrorResultStore = store
 	return h
 }
 
@@ -5798,7 +5833,11 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if served, rule := h.applyEdgeRuleCache(w, r, app, rec); served {
+	var asyncRule *EdgeRuleAsyncResolved
+	if !deploymentSmoke {
+		asyncRule = h.matchAsyncRoute(r, sidecarName)
+	}
+	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
 		return
 	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
 		// A fresh kind=cache hit returned above. A miss (including a stale
@@ -5990,6 +6029,10 @@ haveApp:
 	if r.Body != nil && r.Body != http.NoBody && !isUpgradeRequest(r) {
 		admittedBody := r.Body
 		defer func() { _ = admittedBody.Close() }()
+	}
+	if h.applyEdgeRuleAsync(w, r, app, asyncRule) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
 	}
 
 	burstDone := h.burstPressure.begin(app.ID)
@@ -6380,12 +6423,11 @@ haveApp:
 	// asynchronously. The lookup itself does NOT block on the
 	// store read.
 	//
-	// Source snapshot (code-review PR-A3 #1, #2): the dispatch
-	// goroutine needs the source status + body to drive
-	// ClassifyResult AND to replay the body against the mirror.
-	// The proxy consumes r.Body downstream and the status is only
-	// known after the proxy commits a response header, so the
-	// handler captures both BEFORE fanout:
+	// The dispatch needs two distinct bounded snapshots: the source request
+	// body to forward to v2, and the source response body to compare with v2.
+	// The request body is captured before fanout and immediately restored. The
+	// response is captured by statusRecorder as v1 writes it and handed to the
+	// detached goroutines through mirrorSourceCapture.
 	//
 	//   - sourceBody: io.ReadAll(r.Body) capped at MirrorBodySnapshotCap
 	//     bytes (default 64 KiB — more than enough for status_diff
@@ -6393,34 +6435,23 @@ haveApp:
 	//     unbuffered).
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
-	//   - sourceStatus: read from `rec` after the proxy commits
-	//     WriteHeader. The fanout schedules BEFORE the proxy runs,
-	//     so the goroutine reads rec.status via the shared
-	//     statusRecorder pointer. nil body when the capture
-	//     failed (oversized body); statusDiff defaults to true so
-	//     the metric surfaces "we don't know what the source
-	//     did" rather than a silent no-diff.
 	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
-		sourceBody, restoreBody := snapshotSourceBody(r)
+		requestBody, restoreBody := snapshotSourceBody(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
 		// leaves Content-Length non-zero with an empty body and turns mirrored
 		// POST requests into upstream cancellations/502s.
 		restoreBody()
-		// Install the cross-goroutine status sink BEFORE the proxy
-		// commits its WriteHeader, so the dispatchMirror goroutine
-		// reads the committed status via rec.captureStatusForMirror()
-		// once its round-trip completes (proxy is local + fast,
-		// round-trip is to a cold-boot VM, so the goroutine's read
-		// lands after the proxy's store in practice — the atomic
-		// makes the handoff explicit anyway).
-		rec.mirrorStatusSink = &atomic.Int32{}
+		sourceCapture := newMirrorSourceCapture()
+		rec.mirrorSourceCapture = sourceCapture
+		defer sourceCapture.complete()
+		requestID := requestIDFrom(r)
 		for _, rule := range rules {
 			rule := rule
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
 				continue
 			}
-			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), sourceBody, rec)
+			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
 		}
 	}
 
@@ -6990,26 +7021,32 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = telemetryTraceID(requestID)
 			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
-				AccountID:       acctUUID,
-				AppID:           appUUID,
-				DeploymentID:    deploymentUUID,
-				Route:           telemetryRoute,
-				Method:          r.Method,
-				Status:          status,
-				LatencyMS:       int(elapsed / time.Millisecond),
-				ColdBoot:        cold,
-				TraceID:         requestTraceID,
-				ReceivedAt:      time.Now(),
-				WakeID:          target.WakeID,
-				InstanceID:      target.InstanceID,
-				UAFamily:        uaFamily,
-				ReferrerHost:    referrerHost,
-				Country:         country,
-				GuestDurationMS: guestEvidence.DurationMS,
-				GuestRuntime:    guestEvidence.Runtime,
-				GuestOutcome:    guestEvidence.Outcome,
-				GuestErrorClass: guestEvidence.ErrorClass,
-				ConsumerID:      consumerID,
+				AccountID:           acctUUID,
+				AppID:               appUUID,
+				DeploymentID:        deploymentUUID,
+				Route:               telemetryRoute,
+				Method:              r.Method,
+				Status:              status,
+				LatencyMS:           int(elapsed / time.Millisecond),
+				ColdBoot:            cold,
+				TraceID:             requestTraceID,
+				ReceivedAt:          time.Now(),
+				WakeID:              target.WakeID,
+				InstanceID:          target.InstanceID,
+				UAFamily:            uaFamily,
+				ReferrerHost:        referrerHost,
+				Country:             country,
+				GuestDurationMS:     guestEvidence.DurationMS,
+				GuestRuntime:        guestEvidence.Runtime,
+				GuestOutcome:        guestEvidence.Outcome,
+				GuestErrorClass:     guestEvidence.ErrorClass,
+				ConsumerID:          consumerID,
+				NodeID:              target.NodeID,
+				Region:              target.Region,
+				CommitSHA:           target.CommitSHA,
+				DeploymentTag:       target.DeploymentTag,
+				DeploymentCreatedAt: target.DeploymentCreatedAt,
+				ImageDigest:         target.ImageDigest,
 			})
 		}
 	}
@@ -7499,27 +7536,10 @@ type statusRecorder struct {
 	// everything on the streaming path).
 	streaming bool
 
-	// mirrorStatusSink (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix) is the cross-goroutine channel the
-	// dispatchMirror goroutine reads to learn the source
-	// response's HTTP status. nil = "no mirror on this request"
-	// (the dispatcher never scheduled a mirror, so the field
-	// stays unset — ClassifyResult falls back to status=0 which
-	// surfaces statusDiff=true rather than a silent no-diff).
-	//
-	// Handle installs the *atomic.Int32 pointer on a mirror
-	// fanout path; the proxy's WriteHeader Stores the committed
-	// status code; the dispatch goroutine Loads it after its
-	// round-trip completes (by which time the proxy has
-	// committed the response header — the proxy is local, the
-	// round-trip is to a cold-boot VM, so the gateway's local
-	// WriteHeader fires microseconds before the goroutine reads).
-	//
-	// atomic.Int32 (not int) because the writer (proxy /
-	// WriteHeader) runs in a different goroutine than the
-	// reader (dispatchMirror) — the Go memory model would flag a
-	// plain int read/write as a race.
-	mirrorStatusSink *atomic.Int32
+	// mirrorSourceCapture records the actual v1 response status and bounded
+	// body. It is concurrency-safe because detached v2 goroutines consume it
+	// after (or while) the source response is being written.
+	mirrorSourceCapture *mirrorSourceCapture
 }
 
 // Unwrap lets http.ResponseController reach the underlying server writer for
@@ -7534,22 +7554,6 @@ func (s *statusRecorder) ProblemHTMLRequest() *http.Request {
 		return nil
 	}
 	return s.request
-}
-
-// captureStatusForMirror (issue #72 / ADR-133 / ADR-125 PR-A3)
-// returns the source response's HTTP status as committed by the
-// proxy's WriteHeader. Returns 0 if no mirror was scheduled for
-// this request (mirrorStatusSink is nil), which the dispatch
-// goroutine treats as "unknown source status" — ClassifyResult
-// emits statusDiff=true to surface the "we don't know what the
-// source did" shape rather than a silent no-diff.
-//
-// Safe to call from any goroutine. nil-receiver safe.
-func (s *statusRecorder) captureStatusForMirror() int {
-	if s == nil || s.mirrorStatusSink == nil {
-		return 0
-	}
-	return int(s.mirrorStatusSink.Load())
 }
 
 // installFlushHook arms the recorder for streaming. After install,
@@ -7574,15 +7578,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
-		// Issue #72 / ADR-133 / ADR-125 PR-A3: if Handle armed a
-		// mirrorStatusSink for this request, store the committed
-		// status so the async dispatchMirror goroutine can read
-		// it (via captureStatusForMirror) and drive
-		// ClassifyResult's statusDiff branch correctly. nil
-		// sink = no mirror on this request, no-op.
-		if s.mirrorStatusSink != nil {
-			s.mirrorStatusSink.Store(int32(code))
-		}
+		s.mirrorSourceCapture.writeHeader(code)
 		// Issue #471: capture the upstream Content-Type at header
 		// commit time so the post-proxy site can detect a buffered
 		// SSE response for the deprecation log. Header() returns the
@@ -7625,6 +7621,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		// First Write with no explicit WriteHeader → 200.
 		s.status = http.StatusOK
 		s.wroteHeader = true
+		s.mirrorSourceCapture.writeHeader(http.StatusOK)
 	}
 
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
@@ -7638,6 +7635,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	// cheap insurance for the future.
 	if n > 0 {
 		s.Bytes += int64(n)
+		s.mirrorSourceCapture.write(b[:n])
 	}
 	if s.flusher != nil {
 		s.maybeFlush()
@@ -8052,6 +8050,11 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set(api.ErrorCodeHeader, api.CodeConcurrencyQueueTimeout)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeConcurrencyQueueTimeout,
 			"Concurrency queue wait expired", "no warm instance slot became available within the configured wait budget"))
+	case errors.Is(err, ErrConcurrencyQueueAdmissionUnavailable):
+		retryAfter := wakeRetryAfterSeconds(err, 1)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Concurrency queue temporarily unavailable", "the fleet-wide queue admission budget could not be checked; retry shortly"))
 	case errors.Is(err, ErrWakeQueueWaitTimeout):
 		retryAfter := wakeRetryAfterSeconds(err, 5)
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
@@ -8125,6 +8128,7 @@ func wakeRetryAfterSeconds(err error, fallback int) int {
 	var concurrencyDrop *WakeConcurrencyDropError
 	var concurrencyFull *ConcurrencyQueueFullError
 	var concurrencyTimeout *ConcurrencyQueueWaitTimeoutError
+	var concurrencyAdmission *ConcurrencyQueueAdmissionError
 	var globalFull *WakeAdmissionQueueFullError
 	var globalTimeout *WakeAdmissionQueueWaitTimeoutError
 	switch {
@@ -8134,6 +8138,8 @@ func wakeRetryAfterSeconds(err error, fallback int) int {
 		retryAfter = concurrencyFull.RetryAfter
 	case errors.As(err, &concurrencyTimeout):
 		retryAfter = concurrencyTimeout.RetryAfter
+	case errors.As(err, &concurrencyAdmission):
+		retryAfter = concurrencyAdmission.RetryAfter
 	case errors.As(err, &perAppFull):
 		retryAfter = perAppFull.RetryAfter
 	case errors.As(err, &perAppTimeout):

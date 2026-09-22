@@ -1,5 +1,5 @@
 // Traffic mirroring HTTP handlers (issue #72 / ADR-125 traffic
-// mirroring PR-A2). Six routes live under /v1/apps/{slug}/mirrors:
+// mirroring). Seven routes live under /v1/apps/{slug}/mirrors:
 //
 //	POST   /v1/apps/{slug}/mirrors                createMirrorRule
 //	GET    /v1/apps/{slug}/mirrors                listMirrorRules
@@ -7,12 +7,7 @@
 //	PATCH  /v1/apps/{slug}/mirrors/{id}           updateMirrorRule
 //	DELETE /v1/apps/{slug}/mirrors/{id}           deleteMirrorRule
 //	GET    /v1/apps/{slug}/mirrors/{id}/summary   getMirrorRuleSummary
-//
-// PR-A2 ships the CRUD surface only — the runtime mirror goroutine
-// (detached ctx, redaction, schedd stamping) lands in PR-A3. By the
-// end of PR-A2, a customer can POST a rule and see it via GET, but no
-// traffic is actually mirrored yet; the GET /summary endpoint reads
-// rows from the comparison ledger that PR-A1 left empty.
+//	POST   /v1/apps/{slug}/mirrors/{id}/replay    replayMirrorRequests
 //
 // Gate order (mirrors updateDeploymentTraffic in handlers_ext.go and
 // createEdgeRule in handlers_edge_rules.go exactly):
@@ -36,14 +31,21 @@
 package main
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"golang.org/x/net/http/httpguts"
 )
 
 // mirrorRuleResponse maps a state.MirrorRule to the customer-facing
@@ -395,16 +397,186 @@ func (s *server) getMirrorRuleSummary(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "could not compute mirror summary", err.Error()))
 		return
 	}
+	changedPercent := 0.0
+	if summary.TotalInvocations > 0 {
+		changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(summary.TotalInvocations)
+	}
 	writeJSON(w, http.StatusOK, api.MirrorSummaryResponse{
-		TotalInvocations:  int64(summary.TotalInvocations),
-		StatusDiffCount:   int64(summary.StatusDiffCount),
-		SchemaDiffCount:   int64(summary.SchemaDiffCount),
-		BodyDiffCount:     int64(summary.BodyDiffCount),
-		MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs),
-		P99LatencyDiffMs:  int64(summary.P99LatencyDiffMs),
-		CrashCount:        int64(summary.CrashCount),
-		WindowSeconds:     int(window),
+		TotalInvocations:     int64(summary.TotalInvocations),
+		ChangedResponseCount: int64(summary.ChangedResponseCount),
+		ChangedResponsePct:   changedPercent,
+		StatusDiffCount:      int64(summary.StatusDiffCount),
+		SchemaDiffCount:      int64(summary.SchemaDiffCount),
+		BodyDiffCount:        int64(summary.BodyDiffCount),
+		MeanLatencyDiffMs:    int64(summary.MeanLatencyDiffMs),
+		P99LatencyDiffMs:     int64(summary.P99LatencyDiffMs),
+		CrashCount:           int64(summary.CrashCount),
+		WindowSeconds:        int(window),
 	})
+}
+
+// replayMirrorRequests accepts an explicitly sanitized historical corpus and
+// queues every item against this rule's shadow deployment. Raw production
+// requests are never inferred from telemetry or captured implicitly.
+func (s *server) replayMirrorRequests(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	rule, ok := s.loadMirrorRuleIfOwned(w, r, acct, app, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	if !acct.Plan.MirrorRuleAllowed() {
+		api.WriteProblem(w, api.ErrPlanMirrorNotAllowed(acct.Plan))
+		return
+	}
+	if !rule.Enabled {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDebugReplayUnsupported,
+			"Mirror replay is unavailable", "enable the mirror rule before replaying a corpus"))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, int64(api.MirrorReplayMaxBatchBytes))
+	var req api.MirrorReplayBatchRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if len(req.Requests) == 0 || len(req.Requests) > api.MirrorReplayMaxRequests {
+		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("requests must contain between 1 and %d items", api.MirrorReplayMaxRequests)))
+		return
+	}
+
+	prepared := make([]state.Invocation, 0, len(req.Requests))
+	requestIDs := make([]string, 0, len(req.Requests))
+	now := time.Now().UTC()
+	for i := range req.Requests {
+		inv, requestID, err := prepareMirrorReplayInvocation(app, rule, req.Requests[i], req.AllowUnsafeMethods, now)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("requests[%d]: %v", i, err)))
+			return
+		}
+		prepared = append(prepared, inv)
+		requestIDs = append(requestIDs, requestID)
+	}
+
+	response := api.MirrorReplayBatchResponse{Invocations: make([]api.MirrorReplayInvocation, 0, len(prepared))}
+	for i := range prepared {
+		inv, err := s.store.EnqueueInvocation(r.Context(), prepared[i])
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("enqueue mirror replay"))
+			return
+		}
+		response.Invocations = append(response.Invocations, api.MirrorReplayInvocation{
+			RequestID:          requestIDs[i],
+			MirrorInvocationID: inv.ID,
+			Status:             "queued",
+		})
+	}
+	response.Queued = len(response.Invocations)
+	if s.audit != nil {
+		s.audit.Emit(r.Context(), "mirror_rule.replay_queued", &acct.ID, map[string]any{
+			"app": app.ID, "rule": rule.ID, "count": response.Queued,
+			"allow_unsafe_methods": req.AllowUnsafeMethods,
+		})
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func prepareMirrorReplayInvocation(app state.App, rule state.MirrorRule, item api.MirrorReplayRequestItem, allowUnsafe bool, now time.Time) (state.Invocation, string, error) {
+	method := strings.ToUpper(strings.TrimSpace(item.Method))
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		if !allowUnsafe {
+			return state.Invocation{}, "", fmt.Errorf("method %s requires allow_unsafe_methods=true", method)
+		}
+	default:
+		return state.Invocation{}, "", fmt.Errorf("unsupported method %q", item.Method)
+	}
+	path := strings.TrimSpace(item.Path)
+	parsed, err := url.ParseRequestURI(path)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" || !strings.HasPrefix(parsed.Path, "/") || strings.HasPrefix(parsed.Path, "//") {
+		return state.Invocation{}, "", fmt.Errorf("path must be an absolute request path with an optional query")
+	}
+	if len(path) > 4096 {
+		return state.Invocation{}, "", fmt.Errorf("path exceeds 4096 bytes")
+	}
+	if len(item.Body) > api.MirrorBodySnapshotCap {
+		return state.Invocation{}, "", fmt.Errorf("body exceeds %d bytes", api.MirrorBodySnapshotCap)
+	}
+	if len(item.Body) > 0 && !json.Valid(item.Body) {
+		return state.Invocation{}, "", fmt.Errorf("body must be valid JSON")
+	}
+	if item.ExpectedStatus != 0 && (item.ExpectedStatus < 100 || item.ExpectedStatus > 599) {
+		return state.Invocation{}, "", fmt.Errorf("expected_status must be 100..599")
+	}
+	if item.ExpectedLatencyMS < 0 {
+		return state.Invocation{}, "", fmt.Errorf("expected_latency_ms must be non-negative")
+	}
+	expectedHash := strings.ToLower(strings.TrimSpace(item.ExpectedBodySHA256))
+	if expectedHash != "" {
+		decoded, err := hex.DecodeString(expectedHash)
+		if err != nil || len(decoded) != 32 {
+			return state.Invocation{}, "", fmt.Errorf("expected_body_sha256 must be 64 hexadecimal characters")
+		}
+	}
+	headers, err := sanitizeMirrorReplayHeaders(rule, item.Headers)
+	if err != nil {
+		return state.Invocation{}, "", err
+	}
+	requestID := strings.TrimSpace(item.RequestID)
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+	if len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return state.Invocation{}, "", fmt.Errorf("request_id must be at most 128 printable characters")
+	}
+	headers[api.DebugReplayRequestIDHeader] = requestID
+	headers[api.DebugReplayDeploymentIDHeader] = rule.SourceDeploymentID
+	headers[api.DebugReplayMirrorRuleIDHeader] = rule.ID
+	headers[api.DebugReplaySourceStatusHeader] = strconv.Itoa(item.ExpectedStatus)
+	headers[api.DebugReplaySourceLatencyHeader] = strconv.Itoa(item.ExpectedLatencyMS)
+	headers[api.DebugReplaySanitizedPayloadHeader] = "true"
+	if expectedHash != "" {
+		headers[api.DebugReplaySourceBodyHashHeader] = expectedHash
+	}
+	headerBytes, err := json.Marshal(headers)
+	if err != nil {
+		return state.Invocation{}, "", fmt.Errorf("encode sanitized headers: %w", err)
+	}
+	return state.Invocation{
+		AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationReplay,
+		Method: method, Path: path, Payload: append(json.RawMessage(nil), item.Body...),
+		Headers: headerBytes, DueAt: now,
+	}, requestID, nil
+}
+
+func sanitizeMirrorReplayHeaders(rule state.MirrorRule, src map[string]string) (map[string]string, error) {
+	blocked := make(map[string]struct{}, len(api.MirrorAlwaysStrippedHeaders)+len(rule.RedactHeaders)+4)
+	for _, key := range append(append([]string(nil), api.MirrorAlwaysStrippedHeaders...), rule.RedactHeaders...) {
+		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
+	}
+	for _, key := range []string{"Host", "Content-Length", "Transfer-Encoding", "Connection"} {
+		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
+	}
+	out := make(map[string]string, min(len(src), api.MirrorReplayMaxHeaders))
+	totalBytes := 0
+	for key, value := range src {
+		if !httpguts.ValidHeaderFieldName(key) || !httpguts.ValidHeaderFieldValue(value) {
+			return nil, fmt.Errorf("invalid header %q", key)
+		}
+		canonical := http.CanonicalHeaderKey(key)
+		if _, drop := blocked[canonical]; drop || strings.HasPrefix(strings.ToLower(canonical), "x-faas-") {
+			continue
+		}
+		out[canonical] = value
+		totalBytes += len(canonical) + len(value)
+		if len(out) > api.MirrorReplayMaxHeaders || totalBytes > api.MirrorReplayMaxHeaderBytes {
+			return nil, fmt.Errorf("sanitized headers exceed the %d-header/%d-byte limit", api.MirrorReplayMaxHeaders, api.MirrorReplayMaxHeaderBytes)
+		}
+	}
+	return out, nil
 }
 
 // The summary handler deliberately stays narrow: SQL aggregates

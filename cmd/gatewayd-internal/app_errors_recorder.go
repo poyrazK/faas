@@ -135,18 +135,25 @@ type appErrorsRecorder struct {
 // appErrorRow is the unit of work shared between recorder +
 // publisher + LRU cache.
 type appErrorRow struct {
-	AccountID    string
-	AppID        string
-	DeploymentID string
-	Fingerprint  string
-	Route        string
-	HTTPStatus   int
-	ErrorClass   string
-	SampleMsg    string
-	HeadersJSON  string
-	Redactions   []string
-	InstanceID   string
-	ReceivedAt   time.Time
+	AccountID           string
+	AppID               string
+	DeploymentID        string
+	Fingerprint         string
+	Route               string
+	HTTPStatus          int
+	ErrorClass          string
+	SampleMsg           string
+	HeadersJSON         string
+	Redactions          []string
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+	RequestID           string
+	ReceivedAt          time.Time
 
 	// LastSeen is the LRU bookkeeping field (NOT a wire
 	// field). The recorder bumps LastSeen on every cache
@@ -270,20 +277,31 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 		headersJSON = mapToJSON(redactedHeaders)
 	}
 
-	// Build the row.
+	// Build the row. The gateway stamps the authoritative identity into
+	// reserved headers before crossing the guest boundary; reading those
+	// headers here keeps attribution intact even when the handler replaced
+	// the request context with a derived copy.
+	identity := resolvePlatformIdentity(req)
 	row := appErrorRow{
-		AccountID:    resolveAccountID(req),
-		AppID:        resolveAppID(req),
-		DeploymentID: resolveDeploymentID(req),
-		Fingerprint:  fp,
-		Route:        route,
-		HTTPStatus:   status,
-		ErrorClass:   errClass,
-		SampleMsg:    redactedSample,
-		HeadersJSON:  headersJSON,
-		Redactions:   allRedactions,
-		InstanceID:   firstHeader(req, "X-Gregale-Instance-ID", api.InstanceIDHeader),
-		ReceivedAt:   r.cfg.Now().UTC(),
+		AccountID:           resolveAccountID(req),
+		AppID:               resolveAppID(req),
+		DeploymentID:        firstNonEmpty(resolveDeploymentID(req), identity.DeploymentID),
+		Fingerprint:         fp,
+		Route:               route,
+		HTTPStatus:          status,
+		ErrorClass:          errClass,
+		SampleMsg:           redactedSample,
+		HeadersJSON:         headersJSON,
+		Redactions:          allRedactions,
+		InstanceID:          firstNonEmpty(firstHeader(req, "X-Gregale-Instance-ID", api.InstanceIDHeader), identity.InstanceID),
+		NodeID:              identity.NodeID,
+		Region:              identity.Region,
+		CommitSHA:           identity.CommitSHA,
+		DeploymentTag:       identity.DeploymentTag,
+		DeploymentCreatedAt: identity.DeploymentCreatedAt,
+		ImageDigest:         identity.ImageDigest,
+		RequestID:           identity.RequestID,
+		ReceivedAt:          r.cfg.Now().UTC(),
 	}
 
 	// Append to the ringbuffer. The publisher drains it on
@@ -475,6 +493,22 @@ func resolveAppID(req *http.Request) string {
 
 func resolveDeploymentID(req *http.Request) string {
 	return firstNonEmpty(reqContextString(req, deploymentIDKey), req.Header.Get(api.DeploymentIDHeader))
+}
+
+func resolvePlatformIdentity(req *http.Request) api.PlatformIdentity {
+	return api.PlatformIdentity{
+		RequestID:           firstHeader(req, api.RequestIDHeader),
+		AppID:               firstHeader(req, api.AppIDHeader),
+		DeploymentID:        firstHeader(req, api.DeploymentIDHeader),
+		TenantID:            firstHeader(req, api.TenantIDHeader),
+		InstanceID:          firstHeader(req, api.InstanceIDHeader, "X-Gregale-Instance-ID"),
+		NodeID:              firstHeader(req, api.NodeIDHeader),
+		Region:              firstHeader(req, api.RegionHeader),
+		CommitSHA:           firstHeader(req, api.CommitSHAHeader),
+		DeploymentTag:       firstHeader(req, api.DeploymentTagHeader),
+		DeploymentCreatedAt: firstHeader(req, api.DeploymentCreatedAtHeader),
+		ImageDigest:         firstHeader(req, api.ImageDigestHeader),
+	}
 }
 
 func firstHeader(req *http.Request, names ...string) string {
