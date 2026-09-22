@@ -224,6 +224,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAY_LISTEN", Owners: []string{"gatewayd-internal", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_GATEWAY_METRICS_URL", Owners: []string{"schedd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAY_RAW_STREAM_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
+	{Name: "FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Validate: EnvValidationURL, Note: "optional distributed response-cache endpoint; delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env"},
 	{Name: "FAAS_GATEWAY_RETRY", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-201 §1; off by default. A matched kind=retry rule is still required, so this is a fleet-wide kill switch rather than a behaviour change"},
 	{Name: "FAAS_GATEWAY_ROUTE_METRICS", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_ROUTE_STALE_TTL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "ADR-190; how long a last-known-good route is served while the Postgres route lookup errors (default 10m, 0 disables)"},

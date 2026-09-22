@@ -58,15 +58,16 @@ import "github.com/onebox-faas/faas/pkg/state"
 // DeploymentID out of the Resolved struct entirely; the
 // applier pulls it at request time.
 type EdgeRuleCacheResolved struct {
-	ID                  string
-	AccountID           string
-	AppID               string
-	Priority            int
-	PathGlob            string          // "" = any path
-	Methods             map[string]bool // nil = any method
-	MaxAgeSeconds       int             // fresh window; 0 = no fresh hits
-	StaleIfErrorSeconds int             // post-fresh window; 0 = no stale-on-error
-	VaryOn              []string        // closed subset of {Accept-Language, Accept-Encoding}
+	ID                          string
+	AccountID                   string
+	AppID                       string
+	Priority                    int
+	PathGlob                    string          // "" = any path
+	Methods                     map[string]bool // nil = any method
+	MaxAgeSeconds               int             // fresh window; 0 = no fresh hits
+	StaleWhileRevalidateSeconds int             // serve stale immediately while refreshing; 0 = disabled
+	StaleIfErrorSeconds         int             // post-fresh window; 0 = no stale-on-error
+	VaryOn                      []string        // closed subset of {Accept-Language, Accept-Encoding}
 }
 
 // PickFirstCacheMatch is the priority-ASC + methods + path-glob
@@ -122,8 +123,9 @@ func (r *EdgeRuleCacheResolved) toStateEdgeRuleCacheAction() *state.EdgeRuleCach
 	// stored action.
 	vary := append([]string(nil), r.VaryOn...)
 	return &state.EdgeRuleCacheAction{
-		MaxAgeSeconds:       r.MaxAgeSeconds,
-		StaleIfErrorSeconds: r.StaleIfErrorSeconds,
-		VaryOn:              vary,
+		MaxAgeSeconds:               r.MaxAgeSeconds,
+		StaleWhileRevalidateSeconds: r.StaleWhileRevalidateSeconds,
+		StaleIfErrorSeconds:         r.StaleIfErrorSeconds,
+		VaryOn:                      vary,
 	}
 }

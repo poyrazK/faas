@@ -145,6 +145,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_LISTEN` | gatewayd-internal, shared | `unit` |  |  | `` |  |
 | `FAAS_GATEWAY_METRICS_URL` | schedd | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAY_RAW_STREAM_ENABLED` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL` | gatewayd-internal | `secrets-env` |  |  | `url` | optional distributed response-cache endpoint; delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env |
 | `FAAS_GATEWAY_RETRY` | gatewayd-internal | `default` |  |  | `` | ADR-201 §1; off by default. A matched kind=retry rule is still required, so this is a fleet-wide kill switch rather than a behaviour change |
 | `FAAS_GATEWAY_ROUTE_METRICS` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_ROUTE_STALE_TTL` | shared | `default` |  |  | `` | ADR-190; how long a last-known-good route is served while the Postgres route lookup errors (default 10m, 0 disables) |
