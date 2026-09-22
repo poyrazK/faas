@@ -6705,9 +6705,10 @@ paths:
       operationId: purgeAppCache
       summary: Purge cached responses for an app.
       description: |
-        Requests an in-process response-cache purge on every gateway. The
-        optional path glob limits the purge to matching normalized request
-        paths; omit it to purge the complete app cache.
+        Requests a response-cache purge on every gateway and on the optional
+        distributed cache tier. The optional path glob limits the purge to
+        matching normalized request paths; omit it to purge the complete app
+        cache.
       parameters:
         - name: path
           in: query
@@ -26943,6 +26944,10 @@ components:
             (`api.ResponseCacheMaxAgeMaxSeconds`). The runtime cache
             layer in `pkg/gateway/response_cache.go` re-checks this
             cap as defence-in-depth.
+          * `stale_while_revalidate_seconds` — optional. After the fresh
+            window, return the cached response immediately while one
+            gateway request refreshes the key in the background. Default
+            0 (disabled); absolute cap 300.
           * `stale_if_error_seconds` — required. Stale-on-error window
             in seconds. Default 300; absolute cap 300
             (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
@@ -26971,6 +26976,15 @@ components:
             Fresh window in seconds. 0 = inherit the apid-side default
             (60s). Positive values are clamped to the platform cap
             (3600s = 1 hour).
+        stale_while_revalidate_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: |
+            After the fresh window, serve stale for this many seconds
+            while a single coalesced background request refreshes the
+            cache key. 0 disables stale-while-revalidate.
         stale_if_error_seconds:
           type: integer
           minimum: 0

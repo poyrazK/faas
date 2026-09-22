@@ -6653,10 +6653,11 @@ type EdgeRuleBudgetAction struct {
 // constants in pkg/gateway/response_cache.go, not per-rule knobs,
 // so a single misconfigured rule cannot blow the in-memory budget.
 type EdgeRuleCacheAction struct {
-	MaxAgeSeconds       int      `json:"max_age_seconds"`
-	StaleIfErrorSeconds int      `json:"stale_if_error_seconds"`
-	VaryOn              []string `json:"vary_on,omitempty"`
-	Methods             []string `json:"methods,omitempty"`
+	MaxAgeSeconds               int      `json:"max_age_seconds"`
+	StaleWhileRevalidateSeconds int      `json:"stale_while_revalidate_seconds,omitempty"`
+	StaleIfErrorSeconds         int      `json:"stale_if_error_seconds"`
+	VaryOn                      []string `json:"vary_on,omitempty"`
+	Methods                     []string `json:"methods,omitempty"`
 }
 
 // EdgeRuleRespondAction is the fixed JSON response for kind=respond.

@@ -7711,10 +7711,11 @@ func (a *EdgeRuleBudgetAction) Validate() *Problem {
 // Only idempotent methods are cacheable. Anything outside
 // edgeRuleCacheMethodVocab trips Validate.
 type EdgeRuleCacheAction struct {
-	MaxAgeSeconds       int      `json:"max_age_seconds"`
-	StaleIfErrorSeconds int      `json:"stale_if_error_seconds"`
-	VaryOn              []string `json:"vary_on,omitempty"`
-	Methods             []string `json:"methods,omitempty"`
+	MaxAgeSeconds               int      `json:"max_age_seconds"`
+	StaleWhileRevalidateSeconds int      `json:"stale_while_revalidate_seconds,omitempty"`
+	StaleIfErrorSeconds         int      `json:"stale_if_error_seconds"`
+	VaryOn                      []string `json:"vary_on,omitempty"`
+	Methods                     []string `json:"methods,omitempty"`
 }
 
 // edgeRuleCacheVaryOnVocab is the closed vocabulary of headers that
@@ -7753,6 +7754,11 @@ const ResponseCacheMaxAgeMaxSeconds = 3600
 // the original ask; longer windows would let a stale body outlive
 // a customer's reasonable expectation that an outage clears.
 const ResponseCacheStaleIfErrorMaxSeconds = 300
+
+// ResponseCacheStaleWhileRevalidateMaxSeconds bounds the interval in which
+// Gregale may immediately serve a stale response while one gateway request
+// refreshes the key in the background.
+const ResponseCacheStaleWhileRevalidateMaxSeconds = 300
 
 // ResponseCacheDefaultMaxAgeSeconds is the apid-side default when
 // a kind=cache rule omits max_age_seconds. 60 s matches the
@@ -7812,6 +7818,16 @@ func (a *EdgeRuleCacheAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"cache action: stale_if_error_seconds (%d) exceeds the hard cap (%d s = 5 min); a longer stale window would outlive a customer's expectation that an outage clears",
 			a.StaleIfErrorSeconds, ResponseCacheStaleIfErrorMaxSeconds))
+	}
+	if a.StaleWhileRevalidateSeconds < 0 {
+		return ErrValidation(fmt.Sprintf(
+			"cache action: stale_while_revalidate_seconds must be ≥ 0 (got %d)",
+			a.StaleWhileRevalidateSeconds))
+	}
+	if a.StaleWhileRevalidateSeconds > ResponseCacheStaleWhileRevalidateMaxSeconds {
+		return ErrValidation(fmt.Sprintf(
+			"cache action: stale_while_revalidate_seconds (%d) exceeds the hard cap (%d s = 5 min)",
+			a.StaleWhileRevalidateSeconds, ResponseCacheStaleWhileRevalidateMaxSeconds))
 	}
 	// Methods defaults to {GET, HEAD} but may be empty (caller
 	// chose not to enumerate). Reject anything outside the closed

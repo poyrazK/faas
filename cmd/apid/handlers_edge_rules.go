@@ -618,10 +618,11 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// the customer ask for stale-on-error" by reading
 			// the row.
 			out.Cache = &state.EdgeRuleCacheAction{
-				MaxAgeSeconds:       a.MaxAgeSeconds,
-				StaleIfErrorSeconds: a.StaleIfErrorSeconds,
-				VaryOn:              a.VaryOn,
-				Methods:             a.Methods,
+				MaxAgeSeconds:               a.MaxAgeSeconds,
+				StaleWhileRevalidateSeconds: a.StaleWhileRevalidateSeconds,
+				StaleIfErrorSeconds:         a.StaleIfErrorSeconds,
+				VaryOn:                      a.VaryOn,
+				Methods:                     a.Methods,
 			}
 		}
 	case state.EdgeRuleKindRespond:

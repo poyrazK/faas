@@ -151,6 +151,31 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// cached status.
 		h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 		return true, rule
+	case "stale_while_revalidate_eligible":
+		// Serve stale immediately and refresh the same cache key in the
+		// background. The refresh is singleflight-coalesced so concurrent
+		// callers do not stampede the origin.
+		h.metricsIncCacheOutcome(app.ID, "stale_while_revalidate_served")
+		w.Header().Del(wire.WakeHeader)
+		for k, vs := range entry.header {
+			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) {
+				continue
+			}
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.Header().Set("x-faas-cache", "stale-while-revalidate")
+		w.Header().Set("X-From-Cache", "stale")
+		w.Header().Add("Warning", `110 - "Response is Stale"`)
+		w.Header().Set("Content-Length", itoaLen(entry.body))
+		w.WriteHeader(entry.statusCode)
+		_, _ = w.Write(entry.body)
+		rec.status = entry.statusCode
+		rec.Bytes = int64(len(entry.body))
+		h.startCacheRefresh(r, app, rule, key)
+		h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
+		return true, rule
 	case "stale_if_error_eligible":
 		// Past fresh, inside stale_if_error window. Per
 		// ADR-122 D5: stale serves ONLY on origin failure
