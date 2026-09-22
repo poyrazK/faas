@@ -357,11 +357,15 @@ func cmdProjectsEnvironmentConfigDiff(args []string) int {
 	if *from == *to {
 		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
 	}
+	return runProjectEnvironmentDiff(positional[0], *from, *to)
+}
+
+func runProjectEnvironmentDiff(project, from, to string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	diff, err := client.GetProjectEnvironmentDiff(context.Background(), positional[0], *to, *from)
+	diff, err := client.GetProjectEnvironmentDiff(context.Background(), project, to, from)
 	if err != nil {
 		return printErr("Could not load environment diff", err)
 	}

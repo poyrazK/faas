@@ -954,6 +954,15 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:        "diff",
+		DocSlug:     "diff",
+		Short:       "Compare two named environments in the linked project",
+		Positionals: []string{"<from-environment>", "<to-environment>"},
+		Flags: []cliFlag{
+			{Name: "project", Short: "project slug (defaults to linked project)", Value: "SLUG"},
+		},
+	},
+	{
 		Name:    "preview",
 		DocSlug: "preview",
 		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
