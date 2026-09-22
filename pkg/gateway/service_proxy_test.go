@@ -10,6 +10,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 type serviceProxyProvider struct {
@@ -184,6 +191,120 @@ func TestServiceProxyDoesNotRetryPOST(t *testing.T) {
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("forward calls = %d, want no retry for POST", got)
 	}
+}
+
+func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	providerBackend := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
+		AppID:     "app-orders",
+		Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
+	}}
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: providerBackend,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
+		Forward: func(_ Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if span := oteltrace.SpanFromContext(r.Context()); !span.SpanContext().IsValid() {
+					t.Fatal("service forward lost dependency span context")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+		},
+	})
+
+	rootCtx, root := provider.Tracer("test").Start(context.Background(), "request")
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil).WithContext(rootCtx)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	root.End()
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	span := findEndedSpan(t, recorder.Ended(), "service.orders")
+	if span.SpanKind() != oteltrace.SpanKindClient {
+		t.Fatalf("span kind = %s, want client", span.SpanKind())
+	}
+	if span.Parent().SpanID() != root.SpanContext().SpanID() {
+		t.Fatalf("span parent = %s, want root %s", span.Parent().SpanID(), root.SpanContext().SpanID())
+	}
+	wantStrings := map[string]string{
+		"gregale.dependency.type":       "managed_binding",
+		"gregale.dependency.kind":       "service_proxy",
+		"gregale.service.name":          "orders",
+		"gregale.service.target_app_id": "app-orders",
+		"http.request.method":           http.MethodGet,
+	}
+	for key, want := range wantStrings {
+		if got := spanAttribute(span.Attributes(), key); got != attribute.StringValue(want) {
+			t.Errorf("attribute %s = %v, want %q", key, got, want)
+		}
+	}
+	if got := spanAttribute(span.Attributes(), "http.response.status_code"); got != attribute.IntValue(http.StatusNoContent) {
+		t.Errorf("http.response.status_code = %v, want %d", got, http.StatusNoContent)
+	}
+}
+
+func TestServiceProxyRecordsFailedStatusOnDependencySpan(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		ResolveCaller: func(context.Context, string) (string, error) { return "", nil },
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://payments.svc.gregale:10080/charge", nil)
+	req.Host = "payments.svc.gregale:10080"
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	span := findEndedSpan(t, recorder.Ended(), "service.payments")
+	if got := spanAttribute(span.Attributes(), "http.response.status_code"); got != attribute.IntValue(http.StatusForbidden) {
+		t.Errorf("http.response.status_code = %v, want %d", got, http.StatusForbidden)
+	}
+	if span.Status().Code != codes.Error {
+		t.Errorf("span status = %s, want Error", span.Status().Code)
+	}
+}
+
+func findEndedSpan(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+	t.Fatalf("spans = %#v, want %q", spans, name)
+	return nil
+}
+
+func spanAttribute(attrs []attribute.KeyValue, key string) attribute.Value {
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			return attr.Value
+		}
+	}
+	return attribute.Value{}
 }
 
 func TestServiceProxyRoutesDNSHostName(t *testing.T) {

@@ -202,6 +202,22 @@ and provider headers are not span attributes. Customer code that opens its own
 database or storage client remains outside the platform-owned path and needs
 the runtime's OpenTelemetry instrumentation.
 
+Guest-to-guest HTTP calls through the node-local service proxy are represented
+as `managed_binding/service_proxy` client spans named `service.<name>`. Gregale
+records the bounded service name, target app ID, method, response status, and
+elapsed time; retries remain inside the same dependency span, with the existing
+guest-transport span beneath it. Paths, queries, headers, bodies, and caller
+credentials are not recorded. The proxy injects the dependency span's W3C
+context into the target guest request, so neither application needs an
+OpenTelemetry SDK for the service call and target execution to be visible.
+
+When the caller propagates its inbound `traceparent`, the service dependency is
+nested under that original request and appears in the same waterfall. When the
+header is absent, Gregale starts a separate service-call trace. It deliberately
+does not infer a parent from source instance and timing: an instance can process
+concurrent requests, so that heuristic could attach a payment or notification
+call to the wrong customer request.
+
 ## Event-triggered invocations
 
 Event-driven invocations preserve W3C trace context carried by a broker record's
