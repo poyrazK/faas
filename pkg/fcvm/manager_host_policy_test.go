@@ -1,3 +1,4 @@
+// spec: §11, §14 — wake must publish changed host policy; repair remains forced.
 package fcvm
 
 import (
