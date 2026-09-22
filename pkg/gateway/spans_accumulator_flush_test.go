@@ -1,3 +1,4 @@
+// adr: 127
 // spans_accumulator_flush_test.go — ADR-127 PR-D code-review
 // #5 + #10 regression coverage.
 //
