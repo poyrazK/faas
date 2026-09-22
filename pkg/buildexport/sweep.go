@@ -57,13 +57,18 @@ type entry struct {
 	mtime    time.Time
 	state    ReferenceState
 	removed  bool
+	leased   bool
 }
 
 // Sweep inventories one export root, removes released handoffs immediately,
 // expires any artifact beyond MaxAge, and reclaims legacy orphans older than
 // OrphanMinAge when MaxBytes is exceeded. A shared reader lease always wins.
+// Cancellation stops inventory and further removals, returning partial results.
 func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 	result := SweepResult{RemovedByReason: map[string]int{}}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if opts.Root == "" {
 		return result, errors.New("build export: empty root")
 	}
@@ -79,6 +84,9 @@ func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 	}
 	entries := make([]*entry, 0, len(dirs))
 	for _, dir := range dirs {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if !dir.IsDir() || dir.Name() == "" || dir.Name()[0] == '.' {
 			continue
 		}
@@ -87,7 +95,10 @@ func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 			path:     filepath.Join(opts.Root, dir.Name()),
 			artifact: filepath.Join(opts.Root, dir.Name(), "build", "out", "image.tar"),
 		}
-		item.bytes, item.mtime, err = treeUsage(item.path)
+		item.bytes, item.mtime, err = treeUsage(ctx, item.path)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, ctxErr
+		}
 		if err != nil {
 			result.Errors++
 			continue
@@ -95,6 +106,9 @@ func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 		result.CurrentBytes += item.bytes
 		if opts.Resolve != nil {
 			item.state, err = opts.Resolve(ctx, item.buildID, item.artifact)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
 			if err != nil {
 				result.Errors++
 				continue
@@ -104,6 +118,9 @@ func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 	}
 
 	for _, item := range entries {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		age := opts.Now.Sub(item.mtime)
 		reason := ""
 		switch {
@@ -113,13 +130,18 @@ func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 			reason = "expired"
 		}
 		if reason != "" {
-			removeEntry(item, reason, &result)
+			if err := removeEntry(ctx, item, reason, &result); err != nil {
+				return result, err
+			}
 		}
 	}
 
 	if opts.MaxBytes > 0 && result.CurrentBytes > opts.MaxBytes {
 		sort.Slice(entries, func(i, j int) bool { return entries[i].mtime.Before(entries[j].mtime) })
 		for _, item := range entries {
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
 			if result.CurrentBytes <= opts.MaxBytes {
 				break
 			}
@@ -130,49 +152,55 @@ func Sweep(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 				(opts.OrphanMinAge > 0 && opts.Now.Sub(item.mtime) < opts.OrphanMinAge) {
 				continue
 			}
-			removeEntry(item, "pressure", &result)
+			if err := removeEntry(ctx, item, "pressure", &result); err != nil {
+				return result, err
+			}
 		}
 	}
 	for _, item := range entries {
-		if !item.removed && item.state == ReferenceActive {
+		if !item.removed && (item.leased || item.state == ReferenceActive) {
 			result.SkippedActive++
 		}
 	}
 	return result, nil
 }
 
-func removeEntry(item *entry, reason string, result *SweepResult) {
-	if item.removed {
-		return
+func removeEntry(ctx context.Context, item *entry, reason string, result *SweepResult) error {
+	if item.removed || item.leased {
+		return nil
 	}
-	f, err := os.Open(item.artifact) //nolint:forbidigo // canonical internal builder export validated by inventory.
+	f, err := openArtifact(item.artifact)
 	if err == nil {
 		defer func() { _ = f.Close() }()
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-				result.SkippedActive++
-				return
+				item.leased = true
+				return nil
 			}
 			result.Errors++
-			return
+			return nil
 		}
 		defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		result.Errors++
-		return
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(item.path); err != nil {
 		result.Errors++
-		return
+		return nil
 	}
 	item.removed = true
 	result.Removed++
 	result.RemovedByReason[reason]++
 	result.ReclaimedBytes += item.bytes
 	result.CurrentBytes -= item.bytes
+	return nil
 }
 
-func treeUsage(root string) (int64, time.Time, error) {
+func treeUsage(ctx context.Context, root string) (int64, time.Time, error) {
 	info, err := os.Stat(root)
 	if err != nil {
 		return 0, time.Time{}, err
@@ -180,6 +208,9 @@ func treeUsage(root string) (int64, time.Time, error) {
 	mtime := info.ModTime()
 	var bytes int64
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}

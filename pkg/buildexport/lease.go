@@ -29,12 +29,13 @@ type Lease struct {
 
 // AcquireArtifact takes a non-blocking shared lease when path is a canonical
 // builder export. Non-export paths (direct image deploys and cache leases) are
-// deliberately ignored and return (nil, false, nil).
+// deliberately ignored and return (nil, false, nil). Canonical paths must name
+// regular files, not symlinks or special files.
 func AcquireArtifact(path string) (*Lease, bool, error) {
 	if _, ok := ExportDir(path); !ok {
 		return nil, false, nil
 	}
-	f, err := os.Open(filepath.Clean(path)) //nolint:forbidigo // ExportDir restricts this to the internal builder handoff tree.
+	f, err := openArtifact(filepath.Clean(path))
 	if err != nil {
 		return nil, true, fmt.Errorf("build export: open artifact: %w", err)
 	}
@@ -46,6 +47,28 @@ func AcquireArtifact(path string) (*Lease, bool, error) {
 		return nil, true, fmt.Errorf("build export: acquire reader lease: %w", err)
 	}
 	return &Lease{file: f}, true, nil
+}
+
+// openArtifact is shared by readers and cleanup. O_NONBLOCK prevents a FIFO
+// from hanging in open before Flock can apply its non-blocking lease; checking
+// the opened descriptor avoids a type-check/open race. O_NOFOLLOW rejects the
+// final symlink rather than leasing an unrelated inode (or treating a dangling
+// symlink as an absent artifact during cleanup).
+func openArtifact(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, errors.New("build export: artifact is not a regular file")
+	}
+	return f, nil
 }
 
 // Close releases the reader lease. It is safe to call more than once.
