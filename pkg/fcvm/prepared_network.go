@@ -281,10 +281,25 @@ func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEn
 }
 
 func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry) (bool, error) {
-	if prepared != nil && reflect.DeepEqual(prepared.config, nc) {
+	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
 		return true, nil
 	}
 	// A bundle reload may change the policy after claim. setupNetwork destroys
 	// the unused network and installs the complete validated current policy.
 	return false, m.setupNetwork(ctx, nc)
+}
+
+func preparedNetworkConfigMatches(prepared, requested netns.Config) bool {
+	// NewConfig leaves GuestAppPort at zero, while a normal deployment sends
+	// the explicit default, 8080. Both render the same DNAT rule. Comparing
+	// their raw values discards an otherwise ready namespace on every wake.
+	// Normalize only this documented alias, on copies: every identity and
+	// policy field must still match, including future additions to Config.
+	if prepared.GuestAppPort == 0 {
+		prepared.GuestAppPort = netns.AppPort
+	}
+	if requested.GuestAppPort == 0 {
+		requested.GuestAppPort = netns.AppPort
+	}
+	return reflect.DeepEqual(prepared, requested)
 }

@@ -5095,6 +5095,32 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
+// --- Durable inbound webhooks (ADR-212) ----------------------------------
+
+func (c *Client) ListInboundWebhookEndpoints(ctx context.Context, slug string) ([]InboundWebhookEndpointResponse, error) {
+	var out []InboundWebhookEndpointResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/inbound-webhooks", nil, &out)
+}
+
+func (c *Client) CreateInboundWebhookEndpoint(ctx context.Context, slug string, req CreateInboundWebhookEndpointRequest) (InboundWebhookEndpointResponse, error) {
+	var out InboundWebhookEndpointResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/inbound-webhooks", req, &out)
+}
+
+func (c *Client) GetInboundWebhookEndpoint(ctx context.Context, slug, id string) (InboundWebhookEndpointResponse, error) {
+	var out InboundWebhookEndpointResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/inbound-webhooks/"+id, nil, &out)
+}
+
+func (c *Client) UpdateInboundWebhookEndpoint(ctx context.Context, slug, id string, req UpdateInboundWebhookEndpointRequest) (InboundWebhookEndpointResponse, error) {
+	var out InboundWebhookEndpointResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/inbound-webhooks/"+id, req, &out)
+}
+
+func (c *Client) DeleteInboundWebhookEndpoint(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/inbound-webhooks/"+id, nil, nil)
+}
+
 // --- Managed realtime endpoints (ADR-156) -------------------------------
 
 func (c *Client) ListManagedRealtimeEndpoints(ctx context.Context, slug string) ([]ManagedRealtimeEndpointResponse, error) {

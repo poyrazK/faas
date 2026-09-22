@@ -191,7 +191,27 @@ var (
 	// ErrConcurrencyQueueWaitTimeout means a queued request did not receive a
 	// VM slot within the configured warm wait budget.
 	ErrConcurrencyQueueWaitTimeout = errors.New("gateway: concurrency queue wait timeout")
+	// ErrConcurrencyQueueAdmissionUnavailable means the gateway could not
+	// consult the fleet-wide warm-queue permit budget. Admission fails closed
+	// so a database partition cannot silently multiply the configured cap.
+	ErrConcurrencyQueueAdmissionUnavailable = errors.New("gateway: concurrency queue admission unavailable")
 )
+
+type ConcurrencyQueueAdmissionError struct {
+	Err        error
+	RetryAfter time.Duration
+}
+
+func (e *ConcurrencyQueueAdmissionError) Error() string {
+	if e == nil || e.Err == nil {
+		return ErrConcurrencyQueueAdmissionUnavailable.Error()
+	}
+	return fmt.Sprintf("%s: %v", ErrConcurrencyQueueAdmissionUnavailable, e.Err)
+}
+
+func (e *ConcurrencyQueueAdmissionError) Unwrap() error {
+	return ErrConcurrencyQueueAdmissionUnavailable
+}
 
 type ConcurrencyQueueFullError struct {
 	Depth      int
