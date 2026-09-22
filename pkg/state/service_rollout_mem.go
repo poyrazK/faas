@@ -196,6 +196,9 @@ func (m *MemStore) UpdateServiceRolloutHandoff(_ context.Context, id string, han
 	if target.Status != DeployLive || !IsServiceRollout(target) {
 		return target, ErrServiceRolloutInvalid
 	}
+	if !serviceRolloutHandoffCanReplace(target.ServiceRolloutHandoff, handoff) {
+		return target, ErrServiceRolloutInvalid
+	}
 	target.ServiceRolloutHandoff = handoff
 	m.deployments[id] = target
 	return target, nil

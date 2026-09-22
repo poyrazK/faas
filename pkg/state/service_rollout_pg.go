@@ -274,7 +274,12 @@ func (s *PgStore) UpdateServiceRolloutHandoff(ctx context.Context, id string, ha
 		`update deployments
 		    set service_rollout_handoff = $2::jsonb
 		  where id = $1 and status = 'live' and canary_total_steps = 0 and rollout_state = 'rolling_out'
-		  returning `+deploymentSelectColumnsWithRootfs, id, payload))
+		    and (coalesce(service_rollout_handoff->>'action', '') <> 'abort'
+		         or coalesce(service_rollout_handoff->>'phase', '') = 'complete'
+		         or $3 = 'abort')
+		    and (coalesce(service_rollout_handoff->>'action', '') <> $3
+		         or coalesce((service_rollout_handoff->>'generation')::bigint, 0) <= $4)
+		  returning `+deploymentSelectColumnsWithRootfs, id, payload, handoff.Action, handoff.Generation))
 	if errors.Is(err, ErrNotFound) {
 		return Deployment{}, ErrServiceRolloutInvalid
 	}

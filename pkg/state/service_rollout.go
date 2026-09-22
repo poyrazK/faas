@@ -42,6 +42,16 @@ func (h ServiceRolloutHandoff) ActiveAbort() bool {
 	return h.Action == ServiceRolloutActionAbort && h.Phase != ServiceRolloutPhaseComplete
 }
 
+// A scheduler may finish a route-ACK wait after an operator has requested an
+// abort. Such stale progress must not replace the abort intent or a newer
+// routing generation.
+func serviceRolloutHandoffCanReplace(current, next ServiceRolloutHandoff) bool {
+	if current.ActiveAbort() && next.Action != ServiceRolloutActionAbort {
+		return false
+	}
+	return current.Action != next.Action || next.Generation >= current.Generation
+}
+
 // NormalizeRolloutState returns the canonical state for a deployment row.
 // The rollout_state column is NOT NULL on current schemas, but older rows and
 // in-memory fixtures may still carry the zero value. Treating it as pending at

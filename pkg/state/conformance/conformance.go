@@ -2133,6 +2133,20 @@ func testServiceRolloutAbortHandoff(t *testing.T, fx *Fixture) {
 	if got := routing.ServiceRolloutHandoff; got.Action != state.ServiceRolloutActionAbort || got.Phase != state.ServiceRolloutPhaseRouting || got.PredecessorDeploymentID != fx.Deployment.ID || got.RetryCount != 1 || got.Generation != 42 {
 		t.Fatalf("routing handoff = %+v, want abort/routing/predecessor/retry=1/generation=42", got)
 	}
+	stalePromotion := routing.ServiceRolloutHandoff
+	stalePromotion.Action = state.ServiceRolloutActionPromote
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, stalePromotion); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("stale promotion replaced abort intent: %v", err)
+	}
+	staleGeneration := routing.ServiceRolloutHandoff
+	staleGeneration.Generation--
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, staleGeneration); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("stale generation replaced newer routing state: %v", err)
+	}
+	unchanged, err := fx.Store.DeploymentByID(fx.Ctx, candidate.ID)
+	if err != nil || unchanged.ServiceRolloutHandoff.Action != state.ServiceRolloutActionAbort || unchanged.ServiceRolloutHandoff.Generation != 42 {
+		t.Fatalf("abort intent changed after stale updates: handoff=%+v err=%v", unchanged.ServiceRolloutHandoff, err)
+	}
 	predecessor, err := fx.Store.DeploymentByID(fx.Ctx, fx.Deployment.ID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(predecessor): %v", err)
