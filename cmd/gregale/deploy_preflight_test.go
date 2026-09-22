@@ -31,6 +31,13 @@ func TestDeployPreflightSourceNamesIncludedWorkingTreeChanges(t *testing.T) {
 	}
 }
 
+func TestDeployPreflightRepoSourcePreservesRef(t *testing.T) {
+	got := deployPreflightRepoSource("onebox-faas/hello", "release/2026-q3")
+	if want := "GitHub onebox-faas/hello · ref release/2026-q3"; got != want {
+		t.Fatalf("source = %q, want %q", got, want)
+	}
+}
+
 func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 	var out bytes.Buffer
 	renderDeployPreflight(&out, deployPreflightSummary{
@@ -88,5 +95,31 @@ func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 	}
 	if !strings.Contains(got, "environment:   default") {
 		t.Fatalf("function preflight omitted default environment:\n%s", got)
+	}
+}
+
+func TestRenderDeployPreflightShowsRemoteResolutionBoundary(t *testing.T) {
+	var out bytes.Buffer
+	renderDeployPreflight(&out, deployPreflightSummary{
+		Slug:              "hello",
+		Source:            "GitHub onebox-faas/hello · ref main",
+		RuntimeResolution: "detected remotely after checkout",
+		ResourceBehavior:  "preserve existing · plan default for new app",
+		Environment:       "staging",
+		Release:           "standard · 100% after readiness",
+	})
+
+	for _, want := range []string{
+		"source:        GitHub onebox-faas/hello · ref main",
+		"runtime:       detected remotely after checkout",
+		"resources:     preserve existing · plan default for new app",
+		"environment:   staging",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("preflight missing %q in:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "listener:") || strings.Contains(out.String(), "start:") {
+		t.Fatalf("remote preflight invented unresolved build details:\n%s", out.String())
 	}
 }

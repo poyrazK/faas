@@ -54,10 +54,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 211 | [Distributed declarative response caching](211-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
+| 214 | [Distributed declarative response caching](214-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
+| 211 | [Durable async routes](211-durable-async-routes.md) | accepted | Accept authenticated edge requests durably before waking apps, then expose invocation results |
 | 210 | [Runtime secret delivery status](210-runtime-secret-delivery.md) | accepted | Expose durable runtime-secret delivery outcomes and errors to operators |
-| 209 | [Runtime secret delivery](209-runtime-secret-delivery.md) | accepted | Restart warm and init snapshots without snapshotting stale runtime secret state |
 | 208 | [Acknowledged routing handoff for zero-downtime service rollouts](208-zero-downtime-service-rollout-handoff.md) | accepted | Two-phase route publication, serving-gateway acknowledgements, and post-ack per-instance request draining before predecessor retirement |
+| 212 | [Durable inbound webhook ingress](212-durable-inbound-webhook-ingress.md) | accepted | Provider-signed Stripe callbacks persist a deduplicated invocation before `202`, then reuse the scheduler wake, retry, and DLQ path |
 | 207 | [Bounded builder cache affinity](207-bounded-builder-cache-affinity.md) | accepted | Prefer the latest successful builder briefly so production rebuilds reuse node-local caches without sacrificing availability |
 | 200 | [First-wake 5xx auto-rollback on every plan](200-auto-rollback-on-every-plan.md) | accepted | Health-driven rollback for the first wake of a new deployment, on every plan |
 | 201 | [Traffic resilience as a platform primitive](201-traffic-as-a-platform-primitive.md) | accepted | `kind=retry` + `kind=circuit_breaker` over instance health, and an nftables egress breaker driven by ADR-098 probe outcomes |

@@ -7,7 +7,8 @@ info:
   description: |
     Public REST surface exposed by `apid` on `127.0.0.1:8081` (proxied by
     `gatewayd` at the public listener). Every route is authenticated with a
-    Bearer API key (`fp_live_…`) and rate-limited per-IP (10 failed-auth / min).
+    Bearer API key (`fp_live_…`) and rate-limited per-IP (10 failed-auth / min),
+    except the provider-signed durable inbound webhook ingress.
     Successful POSTs accept an `Idempotency-Key` header (24h TTL) and replay
     with `Idempotent-Replayed: true`.
 
@@ -138,6 +139,11 @@ tags:
       backoff + jitter and DLQs at attempt 7. The deliveries subroute
       surfaces the per-attempt retry state + a manual retry endpoint
       that clears status='dead' back to 'pending'.
+  - name: inbound_webhooks
+    description: |
+      Provider-verified webhook ingress that persists an app invocation before
+      returning 202, then uses the normal wake, retry, and dead-letter path.
+      Stripe is the initial provider adapter (ADR-212).
   - name: alert_rules
     description: |
       Customer-configurable alert rules (issue #396 / ADR-045 PR 3).
@@ -13617,6 +13623,145 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Durable inbound webhooks (ADR-212) ───────────────────────────────────
+  /v1/apps/{slug}/inbound-webhooks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [inbound_webhooks]
+      operationId: listInboundWebhookEndpoints
+      summary: List durable inbound webhook endpoints for this app.
+      responses:
+        '200':
+          description: The configured endpoints. Public route tokens are never returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InboundWebhookEndpointResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [inbound_webhooks]
+      operationId: createInboundWebhookEndpoint
+      summary: Create a provider-verified durable webhook endpoint.
+      description: |
+        Returns the public endpoint_url once. Gregale stores only a SHA-256
+        digest of its opaque token and an age/X25519-sealed provider signing
+        secret. Hobby, Pro, and Scale plans are supported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInboundWebhookEndpointRequest' }
+      responses:
+        '201':
+          description: Endpoint created; copy endpoint_url into the provider now.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboundWebhookEndpointResponse' }
+        '400': { $ref: '#/components/responses/InboundWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanInboundWebhooksNotAllowed' }
+        '403': { $ref: '#/components/responses/PlanInboundWebhookQuota' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InboundWebhookInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/inbound-webhooks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Inbound webhook endpoint ID.
+    get:
+      tags: [inbound_webhooks]
+      operationId: getInboundWebhookEndpoint
+      summary: Fetch one durable inbound webhook endpoint.
+      responses:
+        '200':
+          description: Endpoint metadata. The route token and signing secret are not returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboundWebhookEndpointResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [inbound_webhooks]
+      operationId: updateInboundWebhookEndpoint
+      summary: Change delivery, enabled state, or rotate the provider secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInboundWebhookEndpointRequest' }
+      responses:
+        '200':
+          description: Updated endpoint metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboundWebhookEndpointResponse' }
+        '400': { $ref: '#/components/responses/InboundWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [inbound_webhooks]
+      operationId: deleteInboundWebhookEndpoint
+      summary: Stop future ingress for this endpoint.
+      description: Already accepted invocation rows remain queued and deliverable.
+      responses:
+        '204': { description: Endpoint deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/hooks/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        description: Opaque one-time-disclosed endpoint routing capability.
+        schema: { type: string, pattern: '^gwh_[A-Za-z0-9_-]+$', maxLength: 128 }
+    post:
+      tags: [inbound_webhooks]
+      operationId: receiveInboundWebhook
+      summary: Verify and durably accept a provider webhook.
+      description: |
+        This route does not use a Gregale bearer key. The opaque URL and the
+        provider signature are the trust boundary. For Stripe, the exact raw
+        body is verified against Stripe-Signature. A 202 is returned only after
+        the deterministic invocation receipt commits. Provider retries return
+        the same receipt with duplicate=true.
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          description: Stripe v1 timestamped HMAC signature over the exact request body.
+          schema: { type: string, maxLength: 4096 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '202':
+          description: Verified and durably accepted, or an already accepted provider retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboundWebhookReceiptResponse' }
+        '400': { $ref: '#/components/responses/InboundWebhookInvalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/InboundWebhookTooLarge' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   # ─── Managed realtime endpoints (ADR-156) ─────────────────────────────────
   /v1/apps/{slug}/realtime/endpoints:
     parameters:
@@ -26001,7 +26146,7 @@ components:
         failure_source:
           type: string
           description: 'Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk).'
-          enum: [any, cron, queue, delayed_task, async_invoke]
+          enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
         webhook_url: { type: string, format: uri, example: "https://example.com/hook" }
         webhook_secret_sealed_masked:
           type: string
@@ -26043,7 +26188,7 @@ components:
         failure_source:
           type: string
           description: 'Required when metric == failed_invocations; omit otherwise (xor_chk).'
-          enum: [any, cron, queue, delayed_task, async_invoke]
+          enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
         webhook_url: { type: string, format: uri, example: "https://example.com/hook" }
         webhook_secret:
           type: string
@@ -30837,7 +30982,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         account_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
-        source: { type: string, enum: [async_invoke, queue, delayed_task, cron, replay] }
+        source: { type: string, enum: [async_invoke, inbound_webhook, queue, delayed_task, cron, replay] }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue." }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
         method: { type: string }
@@ -32677,6 +32822,71 @@ components:
         finalized_at: { type: string, format: date-time }
       additionalProperties: true
 
+    CreateInboundWebhookEndpointRequest:
+      type: object
+      description: Create a provider-verified endpoint whose accepted events become durable app invocations.
+      required: [name, provider, signing_secret]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+          maxLength: 63
+        provider: { type: string, enum: [stripe] }
+        signing_secret:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Provider endpoint secret; sealed at rest and never returned.
+        delivery_path:
+          type: string
+          pattern: '^/[^?#]*$'
+          maxLength: 256
+          default: '/'
+        enabled: { type: boolean, default: true }
+      example:
+        name: stripe-primary
+        provider: stripe
+        signing_secret: whsec_example
+        delivery_path: /internal/stripe
+
+    UpdateInboundWebhookEndpointRequest:
+      type: object
+      description: Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place.
+      properties:
+        signing_secret: { type: string, minLength: 1, maxLength: 256 }
+        delivery_path: { type: string, pattern: '^/[^?#]*$', maxLength: 256 }
+        enabled: { type: boolean }
+
+    InboundWebhookEndpointResponse:
+      type: object
+      description: Safe endpoint metadata. endpoint_url is disclosed only by the create response.
+      required: [id, app_id, account_id, name, provider, delivery_path, enabled, signing_secret_masked, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        name: { type: string, maxLength: 63 }
+        provider: { type: string, enum: [stripe] }
+        delivery_path: { type: string, maxLength: 256 }
+        enabled: { type: boolean }
+        signing_secret_masked: { type: string, enum: ['***'] }
+        endpoint_url:
+          type: string
+          format: uri
+          description: One-time-disclosed public provider URL, present only on create.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    InboundWebhookReceiptResponse:
+      type: object
+      description: Returned only after the verified event has a committed durable invocation row.
+      required: [receipt_id, status, duplicate, accepted_at]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+        duplicate: { type: boolean, description: True when this endpoint already accepted the same provider event ID. }
+        accepted_at: { type: string, format: date-time }
+
     AppWebhookResponse:
       description: |
         An outbound webhook subscription. Carries the masked HMAC secret;
@@ -34415,6 +34625,31 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
         text/plain:
           schema: { $ref: '#/components/schemas/RateLimitPlain' }
+
+    # ─── Inbound-webhook problem responses (ADR-212) ───────────────────────────
+    InboundWebhookInvalid:
+      description: 'code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanInboundWebhooksNotAllowed:
+      description: 'code: plan_inbound_webhooks_not_allowed — the plan excludes durable inbound webhook ingress.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanInboundWebhookQuota:
+      description: 'code: plan_inbound_webhook_quota — the app or account endpoint cap is reached.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    InboundWebhookTooLarge:
+      description: 'code: inbound_webhook_too_large — the provider request body exceeds 1 MiB.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
 
     # ─── Outbound-webhook problem responses ────────────────────────────────────
     AppWebhookInvalid:
