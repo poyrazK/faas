@@ -458,12 +458,16 @@ type Capabilities struct {
 	PooledConnections  bool
 	PointInTimeRestore bool
 	// RestoreUsageIsolated means a provider can meter a restored target
-	// independently. Providers that implement restore with a shared project
-	// or cluster must keep this false until usage allocation is qualified.
-	RestoreUsageIsolated    bool
-	MaxRestoreWindowSeconds int64
-	MaxStorageBytes         int64
-	UsageMeters             []Meter
+	// independently of its source. It must not also be counted in the source
+	// resource's Usage response.
+	RestoreUsageIsolated bool
+	// RestoreUsageIncludedInSource means the source resource's Usage response
+	// includes consumption for all restore descendants. The collector records
+	// that shared aggregate once against the source and skips restored targets.
+	RestoreUsageIncludedInSource bool
+	MaxRestoreWindowSeconds      int64
+	MaxStorageBytes              int64
+	UsageMeters                  []Meter
 }
 
 func (c Capabilities) Validate() error {
@@ -471,6 +475,10 @@ func (c Capabilities) Validate() error {
 		return ErrInvalid
 	}
 	if c.MaxRestoreWindowSeconds < 0 || c.MaxStorageBytes < 0 {
+		return ErrInvalid
+	}
+	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource
+	if (c.RestoreUsageIsolated && c.RestoreUsageIncludedInSource) || (hasRestoreUsageAccounting && !c.PointInTimeRestore) {
 		return ErrInvalid
 	}
 	if hasDuplicates(c.PostgresMajors) || hasDuplicates(c.ServiceClasses) || hasDuplicates(c.Availability) || hasDuplicates(c.CredentialAccess) || hasDuplicates(c.UsageMeters) {
@@ -634,6 +642,10 @@ type Store interface {
 	List(context.Context, string) ([]Database, error)
 	Due(context.Context, bool, int, time.Time) ([]Database, error)
 	Claim(context.Context, string, string, string, State, time.Time, time.Time) (Database, error)
+	// ClaimDelete serializes the deleting transition with binding and restore
+	// reservations. It must reject active bindings or restore descendants before
+	// returning so callers can safely perform irreversible provider deletion.
+	ClaimDelete(context.Context, string, string, string, time.Time, time.Time) (Database, error)
 	RecordProviderResource(context.Context, string, string, string, time.Time) error
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error

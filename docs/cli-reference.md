@@ -81,8 +81,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]; slug defaults to linked context) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
-| [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
-| [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
+| [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
+| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only) |
 | [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
@@ -951,7 +951,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -988,11 +988,12 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
 | `--canary-stages <STAGES>` | custom percent@duration canary stages |  |
-| `--safe` | deploy with the balanced health-gated rollout and first-wake 5xx rollback (Pro/Scale only) |  |
+| `--safe` | deploy with the balanced health-gated rollout and first-wake 5xx rollback |  |
 | `--require-authn` | require bearer auth on every request |  |
 | `--no-require-authn` | drop the token requirement |  |
 | `--app-protocol <PROTOCOL>` | wire protocol selector | one of `http1` · `http2` · `grpc` |
 | `--traffic-percent <PERCENT>` | deployment traffic split weight (0-100) |  |
+| `--no-traffic` | stage with 0% production traffic and print the preview URL |  |
 | `--no-triggers` | skip gregale.yaml trigger fan-out |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
@@ -2173,7 +2174,7 @@ Wake a parked app (pulls out of snapshot)
 
 ## traffic
 
-Manage deployment traffic split (issue #556; Pro/Scale only)
+Manage deployment traffic split (available on every plan)
 
 `gregale traffic [<subcommand>]`
 
@@ -2194,7 +2195,7 @@ Show live deployment traffic weights for an app
 
 ## mirror
 
-Manage traffic mirroring (mirror list|create|info|update|rm|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only)
+Manage traffic mirroring and sanitized replay (Pro/Scale only)
 
 `gregale mirror [<subcommand>]`
 
@@ -2216,7 +2217,7 @@ Create a mirror rule
 | `--source <ID>` | source deployment id or vN revision (live) | required |
 | `--mirror <ID>` | mirror deployment id or vN revision (live; same app) | required |
 | `--percent <N>` | fan-out percent in [0, 100]; 100 = every request |  |
-| `--include-body` | include request/response bodies in the comparison ledger |  |
+| `--include-body` | include request/response body hashes in the comparison ledger |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 
 ### mirror info
@@ -2239,8 +2240,8 @@ Patch a mirror rule (patch semantics)
 | `--percent <N>` | new percent in [0, 100] |  |
 | `--enable` | enable the rule (mutually exclusive with --disable) |  |
 | `--disable` | disable the rule (mutually exclusive with --enable) |  |
-| `--include-body` | enable body capture (mutually exclusive with --no-include-body) |  |
-| `--no-include-body` | disable body capture |  |
+| `--include-body` | enable body-hash comparison (mutually exclusive with --no-include-body) |  |
+| `--no-include-body` | disable body-hash comparison |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 | `--clear-redact` | clear the customer&#39;s redact_headers list (drop to always-stripped only) |  |
 
@@ -2262,6 +2263,17 @@ Aggregate mirror drift counts over a window
 | `--app <slug>` | app slug | required |
 | `--id <ID>` | mirror rule id | required |
 | `--window <WINDOW>` | summary window: 1h \| 24h \| 7d (default 1h) | one of `1h` · `24h` · `7d` |
+
+### mirror replay
+
+Replay a sanitized historical request corpus
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--id <ID>` | mirror rule id | required |
+| `--file <PATH>` | corpus JSON file, or - for stdin | required |
+| `--allow-unsafe-methods` | allow POST, PUT, PATCH, and DELETE |  |
 
 
 ## cache
