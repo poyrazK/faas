@@ -39,9 +39,8 @@ iss = gregale.svc          exp = now + 30s        jti = uuidv4
 account_id, caller_instance_id, caller_env
 ```
 
-Signed EdDSA with the per-node key already registered in `compute_node_keys`
-(ADR-053), so the `kid` identifies both the algorithm and the node that
-asserted it.
+Signed EdDSA with a **per-host service-caller key**, so the `kid` identifies
+the node that asserted it.
 
 ### Why proxy-minted rather than guest-presented
 
@@ -73,14 +72,24 @@ If a future requirement genuinely needs channel encryption between guests
 rather than caller attestation, that is a separate decision and this ADR does
 not foreclose it.
 
-### Why the per-node key rather than the cluster key
+### Why a per-host key rather than the cluster key
 
-`cluster_signing_keys` is minted by schedd, which holds the sealed private key;
-`gatewayd-internal` loads verifier public keys only. Giving the data-plane
-daemon the cluster private key would widen that blast radius to every node
-serving customer traffic. `compute_node_keys` already carries per-node ECDSA
-keys with `current`/`overlap`/`revoked` states and notify-driven refresh, and a
-compromised node key invalidates one node rather than the fleet.
+`cluster_signing_keys` is Ed25519 and fleet-wide, but schedd holds the sealed
+private key and `gatewayd-internal` loads verifier public keys only. Handing
+the fleet private key to the daemon that serves customer traffic on every node
+would widen that blast radius considerably for no gain here: an assertion only
+needs to be trustworthy, not fleet-signed.
+
+`compute_node_keys` (ADR-053) is per-node and looks like a fit, but is not one:
+those keys are ECDSA-P-256, owned and registered by **vmmd**, and scoped to
+CapacityReport signing. Borrowing them would mean a second consumer with a
+different algorithm and a different daemon holding the private half.
+
+So the mint key is a dedicated per-host Ed25519 keypair, provisioned exactly
+like ADR-119's per-host internal-service key: a path with a sealed-blob option,
+generated on first boot with a loud warning if absent. A compromised key
+invalidates one node's assertions rather than the fleet's, and the `kid` makes
+which node is affected obvious.
 
 ## Consequences
 
@@ -107,6 +116,9 @@ compromised node key invalidates one node rather than the fleet.
   already have. See above.
 - **Signing with the cluster key.** Puts the fleet-wide private key in every
   data-plane daemon.
+- **Reusing `compute_node_keys`.** ECDSA-P-256, vmmd-owned, scoped to capacity
+  reports; a second consumer would need a different algorithm and a different
+  private-key holder.
 - **Reusing `pkg/internalsvc` unchanged.** Its `sub` is a platform service name
   against a per-service allowlist, `aud` is the constant `gregale.internal`.
   A caller assertion needs an app-id subject and a per-target audience, so

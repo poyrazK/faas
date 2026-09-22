@@ -49,7 +49,11 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		}
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
-		return gateway.ServiceCaller{AppID: caller.ID, PreviewOfSlug: caller.PreviewOfSlug}, nil
+		return gateway.ServiceCaller{
+			AppID:         caller.ID,
+			PreviewOfSlug: caller.PreviewOfSlug,
+			AccountID:     caller.AccountID,
+		}, nil
 	}
 }
 

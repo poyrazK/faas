@@ -102,6 +102,11 @@ type ServiceCaller struct {
 	// the current, documented behaviour — this field exists so the hop can
 	// say so instead of doing it silently.
 	PreviewOfSlug string
+	// AccountID and InstanceID are carried for the ADR-206 assertion claims.
+	// The authorizer already loaded the caller row to check the tenant
+	// boundary, so these cost nothing extra.
+	AccountID  string
+	InstanceID string
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary between caller and
@@ -114,6 +119,33 @@ type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID s
 // compatibility assertion. This lets guest requests omit a spoofable
 // platform header while preserving the header contract for trusted callers.
 type ServiceProxyCallerResolver func(ctx context.Context, remoteAddr string) (appID string, err error)
+
+// ServiceCallerMintInput is what the proxy knows about a call it has already
+// authorized, handed to the minter so pkg/gateway does not import the token
+// library or care about its key material.
+type ServiceCallerMintInput struct {
+	CallerAppID      string
+	TargetAppID      string
+	AccountID        string
+	CallerInstanceID string
+	CallerEnv        string
+}
+
+// ServiceCallerMinter produces the ADR-206 assertion attesting the caller the
+// proxy verified. nil attaches nothing, which is the default: the assertion
+// has no consumer yet, so an operator without a verifier should not pay for a
+// signature on every call.
+type ServiceCallerMinter func(ServiceCallerMintInput) (string, error)
+
+// ServiceCallerAssertionHeader carries the ADR-206 assertion to the target. It
+// is deliberately not Authorization: that header belongs to the customer's own
+// scheme, and overwriting it would break an app that authenticates its callers
+// itself.
+const ServiceCallerAssertionHeader = "X-Faas-Caller-Assertion"
+
+// servicecallerEnvPreview mirrors servicecaller.EnvPreview without importing
+// the token package into the request path.
+const servicecallerEnvPreview = "preview"
 
 // ServiceProxyWaker holds the caller while the scheduler brings a parked
 // target service back (ADR-196). It returns nil once the wake attempt has
@@ -150,6 +182,9 @@ type ServiceProxyConfig struct {
 	EndpointTTL time.Duration
 	Now         func() time.Time
 	Log         *slog.Logger
+	// MintCallerAssertion attaches a verifiable statement of who called
+	// (ADR-206). nil attaches nothing.
+	MintCallerAssertion ServiceCallerMinter
 	// LocalNodeID is this gateway's compute node. When set, endpoint
 	// selection prefers a replica on this node before crossing the network
 	// (ADR-168 refinement). Empty preserves flat round-robin.
@@ -167,6 +202,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	mintAssertion ServiceCallerMinter
 	localNodeID   string
 	provider      ServiceEndpointProvider
 	resolve       ServiceProxyResolver
@@ -227,6 +263,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		})
 	}
 	return &ServiceProxy{
+		mintAssertion: cfg.MintCallerAssertion,
 		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
 		provider:      cfg.Provider,
 		resolve:       cfg.Resolve,
@@ -577,18 +614,45 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	// caller's word for it.
 	request.Header.Del(ServiceCallerEnvHeader)
 	request.Header.Del(ServiceCallerPreviewOfHeader)
+	request.Header.Del(ServiceCallerAssertionHeader)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
 	// A preview app has no sibling copy of its dependencies, so this call is
 	// crossing from a preview into a production service. Say so on the hop and
 	// count it, rather than letting a PR quietly exercise production.
+	callerEnv := ""
 	if caller.PreviewOfSlug != "" {
-		request.Header.Set(ServiceCallerEnvHeader, "preview")
+		callerEnv = servicecallerEnvPreview
+		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
 		p.metrics.IncServicePreviewToProduction()
 	}
+	p.attachCallerAssertion(request, target, caller, callerEnv)
 	return request
+}
+
+// attachCallerAssertion adds the ADR-206 statement of who called. A mint
+// failure is logged and dropped rather than failing the call: nothing verifies
+// the assertion yet, so refusing traffic over a signing problem would trade a
+// working mesh for a feature with no consumer.
+func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) {
+	if p.mintAssertion == nil || caller.AppID == "" {
+		return
+	}
+	token, err := p.mintAssertion(ServiceCallerMintInput{
+		CallerAppID:      caller.AppID,
+		TargetAppID:      target.AppID,
+		AccountID:        caller.AccountID,
+		CallerInstanceID: caller.InstanceID,
+		CallerEnv:        callerEnv,
+	})
+	if err != nil {
+		p.log.Warn("gateway: service caller assertion mint failed; forwarding unsigned",
+			"caller", caller.AppID, "target", target.AppID, "err", err)
+		return
+	}
+	request.Header.Set(ServiceCallerAssertionHeader, token)
 }
 
 // forwardUpgrade carries an Upgrade request to the guest over the raw-bytes
