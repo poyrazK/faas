@@ -62,6 +62,27 @@ func TestListEventDeliveries_ReturnsOnlyEventInvocations(t *testing.T) {
 	if len(out.Deliveries) != 1 || out.Deliveries[0].SubscriptionID != "sub-1" {
 		t.Fatalf("event filter deliveries = %+v", out.Deliveries)
 	}
+
+	// A cursor is positioned in the unfiltered event stream. Changing the
+	// filter must not restart pagination when the cursor row is excluded.
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?limit=2", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Deliveries) != 2 {
+		t.Fatalf("decode page: err=%v deliveries=%+v", err, out.Deliveries)
+	}
+	if out.Deliveries[1].EventID != "evt-2" {
+		t.Fatalf("cursor event = %q, want evt-2", out.Deliveries[1].EventID)
+	}
+	before := out.Deliveries[1].InvocationID
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&before="+before, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("filtered cursor status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Deliveries) != 0 {
+		t.Fatalf("filtered cursor: err=%v deliveries=%+v, want empty page", err, out.Deliveries)
+	}
 }
 
 func TestListEventDeliveries_CrossAccountIsNotVisible(t *testing.T) {

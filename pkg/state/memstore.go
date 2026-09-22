@@ -11548,9 +11548,28 @@ func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, li
 	if limit <= 0 {
 		limit = 20
 	}
+	var cursor Invocation
+	if before != "" {
+		var ok bool
+		cursor, ok = m.invocations[before]
+		if !ok || cursor.AppID != appID || cursor.Source != InvocationAsyncInvoke {
+			return []Invocation{}, nil
+		}
+		var cursorHeaders map[string]string
+		if json.Unmarshal(cursor.Headers, &cursorHeaders) != nil {
+			return []Invocation{}, nil
+		}
+		if _, ok := cursorHeaders["x-gregale-event-id"]; !ok {
+			return []Invocation{}, nil
+		}
+	}
 	var out []Invocation
 	for _, inv := range m.invocations {
 		if inv.AppID != appID || inv.Source != InvocationAsyncInvoke {
+			continue
+		}
+		if before != "" && (inv.CreatedAt.After(cursor.CreatedAt) ||
+			(inv.CreatedAt.Equal(cursor.CreatedAt) && inv.ID >= cursor.ID)) {
 			continue
 		}
 		var headers map[string]string
@@ -11574,14 +11593,6 @@ func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, li
 		}
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
-	if before != "" {
-		for i, inv := range out {
-			if inv.ID == before {
-				out = out[i+1:]
-				break
-			}
-		}
-	}
 	if len(out) > limit {
 		out = out[:limit]
 	}
