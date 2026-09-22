@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- ADR-211: durable, customer-queryable log projection. Source systems remain
+-- ADR-213: durable, customer-queryable log projection. Source systems remain
 -- authoritative; apid is the sole writer to this bounded tenant ledger.
 CREATE TABLE IF NOT EXISTS log_events (
     id              uuid        NOT NULL DEFAULT gen_random_uuid(),
