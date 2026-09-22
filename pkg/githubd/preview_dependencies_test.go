@@ -2,6 +2,7 @@ package githubd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -96,7 +97,7 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	if productionAPI.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "" {
 		t.Fatal("PR head source mutated production app manifest")
 	}
-	if _, err := rig.mem.AppBySlug(ctx, "pr-42-metrics"); err != state.ErrNotFound {
+	if _, err := rig.mem.AppBySlug(ctx, "pr-42-metrics"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unrelated metrics preview = %v, want ErrNotFound", err)
 	}
 
@@ -194,7 +195,7 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	if len(rec.checks) < 2 || rec.checks[len(rec.checks)-1].phase != githubdgrpc.CheckPhaseFailed {
 		t.Fatalf("checks = %+v, want failed quota check", rec.checks)
 	}
-	if _, err := rig.mem.AppBySlug(ctx, "pr-42-worker"); err != state.ErrNotFound {
+	if _, err := rig.mem.AppBySlug(ctx, "pr-42-worker"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("over-quota dependency preview = %v, want ErrNotFound", err)
 	}
 }
