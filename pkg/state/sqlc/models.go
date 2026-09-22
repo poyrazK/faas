@@ -1122,6 +1122,20 @@ type IdempotencyKey struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type InboundWebhookEndpoint struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	Name                string
+	Provider            string
+	TokenHash           []byte
+	SigningSecretSealed []byte
+	DeliveryPath        string
+	Enabled             bool
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type Instance struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID

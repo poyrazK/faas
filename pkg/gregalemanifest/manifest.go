@@ -109,19 +109,20 @@ type EventTrigger struct {
 // explicit and digest-pinned: Gregale never silently selects a mutable image
 // on a customer's behalf.
 type ExtensionSpec struct {
-	Name          string                `yaml:"name,omitempty" toml:"name,omitempty"`
-	Preset        string                `yaml:"preset,omitempty" toml:"preset,omitempty"`
-	Image         string                `yaml:"image" toml:"image"`
-	Type          api.SidecarType       `yaml:"type,omitempty" toml:"type,omitempty"`
-	Cmd           []string              `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
-	Env           map[string]string     `yaml:"env,omitempty" toml:"env,omitempty"`
-	Port          int                   `yaml:"port,omitempty" toml:"port,omitempty"`
-	RamMB         int                   `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
-	ScratchMB     int                   `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
-	CPUMillicores int                   `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
-	DiskIOProfile string                `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
-	Essential     *bool                 `yaml:"essential,omitempty" toml:"essential,omitempty"`
-	DependsOn     []ExtensionDependency `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+	Name          string                      `yaml:"name,omitempty" toml:"name,omitempty"`
+	Preset        string                      `yaml:"preset,omitempty" toml:"preset,omitempty"`
+	Image         string                      `yaml:"image" toml:"image"`
+	Type          api.SidecarType             `yaml:"type,omitempty" toml:"type,omitempty"`
+	Cmd           []string                    `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
+	Env           map[string]string           `yaml:"env,omitempty" toml:"env,omitempty"`
+	Port          int                         `yaml:"port,omitempty" toml:"port,omitempty"`
+	RamMB         int                         `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
+	ScratchMB     int                         `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
+	CPUMillicores int                         `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
+	DiskIOProfile string                      `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
+	Essential     *bool                       `yaml:"essential,omitempty" toml:"essential,omitempty"`
+	StartupProbe  *api.AppManifestHealthcheck `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
+	DependsOn     []ExtensionDependency       `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 }
 
 // ExtensionDependency gates an extension on another workload lifecycle.
@@ -210,7 +211,7 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			Cmd: append([]string(nil), ext.Cmd...), Env: env,
 			Port: ext.Port, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
 			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
-			Essential: ext.Essential, DependsOn: deps,
+			Essential: ext.Essential, StartupProbe: ext.StartupProbe, DependsOn: deps,
 		}
 		if sc.Port == 0 {
 			sc.Port = defaults.Port
@@ -972,8 +973,9 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `extensions`, `workflows`, `databases`, and
-// `buckets`; other keys are validated strictly (yaml.Decoder.KnownFields(true))
+// `triggers`, `event_triggers`, `extensions`, `workflows`, `databases`,
+// `buckets`, and the local-only `dev` profile; other keys are validated
+// strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
 type Manifest struct {
@@ -981,6 +983,7 @@ type Manifest struct {
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
+	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
 	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
@@ -999,6 +1002,56 @@ type Manifest struct {
 	Databases     []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets       []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker        *WorkerSpec          `yaml:"worker,omitempty"`
+}
+
+// DevConfig declares local defaults for the remote `gregale dev` loop. Paths
+// are deliberately relative to the selected source root so a checked-in
+// manifest cannot reach outside the project by accident. Values are always
+// resolved locally by the CLI; this block never contains secret plaintext.
+type DevConfig struct {
+	EnvFile             string `yaml:"env_file,omitempty"`
+	ServiceOverrideFile string `yaml:"service_override_file,omitempty"`
+	Postgres            *bool  `yaml:"postgres,omitempty"`
+	PostgresRegion      string `yaml:"postgres_region,omitempty"`
+}
+
+func (c *DevConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if err := validateDevConfigPath("env_file", c.EnvFile); err != nil {
+		return err
+	}
+	if err := validateDevConfigPath("service_override_file", c.ServiceOverrideFile); err != nil {
+		return err
+	}
+	if c.EnvFile != "" && c.EnvFile == c.ServiceOverrideFile {
+		return fmt.Errorf("dev: env_file and service_override_file must point to different files")
+	}
+	if c.PostgresRegion != "" && (c.Postgres == nil || !*c.Postgres) {
+		return fmt.Errorf("dev: postgres_region requires postgres: true")
+	}
+	return nil
+}
+
+func validateDevConfigPath(field, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if strings.TrimSpace(raw) != raw {
+		return fmt.Errorf("dev.%s must not have leading or trailing whitespace", field)
+	}
+	if len(raw) > 512 || strings.ContainsAny(raw, "\x00\r\n") {
+		return fmt.Errorf("dev.%s must be a relative file path of at most 512 characters", field)
+	}
+	if filepath.IsAbs(raw) {
+		return fmt.Errorf("dev.%s must be relative to the selected source root", field)
+	}
+	clean := filepath.Clean(raw)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("dev.%s must stay inside the selected source root", field)
+	}
+	return nil
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -1348,6 +1401,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.Hosting != nil {
 		if err := m.Hosting.Validate(); err != nil {
 			return fmt.Errorf("hosting: %w", err)
+		}
+	}
+	if m.Dev != nil {
+		if err := m.Dev.Validate(); err != nil {
+			return err
 		}
 	}
 	if m.Scaling != nil {

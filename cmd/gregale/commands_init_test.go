@@ -7,7 +7,7 @@
 // `swapIO` and `swapStdout` helpers from sign_keys_test.go are reused.
 //
 // What we cover:
-//   - every Wave 0 PR-B template and the event-worker starter materialize with the expected
+//   - every Wave 0 PR-B template plus the event-worker and queue-worker starters materialize with the expected
 //     file set and a README that mentions the right `gregale secrets
 //     set` commands (drift pin between the CLI hint and the README)
 //   - missing / unknown / non-empty --path rejection paths
@@ -31,8 +31,8 @@ import (
 )
 
 // TestCmdInit_AllTemplatesMaterialize: every Wave 0 PR-B template
-// (s3-uploader, slack-bot, rest-api-postgres, cron-worker) and the
-// event-worker starter write the
+// (s3-uploader, slack-bot, rest-api-postgres, cron-worker) plus the
+// event-worker and queue-worker starters write the
 // expected file set to a fresh t.TempDir() via runCmdInit. Pinned so a
 // future template addition can't silently drop the README or
 // package.json. The pre-existing seven templates are out of scope for
@@ -111,6 +111,16 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				"invoice.paid",
 			},
 		},
+		{
+			name:  "queue-worker",
+			files: []string{"handler.js", "package.json", "gregale.yaml", "README.md"},
+			readmeHas: []string{
+				"queue binding",
+				"queue-depth autoscaling",
+				"gregale queue send",
+				"gregale dlq",
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -140,6 +150,62 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				t.Errorf("stdout missing docs URL; got: %q", stdout.String())
 			}
 		})
+	}
+}
+
+// TestCmdInit_QueueWorkerQuickstartContract keeps the queue starter aligned
+// with the manifest reconciler and the documented send/status path.
+func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "orders-worker")
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	if code := runCmdInit("queue-worker", dest, false, "", osStdout, os.Stderr); code != 0 {
+		t.Fatalf("runCmdInit(queue-worker) = %d; stdout=%q", code, stdout.String())
+	}
+
+	manifest, ok, err := gregalemanifest.Load(dest)
+	if err != nil {
+		t.Fatalf("load queue-worker manifest: %v", err)
+	}
+	if !ok || manifest == nil {
+		t.Fatal("queue-worker starter did not produce a manifest")
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("validate queue-worker manifest: %v", err)
+	}
+	if len(manifest.QueueBindings) != 1 {
+		t.Fatalf("queue bindings = %d, want 1", len(manifest.QueueBindings))
+	}
+	binding := manifest.QueueBindings[0]
+	if binding.Name != "default" || binding.QueueName != "default" || binding.Mode != "push" || binding.WorkloadClass != "worker" || binding.MaxConcurrency != 1 {
+		t.Fatalf("queue binding = %+v, want default push worker binding", binding)
+	}
+	if binding.RetryPolicy == nil || binding.RetryPolicy.MaxAttempts != 3 || binding.RetryPolicy.BaseSeconds != 1 || binding.RetryPolicy.MaxSeconds != 30 || binding.RetryPolicy.JitterSeconds != 0.25 {
+		t.Fatalf("retry policy = %+v, want starter defaults", binding.RetryPolicy)
+	}
+	if manifest.Scaling == nil || manifest.Scaling.Target == nil || manifest.Scaling.Target.Metric != "queue_depth" || manifest.Scaling.Target.Value != 10 {
+		t.Fatalf("scaling = %+v, want queue_depth target 10", manifest.Scaling)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(dest, "README.md"))
+	if err != nil {
+		t.Fatalf("read queue-worker README: %v", err)
+	}
+	readmeText := string(readme)
+	steps := []string{
+		"gregale init --template queue-worker",
+		"gregale deploy --name orders-worker",
+		"gregale queue send orders-worker",
+		"gregale queue status orders-worker",
+		"gregale dlq orders-worker",
+	}
+	last := -1
+	for _, step := range steps {
+		at := strings.Index(readmeText, step)
+		if at <= last {
+			t.Fatalf("README quickstart step %q is missing or out of order", step)
+		}
+		last = at
 	}
 }
 
@@ -459,7 +525,7 @@ func TestCheckDestEmpty(t *testing.T) {
 }
 
 // TestCmdInit_List_GroupsByCategory: `gregale init --list` short-circuits
-// before materialization and renders the 13 templates grouped by
+// before materialization and renders the 17 templates grouped by
 // category. Pins both the group ordering (templates.CategoryOrder) and
 // the per-category content (CategoryFor). A future template addition
 // must add a Names entry, a CategoryFor case, and (if it's a new group)
@@ -492,7 +558,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	wantPerCat := map[string][]string{
 		"hello":              {"hello-node", "hello-python", "hello-go"},
 		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
-		"event-driven":       {"event-worker"},
+		"event-driven":       {"event-worker", "queue-worker"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver"},
 		"ai":                 {"ai-chat"},
 	}

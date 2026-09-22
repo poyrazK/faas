@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -18,6 +19,8 @@ const traceUsage = "usage: gregale trace <trace-id> [--watch] [--interval <DURAT
 const (
 	defaultTraceWatchInterval = time.Second
 	defaultTraceWatchTimeout  = 5 * time.Minute
+	traceWatchRetryBase       = 250 * time.Millisecond
+	traceWatchRetryMax        = 5 * time.Second
 )
 
 type traceWatchOptions struct {
@@ -132,10 +135,9 @@ func traceFlagValue(args []string, index int, name string) (string, int, error) 
 func watchTrace(ctx context.Context, client *Client, traceID string, options traceWatchOptions) int {
 	watchCtx, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
-	ticker := time.NewTicker(options.interval)
-	defer ticker.Stop()
 
 	var previous string
+	retryAttempt := 0
 	for {
 		result, err := client.GetAccountTrace(watchCtx, traceID)
 		if err != nil {
@@ -143,8 +145,21 @@ func watchTrace(ctx context.Context, client *Client, traceID string, options tra
 				_, _ = fmt.Fprintf(osStderr, "Trace %s watch timed out after %s.\n", traceID, options.timeout)
 				return 3
 			}
-			return printErr("Could not look up trace", err)
+			if !traceWatchRetryableError(err) {
+				return printErr("Could not look up trace", err)
+			}
+			retryAttempt++
+			delay := traceWatchRetryDelay(retryAttempt, traceWatchRetryAfter(err))
+			if !jsonOutput {
+				_, _ = fmt.Fprintf(osStderr, "trace %s: temporary lookup failure; retrying in %s\n", traceID, delay)
+			}
+			if !waitTraceWatch(watchCtx, delay) {
+				_, _ = fmt.Fprintf(osStderr, "Trace %s watch timed out after %s.\n", traceID, options.timeout)
+				return 3
+			}
+			continue
 		}
+		retryAttempt = 0
 		current := traceSnapshotKey(result)
 		if current != previous {
 			if previous != "" && !jsonOutput {
@@ -168,12 +183,67 @@ func watchTrace(ctx context.Context, client *Client, traceID string, options tra
 			}
 			return 0
 		}
-		select {
-		case <-watchCtx.Done():
+		if !waitTraceWatch(watchCtx, options.interval) {
 			_, _ = fmt.Fprintf(osStderr, "Trace %s watch timed out after %s.\n", traceID, options.timeout)
 			return 3
-		case <-ticker.C:
 		}
+	}
+}
+
+func traceWatchRetryableError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		// The trace endpoint is read-only, so transport and decoding failures
+		// are safe to retry while the overall watch timeout remains in force.
+		return true
+	}
+	status := apiErr.Problem.Status
+	return status == 408 || status == 425 || status == 429 || status >= 500
+}
+
+func traceWatchRetryAfter(err error) *int64 {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Problem.RetryAfterSeconds
+	}
+	return nil
+}
+
+func traceWatchRetryDelay(attempt int, retryAfter *int64) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := traceWatchRetryBase
+	for i := 1; i < attempt && delay < traceWatchRetryMax; i++ {
+		if delay > traceWatchRetryMax/2 {
+			delay = traceWatchRetryMax
+			break
+		}
+		delay *= 2
+	}
+	if retryAfter != nil && *retryAfter > 0 {
+		if *retryAfter >= int64(traceWatchRetryMax/time.Second) {
+			return traceWatchRetryMax
+		}
+		hint := time.Duration(*retryAfter) * time.Second
+		if hint > delay {
+			delay = hint
+		}
+	}
+	if delay > traceWatchRetryMax {
+		return traceWatchRetryMax
+	}
+	return delay
+}
+
+func waitTraceWatch(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

@@ -133,6 +133,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// serviceCallerKeys mirrors service_caller_keys: one published
+	// public key per node (ADR-206).
+	serviceCallerKeys map[string]ServiceCallerKey
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
@@ -312,6 +315,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                    map[string]AppWebhook
 	appWebhookDeliveries           map[string]AppWebhookDelivery
+	inboundWebhookEndpoints        map[string]InboundWebhookEndpoint
 	queueBindings                  map[string]QueueBinding
 	managedRealtimeEndpoints       map[string]ManagedRealtimeEndpoint
 	tcpListeners                   map[string]TCPListener
@@ -983,6 +987,7 @@ func NewMemStore() *MemStore {
 		alertDeliveries:                map[string]AlertDelivery{},
 		appWebhooks:                    map[string]AppWebhook{},
 		appWebhookDeliveries:           map[string]AppWebhookDelivery{},
+		inboundWebhookEndpoints:        map[string]InboundWebhookEndpoint{},
 		queueBindings:                  map[string]QueueBinding{},
 		managedRealtimeEndpoints:       map[string]ManagedRealtimeEndpoint{},
 		tcpListeners:                   map[string]TCPListener{},

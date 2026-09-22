@@ -2073,6 +2073,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
 
+	// Durable inbound webhooks. Configuration is authenticated, while the
+	// provider-facing ingress route below is authenticated by the provider's
+	// signature over the raw request body. The ingress handler returns 202 only
+	// after the corresponding invocation row has committed.
+	mux.HandleFunc("GET /v1/apps/{slug}/inbound-webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInboundWebhookEndpoints))))
+	mux.HandleFunc("POST /v1/apps/{slug}/inbound-webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createInboundWebhookEndpoint))))
+	mux.HandleFunc("GET /v1/apps/{slug}/inbound-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getInboundWebhookEndpoint))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/inbound-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateInboundWebhookEndpoint))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/inbound-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteInboundWebhookEndpoint))))
+
 	// Queue bindings are the durable app-scoped contract consumed by push
 	// workers and queue-depth autoscaling. The message ledger remains under
 	// /queues/*; these routes manage only binding configuration.
@@ -2673,6 +2683,11 @@ func (s *server) handler() http.Handler {
 	// HMAC *is* the trust boundary.
 	mux.HandleFunc("POST /v1/webhooks/resend", s.resendWebhook)
 
+	// Customer inbound webhook ingress (no Gregale auth). The opaque route token
+	// identifies an endpoint; the configured provider signature is the trust
+	// boundary. Tokens are stored only as SHA-256 digests.
+	mux.HandleFunc("POST /v1/hooks/{token}", s.receiveInboundWebhook)
+
 	// Operator admin surface (issue #98 / ADR-028). Auth lives in
 	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers
 	// 403 every request when the allowlist is empty. The scope
@@ -2886,7 +2901,7 @@ func (s *server) handler() http.Handler {
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's
 	// main package; the dashboard and the CLI read the same
-	// 15-entry list through independent paths.
+	// 17-entry list through independent paths.
 	mux.Handle("GET /v1/templates", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listTemplates))))
 
 	// PR-C: /oauth/code-callback is the user-to-server OAuth callback
