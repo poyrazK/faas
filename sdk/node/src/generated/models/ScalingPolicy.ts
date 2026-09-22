@@ -61,3 +61,4 @@ export type ScalingPolicy = {
    */
   schedules?: Array<ScalingSchedule>;
 };
+
