@@ -12,11 +12,6 @@ ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one
 and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
-`make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
-any **newly** duplicated number. The 71 numbers already duplicated on `main` are
-frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
-the gate holds that set and stops it growing. Never add a line to that file.
-
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
 
@@ -31,11 +26,9 @@ references *your branch* introduced: shared files (`api/openapi.yaml`,
 `pkg/api/dto.go`, `pkg/api/limits.go`) document many ADRs at once, so a blanket
 `sed` silently rewrites other people's.
 
-Retro-fixing the existing duplicates is deliberately out of scope for the gate.
-The number is embedded in `// adr: NNN` citation lines that
-`scripts/ci/check_spec_cited_tests.sh` reads, plus metric help strings and
-runbooks — ADR-190 alone had 67 references. Renumber one ADR per PR, and delete
-its baseline line in the same change (the gate fails on a stale entry).
+When correcting a duplicate, renumber one ADR per PR and update the references
+that ADR introduced. Numbers can appear in `// adr: NNN` citation lines,
+metrics, and runbooks — ADR-190 alone had 67 references.
 
 ## Format
 
