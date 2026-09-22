@@ -342,6 +342,9 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	}
 	// Cache should have been populated.
 	hash, _ := hashFile(srcTar)
+	if fvm.lastRequest.SourceSHA256 != hash {
+		t.Errorf("VM source digest = %q, want %q", fvm.lastRequest.SourceSHA256, hash)
+	}
 	if _, ok := c.LookupBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal)); !ok {
 		t.Error("expected cache populated after successful build")
 	}

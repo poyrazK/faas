@@ -44,6 +44,30 @@ export type DebugTelemetryRequestItem = {
    * Stable API consumer identity; omitted for anonymous or legacy traffic.
    */
   consumer_id?: string;
+  /**
+   * Compute node that served the request.
+   */
+  node_id?: string;
+  /**
+   * Region associated with the deployment target.
+   */
+  region?: string;
+  /**
+   * Source revision associated with the deployment.
+   */
+  commit_sha?: string;
+  /**
+   * Deployment tag associated with the request.
+   */
+  deployment_tag?: string;
+  /**
+   * Deployment creation timestamp supplied by the platform.
+   */
+  deployment_created_at?: string;
+  /**
+   * Immutable image/artifact digest associated with the deployment.
+   */
+  image_digest?: string;
   guest?: DebugGuestExecutionEvidence;
 };
 

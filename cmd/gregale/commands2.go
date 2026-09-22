@@ -2800,18 +2800,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
-	if *simplePlan {
-		sourceKind := simpleapp.SourceDirectory
-		if *image != "" {
-			sourceKind = simpleapp.SourceImage
-		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
-		if planErr != nil {
-			return printErr("Could not resolve simple app plan", planErr)
-		}
-		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
-	}
-	// Authenticate before any zero-config source scan or archive extraction. The
+	// Authenticate before any deploy-time zero-config source scan or archive
+	// extraction. The local --plan path is the deliberate exception: it resolves
+	// the same source selection below but never needs account state or remote
+	// access.
+	//
 	// zero-config path can inspect the working tree, run doctor checks, and
 	// materialise a potentially large archive; doing that for an unauthenticated
 	// invocation wastes customer CPU/IO and can expose source-side diagnostics
@@ -2821,7 +2814,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localZeroConfig := *image == "" && *tarball == ""
 	var client *Client
 	var err error
-	if localZeroConfig || explicitTarball {
+	if !*simplePlan && (localZeroConfig || explicitTarball) {
 		var authErr error
 		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
 		if authErr != nil {
@@ -2896,6 +2889,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		} else if !errors.Is(perr, ErrNotInGitRepo) && !errors.Is(perr, ErrNoGitRemote) {
 			return printErr("Could not resolve git metadata", perr)
 		}
+	}
+	if *simplePlan {
+		sourceKind := simpleapp.SourceDirectory
+		if *image != "" {
+			sourceKind = simpleapp.SourceImage
+		}
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		if planErr != nil {
+			return printErr("Could not resolve simple app plan", planErr)
+		}
+		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
 	}
 	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
 		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction

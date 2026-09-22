@@ -2035,6 +2035,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/apps/{slug}/mirrors/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateMirrorRule))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/mirrors/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteMirrorRule))))
 	mux.HandleFunc("GET /v1/apps/{slug}/mirrors/{id}/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMirrorRuleSummary))))
+	mux.HandleFunc("POST /v1/apps/{slug}/mirrors/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.replayMirrorRequests))))
 
 	// CORS presets (issue #975 #4 / PR-B / ADR-129). The
 	// account-wide + app-scoped read surface is a single
