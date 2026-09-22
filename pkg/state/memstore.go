@@ -1596,6 +1596,16 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	if !ok {
 		return ErrNotFound
 	}
+	if plan == api.PlanFree {
+		// Keep the in-memory backend aligned with PgStore's database
+		// invariant: a Free account cannot retain an opted-in streaming app.
+		for appID, app := range m.apps {
+			if app.AccountID == id && app.StreamingEnabled {
+				app.StreamingEnabled = false
+				m.apps[appID] = app
+			}
+		}
+	}
 	a.Plan = plan
 	m.accounts[id] = a
 	now := time.Now().UTC()
