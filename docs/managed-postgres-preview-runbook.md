@@ -24,9 +24,13 @@ go run ./cmd/managed-postgres-qualify --check-config
 ```
 
 The JSON result contains stable check codes and a `readiness` object. Warnings
-such as `usage_policy_disabled` or `restore_usage_not_isolated` do not make the
+such as `usage_policy_disabled` or `restore_usage_unaccounted` do not make the
 provider call safe to skip; they remain launch blockers that must be resolved
-or explicitly documented before a staging canary.
+or explicitly documented before a staging canary. `restore_usage_not_isolated`
+documents that branch-level usage is not available. A provider that declares
+`RestoreUsageIncludedInSource` may nevertheless support guarded restores
+without per-target metering, provided its source usage response accounts for
+all descendants.
 
 Run the provider qualification with
 `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and save its JSON output in an
