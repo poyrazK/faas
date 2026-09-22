@@ -260,10 +260,9 @@ func (cfg MiddlewareConfig) writeProblem(bw *budgetWriter, w http.ResponseWriter
 // whether the inner handler committed a response body. If not, the
 // middleware writes its own 504 problem on top.
 //
-// The wrapper deliberately does NOT implement http.Flusher /
-// http.Hijacker — those are power-user escapes the middleware is
-// not in the path for today; the streaming-forwarder is one layer
-// down where the per-flush write deadline is enforced separately.
+// The wrapper preserves streaming and upgrade operations because it wraps
+// the public gateway and apid listeners, including their SSE/WebSocket paths.
+// See writer.go for the optional-interface and ResponseController forwarding.
 type budgetWriter struct {
 	http.ResponseWriter
 	wrote bool
@@ -271,6 +270,12 @@ type budgetWriter struct {
 
 func (b *budgetWriter) WriteHeader(code int) {
 	if b.wrote {
+		return
+	}
+	// Informational responses do not commit the final status. A protocol
+	// switch is the exception: the handler owns the connection from there.
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		b.ResponseWriter.WriteHeader(code)
 		return
 	}
 	b.wrote = true

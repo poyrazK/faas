@@ -21,6 +21,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // stubDialer captures the (ctx, target) tuples for assertions and
@@ -110,6 +113,38 @@ func TestInternalReverseProxy_PreservesInboundHost(t *testing.T) {
 	}
 	if gotHost != "hello-node-test.apps.gregale.dev" {
 		t.Errorf("upstream Host = %q, want the inbound hostname preserved", gotHost)
+	}
+}
+
+func TestInternalReverseProxy_InjectsActiveTraceContext(t *testing.T) {
+	var gotTraceparent string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTraceparent = r.Header.Get("traceparent")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	ctx, span := provider.Tracer("test").Start(context.Background(), "public-edge")
+	defer span.End()
+
+	proxy := NewInternalReverseProxy(
+		&stubDialer{server: upstream},
+		&url.URL{Scheme: "http", Host: "internal"},
+		slog.Default(),
+		false,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	extracted := propagation.TraceContext{}.Extract(context.Background(), propagation.HeaderCarrier(http.Header{"Traceparent": []string{gotTraceparent}}))
+	got := oteltrace.SpanContextFromContext(extracted)
+	if !got.IsValid() {
+		t.Fatalf("traceparent = %q, want valid W3C context", gotTraceparent)
+	}
+	if got.TraceID() != span.SpanContext().TraceID() || got.SpanID() != span.SpanContext().SpanID() {
+		t.Fatalf("propagated context = %s/%s, want %s/%s", got.TraceID(), got.SpanID(), span.SpanContext().TraceID(), span.SpanContext().SpanID())
 	}
 }
 

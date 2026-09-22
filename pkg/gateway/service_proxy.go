@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const (
@@ -294,7 +295,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
 		return
 	}
-	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(r.Context(), serviceProxySpanName(service),
+	// The guest-facing service-proxy listener is a standalone http.Server, not
+	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
+	// its inbound traceparent joins the original request instead of always
+	// starting a new service-call trace.
+	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service),
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.dependency.kind", "service_proxy"),
 		attribute.String("http.request.method", r.Method),
@@ -376,6 +382,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service authorization is unavailable")
 		return
+	}
+	// Only the authorizer can establish the tenant identity. Stamp it after a
+	// successful authorization so the in-process retained-span exporter can
+	// route this platform-owned span to apid without a customer API key.
+	if callerInfo.AccountID != "" {
+		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
 	}
 	if p.provider == nil || p.forward == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")

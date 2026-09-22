@@ -1723,16 +1723,24 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 		if stale > api.ResponseCacheStaleIfErrorMaxSeconds {
 			stale = api.ResponseCacheStaleIfErrorMaxSeconds
 		}
+		staleWhileRevalidate := r.Action.Cache.StaleWhileRevalidateSeconds
+		if staleWhileRevalidate < 0 {
+			staleWhileRevalidate = 0
+		}
+		if staleWhileRevalidate > api.ResponseCacheStaleWhileRevalidateMaxSeconds {
+			staleWhileRevalidate = api.ResponseCacheStaleWhileRevalidateMaxSeconds
+		}
 		out = append(out, gateway.EdgeRuleCacheResolved{
-			ID:                  r.ID,
-			AccountID:           r.AccountID,
-			AppID:               r.AppID,
-			Priority:            r.Priority,
-			PathGlob:            r.MatchPath,
-			Methods:             buildMethodsMap(r.MatchMethods),
-			MaxAgeSeconds:       maxAge,
-			StaleIfErrorSeconds: stale,
-			VaryOn:              r.Action.Cache.VaryOn,
+			ID:                          r.ID,
+			AccountID:                   r.AccountID,
+			AppID:                       r.AppID,
+			Priority:                    r.Priority,
+			PathGlob:                    r.MatchPath,
+			Methods:                     buildMethodsMap(r.MatchMethods),
+			MaxAgeSeconds:               maxAge,
+			StaleWhileRevalidateSeconds: staleWhileRevalidate,
+			StaleIfErrorSeconds:         stale,
+			VaryOn:                      r.Action.Cache.VaryOn,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

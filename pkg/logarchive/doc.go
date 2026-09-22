@@ -19,13 +19,17 @@
 //     via the S3Client (s3client.go). The active .partial file is
 //     rotated to .upload before reading, so new evictions remain
 //     writable while the upload runs. On success the .upload file
-//     is removed and the .jsonl.gz marker is eligible for the
-//     7-day purge; on failure .upload remains for retry.
+//     is committed into the retained .jsonl.gz history. Each daily PUT
+//     includes that history plus the new gzip member so it cannot overwrite
+//     earlier flushes. A .jsonl.committed marker makes the local handoff
+//     restartable without duplicating the accepted fragment. On failure
+//     .upload remains for retry and the prior history is unchanged.
 //     {daemon}_log_archive_failures_total{reason} increments and
 //     a slog WARN fires.
 //
 //   - Purger (shipper.go::PurgeOnce) — the daily ticker that
-//     removes any .jsonl.gz older than the configured retention.
+//     removes .jsonl.gz history older than the configured retention, except
+//     when a pending fragment or commit still needs it for retry.
 //     Independent from the shipper so a bucket outage doesn't
 //     prevent local cleanup; the per-tick size is bounded by the
 //     instance count on the box.

@@ -62,7 +62,7 @@ func TestFaasFleetDashboardParses(t *testing.T) {
 	// non-empty PromQL expression. The ids are stable contract:
 	// review-future contributors must add new panels with new ids
 	// rather than reusing these, so the assertions stay accurate.
-	for _, want := range []int{80, 81, 82, 83, 90, 410, 411, 412} {
+	for _, want := range []int{80, 81, 82, 83, 90, 410, 411, 412, 418, 419} {
 		var found *panel
 		for i := range root.Panels {
 			if root.Panels[i].ID == want {

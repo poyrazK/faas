@@ -355,13 +355,16 @@ func TestHandlerBoundsUnknownLengthProviderResponse(t *testing.T) {
 	handler.MaxResponseBytes = 4
 
 	rr := httptest.NewRecorder()
+	defer func() {
+		abort, _ := recover().(error)
+		if !errors.Is(abort, http.ErrAbortHandler) {
+			t.Errorf("response cap did not abort the downstream stream: %v", abort)
+		}
+		if rr.Code != http.StatusOK || rr.Body.String() != "1234" {
+			t.Errorf("status=%d body=%q, want original status and bounded prefix", rr.Code, rr.Body.String())
+		}
+	}()
 	handler.ServeHTTP(rr, gatewayRequest(Prefix+integration.ID+"/read", "secret", "app-1", http.MethodGet, nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
-	}
-	if got := rr.Body.String(); got != "1234" {
-		t.Fatalf("body = %q, want capped response", got)
-	}
 }
 
 func TestHandlerRejectsOversizedProviderHeaders(t *testing.T) {
