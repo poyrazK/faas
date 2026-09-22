@@ -537,7 +537,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	}
 	var mirrorBodyHash []byte
 	if statusCode != 0 {
-		// codeql[go/weak-cryptographic-algorithm] false-positive: SHA-256 is
+		// codeql[go/weak-sensitive-data-hashing] false-positive: SHA-256 is
 		// a non-secret response-content fingerprint used only for equality
 		// checks; this is not password hashing or credential storage.
 		sum := sha256.Sum256(mirrorBody)

@@ -6281,7 +6281,7 @@ haveApp:
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
 				continue
 			}
-			go h.dispatchMirror(target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
+			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
 		}
 	}
 

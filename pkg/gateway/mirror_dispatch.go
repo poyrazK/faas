@@ -132,15 +132,16 @@ func (d *defaultMirrorRoundTripper) RoundTripMirror(ctx context.Context, target 
 // forwarding to v2. Source response status/body are captured independently by
 // statusRecorder and synchronized through mirrorSourceCapture, preventing the
 // old request-body-versus-response-body comparison bug.
-func (h *Handler) dispatchMirror(sourceInstanceID string, sourceTarget *Target, rule MirrorRuleRow, srcReq *http.Request, requestBody []byte, requestID string, sourceCapture *mirrorSourceCapture) {
+func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID string, sourceTarget *Target, rule MirrorRuleRow, srcReq *http.Request, requestBody []byte, requestID string, sourceCapture *mirrorSourceCapture) {
 	// The mirror goroutine outlives the customer's request. The goroutine's
-	// own ctx is rooted at context.Background() with a MirrorMaxLifetimeSeconds
-	// deadline (ADR-098 detached-ctx pattern, mirrors pkg/gateway/gate.go:172);
+	// own ctx retains request values while dropping customer cancellation, then
+	// adds the MirrorMaxLifetimeSeconds deadline (ADR-098 detached-ctx pattern,
+	// mirrors pkg/gateway/gate.go:172).
 	if h == nil || h.backend == nil {
 		return
 	}
 	timeout := time.Duration(api.MirrorMaxLifetimeSeconds) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), timeout)
 	defer cancel()
 
 	// 0. Per-rule concurrent mirror-VM cap (PR-A3 code-review fix #3).
@@ -350,7 +351,7 @@ func (h *Handler) compareAndPersistMirror(
 	if h == nil || h.mirrorResultStore == nil {
 		return statusDiff, schemaDiff, bodyDiff, crashed
 	}
-	persistCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	if err := h.mirrorResultStore.InsertMirrorResult(persistCtx, result); err != nil && h.log != nil {
 		// requestID may originate in the caller-controlled X-Request-ID
@@ -364,7 +365,7 @@ func (h *Handler) compareAndPersistMirror(
 }
 
 func mirrorSHA256(body []byte) []byte {
-	// codeql[go/weak-cryptographic-algorithm] false-positive: SHA-256 is a
+	// codeql[go/weak-sensitive-data-hashing] false-positive: SHA-256 is a
 	// non-secret response-content fingerprint used only for equality checks;
 	// this is not password hashing or credential storage.
 	sum := sha256.Sum256(body)

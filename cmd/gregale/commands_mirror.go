@@ -423,7 +423,7 @@ func readMirrorReplayCorpus(path string) (api.MirrorReplayBatchRequest, error) {
 	if path == "-" {
 		reader = osStdin
 	} else {
-		f, err := os.Open(path)
+		f, err := openCustomerFile(path)
 		if err != nil {
 			return api.MirrorReplayBatchRequest{}, err
 		}
