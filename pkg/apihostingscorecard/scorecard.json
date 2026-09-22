@@ -65,6 +65,15 @@
       "evidence": [{"kind": "test", "locator": "cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"}]
     },
     {
+      "id": "durable-inbound-webhook-reliability",
+      "name": "Durable inbound webhook reliability",
+      "category": "reliability",
+      "description": "A provider-signed webhook is durably accepted before acknowledgement, deduplicated across provider retries, and queued for the normal wake and delivery lifecycle.",
+      "capabilities": ["durable-inbound-webhooks"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [{"kind": "test", "locator": "cmd/apid/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"}]
+    },
+    {
       "id": "first-healthy-api",
       "name": "Time to first healthy API",
       "category": "activation",

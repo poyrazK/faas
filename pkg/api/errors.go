@@ -1783,10 +1783,10 @@ func StatusForCode(code string) int {
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
 		CodeAuthRateLimited:
 		return http.StatusTooManyRequests
-	case CodeSourceTooLarge:
+	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeInboundWebhookInvalid, CodeInboundWebhookBadSignature, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
 		CodePrivateNetworkInvalid,
@@ -2114,6 +2114,10 @@ func StatusForCode(code string) int {
 	case CodePlanWebhooksNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
+		return http.StatusForbidden
+	case CodePlanInboundWebhooksNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanInboundWebhookQuota:
 		return http.StatusForbidden
 	case CodePlanRealtimeNotAllowed:
 		return http.StatusPaymentRequired
@@ -3212,6 +3216,17 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
 
+// Durable inbound webhook errors (ADR-212). Plan gating and quota follow the
+// outbound webhook posture; ingress validation keeps signature and body-size
+// failures distinct so providers and operators can diagnose retries safely.
+const (
+	CodePlanInboundWebhooksNotAllowed = "plan_inbound_webhooks_not_allowed"
+	CodePlanInboundWebhookQuota       = "plan_inbound_webhook_quota"
+	CodeInboundWebhookInvalid         = "inbound_webhook_invalid"
+	CodeInboundWebhookBadSignature    = "inbound_webhook_bad_signature"
+	CodeInboundWebhookTooLarge        = "inbound_webhook_too_large"
+)
+
 // Managed realtime endpoint errors (ADR-156). Realtime is an opt-in
 // connection service; Free is gated, while paid plans have bounded endpoint
 // inventories so quiet connections cannot become an unmetered resource.
@@ -3897,6 +3912,23 @@ func ErrPlanWebhookQuota(plan Plan, scope string, limit, observed int) *Problem 
 		WithDocs(docsBase + "/plans#webhooks")
 }
 
+func ErrPlanInboundWebhooksNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanInboundWebhooksNotAllowed,
+		"Inbound webhooks unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include durable inbound webhooks; upgrade to Hobby or above to receive provider callbacks while an app sleeps.", p)).
+		WithDocs(docsBase + "/inbound-webhooks")
+}
+
+func ErrPlanInboundWebhookQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanInboundWebhookQuota,
+		"Inbound webhook endpoint limit reached",
+		fmt.Sprintf("%s plan caps inbound webhook endpoints at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/inbound-webhooks")
+}
+
 func ErrPlanRealtimeNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanRealtimeNotAllowed,
 		"Managed realtime unavailable on this plan",
@@ -3999,6 +4031,21 @@ func ErrTriggerTLSSkipVerifyNotAllowed(plan Plan) *Problem {
 func ErrAppWebhookInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppWebhookInvalid,
 		"Invalid webhook", reason)
+}
+
+func ErrInboundWebhookInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInboundWebhookInvalid,
+		"Invalid inbound webhook", reason)
+}
+
+func ErrInboundWebhookBadSignature() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInboundWebhookBadSignature,
+		"Invalid webhook signature", "the Stripe-Signature header did not verify")
+}
+
+func ErrInboundWebhookTooLarge() *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodeInboundWebhookTooLarge,
+		"Webhook body too large", "the webhook body exceeds 1 MiB")
 }
 
 func ErrPlanLogDrainsNotAllowed(p Plan) *Problem {
