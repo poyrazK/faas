@@ -643,29 +643,43 @@ type PaddleOverageDedupeSchemaResult struct {
 // so handlers don't have to thread pgtype values through the
 // wire layer. PgStore converts at the boundary.
 type AppErrorGroup struct {
-	ID            uuid.UUID
-	Fingerprint   string
-	ErrorClass    string
-	Route         string
-	HTTPStatus    int32
-	Count         int64
-	RequestCount  int64
-	FirstSeenAt   time.Time
-	LastSeenAt    time.Time
-	SampleMessage string
+	ID                      uuid.UUID
+	Fingerprint             string
+	ErrorClass              string
+	Route                   string
+	HTTPStatus              int32
+	Count                   int64
+	RequestCount            int64
+	FirstSeenAt             time.Time
+	LastSeenAt              time.Time
+	SampleMessage           string
+	LastInstanceID          string
+	LastNodeID              string
+	LastRegion              string
+	LastCommitSHA           string
+	LastDeploymentTag       string
+	LastDeploymentCreatedAt string
+	LastImageDigest         string
 }
 
 // AppErrorRequestRow is the typed drill-down row for
 // /v1/apps/{slug}/errors/{fingerprint}.
 type AppErrorRequestRow struct {
-	ID            uuid.UUID
-	RequestID     uuid.UUID
-	ReceivedAt    time.Time
-	Route         string
-	HTTPStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	DeploymentID  *uuid.UUID
+	ID                  uuid.UUID
+	RequestID           uuid.UUID
+	ReceivedAt          time.Time
+	Route               string
+	HTTPStatus          int32
+	ErrorClass          string
+	SampleMessage       string
+	DeploymentID        *uuid.UUID
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // AppErrorSampleRow is the typed single-sample row for

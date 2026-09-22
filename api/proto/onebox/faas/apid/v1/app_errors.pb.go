@@ -89,7 +89,18 @@ type IncrementAppErrorRequest struct {
 	// instance_id (optional) — vmmd-assigned instance id when the
 	// request reached a live microVM. Empty when the error fired
 	// before instance resolution (cold-boot, wake failure).
-	InstanceId    string `protobuf:"bytes,12,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	InstanceId string `protobuf:"bytes,12,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	// Deployment provenance copied from the authoritative platform identity.
+	// Empty values are valid for legacy/partially-resolved requests.
+	NodeId              string `protobuf:"bytes,13,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Region              string `protobuf:"bytes,14,opt,name=region,proto3" json:"region,omitempty"`
+	CommitSha           string `protobuf:"bytes,15,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	DeploymentTag       string `protobuf:"bytes,16,opt,name=deployment_tag,json=deploymentTag,proto3" json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string `protobuf:"bytes,17,opt,name=deployment_created_at,json=deploymentCreatedAt,proto3" json:"deployment_created_at,omitempty"`
+	ImageDigest         string `protobuf:"bytes,18,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	// request_id is the platform request/trace UUID used by the drill-down
+	// surface. Empty or malformed values are replaced by apid for compatibility.
+	RequestId     string `protobuf:"bytes,19,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -208,6 +219,55 @@ func (x *IncrementAppErrorRequest) GetInstanceId() string {
 	return ""
 }
 
+func (x *IncrementAppErrorRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetDeploymentTag() string {
+	if x != nil {
+		return x.DeploymentTag
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetDeploymentCreatedAt() string {
+	if x != nil {
+		return x.DeploymentCreatedAt
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 // IncrementAppErrorResponse is the per-record outcome the server
 // returns. outcome ∈ {inserted, merged, redaction_failed,
 // rate_limited, db_error}. `inserted` is a new row in
@@ -284,7 +344,7 @@ var File_onebox_faas_apid_v1_app_errors_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
 	"\n" +
-	"$onebox/faas/apid/v1/app_errors.proto\x12\x13onebox.faas.apid.v1\"\xd6\x03\n" +
+	"$onebox/faas/apid/v1/app_errors.proto\x12\x13onebox.faas.apid.v1\"\xc3\x05\n" +
 	"\x18IncrementAppErrorRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -302,7 +362,16 @@ const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
 	" \x03(\tR\x11redactionsApplied\x12-\n" +
 	"\x13received_at_unix_ms\x18\v \x01(\x03R\x10receivedAtUnixMs\x12\x1f\n" +
 	"\vinstance_id\x18\f \x01(\tR\n" +
-	"instanceId\"|\n" +
+	"instanceId\x12\x17\n" +
+	"\anode_id\x18\r \x01(\tR\x06nodeId\x12\x16\n" +
+	"\x06region\x18\x0e \x01(\tR\x06region\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x0f \x01(\tR\tcommitSha\x12%\n" +
+	"\x0edeployment_tag\x18\x10 \x01(\tR\rdeploymentTag\x122\n" +
+	"\x15deployment_created_at\x18\x11 \x01(\tR\x13deploymentCreatedAt\x12!\n" +
+	"\fimage_digest\x18\x12 \x01(\tR\vimageDigest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x13 \x01(\tR\trequestId\"|\n" +
 	"\x19IncrementAppErrorResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12 \n" +
 	"\vfingerprint\x18\x02 \x01(\tR\vfingerprint\x12#\n" +

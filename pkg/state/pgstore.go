@@ -26589,16 +26589,23 @@ func (s *PgStore) ListAppErrorGroups(ctx context.Context, arg sqlc.ListAppErrorG
 	out := make([]AppErrorGroup, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, AppErrorGroup{
-			ID:            uuidFromPgtype(r.ID),
-			Fingerprint:   r.Fingerprint,
-			ErrorClass:    r.ErrorClass,
-			Route:         r.Route,
-			HTTPStatus:    r.HttpStatus,
-			Count:         r.Count,
-			RequestCount:  r.RequestCount,
-			FirstSeenAt:   timeFromPgtype(r.FirstSeenAt),
-			LastSeenAt:    timeFromPgtype(r.LastSeenAt),
-			SampleMessage: r.SampleMessage,
+			ID:                      uuidFromPgtype(r.ID),
+			Fingerprint:             r.Fingerprint,
+			ErrorClass:              r.ErrorClass,
+			Route:                   r.Route,
+			HTTPStatus:              r.HttpStatus,
+			Count:                   r.Count,
+			RequestCount:            r.RequestCount,
+			FirstSeenAt:             timeFromPgtype(r.FirstSeenAt),
+			LastSeenAt:              timeFromPgtype(r.LastSeenAt),
+			SampleMessage:           r.SampleMessage,
+			LastInstanceID:          r.LastInstanceID,
+			LastNodeID:              r.LastNodeID,
+			LastRegion:              r.LastRegion,
+			LastCommitSHA:           r.LastCommitSha,
+			LastDeploymentTag:       r.LastDeploymentTag,
+			LastDeploymentCreatedAt: r.LastDeploymentCreatedAt,
+			LastImageDigest:         r.LastImageDigest,
 		})
 	}
 	return out, nil
@@ -26619,14 +26626,21 @@ func (s *PgStore) ListAppErrorRequests(ctx context.Context, arg sqlc.ListAppErro
 			depID = &d
 		}
 		out = append(out, AppErrorRequestRow{
-			ID:            uuidFromPgtype(r.ID),
-			RequestID:     uuidFromPgtype(r.RequestID),
-			ReceivedAt:    timeFromPgtype(r.ReceivedAt),
-			Route:         r.Route,
-			HTTPStatus:    r.HttpStatus,
-			ErrorClass:    r.ErrorClass,
-			SampleMessage: r.SampleMessage,
-			DeploymentID:  depID,
+			ID:                  uuidFromPgtype(r.ID),
+			RequestID:           uuidFromPgtype(r.RequestID),
+			ReceivedAt:          timeFromPgtype(r.ReceivedAt),
+			Route:               r.Route,
+			HTTPStatus:          r.HttpStatus,
+			ErrorClass:          r.ErrorClass,
+			SampleMessage:       r.SampleMessage,
+			DeploymentID:        depID,
+			InstanceID:          r.InstanceID,
+			NodeID:              r.NodeID,
+			Region:              r.Region,
+			CommitSHA:           r.CommitSha,
+			DeploymentTag:       r.DeploymentTag,
+			DeploymentCreatedAt: r.DeploymentCreatedAt,
+			ImageDigest:         r.ImageDigest,
 		})
 	}
 	return out, nil
@@ -26651,14 +26665,21 @@ func (s *PgStore) GetAppErrorSample(ctx context.Context, arg sqlc.GetAppErrorSam
 	}
 	return AppErrorSampleRow{
 		AppErrorRequestRow: AppErrorRequestRow{
-			ID:            uuidFromPgtype(row.ID),
-			RequestID:     uuidFromPgtype(row.RequestID),
-			ReceivedAt:    timeFromPgtype(row.ReceivedAt),
-			Route:         row.Route,
-			HTTPStatus:    row.HttpStatus,
-			ErrorClass:    row.ErrorClass,
-			SampleMessage: row.SampleMessage,
-			DeploymentID:  depID,
+			ID:                  uuidFromPgtype(row.ID),
+			RequestID:           uuidFromPgtype(row.RequestID),
+			ReceivedAt:          timeFromPgtype(row.ReceivedAt),
+			Route:               row.Route,
+			HTTPStatus:          row.HttpStatus,
+			ErrorClass:          row.ErrorClass,
+			SampleMessage:       row.SampleMessage,
+			DeploymentID:        depID,
+			InstanceID:          row.InstanceID,
+			NodeID:              row.NodeID,
+			Region:              row.Region,
+			CommitSHA:           row.CommitSha,
+			DeploymentTag:       row.DeploymentTag,
+			DeploymentCreatedAt: row.DeploymentCreatedAt,
+			ImageDigest:         row.ImageDigest,
 		},
 		HeadersSample: headers,
 		Redactions:    row.Redactions,
