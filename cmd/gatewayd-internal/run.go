@@ -3053,7 +3053,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			LocalNodeID: cfg.NodeName,
 			// ADR-206. nil unless FAAS_SERVICE_CALLER_ASSERTIONS is on and a
 			// signing key is available, so the default path is unchanged.
-			MintCallerAssertion: newServiceCallerMinter(cfg.NodeName, log),
+			MintCallerAssertion: newServiceCallerMinter(ctx, pgStore, cfg.NodeName, log),
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
