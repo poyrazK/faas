@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // grype.go — Grype subprocess runner (issue #299).
@@ -255,8 +256,20 @@ func prepareGrypeSource(ctx context.Context, source string) (string, func(), err
 	// debugfs preserves image ownership and modes. The scan runs as the
 	// unprivileged imaged user in the canonical unit, so make the temporary
 	// copy readable/traversable without changing the source image.
+	//
+	// This needs CAP_FOWNER. debugfs restores the image's ownership using the
+	// daemon's CAP_CHOWN, so the extracted tree ends up owned by root while
+	// the daemon runs unprivileged, and chmod then requires ownership or
+	// CAP_FOWNER. Without it every scan failed here, wrote the fail-closed
+	// CRITICAL=9999 sidecar, and vmmd refused to boot any VM on the node —
+	// so say so in the error rather than leaving a bare EPERM.
 	if output, err := exec.CommandContext(ctx, "chmod", "-R", "a+rX", stageDir).CombinedOutput(); err != nil {
 		cleanup()
+		if strings.Contains(string(output), "Operation not permitted") {
+			return "", func() {}, fmt.Errorf(
+				"chmod extraction: %w (output=%q); the daemon likely lacks CAP_FOWNER — debugfs restored root ownership via CAP_CHOWN and chmod needs ownership or CAP_FOWNER (see AmbientCapabilities in faas-imaged.service)",
+				err, string(output))
+		}
 		return "", func() {}, fmt.Errorf("chmod extraction: %w (output=%q)", err, string(output))
 	}
 	return stageDir, cleanup, nil

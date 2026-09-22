@@ -35,7 +35,7 @@
 // is the receipt that the cap was deliberately dropped.
 //
 // The remaining caps in the unit's CapabilityBoundingSet=
-// (cap_fowner, cap_fsetid, cap_kill,
+// (cap_fsetid, cap_kill,
 // cap_setgid, cap_setuid, cap_setpcap, cap_net_bind_service,
 // cap_sys_chroot) are NOT in Allow — they're a "may have" list
 // the runtimecheck does not enforce. A future DEPLOY-3
@@ -53,6 +53,17 @@ var capsDecl = capdecl.Declaration{
 	Allow: []string{
 		"cap_chown",
 		"cap_dac_override",
+		// cap_fowner is required by the Grype scan path.
+		// prepareGrypeSource extracts a base ext4 with `debugfs rdump`,
+		// and cap_chown lets debugfs restore the image's original
+		// ownership (root) on the extracted copy. The follow-up
+		// `chmod -R a+rX`, which makes that copy readable by this
+		// unprivileged daemon, then needs ownership or cap_fowner.
+		// Without it every scan failed with "Operation not permitted",
+		// wrote the fail-closed CRITICAL=9999 sidecar, and vmmd refused
+		// to boot ANY VM on the node. Asserting it here turns a silent
+		// capability gap back into a loud boot failure.
+		"cap_fowner",
 	},
 	Deny: []string{
 		// cap_sys_admin is vmmd-only (spec §11 / CLAUDE.md
