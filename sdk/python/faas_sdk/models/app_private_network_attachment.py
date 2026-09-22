@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -13,6 +13,10 @@ from ..models.app_private_network_attachment_status import (
     check_app_private_network_attachment_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.app_private_network_node_status import AppPrivateNetworkNodeStatus
+
 
 T = TypeVar("T", bound="AppPrivateNetworkAttachment")
 
@@ -36,6 +40,8 @@ class AppPrivateNetworkAttachment:
     address: str | Unset = UNSET
     """Stable Gregale member address for this app when the fabric is enabled."""
     status_detail: str | Unset = UNSET
+    nodes: list[AppPrivateNetworkNodeStatus] | Unset = UNSET
+    """Last durable convergence result for each compute node serving this attachment."""
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -58,6 +64,13 @@ class AppPrivateNetworkAttachment:
         address = self.address
 
         status_detail = self.status_detail
+
+        nodes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.nodes, Unset):
+            nodes = []
+            for nodes_item_data in self.nodes:
+                nodes_item = nodes_item_data.to_dict()
+                nodes.append(nodes_item)
 
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
@@ -84,6 +97,8 @@ class AppPrivateNetworkAttachment:
             field_dict["address"] = address
         if status_detail is not UNSET:
             field_dict["status_detail"] = status_detail
+        if nodes is not UNSET:
+            field_dict["nodes"] = nodes
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
         if updated_at is not UNSET:
@@ -93,6 +108,8 @@ class AppPrivateNetworkAttachment:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_private_network_node_status import AppPrivateNetworkNodeStatus
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -109,6 +126,15 @@ class AppPrivateNetworkAttachment:
         address = d.pop("address", UNSET)
 
         status_detail = d.pop("status_detail", UNSET)
+
+        _nodes = d.pop("nodes", UNSET)
+        nodes: list[AppPrivateNetworkNodeStatus] | Unset = UNSET
+        if _nodes is not UNSET:
+            nodes = []
+            for nodes_item_data in _nodes:
+                nodes_item = AppPrivateNetworkNodeStatus.from_dict(nodes_item_data)
+
+                nodes.append(nodes_item)
 
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
@@ -133,6 +159,7 @@ class AppPrivateNetworkAttachment:
             allowed_cidrs=allowed_cidrs,
             address=address,
             status_detail=status_detail,
+            nodes=nodes,
             created_at=created_at,
             updated_at=updated_at,
         )

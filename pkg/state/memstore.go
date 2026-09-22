@@ -157,12 +157,15 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
-	privateNetworks           map[string]PrivateNetwork
-	privateNetworkAddresses   map[string]PrivateNetworkAddress
-	privateNetworkPeerings    map[string]PrivateNetworkPeering
-	reservedIPLeases          map[string]ReservedIP
-	reservedIPInventory       map[string]ReservedIPInventory
-	appDeletionClaims         map[string]struct{}
+
+	privateNetworkAttachmentNodeStatuses map[string]PrivateNetworkAttachmentNodeStatus
+
+	privateNetworks         map[string]PrivateNetwork
+	privateNetworkAddresses map[string]PrivateNetworkAddress
+	privateNetworkPeerings  map[string]PrivateNetworkPeering
+	reservedIPLeases        map[string]ReservedIP
+	reservedIPInventory     map[string]ReservedIPInventory
+	appDeletionClaims       map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -893,16 +896,19 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},
 		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
-		privateNetworks:           map[string]PrivateNetwork{},
-		privateNetworkAddresses:   map[string]PrivateNetworkAddress{},
-		privateNetworkPeerings:    map[string]PrivateNetworkPeering{},
-		reservedIPLeases:          map[string]ReservedIP{},
-		reservedIPInventory:       map[string]ReservedIPInventory{},
-		appDeletionClaims:         map[string]struct{}{},
-		githubDeployBranches:      map[string]map[string]string{},
-		githubDeployPolicies:      map[string]GitHubDeployPolicy{},
-		githubBindings:            map[string]GitHubBinding{},
-		githubInstalls:            map[string]GitHubInstall{},
+
+		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
+
+		privateNetworks:         map[string]PrivateNetwork{},
+		privateNetworkAddresses: map[string]PrivateNetworkAddress{},
+		privateNetworkPeerings:  map[string]PrivateNetworkPeering{},
+		reservedIPLeases:        map[string]ReservedIP{},
+		reservedIPInventory:     map[string]ReservedIPInventory{},
+		appDeletionClaims:       map[string]struct{}{},
+		githubDeployBranches:    map[string]map[string]string{},
+		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
+		githubBindings:          map[string]GitHubBinding{},
+		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},

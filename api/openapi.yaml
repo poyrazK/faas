@@ -31488,8 +31488,35 @@ components:
           enum: [pending, ready, error]
         status_detail:
           type: string
+        nodes:
+          type: array
+          description: Last durable convergence result for each compute node serving this attachment.
+          items:
+            $ref: '#/components/schemas/AppPrivateNetworkNodeStatus'
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    AppPrivateNetworkNodeStatus:
+      description: Last durable fabric and route convergence result for one compute node.
+      type: object
+      required: [node_id]
+      properties:
+        node_id:
+          type: string
+          description: Compute-node identity that reported the observation.
+        fabric_status:
+          type: string
+          enum: [ready, error]
+        fabric_detail:
+          type: string
+        route_status:
+          type: string
+          enum: [ready, error]
+        route_detail:
+          type: string
+        observed_at:
+          type: string
+          format: date-time
 
     AppPrivateNetworkAttachmentResponse:
       description: Capability metadata and the current private-network intent.

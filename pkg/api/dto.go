@@ -5812,16 +5812,29 @@ type SetAppStaticEgressIPRequest struct {
 // Address is the stable app member address when the Gregale-owned fabric is
 // enabled; it is omitted for external/provider route-only attachments.
 type AppPrivateNetworkAttachment struct {
-	ID           string     `json:"id"`
-	NetworkID    string     `json:"network_id"`
-	Region       string     `json:"region"`
-	CIDRs        []string   `json:"cidrs"`
-	AllowedCIDRs []string   `json:"allowed_cidrs,omitempty"`
-	Address      string     `json:"address,omitempty"`
-	Status       string     `json:"status"`
-	StatusDetail string     `json:"status_detail,omitempty"`
-	CreatedAt    *time.Time `json:"created_at,omitempty"`
-	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	ID           string                        `json:"id"`
+	NetworkID    string                        `json:"network_id"`
+	Region       string                        `json:"region"`
+	CIDRs        []string                      `json:"cidrs"`
+	AllowedCIDRs []string                      `json:"allowed_cidrs,omitempty"`
+	Address      string                        `json:"address,omitempty"`
+	Status       string                        `json:"status"`
+	StatusDetail string                        `json:"status_detail,omitempty"`
+	Nodes        []AppPrivateNetworkNodeStatus `json:"nodes,omitempty"`
+	CreatedAt    *time.Time                    `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time                    `json:"updated_at,omitempty"`
+}
+
+// AppPrivateNetworkNodeStatus is the last durable convergence result for one
+// live compute node. Fabric and route stages are independent because a node
+// bridge can be ready while policy publication is still failing.
+type AppPrivateNetworkNodeStatus struct {
+	NodeID       string     `json:"node_id"`
+	FabricStatus string     `json:"fabric_status,omitempty"`
+	FabricDetail string     `json:"fabric_detail,omitempty"`
+	RouteStatus  string     `json:"route_status,omitempty"`
+	RouteDetail  string     `json:"route_detail,omitempty"`
+	ObservedAt   *time.Time `json:"observed_at,omitempty"`
 }
 
 // AppPrivateNetworkAttachmentResponse is returned by the private-network

@@ -1141,6 +1141,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				reconciler, reconErr := privatenetwork.NewReconciler(reconcileStore, connector, applier, privatenetwork.ReconcilerOptions{
 					Logger: log,
+					RecordObservation: func(ctx context.Context, obs privatenetwork.ReconcileObservation) error {
+						healthStore, ok := any(store).(state.PrivateNetworkAttachmentHealthStore)
+						if !ok {
+							return nil
+						}
+						return privatenetwork.PersistNodeObservations(ctx, healthStore, obs)
+					},
 					Fabric: fabricApplier,
 					Observe: func(obs privatenetwork.ReconcileObservation) {
 						privateNetworkMetrics.Observe(obs)

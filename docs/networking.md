@@ -110,6 +110,12 @@ failure keeps the attachment in `error` and is retried by the next sweep;
 successful nodes are still reported so operators can identify the unhealthy
 box without guessing from aggregate status.
 
+The attachment read endpoint also exposes the last durable per-node result in
+`attachment.nodes`. Each row separates `fabric_status` from `route_status`,
+includes bounded failure detail, and carries `observed_at`. A node can have a
+ready bridge while route policy is still failing; this projection is the
+operator view of that partial convergence and is replaced on the next replay.
+
 For multi-node Gregale networks, vmmd can add a provider-neutral VXLAN link
 over an operator-managed encrypted overlay (Tailscale, WireGuard, or another
 routable underlay). This is disabled by default and does not call DigitalOcean:
