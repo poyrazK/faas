@@ -498,9 +498,16 @@ type SidecarSpec struct {
 	// depends_on gates guest-init startup on another workload's lifecycle
 	// state. An omitted condition means started. The dependency graph is
 	// validated by apid and re-checked defensively by guest-init.
-	DependsOn     []*WorkloadDependency `protobuf:"bytes,10,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DependsOn []*WorkloadDependency `protobuf:"bytes,10,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	// startup_probe optionally replaces the image's baked OCI HEALTHCHECK for
+	// this workload. Test uses CMD, CMD-SHELL, or NONE semantics.
+	StartupProbeTest         []string `protobuf:"bytes,14,rep,name=startup_probe_test,json=startupProbeTest,proto3" json:"startup_probe_test,omitempty"`
+	StartupProbeIntervalS    int32    `protobuf:"varint,15,opt,name=startup_probe_interval_s,json=startupProbeIntervalS,proto3" json:"startup_probe_interval_s,omitempty"`
+	StartupProbeTimeoutS     int32    `protobuf:"varint,16,opt,name=startup_probe_timeout_s,json=startupProbeTimeoutS,proto3" json:"startup_probe_timeout_s,omitempty"`
+	StartupProbeRetries      int32    `protobuf:"varint,17,opt,name=startup_probe_retries,json=startupProbeRetries,proto3" json:"startup_probe_retries,omitempty"`
+	StartupProbeStartPeriodS int32    `protobuf:"varint,18,opt,name=startup_probe_start_period_s,json=startupProbeStartPeriodS,proto3" json:"startup_probe_start_period_s,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *SidecarSpec) Reset() {
@@ -622,6 +629,41 @@ func (x *SidecarSpec) GetDependsOn() []*WorkloadDependency {
 		return x.DependsOn
 	}
 	return nil
+}
+
+func (x *SidecarSpec) GetStartupProbeTest() []string {
+	if x != nil {
+		return x.StartupProbeTest
+	}
+	return nil
+}
+
+func (x *SidecarSpec) GetStartupProbeIntervalS() int32 {
+	if x != nil {
+		return x.StartupProbeIntervalS
+	}
+	return 0
+}
+
+func (x *SidecarSpec) GetStartupProbeTimeoutS() int32 {
+	if x != nil {
+		return x.StartupProbeTimeoutS
+	}
+	return 0
+}
+
+func (x *SidecarSpec) GetStartupProbeRetries() int32 {
+	if x != nil {
+		return x.StartupProbeRetries
+	}
+	return 0
+}
+
+func (x *SidecarSpec) GetStartupProbeStartPeriodS() int32 {
+	if x != nil {
+		return x.StartupProbeStartPeriodS
+	}
+	return 0
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env
@@ -7043,7 +7085,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x12private_network_id\x18\x14 \x01(\tR\x10privateNetworkId\x126\n" +
 	"\x17private_network_address\x18\x15 \x01(\tR\x15privateNetworkAddress\x12A\n" +
 	"\x1dprivate_network_allowed_cidrs\x18\x16 \x03(\tR\x1aprivateNetworkAllowedCidrs\x12t\n" +
-	"\x1eprivate_network_firewall_rules\x18\x17 \x03(\v2/.onebox.faas.vmmd.v1.PrivateNetworkFirewallRuleR\x1bprivateNetworkFirewallRules\"\xcc\x03\n" +
+	"\x1eprivate_network_firewall_rules\x18\x17 \x03(\v2/.onebox.faas.vmmd.v1.PrivateNetworkFirewallRuleR\x1bprivateNetworkFirewallRules\"\xde\x05\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
@@ -7063,7 +7105,12 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"sealed_env\x18\t \x03(\v2!.onebox.faas.vmmd.v1.SealedSecretR\tsealedEnv\x12F\n" +
 	"\n" +
 	"depends_on\x18\n" +
-	" \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\tdependsOn\"@\n" +
+	" \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\tdependsOn\x12,\n" +
+	"\x12startup_probe_test\x18\x0e \x03(\tR\x10startupProbeTest\x127\n" +
+	"\x18startup_probe_interval_s\x18\x0f \x01(\x05R\x15startupProbeIntervalS\x125\n" +
+	"\x17startup_probe_timeout_s\x18\x10 \x01(\x05R\x14startupProbeTimeoutS\x122\n" +
+	"\x15startup_probe_retries\x18\x11 \x01(\x05R\x13startupProbeRetries\x12>\n" +
+	"\x1cstartup_probe_start_period_s\x18\x12 \x01(\x05R\x18startupProbeStartPeriodS\"@\n" +
 	"\fSealedSecret\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +

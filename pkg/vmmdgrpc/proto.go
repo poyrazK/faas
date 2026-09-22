@@ -573,6 +573,16 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	out := make([]fcvm.WorkloadSpec, 0, len(pbs))
 	for _, p := range pbs {
 		sealedEnv := sealedFromProto(p.GetSealedEnv())
+		var startupProbe *api.AppManifestHealthcheck
+		if test := p.GetStartupProbeTest(); len(test) > 0 {
+			startupProbe = &api.AppManifestHealthcheck{
+				Test:         append([]string(nil), test...),
+				IntervalS:    int(p.GetStartupProbeIntervalS()),
+				TimeoutS:     int(p.GetStartupProbeTimeoutS()),
+				Retries:      int(p.GetStartupProbeRetries()),
+				StartPeriodS: int(p.GetStartupProbeStartPeriodS()),
+			}
+		}
 		out = append(out, fcvm.WorkloadSpec{
 			Name:          p.GetName(),
 			Type:          p.GetType(),
@@ -585,6 +595,7 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 			DiskIOProfile: p.GetDiskIoProfile(),
 			Port:          int(p.GetPort()),
 			Essential:     p.GetEssential(),
+			StartupProbe:  startupProbe,
 			SealedEnv:     sealedEnv,
 			DependsOn:     workloadDependenciesFromProto(p.GetDependsOn()),
 		})

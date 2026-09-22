@@ -676,6 +676,13 @@ message SidecarSpec {
   // state. An omitted condition means started. The dependency graph is
   // validated by apid and re-checked defensively by guest-init.
   repeated WorkloadDependency depends_on = 10;
+  // startup_probe optionally replaces the image's baked OCI HEALTHCHECK for
+  // this workload. Test uses CMD, CMD-SHELL, or NONE semantics.
+  repeated string startup_probe_test = 14;
+  int32 startup_probe_interval_s = 15;
+  int32 startup_probe_timeout_s = 16;
+  int32 startup_probe_retries = 17;
+  int32 startup_probe_start_period_s = 18;
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env
