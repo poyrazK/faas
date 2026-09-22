@@ -3001,6 +3001,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// pre-ADR-201 behaviour.
 			Breaker: egressBreakerGroup(),
 			Metrics: deps.metrics,
+			// Prefer a replica on this node before crossing the network.
+			// Empty NodeName (legacy single-box) keeps flat round-robin.
+			LocalNodeID: cfg.NodeName,
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {

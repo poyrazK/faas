@@ -123,6 +123,10 @@ type ServiceProxyConfig struct {
 	EndpointTTL time.Duration
 	Now         func() time.Time
 	Log         *slog.Logger
+	// LocalNodeID is this gateway's compute node. When set, endpoint
+	// selection prefers a replica on this node before crossing the network
+	// (ADR-168 refinement). Empty preserves flat round-robin.
+	LocalNodeID string
 	// Breaker is the endpoint health breaker (ADR-201 §2). Nil installs
 	// circuit.LegacyQuarantineConfig, which reproduces the fixed-TTL
 	// quarantine this field replaced: one failure benches an endpoint for
@@ -136,6 +140,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	localNodeID   string
 	provider      ServiceEndpointProvider
 	resolve       ServiceProxyResolver
 	authorize     ServiceProxyAuthorizer
@@ -195,6 +200,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		})
 	}
 	return &ServiceProxy{
+		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
 		provider:      cfg.Provider,
 		resolve:       cfg.Resolve,
 		authorize:     cfg.Authorize,
@@ -615,8 +621,33 @@ func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceE
 	start := p.next[appID]
 	p.next[appID]++
 	p.mu.Unlock()
+	// Prefer a replica on this node before crossing the network. The caller
+	// is a workload on this box, so a local target keeps the whole exchange
+	// inside one host: no inter-node hop, and no dependency on a peer node
+	// staying reachable for a call between two same-account services that
+	// both happen to live here.
+	//
+	// Round-robin still runs within each tier, so local replicas share load
+	// evenly and a benched local endpoint falls through to a remote one
+	// rather than failing the call.
+	if endpoint, ok := p.pickFrom(appID, endpoints, start, true); ok {
+		return endpoint, true
+	}
+	return p.pickFrom(appID, endpoints, start, false)
+}
+
+// pickFrom walks the rotation once, considering only endpoints that match the
+// requested locality. localOnly=false considers every endpoint, so the second
+// pass is a superset of the first and no target is unreachable.
+func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start uint64, localOnly bool) (ServiceEndpoint, bool) {
+	if localOnly && p.localNodeID == "" {
+		return ServiceEndpoint{}, false
+	}
 	for i := 0; i < len(endpoints); i++ {
 		endpoint := endpoints[(int(start)+i)%len(endpoints)]
+		if localOnly && endpoint.NodeID != p.localNodeID {
+			continue
+		}
 		if p.breaker.Allow(serviceProxyEndpointKey(appID, endpoint.InstanceID)) {
 			return endpoint, true
 		}
